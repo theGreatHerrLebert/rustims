@@ -6,9 +6,9 @@ fn main() {
     let tims_data = TimsDataset::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
-            let frame = tims_data.get_frame(0);
+            let frame = tims_data.get_frame(66073);
             match frame {
-                Ok(frame) => println!("frame: {}", frame),
+                Ok(frame) => println!("frame: {:?}", frame.0),
                 Err(e) => println!("error: {}", e),
             };
         },
