@@ -23,7 +23,7 @@ impl MzSpectrum {
     /// # Example
     ///
     /// ```rust
-    /// # use ms_core::MzSpectrum;
+    /// # use mscore::MzSpectrum;
     /// let spectrum = MzSpectrum::new(vec![100.0, 200.0], vec![10.0, 20.0]);
     /// assert_eq!(spectrum.mz, vec![100.0, 200.0]);
     /// assert_eq!(spectrum.intensity, vec![10.0, 20.0]);
@@ -47,7 +47,7 @@ impl MzSpectrum {
     /// # Example
     ///
     /// ```rust
-    /// # use ms_core::MzSpectrum;
+    /// # use mscore::MzSpectrum;
     /// let spectrum = MzSpectrum::new(vec![100.123, 100.121, 100.131], vec![10.0, 20.0, 30.0]);
     /// let binned_spectrum_1 = spectrum.to_resolution(1);
     /// let binned_spectrum_2 = spectrum.to_resolution(2);
@@ -91,7 +91,7 @@ impl std::ops::Add for MzSpectrum {
     ///
     /// # Example
     /// ```
-    /// # use ms_core::MzSpectrum;
+    /// # use mscore::MzSpectrum;
     /// let spectrum1 = MzSpectrum { mz: vec![100.523, 101.923], intensity: vec![10.0, 20.0] };
     /// let spectrum2 = MzSpectrum { mz: vec![101.235, 105.112], intensity: vec![15.0, 30.0] };
     ///
@@ -149,7 +149,7 @@ impl TOFMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use ms_core::TOFMzSpectrum;
+    /// use mscore::TOFMzSpectrum;
     /// 
     /// let spectrum = TOFMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
@@ -166,7 +166,7 @@ impl TOFMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use ms_core::TOFMzSpectrum;
+    /// use mscore::TOFMzSpectrum;
     /// 
     /// let spectrum = TOFMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
@@ -242,7 +242,7 @@ impl ImsFrame {
     /// # Examples
     /// 
     /// ```
-    /// use ms_core::ImsFrame;
+    /// use mscore::ImsFrame;
     /// 
     /// let frame = ImsFrame::new(100.0, vec![0.1, 0.2], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
@@ -278,7 +278,7 @@ impl TimsFrame {
     /// # Examples
     /// 
     /// ```
-    /// use ms_core::TimsFrame;
+    /// use mscore::TimsFrame;
     /// 
     /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```

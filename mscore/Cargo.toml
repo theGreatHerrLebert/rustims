@@ -1,5 +1,5 @@
 [package]
-name = "ms_core"
+name = "mscore"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 
 [lib]
-name = "ms_core"
+name = "mscore"
 path = "src/lib.rs"
