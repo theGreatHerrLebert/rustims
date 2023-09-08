@@ -1,5 +1,6 @@
 use libloading::{Library, Symbol};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_double};
+
 
 pub struct BrukerTimsDataLibrary {
     pub lib: Library,
@@ -64,6 +65,28 @@ impl BrukerTimsDataLibrary {
         unsafe {
             let func: Symbol<unsafe extern fn(u64) -> ()> = self.lib.get(b"tims_close")?;
             func(self.handle);
+        }
+        Ok(())
+    }
+    // ... other parts of your struct and implementation...
+
+    //
+    // Convert the given indices to mz values.
+    //
+    // # Example
+    //
+    // ```
+    // let indices = vec![...];
+    // let mz_values_result = tims_data.tims_index_to_mz(estimation, &mut indices, tof_max_index);
+    // match mz_values_result {
+    //     Ok(mz_values) => println!("{:?}", mz_values),
+    //     Err(e) => println!("error: {}", e),
+    // };
+    // ```
+    pub fn tims_index_to_mz(&self, frame_id: u32, dbl_tofs: &[c_double], mzs: &mut [c_double], tof_max_index: u32) -> Result<(), Box<dyn std::error::Error>> {
+        unsafe {
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_index_to_mz")?;
+            func(self.handle, frame_id, dbl_tofs.as_ptr(), mzs.as_mut_ptr(), tof_max_index);
         }
         Ok(())
     }

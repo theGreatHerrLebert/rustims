@@ -46,6 +46,7 @@ pub struct GlobalMetaData {
     pub mz_accquisition_range_upper: f64,
     pub one_over_k0_range_lower: f64,
     pub one_over_k0_range_upper: f64,
+    pub digitizer_num_samples: u32,
 }
 
 #[derive(Debug)]
@@ -102,6 +103,7 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
         mz_accquisition_range_upper: -1.0,
         one_over_k0_range_lower: -1.0,
         one_over_k0_range_upper: -1.0,
+        digitizer_num_samples: 0,
     };
 
     // go over the keys and parse values for the global meta data
@@ -119,6 +121,7 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
             "MzAcqRangeUpper" => global_meta.mz_accquisition_range_upper = row.value.parse::<f64>().unwrap(),
             "OneOverK0AcqRangeLower" => global_meta.one_over_k0_range_lower = row.value.parse::<f64>().unwrap(),
             "OneOverK0AcqRangeUpper" => global_meta.one_over_k0_range_upper = row.value.parse::<f64>().unwrap(),
+            "DigitizerNumSamples" => global_meta.digitizer_num_samples = row.value.parse::<u32>().unwrap() + 1,
             _ => (),
         }
     }

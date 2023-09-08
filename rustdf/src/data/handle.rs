@@ -125,7 +125,7 @@ impl TimsDataset {
         })
     }
 
-    pub fn get_frame(&self, frame_id: i64) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
+    pub fn get_frame(&self, frame_id: u32) -> Result<(Vec<u32>, Vec<u32>, Vec<f64>, Vec<u32>), Box<dyn std::error::Error>> {
 
         let frame_index = (frame_id - 1) as usize;
         let offset = self.tims_offset_values[frame_index] as u64;
@@ -143,9 +143,12 @@ impl TimsDataset {
         infile.read_exact(&mut bin_buffer)?;
 
         match self.global_meta_data.tims_compression_type {
+            // TODO: implement
             _ if self.global_meta_data.tims_compression_type == 1 => {
                 return Err("Decompression Type1 not implemented.".into());
             },
+
+            // Extract from ZSTD compressed binary
             _ if self.global_meta_data.tims_compression_type == 2 => {
                 
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
@@ -153,10 +156,24 @@ impl TimsDataset {
             
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
             
-                // Assuming you have the Rust equivalent function for `parse_decompressed_bruker_binary_type2`
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
-                Ok((scan, tof, intensity))
+                let mut dbl_tofs: Vec<f64> = Vec::new();
+                dbl_tofs.resize(self.global_meta_data.digitizer_num_samples as usize, 0.0);
+
+                for (i, &val) in tof.iter().enumerate() {
+                    dbl_tofs[i] = val as f64;
+                }
+
+                let mut mz_values: Vec<f64> = Vec::new();
+                mz_values.resize(self.global_meta_data.digitizer_num_samples as usize, 0.0);
+
+                self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values, self.global_meta_data.digitizer_num_samples)?;
+                mz_values.truncate(tof.len());
+                
+                Ok((scan, tof, mz_values, intensity))
             },
+
+            // Error on unknown compression algorithm
             _ => {
                 return Err("TimsCompressionType is not 1 or 2.".into());
             }
