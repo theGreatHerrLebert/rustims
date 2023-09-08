@@ -1,0 +1,15 @@
+[package]
+name = "rust_tdf"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libloading = "0.8"
+rusqlite = "0.29.0"
+lzf = "1.0.0"
+zstd = "0.12.4"
