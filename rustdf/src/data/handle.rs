@@ -7,8 +7,6 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
-extern crate mscore;
-
 use mscore::{TimsFrame, ImsFrame};
 
 fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
@@ -163,6 +161,13 @@ impl TimsDataset {
         inv_mob
     }
 
+    pub fn flatten_scan_values(&self, scan: &Vec<u32>, zero_indexed: bool) -> Vec<i32> {
+        let add = if zero_indexed { 0 } else { 1 };
+        scan.iter().enumerate()
+            .flat_map(|(index, &count)| vec![(index + add) as i32; count as usize]
+                .into_iter()).collect()
+    }
+
     pub fn get_frame(&self, frame_id: u32) -> Result<TimsFrame, Box<dyn std::error::Error>> {
 
         let frame_index = (frame_id - 1) as usize;
@@ -197,9 +202,7 @@ impl TimsDataset {
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
                 let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
                 let tof_i32 = tof.iter().map(|&x| x as i32).collect();
-                let scan_i32: Vec<i32> = scan.iter().enumerate()
-                    .flat_map(|(index, &count)| vec![(index + 1) as i32; count as usize].into_iter())
-                    .collect();
+                let scan_i32: Vec<i32> = self.flatten_scan_values(&scan, false);
 
                 let mz = self.tof_to_mz(frame_id, &tof);
                 let inv_mobility = self.scan_to_inverse_mobility(frame_id, &scan_i32);
