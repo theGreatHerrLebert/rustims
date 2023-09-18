@@ -6,8 +6,8 @@ fn main() {
     let tims_data = TimsDataset::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
-            for i in 1..50_000 {
-                let frame = tims_data.get_ims_frame(i);
+            for i in 1..100 {
+                let frame = tims_data.get_frame(i);
                 match frame {
                     Ok(frame) => println!("{}", frame),
                     Err(e) => println!("error: {}", e),

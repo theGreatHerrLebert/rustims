@@ -72,7 +72,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
 
 #[derive(Debug)]
-pub enum AquisitionMode {
+pub enum AcquisitionMode {
     DDA,
     DIA,
     MIDIA,
@@ -85,7 +85,7 @@ pub struct TimsDataset {
     pub bruker_lib: BrukerTimsDataLibrary,
     pub global_meta_data: GlobalMetaData,
     pub frame_meta_data: Vec<FrameMeta>,
-    pub aquisition_mode: AquisitionMode,
+    pub aquisition_mode: AcquisitionMode,
     pub max_scan_count: i64,
     pub frame_idptr: Vec<i64>,
     pub tims_offset_values: Vec<i64>,
@@ -110,10 +110,10 @@ impl TimsDataset {
         let tims_offset_values = frame_meta_data.iter().map(|x| x.tims_id).collect::<Vec<i64>>();
 
         let aquisition_mode = match frame_meta_data[0].scan_mode {
-            8 => AquisitionMode::DDA,
-            9 => AquisitionMode::DIA,
-            10 => AquisitionMode::MIDIA,
-            _ => AquisitionMode::UNKNOWN,
+            8 => AcquisitionMode::DDA,
+            9 => AcquisitionMode::DIA,
+            10 => AcquisitionMode::MIDIA,
+            _ => AcquisitionMode::UNKNOWN,
         };
 
         Ok(TimsDataset {
