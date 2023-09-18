@@ -165,5 +165,4 @@ pub fn read_meta_data_sql(bruker_d_folder_name: &str) -> Result<Vec<FrameMeta>, 
 
     // return the frames
     Ok(frames_rows?)
-
 }
