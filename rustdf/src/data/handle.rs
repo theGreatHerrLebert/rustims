@@ -125,7 +125,7 @@ impl TimsDataset {
         })
     }
 
-    pub fn get_frame(&self, frame_id: u32) -> Result<(Vec<u32>, Vec<u32>, Vec<f64>, Vec<u32>), Box<dyn std::error::Error>> {
+    pub fn get_frame(&self, frame_id: u32) -> Result<(Vec<u32>, Vec<u32>, Vec<f64>, Vec<f64>, Vec<u32>), Box<dyn std::error::Error>> {
 
         let frame_index = (frame_id - 1) as usize;
         let offset = self.tims_offset_values[frame_index] as u64;
@@ -157,20 +157,32 @@ impl TimsDataset {
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
             
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
+
+                // TRANSLATE TOF TO MZ
                 let mut dbl_tofs: Vec<f64> = Vec::new();
-                dbl_tofs.resize(self.global_meta_data.digitizer_num_samples as usize, 0.0);
+                dbl_tofs.resize(tof.len(), 0.0);
 
                 for (i, &val) in tof.iter().enumerate() {
                     dbl_tofs[i] = val as f64;
                 }
 
                 let mut mz_values: Vec<f64> = Vec::new();
-                mz_values.resize(self.global_meta_data.digitizer_num_samples as usize, 0.0);
+                mz_values.resize(tof.len() as usize, 0.0);
 
-                self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values, self.global_meta_data.digitizer_num_samples)?;
-                mz_values.truncate(tof.len());
+                // TRANSLATE SCAN TO INV MOB
+                let mut dbl_scans: Vec<f64> = Vec::new();
+                dbl_scans.resize(scan.len(), 0.0);
+
+                for (i, &val) in scan.iter().enumerate() {
+                    dbl_scans[i] = val as f64;
+                }
+
+                let mut inv_mob: Vec<f64> = Vec::new();
+                inv_mob.resize(scan.len() as usize, 0.0);
+
+                self.bruker_lib.tims_index_to_mz(frame_id, &dbl_scans, &mut inv_mob)?;
                 
-                Ok((scan, tof, mz_values, intensity))
+                Ok((scan, tof, mz_values, inv_mob, intensity))
             },
 
             // Error on unknown compression algorithm

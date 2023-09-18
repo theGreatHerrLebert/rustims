@@ -68,7 +68,6 @@ impl BrukerTimsDataLibrary {
         }
         Ok(())
     }
-    // ... other parts of your struct and implementation...
 
     //
     // Convert the given indices to mz values.
@@ -83,10 +82,31 @@ impl BrukerTimsDataLibrary {
     //     Err(e) => println!("error: {}", e),
     // };
     // ```
-    pub fn tims_index_to_mz(&self, frame_id: u32, dbl_tofs: &[c_double], mzs: &mut [c_double], tof_max_index: u32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tims_index_to_mz(&self, frame_id: u32, dbl_tofs: &[c_double], mzs: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_index_to_mz")?;
-            func(self.handle, frame_id, dbl_tofs.as_ptr(), mzs.as_mut_ptr(), tof_max_index);
+            func(self.handle, frame_id, dbl_tofs.as_ptr(), mzs.as_mut_ptr(), dbl_tofs.len() as u32);
+        }
+        Ok(())
+    }
+
+    //
+    // Convert the given indices to mz values.
+    //
+    // # Example
+    //
+    // ```
+    // let indices = vec![...];
+    // let scan_values_result = tims_data.tims_scan_to_inv_mob(estimation, &mut indices);
+    // match mz_values_result {
+    //     Ok(mz_values) => println!("{:?}", mz_values),
+    //     Err(e) => println!("error: {}", e),
+    // };
+    // ```
+    pub fn tims_scan_to_inv_mob(&self, frame_id: u32, dbl_scans: &[c_double], inv_mob: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
+        unsafe {
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_scannum_to_oneoverk0")?;
+            func(self.handle, frame_id, dbl_scans.as_ptr(), inv_mob.as_mut_ptr(), dbl_scans.len() as u32);
         }
         Ok(())
     }
