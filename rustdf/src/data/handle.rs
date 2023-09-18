@@ -7,6 +7,10 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
+extern crate mscore;
+
+use mscore::{TimsFrame, ImsFrame};
+
 fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = zstd::Decoder::new(compressed_data)?;
     let mut decompressed_data = Vec::new();
@@ -125,7 +129,41 @@ impl TimsDataset {
         })
     }
 
-    pub fn get_frame(&self, frame_id: u32) -> Result<(Vec<u32>, Vec<u32>, Vec<f64>, Vec<f64>, Vec<u32>), Box<dyn std::error::Error>> {
+    pub fn tof_to_mz(&self, frame_id: u32, tof: &Vec<u32>) -> Vec<f64> {
+        // TRANSLATE TOF TO MZ
+        let mut dbl_tofs: Vec<f64> = Vec::new();
+        dbl_tofs.resize(tof.len(), 0.0);
+
+        for (i, &val) in tof.iter().enumerate() {
+        dbl_tofs[i] = val as f64;
+        }
+
+        let mut mz_values: Vec<f64> = Vec::new();
+        mz_values.resize(tof.len() as usize, 0.0);
+
+        self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values).expect("Bruker binary call failed at: tims_index_to_mz;");
+
+        mz_values
+    }
+
+    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan: &Vec<i32>) -> Vec<f64> {
+        // TRANSLATE SCAN TO INV MOB
+        let mut dbl_scans: Vec<f64> = Vec::new();
+        dbl_scans.resize(scan.len(), 0.0);
+
+        for (i, &val) in scan.iter().enumerate() {
+            dbl_scans[i] = val as f64;
+        }
+
+        let mut inv_mob: Vec<f64> = Vec::new();
+        inv_mob.resize(scan.len() as usize, 0.0);
+
+        self.bruker_lib.tims_scan_to_inv_mob(frame_id, &dbl_scans, &mut inv_mob).expect("Bruker binary call failed at: tims_scannum_to_oneoverk0;");
+
+        inv_mob
+    }
+
+    pub fn get_frame(&self, frame_id: u32) -> Result<TimsFrame, Box<dyn std::error::Error>> {
 
         let frame_index = (frame_id - 1) as usize;
         let offset = self.tims_offset_values[frame_index] as u64;
@@ -157,32 +195,23 @@ impl TimsDataset {
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
             
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
+                let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
+                let tof_i32 = tof.iter().map(|&x| x as i32).collect();
+                let scan_i32: Vec<i32> = scan.iter().enumerate()
+                    .flat_map(|(index, &count)| vec![(index + 1) as i32; count as usize].into_iter())
+                    .collect();
 
-                // TRANSLATE TOF TO MZ
-                let mut dbl_tofs: Vec<f64> = Vec::new();
-                dbl_tofs.resize(tof.len(), 0.0);
+                let mz = self.tof_to_mz(frame_id, &tof);
+                let inv_mobility = self.scan_to_inverse_mobility(frame_id, &scan_i32);
 
-                for (i, &val) in tof.iter().enumerate() {
-                    dbl_tofs[i] = val as f64;
-                }
-
-                let mut mz_values: Vec<f64> = Vec::new();
-                mz_values.resize(tof.len() as usize, 0.0);
-
-                // TRANSLATE SCAN TO INV MOB
-                let mut dbl_scans: Vec<f64> = Vec::new();
-                dbl_scans.resize(scan.len(), 0.0);
-
-                for (i, &val) in scan.iter().enumerate() {
-                    dbl_scans[i] = val as f64;
-                }
-
-                let mut inv_mob: Vec<f64> = Vec::new();
-                inv_mob.resize(scan.len() as usize, 0.0);
-
-                self.bruker_lib.tims_index_to_mz(frame_id, &dbl_scans, &mut inv_mob)?;
-                
-                Ok((scan, tof, mz_values, inv_mob, intensity))
+                Ok(TimsFrame {
+                    frame_id: frame_id as i32,
+                    retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
+                    scan: scan_i32,
+                    inv_mobility,
+                    tof: tof_i32,
+                    mz,
+                    intensity: intensity_dbl})
             },
 
             // Error on unknown compression algorithm
@@ -190,5 +219,10 @@ impl TimsDataset {
                 return Err("TimsCompressionType is not 1 or 2.".into());
             }
         }
+    }
+
+    pub fn get_ims_frame(&self, frame_id: u32) -> Result<ImsFrame, Box<dyn std::error::Error>> {
+        let frame = self.get_frame(frame_id)?;
+        Ok(ImsFrame{ retention_time: frame.retention_time, inv_mobility: frame.inv_mobility, mz: frame.mz, intensity: frame.intensity})
     }
 }

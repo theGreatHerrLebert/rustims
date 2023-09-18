@@ -6,10 +6,10 @@ fn main() {
     let tims_data = TimsDataset::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
-            for i in 1..66074 {
-                let frame = tims_data.get_frame(i);
+            for i in 1..50_000 {
+                let frame = tims_data.get_ims_frame(i);
                 match frame {
-                    Ok(frame) => println!("frame id: {:?}, first 5 mz values: {:?}", i, frame.2[..1].to_vec()),
+                    Ok(frame) => println!("{}", frame),
                     Err(e) => println!("error: {}", e),
                 };
             }
