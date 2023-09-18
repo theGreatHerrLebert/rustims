@@ -37,15 +37,16 @@ pub struct GlobalMetaData {
     pub schema_type: String,
     pub schema_version_major: i64,
     pub schema_version_minor: i64,
-    pub aquisition_software_vendor: String,
+    pub acquisition_software_vendor: String,
     pub instrument_vendor: String,
     pub closed_property: i64,
     pub tims_compression_type: i64,
     pub max_num_peaks_per_scan: i64,
-    pub mz_accquisition_range_lower: f64,
-    pub mz_accquisition_range_upper: f64,
+    pub mz_acquisition_range_lower: f64,
+    pub mz_acquisition_range_upper: f64,
     pub one_over_k0_range_lower: f64,
     pub one_over_k0_range_upper: f64,
+    pub tof_max_index: u32,
 }
 
 #[derive(Debug)]
@@ -93,15 +94,16 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
         schema_type: String::new(),
         schema_version_major: -1,
         schema_version_minor: -1,
-        aquisition_software_vendor: String::new(),
+        acquisition_software_vendor: String::new(),
         instrument_vendor: String::new(),
         closed_property: -1,
         tims_compression_type: -1,
         max_num_peaks_per_scan: -1,
-        mz_accquisition_range_lower: -1.0,
-        mz_accquisition_range_upper: -1.0,
+        mz_acquisition_range_lower: -1.0,
+        mz_acquisition_range_upper: -1.0,
         one_over_k0_range_lower: -1.0,
         one_over_k0_range_upper: -1.0,
+        tof_max_index: 0,
     };
 
     // go over the keys and parse values for the global meta data
@@ -110,15 +112,16 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
             "SchemaType" => global_meta.schema_type = row.value,
             "SchemaVersionMajor" => global_meta.schema_version_major = row.value.parse::<i64>().unwrap(),
             "SchemaVersionMinor" => global_meta.schema_version_minor = row.value.parse::<i64>().unwrap(),
-            "AcquisitionSoftwareVendor" => global_meta.aquisition_software_vendor = row.value,
+            "AcquisitionSoftwareVendor" => global_meta.acquisition_software_vendor = row.value,
             "InstrumentVendor" => global_meta.instrument_vendor = row.value,
             "ClosedProperly" => global_meta.closed_property = row.value.parse::<i64>().unwrap(),
             "TimsCompressionType" => global_meta.tims_compression_type = row.value.parse::<i64>().unwrap(),
             "MaxNumPeaksPerScan" => global_meta.max_num_peaks_per_scan = row.value.parse::<i64>().unwrap(),
-            "MzAcqRangeLower" => global_meta.mz_accquisition_range_lower = row.value.parse::<f64>().unwrap(),
-            "MzAcqRangeUpper" => global_meta.mz_accquisition_range_upper = row.value.parse::<f64>().unwrap(),
+            "MzAcqRangeLower" => global_meta.mz_acquisition_range_lower = row.value.parse::<f64>().unwrap(),
+            "MzAcqRangeUpper" => global_meta.mz_acquisition_range_upper = row.value.parse::<f64>().unwrap(),
             "OneOverK0AcqRangeLower" => global_meta.one_over_k0_range_lower = row.value.parse::<f64>().unwrap(),
             "OneOverK0AcqRangeUpper" => global_meta.one_over_k0_range_upper = row.value.parse::<f64>().unwrap(),
+            "DigitizerNumSamples" => global_meta.tof_max_index = (row.value.parse::<i64>().unwrap() + 1) as u32,
             _ => (),
         }
     }
@@ -162,5 +165,4 @@ pub fn read_meta_data_sql(bruker_d_folder_name: &str) -> Result<Vec<FrameMeta>, 
 
     // return the frames
     Ok(frames_rows?)
-
 }

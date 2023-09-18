@@ -6,11 +6,13 @@ fn main() {
     let tims_data = TimsDataset::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
-            let frame = tims_data.get_frame(0);
-            match frame {
-                Ok(frame) => println!("frame: {}", frame),
-                Err(e) => println!("error: {}", e),
-            };
+            for i in 1..100 {
+                let frame = tims_data.get_frame(i);
+                match frame {
+                    Ok(frame) => println!("{}", frame),
+                    Err(e) => println!("error: {}", e),
+                };
+            }
         },
         Err(e) => println!("error: {}", e),
     };

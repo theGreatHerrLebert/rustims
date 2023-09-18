@@ -1,5 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
+use std::fmt::Formatter;
 
 /// Represents a mass spectrum with associated m/z values and intensities.
 #[derive(Clone)]
@@ -251,7 +252,7 @@ impl ImsFrame {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub retention_time: f64,
@@ -290,4 +291,17 @@ impl TimsFrame {
         ImsFrame { retention_time: self.retention_time, inv_mobility: self.inv_mobility.clone(), mz: self.mz.clone(), intensity: self.intensity.clone() }
     }
 }
+
+impl fmt::Display for TimsFrame {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "TimsFrame(id: {}, rt: {}, number data points: {})", self.frame_id, self.retention_time, self.scan.len())
+    }
+}
+
+impl fmt::Display for ImsFrame {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "ImsFrame(rt: {}, number data points: {})", self.retention_time, self.inv_mobility.len())
+    }
+}
+
 

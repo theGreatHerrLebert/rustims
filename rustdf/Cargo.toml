@@ -13,3 +13,6 @@ libloading = "0.8"
 rusqlite = "0.29.0"
 lzf = "1.0.0"
 zstd = "0.12.4"
+byteorder = "1.4.3"
+anyhow = "1.0.75"
+mscore = {path = "../mscore"}
