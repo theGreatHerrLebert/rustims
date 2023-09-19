@@ -287,7 +287,7 @@ impl TimsDataset {
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
                 let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
                 let tof_i32 = tof.iter().map(|&x| x as i32).collect();
-                let scan_i32: Vec<i32> = self.flatten_scan_values(&scan, false);
+                let scan_i32: Vec<i32> = self.flatten_scan_values(&scan, true);
 
                 let mz = self.tof_to_mz(frame_id, &tof);
                 let inv_mobility = self.scan_to_inverse_mobility(frame_id, &scan_i32);
