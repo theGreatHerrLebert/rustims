@@ -85,7 +85,7 @@ impl fmt::Display for MzSpectrum {
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "MzSpectrum(data points: {}, max value:({}, {}))", self.mz.len(), mz, i)
+        write!(f, "MzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz.len(), format!("{:.3}", mz), i)
     }
 }
 
@@ -214,7 +214,7 @@ impl fmt::Display for TOFMzSpectrum {
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "TOFMzSpectrum(data points: {}, max value:({}, {}))", self.mz.len(), mz, i)
+        write!(f, "TOFMzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz.len(), format!("{:.3}", mz), i)
     }
 }
 
@@ -224,6 +224,28 @@ pub struct ImsSpectrum {
     pub retention_time: f64,
     pub inv_mobility: f64,
     pub spectrum: MzSpectrum,
+}
+
+impl ImsSpectrum {
+    ///
+    /// Creates a new `ImsSpectrum` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `retention_time` - The retention time in seconds.
+    /// * `inv_mobility` - The inverse ion mobility.
+    /// * `spectrum` - A `MzSpectrum` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{ImsSpectrum, MzSpectrum};
+    ///
+    /// let spectrum = ImsSpectrum::new(100.0, 0.1, MzSpectrum::new(vec![100.5, 200.5], vec![50.0, 60.0]));
+    /// ```
+    pub fn new(retention_time: f64, inv_mobility: f64, spectrum: MzSpectrum) -> Self {
+        ImsSpectrum { retention_time, inv_mobility, spectrum }
+    }
 }
 
 impl fmt::Display for ImsSpectrum {
@@ -242,6 +264,23 @@ pub struct TimsSpectrum {
 }
 
 impl TimsSpectrum {
+    /// Creates a new `TimsSpectrum` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_id` - index of frame in TDF raw file.
+    /// * `scan_id` - index of scan in TDF raw file.
+    /// * `retention_time` - The retention time in seconds.
+    /// * `inv_mobility` - The inverse ion mobility.
+    /// * `spectrum` - A `TOFMzSpectrum` instance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{TimsSpectrum, TOFMzSpectrum};
+    ///
+    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, TOFMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
+    /// ```
     pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: TOFMzSpectrum) -> Self {
         TimsSpectrum { frame_id, scan_id, retention_time, inv_mobility, spectrum }
     }
@@ -324,10 +363,32 @@ impl TimsFrame {
         TimsFrame { frame_id, retention_time, scan, inv_mobility, tof, mz, intensity }
     }
 
+    ///
+    /// Convert a given TimsFrame to an ImsFrame.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{TimsSpectrum, TimsFrame};
+    ///
+    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let ims_spectrum = frame.to_ims_frame();
+    /// ```
     pub fn to_ims_frame(&self) -> ImsFrame {
         ImsFrame { retention_time: self.retention_time, inv_mobility: self.inv_mobility.clone(), mz: self.mz.clone(), intensity: self.intensity.clone() }
     }
 
+    ///
+    /// Convert a given TimsFrame to a vector of TimsSpectrum.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{TimsSpectrum, TimsFrame};
+    ///
+    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let tims_spectra = frame.to_tims_spectra();
+    /// ```
     pub fn to_tims_spectra(&self) -> Vec<TimsSpectrum> {
         let mut spectra = BTreeMap::<i32, (f64, Vec<i32>, Vec<f64>, Vec<f64>)>::new();
 
@@ -353,6 +414,29 @@ impl TimsFrame {
 
         tims_spectra
     }
+
+    ///
+    /// Convert a given TimsFrame to a vector of ImsSpectrum.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{TimsSpectrum, TimsFrame};
+    ///
+    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let ims_spectra = frame.to_ims_spectra();
+    /// ```
+    pub fn to_ims_spectra(&self) -> Vec<ImsSpectrum> {
+        let tims_spectra = self.to_tims_spectra();
+        let mut ims_spectra: Vec<ImsSpectrum> = Vec::new();
+
+        for spec in tims_spectra {
+            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.inv_mobility, MzSpectrum::new(spec.spectrum.mz, spec.spectrum.intensity));
+            ims_spectra.push(ims_spec);
+        }
+
+    ims_spectra
+    }
 }
 
 impl fmt::Display for TimsFrame {
@@ -363,7 +447,7 @@ impl fmt::Display for TimsFrame {
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "TimsFrame(id: {}, rt: {}, data points: {}, max value: (mz: {}, intensity: {}))", self.frame_id, self.retention_time, self.scan.len(), mz, i)
+        write!(f, "TimsFrame(id: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))", self.frame_id, self.retention_time, self.scan.len(), format!("{:.3}", mz), i)
     }
 }
 
