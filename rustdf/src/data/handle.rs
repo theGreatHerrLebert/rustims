@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
-use mscore::{TimsFrame, ImsFrame};
+use mscore::{TimsFrame, ImsFrame, MsType};
 
 /// Decompresses a ZSTD compressed byte array
 ///
@@ -295,8 +295,18 @@ impl TimsDataset {
                 let mz = self.tof_to_mz(frame_id, &tof);
                 let inv_mobility = self.scan_to_inverse_mobility(frame_id, &scan_i32);
 
+                let ms_type_raw = self.frame_meta_data[frame_index].ms_ms_type;
+
+                let ms_type = match ms_type_raw {
+                    0 => MsType::PRECURSOR,
+                    8 => MsType::FRAGMENT,
+                    9 => MsType::FRAGMENT,
+                    _ => MsType::UNKNOWN,
+                };
+
                 Ok(TimsFrame {
                     frame_id: frame_id as i32,
+                    ms_type,
                     retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
                     scan: scan_i32,
                     inv_mobility,
