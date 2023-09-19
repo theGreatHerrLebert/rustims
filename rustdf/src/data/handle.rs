@@ -133,22 +133,27 @@ impl TimsDataset {
     /// * `tims_dataset` - A TimsDataset struct
     ///
     pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<TimsDataset, Box<dyn std::error::Error>> {
-        
+
+        // Load the library
         let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path)?;
+        // get the global and frame meta data
         let global_meta_data = read_global_meta_sql(data_path)?;
         let frame_meta_data = read_meta_data_sql(data_path)?;
-
+        // get the max scan count
         let max_scan_count = frame_meta_data.iter().map(|x| x.num_scans).max().unwrap() + 1;
 
         let mut frame_idptr: Vec<i64> = Vec::new();
         frame_idptr.resize(frame_meta_data.len() + 1, 0);
 
+        // get the frame idptr values
         for (i, row) in frame_meta_data.iter().enumerate() {
             frame_idptr[i + 1] = row.num_peaks + frame_idptr[i];
         }
 
+        // get the tims offset values
         let tims_offset_values = frame_meta_data.iter().map(|x| x.tims_id).collect::<Vec<i64>>();
 
+        // get the acquisition mode
         let aquisition_mode = match frame_meta_data[0].scan_mode {
             8 => AcquisitionMode::DDA,
             9 => AcquisitionMode::DIA,
@@ -181,7 +186,6 @@ impl TimsDataset {
     /// * `mz_values` - A vector of f64 that holds the mz values
     ///
     pub fn tof_to_mz(&self, frame_id: u32, tof: &Vec<u32>) -> Vec<f64> {
-        // TRANSLATE TOF TO MZ
         let mut dbl_tofs: Vec<f64> = Vec::new();
         dbl_tofs.resize(tof.len(), 0.0);
 
@@ -209,7 +213,6 @@ impl TimsDataset {
     /// * `inv_mob` - A vector of f64 that holds the inverse mobility values
     ///
     pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan: &Vec<i32>) -> Vec<f64> {
-        // TRANSLATE SCAN TO INV MOB
         let mut dbl_scans: Vec<f64> = Vec::new();
         dbl_scans.resize(scan.len(), 0.0);
 
