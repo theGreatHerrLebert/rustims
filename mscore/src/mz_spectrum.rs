@@ -1,6 +1,7 @@
 use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::Formatter;
+use itertools;
 
 /// Represents a mass spectrum with associated m/z values and intensities.
 #[derive(Clone)]
@@ -78,7 +79,13 @@ impl MzSpectrum {
 /// Formats the `MzSpectrum` for display.
 impl fmt::Display for MzSpectrum {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "MzSpectrum(mz: {:?}, intensity: {:?})", self.mz, self.intensity)
+
+        let (mz, i) = self.mz.iter()
+            .zip(&self.intensity)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+
+        write!(f, "MzSpectrum(data points: {}, max value:({}, {}))", self.mz.len(), mz, i)
     }
 }
 
@@ -181,15 +188,15 @@ impl TOFMzSpectrum {
         let mut mz_bins: BTreeMap<i64, (f64, Vec<i64>)> = BTreeMap::new();
         let factor = 10f64.powi(resolution as i32);
 
-        for ((mz, inten), tof_val) in self.mz.iter().zip(self.intensity.iter()).zip(&self.tof) {
+        for ((mz, intensity), tof_val) in self.mz.iter().zip(self.intensity.iter()).zip(&self.tof) {
             let key = (mz * factor).round() as i64;
             let entry = mz_bins.entry(key).or_insert((0.0, Vec::new()));
-            entry.0 += *inten;
+            entry.0 += *intensity;
             entry.1.push(*tof_val as i64);
         }
 
         let mz: Vec<f64> = mz_bins.keys().map(|&key| key as f64 / factor).collect();
-        let intensity: Vec<f64> = mz_bins.values().map(|(inten, _)| *inten).collect();
+        let intensity: Vec<f64> = mz_bins.values().map(|(intensity, _)| *intensity).collect();
         let tof: Vec<i32> = mz_bins.values().map(|(_, tof_vals)| {
             let sum: i64 = tof_vals.iter().sum();
             let count: i32 = tof_vals.len() as i32;
@@ -200,11 +207,29 @@ impl TOFMzSpectrum {
     }
 }
 
+impl fmt::Display for TOFMzSpectrum {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let (mz, i) = self.mz.iter()
+            .zip(&self.intensity)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+
+        write!(f, "TOFMzSpectrum(data points: {}, max value:({}, {}))", self.mz.len(), mz, i)
+    }
+}
+
+
 #[derive(Clone)]
 pub struct ImsSpectrum {
     pub retention_time: f64,
     pub inv_mobility: f64,
     pub spectrum: MzSpectrum,
+}
+
+impl fmt::Display for ImsSpectrum {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "ImsSpectrum(rt: {}, inv_mobility: {}, spectrum: {})", self.retention_time, self.inv_mobility, self.spectrum)
+    }
 }
 
 #[derive(Clone)]
@@ -219,6 +244,12 @@ pub struct TimsSpectrum {
 impl TimsSpectrum {
     pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: TOFMzSpectrum) -> Self {
         TimsSpectrum { frame_id, scan_id, retention_time, inv_mobility, spectrum }
+    }
+}
+
+impl fmt::Display for TimsSpectrum {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan_id, self.retention_time, self.inv_mobility, self.spectrum)
     }
 }
 
@@ -252,7 +283,13 @@ impl ImsFrame {
     }
 }
 
-#[derive(Clone, Debug)]
+impl fmt::Display for ImsFrame {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "ImsFrame(rt: {}, data points: {})", self.retention_time, self.inv_mobility.len())
+    }
+}
+
+#[derive(Clone)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub retention_time: f64,
@@ -290,17 +327,43 @@ impl TimsFrame {
     pub fn to_ims_frame(&self) -> ImsFrame {
         ImsFrame { retention_time: self.retention_time, inv_mobility: self.inv_mobility.clone(), mz: self.mz.clone(), intensity: self.intensity.clone() }
     }
+
+    pub fn to_tims_spectra(&self) -> Vec<TimsSpectrum> {
+        let mut spectra = BTreeMap::<i32, (f64, Vec<i32>, Vec<f64>, Vec<f64>)>::new();
+
+        for (scan, inv_mobility, tof, mz, intensity) in itertools::multizip((
+            &self.scan,
+            &self.inv_mobility,
+            &self.tof,
+            &self.mz,
+            &self.intensity,
+        )) {
+            let entry = spectra.entry(*scan).or_insert_with(|| (*inv_mobility, Vec::new(), Vec::new(), Vec::new()));
+            entry.1.push(*tof);
+            entry.2.push(*mz);
+            entry.3.push(*intensity);
+        }
+
+        let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
+
+        for (scan, (inv_mobility, tof, mz, intensity)) in spectra {
+            let spectrum = TOFMzSpectrum::new(tof, mz, intensity);
+            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.retention_time, inv_mobility, spectrum));
+        }
+
+        tims_spectra
+    }
 }
 
 impl fmt::Display for TimsFrame {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "TimsFrame(id: {}, rt: {}, number data points: {})", self.frame_id, self.retention_time, self.scan.len())
-    }
-}
 
-impl fmt::Display for ImsFrame {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "ImsFrame(rt: {}, number data points: {})", self.retention_time, self.inv_mobility.len())
+        let (mz, i) = self.mz.iter()
+            .zip(&self.intensity)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+
+        write!(f, "TimsFrame(id: {}, rt: {}, data points: {}, max value: (mz: {}, intensity: {}))", self.frame_id, self.retention_time, self.scan.len(), mz, i)
     }
 }
 
