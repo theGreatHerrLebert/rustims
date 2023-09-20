@@ -18,17 +18,46 @@ pub struct MzSpectrum {
 ///
 #[derive(Clone)]
 pub enum MsType {
-    PRECURSOR,
-    FRAGMENT,
-    UNKNOWN,
+    Precursor,
+    FragmentDda,
+    FragmentDia,
+    Unknown,
+}
+
+impl MsType {
+    /// Returns the `MsType` enum corresponding to the given integer value.
+    ///
+    /// # Arguments
+    ///
+    /// * `ms_type` - An integer value corresponding to the `MsType` enum.
+    ///
+    pub fn new(ms_type: i32) -> MsType {
+        match ms_type {
+            0 => MsType::Precursor,
+            8 => MsType::FragmentDda,
+            9 => MsType::FragmentDia,
+            _ => MsType::Unknown,
+        }
+    }
+
+    /// Returns the integer value corresponding to the `MsType` enum.
+    pub fn to_i32(&self) -> i32 {
+        match self {
+            MsType::Precursor => 0,
+            MsType::FragmentDda => 8,
+            MsType::FragmentDia => 9,
+            MsType::Unknown => -1,
+        }
+    }
 }
 
 impl Display for MsType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            MsType::PRECURSOR => write!(f, "PRECURSOR"),
-            MsType::FRAGMENT => write!(f, "FRAGMENT"),
-            MsType::UNKNOWN => write!(f, "UNKNOWN"),
+            MsType::Precursor => write!(f, "Precursor"),
+            MsType::FragmentDda => write!(f, "FragmentDda"),
+            MsType::FragmentDia => write!(f, "FragmentDia"),
+            MsType::Unknown => write!(f, "Unknown"),
         }
     }
 }
