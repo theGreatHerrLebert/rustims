@@ -1,6 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
-use std::fmt::Formatter;
+use std::fmt::{Display, Formatter};
 use itertools;
 
 /// Represents a mass spectrum with associated m/z values and intensities.
@@ -8,6 +8,58 @@ use itertools;
 pub struct MzSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
+}
+
+/// Represents the type of spectrum.
+///
+/// # Description
+///
+/// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
+///
+#[derive(Clone)]
+pub enum MsType {
+    Precursor,
+    FragmentDda,
+    FragmentDia,
+    Unknown,
+}
+
+impl MsType {
+    /// Returns the `MsType` enum corresponding to the given integer value.
+    ///
+    /// # Arguments
+    ///
+    /// * `ms_type` - An integer value corresponding to the `MsType` enum.
+    ///
+    pub fn new(ms_type: i32) -> MsType {
+        match ms_type {
+            0 => MsType::Precursor,
+            8 => MsType::FragmentDda,
+            9 => MsType::FragmentDia,
+            _ => MsType::Unknown,
+        }
+    }
+
+    /// Returns the integer value corresponding to the `MsType` enum.
+    pub fn to_i32(&self) -> i32 {
+        match self {
+            MsType::Precursor => 0,
+            MsType::FragmentDda => 8,
+            MsType::FragmentDia => 9,
+            MsType::Unknown => -1,
+        }
+    }
+}
+
+impl Display for MsType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            MsType::Precursor => write!(f, "Precursor"),
+            MsType::FragmentDda => write!(f, "FragmentDda"),
+            MsType::FragmentDia => write!(f, "FragmentDia"),
+            MsType::Unknown => write!(f, "Unknown"),
+        }
+    }
 }
 
 impl MzSpectrum {
@@ -331,6 +383,7 @@ impl fmt::Display for ImsFrame {
 #[derive(Clone)]
 pub struct TimsFrame {
     pub frame_id: i32,
+    pub ms_type: MsType,
     pub retention_time: f64,
     pub scan: Vec<i32>,
     pub inv_mobility: Vec<f64>,
@@ -345,6 +398,7 @@ impl TimsFrame {
     /// # Arguments
     /// 
     /// * `frame_id` - index of frame in TDF raw file.
+    /// * `ms_type` - The type of frame.
     /// * `retention_time` - The retention time in seconds.
     /// * `scan` - A vector of scan IDs.
     /// * `inv_mobility` - A vector of inverse ion mobilities.
@@ -355,12 +409,13 @@ impl TimsFrame {
     /// # Examples
     /// 
     /// ```
+    /// use mscore::MsType;
     /// use mscore::TimsFrame;
-    /// 
-    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    ///
+    /// let frame = TimsFrame::new(1, MsType::PRECURSOR, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
-    pub fn new(frame_id: i32, retention_time: f64, scan: Vec<i32>, inv_mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        TimsFrame { frame_id, retention_time, scan, inv_mobility, tof, mz, intensity }
+    pub fn new(frame_id: i32, ms_type: MsType, retention_time: f64, scan: Vec<i32>, inv_mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
+        TimsFrame { frame_id, ms_type, retention_time, scan, inv_mobility, tof, mz, intensity }
     }
 
     ///
@@ -447,7 +502,7 @@ impl fmt::Display for TimsFrame {
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "TimsFrame(id: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))", self.frame_id, self.retention_time, self.scan.len(), format!("{:.3}", mz), i)
+        write!(f, "TimsFrame(id: {}, type: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))", self.frame_id, self.ms_type, self.retention_time, self.scan.len(), format!("{:.3}", mz), i)
     }
 }
 

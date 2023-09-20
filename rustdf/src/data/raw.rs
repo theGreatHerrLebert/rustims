@@ -29,8 +29,6 @@ impl BrukerTimsDataLibrary {
         let lib = unsafe {
             Library::new(bruker_lib_path)?
         };
-
-        println!("bruker binary successfully loaded library.");
         
         // create a handle to the raw data
         let handle = unsafe {
@@ -39,8 +37,6 @@ impl BrukerTimsDataLibrary {
             let handle = func(path.as_ptr(), 0);
             handle
         };
-
-        println!("bruker library created handle to TDF data.");
 
         // return the BrukerTimsDataLibrary struct
         Ok(BrukerTimsDataLibrary {
@@ -116,7 +112,7 @@ impl Drop for BrukerTimsDataLibrary {
     fn drop(&mut self) {
         let close = self.tims_close();
         match close {
-            Ok(_) => println!("bruker library closed handle to TDF data."),
+            Ok(_) => (),
             Err(e) => println!("error: {}", e),
         };
     }

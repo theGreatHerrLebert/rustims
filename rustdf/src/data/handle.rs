@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
-use mscore::{TimsFrame, ImsFrame};
+use mscore::{TimsFrame, ImsFrame, MsType};
 
 /// Decompresses a ZSTD compressed byte array
 ///
@@ -114,7 +114,7 @@ pub struct TimsDataset {
     pub bruker_lib: BrukerTimsDataLibrary,
     pub global_meta_data: GlobalMetaData,
     pub frame_meta_data: Vec<FrameMeta>,
-    pub aquisition_mode: AcquisitionMode,
+    pub acquisition_mode: AcquisitionMode,
     pub max_scan_count: i64,
     pub frame_idptr: Vec<i64>,
     pub tims_offset_values: Vec<i64>,
@@ -154,7 +154,7 @@ impl TimsDataset {
         let tims_offset_values = frame_meta_data.iter().map(|x| x.tims_id).collect::<Vec<i64>>();
 
         // get the acquisition mode
-        let aquisition_mode = match frame_meta_data[0].scan_mode {
+        let acquisition_mode = match frame_meta_data[0].scan_mode {
             8 => AcquisitionMode::DDA,
             9 => AcquisitionMode::DIA,
             10 => AcquisitionMode::MIDIA,
@@ -167,7 +167,7 @@ impl TimsDataset {
             bruker_lib,
             global_meta_data,
             frame_meta_data,
-            aquisition_mode,
+            acquisition_mode,
             max_scan_count,
             frame_idptr,
             tims_offset_values,
@@ -295,8 +295,18 @@ impl TimsDataset {
                 let mz = self.tof_to_mz(frame_id, &tof);
                 let inv_mobility = self.scan_to_inverse_mobility(frame_id, &scan_i32);
 
+                let ms_type_raw = self.frame_meta_data[frame_index].ms_ms_type;
+
+                let ms_type = match ms_type_raw {
+                    0 => MsType::Precursor,
+                    8 => MsType::FragmentDda,
+                    9 => MsType::FragmentDia,
+                    _ => MsType::Unknown,
+                };
+
                 Ok(TimsFrame {
                     frame_id: frame_id as i32,
+                    ms_type,
                     retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
                     scan: scan_i32,
                     inv_mobility,

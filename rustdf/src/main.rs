@@ -1,4 +1,4 @@
-use rust_tdf::data::handle::TimsDataset;
+use rustdf::data::handle::TimsDataset;
 
 fn main() {
     let data_path = "/media/hd01/CCSPred/M210115_001_Slot1-1_1_850.d";
@@ -6,7 +6,7 @@ fn main() {
     let tims_data = TimsDataset::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
-            for i in 1..9 {
+            for i in 1..5_000 {
                 let frame = tims_data.get_frame(i);
                 match frame {
                     Ok(frame) => {
