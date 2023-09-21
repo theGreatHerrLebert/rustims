@@ -1,6 +1,9 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
 use mscore::{TimsFrame, ImsFrame, MsType};
+use pyo3::types::PyList;
+
+use crate::py_mz_spectrum::{PyTimsSpectrum};
 
 #[pyclass]
 pub struct PyTimsFrame {
@@ -51,6 +54,18 @@ impl PyTimsFrame {
     #[getter]
     pub fn ms_type(&self) -> i32 {
         self.inner.ms_type.to_i32()
+    }
+
+    pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
+        let spectra = self.inner.to_tims_spectra();
+        let list: Py<PyList> = PyList::empty(py).into();
+
+        for spec in spectra {
+            let py_tims_spectrum = Py::new(py, PyTimsSpectrum { inner: spec })?;
+            list.as_ref(py).append(py_tims_spectrum)?;
+        }
+
+        Ok(list.into())
     }
 }
 

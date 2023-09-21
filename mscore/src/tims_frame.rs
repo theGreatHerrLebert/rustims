@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use itertools;
 
+use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
+
 #[derive(Clone)]
 pub struct ImsFrame {
     pub retention_time: f64,

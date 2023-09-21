@@ -23,7 +23,7 @@ impl PyMsType {
 
 #[pyclass]
 pub struct PyMzSpectrum {
-    inner: MzSpectrum,
+    pub inner: MzSpectrum,
 }
 
 #[pymethods]
@@ -51,7 +51,7 @@ impl PyMzSpectrum {
 
 #[pyclass]
 pub struct PyIndexedMzSpectrum {
-    inner: IndexedMzSpectrum,
+    pub inner: IndexedMzSpectrum,
 }
 
 #[pymethods]
@@ -85,7 +85,7 @@ impl PyIndexedMzSpectrum {
 
 #[pyclass]
 pub struct PyImsSpectrum {
-    inner: ImsSpectrum,
+    pub inner: ImsSpectrum,
 }
 
 #[pymethods]
@@ -127,20 +127,21 @@ impl PyImsSpectrum {
 
 #[pyclass]
 pub struct PyTimsSpectrum {
-    inner: TimsSpectrum,
+    pub inner: TimsSpectrum,
 }
 
 #[pymethods]
 impl PyTimsSpectrum {
     #[new]
-    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyTimsSpectrum {
             inner: TimsSpectrum {
                 frame_id,
                 scan,
                 retention_time,
                 inv_mobility,
-                spectrum: MzSpectrum {
+                spectrum: IndexedMzSpectrum {
+                    index: index.as_slice()?.to_vec(),
                     mz: mz.as_slice()?.to_vec(),
                     intensity: intensity.as_slice()?.to_vec(),
                 },

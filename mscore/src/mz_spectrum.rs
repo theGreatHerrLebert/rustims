@@ -1,7 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use itertools;
 
 /// Represents the type of spectrum.
 ///
@@ -129,7 +128,7 @@ impl MzSpectrum {
 }
 
 /// Formats the `MzSpectrum` for display.
-impl fmt::Display for MzSpectrum {
+impl Display for MzSpectrum {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 
         let (mz, i) = self.mz.iter()
@@ -309,7 +308,7 @@ impl fmt::Display for ImsSpectrum {
 #[derive(Clone)]
 pub struct TimsSpectrum {
     pub frame_id: i32,
-    pub scan_id: i32,
+    pub scan: i32,
     pub retention_time: f64,
     pub inv_mobility: f64,
     pub spectrum: IndexedMzSpectrum,
@@ -334,13 +333,13 @@ impl TimsSpectrum {
     /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
     pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: IndexedMzSpectrum) -> Self {
-        TimsSpectrum { frame_id, scan_id, retention_time, inv_mobility, spectrum }
+        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, spectrum }
     }
 }
 
 impl fmt::Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan_id, self.retention_time, self.inv_mobility, self.spectrum)
+        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.inv_mobility, self.spectrum)
     }
 }
 

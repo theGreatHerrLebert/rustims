@@ -4,12 +4,18 @@ mod py_tims_frame;
 
 use pyo3::prelude::*;
 use crate::pyhandle::PyTimsDataset;
-use crate::py_mz_spectrum::PyMzSpectrum;
+use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyImsSpectrum, PyTimsSpectrum};
+use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
 
 /// A Python module implemented in Rust.
 #[pymodule]
 fn pyims(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyMzSpectrum>()?;
+    m.add_class::<PyIndexedMzSpectrum>()?;
+    m.add_class::<PyImsSpectrum>()?;
+    m.add_class::<PyTimsSpectrum>()?;
+    m.add_class::<PyTimsFrame>()?;
+    m.add_class::<PyImsFrame>()?;
     Ok(())
 }
