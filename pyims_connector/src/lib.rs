@@ -1,5 +1,6 @@
 mod pyhandle;
 mod py_mz_spectrum;
+mod py_tims_frame;
 
 use pyo3::prelude::*;
 use crate::pyhandle::PyTimsDataset;
