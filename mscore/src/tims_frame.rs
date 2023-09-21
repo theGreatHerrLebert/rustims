@@ -106,8 +106,10 @@ impl TimsFrame {
     /// let tims_spectra = frame.to_tims_spectra();
     /// ```
     pub fn to_tims_spectra(&self) -> Vec<TimsSpectrum> {
+        // use a sorted map where scan is used as key
         let mut spectra = BTreeMap::<i32, (f64, Vec<i32>, Vec<f64>, Vec<f64>)>::new();
 
+        // all indices and the intensity values are sorted by scan and stored in the map as a tuple (inv_mobility, tof, mz, intensity)
         for (scan, inv_mobility, tof, mz, intensity) in itertools::multizip((
             &self.scan,
             &self.inv_mobility,
@@ -121,6 +123,7 @@ impl TimsFrame {
             entry.3.push(*intensity);
         }
 
+        // convert the map to a vector of TimsSpectrum
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
         for (scan, (inv_mobility, tof, mz, intensity)) in spectra {
@@ -152,6 +155,27 @@ impl TimsFrame {
         }
 
         ims_spectra
+    }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
+
+        let mut scan_vec = Vec::new();
+        let mut inv_mobility_vec = Vec::new();
+        let mut tof_vec = Vec::new();
+        let mut mz_vec = Vec::new();
+        let mut intensity_vec = Vec::new();
+
+        for (mz, intensity, scan, inv_mobility, tof) in itertools::multizip((&self.mz, &self.intensity, &self.scan, &self.inv_mobility, &self.tof)) {
+            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min {
+                scan_vec.push(*scan);
+                inv_mobility_vec.push(*inv_mobility);
+                tof_vec.push(*tof);
+                mz_vec.push(*mz);
+                intensity_vec.push(*intensity);
+            }
+        }
+
+        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.retention_time, scan_vec, inv_mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 }
 

@@ -13,7 +13,14 @@ pub struct PyTimsFrame {
 #[pymethods]
 impl PyTimsFrame {
     #[new]
-    pub unsafe fn new(frame_id: i32, ms_type: i32, retention_time: f64, scan: &PyArray1<i32>, inv_mobility: &PyArray1<f64>, tof: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(frame_id: i32,
+                      ms_type: i32,
+                      retention_time: f64,
+                      scan: &PyArray1<i32>,
+                      inv_mobility: &PyArray1<f64>,
+                      tof: &PyArray1<i32>,
+                      mz: &PyArray1<f64>,
+                      intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyTimsFrame {
             inner: TimsFrame {
                 frame_id,
