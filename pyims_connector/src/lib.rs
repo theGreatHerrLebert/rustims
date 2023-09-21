@@ -9,7 +9,7 @@ use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn pyims(_py: Python, m: &PyModule) -> PyResult<()> {
+fn pyims_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyMzSpectrum>()?;
     m.add_class::<PyIndexedMzSpectrum>()?;
