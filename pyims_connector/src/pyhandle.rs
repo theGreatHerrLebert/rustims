@@ -1,8 +1,7 @@
 use pyo3::prelude::*;
 
 use rustdf::data::handle::{TimsDataset};
-use crate::py_mz_spectrum::PyTimsFrame;
-
+use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
 #[pyclass]
 pub struct PyTimsDataset {
     inner: TimsDataset,
@@ -25,8 +24,13 @@ impl PyTimsDataset {
     }
 
 
-    pub fn get_frame(&self, frame_id: u32) -> PyResult<PyTimsFrame> {
+    pub fn get_tims_frame(&self, frame_id: u32) -> PyResult<PyTimsFrame> {
         let frame = self.inner.get_frame(frame_id).unwrap();
         Ok(PyTimsFrame { inner: frame })
+    }
+
+    pub fn get_ims_frame(&self, frame_id: u32) -> PyResult<PyImsFrame> {
+        let frame = self.inner.get_frame(frame_id).unwrap();
+        Ok(PyImsFrame { inner: frame.to_ims_frame() })
     }
 }
