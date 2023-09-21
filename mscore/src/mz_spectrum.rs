@@ -189,34 +189,34 @@ impl std::ops::Add for MzSpectrum {
     }
 }
 
-/// Represents a Time-Of-Flight (TOF) mass spectrum with corresponding m/z values and intensities.
+/// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
 #[derive(Clone)]
-pub struct TOFMzSpectrum {
-    pub tof: Vec<i32>,
+pub struct IndexedMzSpectrum {
+    pub index: Vec<i32>,
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
 }
 
-impl TOFMzSpectrum {
+impl IndexedMzSpectrum {
     /// Creates a new `TOFMzSpectrum` instance.
     ///
     /// # Arguments
     ///
-    /// * `tof` - A vector containing the time-of-flight values.
+    /// * `index` - A vector containing the mz index, e.g., time-of-flight values.
     /// * `mz` - A vector containing the m/z values.
     /// * `intensity` - A vector containing the intensity values.
     ///
     /// # Examples
     ///
     /// ```
-    /// use mscore::TOFMzSpectrum;
-    /// 
-    /// let spectrum = TOFMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// use mscore::IndexedMzSpectrum;
+    ///
+    /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
     pub fn new(tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        TOFMzSpectrum {tof, mz, intensity}
+        IndexedMzSpectrum { index: tof, mz, intensity}
     }
-    /// Bins the spectrum based on a given m/z resolution, summing intensities and averaging TOF values
+    /// Bins the spectrum based on a given m/z resolution, summing intensities and averaging index values
     /// for m/z values that fall into the same bin.
     ///
     /// # Arguments
@@ -226,21 +226,21 @@ impl TOFMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::TOFMzSpectrum;
-    /// 
-    /// let spectrum = TOFMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
+    /// use mscore::IndexedMzSpectrum;
+    ///
+    /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
-    /// 
+    ///
     /// assert_eq!(binned_spectrum.mz, vec![100.4]);
     /// assert_eq!(binned_spectrum.intensity, vec![110.0]);
-    /// assert_eq!(binned_spectrum.tof, vec![1500]);
+    /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
-    pub fn to_resolution(&self, resolution: u32) -> TOFMzSpectrum {
+    pub fn to_resolution(&self, resolution: u32) -> IndexedMzSpectrum {
 
         let mut mz_bins: BTreeMap<i64, (f64, Vec<i64>)> = BTreeMap::new();
         let factor = 10f64.powi(resolution as i32);
 
-        for ((mz, intensity), tof_val) in self.mz.iter().zip(self.intensity.iter()).zip(&self.tof) {
+        for ((mz, intensity), tof_val) in self.mz.iter().zip(self.intensity.iter()).zip(&self.index) {
             let key = (mz * factor).round() as i64;
             let entry = mz_bins.entry(key).or_insert((0.0, Vec::new()));
             entry.0 += *intensity;
@@ -255,18 +255,18 @@ impl TOFMzSpectrum {
             (sum as f64 / count as f64).round() as i32
         }).collect();
 
-        TOFMzSpectrum { mz, intensity, tof }
+        IndexedMzSpectrum { mz, intensity, index: tof }
     }
 }
 
-impl fmt::Display for TOFMzSpectrum {
+impl fmt::Display for IndexedMzSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let (mz, i) = self.mz.iter()
             .zip(&self.intensity)
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "TOFMzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz.len(), format!("{:.3}", mz), i)
+        write!(f, "IndexedMzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz.len(), format!("{:.3}", mz), i)
     }
 }
 
@@ -312,7 +312,7 @@ pub struct TimsSpectrum {
     pub scan_id: i32,
     pub retention_time: f64,
     pub inv_mobility: f64,
-    pub spectrum: TOFMzSpectrum,
+    pub spectrum: IndexedMzSpectrum,
 }
 
 impl TimsSpectrum {
@@ -329,11 +329,11 @@ impl TimsSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, TOFMzSpectrum};
+    /// use mscore::{TimsSpectrum, IndexedMzSpectrum};
     ///
-    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, TOFMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
+    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
-    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: TOFMzSpectrum) -> Self {
+    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: IndexedMzSpectrum) -> Self {
         TimsSpectrum { frame_id, scan_id, retention_time, inv_mobility, spectrum }
     }
 }
@@ -412,7 +412,7 @@ impl TimsFrame {
     /// use mscore::MsType;
     /// use mscore::TimsFrame;
     ///
-    /// let frame = TimsFrame::new(1, MsType::PRECURSOR, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
     pub fn new(frame_id: i32, ms_type: MsType, retention_time: f64, scan: Vec<i32>, inv_mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
         TimsFrame { frame_id, ms_type, retention_time, scan, inv_mobility, tof, mz, intensity }
@@ -424,9 +424,9 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, TimsFrame};
+    /// use mscore::{TimsSpectrum, TimsFrame, MsType};
     ///
-    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// let ims_spectrum = frame.to_ims_frame();
     /// ```
     pub fn to_ims_frame(&self) -> ImsFrame {
@@ -439,9 +439,9 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, TimsFrame};
+    /// use mscore::{TimsSpectrum, TimsFrame, MsType};
     ///
-    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// let tims_spectra = frame.to_tims_spectra();
     /// ```
     pub fn to_tims_spectra(&self) -> Vec<TimsSpectrum> {
@@ -463,7 +463,7 @@ impl TimsFrame {
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
         for (scan, (inv_mobility, tof, mz, intensity)) in spectra {
-            let spectrum = TOFMzSpectrum::new(tof, mz, intensity);
+            let spectrum = IndexedMzSpectrum::new(tof, mz, intensity);
             tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.retention_time, inv_mobility, spectrum));
         }
 
@@ -476,9 +476,9 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, TimsFrame};
+    /// use mscore::{TimsSpectrum, TimsFrame, MsType};
     ///
-    /// let frame = TimsFrame::new(1, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// let ims_spectra = frame.to_ims_spectra();
     /// ```
     pub fn to_ims_spectra(&self) -> Vec<ImsSpectrum> {
