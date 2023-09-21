@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, MsType};
+use mscore::{TimsFrame, ImsFrame, MsType};
 
 #[pyclass]
 pub struct PyTimsFrame {
@@ -51,5 +51,41 @@ impl PyTimsFrame {
     #[getter]
     pub fn ms_type(&self) -> i32 {
         self.inner.ms_type.to_i32()
+    }
+}
+
+#[pyclass]
+pub struct PyImsFrame {
+    pub inner: ImsFrame,
+}
+
+#[pymethods]
+impl PyImsFrame {
+    #[new]
+    pub unsafe fn new(retention_time: f64, inv_mobility: &PyArray1<f64>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+        Ok(PyImsFrame {
+            inner: ImsFrame {
+                retention_time,
+                inv_mobility: inv_mobility.as_slice()?.to_vec(),
+                mz: mz.as_slice()?.to_vec(),
+                intensity: intensity.as_slice()?.to_vec(),
+            },
+        })
+    }
+    #[getter]
+    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.mz.clone().into_pyarray(py).to_owned()
+    }
+    #[getter]
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.intensity.clone().into_pyarray(py).to_owned()
+    }
+    #[getter]
+    pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.inv_mobility.clone().into_pyarray(py).to_owned()
+    }
+    #[getter]
+    pub fn retention_time(&self) -> f64 {
+        self.inner.retention_time
     }
 }
