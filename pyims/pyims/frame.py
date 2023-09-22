@@ -137,4 +137,5 @@ class TimsFrame:
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
 
     def __repr__(self):
-        return f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type_as_string})"
+        return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type_as_string}, "
+                f"num_peaks={len(self.__frame_ptr.mz)})")
