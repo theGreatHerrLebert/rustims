@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 
@@ -105,10 +106,32 @@ pub enum AcquisitionMode {
     DDA,
     DIA,
     MIDIA,
-    UNKNOWN
+    Unknown,
 }
 
-pub struct TimsDataset {
+impl AcquisitionMode {
+    pub fn to_i32(&self) -> i32 {
+        match self {
+            AcquisitionMode::DDA => 8,
+            AcquisitionMode::DIA => 9,
+            AcquisitionMode::MIDIA => 10,
+            AcquisitionMode::Unknown => -1,
+        }
+    }
+}
+
+impl Display for AcquisitionMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AcquisitionMode::DDA => write!(f, "DDA"),
+            AcquisitionMode::DIA => write!(f, "DIA"),
+            AcquisitionMode::MIDIA => write!(f, "MIDIA"),
+            AcquisitionMode::Unknown => write!(f, "UNKNOWN"),
+        }
+    }
+}
+
+pub struct TimsDataHandle {
     pub data_path: String,
     pub bruker_lib_path: String,
     pub bruker_lib: BrukerTimsDataLibrary,
@@ -120,8 +143,8 @@ pub struct TimsDataset {
     pub tims_offset_values: Vec<i64>,
 }
 
-impl TimsDataset {
-    /// Creates a new TimsDataset
+impl TimsDataHandle {
+    /// Creates a new TimsDataHandle
     ///
     /// # Arguments
     ///
@@ -130,9 +153,9 @@ impl TimsDataset {
     ///
     /// # Returns
     ///
-    /// * `tims_dataset` - A TimsDataset struct
+    /// * `tims_dataset` - A TimsDataHandle struct
     ///
-    pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<TimsDataset, Box<dyn std::error::Error>> {
+    pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<TimsDataHandle, Box<dyn std::error::Error>> {
 
         // Load the library
         let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path)?;
@@ -158,10 +181,10 @@ impl TimsDataset {
             8 => AcquisitionMode::DDA,
             9 => AcquisitionMode::DIA,
             10 => AcquisitionMode::MIDIA,
-            _ => AcquisitionMode::UNKNOWN,
+            _ => AcquisitionMode::Unknown,
         };
 
-        Ok(TimsDataset {
+        Ok(TimsDataHandle {
             data_path: data_path.to_string(),
             bruker_lib_path: bruker_lib_path.to_string(),
             bruker_lib,
