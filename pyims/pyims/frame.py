@@ -71,6 +71,51 @@ class TimsFrame:
         """
         return self.__frame_ptr.retention_time
 
+    @property
+    def scan(self) -> NDArray[np.int32]:
+        """Scan.
+
+        Returns:
+            NDArray[np.int32]: Scan.
+        """
+        return self.__frame_ptr.scan
+
+    @property
+    def inv_mobility(self) -> NDArray[np.float64]:
+        """Inverse mobility.
+
+        Returns:
+            NDArray[np.float64]: Inverse mobility.
+        """
+        return self.__frame_ptr.inv_mobility
+
+    @property
+    def tof(self) -> NDArray[np.int32]:
+        """Time of flight.
+
+        Returns:
+            NDArray[np.int32]: Time of flight.
+        """
+        return self.__frame_ptr.tof
+
+    @property
+    def mz(self) -> NDArray[np.float64]:
+        """m/z.
+
+        Returns:
+            NDArray[np.float64]: m/z.
+        """
+        return self.__frame_ptr.mz
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__frame_ptr.intensity
+
     def filter_ranged(self, mz_min: float, mz_max: float,
                       scan_min: int = 0,
                       scan_max: int = 1000,
