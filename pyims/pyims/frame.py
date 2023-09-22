@@ -54,13 +54,13 @@ class TimsFrame:
         return self.__frame_ptr.frame_id
 
     @property
-    def ms_type(self) -> int:
+    def ms_type(self) -> str:
         """MS type.
 
         Returns:
             int: MS type.
         """
-        return self.__frame_ptr.ms_type
+        return self.__frame_ptr.ms_type_as_string
 
     @property
     def retention_time(self) -> float:
