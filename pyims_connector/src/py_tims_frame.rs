@@ -62,6 +62,10 @@ impl PyTimsFrame {
     pub fn ms_type(&self) -> i32 {
         self.inner.ms_type.to_i32()
     }
+    #[getter]
+    pub fn retention_time(&self) -> f64 {
+        self.inner.retention_time
+    }
 
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
         let spectra = self.inner.to_tims_spectra();

@@ -44,6 +44,33 @@ class TimsFrame:
         instance.__frame_ptr = frame
         return instance
 
+    @property
+    def frame_id(self) -> int:
+        """Frame ID.
+
+        Returns:
+            int: Frame ID.
+        """
+        return self.__frame_ptr.frame_id
+
+    @property
+    def ms_type(self) -> int:
+        """MS type.
+
+        Returns:
+            int: MS type.
+        """
+        return self.__frame_ptr.ms_type
+
+    @property
+    def retention_time(self) -> float:
+        """Retention time.
+
+        Returns:
+            float: Retention time.
+        """
+        return self.__frame_ptr.retention_time
+
     def filter_ranged(self, mz_min: float, mz_max: float,
                       scan_min: int = 0,
                       scan_max: int = 1000,
