@@ -63,6 +63,10 @@ impl PyTimsFrame {
         self.inner.ms_type.to_i32()
     }
     #[getter]
+    pub fn ms_type_as_string(&self) -> String {
+        self.inner.ms_type.to_string()
+    }
+    #[getter]
     pub fn retention_time(&self) -> f64 {
         self.inner.retention_time
     }
