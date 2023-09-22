@@ -44,3 +44,61 @@ class MzSpectrum:
             MzSpectrum: Filtered spectrum.
         """
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min))
+
+
+class TimsSpectrum:
+    def __init__(self, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+        """TimsSpectrum class.
+
+        Args:
+            index (NDArray[np.int32]): Index.
+            mz (NDArray[np.float64]): m/z.
+            intensity (NDArray[np.float64]): Intensity.
+
+        Raises:
+            AssertionError: If the length of the index, mz and intensity arrays are not equal.
+        """
+        assert len(index) == len(mz) == len(intensity), ("The length of the index, mz and intensity arrays must be "
+                                                         "equal.")
+        self.__spec_ptr = pims.PyTimsSpectrum(index, mz, intensity)
+
+    @classmethod
+    def from_py_tims_spectrum(cls, spec: pims.PyTimsSpectrum):
+        """Create a TimsSpectrum from a PyTimsSpectrum.
+
+        Args:
+            spec (pims.PyTimsSpectrum): PyTimsSpectrum to create the TimsSpectrum from.
+
+        Returns:
+            TimsSpectrum: TimsSpectrum created from the PyTimsSpectrum.
+        """
+        instance = cls.__new__(cls)
+        instance.__spec_ptr = spec
+        return instance
+
+    @property
+    def index(self) -> NDArray[np.int32]:
+        """Index.
+
+        Returns:
+            NDArray[np.int32]: Index.
+        """
+        return self.__spec_ptr.index
+
+    @property
+    def mz(self) -> NDArray[np.float64]:
+        """m/z.
+
+        Returns:
+            NDArray[np.float64]: m/z.
+        """
+        return self.__spec_ptr.mz
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__spec_ptr.intensity

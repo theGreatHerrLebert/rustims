@@ -3,6 +3,7 @@ from numpy.typing import NDArray
 
 import numpy as np
 import pyims_connector as pims
+from pyims.spectrum import MzSpectrum, TimsSpectrum
 
 
 class TimsFrame:
@@ -135,6 +136,14 @@ class TimsFrame:
         """
 
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+
+    def to_tims_spectra(self) -> List['TimsSpectrum']:
+        """Convert the frame to a list of TimsSpectrum.
+
+        Returns:
+            List[TimsSpectrum]: List of TimsSpectrum.
+        """
+        return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__frame_ptr.to_tims_spectra()]
 
     def __repr__(self):
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type_as_string}, "
