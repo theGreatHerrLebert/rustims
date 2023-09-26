@@ -16,10 +16,10 @@ impl PyMsType {
         })
     }
     #[getter]
-    pub fn ms_type(&self) -> String { self.inner.ms_type() }
+    pub fn ms_type(&self) -> String { self.inner.to_string() }
 
     #[getter]
-    pub fn ms_type_numeric(&self) -> i { self.inner.ms_type_numeric() }
+    pub fn ms_type_numeric(&self) -> i32 { self.inner.ms_type_numeric() }
 }
 
 #[pyclass]
@@ -134,13 +134,14 @@ pub struct PyTimsSpectrum {
 #[pymethods]
 impl PyTimsSpectrum {
     #[new]
-    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, ms_type: i32, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyTimsSpectrum {
             inner: TimsSpectrum {
                 frame_id,
                 scan,
                 retention_time,
                 inv_mobility,
+                ms_type: MsType::new(ms_type),
                 spectrum: IndexedMzSpectrum {
                     index: index.as_slice()?.to_vec(),
                     mz: mz.as_slice()?.to_vec(),

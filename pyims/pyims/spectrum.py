@@ -102,3 +102,12 @@ class TimsSpectrum:
             NDArray[np.float64]: Intensity.
         """
         return self.__spec_ptr.intensity
+
+    @property
+    def ms_type(self) -> str:
+        """MS type.
+
+        Returns:
+            str: MS type.
+        """
+        return self.__spec_ptr.ms_type

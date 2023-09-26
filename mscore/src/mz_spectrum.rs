@@ -82,7 +82,6 @@ impl MzSpectrum {
     /// assert_eq!(spectrum.intensity, vec![10.0, 20.0]);
     /// ```
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        
         MzSpectrum {mz, intensity}
     }
 
@@ -324,6 +323,7 @@ pub struct TimsSpectrum {
     pub scan: i32,
     pub retention_time: f64,
     pub inv_mobility: f64,
+    pub ms_type: MsType,
     pub spectrum: IndexedMzSpectrum,
 }
 
@@ -341,12 +341,12 @@ impl TimsSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, IndexedMzSpectrum};
+    /// use mscore::{TimsSpectrum, IndexedMzSpectrum, MsType};
     ///
-    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
+    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, MsType::FragmentDda, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
-    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: IndexedMzSpectrum) -> Self {
-        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, spectrum }
+    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
+        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, ms_type, spectrum }
     }
 }
 

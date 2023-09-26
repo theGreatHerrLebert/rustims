@@ -60,7 +60,7 @@ impl PyTimsFrame {
     }
     #[getter]
     pub fn ms_type_numeric(&self) -> i32 {
-        self.inner.ms_type.to_i32()
+        self.inner.ms_type.ms_type_numeric()
     }
     #[getter]
     pub fn ms_type(&self) -> String {

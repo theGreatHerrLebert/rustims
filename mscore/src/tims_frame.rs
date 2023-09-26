@@ -1,6 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Formatter};
 use itertools;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
@@ -128,7 +128,7 @@ impl TimsFrame {
 
         for (scan, (inv_mobility, tof, mz, intensity)) in spectra {
             let spectrum = IndexedMzSpectrum::new(tof, mz, intensity);
-            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.retention_time, inv_mobility, spectrum));
+            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.retention_time, inv_mobility, self.ms_type.clone(), spectrum));
         }
 
         tims_spectra
