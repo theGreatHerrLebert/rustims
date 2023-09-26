@@ -23,6 +23,7 @@ class TimsSlice:
         """
         instance = cls.__new__(cls)
         instance.__slice_ptr = slice
+        instance.__current_index = 0
         return instance
 
     @property
