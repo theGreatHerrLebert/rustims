@@ -43,15 +43,17 @@ class TimsSlice:
     def __repr__(self):
         return f"TimsSlice({self.first_frame_id}, {self.last_frame_id})"
 
-    def filter_ranged(self, mz_min: float, mz_max: float, scan_min: int, scan_max: int, intensity_min: float) -> 'TimsSlice':
-        """Filter the spectrum by m/z range and intensity.
+    def filter_ranged(self, mz_min: float, mz_max: float, scan_min: int = 0, scan_max: int = 1000, intensity_min: float = 0.0) -> 'TimsSlice':
+        """Filter the slice by m/z, scan and intensity.
 
         Args:
-            mz_min (float): Minimum m/z.
-            mz_max (float): Maximum m/z.
-            intensity_min (float): Minimum intensity.
+            mz_min (float): Minimum m/z value.
+            mz_max (float): Maximum m/z value.
+            scan_min (int, optional): Minimum scan value. Defaults to 0.
+            scan_max (int, optional): Maximum scan value. Defaults to 1000.
+            intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
 
         Returns:
-            NDArray[np.float64]: Filtered spectrum.
+            TimsSlice: Filtered slice.
         """
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
