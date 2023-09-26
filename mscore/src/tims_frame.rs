@@ -150,7 +150,7 @@ impl TimsFrame {
         let mut ims_spectra: Vec<ImsSpectrum> = Vec::new();
 
         for spec in tims_spectra {
-            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.inv_mobility, MzSpectrum::new(spec.spectrum.mz, spec.spectrum.intensity));
+            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.inv_mobility, MzSpectrum::new(spec.spectrum.mz_spectrum.mz, spec.spectrum.mz_spectrum.intensity));
             ims_spectra.push(ims_spec);
         }
 

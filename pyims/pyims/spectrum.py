@@ -111,3 +111,24 @@ class TimsSpectrum:
             str: MS type.
         """
         return self.__spec_ptr.ms_type
+
+    @property
+    def inv_mobility(self) -> float:
+        """Inverse mobility.
+
+        Returns:
+            float: Inverse mobility.
+        """
+        return self.__spec_ptr.inv_mobility
+
+    @property
+    def scan(self) -> int:
+        """Scan.
+
+        Returns:
+            int: Scan.
+        """
+        return self.__spec_ptr.scan
+
+    def __repr__(self):
+        return f"TimsSpectrum(inv_mobility={self.inv_mobility}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
