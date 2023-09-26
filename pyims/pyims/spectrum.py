@@ -131,4 +131,4 @@ class TimsSpectrum:
         return self.__spec_ptr.scan
 
     def __repr__(self):
-        return f"TimsSpectrum(inv_mobility={np.round(self.inv_mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
+        return f"TimsSpectrum(scan={self.scan}, inv_mobility={np.round(self.inv_mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
