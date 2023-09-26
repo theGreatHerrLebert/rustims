@@ -181,4 +181,10 @@ impl PyTimsSpectrum {
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
         self.inner.spectrum.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
     }
+
+    #[getter]
+    pub fn ms_type(&self) -> String { self.inner.ms_type.to_string() }
+
+    #[getter]
+    pub fn ms_type_numeric(&self) -> i32 { self.inner.ms_type.ms_type_numeric() }
 }
