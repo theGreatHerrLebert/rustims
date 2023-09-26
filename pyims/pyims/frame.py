@@ -3,7 +3,81 @@ from numpy.typing import NDArray
 
 import numpy as np
 import pyims_connector as pims
-from pyims.spectrum import MzSpectrum, TimsSpectrum
+from pyims.spectrum import TimsSpectrum
+
+
+class ImsFrame:
+    def __init__(self, retention_time: float, inv_mobility: NDArray[np.float64], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+        """ImsFrame class.
+
+        Args:
+            retention_time (float): Retention time.
+            inv_mobility (NDArray[np.float64]): Inverse mobility.
+            mz (NDArray[np.float64]): m/z.
+            intensity (NDArray[np.float64]): Intensity.
+
+        Raises:
+            AssertionError: If the length of the inv_mobility, mz and intensity arrays are not equal.
+        """
+
+        assert len(inv_mobility) == len(mz) == len(intensity), \
+            "The length of the inv_mobility, mz and intensity arrays must be equal."
+
+        self.__frame_ptr = pims.PyImsFrame(retention_time, inv_mobility, mz, intensity)
+
+    @classmethod
+    def from_py_ims_frame(cls, frame: pims.PyImsFrame):
+        """Create a ImsFrame from a PyImsFrame.
+
+        Args:
+            frame (pims.PyImsFrame): PyImsFrame to create the ImsFrame from.
+
+        Returns:
+            ImsFrame: ImsFrame created from the PyImsFrame.
+        """
+        instance = cls.__new__(cls)
+        instance.__frame_ptr = frame
+        return instance
+
+    @property
+    def retention_time(self) -> float:
+        """Retention time.
+
+        Returns:
+            float: Retention time.
+        """
+        return self.__frame_ptr.retention_time
+
+    @property
+    def inv_mobility(self) -> NDArray[np.float64]:
+        """Inverse mobility.
+
+        Returns:
+            NDArray[np.float64]: Inverse mobility.
+        """
+        return self.__frame_ptr.inv_mobility
+
+    @property
+    def mz(self) -> NDArray[np.float64]:
+        """m/z.
+
+        Returns:
+            NDArray[np.float64]: m/z.
+        """
+        return self.__frame_ptr.mz
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__frame_ptr.intensity
+
+    def __repr__(self):
+        return (f"ImsFrame(retention_time={self.__frame_ptr.retention_time}, "
+                f"num_peaks={len(self.__frame_ptr.mz)})")
 
 
 class TimsFrame:
@@ -144,6 +218,14 @@ class TimsFrame:
             List[TimsSpectrum]: List of TimsSpectrum.
         """
         return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__frame_ptr.to_tims_spectra()]
+
+    def get_ims_frame(self) -> ImsFrame:
+        """Get an ImsFrame.
+
+        Returns:
+            ImsFrame: ImsFrame.
+        """
+        return ImsFrame.from_py_ims_frame(self.__frame_ptr.get_ims_frame())
 
     def __repr__(self):
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
