@@ -2,7 +2,9 @@ use pyo3::prelude::*;
 use numpy::{PyArray1};
 
 use rustdf::data::handle::{TimsDataHandle};
-use crate::py_tims_frame::{PyTimsFrame, PyImsFrame, PyTimsSlice};
+use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
+use crate::py_tims_slice::PyTimsSlice;
+
 #[pyclass]
 pub struct PyTimsDataHandle {
     inner: TimsDataHandle,
