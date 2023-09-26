@@ -5,6 +5,16 @@ use itertools;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
 
+pub struct TimsSlice {
+    frames: Vec<TimsFrame>,
+}
+
+impl TimsSlice {
+    pub fn filter_ranged() -> TimsSlice {
+        
+    }
+}
+
 #[derive(Clone)]
 pub struct ImsFrame {
     pub retention_time: f64,

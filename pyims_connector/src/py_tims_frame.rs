@@ -88,6 +88,10 @@ impl PyTimsFrame {
     pub fn get_ims_frame(&self) -> PyImsFrame {
         PyImsFrame { inner: self.inner.ims_frame.clone() }
     }
+    
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
+        self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min)
+    }
 }
 
 #[pyclass]
