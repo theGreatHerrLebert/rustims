@@ -5,9 +5,45 @@ use pyo3::types::PyList;
 use crate::py_tims_frame::{PyTimsFrame};
 
 #[pyclass]
+pub struct PySliceIterator {
+    inner: PyTimsSlice,
+    index: usize,
+}
+
+#[pymethods]
+impl PySliceIterator {
+    #[new]
+    pub fn new(inner: PyTimsSlice) -> Self {
+        PySliceIterator {
+            inner,
+            index: 0,
+        }
+    }
+
+    fn __iter__(slf: PyRef<PySliceIterator>) -> Py<PySliceIterator> {
+        slf.into()
+    }
+
+    fn __next__(mut slf: PyRefMut<PySliceIterator>) -> PyResult<Option<PyTimsFrame>> {
+        if slf.index < slf.inner.inner.frames.len() {
+            let index = slf.index;
+            slf.index += 1;
+
+            let item = &slf.inner.inner.frames[index];
+            let py_item = PyTimsFrame { inner: item.clone() };
+            Ok(Some(py_item))
+        } else {
+            Ok(None) // End of the iterator, return None instead of using PyStopIteration.
+        }
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
 pub struct PyTimsSlice {
     pub inner: TimsSlice,
 }
+
 
 #[pymethods]
 impl PyTimsSlice {
@@ -30,5 +66,12 @@ impl PyTimsSlice {
         }
 
         Ok(list.into())
+    }
+
+    fn iter(&mut self) -> PySliceIterator {
+        PySliceIterator {
+            inner: self.clone(),
+            index: 0,
+        }
     }
 }

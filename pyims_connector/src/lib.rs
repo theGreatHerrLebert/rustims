@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::pyhandle::PyTimsDataHandle;
 use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyImsSpectrum, PyTimsSpectrum};
 use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
-use crate::py_tims_slice::PyTimsSlice;
+use crate::py_tims_slice::{PySliceIterator, PyTimsSlice};
 
 /// A Python module implemented in Rust.
 #[pymodule]
@@ -20,5 +20,6 @@ fn pyims_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsFrame>()?;
     m.add_class::<PyImsFrame>()?;
     m.add_class::<PyTimsSlice>()?;
+    m.add_class::<PySliceIterator>()?;
     Ok(())
 }

@@ -67,3 +67,24 @@ class TimsSlice:
             List[TimsFrame]: Frames.
         """
         return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
+
+    def __iter__(self):
+        return TimsSliceIterator(self.__slice_ptr)
+
+
+class TimsSliceIterator:
+    def __init__(self, py_tims_slice):
+        self.iterator = pims.PySliceIterator(py_tims_slice)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        # Use the Rust-backed PySliceIterator's next method
+        frame = self.iterator.__next__()
+
+        # If the Rust-backed iterator raises a StopIteration, we raise one here too.
+        if frame is None:
+            raise StopIteration
+
+        return TimsFrame.from_py_tims_frame(frame)
