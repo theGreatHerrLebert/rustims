@@ -1,9 +1,21 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, ImsFrame, MsType};
+use mscore::{TimsFrame, ImsFrame, MsType, TimsSlice};
 use pyo3::types::PyList;
 
 use crate::py_mz_spectrum::{PyTimsSpectrum};
+
+#[pyclass]
+pub struct PyTimsSlice {
+    pub inner: TimsSlice,
+}
+
+#[pymethods]
+impl PyTimsSlice {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min) }
+    }
+}
 
 #[pyclass]
 pub struct PyTimsFrame {
@@ -88,9 +100,9 @@ impl PyTimsFrame {
     pub fn get_ims_frame(&self) -> PyImsFrame {
         PyImsFrame { inner: self.inner.ims_frame.clone() }
     }
-    
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
-        self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min)
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> PyTimsFrame {
+        return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min) }
     }
 }
 

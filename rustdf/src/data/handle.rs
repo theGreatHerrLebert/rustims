@@ -8,7 +8,7 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
-use mscore::{TimsFrame, ImsFrame, MsType};
+use mscore::{TimsFrame, ImsFrame, MsType, TimsSlice};
 
 /// Decompresses a ZSTD compressed byte array
 ///
@@ -356,5 +356,25 @@ impl TimsDataHandle {
     pub fn get_ims_frame(&self, frame_id: u32) -> Result<ImsFrame, Box<dyn std::error::Error>> {
         let frame = self.get_frame(frame_id)?;
         Ok(frame.get_ims_frame())
+    }
+
+    pub fn get_tims_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
+
+        let result: Vec<TimsFrame> = frame_ids
+            .into_iter()
+            .map(|f| {
+                match self.get_frame(f) {
+                    Ok(frame) => Some(frame),
+                    Err(_e) => {
+                        // TODO implement error handling
+                        None
+                    }
+                }
+            })
+            .filter(Option::is_some)
+            .map(Option::unwrap)
+            .collect();
+
+        TimsSlice { frames: result}
     }
 }

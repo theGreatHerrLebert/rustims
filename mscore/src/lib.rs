@@ -8,5 +8,6 @@ pub use {
     mz_spectrum::ImsSpectrum,
     mz_spectrum::TimsSpectrum,
     tims_frame::ImsFrame,
-    tims_frame::TimsFrame
+    tims_frame::TimsFrame,
+    tims_frame::TimsSlice,
 };

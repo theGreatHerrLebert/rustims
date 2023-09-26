@@ -2,16 +2,28 @@ use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Formatter};
 use itertools;
+use rayon::prelude::*;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
 
+#[derive(Clone)]
 pub struct TimsSlice {
-    frames: Vec<TimsFrame>,
+    pub frames: Vec<TimsFrame>,
 }
 
 impl TimsSlice {
-    pub fn filter_ranged() -> TimsSlice {
-        
+    
+    pub fn new(frames: Vec<TimsFrame>) -> Self {
+        TimsSlice { frames }
+    }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsSlice {
+
+        let result: Vec<TimsFrame> = self.frames.par_iter()
+            .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+            .collect();
+
+        TimsSlice { frames: result }
     }
 }
 
