@@ -84,6 +84,10 @@ impl PyTimsFrame {
 
         Ok(list.into())
     }
+
+    pub fn get_ims_frame(&self) -> PyImsFrame {
+        PyImsFrame { inner: self.inner.ims_frame.clone() }
+    }
 }
 
 #[pyclass]
