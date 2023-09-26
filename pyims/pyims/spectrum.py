@@ -47,7 +47,7 @@ class MzSpectrum:
 
 
 class TimsSpectrum:
-    def __init__(self, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+    def __init__(self, frame_id: int, scan: int, retention_time: float, inv_mobility: float, ms_type: int, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsSpectrum class.
 
         Args:
@@ -60,7 +60,7 @@ class TimsSpectrum:
         """
         assert len(index) == len(mz) == len(intensity), ("The length of the index, mz and intensity arrays must be "
                                                          "equal.")
-        self.__spec_ptr = pims.PyTimsSpectrum(index, mz, intensity)
+        self.__spec_ptr = pims.PyTimsSpectrum(frame_id, scan, retention_time, inv_mobility, ms_type, index, mz, intensity)
 
     @classmethod
     def from_py_tims_spectrum(cls, spec: pims.PyTimsSpectrum):
