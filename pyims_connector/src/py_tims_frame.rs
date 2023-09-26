@@ -12,6 +12,7 @@ pub struct PyTimsFrame {
 
 #[pymethods]
 impl PyTimsFrame {
+
     #[new]
     pub unsafe fn new(frame_id: i32,
                       ms_type: i32,
@@ -83,6 +84,14 @@ impl PyTimsFrame {
         }
 
         Ok(list.into())
+    }
+
+    pub fn get_ims_frame(&self) -> PyImsFrame {
+        PyImsFrame { inner: self.inner.ims_frame.clone() }
+    }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> PyTimsFrame {
+        return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min) }
     }
 }
 

@@ -9,6 +9,7 @@ import opentims_bruker_bridge as obb
 from abc import ABC
 
 from pyims.frame import TimsFrame
+from pyims.slice import TimsSlice
 
 
 class TimsDataHandle(ABC):
@@ -60,3 +61,14 @@ class TimsDataHandle(ABC):
             TimsFrame: TimsFrame.
         """
         return TimsFrame.from_py_tims_frame(self.__handle.get_tims_frame(frame_id))
+
+    def get_tims_slice(self, frame_ids: NDArray[np.int32]) -> TimsSlice:
+        """Get a TimsFrame.
+
+        Args:
+            frame_ids (int): Frame ID.
+
+        Returns:
+            TimsFrame: TimsFrame.
+        """
+        return TimsSlice.from_py_tims_slice(self.__handle.get_tims_slice(frame_ids))

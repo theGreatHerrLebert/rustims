@@ -133,7 +133,8 @@ pub struct PyTimsSpectrum {
 #[pymethods]
 impl PyTimsSpectrum {
     #[new]
-    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, ms_type: i32, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64,
+                      ms_type: i32, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyTimsSpectrum {
             inner: TimsSpectrum {
                 frame_id,
