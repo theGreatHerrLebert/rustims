@@ -18,6 +18,24 @@ class MzSpectrum:
         assert len(mz) == len(intensity), "The length of the mz and intensity arrays must be equal."
         self.__spec_ptr = pims.PyMzSpectrum(mz, intensity)
 
+    @property
+    def mz(self) -> NDArray[np.float64]:
+        """m/z.
+
+        Returns:
+            NDArray[np.float64]: m/z.
+        """
+        return self.__spec_ptr.mz
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__spec_ptr.intensity
+
     @classmethod
     def from_py_mz_spectrum(cls, spec: pims.PyMzSpectrum):
         """Create a MzSpectrum from a PyMzSpectrum.
@@ -44,6 +62,9 @@ class MzSpectrum:
             MzSpectrum: Filtered spectrum.
         """
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min))
+
+    def __repr__(self):
+        return f"MzSpectrum(num_peaks={len(self.mz)})"
 
 
 class TimsSpectrum:
