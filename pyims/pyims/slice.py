@@ -1,7 +1,9 @@
 import numpy as np
 from numpy.typing import NDArray
+from typing import List
 
 import pyims_connector as pims
+from pyims.frame import TimsFrame
 
 
 class TimsSlice:
@@ -57,3 +59,11 @@ class TimsSlice:
             TimsSlice: Filtered slice.
         """
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+
+    def get_frames(self) -> List[TimsFrame]:
+        """Get the frames.
+
+        Returns:
+            List[TimsFrame]: Frames.
+        """
+        return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
