@@ -73,7 +73,7 @@ class TimsSlice:
         return self
 
     def __next__(self):
-        if self.__current_index < self.__slice_ptr.frame_count():
+        if self.__current_index < self.__slice_ptr.frame_count:
             frame_ptr = self.__slice_ptr.get_frame_at_index(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
