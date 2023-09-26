@@ -16,9 +16,10 @@ impl PyMsType {
         })
     }
     #[getter]
-    pub fn ms_type(&self) -> i32 {
-        self.inner.to_i32()
-    }
+    pub fn ms_type(&self) -> String { self.inner.to_string() }
+
+    #[getter]
+    pub fn ms_type_numeric(&self) -> i32 { self.inner.ms_type_numeric() }
 }
 
 #[pyclass]
@@ -61,8 +62,7 @@ impl PyIndexedMzSpectrum {
         Ok(PyIndexedMzSpectrum {
             inner: IndexedMzSpectrum {
                 index: index.as_slice()?.to_vec(),
-                mz: mz.as_slice()?.to_vec(),
-                intensity: intensity.as_slice()?.to_vec(),
+                mz_spectrum: MzSpectrum { mz: mz.as_slice()?.to_vec(), intensity:  intensity.as_slice()?.to_vec() },
             },
         })
     }
@@ -74,12 +74,12 @@ impl PyIndexedMzSpectrum {
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz.clone().into_pyarray(py).to_owned()
+        self.inner.mz_spectrum.mz.clone().into_pyarray(py).to_owned()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
     }
 }
 
@@ -133,17 +133,20 @@ pub struct PyTimsSpectrum {
 #[pymethods]
 impl PyTimsSpectrum {
     #[new]
-    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64, ms_type: i32, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyTimsSpectrum {
             inner: TimsSpectrum {
                 frame_id,
                 scan,
                 retention_time,
                 inv_mobility,
+                ms_type: MsType::new(ms_type),
                 spectrum: IndexedMzSpectrum {
                     index: index.as_slice()?.to_vec(),
-                    mz: mz.as_slice()?.to_vec(),
-                    intensity: intensity.as_slice()?.to_vec(),
+                    mz_spectrum: MzSpectrum {
+                        mz: mz.as_slice()?.to_vec(),
+                        intensity: intensity.as_slice()?.to_vec(),
+                    },
                 },
             },
         })
@@ -170,12 +173,23 @@ impl PyTimsSpectrum {
     }
 
     #[getter]
+    pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
+        self.inner.spectrum.index.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.mz_spectrum.mz.clone().into_pyarray(py).to_owned()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
     }
+
+    #[getter]
+    pub fn ms_type(&self) -> String { self.inner.ms_type.to_string() }
+
+    #[getter]
+    pub fn ms_type_numeric(&self) -> i32 { self.inner.ms_type.ms_type_numeric() }
 }

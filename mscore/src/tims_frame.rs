@@ -1,6 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Formatter};
 use itertools;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
@@ -45,12 +45,9 @@ impl fmt::Display for ImsFrame {
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,
-    pub retention_time: f64,
     pub scan: Vec<i32>,
-    pub inv_mobility: Vec<f64>,
     pub tof: Vec<i32>,
-    pub mz: Vec<f64>,
-    pub intensity: Vec<f64>,
+    pub ims_frame: ImsFrame,
 }
 
 impl TimsFrame {
@@ -71,12 +68,12 @@ impl TimsFrame {
     ///
     /// ```
     /// use mscore::MsType;
-    /// use mscore::TimsFrame;
+    /// use mscore::{TimsFrame, ImsFrame};
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
     pub fn new(frame_id: i32, ms_type: MsType, retention_time: f64, scan: Vec<i32>, inv_mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        TimsFrame { frame_id, ms_type, retention_time, scan, inv_mobility, tof, mz, intensity }
+        TimsFrame { frame_id, ms_type, scan, tof, ims_frame: ImsFrame { retention_time, inv_mobility, mz, intensity } }
     }
 
     ///
@@ -88,11 +85,9 @@ impl TimsFrame {
     /// use mscore::{TimsSpectrum, TimsFrame, MsType};
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
-    /// let ims_spectrum = frame.to_ims_frame();
+    /// let ims_spectrum = frame.get_ims_frame();
     /// ```
-    pub fn to_ims_frame(&self) -> ImsFrame {
-        ImsFrame { retention_time: self.retention_time, inv_mobility: self.inv_mobility.clone(), mz: self.mz.clone(), intensity: self.intensity.clone() }
-    }
+    pub fn get_ims_frame(&self) -> ImsFrame { self.ims_frame.clone() }
 
     ///
     /// Convert a given TimsFrame to a vector of TimsSpectrum.
@@ -112,10 +107,10 @@ impl TimsFrame {
         // all indices and the intensity values are sorted by scan and stored in the map as a tuple (inv_mobility, tof, mz, intensity)
         for (scan, inv_mobility, tof, mz, intensity) in itertools::multizip((
             &self.scan,
-            &self.inv_mobility,
+            &self.ims_frame.inv_mobility,
             &self.tof,
-            &self.mz,
-            &self.intensity,
+            &self.ims_frame.mz,
+            &self.ims_frame.intensity,
         )) {
             let entry = spectra.entry(*scan).or_insert_with(|| (*inv_mobility, Vec::new(), Vec::new(), Vec::new()));
             entry.1.push(*tof);
@@ -128,7 +123,7 @@ impl TimsFrame {
 
         for (scan, (inv_mobility, tof, mz, intensity)) in spectra {
             let spectrum = IndexedMzSpectrum::new(tof, mz, intensity);
-            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.retention_time, inv_mobility, spectrum));
+            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.ims_frame.retention_time, inv_mobility, self.ms_type.clone(), spectrum));
         }
 
         tims_spectra
@@ -150,7 +145,7 @@ impl TimsFrame {
         let mut ims_spectra: Vec<ImsSpectrum> = Vec::new();
 
         for spec in tims_spectra {
-            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.inv_mobility, MzSpectrum::new(spec.spectrum.mz, spec.spectrum.intensity));
+            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.inv_mobility, MzSpectrum::new(spec.spectrum.mz_spectrum.mz, spec.spectrum.mz_spectrum.intensity));
             ims_spectra.push(ims_spec);
         }
 
@@ -165,7 +160,7 @@ impl TimsFrame {
         let mut mz_vec = Vec::new();
         let mut intensity_vec = Vec::new();
 
-        for (mz, intensity, scan, inv_mobility, tof) in itertools::multizip((&self.mz, &self.intensity, &self.scan, &self.inv_mobility, &self.tof)) {
+        for (mz, intensity, scan, inv_mobility, tof) in itertools::multizip((&self.ims_frame.mz, &self.ims_frame.intensity, &self.scan, &self.ims_frame.inv_mobility, &self.tof)) {
             if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min {
                 scan_vec.push(*scan);
                 inv_mobility_vec.push(*inv_mobility);
@@ -175,18 +170,18 @@ impl TimsFrame {
             }
         }
 
-        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.retention_time, scan_vec, inv_mobility_vec, tof_vec, mz_vec, intensity_vec)
+        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, inv_mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 }
 
 impl fmt::Display for TimsFrame {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
 
-        let (mz, i) = self.mz.iter()
-            .zip(&self.intensity)
+        let (mz, i) = self.ims_frame.mz.iter()
+            .zip(&self.ims_frame.intensity)
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "TimsFrame(id: {}, type: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))", self.frame_id, self.ms_type, self.retention_time, self.scan.len(), format!("{:.3}", mz), i)
+        write!(f, "TimsFrame(id: {}, type: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))", self.frame_id, self.ms_type, self.ims_frame.retention_time, self.scan.len(), format!("{:.3}", mz), i)
     }
 }

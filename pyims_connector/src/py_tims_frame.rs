@@ -25,22 +25,24 @@ impl PyTimsFrame {
             inner: TimsFrame {
                 frame_id,
                 ms_type: MsType::new(ms_type),
-                retention_time,
                 scan: scan.as_slice()?.to_vec(),
-                inv_mobility: inv_mobility.as_slice()?.to_vec(),
                 tof: tof.as_slice()?.to_vec(),
-                mz: mz.as_slice()?.to_vec(),
-                intensity: intensity.as_slice()?.to_vec(),
+                ims_frame: ImsFrame {
+                    retention_time,
+                    inv_mobility: inv_mobility.as_slice()?.to_vec(),
+                    mz: mz.as_slice()?.to_vec(),
+                    intensity: intensity.as_slice()?.to_vec(),
+                },
             },
         })
     }
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz.clone().into_pyarray(py).to_owned()
+        self.inner.ims_frame.mz.clone().into_pyarray(py).to_owned()
     }
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.ims_frame.intensity.clone().into_pyarray(py).to_owned()
     }
     #[getter]
     pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
@@ -48,7 +50,7 @@ impl PyTimsFrame {
     }
     #[getter]
     pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.inv_mobility.clone().into_pyarray(py).to_owned()
+        self.inner.ims_frame.inv_mobility.clone().into_pyarray(py).to_owned()
     }
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
@@ -59,8 +61,16 @@ impl PyTimsFrame {
         self.inner.frame_id
     }
     #[getter]
-    pub fn ms_type(&self) -> i32 {
-        self.inner.ms_type.to_i32()
+    pub fn ms_type_numeric(&self) -> i32 {
+        self.inner.ms_type.ms_type_numeric()
+    }
+    #[getter]
+    pub fn ms_type(&self) -> String {
+        self.inner.ms_type.to_string()
+    }
+    #[getter]
+    pub fn retention_time(&self) -> f64 {
+        self.inner.ims_frame.retention_time
     }
 
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {

@@ -3,6 +3,7 @@ from numpy.typing import NDArray
 
 import numpy as np
 import pyims_connector as pims
+from pyims.spectrum import MzSpectrum, TimsSpectrum
 
 
 class TimsFrame:
@@ -44,6 +45,78 @@ class TimsFrame:
         instance.__frame_ptr = frame
         return instance
 
+    @property
+    def frame_id(self) -> int:
+        """Frame ID.
+
+        Returns:
+            int: Frame ID.
+        """
+        return self.__frame_ptr.frame_id
+
+    @property
+    def ms_type(self) -> str:
+        """MS type.
+
+        Returns:
+            int: MS type.
+        """
+        return self.__frame_ptr.ms_type_as_string
+
+    @property
+    def retention_time(self) -> float:
+        """Retention time.
+
+        Returns:
+            float: Retention time.
+        """
+        return self.__frame_ptr.retention_time
+
+    @property
+    def scan(self) -> NDArray[np.int32]:
+        """Scan.
+
+        Returns:
+            NDArray[np.int32]: Scan.
+        """
+        return self.__frame_ptr.scan
+
+    @property
+    def inv_mobility(self) -> NDArray[np.float64]:
+        """Inverse mobility.
+
+        Returns:
+            NDArray[np.float64]: Inverse mobility.
+        """
+        return self.__frame_ptr.inv_mobility
+
+    @property
+    def tof(self) -> NDArray[np.int32]:
+        """Time of flight.
+
+        Returns:
+            NDArray[np.int32]: Time of flight.
+        """
+        return self.__frame_ptr.tof
+
+    @property
+    def mz(self) -> NDArray[np.float64]:
+        """m/z.
+
+        Returns:
+            NDArray[np.float64]: m/z.
+        """
+        return self.__frame_ptr.mz
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__frame_ptr.intensity
+
     def filter_ranged(self, mz_min: float, mz_max: float,
                       scan_min: int = 0,
                       scan_max: int = 1000,
@@ -63,3 +136,15 @@ class TimsFrame:
         """
 
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+
+    def to_tims_spectra(self) -> List['TimsSpectrum']:
+        """Convert the frame to a list of TimsSpectrum.
+
+        Returns:
+            List[TimsSpectrum]: List of TimsSpectrum.
+        """
+        return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__frame_ptr.to_tims_spectra()]
+
+    def __repr__(self):
+        return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
+                f"num_peaks={len(self.__frame_ptr.mz)})")

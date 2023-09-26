@@ -33,7 +33,7 @@ impl MsType {
     }
 
     /// Returns the integer value corresponding to the `MsType` enum.
-    pub fn to_i32(&self) -> i32 {
+    pub fn ms_type_numeric(&self) -> i32 {
         match self {
             MsType::Precursor => 0,
             MsType::FragmentDda => 8,
@@ -82,7 +82,6 @@ impl MzSpectrum {
     /// assert_eq!(spectrum.intensity, vec![10.0, 20.0]);
     /// ```
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        
         MzSpectrum {mz, intensity}
     }
 
@@ -141,7 +140,7 @@ impl MzSpectrum {
 }
 
 /// Formats the `MzSpectrum` for display.
-impl fmt::Display for MzSpectrum {
+impl Display for MzSpectrum {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
 
         let (mz, i) = self.mz.iter()
@@ -205,8 +204,7 @@ impl std::ops::Add for MzSpectrum {
 #[derive(Clone)]
 pub struct IndexedMzSpectrum {
     pub index: Vec<i32>,
-    pub mz: Vec<f64>,
-    pub intensity: Vec<f64>,
+    pub mz_spectrum: MzSpectrum,
 }
 
 impl IndexedMzSpectrum {
@@ -221,12 +219,12 @@ impl IndexedMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::IndexedMzSpectrum;
+    /// use mscore::{MzSpectrum, IndexedMzSpectrum};
     ///
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
-    pub fn new(tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        IndexedMzSpectrum { index: tof, mz, intensity}
+    pub fn new(index: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
+        IndexedMzSpectrum { index, mz_spectrum: MzSpectrum { mz, intensity } }
     }
     /// Bins the spectrum based on a given m/z resolution, summing intensities and averaging index values
     /// for m/z values that fall into the same bin.
@@ -243,8 +241,8 @@ impl IndexedMzSpectrum {
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
     ///
-    /// assert_eq!(binned_spectrum.mz, vec![100.4]);
-    /// assert_eq!(binned_spectrum.intensity, vec![110.0]);
+    /// assert_eq!(binned_spectrum.mz_spectrum.mz, vec![100.4]);
+    /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
     /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
     pub fn to_resolution(&self, resolution: u32) -> IndexedMzSpectrum {
@@ -252,7 +250,7 @@ impl IndexedMzSpectrum {
         let mut mz_bins: BTreeMap<i64, (f64, Vec<i64>)> = BTreeMap::new();
         let factor = 10f64.powi(resolution as i32);
 
-        for ((mz, intensity), tof_val) in self.mz.iter().zip(self.intensity.iter()).zip(&self.index) {
+        for ((mz, intensity), tof_val) in self.mz_spectrum.mz.iter().zip(self.mz_spectrum.intensity.iter()).zip(&self.index) {
             let key = (mz * factor).round() as i64;
             let entry = mz_bins.entry(key).or_insert((0.0, Vec::new()));
             entry.0 += *intensity;
@@ -267,18 +265,18 @@ impl IndexedMzSpectrum {
             (sum as f64 / count as f64).round() as i32
         }).collect();
 
-        IndexedMzSpectrum { mz, intensity, index: tof }
+        IndexedMzSpectrum {index: tof, mz_spectrum: MzSpectrum {mz, intensity } }
     }
 }
 
-impl fmt::Display for IndexedMzSpectrum {
+impl Display for IndexedMzSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let (mz, i) = self.mz.iter()
-            .zip(&self.intensity)
+        let (mz, i) = self.mz_spectrum.mz.iter()
+            .zip(&self.mz_spectrum.intensity)
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
-        write!(f, "IndexedMzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz.len(), format!("{:.3}", mz), i)
+        write!(f, "IndexedMzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz_spectrum.mz.len(), format!("{:.3}", mz), i)
     }
 }
 
@@ -312,7 +310,7 @@ impl ImsSpectrum {
     }
 }
 
-impl fmt::Display for ImsSpectrum {
+impl Display for ImsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "ImsSpectrum(rt: {}, inv_mobility: {}, spectrum: {})", self.retention_time, self.inv_mobility, self.spectrum)
     }
@@ -324,6 +322,7 @@ pub struct TimsSpectrum {
     pub scan: i32,
     pub retention_time: f64,
     pub inv_mobility: f64,
+    pub ms_type: MsType,
     pub spectrum: IndexedMzSpectrum,
 }
 
@@ -341,16 +340,16 @@ impl TimsSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, IndexedMzSpectrum};
+    /// use mscore::{TimsSpectrum, IndexedMzSpectrum, MsType};
     ///
-    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
+    /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, MsType::FragmentDda, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
-    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, spectrum: IndexedMzSpectrum) -> Self {
-        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, spectrum }
+    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
+        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, ms_type, spectrum }
     }
 }
 
-impl fmt::Display for TimsSpectrum {
+impl Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.inv_mobility, self.spectrum)
     }

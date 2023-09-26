@@ -330,12 +330,10 @@ impl TimsDataHandle {
                 Ok(TimsFrame {
                     frame_id: frame_id as i32,
                     ms_type,
-                    retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
                     scan: scan_i32,
-                    inv_mobility,
                     tof: tof_i32,
-                    mz,
-                    intensity: intensity_dbl})
+                    ims_frame: ImsFrame { retention_time: self.frame_meta_data[(frame_id - 1) as usize].time, inv_mobility, mz, intensity: intensity_dbl }
+                })
             },
 
             // Error on unknown compression algorithm
@@ -357,6 +355,6 @@ impl TimsDataHandle {
     ///
     pub fn get_ims_frame(&self, frame_id: u32) -> Result<ImsFrame, Box<dyn std::error::Error>> {
         let frame = self.get_frame(frame_id)?;
-        Ok(ImsFrame{ retention_time: frame.retention_time, inv_mobility: frame.inv_mobility, mz: frame.mz, intensity: frame.intensity})
+        Ok(frame.get_ims_frame())
     }
 }
