@@ -141,7 +141,7 @@ impl MzSpectrum {
 }
 
 /// Formats the `MzSpectrum` for display.
-impl fmt::Display for MzSpectrum {
+impl Display for MzSpectrum {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
 
         let (mz, i) = self.mz.iter()
@@ -271,7 +271,7 @@ impl IndexedMzSpectrum {
     }
 }
 
-impl fmt::Display for IndexedMzSpectrum {
+impl Display for IndexedMzSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let (mz, i) = self.mz.iter()
             .zip(&self.intensity)
@@ -312,7 +312,7 @@ impl ImsSpectrum {
     }
 }
 
-impl fmt::Display for ImsSpectrum {
+impl Display for ImsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "ImsSpectrum(rt: {}, inv_mobility: {}, spectrum: {})", self.retention_time, self.inv_mobility, self.spectrum)
     }
@@ -350,7 +350,7 @@ impl TimsSpectrum {
     }
 }
 
-impl fmt::Display for TimsSpectrum {
+impl Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.inv_mobility, self.spectrum)
     }
