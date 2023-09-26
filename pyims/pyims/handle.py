@@ -60,3 +60,14 @@ class TimsDataHandle(ABC):
             TimsFrame: TimsFrame.
         """
         return TimsFrame.from_py_tims_frame(self.__handle.get_tims_frame(frame_id))
+
+    def get_tims_slice(self, frame_ids: NDArray[np.int32]) -> TimsFrame:
+        """Get a TimsFrame.
+
+        Args:
+            frame_ids (int): Frame ID.
+
+        Returns:
+            TimsFrame: TimsFrame.
+        """
+        return TimsFrame.from_py_tims_frame(self.__handle.get_tims_slice(frame_ids))
