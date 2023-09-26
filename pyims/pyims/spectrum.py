@@ -130,5 +130,23 @@ class TimsSpectrum:
         """
         return self.__spec_ptr.scan
 
+    @property
+    def retention_time(self) -> float:
+        """Retention time.
+
+        Returns:
+            float: Retention time.
+        """
+        return self.__spec_ptr.retention_time
+
+    @property
+    def frame_id(self) -> int:
+        """Frame ID.
+
+        Returns:
+            int: Frame ID.
+        """
+        return self.__spec_ptr.frame_id
+
     def __repr__(self):
-        return f"TimsSpectrum(scan={self.scan}, inv_mobility={np.round(self.inv_mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
+        return f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, scan={self.scan}, inv_mobility={np.round(self.inv_mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
