@@ -3,9 +3,10 @@ from numpy.typing import NDArray
 
 import pyims_connector as pims
 
+
 class TimsSlice:
     def __int__(self):
-        pass
+        self.__slice_ptr = None
 
     @classmethod
     def from_py_tims_slice(cls, slice: pims.PyTimsSlice):
@@ -41,4 +42,16 @@ class TimsSlice:
 
     def __repr__(self):
         return f"TimsSlice({self.first_frame_id}, {self.last_frame_id})"
-    
+
+    def filter_ranged(self, mz_min: float, mz_max: float, scan_min: int, scan_max: int, intensity_min: float) -> 'TimsSlice':
+        """Filter the spectrum by m/z range and intensity.
+
+        Args:
+            mz_min (float): Minimum m/z.
+            mz_max (float): Maximum m/z.
+            intensity_min (float): Minimum intensity.
+
+        Returns:
+            NDArray[np.float64]: Filtered spectrum.
+        """
+        return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
