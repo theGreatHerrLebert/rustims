@@ -19,6 +19,9 @@ impl PyMsType {
     pub fn ms_type(&self) -> i32 {
         self.inner.to_i32()
     }
+
+    #[getter]
+    pub fn ms_type_as_string(&self) -> {self.inner.}
 }
 
 #[pyclass]

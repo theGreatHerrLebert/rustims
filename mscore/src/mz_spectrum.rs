@@ -33,13 +33,17 @@ impl MsType {
     }
 
     /// Returns the integer value corresponding to the `MsType` enum.
-    pub fn to_i32(&self) -> i32 {
+    pub fn ms_type_numeric(&self) -> i32 {
         match self {
             MsType::Precursor => 0,
             MsType::FragmentDda => 8,
             MsType::FragmentDia => 9,
             MsType::Unknown => -1,
         }
+    }
+    /// Returns string value corresponding to the `MsType` enum
+    pub fn ms_type(&self) -> String {
+        self.to_string()
     }
 }
 
