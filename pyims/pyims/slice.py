@@ -20,3 +20,25 @@ class TimsSlice:
         instance = cls.__new__(cls)
         instance.__slice_ptr = slice
         return instance
+
+    @property
+    def first_frame_id(self) -> int:
+        """First frame ID.
+
+        Returns:
+            int: First frame ID.
+        """
+        return self.__slice_ptr.first_frame_id
+
+    @property
+    def last_frame_id(self) -> int:
+        """Last frame ID.
+
+        Returns:
+            int: Last frame ID.
+        """
+        return self.__slice_ptr.last_frame_id
+
+    def __repr__(self):
+        return f"TimsSlice({self.first_frame_id}, {self.last_frame_id})"
+    

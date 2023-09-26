@@ -12,6 +12,12 @@ pub struct PyTimsSlice {
 
 #[pymethods]
 impl PyTimsSlice {
+    #[getter]
+    pub fn first_frame_id(&self) -> i32 { self.inner.frames.first().unwrap().frame_id }
+
+    #[getter]
+    pub fn last_frame_id(&self) -> i32 { self.inner.frames.last().unwrap().frame_id }
+    
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> PyTimsSlice {
         PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min) }
     }
@@ -24,6 +30,7 @@ pub struct PyTimsFrame {
 
 #[pymethods]
 impl PyTimsFrame {
+
     #[new]
     pub unsafe fn new(frame_id: i32,
                       ms_type: i32,
