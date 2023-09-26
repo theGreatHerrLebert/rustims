@@ -59,11 +59,11 @@ impl PyTimsFrame {
         self.inner.frame_id
     }
     #[getter]
-    pub fn ms_type(&self) -> i32 {
+    pub fn ms_type_numeric(&self) -> i32 {
         self.inner.ms_type.to_i32()
     }
     #[getter]
-    pub fn ms_type_as_string(&self) -> String {
+    pub fn ms_type(&self) -> String {
         self.inner.ms_type.to_string()
     }
     #[getter]

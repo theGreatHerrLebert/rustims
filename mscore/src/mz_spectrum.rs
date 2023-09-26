@@ -41,10 +41,6 @@ impl MsType {
             MsType::Unknown => -1,
         }
     }
-    /// Returns string value corresponding to the `MsType` enum
-    pub fn ms_type(&self) -> String {
-        self.to_string()
-    }
 }
 
 impl Display for MsType {
