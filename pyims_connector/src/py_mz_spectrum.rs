@@ -172,6 +172,7 @@ impl PyTimsSpectrum {
         self.inner.inv_mobility
     }
 
+    #[getter]
     pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
         self.inner.spectrum.index.clone().into_pyarray(py).to_owned()
     }
