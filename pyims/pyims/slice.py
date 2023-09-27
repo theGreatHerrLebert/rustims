@@ -9,6 +9,7 @@ from pyims.frame import TimsFrame
 class TimsSlice:
     def __int__(self):
         self.__slice_ptr = None
+        self.__current_index = 0
 
     @classmethod
     def from_py_tims_slice(cls, slice: pims.PyTimsSlice):
@@ -22,6 +23,7 @@ class TimsSlice:
         """
         instance = cls.__new__(cls)
         instance.__slice_ptr = slice
+        instance.__current_index = 0
         return instance
 
     @property
@@ -67,3 +69,18 @@ class TimsSlice:
             List[TimsFrame]: Frames.
         """
         return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.__current_index < self.__slice_ptr.frame_count:
+            frame_ptr = self.__slice_ptr.get_frame_at_index(self.__current_index)
+            self.__current_index += 1
+            if frame_ptr is not None:
+                return TimsFrame.from_py_tims_frame(frame_ptr)
+            else:
+                raise ValueError("Frame pointer is None for valid index.")
+        else:
+            self.__current_index = 0  # Reset for next iteration
+            raise StopIteration

@@ -1,0 +1,12 @@
+[package]
+name = "imsjl_connector"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2.148"
+mscore = {path = "../mscore"}
+rustdf = {path = "../rustdf"}
+
+[lib]
+crate-type = ["cdylib"]

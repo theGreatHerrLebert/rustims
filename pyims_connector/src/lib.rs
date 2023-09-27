@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::pyhandle::PyTimsDataHandle;
 use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyImsSpectrum, PyTimsSpectrum};
 use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
-use crate::py_tims_slice::PyTimsSlice;
+use crate::py_tims_slice::{PyTimsSlice};
 
 /// A Python module implemented in Rust.
 #[pymodule]
