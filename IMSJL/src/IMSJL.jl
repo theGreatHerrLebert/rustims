@@ -1,5 +1,7 @@
 module IMSJL
 
+import Base.show
+
 export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
 struct CTimsFrame
     frame_id::Int32
@@ -31,6 +33,11 @@ struct TimsFrame
     tof::Vector{Int32}
     mz::Vector{Float64}
     intensity::Vector{Float64}
+end
+
+function show(io::IO, ::MIME"text/plain", frame::TimsFrame)
+    num_peaks = length(frame.mz)  # or whichever array represents peaks
+    print(io, "TimsFrame(frame_id=$(frame.frame_id), ms_type=$(frame.ms_type_numeric), num_peaks=$num_peaks)")
 end
 
 const lib = "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
