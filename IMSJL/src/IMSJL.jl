@@ -16,8 +16,8 @@ function TimsDataHandle_get_bruker_binary_path(handle::Ptr{Cvoid})::String
     return unsafe_string(ccall((:tims_data_handle_get_bruker_binary_path, lib), Cstring, (Ptr{Cvoid},), handle))
 end
 
-function TimsDataHandle_frame_count(handle::Ptr{Cvoid})::Int32
-    return ccall((:tims_data_handle_frame_count, lib), Int32, (Ptr{Cvoid},), handle)
+function TimsDataHandle_get_frame_count(handle::Ptr{Cvoid})::Int32
+    return ccall((:tims_data_handle_get_frame_count, lib), Int32, (Ptr{Cvoid},), handle)
 end
 
 function TimsDataHandle_destroy(handle::Ptr{Cvoid})

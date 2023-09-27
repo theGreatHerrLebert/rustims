@@ -47,7 +47,7 @@ pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
 }
 
 #[no_mangle]
-pub extern "C" fn tims_data_handle_frame_count(handle: *mut CTimsDataHandle) -> i32 {
+pub extern "C" fn tims_data_handle_get_frame_count(handle: *mut CTimsDataHandle) -> i32 {
     assert!(!handle.is_null());
     let handle = unsafe { &mut *handle };
     handle.inner.get_frame_count()
