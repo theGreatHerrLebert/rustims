@@ -22,6 +22,7 @@ class TimsDataHandle(ABC):
         self.data_path = data_path
         self.bp: List[str] = obb.get_so_paths()
         self.__handle = None
+        self.__current_index = 0
 
         # Try to load the data with the first binary found
         appropriate_found = False
@@ -72,3 +73,18 @@ class TimsDataHandle(ABC):
             TimsFrame: TimsFrame.
         """
         return TimsSlice.from_py_tims_slice(self.__handle.get_tims_slice(frame_ids))
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.__current_index < self.__handle.frame_count:
+            frame_ptr = self.__handle.get_tims_frame(self.__current_index)
+            self.__current_index += 1
+            if frame_ptr is not None:
+                return TimsFrame.from_py_tims_frame(frame_ptr)
+            else:
+                raise ValueError("Frame pointer is None for valid index.")
+        else:
+            self.__current_index = 0  # Reset for next iteration
+            raise StopIteration

@@ -375,6 +375,10 @@ impl TimsDataHandle {
             .map(Option::unwrap)
             .collect();
 
-        TimsSlice { frames: result}
+        TimsSlice { frames: result }
+    }
+
+    pub fn get_frame_count(&self) -> usize {
+        self.frame_meta_data.len()
     }
 }

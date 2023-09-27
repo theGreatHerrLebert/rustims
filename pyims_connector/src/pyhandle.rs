@@ -27,6 +27,11 @@ impl PyTimsDataHandle {
     pub fn get_bruker_lib_path(&self) -> &str {
         &self.inner.bruker_lib_path
     }
+    #[getter]
+    pub fn frame_count(&self) -> i32 {
+        self.inner.get_frame_count() as i32
+    }
+
     pub fn get_tims_frame(&self, frame_id: u32) -> PyResult<PyTimsFrame> {
         let frame = self.inner.get_frame(frame_id).unwrap();
         Ok(PyTimsFrame { inner: frame })
