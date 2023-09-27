@@ -1,6 +1,6 @@
 module RustCAPI
 
-using .Data
+using IMSJL.Data
 
 struct CTimsFrame
     frame_id::Int32
