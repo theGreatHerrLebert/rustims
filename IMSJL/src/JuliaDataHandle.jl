@@ -1,7 +1,7 @@
 module JuliaDataHandle
 
-include("Data.jl")
-include("RustCAPI.jl")
+using .Data
+using .RustCAPI
 
 struct TimsDataHandle
     data_path::String

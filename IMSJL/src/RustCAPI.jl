@@ -1,6 +1,6 @@
 module RustCAPI
 
-include("Data.jl")
+using .Data
 
 struct CTimsFrame
     frame_id::Int32
