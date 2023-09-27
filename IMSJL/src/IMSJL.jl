@@ -1,6 +1,6 @@
 module IMSJL
 
-export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy
+export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count
 
 const lib = "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
 
@@ -10,6 +10,10 @@ end
 
 function TimsDataHandle_get_data_path(handle::Ptr{Cvoid})::String
     return unsafe_string(ccall((:tims_data_handle_get_data_path, lib), Cstring, (Ptr{Cvoid},), handle))
+end
+
+function TimsDataHandle_frame_count(handle::Ptr{Cvoid})::Int32
+    return ccall((:tims_data_handle_frame_count, lib), Int32, (Ptr{Cvoid},), handle)
 end
 
 function TimsDataHandle_destroy(handle::Ptr{Cvoid})
