@@ -45,7 +45,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
     julia_mz = unsafe_wrap(Array, ctims_frame.mz, ctims_frame.mz_size, own=true)
     julia_intensity = unsafe_wrap(Array, ctims_frame.intensity, ctims_frame.intensity_size, own=true)
 
-    Data.TimsFrame(
+    TimsFrame(
         ctims_frame.frame_id,
         ctims_frame.ms_type,
         ctims_frame.retention_time,
