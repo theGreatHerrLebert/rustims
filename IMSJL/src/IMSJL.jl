@@ -24,4 +24,52 @@ function TimsDataHandle_destroy(handle::Ptr{Cvoid})
     ccall((:tims_data_handle_destroy, lib), Cvoid, (Ptr{Cvoid},), handle)
 end
 
+function TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFrame
+    ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
+end
+
+struct CTimsFrame
+    frame_id::Int32
+    ms_type_numeric::Int32
+    retention_time::Float64
+    scan::Ptr{Int32}
+    inv_mobility::Ptr{Float64}
+    tof::Ptr{Int32}
+    mz::Ptr{Float64}
+    intensity::Ptr{Float64}
+end
+
+struct TimsFrameJulia
+    frame_id::Int32
+    ms_type_numeric::Int32
+    retention_time::Float64
+    scan::Vector{Int32}
+    inv_mobility::Vector{Float64}
+    tof::Vector{Int32}
+    mz::Vector{Float64}
+    intensity::Vector{Float64}
+end
+
+function convert_to_julia(ctims_frame::CTimsFrame)::TimsFrameJulia
+
+    # Assuming you also have lengths for each array in CTimsFrame or a predefined length
+    julia_scan = unsafe_wrap(Array, ctims_frame.scan, length_of_scan, own=true)
+    julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, length_of_inv_mobility, own=true)
+    julia_tof = unsafe_wrap(Array, ctims_frame.tof, length_of_tof, own=true)
+    julia_mz = unsafe_wrap(Array, ctims_frame.mz, length_of_mz, own=true)
+    julia_intensity = unsafe_wrap(Array, ctims_frame.intensity, length_of_intensity, own=true)
+
+    TimsFrameJulia(
+        ctims_frame.frame_id,
+        ctims_frame.ms_type_numeric,
+        ctims_frame.retention_time,
+        julia_scan,
+        julia_inv_mobility,
+        julia_tof,
+        julia_mz,
+        julia_intensity
+    )
+end
+
+
 end # module IMSJL

@@ -2,6 +2,7 @@ use libc::{c_char};
 use std::ffi::CString;
 
 use rustdf::data::handle::{TimsDataHandle};
+use crate::frame::{convert_to_ctims_frame, CTimsFrame};
 
 #[repr(C)]
 pub struct CTimsDataHandle {
@@ -50,4 +51,10 @@ pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
     unsafe {
         let _ = Box::from_raw(handle);
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tims_data_handle_get_frame(handle: &TimsDataHandle, frame_id: i32) -> CTimsFrame {
+    let frame = handle.get_frame(frame_id as u32).unwrap(); // Ensure proper error handling if get_frame can fail
+    convert_to_ctims_frame(frame)
 }
