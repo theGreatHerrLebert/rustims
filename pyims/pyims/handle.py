@@ -89,7 +89,7 @@ class TimsDataHandle(ABC):
         return self
 
     def __next__(self):
-        if self.__current_index < self.frame_count:
+        if self.__current_index <= self.frame_count:
             frame_ptr = self.__handle.get_tims_frame(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
