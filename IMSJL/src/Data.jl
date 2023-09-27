@@ -1,16 +1,3 @@
-"""
-# module Data
-
-- Julia version: 
-- Author: davidteschner
-- Date: 2023-09-27
-
-# Examples
-
-```jldoctest
-julia>
-```
-"""
 module Data
 
 import Base.show
