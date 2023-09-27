@@ -1,7 +1,5 @@
 module RustCAPI
 
-include("Data.jl")
-
 struct CTimsFrame
     frame_id::Int32
     ms_type::Int32
@@ -45,7 +43,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::Data.TimsFram
     julia_mz = unsafe_wrap(Array, ctims_frame.mz, ctims_frame.mz_size, own=true)
     julia_intensity = unsafe_wrap(Array, ctims_frame.intensity, ctims_frame.intensity_size, own=true)
 
-    DataType.TimsFrame(
+    Data.TimsFrame(
         ctims_frame.frame_id,
         ctims_frame.ms_type,
         ctims_frame.retention_time,

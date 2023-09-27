@@ -1,8 +1,5 @@
 module JuliaDataHandle
 
-include("RustCAPI.jl")
-include("Data.jl")
-
 struct TimsDataHandle
     data_path::String
     bruker_binary_path::String
