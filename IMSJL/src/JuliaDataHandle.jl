@@ -1,5 +1,6 @@
 module JuliaDataHandle
 
+include("Data.jl")
 include("RustCAPI.jl")
 
 struct TimsDataHandle
