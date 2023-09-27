@@ -1,7 +1,6 @@
 module IMSJL
 
-export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame
-
+export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
 struct CTimsFrame
     frame_id::Int32
     ms_type::Int32
@@ -60,7 +59,7 @@ function TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFra
     ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
 end
 
-function convert_ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
+function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     julia_scan = unsafe_wrap(Array, ctims_frame.scan, ctims_frame.scan_size, own=true)
     julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, ctims_frame.inv_mobility_size, own=true)
