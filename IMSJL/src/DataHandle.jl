@@ -1,4 +1,4 @@
-module JuliaDataHandle
+module DataHandle
 
 using IMSJL.Data, IMSJL.RustCAPI
 
