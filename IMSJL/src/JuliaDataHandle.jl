@@ -13,8 +13,8 @@ julia>
 """
 module JuliaDataHandle
 
-using .RustCAPI
-using .Data
+include("RustCAPI.jl")
+include("Data.jl")
 
 struct TimsDataHandle
 
