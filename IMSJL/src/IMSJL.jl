@@ -35,7 +35,7 @@ struct TimsFrame
     intensity::Vector{Float64}
 end
 
-function show(io::IO, ::MIME"text/plain", frame::TimsFrame)
+function show(io::IO, frame::TimsFrame)
     num_peaks = length(frame.mz)  # or whichever array represents peaks
     print(io, "TimsFrame(frame_id=$(frame.frame_id), ms_type=$(frame.ms_type_numeric), num_peaks=$num_peaks)")
 end
