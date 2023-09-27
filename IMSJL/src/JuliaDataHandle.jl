@@ -17,7 +17,7 @@ struct TimsDataHandle
         bruker_binary_path = determine_bruker_binary_path()
 
         # Acquire the actual handle from the C-exposed Rust object
-        handle = RustcApi.TimsDataHandle_new(data_path, bruker_binary_path)
+        handle = RustCAPI.TimsDataHandle_new(data_path, bruker_binary_path)
 
         # Construct the instance
         new(data_path, bruker_binary_path, handle)
@@ -33,8 +33,8 @@ function determine_imsjl_connector_path()::String
 end
 
 function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::TimsFrame
-    ctims_frame = RustcApi.TimsDataHandle_get_frame(handle.handle, Int32(frame_id))
-    return RustcApi.ctims_frame_to_julia_tims_frame(ctims_frame)
+    ctims_frame = RustCAPI.TimsDataHandle_get_frame(handle.handle, Int32(frame_id))
+    return RustCAPI.ctims_frame_to_julia_tims_frame(ctims_frame)
 end
 
 end
