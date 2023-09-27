@@ -2,6 +2,28 @@ module IMSJL
 
 export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame
 
+struct CTimsFrame
+    frame_id::Int32
+    ms_type_numeric::Int32
+    retention_time::Float64
+    scan::Ptr{Int32}
+    inv_mobility::Ptr{Float64}
+    tof::Ptr{Int32}
+    mz::Ptr{Float64}
+    intensity::Ptr{Float64}
+end
+
+struct TimsFrame
+    frame_id::Int32
+    ms_type_numeric::Int32
+    retention_time::Float64
+    scan::Vector{Int32}
+    inv_mobility::Vector{Float64}
+    tof::Vector{Int32}
+    mz::Vector{Float64}
+    intensity::Vector{Float64}
+end
+
 const lib = "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
 
 function TimsDataHandle_new(data_path::String, bruker_lib_path::String)
@@ -28,18 +50,7 @@ function TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFra
     ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
 end
 
-struct TimsFrame
-    frame_id::Int32
-    ms_type_numeric::Int32
-    retention_time::Float64
-    scan::Vector{Int32}
-    inv_mobility::Vector{Float64}
-    tof::Vector{Int32}
-    mz::Vector{Float64}
-    intensity::Vector{Float64}
-end
-
-function convert_to_julia(ctims_frame::CTimsFrame)::TimsFrame
+function convert_ctims_frame_to_julia(ctims_frame::CTimsFrame)::TimsFrame
 
     # Assuming you also have lengths for each array in CTimsFrame or a predefined length
     julia_scan = unsafe_wrap(Array, ctims_frame.scan, length_of_scan, own=true)
