@@ -95,7 +95,7 @@ class TimsDataHandle(ABC):
             if frame_ptr is not None:
                 return TimsFrame.from_py_tims_frame(frame_ptr)
             else:
-                raise ValueError("Frame pointer is None for valid index.")
+                raise ValueError(f"Frame pointer is None for valid index: {self.__current_index}")
         else:
             self.__current_index = 1  # Reset for next iteration
             raise StopIteration
