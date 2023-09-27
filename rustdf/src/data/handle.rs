@@ -379,6 +379,6 @@ impl TimsDataHandle {
     }
 
     pub fn get_frame_count(&self) -> usize {
-        self.frame_meta_data.len()
+        self.frame_meta_data.len() + 1
     }
 }
