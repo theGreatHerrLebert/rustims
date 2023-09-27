@@ -34,6 +34,12 @@ pub extern "C" fn tims_data_handle_get_data_path(handle: *mut CTimsDataHandle) -
 }
 
 #[no_mangle]
+pub extern "C" fn tims_data_handle_get_bruker_binary_path(handle: *mut CTimsDataHandle) -> *mut c_char {
+    let handle = unsafe { &*handle };
+    to_c_string(handle.inner.bruker_lib_path.clone())
+}
+
+#[no_mangle]
 pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
     unsafe {
         let _ = Box::from_raw(handle);
