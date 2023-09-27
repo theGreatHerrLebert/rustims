@@ -1,4 +1,3 @@
-
 use libc::{c_char};
 use std::ffi::CString;
 
@@ -40,15 +39,15 @@ pub extern "C" fn tims_data_handle_get_bruker_binary_path(handle: *mut CTimsData
 }
 
 #[no_mangle]
-pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
-    unsafe {
-        let _ = Box::from_raw(handle);
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn tims_data_handle_get_frame_count(handle: *mut CTimsDataHandle) -> i32 {
     assert!(!handle.is_null());
     let handle = unsafe { &mut *handle };
     handle.inner.get_frame_count()
+}
+
+#[no_mangle]
+pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
+    unsafe {
+        let _ = Box::from_raw(handle);
+    }
 }
