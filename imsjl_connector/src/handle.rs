@@ -20,10 +20,9 @@ pub extern "C" fn tims_data_handle_new(data_path: *const c_char, bruker_lib_path
     let data_path = unsafe { std::ffi::CStr::from_ptr(data_path) }.to_str().unwrap();
     let bruker_lib_path = unsafe { std::ffi::CStr::from_ptr(bruker_lib_path) }.to_str().unwrap();
 
-    // Create your structure
     let handle = TimsDataHandle::new(bruker_lib_path, data_path).unwrap();
 
-    // Box the structure to keep it on the heap and return a pointer
+    // Box structure to keep it on heap and return pointer
     Box::into_raw(Box::new(CTimsDataHandle { inner: handle }))
 }
 
@@ -55,6 +54,6 @@ pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
 
 #[no_mangle]
 pub extern "C" fn tims_data_handle_get_frame(handle: &TimsDataHandle, frame_id: i32) -> CTimsFrame {
-    let frame = handle.get_frame(frame_id as u32).unwrap(); // Ensure proper error handling if get_frame can fail
+    let frame = handle.get_frame(frame_id as u32).unwrap();
     convert_to_ctims_frame(frame)
 }
