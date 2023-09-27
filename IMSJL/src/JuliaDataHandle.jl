@@ -1,7 +1,6 @@
 module JuliaDataHandle
 
-using .Data
-using .RustCAPI
+using .IMSJL: RustCAPI, Data
 
 struct TimsDataHandle
     data_path::String
@@ -30,7 +29,7 @@ function determine_imsjl_connector_path()::String
     return "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
 end
 
-function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::Data.TimsFrame
+function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::TimsFrame
     ctims_frame = RustCAPI.TimsDataHandle_get_frame(handle.handle, Int32(frame_id))
     return RustCAPI.ctims_frame_to_julia_tims_frame(ctims_frame)
 end

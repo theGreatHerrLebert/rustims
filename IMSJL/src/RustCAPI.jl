@@ -1,6 +1,6 @@
 module RustCAPI
 
-using .Data
+using .IMSJL: Data
 
 struct CTimsFrame
     frame_id::Int32
@@ -37,7 +37,7 @@ TimsDataHandle_destroy(handle::Ptr{Cvoid}) = ccall((:tims_data_handle_destroy, l
 
 TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFrame = ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
 
-function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::Data.TimsFrame
+function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     julia_scan = unsafe_wrap(Array, ctims_frame.scan, ctims_frame.scan_size, own=true)
     julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, ctims_frame.inv_mobility_size, own=true)
