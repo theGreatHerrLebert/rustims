@@ -1,6 +1,6 @@
 module JuliaDataHandle
 
-using .IMSJL: RustCAPI, Data
+using .RustCAPI, .Data
 
 struct TimsDataHandle
     data_path::String
