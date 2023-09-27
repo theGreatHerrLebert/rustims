@@ -378,7 +378,7 @@ impl TimsDataHandle {
         TimsSlice { frames: result }
     }
 
-    pub fn get_frame_count(&self) -> usize {
-        self.frame_meta_data.len()
+    pub fn get_frame_count(&self) -> i32 {
+        self.frame_meta_data.len() as i32
     }
 }

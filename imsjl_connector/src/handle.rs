@@ -1,8 +1,8 @@
-
 use libc::{c_char};
 use std::ffi::CString;
 
 use rustdf::data::handle::{TimsDataHandle};
+use crate::frame::{convert_to_ctims_frame, CTimsFrame};
 
 #[repr(C)]
 pub struct CTimsDataHandle {
@@ -33,13 +33,28 @@ pub extern "C" fn tims_data_handle_get_data_path(handle: *mut CTimsDataHandle) -
     to_c_string(handle.inner.data_path.clone())
 }
 
-//... Continue similarly for other methods ...
+#[no_mangle]
+pub extern "C" fn tims_data_handle_get_bruker_binary_path(handle: *mut CTimsDataHandle) -> *mut c_char {
+    let handle = unsafe { &*handle };
+    to_c_string(handle.inner.bruker_lib_path.clone())
+}
 
-// Important: You'll also want to create a destructor function for your structure to avoid memory leaks.
+#[no_mangle]
+pub extern "C" fn tims_data_handle_get_frame_count(handle: *mut CTimsDataHandle) -> i32 {
+    assert!(!handle.is_null());
+    let handle = unsafe { &mut *handle };
+    handle.inner.get_frame_count()
+}
 
 #[no_mangle]
 pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
     unsafe {
         let _ = Box::from_raw(handle);
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tims_data_handle_get_frame(handle: &TimsDataHandle, frame_id: i32) -> CTimsFrame {
+    let frame = handle.get_frame(frame_id as u32).unwrap(); // Ensure proper error handling if get_frame can fail
+    convert_to_ctims_frame(frame)
 }

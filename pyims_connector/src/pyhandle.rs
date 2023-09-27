@@ -29,7 +29,7 @@ impl PyTimsDataHandle {
     }
     #[getter]
     pub fn frame_count(&self) -> i32 {
-        self.inner.get_frame_count() as i32
+        self.inner.get_frame_count()
     }
 
     pub fn get_tims_frame(&self, frame_id: u32) -> PyResult<PyTimsFrame> {
