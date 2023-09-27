@@ -1,40 +1,26 @@
-"""
-# module RustCAPI
+module RustCAPI
 
-- Julia version:
-- Author: davidteschner
-- Date: 2023-09-27
-
-# Examples
-
-```jldoctest
-julia>
-```
-"""
-module RustcApi
-
-export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsFrame_get_bruker_binary_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
-
+using IMSJL.Data
 
 struct CTimsFrame
-frame_id::Int32
-ms_type::Int32
-retention_time::Float64
+    frame_id::Int32
+    ms_type::Int32
+    retention_time::Float64
 
-scan::Ptr{Int32}
-scan_size::UInt64
+    scan::Ptr{Int32}
+    scan_size::UInt64
 
-inv_mobility::Ptr{Float64}
-inv_mobility_size::UInt64
+    inv_mobility::Ptr{Float64}
+    inv_mobility_size::UInt64
 
-tof::Ptr{Int32}
-tof_size::UInt64
+    tof::Ptr{Int32}
+    tof_size::UInt64
 
-mz::Ptr{Float64}
-mz_size::UInt64
+    mz::Ptr{Float64}
+    mz_size::UInt64
 
-intensity::Ptr{Float64}
-intensity_size::UInt64
+    intensity::Ptr{Float64}
+    intensity_size::UInt64
 end
 
 const lib = "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
@@ -61,7 +47,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     TimsFrame(
         ctims_frame.frame_id,
-        ctims_frame.ms_type,  # Note that I've changed ms_type_numeric to ms_type
+        ctims_frame.ms_type,
         ctims_frame.retention_time,
         julia_scan,
         julia_inv_mobility,
@@ -70,5 +56,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
         julia_intensity
     )
 end
+
+export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_get_bruker_binary_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
 
 end

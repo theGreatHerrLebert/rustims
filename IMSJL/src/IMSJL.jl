@@ -1,9 +1,9 @@
 module IMSJL
 
-include("RustCAPI.jl")
-include("JuliaDataHandle.jl")
 include("Data.jl")
+include("RustCAPI.jl")
+include("DataHandle.jl")
 
-export JuliaDataHandle.TimsDataHandle, JuliaDataHandle.get_tims_frame, Data.TimsFrame
+export Data, RustCAPI, DataHandle
 
-end # module IMSJL
+end
