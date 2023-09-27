@@ -4,6 +4,6 @@ include("Data.jl")
 include("RustCAPI.jl")
 include("JuliaDataHandle.jl")
 
-export TimsDataHandle, get_tims_frame, TimsFrame
+export JuliaDataHandle.TimsDataHandle, JuliaDataHandle.get_tims_frame, Data.TimsFrame
 
 end
