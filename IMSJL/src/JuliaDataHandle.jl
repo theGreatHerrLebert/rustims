@@ -19,7 +19,7 @@ include("Data.jl")
 struct TimsDataHandle
     data_path::String
     bruker_binary_path::String
-    handle::Ptr{Void}  # or appropriate type for the handle
+    handle::Ptr{Cvoid}  # or appropriate type for the handle
 
     # Constructor that only requires the data_path
     function TimsDataHandle(data_path::String)
