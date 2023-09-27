@@ -3,8 +3,6 @@ module JuliaDataHandle
 include("RustCAPI.jl")
 include("Data.jl")
 
-export TimsDataHandle, get_tims_frame
-
 struct TimsDataHandle
     data_path::String
     bruker_binary_path::String
@@ -36,5 +34,7 @@ function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::TimsFrame
     ctims_frame = RustCAPI.TimsDataHandle_get_frame(handle.handle, Int32(frame_id))
     return RustCAPI.ctims_frame_to_julia_tims_frame(ctims_frame)
 end
+
+export TimsDataHandle, get_tims_frame
 
 end

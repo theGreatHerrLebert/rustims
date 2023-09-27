@@ -1,7 +1,5 @@
 module RustCAPI
 
-export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsFrame_get_bruker_binary_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
-
 struct CTimsFrame
     frame_id::Int32
     ms_type::Int32
@@ -47,7 +45,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     TimsFrame(
         ctims_frame.frame_id,
-        ctims_frame.ms_type,  # Note that I've changed ms_type_numeric to ms_type
+        ctims_frame.ms_type,
         ctims_frame.retention_time,
         julia_scan,
         julia_inv_mobility,
@@ -56,5 +54,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
         julia_intensity
     )
 end
+
+export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsFrame_get_bruker_binary_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
 
 end
