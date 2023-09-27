@@ -36,6 +36,7 @@ class TimsDataHandle(ABC):
         assert appropriate_found is True, ("No appropriate bruker binary could be found, please check if your "
                                            "operating system is supported by open-tims-bruker-bridge.")
 
+    @property
     def acquisition_mode(self) -> str:
         """Get the acquisition mode.
 
@@ -44,6 +45,7 @@ class TimsDataHandle(ABC):
         """
         return self.__handle.get_acquisition_mode_as_string()
 
+    @property
     def acquisition_mode_numerical(self) -> int:
         """Get the acquisition mode as a numerical value.
 
@@ -51,6 +53,15 @@ class TimsDataHandle(ABC):
             int: Acquisition mode as a numerical value.
         """
         return self.__handle.get_acquisition_mode()
+
+    @property
+    def frame_count(self) -> int:
+        """Get the number of frames.
+
+        Returns:
+            int: Number of frames.
+        """
+        return self.__handle.frame_count
 
     def get_tims_frame(self, frame_id: int) -> TimsFrame:
         """Get a TimsFrame.
@@ -78,7 +89,7 @@ class TimsDataHandle(ABC):
         return self
 
     def __next__(self):
-        if self.__current_index < self.__handle.frame_count:
+        if self.__current_index < self.frame_count:
             frame_ptr = self.__handle.get_tims_frame(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
