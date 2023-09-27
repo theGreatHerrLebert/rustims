@@ -13,8 +13,6 @@ julia>
 """
 module RustcApi
 
-using .Data
-
 export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsFrame_get_bruker_binary_path, TimsDataHandle_destroy, TimsDataHandle_get_frame_count, TimsDataHandle_get_frame, ctims_frame_to_julia_tims_frame
 
 

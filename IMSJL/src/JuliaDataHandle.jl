@@ -14,6 +14,7 @@ julia>
 module JuliaDataHandle
 
 using .RustCAPI
+using .Data
 
 struct TimsDataHandle
 
