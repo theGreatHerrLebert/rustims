@@ -33,13 +33,16 @@ pub extern "C" fn tims_data_handle_get_data_path(handle: *mut CTimsDataHandle) -
     to_c_string(handle.inner.data_path.clone())
 }
 
-//... Continue similarly for other methods ...
-
-// Important: You'll also want to create a destructor function for your structure to avoid memory leaks.
-
 #[no_mangle]
 pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
     unsafe {
         let _ = Box::from_raw(handle);
     }
+}
+
+#[no_mangle]
+pub extern "C" fn tims_data_handle_frame_count(handle: *mut CTimsDataHandle) -> i32 {
+    assert!(!handle.is_null());
+    let handle = unsafe { &mut *handle };
+    handle.inner.get_frame_count()
 }
