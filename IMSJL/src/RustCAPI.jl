@@ -1,5 +1,5 @@
 """
-# module RustcApi
+# module RustCAPI
 
 - Julia version:
 - Author: davidteschner
