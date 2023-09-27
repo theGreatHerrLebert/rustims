@@ -60,7 +60,7 @@ function TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFra
     ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
 end
 
-function convert_ctims_frame_to_julia(ctims_frame::CTimsFrame)::TimsFrame
+function convert_ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     julia_scan = unsafe_wrap(Array, ctims_frame.scan, ctims_frame.scan_size, own=true)
     julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, ctims_frame.inv_mobility_size, own=true)
