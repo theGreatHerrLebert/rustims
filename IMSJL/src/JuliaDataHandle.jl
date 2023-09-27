@@ -1,6 +1,6 @@
 module JuliaDataHandle
 
-using .RustCAPI, .Data
+using .RustCAPI
 
 struct TimsDataHandle
     data_path::String
