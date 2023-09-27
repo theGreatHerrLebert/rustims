@@ -4,13 +4,23 @@ export TimsDataHandle_new, TimsDataHandle_get_data_path, TimsDataHandle_destroy,
 
 struct CTimsFrame
     frame_id::Int32
-    ms_type_numeric::Int32
+    ms_type::Int32
     retention_time::Float64
+
     scan::Ptr{Int32}
+    scan_size::UInt64
+
     inv_mobility::Ptr{Float64}
+    inv_mobility_size::UInt64
+
     tof::Ptr{Int32}
+    tof_size::UInt64
+
     mz::Ptr{Float64}
+    mz_size::UInt64
+
     intensity::Ptr{Float64}
+    intensity_size::UInt64
 end
 
 struct TimsFrame
@@ -52,16 +62,15 @@ end
 
 function convert_ctims_frame_to_julia(ctims_frame::CTimsFrame)::TimsFrame
 
-    # Assuming you also have lengths for each array in CTimsFrame or a predefined length
-    julia_scan = unsafe_wrap(Array, ctims_frame.scan, length_of_scan, own=true)
-    julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, length_of_inv_mobility, own=true)
-    julia_tof = unsafe_wrap(Array, ctims_frame.tof, length_of_tof, own=true)
-    julia_mz = unsafe_wrap(Array, ctims_frame.mz, length_of_mz, own=true)
-    julia_intensity = unsafe_wrap(Array, ctims_frame.intensity, length_of_intensity, own=true)
+    julia_scan = unsafe_wrap(Array, ctims_frame.scan, ctims_frame.scan_size, own=true)
+    julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, ctims_frame.inv_mobility_size, own=true)
+    julia_tof = unsafe_wrap(Array, ctims_frame.tof, ctims_frame.tof_size, own=true)
+    julia_mz = unsafe_wrap(Array, ctims_frame.mz, ctims_frame.mz_size, own=true)
+    julia_intensity = unsafe_wrap(Array, ctims_frame.intensity, ctims_frame.intensity_size, own=true)
 
     TimsFrame(
         ctims_frame.frame_id,
-        ctims_frame.ms_type_numeric,
+        ctims_frame.ms_type,  # Note that I've changed ms_type_numeric to ms_type
         ctims_frame.retention_time,
         julia_scan,
         julia_inv_mobility,
