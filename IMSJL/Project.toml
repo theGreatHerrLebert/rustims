@@ -4,5 +4,5 @@ authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 version = "0.1.0"
 
 [dependencies]
-DataFrames = "1.6.1"
-SQLite = "1.6.0"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+SQLite = "0f11b89e-13b8-5eaf-a93e-5e597f1fa9a1"
