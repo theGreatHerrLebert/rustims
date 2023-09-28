@@ -37,6 +37,18 @@ TimsDataHandle_destroy(handle::Ptr{Cvoid}) = ccall((:tims_data_handle_destroy, l
 
 TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFrame = ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
 
+function ms_type_from_int32(ms_type::Int32)::Data.MsType
+    if ms_type == 0
+        return Data.MsType.PRECURSOR
+    elseif ms_type == 8
+        return Data.MsType.FRAGMENT_DDA
+    elseif ms_type == 9
+        return Data.MsType.FRAGMENT_DIA
+    else
+        return Data.MsType.UNKNOWN
+    end
+end
+
 function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     julia_scan = unsafe_wrap(Array, ctims_frame.scan, ctims_frame.scan_size, own=true)
@@ -47,7 +59,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     TimsFrame(
         ctims_frame.frame_id,
-        MsType(ctims_frame.ms_type),
+        ms_type_from_int32(ctims_frame.ms_type),
         ctims_frame.retention_time,
         julia_scan,
         julia_inv_mobility,
