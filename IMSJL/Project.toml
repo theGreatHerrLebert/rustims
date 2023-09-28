@@ -2,3 +2,8 @@ name = "IMSJL"
 uuid = "bb552929-412c-4b18-96b7-20e9e95a9ee1"
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 version = "0.1.0"
+
+[deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+FilePathsBase = "48062228-2e41-5def-b9a4-89aafe57970f"
+SQLite = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
