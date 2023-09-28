@@ -7,7 +7,7 @@ struct TimsDataHandle
     data_path::String
     bruker_binary_path::String
     frame_meta_data::DataFrame
-    num_frames:Number
+    num_frames::Int
     handle::Ptr{Cvoid}  # or appropriate type for the handle
 
     # Constructor that only requires the data_path
