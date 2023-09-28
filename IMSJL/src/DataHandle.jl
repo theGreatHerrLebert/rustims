@@ -26,7 +26,7 @@ struct TimsDataHandle
         num_frames = size(frame_meta_data, 1)
 
         # Construct the instance
-        new(data_path, bruker_binary_path, frame_meta_data, handle)
+        new(data_path, bruker_binary_path, frame_meta_data, num_frames, handle)
     end
 end
 
