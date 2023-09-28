@@ -2,3 +2,7 @@ name = "IMSJL"
 uuid = "bb552929-412c-4b18-96b7-20e9e95a9ee1"
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 version = "0.1.0"
+
+[dependencies]
+DataFrames = "1.6.1"
+SQLite = "1.6.0"
