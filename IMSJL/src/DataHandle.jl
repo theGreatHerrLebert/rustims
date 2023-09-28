@@ -7,6 +7,7 @@ struct TimsDataHandle
     data_path::String
     bruker_binary_path::String
     frame_meta_data::DataFrame
+    num_frames:Number
     handle::Ptr{Cvoid}  # or appropriate type for the handle
 
     # Constructor that only requires the data_path
@@ -20,6 +21,9 @@ struct TimsDataHandle
 
         # Acquire the frame meta data
         frame_meta_data = get_frame_meta_data(data_path)
+
+        # Acquire the number of frames
+        num_frames = size(frame_meta_data, 1)
 
         # Construct the instance
         new(data_path, bruker_binary_path, frame_meta_data, handle)
