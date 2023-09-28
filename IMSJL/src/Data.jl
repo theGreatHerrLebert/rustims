@@ -20,6 +20,6 @@ function show(io::IO, frame::TimsFrame)
     print(io, "TimsFrame(frame_id=$(frame.frame_id), ms_type=$(frame.ms_type_numeric), num_peaks=$num_peaks)")
 end
 
-export TimsFrame
+export TimsFrame, MsType
 
 end
