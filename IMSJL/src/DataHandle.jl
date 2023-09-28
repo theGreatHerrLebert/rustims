@@ -1,6 +1,6 @@
 module DataHandle
 
-using DataFrames, FilePathsBase
+using DataFrames, FilePathsBase, SQLite
 using IMSJL.Data, IMSJL.RustCAPI
 
 struct TimsDataHandle
