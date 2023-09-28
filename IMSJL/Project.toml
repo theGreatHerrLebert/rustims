@@ -3,6 +3,7 @@ uuid = "bb552929-412c-4b18-96b7-20e9e95a9ee1"
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 version = "0.1.0"
 
-[dependencies]
+[deps]
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 SQLite = "0f11b89e-13b8-5eaf-a93e-5e597f1fa9a1"
+FilePathsBase = "48062228-0a7d-11e9-3f2f-0b112a9a8436"
