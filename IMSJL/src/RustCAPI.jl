@@ -37,7 +37,7 @@ TimsDataHandle_destroy(handle::Ptr{Cvoid}) = ccall((:tims_data_handle_destroy, l
 
 TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFrame = ccall((:tims_data_handle_get_frame, lib), CTimsFrame, (Ptr{Cvoid}, Int32), handle, frame_id)
 
-function ms_type_from_int32(ms_type::Int32)::Data.MsType
+function ms_type_from_int32(ms_type::Int32)::MsType
     if ms_type == 0
         return MsType.PRECURSOR
     elseif ms_type == 8
