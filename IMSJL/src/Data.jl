@@ -2,9 +2,11 @@ module Data
 
 import Base.show
 
+@enum MsType PRECURSOR=0 FRAGMENT_DDA=8 FRAGMENT_DIA=9 UNKNOWN=-1
+
 struct TimsFrame
     frame_id::Int32
-    ms_type_numeric::Int32
+    ms_type::MsType
     retention_time::Float64
     scan::Vector{Int32}
     inv_mobility::Vector{Float64}

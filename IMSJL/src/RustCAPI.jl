@@ -47,7 +47,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     TimsFrame(
         ctims_frame.frame_id,
-        ctims_frame.ms_type,
+        MsType(ctims_frame.ms_type),
         ctims_frame.retention_time,
         julia_scan,
         julia_inv_mobility,
