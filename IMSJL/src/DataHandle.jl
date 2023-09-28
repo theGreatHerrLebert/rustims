@@ -61,7 +61,7 @@ function iterate(td::TimsDataHandle, state)
     end
 
     # Return the current row and the next state (which is the next row index)
-    return get_tims_frame(td.handle, state), state + 1
+    return get_tims_frame(td, state), state + 1
 end
 
 # Define length method for convenience
