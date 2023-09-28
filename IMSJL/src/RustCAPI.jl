@@ -39,13 +39,13 @@ TimsDataHandle_get_frame(handle::Ptr{Cvoid}, frame_id::Int32)::CTimsFrame = ccal
 
 function ms_type_from_int32(ms_type::Int32)::Data.MsType
     if ms_type == 0
-        return Data.MsType.PRECURSOR
+        return MsType.PRECURSOR
     elseif ms_type == 8
-        return Data.MsType.FRAGMENT_DDA
+        return MsType.FRAGMENT_DDA
     elseif ms_type == 9
-        return Data.MsType.FRAGMENT_DIA
+        return MsType.FRAGMENT_DIA
     else
-        return Data.MsType.UNKNOWN
+        return MsType.UNKNOWN
     end
 end
 
