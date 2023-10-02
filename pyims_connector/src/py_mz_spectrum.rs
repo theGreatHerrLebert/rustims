@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
 use mscore::{MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum, MsType};
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]
 pub struct PyMsType {
@@ -49,17 +49,21 @@ impl PyMzSpectrum {
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
         self.inner.intensity.clone().into_pyarray(py).to_owned()
     }
-    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<Py<PyList>> {
+    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
         let spectra = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
 
-        let list: Py<PyList> = PyList::empty(py).into();
+        let mut indices: Vec<i32> = Vec::new();
+        let py_list: Py<PyList> = PyList::empty(py).into();
 
-        for (_index, spec) in spectra {
+        for (index, spec) in spectra {
+            indices.push(index);
             let py_spec = Py::new(py, PyMzSpectrum { inner: spec })?;
-            list.as_ref(py).append(py_spec)?;
+            py_list.as_ref(py).append(py_spec)?;
         }
 
-        Ok(list.into())
+        let numpy_indices = indices.into_pyarray(py);
+
+        Ok(PyTuple::new(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
     }
 }
 
