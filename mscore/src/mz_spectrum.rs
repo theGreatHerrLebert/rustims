@@ -202,7 +202,7 @@ impl MzSpectrum {
             for (i, &mmz) in self.mz.iter().enumerate() {
                 let intensity = self.intensity[i];
 
-                let tmp_key = -(mmz + window_length / 2.0 / window_length).floor() as i32;
+                let tmp_key = -((mmz + window_length / 2.0) / window_length).floor() as i32;
 
                 splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.push(mmz);
                 splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.push(intensity);
