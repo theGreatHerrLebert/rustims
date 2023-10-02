@@ -189,7 +189,7 @@ class TimsSpectrum:
 
     @property
     def mz_spectrum(self) -> MzSpectrum:
-        """Spectrum.
+        """Get the MzSpectrum.
 
         Returns:
             MzSpectrum: Spectrum.
