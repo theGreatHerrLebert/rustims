@@ -1,4 +1,5 @@
 import numpy as np
+from typing import List
 from numpy.typing import NDArray
 
 import pyims_connector as pims
@@ -49,6 +50,23 @@ class MzSpectrum:
         instance = cls.__new__(cls)
         instance.__spec_ptr = spec
         return instance
+
+    def __repr__(self):
+        return f"MzSpectrum(num_peaks={len(self.mz)})"
+
+    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1) -> List['MzSpectrum']:
+        """Convert the spectrum to a list of windows.
+
+        Args:
+            window_length (float, optional): Window length. Defaults to 10.
+            overlapping (bool, optional): Whether the windows should overlap. Defaults to True.
+            min_num_peaks (int, optional): Minimum number of peaks in a window. Defaults to 5.
+            min_intensity (float, optional): Minimum intensity of a peak in a window. Defaults to 1.
+
+        Returns:
+            List[MzSpectrum]: List of windows.
+        """
+        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__spec_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)]
 
     def filter_ranged(self, mz_min: float, mz_max: float, intensity_min: float = 0.0) -> 'MzSpectrum':
         """Filter the spectrum for a given m/z range and intensity range.
