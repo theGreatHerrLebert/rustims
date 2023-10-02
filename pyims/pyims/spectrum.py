@@ -187,5 +187,14 @@ class TimsSpectrum:
         """
         return self.__spec_ptr.frame_id
 
+    @property
+    def mz_spectrum(self) -> MzSpectrum:
+        """Spectrum.
+
+        Returns:
+            MzSpectrum: Spectrum.
+        """
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.mz_spectrum)
+
     def __repr__(self):
         return f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, scan={self.scan}, inv_mobility={np.round(self.inv_mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"

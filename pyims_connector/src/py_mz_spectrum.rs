@@ -206,4 +206,14 @@ impl PyTimsSpectrum {
 
     #[getter]
     pub fn ms_type_numeric(&self) -> i32 { self.inner.ms_type.ms_type_numeric() }
+    
+    #[getter]
+    pub fn indexed_mz_spectrum(&self) -> PyIndexedMzSpectrum {
+        PyIndexedMzSpectrum { inner: self.inner.spectrum.clone() }
+    }
+
+    #[getter]
+    pub fn mz_spectrum(&self) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.spectrum.mz_spectrum.clone() }
+    }
 }
