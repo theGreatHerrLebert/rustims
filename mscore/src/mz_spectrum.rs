@@ -184,7 +184,7 @@ impl MzSpectrum {
     /// assert!(windowed_spectrum.contains_key(&100));
     /// assert!(windowed_spectrum.contains_key(&102));
     /// ```
-    pub fn windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, MzSpectrum> {
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, MzSpectrum> {
         let mut splits = BTreeMap::new();
 
         for (i, &mz) in self.mz.iter().enumerate() {

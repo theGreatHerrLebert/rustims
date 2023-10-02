@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
 use mscore::{MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum, MsType};
+use pyo3::types::PyList;
 
 #[pyclass]
 pub struct PyMsType {
@@ -47,6 +48,18 @@ impl PyMzSpectrum {
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
         self.inner.intensity.clone().into_pyarray(py).to_owned()
+    }
+    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<Py<PyList>> {
+        let spectra = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
+
+        let list: Py<PyList> = PyList::empty(py).into();
+
+        for (_index, spec) in spectra {
+            let py_spec = Py::new(py, PyMzSpectrum { inner: spec })?;
+            list.as_ref(py).append(py_spec)?;
+        }
+
+        Ok(list.into())
     }
 }
 
