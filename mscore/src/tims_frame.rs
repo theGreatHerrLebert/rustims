@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::{Formatter};
 use itertools;
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
 
@@ -193,6 +194,34 @@ impl TimsFrame {
         }
 
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, inv_mobility_vec, tof_vec, mz_vec, intensity_vec)
+    }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
+
+        let spectra = self.to_tims_spectra();
+
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
+
+        // Use the thread pool
+        let windows = pool.install(|| {
+
+            let windows: Vec<_> = spectra.par_iter()
+                .map(|spectrum| spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
+                .collect();
+
+            windows
+
+        });
+
+        let mut result: Vec<MzSpectrum> = Vec::new();
+
+        for window in windows {
+            for (_, spectrum) in window {
+                result.push(spectrum);
+            }
+        }
+
+        result
     }
 }
 

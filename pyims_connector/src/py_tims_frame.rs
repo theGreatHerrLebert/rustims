@@ -3,7 +3,7 @@ use numpy::{PyArray1, IntoPyArray};
 use mscore::{TimsFrame, ImsFrame, MsType};
 use pyo3::types::PyList;
 
-use crate::py_mz_spectrum::{PyTimsSpectrum};
+use crate::py_mz_spectrum::{PyMzSpectrum, PyTimsSpectrum};
 
 #[pyclass]
 pub struct PyTimsFrame {
@@ -81,6 +81,19 @@ impl PyTimsFrame {
         for spec in spectra {
             let py_tims_spectrum = Py::new(py, PyTimsSpectrum { inner: spec })?;
             list.as_ref(py).append(py_tims_spectrum)?;
+        }
+
+        Ok(list.into())
+    }
+
+    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> PyResult<Py<PyList>> {
+
+        let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity, num_threads);
+        let list: Py<PyList> = PyList::empty(py).into();
+
+        for window in windows {
+            let py_mz_spectrum = Py::new(py, PyMzSpectrum { inner: window })?;
+            list.as_ref(py).append(py_mz_spectrum)?;
         }
 
         Ok(list.into())
