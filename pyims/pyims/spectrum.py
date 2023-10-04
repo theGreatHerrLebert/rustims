@@ -83,25 +83,37 @@ class MzSpectrum:
         """
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min))
 
+    def vectorized(self, resolution: int = 2) -> 'MzSpectrumVectorized':
+        """Convert the spectrum to a vectorized spectrum.
+
+        Args:
+            resolution (int, optional): Resolution. Defaults to 2.
+
+        Returns:
+            MzSpectrumVectorized: Vectorized spectrum.
+        """
+        return MzSpectrumVectorized.from_py_mz_spectrum_vectorized(self.__spec_ptr.vectorized(resolution))
+
     def __repr__(self):
         return f"MzSpectrum(num_peaks={len(self.mz)})"
 
+
 class MzSpectrumVectorized:
-    def __init__(self, indices: NDArray[np.int32], intensity: NDArray[np.float64]):
+    def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):
         """MzSpectrum class.
 
         Args:
             mz (NDArray[np.float64]): m/z.
-            intensity (NDArray[np.float64]): Intensity.
+            values (NDArray[np.float64]): Intensity.
 
         Raises:
             AssertionError: If the length of the mz and intensity arrays are not equal.
         """
-        assert len(indices) == len(intensity), "The length of the mz and intensity arrays must be equal."
-        self.__spec_ptr = pims.PyMzSpectrumVectorized(indices, intensity)
+        assert len(indices) == len(values), "The length of the mz and intensity arrays must be equal."
+        self.__spec_ptr = pims.PyMzSpectrumVectorized(indices, values, resolution)
 
     @classmethod
-    def from_py_mz_spectrum(cls, spec: pims.PyMzSpectrumVectorized):
+    def from_py_mz_spectrum_vectorized(cls, spec: pims.PyMzSpectrumVectorized):
         """Create a MzSpectrum from a PyMzSpectrum.
 
         Args:
@@ -113,7 +125,7 @@ class MzSpectrumVectorized:
         instance = cls.__new__(cls)
         instance.__spec_ptr = spec
         return instance
-    
+
     @property
     def resolution(self) -> float:
         """Resolution.
