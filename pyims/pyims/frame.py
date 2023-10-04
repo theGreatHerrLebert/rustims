@@ -1,3 +1,5 @@
+import pandas as pd
+
 from typing import List
 from numpy.typing import NDArray
 
@@ -190,6 +192,16 @@ class TimsFrame:
             NDArray[np.float64]: Intensity.
         """
         return self.__frame_ptr.intensity
+
+    @property
+    def data(self) -> pd.DataFrame:
+        """ Data as a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: Data.
+        """
+
+        return pd.DataFrame({'scan': self.scan, 'mobility': self.mobility, 'tof': self.tof, 'mz': self.mz, 'intensity': self.intensity})
 
     def filter_ranged(self, mz_min: float, mz_max: float,
                       scan_min: int = 0,
