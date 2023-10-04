@@ -65,6 +65,14 @@ impl PyMzSpectrum {
 
         Ok(PyTuple::new(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
     }
+
+    pub fn vectorized(&self, _py: Python, resolution: i32) -> PyResult<PyMzSpectrumVectorized> {
+        let vectorized = self.inner.vectorized(resolution);
+        let py_vectorized = PyMzSpectrumVectorized {
+            inner: vectorized,
+        };
+        Ok(py_vectorized)
+    }
 }
 
 #[pyclass]
