@@ -109,9 +109,9 @@ impl MzSpectrum {
     /// assert_eq!(binned_spectrum_2.mz, vec![100.12, 100.13]);
     /// assert_eq!(binned_spectrum_2.intensity, vec![30.0, 30.0]);
     /// ```
-    pub fn to_resolution(&self, resolution: u32) -> MzSpectrum {
+    pub fn to_resolution(&self, resolution: i32) -> MzSpectrum {
         let mut binned: BTreeMap<i64, f64> = BTreeMap::new();
-        let factor = 10f64.powi(resolution as i32);
+        let factor = 10f64.powi(resolution);
 
         for (mz, inten) in self.mz.iter().zip(self.intensity.iter()) {
             
@@ -120,7 +120,7 @@ impl MzSpectrum {
             *entry += *inten;
         }
 
-        let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution as i32)).collect();
+        let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution)).collect();
         let intensity: Vec<f64> = binned.values().cloned().collect();
 
         MzSpectrum { mz, intensity }
@@ -142,7 +142,7 @@ impl MzSpectrum {
     /// Convert the `MzSpectrum` to a `MzVector` using the given resolution for binning.
     ///
     /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
-    pub fn vectorized(&self, resolution: u32) -> MzVector {
+    pub fn vectorized(&self, resolution: i32) -> MzVector {
         let binned_spectrum = self.to_resolution(resolution);
 
         // Translate the m/z values into integer indices
@@ -215,8 +215,8 @@ impl MzSpectrum {
         }
 
         splits.retain(|_, spectrum| {
-            spectrum.mz.len() >= min_peaks && spectrum.intensity.iter().cloned().max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
-
+            spectrum.mz.len() >= min_peaks && spectrum.intensity.iter().cloned().max_by(
+                |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
         });
 
         splits
@@ -461,7 +461,6 @@ impl MzVector {
                 dense[index as usize] = intensity;
             }
         }
-
         dense
     }
 }

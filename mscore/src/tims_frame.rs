@@ -80,6 +80,14 @@ impl fmt::Display for ImsFrame {
 }
 
 #[derive(Clone)]
+pub struct ImsFrameVectorized {
+    pub retention_time: f64,
+    pub inv_mobility: Vec<f64>,
+    pub indices: Vec<i32>,
+    pub values: Vec<f64>,
+}
+
+#[derive(Clone)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,

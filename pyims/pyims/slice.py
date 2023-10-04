@@ -70,7 +70,7 @@ class TimsSlice:
             List[TimsFrame]: Frames.
         """
         return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
-    
+
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1, num_threads: int = 1) -> List[MzSpectrum]:
         """Convert the slice to a list of windows.
 
