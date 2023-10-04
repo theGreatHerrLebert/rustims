@@ -26,6 +26,21 @@ impl TimsSlice {
 
         TimsSlice { frames: result }
     }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
+        // Create a thread pool
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
+
+        // Use the thread pool
+        let windows = pool.install(|| {
+            let windows: Vec<_> = self.frames.par_iter()
+                .flat_map( | frame | frame.to_windows(window_length, overlapping, min_peaks, min_intensity))
+                .collect();
+            windows
+        });
+
+        windows
+    }
 }
 
 #[derive(Clone)]
@@ -196,22 +211,13 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, inv_mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {
 
         let spectra = self.to_tims_spectra();
 
-        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
-
-        // Use the thread pool
-        let windows = pool.install(|| {
-
-            let windows: Vec<_> = spectra.par_iter()
-                .map(|spectrum| spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
-                .collect();
-
-            windows
-
-        });
+        let windows: Vec<_> = spectra.iter().map(|spectrum|
+            spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
+            .collect();
 
         let mut result: Vec<MzSpectrum> = Vec::new();
 

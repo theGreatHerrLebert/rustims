@@ -86,9 +86,9 @@ impl PyTimsFrame {
         Ok(list.into())
     }
 
-    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> PyResult<Py<PyList>> {
+    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<Py<PyList>> {
 
-        let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity, num_threads);
+        let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
         let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
