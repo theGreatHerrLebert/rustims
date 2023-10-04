@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use numpy::{PyArray1};
 
 use rustdf::data::handle::{TimsDataHandle};
-use crate::py_tims_frame::{PyTimsFrame, PyImsFrame};
+use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 
 #[pyclass]
@@ -35,11 +35,6 @@ impl PyTimsDataHandle {
     pub fn get_tims_frame(&self, frame_id: u32) -> PyResult<PyTimsFrame> {
         let frame = self.inner.get_frame(frame_id).unwrap();
         Ok(PyTimsFrame { inner: frame })
-    }
-
-    pub fn get_ims_frame(&self, frame_id: u32) -> PyResult<PyImsFrame> {
-        let frame = self.inner.get_frame(frame_id).unwrap();
-        Ok(PyImsFrame { inner: frame.get_ims_frame() })
     }
 
     pub fn get_acquisition_mode(&self) -> i32 {

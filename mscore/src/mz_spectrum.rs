@@ -146,11 +146,11 @@ impl MzSpectrum {
         let binned_spectrum = self.to_resolution(resolution);
 
         // Translate the m/z values into integer indices
-        let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution as i32)).round() as i32).collect();
+        let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
 
         MzVector {
             indices,
-            intensity: binned_spectrum.intensity,
+            values: binned_spectrum.intensity,
         }
     }
     /// Splits the spectrum into a collection of windows based on m/z values.
@@ -329,10 +329,10 @@ impl IndexedMzSpectrum {
     /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
     /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
-    pub fn to_resolution(&self, resolution: u32) -> IndexedMzSpectrum {
+    pub fn to_resolution(&self, resolution: i32) -> IndexedMzSpectrum {
 
         let mut mz_bins: BTreeMap<i64, (f64, Vec<i64>)> = BTreeMap::new();
-        let factor = 10f64.powi(resolution as i32);
+        let factor = 10f64.powi(resolution);
 
         for ((mz, intensity), tof_val) in self.mz_spectrum.mz.iter().zip(self.mz_spectrum.intensity.iter()).zip(&self.index) {
             let key = (mz * factor).round() as i64;
@@ -351,6 +351,43 @@ impl IndexedMzSpectrum {
 
         IndexedMzSpectrum {index: tof, mz_spectrum: MzSpectrum {mz, intensity } }
     }
+
+    /// Convert the `IndexedMzSpectrum` to a `IndexedMzVector` using the given resolution for binning.
+    ///
+    /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
+    ///
+    /// # Arguments
+    ///
+    /// * `resolution` - The desired m/z resolution for binning.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::IndexedMzSpectrum;
+    ///
+    /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
+    /// let binned_spectrum = spectrum.to_resolution(1);
+    ///
+    /// assert_eq!(binned_spectrum.mz_spectrum.mz, vec![100.4]);
+    /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
+    /// assert_eq!(binned_spectrum.index, vec![1500]);
+    /// ```
+    pub fn vectorized(&self, resolution: i32) -> IndexedMzVector {
+
+        let binned_spectrum = self.to_resolution(resolution);
+
+        // Translate the m/z values into integer indices
+        let indices: Vec<i32> = binned_spectrum.mz_spectrum.mz.iter()
+            .map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
+
+        IndexedMzVector {
+            index: binned_spectrum.index,
+            mz_vector: MzVector {
+                indices,
+                values: binned_spectrum.mz_spectrum.intensity,
+            }
+        }
+    }
 }
 
 impl Display for IndexedMzSpectrum {
@@ -361,42 +398,6 @@ impl Display for IndexedMzSpectrum {
             .unwrap();
 
         write!(f, "IndexedMzSpectrum(data points: {}, max  by intensity:({}, {}))", self.mz_spectrum.mz.len(), format!("{:.3}", mz), i)
-    }
-}
-
-
-#[derive(Clone)]
-pub struct ImsSpectrum {
-    pub retention_time: f64,
-    pub mobility: f64,
-    pub spectrum: MzSpectrum,
-}
-
-impl ImsSpectrum {
-    ///
-    /// Creates a new `ImsSpectrum` instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `retention_time` - The retention time in seconds.
-    /// * `mobility` - The inverse ion mobility.
-    /// * `spectrum` - A `MzSpectrum` instance.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mscore::{ImsSpectrum, MzSpectrum};
-    ///
-    /// let spectrum = ImsSpectrum::new(100.0, 0.1, MzSpectrum::new(vec![100.5, 200.5], vec![50.0, 60.0]));
-    /// ```
-    pub fn new(retention_time: f64, mobility: f64, spectrum: MzSpectrum) -> Self {
-        ImsSpectrum { retention_time, mobility, spectrum }
-    }
-}
-
-impl Display for ImsSpectrum {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "ImsSpectrum(rt: {}, mobility: {}, spectrum: {})", self.retention_time, self.mobility, self.spectrum)
     }
 }
 
@@ -431,6 +432,16 @@ impl TimsSpectrum {
     pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
         TimsSpectrum { frame_id, scan: scan_id, retention_time, mobility: mobility, ms_type, spectrum }
     }
+
+    pub fn to_resolution(&self, resolution: i32) -> TimsSpectrum {
+        let spectrum = self.spectrum.to_resolution(resolution);
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), spectrum }
+    }
+
+    pub fn vectorized(&self, resolution: i32) -> TimsVector {
+        let vector = self.spectrum.vectorized(resolution);
+        TimsVector { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), vector }
+    }
 }
 
 impl Display for TimsSpectrum {
@@ -439,9 +450,10 @@ impl Display for TimsSpectrum {
     }
 }
 
+#[derive(Clone)]
 pub struct MzVector {
     pub indices: Vec<i32>,
-    pub intensity: Vec<f64>,
+    pub values: Vec<f64>,
 }
 
 impl MzVector {
@@ -456,7 +468,7 @@ impl MzVector {
     pub fn to_dense(&self, max_index: usize) -> DVector<f64> {
         let mut dense = DVector::zeros(max_index + 1);
 
-        for (&index, &intensity) in self.indices.iter().zip(self.intensity.iter()) {
+        for (&index, &intensity) in self.indices.iter().zip(self.values.iter()) {
             if (index as usize) <= max_index {
                 dense[index as usize] = intensity;
             }
@@ -464,5 +476,23 @@ impl MzVector {
         dense
     }
 }
+
+#[derive(Clone)]
+pub struct IndexedMzVector {
+    pub index: Vec<i32>,
+    pub mz_vector: MzVector,
+}
+
+#[derive(Clone)]
+pub struct TimsVector {
+    pub frame_id: i32,
+    pub scan: i32,
+    pub retention_time: f64,
+    pub mobility: f64,
+    pub ms_type: MsType,
+    pub vector: IndexedMzVector,
+}
+
+
 
 

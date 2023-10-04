@@ -5,7 +5,7 @@ use itertools;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
-use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum};
+use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, TimsSpectrum};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -156,8 +156,7 @@ impl TimsFrame {
             &self.ims_frame.mobility,
             &self.tof,
             &self.ims_frame.mz,
-            &self.ims_frame.intensity,
-        )) {
+            &self.ims_frame.intensity)) {
             let entry = spectra.entry(*scan).or_insert_with(|| (*mobility, Vec::new(), Vec::new(), Vec::new()));
             entry.1.push(*tof);
             entry.2.push(*mz);
@@ -173,29 +172,6 @@ impl TimsFrame {
         }
 
         tims_spectra
-    }
-
-    ///
-    /// Convert a given TimsFrame to a vector of ImsSpectrum.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mscore::{TimsSpectrum, TimsFrame, MsType};
-    ///
-    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
-    /// let ims_spectra = frame.to_ims_spectra();
-    /// ```
-    pub fn to_ims_spectra(&self) -> Vec<ImsSpectrum> {
-        let tims_spectra = self.to_tims_spectra();
-        let mut ims_spectra: Vec<ImsSpectrum> = Vec::new();
-
-        for spec in tims_spectra {
-            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.mobility, MzSpectrum::new(spec.spectrum.mz_spectrum.mz, spec.spectrum.mz_spectrum.intensity));
-            ims_spectra.push(ims_spec);
-        }
-
-        ims_spectra
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
@@ -296,4 +272,13 @@ impl fmt::Display for TimsFrame {
         write!(f, "TimsFrame(id: {}, type: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))",
                self.frame_id, self.ms_type, self.ims_frame.retention_time, self.scan.len(), format!("{:.3}", mz), i)
     }
+}
+
+#[derive(Clone)]
+pub struct TimsFrameVectorized {
+    pub frame_id: i32,
+    pub ms_type: MsType,
+    pub scan: Vec<i32>,
+    pub tof: Vec<i32>,
+    pub ims_frame: ImsFrameVectorized,
 }

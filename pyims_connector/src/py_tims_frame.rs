@@ -73,7 +73,7 @@ impl PyTimsFrame {
     pub fn retention_time(&self) -> f64 {
         self.inner.ims_frame.retention_time
     }
-    
+
     pub fn to_resolution(&self, resolution: i32) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.to_resolution(resolution) }
     }
@@ -103,47 +103,7 @@ impl PyTimsFrame {
         Ok(list.into())
     }
 
-    pub fn get_ims_frame(&self) -> PyImsFrame {
-        PyImsFrame { inner: self.inner.ims_frame.clone() }
-    }
-
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> PyTimsFrame {
         return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min) }
-    }
-}
-
-#[pyclass]
-pub struct PyImsFrame {
-    pub inner: ImsFrame,
-}
-
-#[pymethods]
-impl PyImsFrame {
-    #[new]
-    pub unsafe fn new(retention_time: f64, mobility: &PyArray1<f64>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
-        Ok(PyImsFrame {
-            inner: ImsFrame {
-                retention_time,
-                mobility: mobility.as_slice()?.to_vec(),
-                mz: mz.as_slice()?.to_vec(),
-                intensity: intensity.as_slice()?.to_vec(),
-            },
-        })
-    }
-    #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz.clone().into_pyarray(py).to_owned()
-    }
-    #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
-    }
-    #[getter]
-    pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mobility.clone().into_pyarray(py).to_owned()
-    }
-    #[getter]
-    pub fn retention_time(&self) -> f64 {
-        self.inner.retention_time
     }
 }

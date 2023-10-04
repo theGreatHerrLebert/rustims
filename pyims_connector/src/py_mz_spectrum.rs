@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{MzSpectrum, IndexedMzSpectrum, ImsSpectrum, TimsSpectrum, MsType};
+use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType};
 use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]
@@ -97,48 +97,6 @@ impl PyIndexedMzSpectrum {
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
         self.inner.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
-    }
-}
-
-#[pyclass]
-pub struct PyImsSpectrum {
-    pub inner: ImsSpectrum,
-}
-
-#[pymethods]
-impl PyImsSpectrum {
-    #[new]
-    pub unsafe fn new(retention_time: f64, mobility: f64, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
-        Ok(PyImsSpectrum {
-            inner: ImsSpectrum {
-                retention_time,
-                mobility: mobility,
-                spectrum: MzSpectrum {
-                    mz: mz.as_slice()?.to_vec(),
-                    intensity: intensity.as_slice()?.to_vec(),
-                },
-            },
-        })
-    }
-
-    #[getter]
-    pub fn retention_time(&self) -> f64 {
-        self.inner.retention_time
-    }
-
-    #[getter]
-    pub fn mobility(&self) -> f64 {
-        self.inner.mobility
-    }
-
-    #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz.clone().into_pyarray(py).to_owned()
-    }
-
-    #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.intensity.clone().into_pyarray(py).to_owned()
     }
 }
 
