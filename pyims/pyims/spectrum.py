@@ -88,7 +88,7 @@ class MzSpectrum:
 
 
 class TimsSpectrum:
-    def __init__(self, frame_id: int, scan: int, retention_time: float, inv_mobility: float, ms_type: int, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+    def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsSpectrum class.
 
         Args:
@@ -101,7 +101,7 @@ class TimsSpectrum:
         """
         assert len(index) == len(mz) == len(intensity), ("The length of the index, mz and intensity arrays must be "
                                                          "equal.")
-        self.__spec_ptr = pims.PyTimsSpectrum(frame_id, scan, retention_time, inv_mobility, ms_type, index, mz, intensity)
+        self.__spec_ptr = pims.PyTimsSpectrum(frame_id, scan, retention_time, mobility, ms_type, index, mz, intensity)
 
     @classmethod
     def from_py_tims_spectrum(cls, spec: pims.PyTimsSpectrum):
@@ -154,13 +154,13 @@ class TimsSpectrum:
         return self.__spec_ptr.ms_type
 
     @property
-    def inv_mobility(self) -> float:
+    def mobility(self) -> float:
         """Inverse mobility.
 
         Returns:
             float: Inverse mobility.
         """
-        return self.__spec_ptr.inv_mobility
+        return self.__spec_ptr.mobility
 
     @property
     def scan(self) -> int:
@@ -199,4 +199,4 @@ class TimsSpectrum:
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.mz_spectrum)
 
     def __repr__(self):
-        return f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, scan={self.scan}, inv_mobility={np.round(self.inv_mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
+        return f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, scan={self.scan}, mobility={np.round(self.mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"

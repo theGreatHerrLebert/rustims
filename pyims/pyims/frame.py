@@ -7,23 +7,23 @@ from pyims.spectrum import MzSpectrum, TimsSpectrum
 
 
 class ImsFrame:
-    def __init__(self, retention_time: float, inv_mobility: NDArray[np.float64], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+    def __init__(self, retention_time: float, mobility: NDArray[np.float64], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """ImsFrame class.
 
         Args:
             retention_time (float): Retention time.
-            inv_mobility (NDArray[np.float64]): Inverse mobility.
+            mobility (NDArray[np.float64]): Inverse mobility.
             mz (NDArray[np.float64]): m/z.
             intensity (NDArray[np.float64]): Intensity.
 
         Raises:
-            AssertionError: If the length of the inv_mobility, mz and intensity arrays are not equal.
+            AssertionError: If the length of the mobility, mz and intensity arrays are not equal.
         """
 
-        assert len(inv_mobility) == len(mz) == len(intensity), \
-            "The length of the inv_mobility, mz and intensity arrays must be equal."
+        assert len(mobility) == len(mz) == len(intensity), \
+            "The length of the mobility, mz and intensity arrays must be equal."
 
-        self.__frame_ptr = pims.PyImsFrame(retention_time, inv_mobility, mz, intensity)
+        self.__frame_ptr = pims.PyImsFrame(retention_time, mobility, mz, intensity)
 
     @classmethod
     def from_py_ims_frame(cls, frame: pims.PyImsFrame):
@@ -49,13 +49,13 @@ class ImsFrame:
         return self.__frame_ptr.retention_time
 
     @property
-    def inv_mobility(self) -> NDArray[np.float64]:
+    def mobility(self) -> NDArray[np.float64]:
         """Inverse mobility.
 
         Returns:
             NDArray[np.float64]: Inverse mobility.
         """
-        return self.__frame_ptr.inv_mobility
+        return self.__frame_ptr.mobility
 
     @property
     def mz(self) -> NDArray[np.float64]:
@@ -82,7 +82,7 @@ class ImsFrame:
 
 class TimsFrame:
     def __init__(self, frame_id: int, ms_type: int, retention_time: float, scan: NDArray[np.int32],
-                 inv_mobility: NDArray[np.float64], tof: NDArray[np.int32],
+                 mobility: NDArray[np.float64], tof: NDArray[np.int32],
                  mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsFrame class.
 
@@ -91,19 +91,19 @@ class TimsFrame:
             ms_type (int): MS type.
             retention_time (float): Retention time.
             scan (NDArray[np.int32]): Scan.
-            inv_mobility (NDArray[np.float64]): Inverse mobility.
+            mobility (NDArray[np.float64]): Inverse mobility.
             tof (NDArray[np.int32]): Time of flight.
             mz (NDArray[np.float64]): m/z.
             intensity (NDArray[np.float64]): Intensity.
 
         Raises:
-            AssertionError: If the length of the scan, inv_mobility, tof, mz and intensity arrays are not equal.
+            AssertionError: If the length of the scan, mobility, tof, mz and intensity arrays are not equal.
         """
 
-        assert len(scan) == len(inv_mobility) == len(tof) == len(mz) == len(intensity), \
-            "The length of the scan, inv_mobility, tof, mz and intensity arrays must be equal."
+        assert len(scan) == len(mobility) == len(tof) == len(mz) == len(intensity), \
+            "The length of the scan, mobility, tof, mz and intensity arrays must be equal."
 
-        self.__frame_ptr = pims.PyTimsFrame(frame_id, ms_type, retention_time, scan, inv_mobility, tof, mz, intensity)
+        self.__frame_ptr = pims.PyTimsFrame(frame_id, ms_type, retention_time, scan, mobility, tof, mz, intensity)
 
     @classmethod
     def from_py_tims_frame(cls, frame: pims.PyTimsFrame):
@@ -156,13 +156,13 @@ class TimsFrame:
         return self.__frame_ptr.scan
 
     @property
-    def inv_mobility(self) -> NDArray[np.float64]:
+    def mobility(self) -> NDArray[np.float64]:
         """Inverse mobility.
 
         Returns:
             NDArray[np.float64]: Inverse mobility.
         """
-        return self.__frame_ptr.inv_mobility
+        return self.__frame_ptr.mobility
 
     @property
     def tof(self) -> NDArray[np.int32]:

@@ -368,7 +368,7 @@ impl Display for IndexedMzSpectrum {
 #[derive(Clone)]
 pub struct ImsSpectrum {
     pub retention_time: f64,
-    pub inv_mobility: f64,
+    pub mobility: f64,
     pub spectrum: MzSpectrum,
 }
 
@@ -379,7 +379,7 @@ impl ImsSpectrum {
     /// # Arguments
     ///
     /// * `retention_time` - The retention time in seconds.
-    /// * `inv_mobility` - The inverse ion mobility.
+    /// * `mobility` - The inverse ion mobility.
     /// * `spectrum` - A `MzSpectrum` instance.
     ///
     /// # Examples
@@ -389,14 +389,14 @@ impl ImsSpectrum {
     ///
     /// let spectrum = ImsSpectrum::new(100.0, 0.1, MzSpectrum::new(vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
-    pub fn new(retention_time: f64, inv_mobility: f64, spectrum: MzSpectrum) -> Self {
-        ImsSpectrum { retention_time, inv_mobility, spectrum }
+    pub fn new(retention_time: f64, mobility: f64, spectrum: MzSpectrum) -> Self {
+        ImsSpectrum { retention_time, mobility, spectrum }
     }
 }
 
 impl Display for ImsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "ImsSpectrum(rt: {}, inv_mobility: {}, spectrum: {})", self.retention_time, self.inv_mobility, self.spectrum)
+        write!(f, "ImsSpectrum(rt: {}, mobility: {}, spectrum: {})", self.retention_time, self.mobility, self.spectrum)
     }
 }
 
@@ -405,7 +405,7 @@ pub struct TimsSpectrum {
     pub frame_id: i32,
     pub scan: i32,
     pub retention_time: f64,
-    pub inv_mobility: f64,
+    pub mobility: f64,
     pub ms_type: MsType,
     pub spectrum: IndexedMzSpectrum,
 }
@@ -418,7 +418,7 @@ impl TimsSpectrum {
     /// * `frame_id` - index of frame in TDF raw file.
     /// * `scan_id` - index of scan in TDF raw file.
     /// * `retention_time` - The retention time in seconds.
-    /// * `inv_mobility` - The inverse ion mobility.
+    /// * `mobility` - The inverse ion mobility.
     /// * `spectrum` - A `TOFMzSpectrum` instance.
     ///
     /// # Examples
@@ -428,14 +428,14 @@ impl TimsSpectrum {
     ///
     /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, MsType::FragmentDda, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
-    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
-        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, ms_type, spectrum }
+    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
+        TimsSpectrum { frame_id, scan: scan_id, retention_time, mobility: mobility, ms_type, spectrum }
     }
 }
 
 impl Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.inv_mobility, self.spectrum)
+        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.mobility, self.spectrum)
     }
 }
 

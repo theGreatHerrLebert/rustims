@@ -18,7 +18,7 @@ impl PyTimsFrame {
                       ms_type: i32,
                       retention_time: f64,
                       scan: &PyArray1<i32>,
-                      inv_mobility: &PyArray1<f64>,
+                      mobility: &PyArray1<f64>,
                       tof: &PyArray1<i32>,
                       mz: &PyArray1<f64>,
                       intensity: &PyArray1<f64>) -> PyResult<Self> {
@@ -30,7 +30,7 @@ impl PyTimsFrame {
                 tof: tof.as_slice()?.to_vec(),
                 ims_frame: ImsFrame {
                     retention_time,
-                    inv_mobility: inv_mobility.as_slice()?.to_vec(),
+                    mobility: mobility.as_slice()?.to_vec(),
                     mz: mz.as_slice()?.to_vec(),
                     intensity: intensity.as_slice()?.to_vec(),
                 },
@@ -50,8 +50,8 @@ impl PyTimsFrame {
         self.inner.scan.clone().into_pyarray(py).to_owned()
     }
     #[getter]
-    pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.inv_mobility.clone().into_pyarray(py).to_owned()
+    pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.ims_frame.mobility.clone().into_pyarray(py).to_owned()
     }
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
@@ -116,11 +116,11 @@ pub struct PyImsFrame {
 #[pymethods]
 impl PyImsFrame {
     #[new]
-    pub unsafe fn new(retention_time: f64, inv_mobility: &PyArray1<f64>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(retention_time: f64, mobility: &PyArray1<f64>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyImsFrame {
             inner: ImsFrame {
                 retention_time,
-                inv_mobility: inv_mobility.as_slice()?.to_vec(),
+                mobility: mobility.as_slice()?.to_vec(),
                 mz: mz.as_slice()?.to_vec(),
                 intensity: intensity.as_slice()?.to_vec(),
             },
@@ -135,8 +135,8 @@ impl PyImsFrame {
         self.inner.intensity.clone().into_pyarray(py).to_owned()
     }
     #[getter]
-    pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.inv_mobility.clone().into_pyarray(py).to_owned()
+    pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.mobility.clone().into_pyarray(py).to_owned()
     }
     #[getter]
     pub fn retention_time(&self) -> f64 {

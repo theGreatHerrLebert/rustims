@@ -46,7 +46,7 @@ impl TimsSlice {
 #[derive(Clone)]
 pub struct ImsFrame {
     pub retention_time: f64,
-    pub inv_mobility: Vec<f64>,
+    pub mobility: Vec<f64>,
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
 }
@@ -57,7 +57,7 @@ impl ImsFrame {
     /// # Arguments
     ///
     /// * `retention_time` - The retention time in seconds.
-    /// * `inv_mobility` - A vector of inverse ion mobilities.
+    /// * `mobility` - A vector of inverse ion mobilities.
     /// * `mz` - A vector of m/z values.
     /// * `intensity` - A vector of intensity values.
     ///
@@ -68,21 +68,21 @@ impl ImsFrame {
     ///
     /// let frame = ImsFrame::new(100.0, vec![0.1, 0.2], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
-    pub fn new(retention_time: f64, inv_mobility: Vec<f64>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        ImsFrame { retention_time, inv_mobility, mz, intensity }
+    pub fn new(retention_time: f64, mobility: Vec<f64>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
+        ImsFrame { retention_time, mobility, mz, intensity }
     }
 }
 
 impl fmt::Display for ImsFrame {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "ImsFrame(rt: {}, data points: {})", self.retention_time, self.inv_mobility.len())
+        write!(f, "ImsFrame(rt: {}, data points: {})", self.retention_time, self.mobility.len())
     }
 }
 
 #[derive(Clone)]
 pub struct ImsFrameVectorized {
     pub retention_time: f64,
-    pub inv_mobility: Vec<f64>,
+    pub mobility: Vec<f64>,
     pub indices: Vec<i32>,
     pub values: Vec<f64>,
 }
@@ -105,7 +105,7 @@ impl TimsFrame {
     /// * `ms_type` - The type of frame.
     /// * `retention_time` - The retention time in seconds.
     /// * `scan` - A vector of scan IDs.
-    /// * `inv_mobility` - A vector of inverse ion mobilities.
+    /// * `mobility` - A vector of inverse ion mobilities.
     /// * `tof` - A vector of time-of-flight values.
     /// * `mz` - A vector of m/z values.
     /// * `intensity` - A vector of intensity values.
@@ -118,8 +118,8 @@ impl TimsFrame {
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
-    pub fn new(frame_id: i32, ms_type: MsType, retention_time: f64, scan: Vec<i32>, inv_mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        TimsFrame { frame_id, ms_type, scan, tof, ims_frame: ImsFrame { retention_time, inv_mobility, mz, intensity } }
+    pub fn new(frame_id: i32, ms_type: MsType, retention_time: f64, scan: Vec<i32>, mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
+        TimsFrame { frame_id, ms_type, scan, tof, ims_frame: ImsFrame { retention_time, mobility, mz, intensity } }
     }
 
     ///
@@ -150,15 +150,15 @@ impl TimsFrame {
         // use a sorted map where scan is used as key
         let mut spectra = BTreeMap::<i32, (f64, Vec<i32>, Vec<f64>, Vec<f64>)>::new();
 
-        // all indices and the intensity values are sorted by scan and stored in the map as a tuple (inv_mobility, tof, mz, intensity)
-        for (scan, inv_mobility, tof, mz, intensity) in itertools::multizip((
+        // all indices and the intensity values are sorted by scan and stored in the map as a tuple (mobility, tof, mz, intensity)
+        for (scan, mobility, tof, mz, intensity) in itertools::multizip((
             &self.scan,
-            &self.ims_frame.inv_mobility,
+            &self.ims_frame.mobility,
             &self.tof,
             &self.ims_frame.mz,
             &self.ims_frame.intensity,
         )) {
-            let entry = spectra.entry(*scan).or_insert_with(|| (*inv_mobility, Vec::new(), Vec::new(), Vec::new()));
+            let entry = spectra.entry(*scan).or_insert_with(|| (*mobility, Vec::new(), Vec::new(), Vec::new()));
             entry.1.push(*tof);
             entry.2.push(*mz);
             entry.3.push(*intensity);
@@ -167,9 +167,9 @@ impl TimsFrame {
         // convert the map to a vector of TimsSpectrum
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
-        for (scan, (inv_mobility, tof, mz, intensity)) in spectra {
+        for (scan, (mobility, tof, mz, intensity)) in spectra {
             let spectrum = IndexedMzSpectrum::new(tof, mz, intensity);
-            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.ims_frame.retention_time, inv_mobility, self.ms_type.clone(), spectrum));
+            tims_spectra.push(TimsSpectrum::new(self.frame_id, scan, self.ims_frame.retention_time, mobility, self.ms_type.clone(), spectrum));
         }
 
         tims_spectra
@@ -191,7 +191,7 @@ impl TimsFrame {
         let mut ims_spectra: Vec<ImsSpectrum> = Vec::new();
 
         for spec in tims_spectra {
-            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.inv_mobility, MzSpectrum::new(spec.spectrum.mz_spectrum.mz, spec.spectrum.mz_spectrum.intensity));
+            let ims_spec = ImsSpectrum::new(spec.retention_time, spec.mobility, MzSpectrum::new(spec.spectrum.mz_spectrum.mz, spec.spectrum.mz_spectrum.intensity));
             ims_spectra.push(ims_spec);
         }
 
@@ -201,22 +201,22 @@ impl TimsFrame {
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
 
         let mut scan_vec = Vec::new();
-        let mut inv_mobility_vec = Vec::new();
+        let mut mobility_vec = Vec::new();
         let mut tof_vec = Vec::new();
         let mut mz_vec = Vec::new();
         let mut intensity_vec = Vec::new();
 
-        for (mz, intensity, scan, inv_mobility, tof) in itertools::multizip((&self.ims_frame.mz, &self.ims_frame.intensity, &self.scan, &self.ims_frame.inv_mobility, &self.tof)) {
+        for (mz, intensity, scan, mobility, tof) in itertools::multizip((&self.ims_frame.mz, &self.ims_frame.intensity, &self.scan, &self.ims_frame.mobility, &self.tof)) {
             if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min {
                 scan_vec.push(*scan);
-                inv_mobility_vec.push(*inv_mobility);
+                mobility_vec.push(*mobility);
                 tof_vec.push(*tof);
                 mz_vec.push(*mz);
                 intensity_vec.push(*intensity);
             }
         }
 
-        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, inv_mobility_vec, tof_vec, mz_vec, intensity_vec)
+        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
     pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {

@@ -108,11 +108,11 @@ pub struct PyImsSpectrum {
 #[pymethods]
 impl PyImsSpectrum {
     #[new]
-    pub unsafe fn new(retention_time: f64, inv_mobility: f64, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(retention_time: f64, mobility: f64, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyImsSpectrum {
             inner: ImsSpectrum {
                 retention_time,
-                inv_mobility,
+                mobility: mobility,
                 spectrum: MzSpectrum {
                     mz: mz.as_slice()?.to_vec(),
                     intensity: intensity.as_slice()?.to_vec(),
@@ -127,8 +127,8 @@ impl PyImsSpectrum {
     }
 
     #[getter]
-    pub fn inv_mobility(&self) -> f64 {
-        self.inner.inv_mobility
+    pub fn mobility(&self) -> f64 {
+        self.inner.mobility
     }
 
     #[getter]
@@ -150,14 +150,14 @@ pub struct PyTimsSpectrum {
 #[pymethods]
 impl PyTimsSpectrum {
     #[new]
-    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, inv_mobility: f64,
+    pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, mobility: f64,
                       ms_type: i32, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyTimsSpectrum {
             inner: TimsSpectrum {
                 frame_id,
                 scan,
                 retention_time,
-                inv_mobility,
+                mobility,
                 ms_type: MsType::new(ms_type),
                 spectrum: IndexedMzSpectrum {
                     index: index.as_slice()?.to_vec(),
@@ -186,8 +186,8 @@ impl PyTimsSpectrum {
     }
 
     #[getter]
-    pub fn inv_mobility(&self) -> f64 {
-        self.inner.inv_mobility
+    pub fn mobility(&self) -> f64 {
+        self.inner.mobility
     }
 
     #[getter]
