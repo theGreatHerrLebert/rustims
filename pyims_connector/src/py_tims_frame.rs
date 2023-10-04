@@ -73,6 +73,10 @@ impl PyTimsFrame {
     pub fn retention_time(&self) -> f64 {
         self.inner.ims_frame.retention_time
     }
+    
+    pub fn to_resolution(&self, resolution: i32) -> PyTimsFrame {
+        PyTimsFrame { inner: self.inner.to_resolution(resolution) }
+    }
 
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
         let spectra = self.inner.to_tims_spectra();

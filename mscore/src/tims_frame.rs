@@ -219,6 +219,52 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
+    pub fn to_resolution(&self, resolution: i32) -> TimsFrame {
+
+        let factor = (10.0f64).powi(resolution);
+
+        // Using a tuple of (scan, mz_bin) as a key
+        // Value will store sum of intensities and sum of tofs and their count for averaging
+        let mut bin_map: BTreeMap<(i32, i32), (f64, f64, i32)> = BTreeMap::new();
+
+        for i in 0..self.ims_frame.mz.len() {
+            let rounded_mz = (self.ims_frame.mz[i] * factor).round() as i32;
+            let scan_val = self.scan[i];
+            let intensity_val = self.ims_frame.intensity[i];
+            let tof_val = self.tof[i] as f64;
+
+            let entry = bin_map.entry((scan_val, rounded_mz)).or_insert((0.0, 0.0, 0));
+            entry.0 += intensity_val;
+            entry.1 += tof_val;
+            entry.2 += 1;
+        }
+
+        let mut new_mz = Vec::with_capacity(bin_map.len());
+        let mut new_scan = Vec::with_capacity(bin_map.len());
+        let mut new_intensity = Vec::with_capacity(bin_map.len());
+        let mut new_tof = Vec::with_capacity(bin_map.len());
+
+        for ((scan, mz_bin), (intensity_sum, tof_sum, count)) in bin_map {
+            new_mz.push(mz_bin as f64 / factor);
+            new_scan.push(scan);
+            new_intensity.push(intensity_sum as f64);
+            new_tof.push((tof_sum / count as f64) as i32);
+        }
+
+        TimsFrame {
+            frame_id: self.frame_id,
+            ms_type: self.ms_type.clone(),
+            scan: new_scan,
+            tof: new_tof,
+            ims_frame: ImsFrame {
+                retention_time: self.ims_frame.retention_time,
+                mobility: self.ims_frame.mobility.clone(),
+                mz: new_mz,
+                intensity: new_intensity,
+            }
+        }
+    }
+
     pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {
 
         let spectra = self.to_tims_spectra();

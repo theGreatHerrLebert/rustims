@@ -211,6 +211,17 @@ class TimsFrame:
 
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
 
+    def to_resolution(self, resolution: int) -> 'TimsFrame':
+        """Convert the frame to a given resolution.
+
+        Args:
+            resolution (int): Resolution.
+
+        Returns:
+            TimsFrame: Frame with the given resolution.
+        """
+        return TimsFrame.from_py_tims_frame(self.__frame_ptr.to_resolution(resolution))
+
     def to_tims_spectra(self) -> List['TimsSpectrum']:
         """Convert the frame to a list of TimsSpectrum.
 
