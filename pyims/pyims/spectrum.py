@@ -153,6 +153,9 @@ class MzSpectrumVectorized:
         """
         return self.__spec_ptr.values
 
+    def __repr__(self):
+        return f"MzSpectrumVectorized(num_values={len(self.values)})"
+
 
 class TimsSpectrum:
     def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
