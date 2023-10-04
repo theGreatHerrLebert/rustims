@@ -269,4 +269,6 @@ class TimsSpectrum:
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.mz_spectrum)
 
     def __repr__(self):
-        return f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, scan={self.scan}, mobility={np.round(self.mobility, 2)}, ms_type={self.ms_type}, num_peaks={len(self.index)})"
+        return (f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, "
+                f"scan={self.scan}, mobility={np.round(self.mobility, 2)}, ms_type={self.ms_type}, "
+                f"num_peaks={len(self.index)})")
