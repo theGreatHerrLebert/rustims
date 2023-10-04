@@ -18,15 +18,21 @@ impl TimsSlice {
         TimsSlice { frames }
     }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsSlice {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, num_threads: usize) -> TimsSlice {
 
-        let result: Vec<TimsFrame> = self.frames.par_iter()
-            .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
-            .collect();
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
 
-        TimsSlice { frames: result }
+        // Use the thread pool
+        let filtered_frames = pool.install(|| {
+            let result: Vec<_> =  self.frames.par_iter()
+                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+                .collect();
+            result
+        });
+
+        TimsSlice { frames: filtered_frames }
     }
-
+    
     pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
         // Create a thread pool
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads

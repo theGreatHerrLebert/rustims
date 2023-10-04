@@ -48,7 +48,7 @@ class TimsSlice:
     def __repr__(self):
         return f"TimsSlice({self.first_frame_id}, {self.last_frame_id})"
 
-    def filter_ranged(self, mz_min: float, mz_max: float, scan_min: int = 0, scan_max: int = 1000, intensity_min: float = 0.0) -> 'TimsSlice':
+    def filter_ranged(self, mz_min: float, mz_max: float, scan_min: int = 0, scan_max: int = 1000, intensity_min: float = 0.0, num_threads: int = 4) -> 'TimsSlice':
         """Filter the slice by m/z, scan and intensity.
 
         Args:
@@ -57,11 +57,12 @@ class TimsSlice:
             scan_min (int, optional): Minimum scan value. Defaults to 0.
             scan_max (int, optional): Maximum scan value. Defaults to 1000.
             intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
+            num_threads (int, optional): Number of threads to use. Defaults to 4.
 
         Returns:
             TimsSlice: Filtered slice.
         """
-        return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+        return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, num_threads))
 
     def get_frames(self) -> List[TimsFrame]:
         """Get the frames.
@@ -71,7 +72,7 @@ class TimsSlice:
         """
         return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
 
-    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1, num_threads: int = 1) -> List[MzSpectrum]:
+    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1, num_threads: int = 4) -> List[MzSpectrum]:
         """Convert the slice to a list of windows.
 
         Args:
