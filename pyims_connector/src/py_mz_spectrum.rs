@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType};
+use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType, MzSpectrumVectorized};
 use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]
@@ -64,6 +64,34 @@ impl PyMzSpectrum {
         let numpy_indices = indices.into_pyarray(py);
 
         Ok(PyTuple::new(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
+    }
+}
+
+#[pyclass]
+pub struct PyMzSpectrumVectorized {
+    pub inner: MzSpectrumVectorized,
+}
+
+#[pymethods]
+impl PyMzSpectrumVectorized {
+    #[new]
+    pub unsafe fn new(indices: &PyArray1<i32>, values: &PyArray1<f64>) -> PyResult<Self> {
+        Ok(PyMzSpectrumVectorized {
+            inner: MzSpectrumVectorized {
+                indices: indices.as_slice()?.to_vec(),
+                values: values.as_slice()?.to_vec(),
+            },
+        })
+    }
+
+    #[getter]
+    pub fn indices(&self, py: Python) -> Py<PyArray1<i32>> {
+        self.inner.indices.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn values(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.values.clone().into_pyarray(py).to_owned()
     }
 }
 

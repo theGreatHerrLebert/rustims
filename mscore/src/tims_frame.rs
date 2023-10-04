@@ -44,6 +44,11 @@ impl TimsSlice {
 }
 
 #[derive(Clone)]
+pub struct TimsSliceVectorized {
+    pub frames: Vec<TimsFrameVectorized>,
+}
+
+#[derive(Clone)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -85,6 +90,7 @@ pub struct ImsFrameVectorized {
     pub mobility: Vec<f64>,
     pub indices: Vec<i32>,
     pub values: Vec<f64>,
+    pub resolution: i32,
 }
 
 #[derive(Clone)]

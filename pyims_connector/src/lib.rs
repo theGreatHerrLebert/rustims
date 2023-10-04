@@ -5,7 +5,7 @@ mod py_tims_slice;
 
 use pyo3::prelude::*;
 use crate::pyhandle::PyTimsDataHandle;
-use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum};
+use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum, PyMzSpectrumVectorized};
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::{PyTimsSlice};
 
@@ -13,6 +13,7 @@ use crate::py_tims_slice::{PyTimsSlice};
 fn pyims_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataHandle>()?;
     m.add_class::<PyMzSpectrum>()?;
+    m.add_class::<PyMzSpectrumVectorized>()?;
     m.add_class::<PyIndexedMzSpectrum>()?;
     m.add_class::<PyTimsSpectrum>()?;
     m.add_class::<PyTimsFrame>()?;

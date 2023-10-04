@@ -142,13 +142,13 @@ impl MzSpectrum {
     /// Convert the `MzSpectrum` to a `MzVector` using the given resolution for binning.
     ///
     /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
-    pub fn vectorized(&self, resolution: i32) -> MzVector {
+    pub fn vectorized(&self, resolution: i32) -> MzSpectrumVectorized {
         let binned_spectrum = self.to_resolution(resolution);
 
         // Translate the m/z values into integer indices
         let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
 
-        MzVector {
+        MzSpectrumVectorized {
             indices,
             values: binned_spectrum.intensity,
         }
@@ -180,7 +180,7 @@ impl MzSpectrum {
     /// ```rust
     /// # use mscore::MzSpectrum;
     /// let spectrum = MzSpectrum::new(vec![100.0, 101.0, 102.5, 103.0], vec![10.0, 20.0, 30.0, 40.0]);
-    /// let windowed_spectrum = spectrum.windows(1.0, false, 1, 10.0);
+    /// let windowed_spectrum = spectrum.to_windows(1.0, false, 1, 10.0);
     /// assert!(windowed_spectrum.contains_key(&100));
     /// assert!(windowed_spectrum.contains_key(&102));
     /// ```
@@ -372,7 +372,7 @@ impl IndexedMzSpectrum {
     /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
     /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
-    pub fn vectorized(&self, resolution: i32) -> IndexedMzVector {
+    pub fn vectorized(&self, resolution: i32) -> IndexedMzSpectrumVectorized {
 
         let binned_spectrum = self.to_resolution(resolution);
 
@@ -380,9 +380,9 @@ impl IndexedMzSpectrum {
         let indices: Vec<i32> = binned_spectrum.mz_spectrum.mz.iter()
             .map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
 
-        IndexedMzVector {
+        IndexedMzSpectrumVectorized {
             index: binned_spectrum.index,
-            mz_vector: MzVector {
+            mz_vector: MzSpectrumVectorized {
                 indices,
                 values: binned_spectrum.mz_spectrum.intensity,
             }
@@ -438,9 +438,9 @@ impl TimsSpectrum {
         TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), spectrum }
     }
 
-    pub fn vectorized(&self, resolution: i32) -> TimsVector {
+    pub fn vectorized(&self, resolution: i32) -> TimsSpectrumVectorized {
         let vector = self.spectrum.vectorized(resolution);
-        TimsVector { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), vector }
+        TimsSpectrumVectorized { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), vector }
     }
 }
 
@@ -451,12 +451,12 @@ impl Display for TimsSpectrum {
 }
 
 #[derive(Clone)]
-pub struct MzVector {
+pub struct MzSpectrumVectorized {
     pub indices: Vec<i32>,
     pub values: Vec<f64>,
 }
 
-impl MzVector {
+impl MzSpectrumVectorized {
     /// Convert the `MzVector` to a dense vector with a specified maximum index.
     ///
     /// The resulting vector has length equal to `max_index + 1` and its values
@@ -478,19 +478,19 @@ impl MzVector {
 }
 
 #[derive(Clone)]
-pub struct IndexedMzVector {
+pub struct IndexedMzSpectrumVectorized {
     pub index: Vec<i32>,
-    pub mz_vector: MzVector,
+    pub mz_vector: MzSpectrumVectorized,
 }
 
 #[derive(Clone)]
-pub struct TimsVector {
+pub struct TimsSpectrumVectorized {
     pub frame_id: i32,
     pub scan: i32,
     pub retention_time: f64,
     pub mobility: f64,
     pub ms_type: MsType,
-    pub vector: IndexedMzVector,
+    pub vector: IndexedMzSpectrumVectorized,
 }
 
 
