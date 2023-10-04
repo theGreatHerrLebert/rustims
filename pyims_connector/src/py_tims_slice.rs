@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use mscore::TimsSlice;
 use pyo3::types::PyList;
+use crate::py_mz_spectrum::PyMzSpectrum;
 
 use crate::py_tims_frame::{PyTimsFrame};
 
@@ -32,6 +33,19 @@ impl PyTimsSlice {
         for frame in frames {
             let py_tims_frame = Py::new(py, PyTimsFrame { inner: frame.clone() })?;
             list.as_ref(py).append(py_tims_frame)?;
+        }
+
+        Ok(list.into())
+    }
+
+    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> PyResult<Py<PyList>> {
+
+        let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity, num_threads);
+        let list: Py<PyList> = PyList::empty(py).into();
+
+        for window in windows {
+            let py_mz_spectrum = Py::new(py, PyMzSpectrum { inner: window })?;
+            list.as_ref(py).append(py_mz_spectrum)?;
         }
 
         Ok(list.into())

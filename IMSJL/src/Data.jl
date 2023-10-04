@@ -9,7 +9,7 @@ struct TimsFrame
     ms_type::MsType
     retention_time::Float64
     scan::Vector{Int32}
-    inv_mobility::Vector{Float64}
+    mobility::Vector{Float64}
     tof::Vector{Int32}
     mz::Vector{Float64}
     intensity::Vector{Float64}

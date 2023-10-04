@@ -332,7 +332,7 @@ impl TimsDataHandle {
                     ms_type,
                     scan: scan_i32,
                     tof: tof_i32,
-                    ims_frame: ImsFrame { retention_time: self.frame_meta_data[(frame_id - 1) as usize].time, inv_mobility, mz, intensity: intensity_dbl }
+                    ims_frame: ImsFrame { retention_time: self.frame_meta_data[(frame_id - 1) as usize].time, mobility: inv_mobility, mz, intensity: intensity_dbl }
                 })
             },
 

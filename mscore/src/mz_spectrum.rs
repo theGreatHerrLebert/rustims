@@ -1,5 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
+use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
 
 /// Represents the type of spectrum.
@@ -108,9 +109,9 @@ impl MzSpectrum {
     /// assert_eq!(binned_spectrum_2.mz, vec![100.12, 100.13]);
     /// assert_eq!(binned_spectrum_2.intensity, vec![30.0, 30.0]);
     /// ```
-    pub fn to_resolution(&self, resolution: u32) -> MzSpectrum {
+    pub fn to_resolution(&self, resolution: i32) -> MzSpectrum {
         let mut binned: BTreeMap<i64, f64> = BTreeMap::new();
-        let factor = 10f64.powi(resolution as i32);
+        let factor = 10f64.powi(resolution);
 
         for (mz, inten) in self.mz.iter().zip(self.intensity.iter()) {
             
@@ -119,7 +120,7 @@ impl MzSpectrum {
             *entry += *inten;
         }
 
-        let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution as i32)).collect();
+        let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution)).collect();
         let intensity: Vec<f64> = binned.values().cloned().collect();
 
         MzSpectrum { mz, intensity }
@@ -136,6 +137,90 @@ impl MzSpectrum {
             }
         }
         MzSpectrum { mz: mz_vec, intensity: intensity_vec }
+    }
+
+    /// Convert the `MzSpectrum` to a `MzVector` using the given resolution for binning.
+    ///
+    /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
+    pub fn vectorized(&self, resolution: i32) -> MzSpectrumVectorized {
+        let binned_spectrum = self.to_resolution(resolution);
+
+        // Translate the m/z values into integer indices
+        let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
+
+        MzSpectrumVectorized {
+            resolution,
+            indices,
+            values: binned_spectrum.intensity,
+        }
+    }
+    /// Splits the spectrum into a collection of windows based on m/z values.
+    ///
+    /// This function divides the spectrum into smaller spectra (windows) based on a specified window length.
+    /// Each window contains peaks from the original spectrum that fall within the m/z range of that window.
+    ///
+    /// # Arguments
+    ///
+    /// * `window_length`: The size (in terms of m/z values) of each window.
+    ///
+    /// * `overlapping`: If `true`, each window will overlap with its neighboring windows by half of the `window_length`.
+    ///   This means that a peak may belong to multiple windows. If `false`, windows do not overlap.
+    ///
+    /// * `min_peaks`: The minimum number of peaks a window must have to be retained in the result.
+    ///
+    /// * `min_intensity`: The minimum intensity value a window must have (in its highest intensity peak) to be retained in the result.
+    ///
+    /// # Returns
+    ///
+    /// A `BTreeMap` where the keys represent the window indices and the values are the spectra (`MzSpectrum`) within those windows.
+    /// Windows that do not meet the criteria of having at least `min_peaks` peaks or a highest intensity peak
+    /// greater than or equal to `min_intensity` are discarded.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use mscore::MzSpectrum;
+    /// let spectrum = MzSpectrum::new(vec![100.0, 101.0, 102.5, 103.0], vec![10.0, 20.0, 30.0, 40.0]);
+    /// let windowed_spectrum = spectrum.to_windows(1.0, false, 1, 10.0);
+    /// assert!(windowed_spectrum.contains_key(&100));
+    /// assert!(windowed_spectrum.contains_key(&102));
+    /// ```
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, MzSpectrum> {
+        let mut splits = BTreeMap::new();
+
+        for (i, &mz) in self.mz.iter().enumerate() {
+            let intensity = self.intensity[i];
+
+            let tmp_key = (mz / window_length).floor() as i32;
+
+            splits.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.push(mz);
+            splits.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.push(intensity);
+        }
+
+        if overlapping {
+            let mut splits_offset = BTreeMap::new();
+
+            for (i, &mmz) in self.mz.iter().enumerate() {
+                let intensity = self.intensity[i];
+
+                let tmp_key = -((mmz + window_length / 2.0) / window_length).floor() as i32;
+
+                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.push(mmz);
+                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.push(intensity);
+            }
+
+            for (key, val) in splits_offset {
+                splits.entry(key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.extend(val.mz);
+                splits.entry(key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.extend(val.intensity);
+            }
+        }
+
+        splits.retain(|_, spectrum| {
+            spectrum.mz.len() >= min_peaks && spectrum.intensity.iter().cloned().max_by(
+                |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
+        });
+
+        splits
     }
 }
 
@@ -245,10 +330,10 @@ impl IndexedMzSpectrum {
     /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
     /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
-    pub fn to_resolution(&self, resolution: u32) -> IndexedMzSpectrum {
+    pub fn to_resolution(&self, resolution: i32) -> IndexedMzSpectrum {
 
         let mut mz_bins: BTreeMap<i64, (f64, Vec<i64>)> = BTreeMap::new();
-        let factor = 10f64.powi(resolution as i32);
+        let factor = 10f64.powi(resolution);
 
         for ((mz, intensity), tof_val) in self.mz_spectrum.mz.iter().zip(self.mz_spectrum.intensity.iter()).zip(&self.index) {
             let key = (mz * factor).round() as i64;
@@ -267,6 +352,44 @@ impl IndexedMzSpectrum {
 
         IndexedMzSpectrum {index: tof, mz_spectrum: MzSpectrum {mz, intensity } }
     }
+
+    /// Convert the `IndexedMzSpectrum` to a `IndexedMzVector` using the given resolution for binning.
+    ///
+    /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
+    ///
+    /// # Arguments
+    ///
+    /// * `resolution` - The desired m/z resolution for binning.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::IndexedMzSpectrum;
+    ///
+    /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
+    /// let binned_spectrum = spectrum.to_resolution(1);
+    ///
+    /// assert_eq!(binned_spectrum.mz_spectrum.mz, vec![100.4]);
+    /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
+    /// assert_eq!(binned_spectrum.index, vec![1500]);
+    /// ```
+    pub fn vectorized(&self, resolution: i32) -> IndexedMzSpectrumVectorized {
+
+        let binned_spectrum = self.to_resolution(resolution);
+
+        // Translate the m/z values into integer indices
+        let indices: Vec<i32> = binned_spectrum.mz_spectrum.mz.iter()
+            .map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
+
+        IndexedMzSpectrumVectorized {
+            index: binned_spectrum.index,
+            mz_vector: MzSpectrumVectorized {
+                resolution,
+                indices,
+                values: binned_spectrum.mz_spectrum.intensity,
+            }
+        }
+    }
 }
 
 impl Display for IndexedMzSpectrum {
@@ -280,48 +403,12 @@ impl Display for IndexedMzSpectrum {
     }
 }
 
-
-#[derive(Clone)]
-pub struct ImsSpectrum {
-    pub retention_time: f64,
-    pub inv_mobility: f64,
-    pub spectrum: MzSpectrum,
-}
-
-impl ImsSpectrum {
-    ///
-    /// Creates a new `ImsSpectrum` instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `retention_time` - The retention time in seconds.
-    /// * `inv_mobility` - The inverse ion mobility.
-    /// * `spectrum` - A `MzSpectrum` instance.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mscore::{ImsSpectrum, MzSpectrum};
-    ///
-    /// let spectrum = ImsSpectrum::new(100.0, 0.1, MzSpectrum::new(vec![100.5, 200.5], vec![50.0, 60.0]));
-    /// ```
-    pub fn new(retention_time: f64, inv_mobility: f64, spectrum: MzSpectrum) -> Self {
-        ImsSpectrum { retention_time, inv_mobility, spectrum }
-    }
-}
-
-impl Display for ImsSpectrum {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "ImsSpectrum(rt: {}, inv_mobility: {}, spectrum: {})", self.retention_time, self.inv_mobility, self.spectrum)
-    }
-}
-
 #[derive(Clone)]
 pub struct TimsSpectrum {
     pub frame_id: i32,
     pub scan: i32,
     pub retention_time: f64,
-    pub inv_mobility: f64,
+    pub mobility: f64,
     pub ms_type: MsType,
     pub spectrum: IndexedMzSpectrum,
 }
@@ -334,7 +421,7 @@ impl TimsSpectrum {
     /// * `frame_id` - index of frame in TDF raw file.
     /// * `scan_id` - index of scan in TDF raw file.
     /// * `retention_time` - The retention time in seconds.
-    /// * `inv_mobility` - The inverse ion mobility.
+    /// * `mobility` - The inverse ion mobility.
     /// * `spectrum` - A `TOFMzSpectrum` instance.
     ///
     /// # Examples
@@ -344,15 +431,71 @@ impl TimsSpectrum {
     ///
     /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, MsType::FragmentDda, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
-    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, inv_mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
-        TimsSpectrum { frame_id, scan: scan_id, retention_time, inv_mobility, ms_type, spectrum }
+    pub fn new(frame_id: i32, scan_id: i32, retention_time: f64, mobility: f64, ms_type: MsType, spectrum: IndexedMzSpectrum) -> Self {
+        TimsSpectrum { frame_id, scan: scan_id, retention_time, mobility: mobility, ms_type, spectrum }
+    }
+
+    pub fn to_resolution(&self, resolution: i32) -> TimsSpectrum {
+        let spectrum = self.spectrum.to_resolution(resolution);
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), spectrum }
+    }
+
+    pub fn vectorized(&self, resolution: i32) -> TimsSpectrumVectorized {
+        let vector = self.spectrum.vectorized(resolution);
+        TimsSpectrumVectorized { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), vector }
     }
 }
 
 impl Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, inv_mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.inv_mobility, self.spectrum)
+        write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.mobility, self.spectrum)
     }
 }
+
+#[derive(Clone)]
+pub struct MzSpectrumVectorized {
+    pub resolution: i32,
+    pub indices: Vec<i32>,
+    pub values: Vec<f64>,
+}
+
+impl MzSpectrumVectorized {
+    /// Convert the `MzVector` to a dense vector with a specified maximum index.
+    ///
+    /// The resulting vector has length equal to `max_index + 1` and its values
+    /// are the intensities corresponding to each index. Indices with no associated intensity will have a value of 0.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_index` - The maximum index for the dense vector.
+    pub fn to_dense(&self, max_index: usize) -> DVector<f64> {
+        let mut dense = DVector::zeros(max_index + 1);
+
+        for (&index, &intensity) in self.indices.iter().zip(self.values.iter()) {
+            if (index as usize) <= max_index {
+                dense[index as usize] = intensity;
+            }
+        }
+        dense
+    }
+}
+
+#[derive(Clone)]
+pub struct IndexedMzSpectrumVectorized {
+    pub index: Vec<i32>,
+    pub mz_vector: MzSpectrumVectorized,
+}
+
+#[derive(Clone)]
+pub struct TimsSpectrumVectorized {
+    pub frame_id: i32,
+    pub scan: i32,
+    pub retention_time: f64,
+    pub mobility: f64,
+    pub ms_type: MsType,
+    pub vector: IndexedMzSpectrumVectorized,
+}
+
+
 
 

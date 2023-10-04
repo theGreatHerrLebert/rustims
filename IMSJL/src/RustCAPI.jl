@@ -10,8 +10,8 @@ struct CTimsFrame
     scan::Ptr{Int32}
     scan_size::UInt64
 
-    inv_mobility::Ptr{Float64}
-    inv_mobility_size::UInt64
+    mobility::Ptr{Float64}
+    mobility_size::UInt64
 
     tof::Ptr{Int32}
     tof_size::UInt64
@@ -52,7 +52,7 @@ end
 function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
 
     julia_scan = unsafe_wrap(Array, ctims_frame.scan, ctims_frame.scan_size, own=true)
-    julia_inv_mobility = unsafe_wrap(Array, ctims_frame.inv_mobility, ctims_frame.inv_mobility_size, own=true)
+    julia_mobility = unsafe_wrap(Array, ctims_frame.mobility, ctims_frame.mobility_size, own = true)
     julia_tof = unsafe_wrap(Array, ctims_frame.tof, ctims_frame.tof_size, own=true)
     julia_mz = unsafe_wrap(Array, ctims_frame.mz, ctims_frame.mz_size, own=true)
     julia_intensity = unsafe_wrap(Array, ctims_frame.intensity, ctims_frame.intensity_size, own=true)
@@ -62,7 +62,7 @@ function ctims_frame_to_julia_tims_frame(ctims_frame::CTimsFrame)::TimsFrame
         ms_type_from_int32(ctims_frame.ms_type),
         ctims_frame.retention_time,
         julia_scan,
-        julia_inv_mobility,
+        julia_mobility,
         julia_tof,
         julia_mz,
         julia_intensity
