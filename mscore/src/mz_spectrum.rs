@@ -149,6 +149,7 @@ impl MzSpectrum {
         let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
 
         MzSpectrumVectorized {
+            resolution,
             indices,
             values: binned_spectrum.intensity,
         }
@@ -383,6 +384,7 @@ impl IndexedMzSpectrum {
         IndexedMzSpectrumVectorized {
             index: binned_spectrum.index,
             mz_vector: MzSpectrumVectorized {
+                resolution,
                 indices,
                 values: binned_spectrum.mz_spectrum.intensity,
             }
@@ -452,6 +454,7 @@ impl Display for TimsSpectrum {
 
 #[derive(Clone)]
 pub struct MzSpectrumVectorized {
+    pub resolution: i32,
     pub indices: Vec<i32>,
     pub values: Vec<f64>,
 }

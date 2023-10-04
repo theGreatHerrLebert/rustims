@@ -113,6 +113,15 @@ class MzSpectrumVectorized:
         instance = cls.__new__(cls)
         instance.__spec_ptr = spec
         return instance
+    
+    @property
+    def resolution(self) -> float:
+        """Resolution.
+
+        Returns:
+            float: Resolution.
+        """
+        return self.__spec_ptr.resolution
 
     @property
     def indices(self) -> NDArray[np.int32]:
@@ -122,7 +131,7 @@ class MzSpectrumVectorized:
             NDArray[np.float64]: m/z.
         """
         return self.__spec_ptr.indices
-    
+
     @property
     def values(self) -> NDArray[np.float64]:
         """Intensity.

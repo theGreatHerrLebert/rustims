@@ -75,13 +75,19 @@ pub struct PyMzSpectrumVectorized {
 #[pymethods]
 impl PyMzSpectrumVectorized {
     #[new]
-    pub unsafe fn new(indices: &PyArray1<i32>, values: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(indices: &PyArray1<i32>, values: &PyArray1<f64>, resolution: i32) -> PyResult<Self> {
         Ok(PyMzSpectrumVectorized {
             inner: MzSpectrumVectorized {
+                resolution,
                 indices: indices.as_slice()?.to_vec(),
                 values: values.as_slice()?.to_vec(),
             },
         })
+    }
+
+    #[getter]
+    pub fn resolution(&self) -> i32 {
+        self.inner.resolution
     }
 
     #[getter]
