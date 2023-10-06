@@ -1,5 +1,6 @@
 pub mod mz_spectrum;
 mod tims_frame;
+mod tims_slice;
 
 pub use {
     mz_spectrum::MsType,
@@ -19,6 +20,6 @@ pub use {
     tims_frame::TimsFrame,
     tims_frame::TimsFrameVectorized,
 
-    tims_frame::TimsSlice,
-    tims_frame::TimsSliceVectorized,
+    tims_slice::TimsSlice,
+    tims_slice::TimsSliceVectorized,
 };

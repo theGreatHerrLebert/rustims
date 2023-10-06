@@ -4,6 +4,7 @@ use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType, MzSpectrumVect
 use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyMsType {
     pub inner: MsType,
 }
@@ -76,6 +77,7 @@ impl PyMzSpectrum {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyMzSpectrumVectorized {
     pub inner: MzSpectrumVectorized,
 }
