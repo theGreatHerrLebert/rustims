@@ -55,3 +55,9 @@ impl PyTimsSlice {
         PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
     }
 }
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyTimsSliceVectorized {
+    pub inner: TimsSlice,
+}
