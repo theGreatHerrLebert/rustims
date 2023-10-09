@@ -88,6 +88,7 @@ class TimsSlice:
         """
         return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__slice_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
 
+    @property
     def data(self) -> pd.DataFrame:
         cols = ['frame_id', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
         return pd.DataFrame({c: v for c, v in zip(cols, self.__slice_ptr.to_arrays())})
