@@ -17,6 +17,8 @@ pub use {
     tims_frame::ImsFrame,
     tims_frame::ImsFrameVectorized,
 
+    tims_frame::TimsFrameFlat,
+
     tims_frame::TimsFrame,
     tims_frame::TimsFrameVectorized,
 

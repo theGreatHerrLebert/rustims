@@ -249,3 +249,14 @@ pub struct TimsFrameVectorized {
     pub tof: Vec<i32>,
     pub ims_frame: ImsFrameVectorized,
 }
+
+#[derive(Clone, Debug)]
+pub struct TimsFrameFlat {
+    pub frame_ids: Vec<i32>,
+    pub scans: Vec<i32>,
+    pub tofs: Vec<i32>,
+    pub retention_times: Vec<f64>,
+    pub mobilities: Vec<f64>,
+    pub mzs: Vec<f64>,
+    pub intensities: Vec<f64>,
+}

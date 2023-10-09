@@ -2,7 +2,7 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
 use crate::mz_spectrum::{MzSpectrum};
-use crate::tims_frame::{TimsFrame, TimsFrameVectorized};
+use crate::tims_frame::{TimsFrame, TimsFrameFlat, TimsFrameVectorized};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -43,6 +43,37 @@ impl TimsSlice {
         });
 
         windows
+    }
+
+    pub fn flatten(&self) -> TimsFrameFlat {
+        let mut frame_ids = Vec::new();
+        let mut scans = Vec::new();
+        let mut tofs = Vec::new();
+        let mut retention_times = Vec::new();
+        let mut mobilities = Vec::new();
+        let mut mzs = Vec::new();
+        let mut intensities = Vec::new();
+
+        for frame in &self.frames {
+            let length = frame.scan.len();
+            frame_ids.extend(vec![frame.frame_id; length].into_iter());
+            scans.extend(frame.scan.clone());
+            tofs.extend(frame.tof.clone());
+            retention_times.extend(vec![frame.ims_frame.retention_time; length].into_iter());
+            mobilities.extend(&frame.ims_frame.mobility);
+            mzs.extend(&frame.ims_frame.mz);
+            intensities.extend(&frame.ims_frame.intensity);
+        }
+
+        TimsFrameFlat {
+            frame_ids,
+            scans,
+            tofs,
+            retention_times,
+            mobilities,
+            mzs,
+            intensities,
+        }
     }
 }
 
