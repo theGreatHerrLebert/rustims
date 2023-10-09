@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 from typing import List
 
@@ -86,6 +87,10 @@ class TimsSlice:
             List[MzSpectrum]: List of windows.
         """
         return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__slice_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
+
+    def data(self) -> pd.DataFrame:
+        cols = ['frame_id', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
+        return pd.DataFrame({c: v for c, v in zip(cols, self.__slice_ptr.to_arrays())})
 
     def __iter__(self):
         return self

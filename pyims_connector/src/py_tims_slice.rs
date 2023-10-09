@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use mscore::TimsSlice;
-use pyo3::types::PyList;
+use pyo3::types::{PyList};
+use numpy::{IntoPyArray};
 use crate::py_mz_spectrum::PyMzSpectrum;
 
 use crate::py_tims_frame::{PyTimsFrame};
@@ -50,9 +51,24 @@ impl PyTimsSlice {
 
         Ok(list.into())
     }
-
     pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
+    }
+
+    fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
+
+        let flat_frame = self.inner.flatten();
+        let frame_ids_np = flat_frame.frame_ids.into_pyarray(py);
+        let scans_np = flat_frame.scans.into_pyarray(py);
+        let tofs_np = flat_frame.tofs.into_pyarray(py);
+        let retention_times_np = flat_frame.retention_times.into_pyarray(py);
+        let mobilities_np = flat_frame.mobilities.into_pyarray(py);
+        let mzs_np = flat_frame.mzs.into_pyarray(py);
+        let intensities_np = flat_frame.intensities.into_pyarray(py);
+
+        Ok((frame_ids_np.to_object(py), scans_np.to_object(py), tofs_np.to_object(py),
+            retention_times_np.to_object(py), mobilities_np.to_object(py), mzs_np.to_object(py),
+            intensities_np.to_object(py)))
     }
 }
 
