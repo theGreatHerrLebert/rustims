@@ -90,8 +90,13 @@ class TimsSlice:
 
     @property
     def data(self) -> pd.DataFrame:
-        cols = ['frame_id', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
-        return pd.DataFrame({c: v for c, v in zip(cols, self.__slice_ptr.to_arrays())})
+        """Get the data as a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: Data.
+        """
+        columns = ['frame_id', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
+        return pd.DataFrame({c: v for c, v in zip(columns, self.__slice_ptr.to_arrays())})
 
     def __iter__(self):
         return self
