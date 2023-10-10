@@ -23,7 +23,8 @@ struct CTimsFrame
     intensity_size::UInt64
 end
 
-const lib = "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
+const lib = joinpath(pkgdir(@__MODULE__), "..", "imsjl_connector", "target", "release", "libimsjl_connector.so")
+
 
 TimsDataHandle_new(data_path::String, bruker_lib_path::String) = ccall((:tims_data_handle_new, lib), Ptr{Cvoid}, (Cstring, Cstring), data_path, bruker_lib_path)
 

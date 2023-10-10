@@ -33,13 +33,12 @@ struct TimsDataHandle
 end
 
 function determine_bruker_binary_path()::String
-    # TODO: Remove hard-coded path, library should be included in deps
-    return "/home/administrator/Documents/promotion/ENV-11/lib/python3.11/site-packages/opentims_bruker_bridge/libtimsdata.so"
+    # TODO: find better place to put libtimsdata.so
+    return joinpath(pkgdir(@__MODULE__), "lib", "libtimsdata.so")
 end
 
 function determine_imsjl_connector_path()::String
-    # TODO: Remove hard-coded path, library should be included in deps
-    return "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
+    return joinpath(pkgdir(@__MODULE__), "..", "imsjl_connector", "target", "release", "libimsjl_connector.so")
 end
 
 function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::TimsFrame
