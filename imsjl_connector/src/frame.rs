@@ -10,8 +10,8 @@ pub struct CTimsFrame {
     scan: *const i32,
     scan_size: usize,
 
-    inv_mobility: *const f64,
-    inv_mobility_size: usize,
+    mobility: *const f64,
+    mobility_size: usize,
 
     tof: *const i32,
     tof_size: usize,
@@ -27,7 +27,7 @@ pub struct CTimsFrame {
 pub extern "C" fn convert_to_ctims_frame(frame: TimsFrame) -> CTimsFrame {
     // Clone the vectors and convert them to boxed slices
     let scan_boxed = frame.scan.clone().into_boxed_slice();
-    let inv_mobility_boxed = frame.ims_frame.inv_mobility.clone().into_boxed_slice();
+    let mobility_boxed = frame.ims_frame.mobility.clone().into_boxed_slice();
     let tof_boxed = frame.tof.clone().into_boxed_slice();
     let mz_boxed = frame.ims_frame.mz.clone().into_boxed_slice();
     let intensity_boxed = frame.ims_frame.intensity.clone().into_boxed_slice();
@@ -40,8 +40,8 @@ pub extern "C" fn convert_to_ctims_frame(frame: TimsFrame) -> CTimsFrame {
         scan: Box::into_raw(scan_boxed) as *const i32,
         scan_size: frame.scan.len(),
 
-        inv_mobility: Box::into_raw(inv_mobility_boxed) as *const f64,
-        inv_mobility_size: frame.ims_frame.inv_mobility.len(),
+        mobility: Box::into_raw(mobility_boxed) as *const f64,
+        mobility_size: frame.ims_frame.mobility.len(),
 
         tof: Box::into_raw(tof_boxed) as *const i32,
         tof_size: frame.tof.len(),
@@ -57,7 +57,7 @@ pub extern "C" fn convert_to_ctims_frame(frame: TimsFrame) -> CTimsFrame {
 pub extern "C" fn free_ctims_frame_data(frame: CTimsFrame) {
     unsafe {
         let _ = Box::from_raw(slice::from_raw_parts_mut(frame.scan as *mut i32, frame.scan_size));
-        let _ = Box::from_raw(slice::from_raw_parts_mut(frame.inv_mobility as *mut f64, frame.inv_mobility_size));
+        let _ = Box::from_raw(slice::from_raw_parts_mut(frame.mobility as *mut f64, frame.mobility_size));
         let _ = Box::from_raw(slice::from_raw_parts_mut(frame.tof as *mut i32, frame.tof_size));
         let _ = Box::from_raw(slice::from_raw_parts_mut(frame.mz as *mut f64, frame.mz_size));
         let _ = Box::from_raw(slice::from_raw_parts_mut(frame.intensity as *mut f64, frame.intensity_size));
