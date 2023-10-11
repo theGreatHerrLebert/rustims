@@ -1,9 +1,9 @@
 module DataHandle
 
 using DataFrames, FilePathsBase, SQLite
-using IMSJL.Data, IMSJL.RustCAPI
+using IMSJL.Data, IMSJL.RustCAPI, IMSJL.Slice
 
-import Base: iterate, length
+import Base
 
 struct TimsDataHandle
     data_path::String
@@ -52,10 +52,10 @@ function get_frame_meta_data(ds_path::String)::DataFrame
 end
 
 # Initial iteration state
-iterate(td::TimsDataHandle) = iterate(td, 1)
+Base.iterate(td::TimsDataHandle) = iterate(td, 1)
 
 # Producing the next value and iteration state
-function iterate(td::TimsDataHandle, state)
+function Base.iterate(td::TimsDataHandle, state)
     # Check if we're past the last row
     if state > size(td.frame_meta_data, 1)
         return nothing  # Signal the end of iteration
@@ -66,7 +66,15 @@ function iterate(td::TimsDataHandle, state)
 end
 
 # Define length method for convenience
-length(td::TimsDataHandle) = size(td.frame_meta_data, 1)
+Base.length(td::TimsDataHandle) = size(td.frame_meta_data, 1)
+
+function Base.getindex(td::TimsDataHandle, frame_id::Int)::TimsFrame
+    return get_tims_frame(td, frame_id)
+end
+
+function Base.getindex(td::TimsDataHandle, ur::UnitRange{Int})::TimsSlice
+    return TimsSlice(ur.start, ur.stop)
+end
 
 export TimsDataHandle, get_tims_frame
 
