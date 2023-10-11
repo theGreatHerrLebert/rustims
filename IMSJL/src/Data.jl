@@ -15,6 +15,10 @@ struct TimsFrame
     intensity::Vector{Float64}
 end
 
+function TimsFrame()
+    return TimsFrame(0, MsType(0), 0.0, Vector(), Vector(), Vector(), Vector(), Vector())
+end
+
 function show(io::IO, frame::TimsFrame)
     num_peaks = length(frame.mz)
     print(io, "TimsFrame(frame_id=$(frame.frame_id), ms_type=$(frame.ms_type), num_peaks=$num_peaks)")
