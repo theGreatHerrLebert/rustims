@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
-use mscore::TimsSlice;
+use mscore::{TimsPlane, TimsSlice};
 use pyo3::types::{PyList};
-use numpy::{IntoPyArray};
+use numpy::{IntoPyArray, PyArray1};
 use crate::py_mz_spectrum::PyMzSpectrum;
 
 use crate::py_tims_frame::{PyTimsFrame};
@@ -70,10 +70,75 @@ impl PyTimsSlice {
             retention_times_np.to_object(py), mobilities_np.to_object(py), mzs_np.to_object(py),
             intensities_np.to_object(py)))
     }
+
+    pub fn to_tims_planes(&self, py: Python, tof_max_value: i32, num_chunks: i32, num_threads: i32) -> PyResult<Py<PyList>> {
+
+        let planes = self.inner.to_tims_planes(tof_max_value, num_chunks, num_threads as usize);
+        let list: Py<PyList> = PyList::empty(py).into();
+
+        for plane in planes {
+            let py_plane = Py::new(py, PyTimsPlane { inner: plane })?;
+            list.as_ref(py).append(py_plane)?;
+        }
+
+        Ok(list.into())
+    }
 }
 
 #[pyclass]
 #[derive(Clone)]
 pub struct PyTimsSliceVectorized {
     pub inner: TimsSlice,
+}
+
+#[pyclass]
+pub struct PyTimsPlane {
+    pub inner: TimsPlane,
+}
+
+#[pymethods]
+impl PyTimsPlane {
+    #[getter]
+    pub fn mz_mean(&self) -> f64 {
+        self.inner.mz_mean
+    }
+    #[getter]
+    pub fn mz_std(&self) -> f64 {
+        self.inner.mz_std
+    }
+
+    #[getter]
+    pub fn tof_mean(&self) -> f64 {
+        self.inner.tof_mean
+    }
+
+    #[getter]
+    pub fn tof_std(&self) -> f64 {
+        self.inner.tof_std
+    }
+
+    #[getter]
+    pub fn scans(&self, py: Python) -> Py<PyArray1<i32>> {
+        self.inner.scan.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn mobilities(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.mobility.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn frame_ids(&self, py: Python) -> Py<PyArray1<i32>> {
+        self.inner.frame_id.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn retention_times(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.retention_time.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.intensity.clone().into_pyarray(py).to_owned()
+    }
 }

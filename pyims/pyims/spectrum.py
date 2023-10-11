@@ -70,7 +70,7 @@ class MzSpectrum:
         indices, windows = self.__spec_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)
         return indices, [MzSpectrum.from_py_mz_spectrum(window) for window in windows]
 
-    def filter_ranged(self, mz_min: float, mz_max: float, intensity_min: float = 0.0) -> 'MzSpectrum':
+    def filter_ranged(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0) -> 'MzSpectrum':
         """Filter the spectrum for a given m/z range and intensity range.
 
         Args:

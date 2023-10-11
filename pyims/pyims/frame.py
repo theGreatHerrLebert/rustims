@@ -129,7 +129,8 @@ class TimsFrame:
 
         return pd.DataFrame({'scan': self.scan, 'mobility': self.mobility, 'tof': self.tof, 'mz': self.mz, 'intensity': self.intensity})
 
-    def filter_ranged(self, mz_min: float, mz_max: float,
+    def filter_ranged(self, mz_min: float = 0.0,
+                      mz_max: float = 2000.0,
                       scan_min: int = 0,
                       scan_max: int = 1000,
                       intensity_min: float = 0.0,
