@@ -1,9 +1,9 @@
 module DataHandle
 
 using DataFrames, FilePathsBase, SQLite
-using IMSJL.Data, IMSJL.RustCAPI
+using IMSJL.Data, IMSJL.RustCAPI, IMSJL.Slice
 
-import Base: iterate, length
+import Base
 
 struct TimsDataHandle
     data_path::String
@@ -33,13 +33,12 @@ struct TimsDataHandle
 end
 
 function determine_bruker_binary_path()::String
-    # TODO: Remove hard-coded path, library should be included in deps
-    return "/home/administrator/Documents/promotion/ENV-11/lib/python3.11/site-packages/opentims_bruker_bridge/libtimsdata.so"
+    # TODO: find better place to put libtimsdata.so
+    return joinpath(pkgdir(@__MODULE__), "lib", "libtimsdata.so")
 end
 
 function determine_imsjl_connector_path()::String
-    # TODO: Remove hard-coded path, library should be included in deps
-    return "/home/administrator/Documents/promotion/rustims/imsjl_connector/target/release/libimsjl_connector.so"
+    return joinpath(pkgdir(@__MODULE__), "..", "imsjl_connector", "target", "release", "libimsjl_connector.so")
 end
 
 function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::TimsFrame
@@ -53,10 +52,10 @@ function get_frame_meta_data(ds_path::String)::DataFrame
 end
 
 # Initial iteration state
-iterate(td::TimsDataHandle) = iterate(td, 1)
+Base.iterate(td::TimsDataHandle) = iterate(td, 1)
 
 # Producing the next value and iteration state
-function iterate(td::TimsDataHandle, state)
+function Base.iterate(td::TimsDataHandle, state)
     # Check if we're past the last row
     if state > size(td.frame_meta_data, 1)
         return nothing  # Signal the end of iteration
@@ -67,7 +66,15 @@ function iterate(td::TimsDataHandle, state)
 end
 
 # Define length method for convenience
-length(td::TimsDataHandle) = size(td.frame_meta_data, 1)
+Base.length(td::TimsDataHandle) = size(td.frame_meta_data, 1)
+
+function Base.getindex(td::TimsDataHandle, frame_id::Int)::TimsFrame
+    return get_tims_frame(td, frame_id)
+end
+
+function Base.getindex(td::TimsDataHandle, ur::UnitRange{Int})::TimsSlice
+    return TimsSlice(ur.start, ur.stop)
+end
 
 export TimsDataHandle, get_tims_frame
 

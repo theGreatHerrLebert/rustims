@@ -1,8 +1,12 @@
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
+use std::collections::BTreeMap;
+use itertools::multizip;
+use crate::MsType;
+
 use crate::mz_spectrum::{MzSpectrum};
-use crate::tims_frame::{TimsFrame, TimsFrameFlat, TimsFrameVectorized};
+use crate::tims_frame::{TimsFrame, TimsSliceFlat, TimsFrameVectorized};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -45,7 +49,15 @@ impl TimsSlice {
         windows
     }
 
-    pub fn flatten(&self) -> TimsFrameFlat {
+    pub fn get_slice_by_type(&self, t: MsType) -> TimsSlice {
+        let filtered_frames = self.frames.iter()
+            .filter(|f| f.ms_type == t)
+            .map(|f| f.clone())
+            .collect();
+        TimsSlice { frames: filtered_frames }
+    }
+
+    pub fn flatten(&self) -> TimsSliceFlat {
         let mut frame_ids = Vec::new();
         let mut scans = Vec::new();
         let mut tofs = Vec::new();
@@ -65,7 +77,7 @@ impl TimsSlice {
             intensities.extend(&frame.ims_frame.intensity);
         }
 
-        TimsFrameFlat {
+        TimsSliceFlat {
             frame_ids,
             scans,
             tofs,
@@ -75,9 +87,111 @@ impl TimsSlice {
             intensities,
         }
     }
+
+    pub fn to_tims_plane(&self, tof_max_value: i32, num_chunks: i32) -> Vec<TimsPlane> {
+
+        let flat_slice = self.get_slice_by_type(MsType::Precursor).flatten();
+
+        let chunk_size = (tof_max_value as f64 / num_chunks as f64) as i32;
+
+        // Calculate range_and_width based on num_chunks and chunk_size
+        let range_and_width: Vec<(i32, i32)> = (1..=num_chunks)
+            .map(|i| (chunk_size * i, i + 2))
+            .collect();
+
+        let mut tof_map: BTreeMap<(i32, i32), (Vec<i32>, Vec<f64>, Vec<i32>, Vec<f64>, Vec<i32>, Vec<f64>, Vec<f64>)> = BTreeMap::new();
+
+        // Iterate over the data points using multizip
+        for (id, rt, scan, mobility, tof, mz, intensity)
+
+        in multizip((flat_slice.frame_ids, flat_slice.retention_times, flat_slice.scans, flat_slice.mobilities, flat_slice.tofs, flat_slice.mzs, flat_slice.intensities)) {
+
+            for &(switch_point, width) in &range_and_width {
+                if tof < switch_point {
+
+                    let key = (width, (tof as f64 / width as f64).floor() as i32);
+
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).0.push(id);
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).1.push(rt);
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).2.push(scan);
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).3.push(mobility);
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).4.push(tof);
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).5.push(mz);
+                    tof_map.entry(key).or_insert_with(|| (vec![], vec![], vec![], vec![], vec![], vec![], vec![])).6.push(intensity);
+
+                    break
+                }
+            }
+        }
+
+        let mut tims_planes = Vec::new();
+
+        for ((_width, _key), (frame_ids, retention_times, scans, mobilities, tofs, mzs, intensities)) in &tof_map {
+
+            // 1. Calculate mean and std for tof and mz
+            let tof_mean: f64 = tofs.iter().map(|&x| x as f64).sum::<f64>() / tofs.len() as f64;
+            let tof_std: f64 = (tofs.iter().map(|&x| (x as f64 - tof_mean).powi(2)).sum::<f64>() / tofs.len() as f64).sqrt();
+            let mz_mean: f64 = mzs.iter().map(|&x| x as f64).sum::<f64>() / mzs.len() as f64;
+            let mz_std: f64 = (mzs.iter().map(|&x| (x as f64 - mz_mean).powi(2)).sum::<f64>() / mzs.len() as f64).sqrt();
+
+            // 2. Aggregate data by frame_id and scan using a BTreeMap for sorted order
+            let mut grouped_data: BTreeMap<(i32, i32), (f64, f64, f64)> = BTreeMap::new();
+
+            for (f, r, s, m, i) in multizip((frame_ids, retention_times, scans, mobilities, intensities)) {
+                let key = (*f, *s);
+                let entry = grouped_data.entry(key).or_insert((0.0, 0.0, 0.0));  // (intensity_sum, mobility, retention_time)
+                entry.0 += *i as f64;
+                entry.1 = *m as f64;
+                entry.2 = *r;
+            }
+
+            // Extract data from the grouped_data
+            let mut frame_id = vec![];
+            let mut retention_time = vec![];
+            let mut scan = vec![];
+            let mut mobility = vec![];
+            let mut intensity = vec![];
+            for ((f, s), (i, m, r)) in grouped_data {
+                frame_id.push(f);
+                retention_time.push(r);
+                scan.push(s);
+                mobility.push(m);
+                intensity.push(i);
+            }
+
+            // 3. Push a new TimsPlane instance to tims_planes vector
+            tims_planes.push(TimsPlane {
+                tof_mean,
+                tof_std,
+                mz_mean,
+                mz_std,
+                frame_id,
+                retention_time,
+                scan,
+                mobility,
+                intensity,
+            });
+        }
+
+        tims_planes
+    }
 }
 
 #[derive(Clone)]
 pub struct TimsSliceVectorized {
     pub frames: Vec<TimsFrameVectorized>,
+}
+
+#[derive(Clone)]
+pub struct TimsPlane {
+    pub tof_mean: f64,
+    pub tof_std: f64,
+    pub mz_mean: f64,
+    pub mz_std: f64,
+
+    pub frame_id: Vec<i32>,
+    pub retention_time: Vec<f64>,
+    pub scan: Vec<i32>,
+    pub mobility: Vec<f64>,
+    pub intensity: Vec<f64>,
 }

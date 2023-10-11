@@ -9,7 +9,7 @@ use std::fmt::{Display, Formatter};
 ///
 /// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
 ///
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum MsType {
     Precursor,
     FragmentDda,

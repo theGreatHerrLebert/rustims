@@ -251,7 +251,7 @@ pub struct TimsFrameVectorized {
 }
 
 #[derive(Clone, Debug)]
-pub struct TimsFrameFlat {
+pub struct TimsSliceFlat {
     pub frame_ids: Vec<i32>,
     pub scans: Vec<i32>,
     pub tofs: Vec<i32>,
