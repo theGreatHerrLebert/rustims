@@ -24,4 +24,6 @@ pub use {
 
     tims_slice::TimsSlice,
     tims_slice::TimsSliceVectorized,
+
+    tims_slice::TimsPlane,
 };

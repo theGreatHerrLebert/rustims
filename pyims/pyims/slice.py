@@ -49,7 +49,7 @@ class TimsSlice:
     def __repr__(self):
         return f"TimsSlice({self.first_frame_id}, {self.last_frame_id})"
 
-    def filter_ranged(self, mz_min: float, mz_max: float, scan_min: int = 0, scan_max: int = 1000, intensity_min: float = 0.0, num_threads: int = 4) -> 'TimsSlice':
+    def filter_ranged(self, mz_min: float = 0.0, mz_max: float = 2000.0, scan_min: int = 0, scan_max: int = 1000, intensity_min: float = 0.0, num_threads: int = 4) -> 'TimsSlice':
         """Filter the slice by m/z, scan and intensity.
 
         Args:
@@ -112,3 +112,68 @@ class TimsSlice:
         else:
             self.__current_index = 0  # Reset for next iteration
             raise StopIteration
+
+    def get_tims_planes(self, tof_max_value: int = 400_000, num_chunks: int = 7, num_threads: int = 4) -> List['TimsPlane']:
+        return [TimsPlane.from_py_tims_plane(plane) for plane in self.__slice_ptr.to_tims_planes(tof_max_value, num_chunks, num_threads)]
+
+
+class TimsPlane:
+    def __init__(self):
+        self.__plane_ptr = None
+
+    @classmethod
+    def from_py_tims_plane(cls, plane: pims.PyTimsPlane):
+        """Create a TimsPlane from a PyTimsPlane.
+
+        Args:
+            plane (pims.PyTimsPlane): PyTimsPlane to create the TimsPlane from.
+
+        Returns:
+            TimsPlane: TimsPlane created from the PyTimsPlane.
+        """
+        instance = cls.__new__(cls)
+        instance.__plane_ptr = plane
+        return instance
+
+    @property
+    def mz_mean(self):
+        return self.__plane_ptr.mz_mean
+
+    @property
+    def mz_std(self):
+        return self.__plane_ptr.mz_std
+
+    @property
+    def tof_mean(self):
+        return self.__plane_ptr.tof_mean
+
+    @property
+    def tof_std(self):
+        return self.__plane_ptr.tof_std
+
+    @property
+    def frame_ids(self):
+        return self.__plane_ptr.frame_ids
+
+    @property
+    def scans(self):
+        return self.__plane_ptr.scans
+
+    @property
+    def intensities(self):
+        return self.__plane_ptr.intensity
+
+    @property
+    def retention_times(self):
+        return self.__plane_ptr.retention_times
+
+    @property
+    def mobilities(self):
+        return self.__plane_ptr.mobilities
+
+    @property
+    def num_points(self):
+        return len(self.frame_ids)
+
+    def __repr__(self):
+        return f"TimsPlane(mz_mean: {self.mz_mean}, mz_std: {self.mz_std}, tof_mean: {self.tof_mean}, tof_std: {self.tof_std}, num_points: {len(self.frame_ids)})"
