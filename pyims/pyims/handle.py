@@ -99,3 +99,9 @@ class TimsDataHandle(ABC):
         else:
             self.__current_index = 1  # Reset for next iteration
             raise StopIteration
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return self.get_tims_slice(np.arange(index.start, index.stop, index.step).astype(np.int32))
+        return self.get_tims_frame(index)
+

@@ -49,16 +49,15 @@ class TimsSlice:
     def __repr__(self):
         return f"TimsSlice({self.first_frame_id}, {self.last_frame_id})"
 
-    def get_precursors(self):
+    @property
+    def precursors(self):
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.get_precursors())
 
-    def get_fragments_dda(self):
+    @property
+    def fragments(self):
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.get_fragments_dda())
 
-    def get_fragments_dia(self):
-        return TimsSlice.from_py_tims_slice(self.__slice_ptr.get_fragments_dia())
-
-    def filter_ranged(self, mz_min: float = 0.0, mz_max: float = 2000.0, scan_min: int = 0, scan_max: int = 1000,
+    def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, scan_min: int = 0, scan_max: int = 1000,
                       intensity_min: float = 0.0, intensity_max: float = 1e9, num_threads: int = 4) -> 'TimsSlice':
         """Filter the slice by m/z, scan and intensity.
 
@@ -76,7 +75,8 @@ class TimsSlice:
         """
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max, num_threads))
 
-    def get_frames(self) -> List[TimsFrame]:
+    @property
+    def frames(self) -> List[TimsFrame]:
         """Get the frames.
 
         Returns:
@@ -186,5 +186,20 @@ class TimsPlane:
     def num_points(self):
         return len(self.frame_ids)
 
+    @property
+    def data(self):
+        return pd.DataFrame({
+            'frame_id': self.frame_ids,
+            'scan': self.scans,
+            'retention_time': self.retention_times,
+            'mobility': self.mobilities,
+            'intensity': self.intensities
+        })
+
     def __repr__(self):
-        return f"TimsPlane(mz_mean: {self.mz_mean}, mz_std: {self.mz_std}, tof_mean: {self.tof_mean}, tof_std: {self.tof_std}, num_points: {len(self.frame_ids)})"
+        return (f"TimsPlane(mz_mean: "
+                f"{np.round(self.mz_mean, 4)}, "
+                f"mz_std: {np.round(self.mz_std, 4)},"
+                f" tof_mean: {np.round(self.tof_mean, 4)}, "
+                f"tof_std: {np.round(self.tof_std, 4)}, "
+                f"num_points: {len(self.frame_ids)})")

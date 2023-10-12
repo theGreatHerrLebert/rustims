@@ -6,7 +6,7 @@ use itertools::multizip;
 use crate::MsType;
 
 use crate::mz_spectrum::{MzSpectrum};
-use crate::tims_frame::{TimsFrame, TimsSliceFlat, TimsFrameVectorized};
+use crate::tims_frame::{TimsFrame, TimsFrameVectorized};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -203,4 +203,15 @@ fn collapse_entry(_key: &(i32, i32), values: &(Vec<i32>, Vec<f64>, Vec<i32>, Vec
         mobility,
         intensity,
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct TimsSliceFlat {
+    pub frame_ids: Vec<i32>,
+    pub scans: Vec<i32>,
+    pub tofs: Vec<i32>,
+    pub retention_times: Vec<f64>,
+    pub mobilities: Vec<f64>,
+    pub mzs: Vec<f64>,
+    pub intensities: Vec<f64>,
 }
