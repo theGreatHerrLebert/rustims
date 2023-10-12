@@ -126,12 +126,12 @@ impl MzSpectrum {
         MzSpectrum { mz, intensity }
     }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min:f64) -> Self {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min:f64, intensity_max: f64) -> Self {
         let mut mz_vec: Vec<f64> = Vec::new();
         let mut intensity_vec: Vec<f64> = Vec::new();
 
         for (mz, intensity) in self.mz.iter().zip(self.intensity.iter()) {
-            if mz_min <= *mz && *mz <= mz_max && *intensity >= intensity_min {
+            if mz_min <= *mz && *mz <= mz_max && *intensity >= intensity_min && *intensity <= intensity_max {
                 mz_vec.push(*mz);
                 intensity_vec.push(*intensity);
             }

@@ -70,18 +70,19 @@ class MzSpectrum:
         indices, windows = self.__spec_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)
         return indices, [MzSpectrum.from_py_mz_spectrum(window) for window in windows]
 
-    def filter_ranged(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0) -> 'MzSpectrum':
+    def filter_ranged(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0, intensity_max: float = 1e9) -> 'MzSpectrum':
         """Filter the spectrum for a given m/z range and intensity range.
 
         Args:
             mz_min (float): Minimum m/z value.
             mz_max (float): Maximum m/z value.
             intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
+            intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
 
         Returns:
             MzSpectrum: Filtered spectrum.
         """
-        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min))
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
 
     def vectorized(self, resolution: int = 2) -> 'MzSpectrumVectorized':
         """Convert the spectrum to a vectorized spectrum.
