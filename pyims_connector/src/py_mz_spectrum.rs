@@ -74,6 +74,14 @@ impl PyMzSpectrum {
         };
         Ok(py_vectorized)
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyResult<PyMzSpectrum> {
+        let filtered = self.inner.filter_ranged(mz_min, mz_max, intensity_min, intensity_max);
+        let py_filtered = PyMzSpectrum {
+            inner: filtered,
+        };
+        Ok(py_filtered)
+    }
 }
 
 #[pyclass]
