@@ -19,14 +19,14 @@ impl TimsSlice {
         TimsSlice { frames }
     }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, num_threads: usize) -> TimsSlice {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64, num_threads: usize) -> TimsSlice {
 
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
 
         // Use the thread pool
         let filtered_frames = pool.install(|| {
             let result: Vec<_> =  self.frames.par_iter()
-                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max))
                 .collect();
             result
         });
@@ -90,7 +90,7 @@ impl TimsSlice {
 
     pub fn to_tims_planes(&self, tof_max_value: i32, num_chunks: i32, num_threads: usize) -> Vec<TimsPlane> {
 
-        let flat_slice = self.get_slice_by_type(MsType::Precursor).flatten();
+        let flat_slice = self.flatten();
 
         let chunk_size = (tof_max_value as f64 / num_chunks as f64) as i32;
 

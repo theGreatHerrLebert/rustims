@@ -137,7 +137,7 @@ impl TimsFrame {
         tims_spectra
     }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64) -> TimsFrame {
 
         let mut scan_vec = Vec::new();
         let mut mobility_vec = Vec::new();
@@ -146,7 +146,7 @@ impl TimsFrame {
         let mut intensity_vec = Vec::new();
 
         for (mz, intensity, scan, mobility, tof) in itertools::multizip((&self.ims_frame.mz, &self.ims_frame.intensity, &self.scan, &self.ims_frame.mobility, &self.tof)) {
-            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min {
+            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min && intensity <= &intensity_max {
                 scan_vec.push(*scan);
                 mobility_vec.push(*mobility);
                 tof_vec.push(*tof);

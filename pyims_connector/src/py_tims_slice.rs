@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use mscore::{TimsPlane, TimsSlice};
+use mscore::{MsType, TimsPlane, TimsSlice};
 use pyo3::types::{PyList};
 use numpy::{IntoPyArray, PyArray1};
 use crate::py_mz_spectrum::PyMzSpectrum;
@@ -24,8 +24,8 @@ impl PyTimsSlice {
     #[getter]
     pub fn frame_count(&self) -> i32 { self.inner.frames.len() as i32 }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, num_threads: usize) -> PyTimsSlice {
-        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, num_threads) }
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max, num_threads) }
     }
     pub fn get_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
@@ -37,6 +37,18 @@ impl PyTimsSlice {
         }
 
         Ok(list.into())
+    }
+
+    pub fn get_precursors(&self) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.get_slice_by_type(MsType::Precursor) }
+    }
+
+    pub fn get_fragments_dda(&self) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.get_slice_by_type(MsType::FragmentDda) }
+    }
+
+    pub fn get_fragments_dia(&self) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.get_slice_by_type(MsType::FragmentDia) }
     }
 
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> PyResult<Py<PyList>> {
@@ -98,6 +110,7 @@ pub struct PyTimsPlane {
 
 #[pymethods]
 impl PyTimsPlane {
+
     #[getter]
     pub fn mz_mean(&self) -> f64 {
         self.inner.mz_mean
