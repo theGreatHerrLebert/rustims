@@ -186,5 +186,20 @@ class TimsPlane:
     def num_points(self):
         return len(self.frame_ids)
 
+    @property
+    def data(self):
+        return pd.DataFrame({
+            'frame_id': self.frame_ids,
+            'scan': self.scans,
+            'retention_time': self.retention_times,
+            'mobility': self.mobilities,
+            'intensity': self.intensities
+        })
+
     def __repr__(self):
-        return f"TimsPlane(mz_mean: {self.mz_mean}, mz_std: {self.mz_std}, tof_mean: {self.tof_mean}, tof_std: {self.tof_std}, num_points: {len(self.frame_ids)})"
+        return (f"TimsPlane(mz_mean: "
+                f"{np.round(self.mz_mean, 4)}, "
+                f"mz_std: {np.round(self.mz_std, 4)},"
+                f" tof_mean: {np.round(self.tof_mean, 4)}, "
+                f"tof_std: {np.round(self.tof_std, 4)}, "
+                f"num_points: {len(self.frame_ids)})")
