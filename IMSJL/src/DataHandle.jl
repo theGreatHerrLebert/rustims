@@ -41,15 +41,37 @@ function determine_imsjl_connector_path()::String
     return joinpath(pkgdir(@__MODULE__), "..", "imsjl_connector", "target", "release", "libimsjl_connector.so")
 end
 
+function get_frame_meta_data(ds_path::String)::DataFrame
+    db = SQLite.DB(string(Path(ds_path), Path("/analysis.tdf")))
+    return DataFrame(DBInterface.execute(db, "SELECT * FROM Frames"))
+end
+
+# TimsFrame functions
+
 function get_tims_frame(handle::TimsDataHandle, frame_id::Number)::TimsFrame
     ctims_frame = RustCAPI.TimsDataHandle_get_frame(handle.handle, Int32(frame_id))
     return RustCAPI.ctims_frame_to_julia_tims_frame(ctims_frame)
 end
 
-function get_frame_meta_data(ds_path::String)::DataFrame
-    db = SQLite.DB(string(Path(ds_path), Path("/analysis.tdf")))
-    return DataFrame(DBInterface.execute(db, "SELECT * FROM Frames"))
+
+# TimsSlice functions
+
+function get_tims_slice(handle::TimsDataHandle, ur::UnitRange)::TimsSlice
+    datavec = Vector{TimsFrame}(undef, last(ur)-first(ur)+1)
+    for (idx, frame_id) in enumerate(ur)
+        datavec[idx] = get_tims_frame(handle, frame_id)
+    end
+    return TimsSlice(first(ur), last(ur), datavec)
 end
+
+function get_tims_slice(handle::TimsDataHandle, first_id::Int, last_id::Int)::TimsSlice
+    return get_tims_slice(handle, first_id:last_id)
+end
+
+function get_tims_slice(handle::TimsDataHandle, vec_ur::Vector{UnitRange{Int}})::TimsSlice
+    return get_tims_slice(handle, vec_ur[1])
+end
+
 
 # Initial iteration state
 Base.iterate(td::TimsDataHandle) = iterate(td, 1)
@@ -73,7 +95,7 @@ function Base.getindex(td::TimsDataHandle, frame_id::Int)::TimsFrame
 end
 
 function Base.getindex(td::TimsDataHandle, ur::UnitRange{Int})::TimsSlice
-    return TimsSlice(ur.start, ur.stop)
+    return get_tims_slice(td, ur)
 end
 
 export TimsDataHandle, get_tims_frame
