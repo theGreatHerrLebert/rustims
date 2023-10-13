@@ -16,8 +16,8 @@ function TimsSlice()
     return TimsSlice(0, 0, Vector())
 end
 
-
-function filter_ranged(slice::TimsSlice, mz_min, mz_max; scan_min=0, scan_max=1000, intensity_min=0.0)::TimsSlice
+# todo add intensity max
+function filter_ranged(slice::TimsSlice, mz_min, mz_max; scan_min=0, scan_max=1000, intensity_min=0.0, intensity_max=200000)::TimsSlice
     new_data = Vector{TimsFrame}()
     for frame in slice.data
         # the mathematical operator is xor
