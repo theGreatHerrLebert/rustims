@@ -6,7 +6,7 @@ use itertools::multizip;
 use crate::MsType;
 
 use crate::mz_spectrum::{MzSpectrum};
-use crate::tims_frame::{TimsFrame, TimsSliceFlat, TimsFrameVectorized};
+use crate::tims_frame::{TimsFrame, TimsFrameVectorized};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -15,18 +15,59 @@ pub struct TimsSlice {
 
 impl TimsSlice {
 
+    /// Create a new TimsSlice from a vector of TimsFrames
+    ///
+    /// # Arguments
+    ///
+    /// * `frames` - A vector of TimsFrames
+    ///
+    /// # Returns
+    ///
+    /// * `TimsSlice` - A TimsSlice containing the TimsFrames
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mscore::TimsSlice;
+    ///
+    /// let slice = TimsSlice::new(vec![]);
+    /// ```
     pub fn new(frames: Vec<TimsFrame>) -> Self {
         TimsSlice { frames }
     }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, num_threads: usize) -> TimsSlice {
+    /// Filter the TimsSlice by m/z, scan, and intensity
+    ///
+    /// # Arguments
+    ///
+    /// * `mz_min` - The minimum m/z value
+    /// * `mz_max` - The maximum m/z value
+    /// * `scan_min` - The minimum scan value
+    /// * `scan_max` - The maximum scan value
+    /// * `intensity_min` - The minimum intensity value
+    /// * `intensity_max` - The maximum intensity value
+    /// * `num_threads` - The number of threads to use
+    ///
+    /// # Returns
+    ///
+    /// * `TimsSlice` - A TimsSlice containing only the TimsFrames that pass the filter
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mscore::TimsSlice;
+    ///
+    /// let slice = TimsSlice::new(vec![]);
+    /// let filtered_slice = slice.filter_ranged(400.0, 2000.0, 0, 1000, 0.0, 100000.0, 4);
+    /// ```
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64, num_threads: usize) -> TimsSlice {
 
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
 
         // Use the thread pool
         let filtered_frames = pool.install(|| {
             let result: Vec<_> =  self.frames.par_iter()
-                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min))
+                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max))
                 .collect();
             result
         });
@@ -34,27 +75,36 @@ impl TimsSlice {
         TimsSlice { frames: filtered_frames }
     }
 
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
-        // Create a thread pool
-        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
-
-        // Use the thread pool
-        let windows = pool.install(|| {
-            let windows: Vec<_> = self.frames.par_iter()
-                .flat_map( | frame | frame.to_windows(window_length, overlapping, min_peaks, min_intensity))
-                .collect();
-            windows
-        });
-
-        windows
-    }
-
+    /// Get a vector of TimsFrames by MsType
+    ///
+    /// # Arguments
+    ///
+    /// * `t` - The MsType to filter by
+    ///
+    /// # Returns
+    ///
+    /// * `TimsSlice` - A TimsSlice containing only the TimsFrames of the specified MsType
     pub fn get_slice_by_type(&self, t: MsType) -> TimsSlice {
         let filtered_frames = self.frames.iter()
             .filter(|f| f.ms_type == t)
             .map(|f| f.clone())
             .collect();
         TimsSlice { frames: filtered_frames }
+    }
+
+    pub fn to_resolution(&self, resolution: i32, num_threads: usize) -> TimsSlice {
+
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
+
+        // Use the thread pool
+        let result_frames = pool.install(|| {
+            let result: Vec<_> =  self.frames.par_iter()
+                .map(|f| f.to_resolution(resolution))
+                .collect();
+            result
+        });
+
+        TimsSlice { frames: result_frames }
     }
 
     pub fn flatten(&self) -> TimsSliceFlat {
@@ -88,9 +138,24 @@ impl TimsSlice {
         }
     }
 
-    pub fn to_tims_plane(&self, tof_max_value: i32, num_chunks: i32) -> Vec<TimsPlane> {
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
+        // Create a thread pool
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
 
-        let flat_slice = self.get_slice_by_type(MsType::Precursor).flatten();
+        // Use the thread pool
+        let windows = pool.install(|| {
+            let windows: Vec<_> = self.frames.par_iter()
+                .flat_map( | frame | frame.to_windows(window_length, overlapping, min_peaks, min_intensity))
+                .collect();
+            windows
+        });
+
+        windows
+    }
+
+    pub fn to_tims_planes(&self, tof_max_value: i32, num_chunks: i32, num_threads: usize) -> Vec<TimsPlane> {
+
+        let flat_slice = self.flatten();
 
         let chunk_size = (tof_max_value as f64 / num_chunks as f64) as i32;
 
@@ -124,54 +189,14 @@ impl TimsSlice {
             }
         }
 
-        let mut tims_planes = Vec::new();
+        // Create a thread pool with the desired number of threads
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
 
-        for ((_width, _key), (frame_ids, retention_times, scans, mobilities, tofs, mzs, intensities)) in &tof_map {
-
-            // 1. Calculate mean and std for tof and mz
-            let tof_mean: f64 = tofs.iter().map(|&x| x as f64).sum::<f64>() / tofs.len() as f64;
-            let tof_std: f64 = (tofs.iter().map(|&x| (x as f64 - tof_mean).powi(2)).sum::<f64>() / tofs.len() as f64).sqrt();
-            let mz_mean: f64 = mzs.iter().map(|&x| x as f64).sum::<f64>() / mzs.len() as f64;
-            let mz_std: f64 = (mzs.iter().map(|&x| (x as f64 - mz_mean).powi(2)).sum::<f64>() / mzs.len() as f64).sqrt();
-
-            // 2. Aggregate data by frame_id and scan using a BTreeMap for sorted order
-            let mut grouped_data: BTreeMap<(i32, i32), (f64, f64, f64)> = BTreeMap::new();
-
-            for (f, r, s, m, i) in multizip((frame_ids, retention_times, scans, mobilities, intensities)) {
-                let key = (*f, *s);
-                let entry = grouped_data.entry(key).or_insert((0.0, 0.0, 0.0));  // (intensity_sum, mobility, retention_time)
-                entry.0 += *i as f64;
-                entry.1 = *m as f64;
-                entry.2 = *r;
-            }
-
-            // Extract data from the grouped_data
-            let mut frame_id = vec![];
-            let mut retention_time = vec![];
-            let mut scan = vec![];
-            let mut mobility = vec![];
-            let mut intensity = vec![];
-            for ((f, s), (i, m, r)) in grouped_data {
-                frame_id.push(f);
-                retention_time.push(r);
-                scan.push(s);
-                mobility.push(m);
-                intensity.push(i);
-            }
-
-            // 3. Push a new TimsPlane instance to tims_planes vector
-            tims_planes.push(TimsPlane {
-                tof_mean,
-                tof_std,
-                mz_mean,
-                mz_std,
-                frame_id,
-                retention_time,
-                scan,
-                mobility,
-                intensity,
-            });
-        }
+        let tims_planes: Vec<TimsPlane> = pool.install(|| {
+            tof_map.par_iter()
+                .map(|(key, values)| collapse_entry(key, values))
+                .collect()
+        });
 
         tims_planes
     }
@@ -194,4 +219,64 @@ pub struct TimsPlane {
     pub scan: Vec<i32>,
     pub mobility: Vec<f64>,
     pub intensity: Vec<f64>,
+}
+
+fn collapse_entry(_key: &(i32, i32), values: &(Vec<i32>, Vec<f64>, Vec<i32>, Vec<f64>, Vec<i32>, Vec<f64>, Vec<f64>)) -> TimsPlane {
+
+    let (frame_ids, retention_times, scans, mobilities, tofs, mzs, intensities) = values;
+
+    // 1. Calculate mean and std for tof and mz
+    let tof_mean: f64 = tofs.iter().map(|&x| x as f64).sum::<f64>() / tofs.len() as f64;
+    let tof_std: f64 = (tofs.iter().map(|&x| (x as f64 - tof_mean).powi(2)).sum::<f64>() / tofs.len() as f64).sqrt();
+    let mz_mean: f64 = mzs.iter().map(|&x| x as f64).sum::<f64>() / mzs.len() as f64;
+    let mz_std: f64 = (mzs.iter().map(|&x| (x as f64 - mz_mean).powi(2)).sum::<f64>() / mzs.len() as f64).sqrt();
+
+    // 2. Aggregate data by frame_id and scan using a BTreeMap for sorted order
+    let mut grouped_data: BTreeMap<(i32, i32), (f64, f64, f64)> = BTreeMap::new();
+
+    for (f, r, s, m, i) in multizip((frame_ids, retention_times, scans, mobilities, intensities)) {
+        let key = (*f, *s);
+        let entry = grouped_data.entry(key).or_insert((0.0, 0.0, 0.0));  // (intensity_sum, mobility, retention_time)
+        entry.0 += *i;
+        entry.1 = *m;
+        entry.2 = *r;
+    }
+
+    // Extract data from the grouped_data
+    let mut frame_id = vec![];
+    let mut retention_time = vec![];
+    let mut scan = vec![];
+    let mut mobility = vec![];
+    let mut intensity = vec![];
+
+    for ((f, s), (i, m, r)) in grouped_data {
+            frame_id.push(f);
+            retention_time.push(r);
+            scan.push(s);
+            mobility.push(m);
+            intensity.push(i);
+        }
+
+    TimsPlane {
+        tof_mean,
+        tof_std,
+        mz_mean,
+        mz_std,
+        frame_id,
+        retention_time,
+        scan,
+        mobility,
+        intensity,
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TimsSliceFlat {
+    pub frame_ids: Vec<i32>,
+    pub scans: Vec<i32>,
+    pub tofs: Vec<i32>,
+    pub retention_times: Vec<f64>,
+    pub mobilities: Vec<f64>,
+    pub mzs: Vec<f64>,
+    pub intensities: Vec<f64>,
 }

@@ -137,7 +137,27 @@ impl TimsFrame {
         tims_spectra
     }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64) -> TimsFrame {
+    ///
+    /// Filter a given TimsFrame by m/z, scan, and intensity.
+    ///
+    /// # Arguments
+    ///
+    /// * `mz_min` - The minimum m/z value.
+    /// * `mz_max` - The maximum m/z value.
+    /// * `scan_min` - The minimum scan value.
+    /// * `scan_max` - The maximum scan value.
+    /// * `intensity_min` - The minimum intensity value.
+    /// * `intensity_max` - The maximum intensity value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{TimsFrame, MsType};
+    ///
+    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let filtered_frame = frame.filter_ranged(100.0, 200.0, 1, 2, 50.0, 60.0);
+    /// ```
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64) -> TimsFrame {
 
         let mut scan_vec = Vec::new();
         let mut mobility_vec = Vec::new();
@@ -146,7 +166,7 @@ impl TimsFrame {
         let mut intensity_vec = Vec::new();
 
         for (mz, intensity, scan, mobility, tof) in itertools::multizip((&self.ims_frame.mz, &self.ims_frame.intensity, &self.scan, &self.ims_frame.mobility, &self.tof)) {
-            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min {
+            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && intensity >= &intensity_min && intensity <= &intensity_max {
                 scan_vec.push(*scan);
                 mobility_vec.push(*mobility);
                 tof_vec.push(*tof);
@@ -158,6 +178,21 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
+    ///
+    /// Convert a given TimsFrame to a vector of TimsSpectrum.
+    ///
+    /// # Arguments
+    ///
+    /// * `resolution` - The resolution to which the m/z values should be rounded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use mscore::{TimsSpectrum, TimsFrame, MsType};
+    ///
+    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+    /// let low_res_frame = frame.to_resolution(1);
+    /// ```
     pub fn to_resolution(&self, resolution: i32) -> TimsFrame {
 
         let factor = (10.0f64).powi(resolution);
@@ -248,15 +283,4 @@ pub struct TimsFrameVectorized {
     pub scan: Vec<i32>,
     pub tof: Vec<i32>,
     pub ims_frame: ImsFrameVectorized,
-}
-
-#[derive(Clone, Debug)]
-pub struct TimsSliceFlat {
-    pub frame_ids: Vec<i32>,
-    pub scans: Vec<i32>,
-    pub tofs: Vec<i32>,
-    pub retention_times: Vec<f64>,
-    pub mobilities: Vec<f64>,
-    pub mzs: Vec<f64>,
-    pub intensities: Vec<f64>,
 }

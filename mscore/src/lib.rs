@@ -17,11 +17,13 @@ pub use {
     tims_frame::ImsFrame,
     tims_frame::ImsFrameVectorized,
 
-    tims_frame::TimsSliceFlat,
-
     tims_frame::TimsFrame,
     tims_frame::TimsFrameVectorized,
 
     tims_slice::TimsSlice,
     tims_slice::TimsSliceVectorized,
+
+    tims_slice::TimsSliceFlat,
+
+    tims_slice::TimsPlane,
 };

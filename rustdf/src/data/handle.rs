@@ -358,6 +358,16 @@ impl TimsDataHandle {
         Ok(frame.get_ims_frame())
     }
 
+    /// get a slice of frames from the tims dataset
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_ids` - A vector of u32 that holds the frame ids
+    ///
+    /// # Returns
+    ///
+    /// * `tims_slice` - A TimsSlice struct
+    ///
     pub fn get_tims_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
 
         let result: Vec<TimsFrame> = frame_ids
@@ -378,6 +388,12 @@ impl TimsDataHandle {
         TimsSlice { frames: result }
     }
 
+    /// get the number of frames in the dataset
+    ///
+    /// # Returns
+    ///
+    /// * the number of frames in the dataset
+    ///
     pub fn get_frame_count(&self) -> i32 {
         self.frame_meta_data.len() as i32
     }
