@@ -67,6 +67,10 @@ impl PyTimsSlice {
         PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
     }
 
+    pub fn to_resolution(&self, resolution: i32, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.to_resolution(resolution, num_threads) }
+    }
+
     fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
 
         let flat_frame = self.inner.flatten();
