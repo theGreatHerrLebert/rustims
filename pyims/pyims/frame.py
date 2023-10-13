@@ -129,13 +129,14 @@ class TimsFrame:
 
         return pd.DataFrame({'scan': self.scan, 'mobility': self.mobility, 'tof': self.tof, 'mz': self.mz, 'intensity': self.intensity})
 
-    def filter(self, mz_min: float = 0.0,
-                      mz_max: float = 2000.0,
-                      scan_min: int = 0,
-                      scan_max: int = 1000,
-                      intensity_min: float = 0.0,
-                      intensity_max: float = 1e9,
-                      ) -> 'TimsFrame':
+    def filter(self,
+               mz_min: float = 0.0,
+               mz_max: float = 2000.0,
+               scan_min: int = 0,
+               scan_max: int = 1000,
+               intensity_min: float = 0.0,
+               intensity_max: float = 1e9,
+               ) -> 'TimsFrame':
         """Filter the frame for a given m/z range, scan range and intensity range.
 
         Args:
@@ -179,7 +180,6 @@ class TimsFrame:
             overlapping (bool, optional): Whether the windows should overlap. Defaults to True.
             min_num_peaks (int, optional): Minimum number of peaks in a window. Defaults to 5.
             min_intensity (float, optional): Minimum intensity of a peak in a window. Defaults to 1.
-            num_threads (int, optional): Number of threads to use. Defaults to 1.
 
         Returns:
             List[MzSpectrum]: List of windows.

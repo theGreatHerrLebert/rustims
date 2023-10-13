@@ -15,10 +15,51 @@ pub struct TimsSlice {
 
 impl TimsSlice {
 
+    /// Create a new TimsSlice from a vector of TimsFrames
+    ///
+    /// # Arguments
+    ///
+    /// * `frames` - A vector of TimsFrames
+    ///
+    /// # Returns
+    ///
+    /// * `TimsSlice` - A TimsSlice containing the TimsFrames
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mscore::TimsSlice;
+    ///
+    /// let slice = TimsSlice::new(vec![]);
+    /// ```
     pub fn new(frames: Vec<TimsFrame>) -> Self {
         TimsSlice { frames }
     }
 
+    /// Filter the TimsSlice by m/z, scan, and intensity
+    ///
+    /// # Arguments
+    ///
+    /// * `mz_min` - The minimum m/z value
+    /// * `mz_max` - The maximum m/z value
+    /// * `scan_min` - The minimum scan value
+    /// * `scan_max` - The maximum scan value
+    /// * `intensity_min` - The minimum intensity value
+    /// * `intensity_max` - The maximum intensity value
+    /// * `num_threads` - The number of threads to use
+    ///
+    /// # Returns
+    ///
+    /// * `TimsSlice` - A TimsSlice containing only the TimsFrames that pass the filter
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mscore::TimsSlice;
+    ///
+    /// let slice = TimsSlice::new(vec![]);
+    /// let filtered_slice = slice.filter_ranged(400.0, 2000.0, 0, 1000, 0.0, 100000.0, 4);
+    /// ```
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64, num_threads: usize) -> TimsSlice {
 
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
@@ -34,27 +75,36 @@ impl TimsSlice {
         TimsSlice { frames: filtered_frames }
     }
 
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
-        // Create a thread pool
-        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
-
-        // Use the thread pool
-        let windows = pool.install(|| {
-            let windows: Vec<_> = self.frames.par_iter()
-                .flat_map( | frame | frame.to_windows(window_length, overlapping, min_peaks, min_intensity))
-                .collect();
-            windows
-        });
-
-        windows
-    }
-
+    /// Get a vector of TimsFrames by MsType
+    ///
+    /// # Arguments
+    ///
+    /// * `t` - The MsType to filter by
+    ///
+    /// # Returns
+    ///
+    /// * `TimsSlice` - A TimsSlice containing only the TimsFrames of the specified MsType
     pub fn get_slice_by_type(&self, t: MsType) -> TimsSlice {
         let filtered_frames = self.frames.iter()
             .filter(|f| f.ms_type == t)
             .map(|f| f.clone())
             .collect();
         TimsSlice { frames: filtered_frames }
+    }
+
+    pub fn to_resolution(&self, resolution: i32, num_threads: usize) -> TimsSlice {
+
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
+
+        // Use the thread pool
+        let result_frames = pool.install(|| {
+            let result: Vec<_> =  self.frames.par_iter()
+                .map(|f| f.to_resolution(resolution))
+                .collect();
+            result
+        });
+
+        TimsSlice { frames: result_frames }
     }
 
     pub fn flatten(&self) -> TimsSliceFlat {
@@ -86,6 +136,21 @@ impl TimsSlice {
             mzs,
             intensities,
         }
+    }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
+        // Create a thread pool
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
+
+        // Use the thread pool
+        let windows = pool.install(|| {
+            let windows: Vec<_> = self.frames.par_iter()
+                .flat_map( | frame | frame.to_windows(window_length, overlapping, min_peaks, min_intensity))
+                .collect();
+            windows
+        });
+
+        windows
     }
 
     pub fn to_tims_planes(&self, tof_max_value: i32, num_chunks: i32, num_threads: usize) -> Vec<TimsPlane> {

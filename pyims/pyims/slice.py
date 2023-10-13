@@ -84,6 +84,18 @@ class TimsSlice:
         """
         return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
 
+    def to_resolution(self, resolution: int, num_threads: int = 4) -> 'TimsSlice':
+        """Convert the slice to a given resolution.
+
+        Args:
+            resolution (int): Resolution.
+            num_threads (int, optional): Number of threads to use. Defaults to 4.
+
+        Returns:
+            TimsSlice: Slice with given resolution.
+        """
+        return TimsSlice.from_py_tims_slice(self.__slice_ptr.to_resolution(resolution, num_threads))
+
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1, num_threads: int = 4) -> List[MzSpectrum]:
         """Convert the slice to a list of windows.
 
