@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from numpy.typing import NDArray
 from typing import List
 
 import pyims_connector as pims
