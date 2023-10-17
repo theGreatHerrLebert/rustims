@@ -119,7 +119,8 @@ class TimsDataset(ABC):
 
 
 class TimsDatasetDDA(TimsDataset):
-    def get_selected_precursors(self):
+    @property
+    def selected_precursors(self):
         """Get precursors selected for fragmentation.
 
         Returns:
@@ -127,7 +128,8 @@ class TimsDatasetDDA(TimsDataset):
         """
         return pd.read_sql_query("SELECT * from Precursors", sqlite3.connect(self.data_path + "/analysis.tdf"))
 
-    def get_pasef_meta_data(self):
+    @property
+    def pasef_meta_data(self):
         """Get PASEF meta data for DDA.
 
         Returns:
@@ -138,7 +140,8 @@ class TimsDatasetDDA(TimsDataset):
 
 
 class TimsDatasetDIA(TimsDataset):
-    def get_pasef_meta_data(self):
+    @property
+    def pasef_meta_data(self):
         """Get PASEF meta data for DIA.
 
         Returns:
