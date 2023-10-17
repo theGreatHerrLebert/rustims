@@ -1,6 +1,8 @@
 from typing import List
 
 import numpy as np
+import pandas as pd
+import sqlite3
 from numpy.typing import NDArray
 
 import pyims_connector as pims
@@ -12,7 +14,7 @@ from pyims.frame import TimsFrame
 from pyims.slice import TimsSlice
 
 
-class TimsDataHandle(ABC):
+class TimsDataset(ABC):
     def __init__(self, data_path: str):
         """TimsDataHandle class.
 
@@ -21,6 +23,8 @@ class TimsDataHandle(ABC):
         """
         self.data_path = data_path
         self.bp: List[str] = obb.get_so_paths()
+        self.meta_data = self.__load_meta_data()
+        self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values
         self.__handle = None
         self.__current_index = 1
 
@@ -62,6 +66,14 @@ class TimsDataHandle(ABC):
             int: Number of frames.
         """
         return self.__handle.frame_count
+
+    def __load_meta_data(self) -> pd.DataFrame:
+        """Get the meta data.
+
+        Returns:
+            pd.DataFrame: Meta data.
+        """
+        return pd.read_sql_query("SELECT * from Frames", sqlite3.connect(self.data_path + "/analysis.tdf"))
 
     def get_tims_frame(self, frame_id: int) -> TimsFrame:
         """Get a TimsFrame.
@@ -105,3 +117,32 @@ class TimsDataHandle(ABC):
             return self.get_tims_slice(np.arange(index.start, index.stop, index.step).astype(np.int32))
         return self.get_tims_frame(index)
 
+
+class TimsDatasetDDA(TimsDataset):
+    def get_selected_precursors(self):
+        """Get precursors selected for fragmentation.
+
+        Returns:
+            pd.DataFrame: Precursors selected for fragmentation.
+        """
+        return pd.read_sql_query("SELECT * from Precursors", sqlite3.connect(self.data_path + "/analysis.tdf"))
+
+    def get_pasef_meta_data(self):
+        """Get PASEF meta data for DDA.
+
+        Returns:
+            pd.DataFrame: PASEF meta data.
+        """
+        return pd.read_sql_query("SELECT * from PasefFrameMsMsInfo",
+                                 sqlite3.connect(self.data_path + "/analysis.tdf"))
+
+
+class TimsDatasetDIA(TimsDataset):
+    def get_pasef_meta_data(self):
+        """Get PASEF meta data for DIA.
+
+        Returns:
+            pd.DataFrame: PASEF meta data.
+        """
+        return pd.read_sql_query("SELECT * from DiaFrameMsMsWindows",
+                                 sqlite3.connect(self.data_path + "/analysis.tdf"))
