@@ -75,7 +75,7 @@ impl PyTimsSlice {
     fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
 
         let flat_frame = self.inner.flatten();
-        
+
         let frame_ids_np = flat_frame.frame_ids.into_pyarray(py);
         let scans_np = flat_frame.scans.into_pyarray(py);
         let tofs_np = flat_frame.tofs.into_pyarray(py);
