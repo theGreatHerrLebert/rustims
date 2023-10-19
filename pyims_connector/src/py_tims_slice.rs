@@ -1,10 +1,10 @@
 use pyo3::prelude::*;
-use mscore::{MsType, TimsPlane, TimsSlice};
+use mscore::{MsType, TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
 use numpy::{IntoPyArray, PyArray1};
 use crate::py_mz_spectrum::PyMzSpectrum;
 
-use crate::py_tims_frame::{PyTimsFrame};
+use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
 
 #[pyclass]
 #[derive(Clone)]
@@ -27,6 +27,7 @@ impl PyTimsSlice {
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
         PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max, num_threads) }
     }
+
     pub fn get_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
         let list: Py<PyList> = PyList::empty(py).into();
@@ -74,6 +75,7 @@ impl PyTimsSlice {
     fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
 
         let flat_frame = self.inner.flatten();
+        
         let frame_ids_np = flat_frame.frame_ids.into_pyarray(py);
         let scans_np = flat_frame.scans.into_pyarray(py);
         let tofs_np = flat_frame.tofs.into_pyarray(py);
@@ -99,12 +101,54 @@ impl PyTimsSlice {
 
         Ok(list.into())
     }
+
+    pub fn vectorized(&self, resolution: i32, num_threads: usize) -> PyTimsSliceVectorized {
+        let vectorized = self.inner.vectorized(resolution, num_threads);
+        let py_vectorized = PyTimsSliceVectorized {
+            inner: vectorized,
+        };
+        py_vectorized
+    }
 }
 
 #[pyclass]
 #[derive(Clone)]
 pub struct PyTimsSliceVectorized {
-    pub inner: TimsSlice,
+    pub inner: TimsSliceVectorized,
+}
+
+#[pymethods]
+impl PyTimsSliceVectorized {
+    #[getter]
+    pub fn get_vectorized_frames(&self, py: Python) -> PyResult<Py<PyList>> {
+        let frames = &self.inner.frames;
+        let list: Py<PyList> = PyList::empty(py).into();
+
+        for frame in frames {
+            let py_tims_frame = Py::new(py, PyTimsFrameVectorized { inner: frame.clone() })?;
+            list.as_ref(py).append(py_tims_frame)?;
+        }
+
+        Ok(list.into())
+    }
+
+    #[getter]
+    pub fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
+
+        let flat_frame = self.inner.flatten();
+
+        let frame_ids_np = flat_frame.frame_ids.into_pyarray(py);
+        let scans_np = flat_frame.scans.into_pyarray(py);
+        let tofs_np = flat_frame.tofs.into_pyarray(py);
+        let retention_times_np = flat_frame.retention_times.into_pyarray(py);
+        let mobilities_np = flat_frame.mobilities.into_pyarray(py);
+        let indices_np = flat_frame.indices.into_pyarray(py);
+        let intensities_np = flat_frame.intensities.into_pyarray(py);
+
+        Ok((frame_ids_np.to_object(py), scans_np.to_object(py), tofs_np.to_object(py),
+            retention_times_np.to_object(py), mobilities_np.to_object(py), indices_np.to_object(py),
+            intensities_np.to_object(py)))
+    }
 }
 
 #[pyclass]

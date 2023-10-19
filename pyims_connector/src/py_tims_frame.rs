@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, ImsFrame, MsType};
+use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized};
 use pyo3::types::PyList;
 
 use crate::py_mz_spectrum::{PyMzSpectrum, PyTimsSpectrum};
@@ -104,6 +104,14 @@ impl PyTimsFrame {
         Ok(list.into())
     }
 
+    pub fn vectorized(&self, resolution: i32) -> PyTimsFrameVectorized {
+        let vectorized = self.inner.vectorized(resolution);
+        let py_vectorized = PyTimsFrameVectorized {
+            inner: vectorized,
+        };
+        py_vectorized
+    }
+
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64) -> PyTimsFrame {
         return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max) }
     }
@@ -112,5 +120,5 @@ impl PyTimsFrame {
 #[pyclass]
 #[derive(Clone)]
 pub struct PyTimsFrameVectorized {
-    pub inner: TimsFrame,
+    pub inner: TimsFrameVectorized,
 }

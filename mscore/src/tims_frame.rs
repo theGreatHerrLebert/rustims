@@ -261,6 +261,25 @@ impl TimsFrame {
 
         result
     }
+    pub fn vectorized(&self, resolution: i32) -> TimsFrameVectorized {
+        let binned_frame = self.to_resolution(resolution);
+        // Translate the m/z values into integer indices
+        let indices: Vec<i32> = binned_frame.ims_frame.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
+        // Create a vector of values
+        return TimsFrameVectorized {
+            frame_id: self.frame_id,
+            ms_type: self.ms_type.clone(),
+            scan: binned_frame.scan,
+            tof: binned_frame.tof,
+            ims_frame: ImsFrameVectorized {
+                retention_time: binned_frame.ims_frame.retention_time,
+                mobility: binned_frame.ims_frame.mobility,
+                indices,
+                values: binned_frame.ims_frame.intensity,
+                resolution,
+            },
+        };
+    }
 }
 
 impl fmt::Display for TimsFrame {
