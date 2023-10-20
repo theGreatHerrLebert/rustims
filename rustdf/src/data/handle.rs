@@ -57,7 +57,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     let scan_count = buffer_u32[0] as usize;
 
     // get the scan indices
-    let mut scan_indices: Vec<u32> = buffer_u32[..scan_count + 1].to_vec();
+    let mut scan_indices: Vec<u32> = buffer_u32[..=scan_count].to_vec();
     for index in &mut scan_indices {
         *index /= 2;
     }
