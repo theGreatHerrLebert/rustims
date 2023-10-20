@@ -83,7 +83,8 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
     // Directly set the last scan index as the length of intensities
     let last_scan = intensities.len() as u32;
-    scan_indices[scan_indices.len() - 1] = last_scan;
+    let last_index = scan_indices.len() - 1;
+    scan_indices[last_index] = last_scan;
 
     // adjust the tof indices to be zero-indexed
     let adjusted_tof_indices: Vec<u32> = tof_indices.iter().map(|&val| val - 1).collect();
