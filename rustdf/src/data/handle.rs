@@ -79,7 +79,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
         for _ in 0..size {
             println!("Before accumulation: current_sum: {}, tof_indices[{}]: {}", current_sum, index, tof_indices[index]);
             current_sum += tof_indices[index];
-            print(f"After accumulation: current_sum: {current_sum}")
+            print(f"After accumulation: current_sum: {current_sum}");
             tof_indices[index] = current_sum;
             index += 1;
         }
