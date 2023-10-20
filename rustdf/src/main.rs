@@ -25,7 +25,7 @@ fn main() {
     let tims_data = TimsDataHandle::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
-            let frame = tims_data.get_frame(frame_id);
+            let _frame = tims_data.get_frame(frame_id);
         }
 
         Err(e) => println!("error: {}", e),
