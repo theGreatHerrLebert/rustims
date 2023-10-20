@@ -311,7 +311,7 @@ impl TimsDataHandle {
                 write("/home/administrator/Documents/promotion/rust/notebook/compressed_rust.bytes", &compressed_data)?;
 
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
-                write("/home/administrator/Documents/promotion/rust/notebook/decompressed_bytes.bytes", &compressed_data)?;
+                write("/home/administrator/Documents/promotion/rust/notebook/decompressed_rust.bytes", &compressed_data)?;
 
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
                 let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
