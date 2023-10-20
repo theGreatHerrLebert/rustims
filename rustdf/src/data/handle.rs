@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
+use std::fs::write;
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -307,6 +308,7 @@ impl TimsDataHandle {
 
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
                 infile.read_exact(&mut compressed_data)?;
+                write("/home/administrator/Documents/promotion/rust/notebook/compressed_rust.bytes", &compressed_data)?;
 
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
 
