@@ -56,7 +56,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
     use std::fs::write;
 
-    let file_name = format!("rust_buffer_frame.bin");
+    let file_name = format!("/home/administrator/Documents/promotion/rust/notebook/rust_buffer_frame.bin");
     let mut file = File::create(file_name)?;
     for &value in buffer_u32.iter() {
         file.write_all(&value.to_le_bytes())?;
