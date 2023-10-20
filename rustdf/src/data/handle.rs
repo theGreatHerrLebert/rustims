@@ -1,7 +1,6 @@
 use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
-use std::fs::write;
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -54,14 +53,6 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
         buffer_u32.push(value);
     }
 
-    use std::fs::write;
-
-    let file_name = format!("/home/administrator/Documents/promotion/rust/notebook/rust_buffer_frame.bin");
-    let mut file = File::create(file_name)?;
-    for &value in buffer_u32.iter() {
-        file.write_all(&value.to_le_bytes())?;
-    }
-
     // get the number of scans
     let scan_count = buffer_u32[0] as usize;
 
@@ -70,8 +61,6 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     for index in &mut scan_indices {
         *index /= 2;
     }
-
-    println!("{:?}", scan_indices);
 
     // first scan index is always 0?
     scan_indices[0] = 0;
@@ -89,11 +78,10 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
             index += 1;
         }
     }
+    println!("{:?}", &tof_indices[tof_indices.len() - 10..]);
 
     // get the intensities, which are the second half of the buffer
     let intensities: Vec<u32> = buffer_u32.iter().skip(scan_count + 1).step_by(2).cloned().collect();
-    println!("Length of intensities: {}", intensities.len());
-    println!("Sum of scan_indices[1..]: {}", scan_indices[1..].iter().sum::<u32>());
     // get the last scan index
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
 
@@ -229,7 +217,7 @@ impl TimsDataHandle {
         }
 
         let mut mz_values: Vec<f64> = Vec::new();
-        mz_values.resize(tof.len() as usize, 0.0);
+        mz_values.resize(tof.len(),  0.0);
 
         self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values).expect("Bruker binary call failed at: tims_index_to_mz;");
 
@@ -319,10 +307,8 @@ impl TimsDataHandle {
 
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
                 infile.read_exact(&mut compressed_data)?;
-                write("/home/administrator/Documents/promotion/rust/notebook/compressed_rust.bytes", &compressed_data)?;
 
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
-                write("/home/administrator/Documents/promotion/rust/notebook/decompressed_rust.bytes", &decompressed_bytes)?;
 
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
                 let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
