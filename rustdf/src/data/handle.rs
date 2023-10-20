@@ -93,6 +93,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
     // get the last scan index
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
+    println!("last_scan: {}", last_scan);
 
     // shift the scan indices to the right
     for i in 0..(scan_indices.len() - 1) {
