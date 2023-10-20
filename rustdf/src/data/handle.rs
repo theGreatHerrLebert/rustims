@@ -39,7 +39,7 @@ fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `tof_indices` - A vector of u32 that holds the tof indices
 /// * `intensities` - A vector of u32 that holds the intensities
 ///
-fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
+fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8], scan_count: usize) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
 
     let mut buffer_u32 = Vec::new();
 
@@ -54,7 +54,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     }
 
     // get the number of scans
-    let scan_count = buffer_u32[0] as usize;
+    // let scan_count = buffer_u32[0] as usize;
 
     // get the scan indices
     let mut scan_indices: Vec<u32> = buffer_u32[..scan_count].to_vec();
@@ -280,7 +280,6 @@ impl TimsDataHandle {
     /// * `frame` - A TimsFrame struct
     ///
     pub fn get_frame(&self, frame_id: u32) -> Result<TimsFrame, Box<dyn std::error::Error>> {
-
         let frame_index = (frame_id - 1) as usize;
         let offset = self.tims_offset_values[frame_index] as u64;
 
@@ -289,12 +288,13 @@ impl TimsDataHandle {
         let mut infile = File::open(&file_path)?;
 
         infile.seek(SeekFrom::Start(offset))?;
-        
+
         let mut bin_buffer = [0u8; 4];
         infile.read_exact(&mut bin_buffer)?;
         let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;
-    
+
         infile.read_exact(&mut bin_buffer)?;
+        let scan_count = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;  // Read scan_count after bin_size
 
         match self.global_meta_data.tims_compression_type {
             // TODO: implement
@@ -304,13 +304,13 @@ impl TimsDataHandle {
 
             // Extract from ZSTD compressed binary
             _ if self.global_meta_data.tims_compression_type == 2 => {
-                
+
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
                 infile.read_exact(&mut compressed_data)?;
-            
+
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
-            
-                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
+
+                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes, scan_count as usize)?;
                 let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
                 let tof_i32 = tof.iter().map(|&x| x as i32).collect();
                 let scan_i32: Vec<i32> = self.flatten_scan_values(&scan, true);
