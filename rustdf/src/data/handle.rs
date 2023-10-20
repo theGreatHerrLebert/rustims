@@ -90,10 +90,10 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
     // get the intensities, which are the second half of the buffer
     let intensities: Vec<u32> = buffer_u32.iter().skip(scan_count + 1).step_by(2).cloned().collect();
-
+    println!("Length of intensities: {}", intensities.len());
+    println!("Sum of scan_indices[1..]: {}", scan_indices[1..].iter().sum::<u32>());
     // get the last scan index
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
-    println!("last_scan: {}", last_scan);
 
     // shift the scan indices to the right
     for i in 0..(scan_indices.len() - 1) {
