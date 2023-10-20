@@ -64,17 +64,15 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     // first scan index is always 0?
     scan_indices[0] = 0;
 
-    // get the tof indices, which are the first half of the buffer after the scan indices
-    let mut tof_indices: Vec<u32> = buffer_u32.iter().skip(scan_count).step_by(2).cloned().collect();
-
-    // convert the tof indices to cumulative sums
-    let mut index = 0;
+       // Extract tof_indices and intensities based on scan_indices
+    let mut tof_indices = Vec::new();
+    let mut intensities = Vec::new();
+    let mut current_index = scan_count;
     for &size in &scan_indices {
-        let mut current_sum = 0;
         for _ in 0..size {
-            current_sum += tof_indices[index];
-            tof_indices[index] = current_sum;
-            index += 1;
+            tof_indices.push(buffer_u32[current_index]);
+            intensities.push(buffer_u32[current_index + 1]);
+            current_index += 2;
         }
     }
 
