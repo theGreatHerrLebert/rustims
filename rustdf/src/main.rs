@@ -1,4 +1,5 @@
 use rustdf::data::handle::TimsDataHandle;
+use std::env;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
