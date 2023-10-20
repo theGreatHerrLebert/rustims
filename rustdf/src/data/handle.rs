@@ -77,14 +77,13 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     for &size in &scan_indices {
         let mut current_sum = 0;
         for _ in 0..size {
+            println!("Before accumulation: current_sum: {}, tof_indices[{}]: {}", current_sum, index, tof_indices[index]);
             current_sum += tof_indices[index];
+            print(f"After accumulation: current_sum: {current_sum}")
             tof_indices[index] = current_sum;
             index += 1;
         }
     }
-
-    println!("Rust TOF values (first 20): {:?}", &tof_indices[0..20]);
-    println!("Rust Intensity values (first 20): {:?}", &intensities[0..20]);
 
     // get the last scan index
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
