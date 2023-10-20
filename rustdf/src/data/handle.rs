@@ -40,14 +40,13 @@ fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `intensities` - A vector of u32 that holds the intensities
 ///
 fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
-
     let mut buffer_u32 = Vec::new();
 
     for i in 0..(decompressed_bytes.len() / 4) {
         let value = LittleEndian::read_u32(&[
-            decompressed_bytes[i], 
-            decompressed_bytes[i + (decompressed_bytes.len() / 4)], 
-            decompressed_bytes[i + (2 * decompressed_bytes.len() / 4)], 
+            decompressed_bytes[i],
+            decompressed_bytes[i + (decompressed_bytes.len() / 4)],
+            decompressed_bytes[i + (2 * decompressed_bytes.len() / 4)],
             decompressed_bytes[i + (3 * decompressed_bytes.len() / 4)]
         ]);
         buffer_u32.push(value);
@@ -82,20 +81,13 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     // get the intensities, which are the second half of the buffer
     let intensities: Vec<u32> = buffer_u32.iter().skip(scan_count + 1).step_by(2).cloned().collect();
 
-    // get the last scan index
-    let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
-
-    // shift the scan indices to the right
-    for i in 0..(scan_indices.len() - 1) {
-        scan_indices[i] = scan_indices[i + 1];
-    }
-
-    // set the last scan index
-    let len = scan_indices.len();
-    scan_indices[len - 1] = last_scan;
+    // Directly set the last scan index as the length of intensities
+    let last_scan = intensities.len() as u32;
+    scan_indices[scan_indices.len() - 1] = last_scan;
 
     // adjust the tof indices to be zero-indexed
     let adjusted_tof_indices: Vec<u32> = tof_indices.iter().map(|&val| val - 1).collect();
+
     Ok((scan_indices, adjusted_tof_indices, intensities))
 }
 
