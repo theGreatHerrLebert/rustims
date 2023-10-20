@@ -72,13 +72,15 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     let mut index = 0;
     for &size in &scan_indices {
         let mut current_sum = 0;
+        println!("Before loop: current_sum: {}, index: {}, size: {}", current_sum, index, size);
         for _ in 0..size {
             current_sum += tof_indices[index];
             tof_indices[index] = current_sum;
+            println!("Before loop: current_sum: {}, index: {}, size: {}", current_sum, index, size);
             index += 1;
         }
+        println!("After loop: current_sum: {}, index: {}", current_sum, index);
     }
-    println!("{:?}", &tof_indices[tof_indices.len() - 10..]);
 
     // get the intensities, which are the second half of the buffer
     let intensities: Vec<u32> = buffer_u32.iter().skip(scan_count + 1).step_by(2).cloned().collect();
