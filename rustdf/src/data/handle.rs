@@ -2,7 +2,7 @@ use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
