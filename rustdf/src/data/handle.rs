@@ -83,6 +83,9 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
         }
     }
 
+    println!("Rust TOF values (first 20): {:?}", &tof_indices[0..20]);
+    println!("Rust Intensity values (first 20): {:?}", &intensities[0..20]);
+
     // get the last scan index
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
 
