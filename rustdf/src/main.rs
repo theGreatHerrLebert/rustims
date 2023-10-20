@@ -2,7 +2,7 @@ use rustdf::data::handle::TimsDataHandle;
 
 fn main() {
     let data_path = "/media/hd01/CCSPred/M210115_001_Slot1-1_1_850.d";
-    let bruker_lib_path = "/home/administrator/Documents/promotion/rust/rust_tdf/libs/libtimsdata.so";
+    let bruker_lib_path = "/home/administrator/Documents/promotion/ENV/lib/python3.8/site-packages/opentims_bruker_bridge/libtimsdata.so";
     let tims_data = TimsDataHandle::new(bruker_lib_path, data_path);
     match tims_data {
         Ok(tims_data) => {
