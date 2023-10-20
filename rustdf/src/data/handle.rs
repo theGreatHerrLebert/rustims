@@ -71,6 +71,8 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
         *index /= 2;
     }
 
+    println!("{:?}", scan_indices);
+
     // first scan index is always 0?
     scan_indices[0] = 0;
 
