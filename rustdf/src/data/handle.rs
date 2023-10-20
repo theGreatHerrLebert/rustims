@@ -3,7 +3,7 @@ use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 use std::fs::write;
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
@@ -52,6 +52,14 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
             decompressed_bytes[i + (3 * decompressed_bytes.len() / 4)]
         ]);
         buffer_u32.push(value);
+    }
+
+    use std::fs::write;
+
+    let file_name = format!("rust_buffer_frame.bin");
+    let mut file = File::create(file_name)?;
+    for &value in buffer_u32.iter() {
+        file.write_all(&value.to_le_bytes())?;
     }
 
     // get the number of scans
