@@ -45,9 +45,9 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
     for i in 0..(decompressed_bytes.len() / 4) {
         let value = LittleEndian::read_u32(&[
-            decompressed_bytes[i], 
-            decompressed_bytes[i + (decompressed_bytes.len() / 4)], 
-            decompressed_bytes[i + (2 * decompressed_bytes.len() / 4)], 
+            decompressed_bytes[i],
+            decompressed_bytes[i + (decompressed_bytes.len() / 4)],
+            decompressed_bytes[i + (2 * decompressed_bytes.len() / 4)],
             decompressed_bytes[i + (3 * decompressed_bytes.len() / 4)]
         ]);
         buffer_u32.push(value);
@@ -68,21 +68,10 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     // get the tof indices, which are the first half of the buffer after the scan indices
     let mut tof_indices: Vec<u32> = buffer_u32.iter().skip(scan_count).step_by(2).cloned().collect();
 
-    // convert the tof indices to cumulative sums
-    let mut index = 0;
-    for &size in &scan_indices {
-        let mut current_sum = 0;
-        for _ in 0..size {
-            current_sum += tof_indices[index];
-            tof_indices[index] = current_sum;
-            index += 1;
-        }
-    }
-
     // get the intensities, which are the second half of the buffer
     let intensities: Vec<u32> = buffer_u32.iter().skip(scan_count + 1).step_by(2).cloned().collect();
 
-    // get the last scan index
+    // calculate the last scan before moving scan indices
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
 
     // shift the scan indices to the right
@@ -93,6 +82,17 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     // set the last scan index
     let len = scan_indices.len();
     scan_indices[len - 1] = last_scan;
+
+    // convert the tof indices to cumulative sums
+    let mut index = 0;
+    for &size in &scan_indices {
+        let mut current_sum = 0;
+        for _ in 0..size {
+            current_sum += tof_indices[index];
+            tof_indices[index] = current_sum;
+            index += 1;
+        }
+    }
 
     // adjust the tof indices to be zero-indexed
     let adjusted_tof_indices: Vec<u32> = tof_indices.iter().map(|&val| val - 1).collect();
@@ -217,7 +217,7 @@ impl TimsDataHandle {
         }
 
         let mut mz_values: Vec<f64> = Vec::new();
-        mz_values.resize(tof.len() as usize, 0.0);
+        mz_values.resize(tof.len(),  0.0);
 
         self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values).expect("Bruker binary call failed at: tims_index_to_mz;");
 
@@ -289,11 +289,11 @@ impl TimsDataHandle {
         let mut infile = File::open(&file_path)?;
 
         infile.seek(SeekFrom::Start(offset))?;
-        
+
         let mut bin_buffer = [0u8; 4];
         infile.read_exact(&mut bin_buffer)?;
         let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;
-    
+
         infile.read_exact(&mut bin_buffer)?;
 
         match self.global_meta_data.tims_compression_type {
@@ -304,12 +304,12 @@ impl TimsDataHandle {
 
             // Extract from ZSTD compressed binary
             _ if self.global_meta_data.tims_compression_type == 2 => {
-                
+
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
                 infile.read_exact(&mut compressed_data)?;
-            
+
                 let decompressed_bytes = zstd_decompress(&compressed_data)?;
-            
+
                 let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
                 let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
                 let tof_i32 = tof.iter().map(|&x| x as i32).collect();

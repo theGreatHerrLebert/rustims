@@ -1,5 +1,7 @@
 import numpy as np
 from typing import List, Tuple
+
+import pandas as pd
 from numpy.typing import NDArray
 
 import pyims_connector as pims
@@ -37,6 +39,16 @@ class MzSpectrum:
         """
         return self.__spec_ptr.intensity
 
+    @property
+    def data(self) -> pd.DataFrame:
+        """Data.
+
+        Returns:
+            pd.DataFrame: Data.
+        """
+
+        return pd.DataFrame({'mz': self.mz, 'intensity': self.intensity})
+
     @classmethod
     def from_py_mz_spectrum(cls, spec: pims.PyMzSpectrum):
         """Create a MzSpectrum from a PyMzSpectrum.
@@ -54,7 +66,8 @@ class MzSpectrum:
     def __repr__(self):
         return f"MzSpectrum(num_peaks={len(self.mz)})"
 
-    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1) -> Tuple[NDArray, List['MzSpectrum']]:
+    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
+                   min_intensity: float = 1) -> Tuple[NDArray, List['MzSpectrum']]:
         """Convert the spectrum to a list of windows.
 
         Args:
@@ -70,7 +83,8 @@ class MzSpectrum:
         indices, windows = self.__spec_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)
         return indices, [MzSpectrum.from_py_mz_spectrum(window) for window in windows]
 
-    def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0, intensity_max: float = 1e9) -> 'MzSpectrum':
+    def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0,
+               intensity_max: float = 1e9) -> 'MzSpectrum':
         """Filter the spectrum for a given m/z range and intensity range.
 
         Args:
@@ -82,7 +96,8 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Filtered spectrum.
         """
-        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
+        return MzSpectrum.from_py_mz_spectrum(
+            self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
 
     def vectorized(self, resolution: int = 2) -> 'MzSpectrumVectorized':
         """Convert the spectrum to a vectorized spectrum.
@@ -159,7 +174,8 @@ class MzSpectrumVectorized:
 
 
 class TimsSpectrum:
-    def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+    def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int,
+                 index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsSpectrum class.
 
         Args:
@@ -268,6 +284,18 @@ class TimsSpectrum:
             MzSpectrum: Spectrum.
         """
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.mz_spectrum)
+
+    @property
+    def data(self) -> pd.DataFrame:
+        """Data.
+        
+        Returns:
+            pd.DataFrame: Data.
+        """
+
+        return pd.DataFrame({'scan': np.repeat(self.scan, len(self.index)),
+                             'mobility': np.repeat(self.mobility, len(self.index)), 'mz': self.mz,
+                             'tof': self.index, 'intensity': self.intensity})
 
     def __repr__(self):
         return (f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, "

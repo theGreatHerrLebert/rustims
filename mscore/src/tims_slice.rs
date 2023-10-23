@@ -107,6 +107,21 @@ impl TimsSlice {
         TimsSlice { frames: result_frames }
     }
 
+    pub fn vectorized(&self, resolution: i32, num_threads: usize) -> TimsSliceVectorized {
+
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+
+        // Use the thread pool
+        let result_frames = pool.install(|| {
+            let result: Vec<_> =  self.frames.par_iter()
+                .map(|f| f.vectorized(resolution))
+                .collect();
+            result
+        });
+
+        TimsSliceVectorized { frames: result_frames }
+    }
+
     pub fn flatten(&self) -> TimsSliceFlat {
         let mut frame_ids = Vec::new();
         let mut scans = Vec::new();
@@ -207,6 +222,39 @@ pub struct TimsSliceVectorized {
     pub frames: Vec<TimsFrameVectorized>,
 }
 
+impl TimsSliceVectorized {
+    pub fn flatten(&self) -> TimsSliceVectorizedFlat {
+        let mut frame_ids = Vec::new();
+        let mut scans = Vec::new();
+        let mut tofs = Vec::new();
+        let mut retention_times = Vec::new();
+        let mut mobilities = Vec::new();
+        let mut indices = Vec::new();
+        let mut intensities = Vec::new();
+
+        for frame in &self.frames {
+            let length = frame.ims_frame.indices.len();
+            frame_ids.extend(vec![frame.frame_id; length].into_iter());
+            scans.extend(frame.scan.clone());
+            tofs.extend(frame.tof.clone());
+            retention_times.extend(vec![frame.ims_frame.retention_time; length].into_iter());
+            mobilities.extend(&frame.ims_frame.mobility);
+            indices.extend(&frame.ims_frame.indices);
+            intensities.extend(&frame.ims_frame.values);
+        }
+
+        TimsSliceVectorizedFlat {
+            frame_ids,
+            scans,
+            tofs,
+            retention_times,
+            mobilities,
+            indices,
+            intensities,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct TimsPlane {
     pub tof_mean: f64,
@@ -278,5 +326,16 @@ pub struct TimsSliceFlat {
     pub retention_times: Vec<f64>,
     pub mobilities: Vec<f64>,
     pub mzs: Vec<f64>,
+    pub intensities: Vec<f64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimsSliceVectorizedFlat {
+    pub frame_ids: Vec<i32>,
+    pub scans: Vec<i32>,
+    pub tofs: Vec<i32>,
+    pub retention_times: Vec<f64>,
+    pub mobilities: Vec<f64>,
+    pub indices: Vec<i32>,
     pub intensities: Vec<f64>,
 }

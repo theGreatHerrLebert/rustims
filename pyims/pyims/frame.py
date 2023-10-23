@@ -189,3 +189,29 @@ class TimsFrame:
     def __repr__(self):
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
                 f"num_peaks={len(self.__frame_ptr.mz)})")
+
+
+class TimsFrameVectorized:
+    def __init__(self, frame_id: int, ms_type: int, retention_time: float, scan: NDArray[np.int32],
+                 mobility: NDArray[np.float64], tof: NDArray[np.int32],
+                 indices: NDArray[np.int32], intensity: NDArray[np.float64]):
+        """TimsFrameVectorized class.
+
+        Args:
+            frame_id (int): Frame ID.
+            ms_type (int): MS type.
+            retention_time (float): Retention time.
+            scan (NDArray[np.int32]): Scan.
+            mobility (NDArray[np.float64]): Inverse mobility.
+            tof (NDArray[np.int32]): Time of flight.
+            indices (NDArray[np.int32]): Indices.
+            intensity (NDArray[np.float64]): Intensity.
+
+        Raises:
+            AssertionError: If the length of the scan, mobility, tof, indices and intensity arrays are not equal.
+        """
+
+        assert len(scan) == len(mobility) == len(tof) == len(indices) == len(intensity), \
+            "The length of the scan, mobility, tof, indices and intensity arrays must be equal."
+
+        self.__frame_ptr = pims.PyTimsFrameVectorized(frame_id, ms_type, retention_time, scan, mobility, tof, indices, intensity)
