@@ -120,7 +120,7 @@ class TimsFrame:
         return self.__frame_ptr.intensity
 
     @property
-    def data(self) -> pd.DataFrame:
+    def df(self) -> pd.DataFrame:
         """ Data as a pandas DataFrame.
 
         Returns:

@@ -40,7 +40,7 @@ class MzSpectrum:
         return self.__spec_ptr.intensity
 
     @property
-    def data(self) -> pd.DataFrame:
+    def df(self) -> pd.DataFrame:
         """Data.
 
         Returns:
@@ -286,7 +286,7 @@ class TimsSpectrum:
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.mz_spectrum)
 
     @property
-    def data(self) -> pd.DataFrame:
+    def df(self) -> pd.DataFrame:
         """Data.
         
         Returns:
