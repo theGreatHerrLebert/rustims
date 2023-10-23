@@ -111,13 +111,13 @@ class TimsSlice:
         return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__slice_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
 
     @property
-    def data(self) -> pd.DataFrame:
+    def df(self) -> pd.DataFrame:
         """Get the data as a pandas DataFrame.
 
         Returns:
             pd.DataFrame: Data.
         """
-        columns = ['frame_id', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
+        columns = ['frame', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
         return pd.DataFrame({c: v for c, v in zip(columns, self.__slice_ptr.to_arrays())})
 
     def __iter__(self):
@@ -198,9 +198,9 @@ class TimsPlane:
         return len(self.frame_ids)
 
     @property
-    def data(self):
+    def df(self):
         return pd.DataFrame({
-            'frame_id': self.frame_ids,
+            'frame': self.frame_ids,
             'scan': self.scans,
             'retention_time': self.retention_times,
             'mobility': self.mobilities,
