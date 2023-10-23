@@ -117,7 +117,7 @@ class TimsSlice:
         Returns:
             pd.DataFrame: Data.
         """
-        columns = ['frame_id', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
+        columns = ['frame', 'scan', 'tof', 'retention_time', 'mobility', 'mz', 'intensity']
         return pd.DataFrame({c: v for c, v in zip(columns, self.__slice_ptr.to_arrays())})
 
     def __iter__(self):
@@ -200,7 +200,7 @@ class TimsPlane:
     @property
     def data(self):
         return pd.DataFrame({
-            'frame_id': self.frame_ids,
+            'frame': self.frame_ids,
             'scan': self.scans,
             'retention_time': self.retention_times,
             'mobility': self.mobilities,

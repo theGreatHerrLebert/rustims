@@ -293,9 +293,15 @@ class TimsSpectrum:
             pd.DataFrame: Data.
         """
 
-        return pd.DataFrame({'scan': np.repeat(self.scan, len(self.index)),
-                             'mobility': np.repeat(self.mobility, len(self.index)), 'mz': self.mz,
-                             'tof': self.index, 'intensity': self.intensity})
+        return pd.DataFrame({
+            'frame': np.repeat(self.frame_id, len(self.index)),
+            'retention_time': np.repeat(self.retention_time, len(self.index)),
+            'scan': np.repeat(self.scan, len(self.index)),
+            'mobility': np.repeat(self.mobility, len(self.index)),
+            'tof': self.index,
+            'mz': self.mz,
+            'intensity': self.intensity
+        })
 
     def __repr__(self):
         return (f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, "

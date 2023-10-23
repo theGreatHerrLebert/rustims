@@ -127,7 +127,14 @@ class TimsFrame:
             pd.DataFrame: Data.
         """
 
-        return pd.DataFrame({'scan': self.scan, 'mobility': self.mobility, 'tof': self.tof, 'mz': self.mz, 'intensity': self.intensity})
+        return pd.DataFrame({
+            'frame': np.repeat(self.frame_id, len(self.scan)),
+            'retention_time': np.repeat(self.retention_time, len(self.scan)),
+            'scan': self.scan,
+            'mobility': self.mobility,
+            'tof': self.tof,
+            'mz': self.mz,
+            'intensity': self.intensity})
 
     def filter(self,
                mz_min: float = 0.0,
