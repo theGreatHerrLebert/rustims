@@ -98,7 +98,7 @@ class GaussianMixtureModel(tf.Module):
 
                 # Add regularization based on prior scales if provided
 
-                if self.prior_scales is not None:
+                if self.prior_stdevs is not None:
                     scale_diff = tf.math.exp(self.scales) - self.prior_stdevs
                     reg_loss = self.lambda_scale * tf.reduce_sum(scale_diff * scale_diff)
                     loss += reg_loss
