@@ -57,7 +57,7 @@ class GaussianMixtureModel(tf.Module):
         self.weights = tf.Variable(tf.ones([num_components]), name="weights")
 
         # Set the prior scales and regularization strength
-        self.prior_scales = prior_scales
+        self.prior_stdevs = prior_stdevs
         self.lambda_scale = lambda_scale
 
     def __call__(self, data):
