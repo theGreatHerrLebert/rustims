@@ -158,7 +158,8 @@ class TimsFrame:
             TimsFrame: Filtered frame.
         """
 
-        return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max))
+        return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max,
+                                                                           intensity_min, intensity_max))
 
     def to_resolution(self, resolution: int) -> 'TimsFrame':
         """Convert the frame to a given resolution.
@@ -179,7 +180,8 @@ class TimsFrame:
         """
         return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__frame_ptr.to_tims_spectra()]
 
-    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1) -> List[MzSpectrum]:
+    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
+                   min_intensity: float = 1) -> List[MzSpectrum]:
         """Convert the frame to a list of windows.
 
         Args:
@@ -191,7 +193,8 @@ class TimsFrame:
         Returns:
             List[MzSpectrum]: List of windows.
         """
-        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__frame_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)]
+        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__frame_ptr.to_windows(
+            window_length, overlapping, min_num_peaks, min_intensity)]
 
     def __repr__(self):
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
@@ -221,4 +224,5 @@ class TimsFrameVectorized:
         assert len(scan) == len(mobility) == len(tof) == len(indices) == len(intensity), \
             "The length of the scan, mobility, tof, indices and intensity arrays must be equal."
 
-        self.__frame_ptr = pims.PyTimsFrameVectorized(frame_id, ms_type, retention_time, scan, mobility, tof, indices, intensity)
+        self.__frame_ptr = pims.PyTimsFrameVectorized(frame_id, ms_type, retention_time, scan, mobility, tof, indices,
+                                                      intensity)

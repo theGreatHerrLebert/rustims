@@ -110,9 +110,6 @@ class MzSpectrum:
         """
         return MzSpectrumVectorized.from_py_mz_spectrum_vectorized(self.__spec_ptr.vectorized(resolution))
 
-    def __repr__(self):
-        return f"MzSpectrum(num_peaks={len(self.mz)})"
-
 
 class MzSpectrumVectorized:
     def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):
