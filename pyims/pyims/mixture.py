@@ -147,6 +147,7 @@ class GaussianMixtureModel(tf.Module):
         return normalized_probs.numpy()
 
     def predict(self, data):
+        """Get the cluster ids under the current mixture model"""
         return np.argmax(self.predict_proba(data), axis=1)
 
     def sample(self, n_samples=1):
