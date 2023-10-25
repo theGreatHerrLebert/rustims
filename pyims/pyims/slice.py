@@ -13,17 +13,17 @@ class TimsSlice:
         self.__current_index = 0
 
     @classmethod
-    def from_py_tims_slice(cls, slice: pims.PyTimsSlice):
+    def from_py_tims_slice(cls, tims_slice: pims.PyTimsSlice):
         """Create a TimsSlice from a PyTimsSlice.
 
         Args:
-            slice (pims.PyTimsSlice): PyTimsSlice to create the TimsSlice from.
+            tims_slice (pims.PyTimsSlice): PyTimsSlice to create the TimsSlice from.
 
         Returns:
             TimsSlice: TimsSlice created from the PyTimsSlice.
         """
         instance = cls.__new__(cls)
-        instance.__slice_ptr = slice
+        instance.__slice_ptr = tims_slice
         instance.__current_index = 0
         return instance
 
@@ -57,7 +57,7 @@ class TimsSlice:
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.get_fragments_dda())
 
     def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, scan_min: int = 0, scan_max: int = 1000,
-                      intensity_min: float = 0.0, intensity_max: float = 1e9, num_threads: int = 4) -> 'TimsSlice':
+               intensity_min: float = 0.0, intensity_max: float = 1e9, num_threads: int = 4) -> 'TimsSlice':
         """Filter the slice by m/z, scan and intensity.
 
         Args:
@@ -72,7 +72,8 @@ class TimsSlice:
         Returns:
             TimsSlice: Filtered slice.
         """
-        return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max, num_threads))
+        return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max,
+                                                                           intensity_min, intensity_max, num_threads))
 
     @property
     def frames(self) -> List[TimsFrame]:
@@ -108,7 +109,8 @@ class TimsSlice:
         Returns:
             List[MzSpectrum]: List of windows.
         """
-        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__slice_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
+        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__slice_ptr.to_windows(
+            window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
 
     @property
     def df(self) -> pd.DataFrame:
