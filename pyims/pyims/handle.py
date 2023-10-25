@@ -24,7 +24,7 @@ class TimsDataset(ABC):
         self.data_path = data_path
         self.bp: List[str] = obb.get_so_paths()
         self.meta_data = self.__load_meta_data()
-        self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values
+        self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
         self.__handle = None
         self.__current_index = 1
 
