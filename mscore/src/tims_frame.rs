@@ -5,6 +5,14 @@ use itertools;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, TimsSpectrum};
 
+pub trait ToResolution {
+    fn to_resolution(&self, resolution: i32) -> Self;
+}
+
+pub trait Vectorized<T> {
+    fn vectorized(&self, resolution: i32) -> T;
+}
+
 #[derive(Clone)]
 pub struct ImsFrame {
     pub retention_time: f64,
@@ -179,23 +187,79 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
-    ///
-    /// Convert a given TimsFrame to a vector of TimsSpectrum.
-    ///
-    /// # Arguments
-    ///
-    /// * `resolution` - The resolution to which the m/z values should be rounded.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use mscore::{TimsSpectrum, TimsFrame, MsType};
-    ///
-    /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
-    /// let low_res_frame = frame.to_resolution(1);
-    /// ```
-    pub fn to_resolution(&self, resolution: i32) -> TimsFrame {
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {
 
+        let spectra = self.to_tims_spectra();
+
+        let windows: Vec<_> = spectra.iter().map(|spectrum|
+            spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
+            .collect();
+
+        let mut result: Vec<MzSpectrum> = Vec::new();
+
+        for window in windows {
+            for (_, spectrum) in window {
+                result.push(spectrum);
+            }
+        }
+
+        result
+    }
+
+}
+
+impl fmt::Display for TimsFrame {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+
+        let (mz, i) = self.ims_frame.mz.iter()
+            .zip(&self.ims_frame.intensity)
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap();
+
+        write!(f, "TimsFrame(id: {}, type: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))",
+               self.frame_id, self.ms_type, self.ims_frame.retention_time, self.scan.len(), format!("{:.3}", mz), i)
+    }
+}
+
+impl Vectorized<TimsFrameVectorized> for TimsFrame {
+    fn vectorized(&self, resolution: i32) -> TimsFrameVectorized {
+        let binned_frame = self.to_resolution(resolution);
+        // Translate the m/z values into integer indices
+        let indices: Vec<i32> = binned_frame.ims_frame.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
+        // Create a vector of values
+        return TimsFrameVectorized {
+            frame_id: self.frame_id,
+            ms_type: self.ms_type.clone(),
+            scan: binned_frame.scan,
+            tof: binned_frame.tof,
+            ims_frame: ImsFrameVectorized {
+                retention_time: binned_frame.ims_frame.retention_time,
+                mobility: binned_frame.ims_frame.mobility,
+                indices,
+                values: binned_frame.ims_frame.intensity,
+                resolution,
+            },
+        };
+    }
+}
+
+///
+/// Convert a given TimsFrame to a vector of TimsSpectrum.
+///
+/// # Arguments
+///
+/// * `resolution` - The resolution to which the m/z values should be rounded.
+///
+/// # Examples
+///
+/// ```
+/// use mscore::{TimsSpectrum, TimsFrame, MsType, ToResolution};
+///
+/// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
+/// let low_res_frame = frame.to_resolution(1);
+/// ```
+impl ToResolution for TimsFrame {
+    fn to_resolution(&self, resolution: i32) -> TimsFrame {
         let factor = (10.0f64).powi(resolution);
 
         // Using a tuple of (scan, mz_bin) as a key
@@ -242,57 +306,6 @@ impl TimsFrame {
                 intensity: new_intensity,
             },
         }
-    }
-
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {
-
-        let spectra = self.to_tims_spectra();
-
-        let windows: Vec<_> = spectra.iter().map(|spectrum|
-            spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
-            .collect();
-
-        let mut result: Vec<MzSpectrum> = Vec::new();
-
-        for window in windows {
-            for (_, spectrum) in window {
-                result.push(spectrum);
-            }
-        }
-
-        result
-    }
-    pub fn vectorized(&self, resolution: i32) -> TimsFrameVectorized {
-        let binned_frame = self.to_resolution(resolution);
-        // Translate the m/z values into integer indices
-        let indices: Vec<i32> = binned_frame.ims_frame.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
-        // Create a vector of values
-        return TimsFrameVectorized {
-            frame_id: self.frame_id,
-            ms_type: self.ms_type.clone(),
-            scan: binned_frame.scan,
-            tof: binned_frame.tof,
-            ims_frame: ImsFrameVectorized {
-                retention_time: binned_frame.ims_frame.retention_time,
-                mobility: binned_frame.ims_frame.mobility,
-                indices,
-                values: binned_frame.ims_frame.intensity,
-                resolution,
-            },
-        };
-    }
-}
-
-impl fmt::Display for TimsFrame {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-
-        let (mz, i) = self.ims_frame.mz.iter()
-            .zip(&self.ims_frame.intensity)
-            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-            .unwrap();
-
-        write!(f, "TimsFrame(id: {}, type: {}, rt: {}, data points: {}, max by intensity: (mz: {}, intensity: {}))",
-               self.frame_id, self.ms_type, self.ims_frame.retention_time, self.scan.len(), format!("{:.3}", mz), i)
     }
 }
 

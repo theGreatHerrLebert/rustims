@@ -6,7 +6,7 @@ use itertools::multizip;
 use crate::MsType;
 
 use crate::mz_spectrum::{MzSpectrum};
-use crate::tims_frame::{TimsFrame, TimsFrameVectorized};
+use crate::tims_frame::{TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
 
 #[derive(Clone)]
 pub struct TimsSlice {
