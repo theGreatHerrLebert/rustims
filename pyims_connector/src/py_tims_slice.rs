@@ -24,8 +24,8 @@ impl PyTimsSlice {
     #[getter]
     pub fn frame_count(&self) -> i32 { self.inner.frames.len() as i32 }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
-        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, intensity_min, intensity_max, num_threads) }
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, num_threads) }
     }
 
     pub fn get_frames(&self, py: Python) -> PyResult<Py<PyList>> {
@@ -132,7 +132,26 @@ impl PyTimsSliceVectorized {
         Ok(list.into())
     }
 
+    pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrameVectorized {
+        PyTimsFrameVectorized { inner: self.inner.frames[index as usize].clone() }
+    }
+
     #[getter]
+    pub fn frame_count(&self) -> i32 {
+        self.inner.frames.len() as i32
+    }
+
+    #[getter]
+    pub fn first_frame_id(&self) -> i32 {
+        self.inner.frames.first().unwrap().frame_id
+    }
+
+    #[getter]
+    pub fn last_frame_id(&self) -> i32 {
+        self.inner.frames.last().unwrap().frame_id
+    }
+
+
     pub fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
 
         let flat_frame = self.inner.flatten();

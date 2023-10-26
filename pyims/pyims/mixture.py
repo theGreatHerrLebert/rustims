@@ -43,10 +43,7 @@ class GaussianMixtureModel(tf.Module):
         self.locs = tf.Variable(init_locs, name="locs")
 
         if init_stds is not None:
-            assert init_stds.shape == (num_components,
-                                       data_dim), f"init_stds should have shape [num_components, data_dim], but got {init_stds.shape}"
-            assert tf.reduce_all(init_stds > 0), "All values in init_stds should be positive."
-            init_stds_vals = tf.repeat(tf.expand_dims(init_stds, axis=-1), num_components, axis=0)
+            init_stds_vals = tf.repeat(init_stds, num_components, axis=0)
         else:
             init_stds_default = [[3, 0.01, 0.01]]
             init_stds_vals = tf.repeat(init_stds_default, num_components, axis=0)
