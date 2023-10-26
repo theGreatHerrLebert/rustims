@@ -2,6 +2,10 @@ import numpy as np
 import pandas as pd
 from typing import List
 
+from tensorflow import sparse as sp
+
+from pyims.utilities import re_index_frames
+
 import pyims_connector as pims
 from pyims.frame import TimsFrame, TimsFrameVectorized
 from pyims.spectrum import MzSpectrum
@@ -240,6 +244,29 @@ class TimsSliceVectorized:
 
     def __repr__(self):
         return f"TimsSliceVectorized({self.first_frame_id}, {self.last_frame_id})"
+
+    def get_tensor_repr(self, dense=True, zero_index=True, re_index=True):
+
+        frames, scans, _, _, _, indices, intensities = self.__slice_ptr.to_arrays()
+
+        if zero_index:
+            scans = scans - np.min(scans)
+            frames = frames - np.min(frames)
+            indices = indices - np.min(indices)
+
+        if re_index:
+            frames = re_index_frames(frames)
+
+        m_s = np.max(scans) + 1
+        m_f = np.max(frames) + 1
+        m_i = np.max(indices) + 1
+
+        sv = sp.reorder(sp.SparseTensor(indices=np.c_[frames, scans, indices], values=intensities, dense_shape=(m_f, m_s, m_i)))
+
+        if dense:
+            return sp.to_dense(sv)
+        else:
+            return sv
 
 
 class TimsPlane:

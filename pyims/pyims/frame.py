@@ -3,9 +3,13 @@ import pandas as pd
 from typing import List
 from numpy.typing import NDArray
 
+from tensorflow import sparse as sp
+
 import numpy as np
 import pyims_connector as pims
 from pyims.spectrum import MzSpectrum, TimsSpectrum
+
+from pyims.utilities import re_index_frames
 
 
 class TimsFrame:
@@ -348,3 +352,25 @@ class TimsFrameVectorized:
     def __repr__(self):
         return (f"TimsFrameVectorized(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
                 f"num_peaks={len(self.__frame_ptr.indices)})")
+
+    def get_tensor_repr(self, dense=True, zero_indexed=True, re_index=True):
+        s = self.scan
+        f = self.indices
+        i = self.intensity
+
+        if zero_indexed:
+            s = s - np.min(s)
+            f = f - np.min(f)
+
+        if re_index:
+            f = re_index_frames(f)
+
+        m_s = np.max(s) + 1
+        m_f = np.max(f) + 1
+
+        sv = sp.reorder(sp.SparseTensor(indices=np.c_[s, f], values=i, dense_shape=(m_s, m_f)))
+
+        if dense:
+            return sp.to_dense(sv)
+        else:
+            return sv

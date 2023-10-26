@@ -9,6 +9,8 @@ readme = "README.md"
 python = ">=3.10"
 pandas = ">=2.1"
 numpy = ">=1.21"
+tensorflow = ">=2.14"
+tensorflow-probability = ">=0.22.1"
 
 [build-system]
 requires = ["poetry-core"]
