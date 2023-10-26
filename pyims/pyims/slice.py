@@ -141,16 +141,18 @@ class TimsSlice:
             self.__current_index = 0  # Reset for next iteration
             raise StopIteration
 
-    def vectorized(self, num_threads: int = 4) -> 'TimsSliceVectorized':
+    def vectorized(self, resolution: int = 2, num_threads: int = 4) -> 'TimsSliceVectorized':
         """Get a vectorized version of the slice.
 
         Args:
+            resolution (int, optional): Resolution. Defaults to 2.
             num_threads (int, optional): Number of threads to use. Defaults to 4.
 
         Returns:
             TimsSliceVectorized: Vectorized version of the slice.
         """
-        return TimsSliceVectorized.from_py_tims_slice(self.__slice_ptr.to_vectorized(num_threads))
+        return TimsSliceVectorized.from_vectorized_py_tims_slice(self.__slice_ptr.vectorized(resolution, num_threads))
+
 
     def get_tims_planes(self, tof_max_value: int = 400_000, num_chunks: int = 7, num_threads: int = 4) -> List['TimsPlane']:
         return [TimsPlane.from_py_tims_plane(plane) for plane in self.__slice_ptr.to_tims_planes(tof_max_value, num_chunks, num_threads)]
