@@ -346,5 +346,5 @@ class TimsFrameVectorized:
             'intensity': self.intensity})
 
     def __repr__(self):
-        return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
+        return (f"TimsFrameVectorized(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
                 f"num_peaks={len(self.__frame_ptr.indices)})")
