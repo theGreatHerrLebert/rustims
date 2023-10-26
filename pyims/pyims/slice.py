@@ -245,7 +245,7 @@ class TimsSliceVectorized:
     def __repr__(self):
         return f"TimsSliceVectorized({self.first_frame_id}, {self.last_frame_id})"
 
-    def get_tensor_repr(self, dense=True, zero_index=True, re_index=True):
+    def get_tensor_repr(self, dense=True, zero_index=True, re_index=True, frame_max=None, scan_max=None, index_max=None):
 
         frames, scans, _, _, _, indices, intensities = self.__slice_ptr.to_arrays()
 
@@ -257,9 +257,20 @@ class TimsSliceVectorized:
         if re_index:
             frames = re_index_indices(frames)
 
-        m_s = np.max(scans) + 1
-        m_f = np.max(frames) + 1
-        m_i = np.max(indices) + 1
+        if scan_max is None:
+            m_s = np.max(scans) + 1
+        else:
+            m_s = scan_max + 1
+
+        if index_max is None:
+            m_i = np.max(indices) + 1
+        else:
+            m_i = index_max + 1
+
+        if frame_max is None:
+            m_f = np.max(frames) + 1
+        else:
+            m_f = frame_max + 1
 
         sv = sp.reorder(sp.SparseTensor(indices=np.c_[frames, scans, indices], values=intensities, dense_shape=(m_f, m_s, m_i)))
 

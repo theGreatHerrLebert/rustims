@@ -353,7 +353,7 @@ class TimsFrameVectorized:
         return (f"TimsFrameVectorized(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
                 f"num_peaks={len(self.__frame_ptr.indices)})")
 
-    def get_tensor_repr(self, dense=True, zero_indexed=True, re_index=True):
+    def get_tensor_repr(self, dense=True, zero_indexed=True, re_index=True, scan_max=None, index_max=None):
         s = self.scan
         f = self.indices
         i = self.intensity
@@ -365,8 +365,15 @@ class TimsFrameVectorized:
         if re_index:
             f = re_index_indices(f)
 
-        m_s = np.max(s) + 1
-        m_f = np.max(f) + 1
+        if scan_max is None:
+            m_s = np.max(s) + 1
+        else:
+            m_s = scan_max + 1
+
+        if index_max is None:
+            m_f = np.max(f) + 1
+        else:
+            m_f = index_max + 1
 
         sv = sp.reorder(sp.SparseTensor(indices=np.c_[s, f], values=i, dense_shape=(m_s, m_f)))
 
