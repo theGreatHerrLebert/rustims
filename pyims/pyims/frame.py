@@ -9,7 +9,7 @@ import numpy as np
 import pyims_connector as pims
 from pyims.spectrum import MzSpectrum, TimsSpectrum
 
-from pyims.utilities import re_index_frames
+from pyims.utilities import re_index_indices
 
 
 class TimsFrame:
@@ -363,7 +363,7 @@ class TimsFrameVectorized:
             f = f - np.min(f)
 
         if re_index:
-            f = re_index_frames(f)
+            f = re_index_indices(f)
 
         m_s = np.max(s) + 1
         m_f = np.max(f) + 1

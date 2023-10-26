@@ -4,7 +4,7 @@ from typing import List
 
 from tensorflow import sparse as sp
 
-from pyims.utilities import re_index_frames
+from pyims.utilities import re_index_indices
 
 import pyims_connector as pims
 from pyims.frame import TimsFrame, TimsFrameVectorized
@@ -255,7 +255,7 @@ class TimsSliceVectorized:
             indices = indices - np.min(indices)
 
         if re_index:
-            frames = re_index_frames(frames)
+            frames = re_index_indices(frames)
 
         m_s = np.max(scans) + 1
         m_f = np.max(frames) + 1
