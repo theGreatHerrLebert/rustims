@@ -3,7 +3,7 @@ import pandas as pd
 from typing import List
 
 import pyims_connector as pims
-from pyims.frame import TimsFrame
+from pyims.frame import TimsFrame, TimsFrameVectorized
 from pyims.spectrum import MzSpectrum
 
 
@@ -141,8 +141,103 @@ class TimsSlice:
             self.__current_index = 0  # Reset for next iteration
             raise StopIteration
 
+    def vectorized(self, num_threads: int = 4) -> 'TimsSliceVectorized':
+        """Get a vectorized version of the slice.
+
+        Args:
+            num_threads (int, optional): Number of threads to use. Defaults to 4.
+
+        Returns:
+            TimsSliceVectorized: Vectorized version of the slice.
+        """
+        return TimsSliceVectorized.from_py_tims_slice(self.__slice_ptr.to_vectorized(num_threads))
+
     def get_tims_planes(self, tof_max_value: int = 400_000, num_chunks: int = 7, num_threads: int = 4) -> List['TimsPlane']:
         return [TimsPlane.from_py_tims_plane(plane) for plane in self.__slice_ptr.to_tims_planes(tof_max_value, num_chunks, num_threads)]
+
+
+class TimsSliceVectorized:
+    def __init__(self):
+        self.__slice_ptr = None
+        self.__current_index = 0
+
+    @classmethod
+    def from_vectorized_py_tims_slice(cls, tims_slice: pims.PyTimsSliceVectorized):
+        """Create a TimsSlice from a PyTimsSlice.
+
+        Args:
+            tims_slice (pims.PyTimsSlice): PyTimsSlice to create the TimsSlice from.
+
+        Returns:
+            TimsSlice: TimsSlice created from the PyTimsSlice.
+        """
+        instance = cls.__new__(cls)
+        instance.__slice_ptr = tims_slice
+        instance.__current_index = 0
+        return instance
+
+    @property
+    def first_frame_id(self) -> int:
+        """First frame ID.
+
+        Returns:
+            int: First frame ID.
+        """
+        return self.__slice_ptr.first_frame_id
+
+    @property
+    def last_frame_id(self) -> int:
+        """Last frame ID.
+
+        Returns:
+            int: Last frame ID.
+        """
+        return self.__slice_ptr.last_frame_id
+
+    @property
+    def precursors(self):
+        return TimsSlice.from_py_tims_slice(self.__slice_ptr.get_precursors())
+
+    @property
+    def fragments(self):
+        return TimsSlice.from_py_tims_slice(self.__slice_ptr.get_fragments_dda())
+
+    @property
+    def frames(self) -> List[TimsFrameVectorized]:
+        """Get the frames.
+
+        Returns:
+            List[TimsFrame]: Frames.
+        """
+        return [TimsFrameVectorized.from_py_tims_frame_vectorized(frame) for frame in self.__slice_ptr.get_vectorized_frames()]
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Get the data as a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: Data.
+        """
+        columns = ['frame', 'scan', 'tof', 'retention_time', 'mobility', 'index', 'intensity']
+        return pd.DataFrame({c: v for c, v in zip(columns, self.__slice_ptr.to_arrays())})
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.__current_index < self.__slice_ptr.frame_count:
+            frame_ptr = self.__slice_ptr.get_frame_at_index(self.__current_index)
+            self.__current_index += 1
+            if frame_ptr is not None:
+                return TimsFrameVectorized.from_py_tims_frame_vectorized(frame_ptr)
+            else:
+                raise ValueError("Frame pointer is None for valid index.")
+        else:
+            self.__current_index = 0
+            raise StopIteration
+
+    def __repr__(self):
+        return f"TimsSliceVectorized({self.first_frame_id}, {self.last_frame_id})"
 
 
 class TimsPlane:

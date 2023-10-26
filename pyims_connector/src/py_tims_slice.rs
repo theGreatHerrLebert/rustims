@@ -132,7 +132,26 @@ impl PyTimsSliceVectorized {
         Ok(list.into())
     }
 
+    pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrameVectorized {
+        PyTimsFrameVectorized { inner: self.inner.frames[index as usize].clone() }
+    }
+
     #[getter]
+    pub fn frame_count(&self) -> i32 {
+        self.inner.frames.len() as i32
+    }
+
+    #[getter]
+    pub fn first_frame_id(&self) -> i32 {
+        self.inner.frames.first().unwrap().frame_id
+    }
+
+    #[getter]
+    pub fn last_frame_id(&self) -> i32 {
+        self.inner.frames.last().unwrap().frame_id
+    }
+
+
     pub fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
 
         let flat_frame = self.inner.flatten();
