@@ -202,6 +202,5 @@ impl  PyTimsFrameVectorized {
          self.inner.ims_frame.retention_time
     }
 
-
 }
 

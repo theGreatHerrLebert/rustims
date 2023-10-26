@@ -176,6 +176,17 @@ class TimsFrame:
         """
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.to_resolution(resolution))
 
+    def vectorized(self, resolution: int = 2) -> 'TimsFrameVectorized':
+        """Convert the frame to a vectorized frame.
+
+        Args:
+            resolution (int, optional): Resolution. Defaults to 2.
+
+        Returns:
+            TimsFrameVectorized: Vectorized frame.
+        """
+        return TimsFrameVectorized.from_py_tims_frame_vectorized(self.__frame_ptr.vectorized(resolution))
+
     def to_tims_spectra(self) -> List['TimsSpectrum']:
         """Convert the frame to a list of TimsSpectrum.
 
@@ -230,3 +241,110 @@ class TimsFrameVectorized:
 
         self.__frame_ptr = pims.PyTimsFrameVectorized(frame_id, ms_type, retention_time, scan, mobility, tof, indices,
                                                       intensity)
+
+    @classmethod
+    def from_py_tims_frame_vectorized(cls, frame: pims.PyTimsFrameVectorized):
+        """Create a TimsFrameVectorized from a PyTimsFrameVectorized.
+
+        Args:
+            frame (pims.PyTimsFrameVectorized): PyTimsFrameVectorized to create the TimsFrameVectorized from.
+
+        Returns:
+            TimsFrameVectorized: TimsFrameVectorized created from the PyTimsFrameVectorized.
+        """
+        instance = cls.__new__(cls)
+        instance.__frame_ptr = frame
+        return instance
+
+    @property
+    def frame_id(self) -> int:
+        """Frame ID.
+
+        Returns:
+            int: Frame ID.
+        """
+        return self.__frame_ptr.frame_id
+
+    @property
+    def ms_type(self) -> str:
+        """MS type.
+
+        Returns:
+            int: MS type.
+        """
+        return self.__frame_ptr.ms_type_as_string
+
+    @property
+    def retention_time(self) -> float:
+        """Retention time.
+
+        Returns:
+            float: Retention time.
+        """
+        return self.__frame_ptr.retention_time
+
+    @property
+    def scan(self) -> NDArray[np.int32]:
+        """Scan.
+
+        Returns:
+            NDArray[np.int32]: Scan.
+        """
+        return self.__frame_ptr.scan
+
+    @property
+    def mobility(self) -> NDArray[np.float64]:
+        """Inverse mobility.
+
+        Returns:
+            NDArray[np.float64]: Inverse mobility.
+        """
+        return self.__frame_ptr.mobility
+
+    @property
+    def tof(self) -> NDArray[np.int32]:
+        """Time of flight.
+
+        Returns:
+            NDArray[np.int32]: Time of flight.
+        """
+        return self.__frame_ptr.tof
+
+    @property
+    def indices(self) -> NDArray[np.int32]:
+        """Indices.
+
+        Returns:
+            NDArray[np.int32]: Indices.
+        """
+        return self.__frame_ptr.indices
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__frame_ptr.values
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """ Data as a pandas DataFrame.
+
+        Returns:
+            pd.DataFrame: Data.
+        """
+
+        return pd.DataFrame({
+            'frame': np.repeat(self.frame_id, len(self.scan)),
+            'retention_time': np.repeat(self.retention_time, len(self.scan)),
+            'scan': self.scan,
+            'mobility': self.mobility,
+            'tof': self.tof,
+            'indices': self.indices,
+            'intensity': self.intensity})
+
+    def __repr__(self):
+        return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
+                f"num_peaks={len(self.__frame_ptr.indices)})")
