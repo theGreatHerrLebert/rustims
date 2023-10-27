@@ -14,16 +14,18 @@ from pyims.spectrum import MzSpectrum
 
 class TimsSlice:
     def __int__(self,
-                frame_ids: NDArray[np.int32],
+                frame_id: NDArray[np.int32],
                 scan: NDArray[np.int32],
                 tof: NDArray[np.int32],
-                retention_times: NDArray[np.float64],
+                retention_time: NDArray[np.float64],
                 mobility: NDArray[np.float64],
                 mz: NDArray[np.float64],
                 intensity: NDArray[np.float64]):
 
-        self.__slice_ptr = pims.PyImsSlice(
-            frame_ids, scan, tof, retention_times, mobility, mz, intensity
+        assert len(frame_id) == len(scan) == len(tof) == len(retention_time) == len(mobility) == len(mz) == len(intensity), "All arrays must have the same length."
+
+        self.__slice_ptr = pims.PyTimsSlice(
+            frame_id, scan, tof, retention_time, mobility, mz, intensity
         )
         self.__current_index = 0
 
