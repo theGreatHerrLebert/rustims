@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType, MzSpectrumVectorized};
+use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType, MzSpectrumVectorized, ToResolution, Vectorized};
 use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]
@@ -65,6 +65,10 @@ impl PyMzSpectrum {
         let numpy_indices = indices.into_pyarray(py);
 
         Ok(PyTuple::new(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
+    }
+
+    pub fn to_resolution(&self, resolution: i32) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.to_resolution(resolution) }
     }
 
     pub fn vectorized(&self, _py: Python, resolution: i32) -> PyResult<PyMzSpectrumVectorized> {

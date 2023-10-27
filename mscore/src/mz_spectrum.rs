@@ -2,6 +2,7 @@ use std::fmt;
 use std::collections::BTreeMap;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
+use crate::tims_frame::{ToResolution, Vectorized};
 
 /// Represents the type of spectrum.
 ///
@@ -86,46 +87,6 @@ impl MzSpectrum {
         MzSpectrum {mz, intensity}
     }
 
-    /// Bins the spectrum's m/z values to a given resolution and sums the intensities.
-    ///
-    /// # Arguments
-    ///
-    /// * `resolution` - The desired resolution in terms of decimal places. For instance, a resolution of 2 
-    /// would bin m/z values to two decimal places.
-    ///
-    /// # Returns
-    ///
-    /// A new `MzSpectrum` where m/z values are binned according to the given resolution.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use mscore::MzSpectrum;
-    /// let spectrum = MzSpectrum::new(vec![100.123, 100.121, 100.131], vec![10.0, 20.0, 30.0]);
-    /// let binned_spectrum_1 = spectrum.to_resolution(1);
-    /// let binned_spectrum_2 = spectrum.to_resolution(2);
-    /// /// assert_eq!(binned_spectrum_2.mz, vec![100.1]);
-    /// assert_eq!(binned_spectrum_1.intensity, vec![60.0]);
-    /// assert_eq!(binned_spectrum_2.mz, vec![100.12, 100.13]);
-    /// assert_eq!(binned_spectrum_2.intensity, vec![30.0, 30.0]);
-    /// ```
-    pub fn to_resolution(&self, resolution: i32) -> MzSpectrum {
-        let mut binned: BTreeMap<i64, f64> = BTreeMap::new();
-        let factor = 10f64.powi(resolution);
-
-        for (mz, inten) in self.mz.iter().zip(self.intensity.iter()) {
-            
-            let key = (mz * factor).round() as i64;
-            let entry = binned.entry(key).or_insert(0.0);
-            *entry += *inten;
-        }
-
-        let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution)).collect();
-        let intensity: Vec<f64> = binned.values().cloned().collect();
-
-        MzSpectrum { mz, intensity }
-    }
-
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min:f64, intensity_max: f64) -> Self {
         let mut mz_vec: Vec<f64> = Vec::new();
         let mut intensity_vec: Vec<f64> = Vec::new();
@@ -139,21 +100,6 @@ impl MzSpectrum {
         MzSpectrum { mz: mz_vec, intensity: intensity_vec }
     }
 
-    /// Convert the `MzSpectrum` to a `MzVector` using the given resolution for binning.
-    ///
-    /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
-    pub fn vectorized(&self, resolution: i32) -> MzSpectrumVectorized {
-        let binned_spectrum = self.to_resolution(resolution);
-
-        // Translate the m/z values into integer indices
-        let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
-
-        MzSpectrumVectorized {
-            resolution,
-            indices,
-            values: binned_spectrum.intensity,
-        }
-    }
     /// Splits the spectrum into a collection of windows based on m/z values.
     ///
     /// This function divides the spectrum into smaller spectra (windows) based on a specified window length.
@@ -221,6 +167,68 @@ impl MzSpectrum {
         });
 
         splits
+    }
+}
+
+impl ToResolution for MzSpectrum {
+    /// Bins the spectrum's m/z values to a given resolution and sums the intensities.
+    ///
+    /// # Arguments
+    ///
+    /// * `resolution` - The desired resolution in terms of decimal places. For instance, a resolution of 2
+    /// would bin m/z values to two decimal places.
+    ///
+    /// # Returns
+    ///
+    /// A new `MzSpectrum` where m/z values are binned according to the given resolution.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use mscore::MzSpectrum;
+    /// # use mscore::ToResolution;
+    /// let spectrum = MzSpectrum::new(vec![100.123, 100.121, 100.131], vec![10.0, 20.0, 30.0]);
+    /// let binned_spectrum_1 = spectrum.to_resolution(1);
+    /// let binned_spectrum_2 = spectrum.to_resolution(2);
+    /// /// assert_eq!(binned_spectrum_2.mz, vec![100.1]);
+    /// assert_eq!(binned_spectrum_1.intensity, vec![60.0]);
+    /// assert_eq!(binned_spectrum_2.mz, vec![100.12, 100.13]);
+    /// assert_eq!(binned_spectrum_2.intensity, vec![30.0, 30.0]);
+    /// ```
+    fn to_resolution(&self, resolution: i32) -> Self {
+        let mut binned: BTreeMap<i64, f64> = BTreeMap::new();
+        let factor = 10f64.powi(resolution);
+
+        for (mz, inten) in self.mz.iter().zip(self.intensity.iter()) {
+
+            let key = (mz * factor).round() as i64;
+            let entry = binned.entry(key).or_insert(0.0);
+            *entry += *inten;
+        }
+
+        let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution)).collect();
+        let intensity: Vec<f64> = binned.values().cloned().collect();
+
+        MzSpectrum { mz, intensity }
+    }
+}
+
+impl Vectorized<MzSpectrumVectorized> for MzSpectrum {
+    /// Convert the `MzSpectrum` to a `MzSpectrumVectorized` using the given resolution for binning.
+    ///
+    /// After binning to the desired resolution, the binned m/z values are translated into integer indices.
+    fn vectorized(&self, resolution: i32) -> MzSpectrumVectorized {
+
+        let binned_spectrum = self.to_resolution(resolution);
+
+        // Translate the m/z values into integer indices
+        let indices: Vec<i32> = binned_spectrum.mz.iter().map(|&mz| (mz * 10f64.powi(resolution)).round() as i32).collect();
+
+        MzSpectrumVectorized {
+            resolution,
+            indices,
+            values: binned_spectrum.intensity,
+        }
     }
 }
 
