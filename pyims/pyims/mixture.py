@@ -27,7 +27,6 @@ class GaussianMixtureModel(tf.Module):
 
         # Initialize the locations of the GMM components
         super().__init__()
-        self.prior_stddevs = None
 
         if init_means is not None:
             assert init_means.shape == (num_components,
@@ -58,6 +57,8 @@ class GaussianMixtureModel(tf.Module):
         if prior_stddevs is not None:
             init_prior_stds = tf.repeat(prior_stdevs, num_components, axis=0)
             self.prior_stddevs = init_prior_stds
+        else:
+            self.prior_stddevs = None
 
     def __call__(self, data):
         """
