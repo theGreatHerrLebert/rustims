@@ -10,7 +10,7 @@ tfd = tfp.distributions
 
 class GaussianMixtureModel(tf.Module):
 
-    def __init__(self, num_components: int, data_dim: int, prior_stdevs=None, lambda_scale=0.01, data=None,
+    def __init__(self, num_components: int, data_dim: int, prior_stdevs=None, data=None,
                  init_means=None, init_stds=None):
         """
         Initialize the Gaussian Mixture Model.
@@ -54,8 +54,9 @@ class GaussianMixtureModel(tf.Module):
         self.weights = tf.Variable(tf.ones([num_components]), name="weights")
 
         # Set the prior scales and regularization strength
-        self.prior_stdevs = prior_stdevs
-        self.lambda_scale = lambda_scale
+        if prior_stdevs is not None:
+            init_prior_stds = tf.repeat(prior_stdevs, num_components, axis=0)
+            self.prior_stdevs = init_prior_stds
 
     def __call__(self, data):
         """
@@ -72,7 +73,7 @@ class GaussianMixtureModel(tf.Module):
 
         return gmm.log_prob(data)
 
-    def fit(self, data, weights=None, num_steps=200, learning_rate=0.05, verbose=True):
+    def fit(self, data, weights=None, num_steps=200, learning_rate=0.05, lambda_scale=0.01, verbose=True):
         """
         Fit the Gaussian Mixture Model to the data.
 
@@ -97,7 +98,7 @@ class GaussianMixtureModel(tf.Module):
 
                 if self.prior_stdevs is not None:
                     scale_diff = tf.math.exp(self.scales) - self.prior_stdevs
-                    reg_loss = self.lambda_scale * tf.reduce_sum(scale_diff * scale_diff)
+                    reg_loss = lambda_scale * tf.reduce_sum(scale_diff * scale_diff)
                     loss += reg_loss
 
             gradients = tape.gradient(loss, [self.locs, self.scales, self.weights])
