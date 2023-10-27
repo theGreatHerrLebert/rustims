@@ -13,7 +13,8 @@ from pyims.spectrum import MzSpectrum
 
 
 class TimsSlice:
-    def __int__(self, frame_ids: NDArray[np.int32],
+    def __int__(self,
+                frame_ids: NDArray[np.int32],
                 scan: NDArray[np.int32],
                 tof: NDArray[np.int32],
                 retention_times: NDArray[np.float64],
