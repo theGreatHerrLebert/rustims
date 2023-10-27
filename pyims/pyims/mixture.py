@@ -55,7 +55,7 @@ class GaussianMixtureModel(tf.Module):
 
         # Set the prior scales and regularization strength
         if prior_stddevs is not None:
-            init_prior_stds = tf.repeat(prior_stdevs, num_components, axis=0)
+            init_prior_stds = tf.repeat(prior_stddevs, num_components, axis=0)
             self.prior_stddevs = init_prior_stds
         else:
             self.prior_stddevs = None
