@@ -10,14 +10,8 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-<<<<<<<< HEAD:imspy/imspy/handle.py
-from imspy.frame import TimsFrame
-from imspy.slice import TimsSlice
-========
-from pyims.data import TimsFrame, TimsSlice
-
->>>>>>>> 1cd02c1 (transfer simulation framework from proteolizard):imspy/imspy/data/handle.py
-
+from imspy.data.frame import TimsFrame
+from imspy.data.slice import TimsSlice
 
 class TimsDataset(ABC):
     def __init__(self, data_path: str):

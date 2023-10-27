@@ -7,7 +7,7 @@ from tensorflow import sparse as sp
 
 import numpy as np
 import imspy_connector as pims
-from imspy.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
+from imspy.data.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
 
 from imspy.utilities import re_index_indices
 

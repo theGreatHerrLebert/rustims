@@ -4,7 +4,7 @@ from numpy.typing import ArrayLike
 
 import json
 
-from pyims.data import TimsSlice, TimsFrame, MzSpectrum
+from pyims.data import TimsSlice, TimsFrame
 from pyims.utility import gaussian, exp_gaussian
 from pyims.isotopes import IsotopePatternGenerator, create_initial_feature_distribution
 from abc import ABC, abstractmethod

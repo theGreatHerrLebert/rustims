@@ -89,7 +89,7 @@ def build_experiment():
 
 
     # to reduce computational load in example
-    sample_digest.data = sample_digest.data.sample(100000, random_state= rng)
+    sample_digest.data = sample_digest.data.sample(100, random_state= rng)
 
 
     t.load_sample(sample_digest)

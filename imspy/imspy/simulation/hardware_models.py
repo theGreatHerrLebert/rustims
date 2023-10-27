@@ -267,7 +267,7 @@ class NeuralChromatographyApex(ChromatographyApexModel):
 
     def sequences_to_tokens(self, sequences_tokenized: np.array) -> np.array:
         print('tokenizing sequences...')
-        tokens = np.apply_along_axis(self.tokenizer.texts_to_sequences, 0, sequences_tokenized)
+        tokens = self.tokenizer.texts_to_sequences(sequences_tokenized)
         tokens_padded = tf.keras.preprocessing.sequence.pad_sequences(tokens, 50, padding='post')
         return tokens_padded
 
@@ -286,7 +286,7 @@ class NeuralChromatographyApex(ChromatographyApexModel):
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: Chromatography) ->  NDArray[np.float64]:
 
         data = sample.peptides
-        tokens = data["sequence_tokenized"].apply(lambda st: st.sequence_tokenized)
+        tokens = data["sequence_tokenized"].apply(lambda st: st.sequence_tokenized).to_numpy()
         print('generating tf dataset...')
         tokens_padded = self.sequences_to_tokens(tokens)
 
@@ -632,7 +632,7 @@ class NeuralIonMobilityApex(IonMobilityApexModel):
 
     def sequences_to_tokens(self, sequences_tokenized: np.array) -> np.array:
         print('tokenizing sequences...')
-        tokens = np.apply_along_axis(self.tokenizer.texts_to_sequences, 0, sequences_tokenized)
+        tokens = self.tokenizer.texts_to_sequences(sequences_tokenized)
         tokens_padded = tf.keras.preprocessing.sequence.pad_sequences(tokens, 50, padding='post')
         return tokens_padded
 
@@ -654,7 +654,7 @@ class NeuralIonMobilityApex(IonMobilityApexModel):
 
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: IonMobilitySeparation) -> Tuple[NDArray]:
         data = sample.ions.merge(sample.peptides.loc[:,["pep_id","sequence_tokenized"]],on="pep_id",validate="many_to_one")
-        tokens = data.sequence_tokenized.apply(lambda st: st.sequence_tokenized)
+        tokens = data.sequence_tokenized.apply(lambda st: st.sequence_tokenized).to_numpy()
         tokens_padded = self.sequences_to_tokens(tokens)
         mz = data['mz'].values
         charges = data["charge"].values
