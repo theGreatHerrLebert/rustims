@@ -112,7 +112,7 @@ class GaussianMixtureModel(tf.Module):
             if step % 100 == 0 and verbose:
                 tf.print("step:", step, "log-loss:", loss)
 
-    def __mixture(self):
+    def _mixture(self):
         """
         Creates a Gaussian Mixture Model from the current parameters (weights, means, and covariances).
         """
@@ -132,7 +132,7 @@ class GaussianMixtureModel(tf.Module):
         return tf.math.exp(self.scales)
 
     def predict_proba(self, data):
-        gmm = self.__mixture()
+        gmm = self._mixture()
 
         # Calculate the log probabilities for each data point for each component
         log_probs = gmm.components_distribution.log_prob(tf.transpose(data[..., tf.newaxis], [0, 2, 1]))
@@ -151,7 +151,7 @@ class GaussianMixtureModel(tf.Module):
         return np.argmax(self.predict_proba(data), axis=1)
 
     def sample(self, n_samples=1):
-        gmm = self.__mixture()
+        gmm = self._mixture()
 
         # Sample from the Gaussian Mixture Model
         samples = gmm.sample(n_samples)

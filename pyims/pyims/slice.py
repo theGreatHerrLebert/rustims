@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from typing import List
 
+from numpy.typing import NDArray
 from tensorflow import sparse as sp
 
 from pyims.utilities import re_index_indices
@@ -12,8 +13,17 @@ from pyims.spectrum import MzSpectrum
 
 
 class TimsSlice:
-    def __int__(self):
-        self.__slice_ptr = None
+    def __int__(self, frame_ids: NDArray[np.int32],
+                scan: NDArray[np.int32],
+                tof: NDArray[np.int32],
+                retention_times: NDArray[np.float64],
+                mobility: NDArray[np.float64],
+                mz: NDArray[np.float64],
+                intensity: NDArray[np.float64]):
+
+        self.__slice_ptr = pims.PyImsSlice(
+            frame_ids, scan, tof, retention_times, mobility, mz, intensity
+        )
         self.__current_index = 0
 
     @classmethod
