@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized};
+use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized};
 use pyo3::types::PyList;
 
 use crate::py_mz_spectrum::{PyMzSpectrum, PyTimsSpectrum};
