@@ -10,7 +10,7 @@ tfd = tfp.distributions
 
 class GaussianMixtureModel(tf.Module):
 
-    def __init__(self, num_components: int, data_dim: int, prior_stdevs=None, data=None,
+    def __init__(self, num_components: int, data_dim: int, prior_stddevs=None, data=None,
                  init_means=None, init_stds=None):
         """
         Initialize the Gaussian Mixture Model.
@@ -27,6 +27,7 @@ class GaussianMixtureModel(tf.Module):
 
         # Initialize the locations of the GMM components
         super().__init__()
+        self.prior_stddevs = None
 
         if init_means is not None:
             assert init_means.shape == (num_components,
@@ -54,9 +55,9 @@ class GaussianMixtureModel(tf.Module):
         self.weights = tf.Variable(tf.ones([num_components]), name="weights")
 
         # Set the prior scales and regularization strength
-        if prior_stdevs is not None:
+        if prior_stddevs is not None:
             init_prior_stds = tf.repeat(prior_stdevs, num_components, axis=0)
-            self.prior_stdevs = init_prior_stds
+            self.prior_stddevs = init_prior_stds
 
     def __call__(self, data):
         """
