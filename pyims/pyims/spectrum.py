@@ -7,6 +7,77 @@ from numpy.typing import NDArray
 import pyims_connector as pims
 
 
+class IndexedMzSpectrum:
+    def __init__(self, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
+        """IndexedMzSpectrum class.
+
+        Args:
+            index (NDArray[np.int32]): Index.
+            mz (NDArray[np.float64]): m/z.
+            intensity (NDArray[np.float64]): Intensity.
+
+        Raises:
+            AssertionError: If the length of the index, mz and intensity arrays are not equal.
+        """
+        assert len(index) == len(mz) == len(intensity), ("The length of the index, mz and intensity arrays must be "
+                                                         "equal.")
+        self.__spec_ptr = pims.PyIndexedMzSpectrum(index, mz, intensity)
+
+    @classmethod
+    def from_py_indexed_mz_spectrum(cls, spec: pims.PyIndexedMzSpectrum):
+        """Create a IndexedMzSpectrum from a PyIndexedMzSpectrum.
+
+        Args:
+            spec (pims.PyIndexedMzSpectrum): PyIndexedMzSpectrum to create the IndexedMzSpectrum from.
+
+        Returns:
+            IndexedMzSpectrum: IndexedMzSpectrum created from the PyIndexedMzSpectrum.
+        """
+        instance = cls.__new__(cls)
+        instance.__spec_ptr = spec
+        return instance
+
+    @property
+    def index(self) -> NDArray[np.int32]:
+        """Index.
+
+        Returns:
+            NDArray[np.int32]: Index.
+        """
+        return self.__spec_ptr.index
+
+    @property
+    def mz(self) -> NDArray[np.float64]:
+        """m/z.
+
+        Returns:
+            NDArray[np.float64]: m/z.
+        """
+        return self.__spec_ptr.mz
+
+    @property
+    def intensity(self) -> NDArray[np.float64]:
+        """Intensity.
+
+        Returns:
+            NDArray[np.float64]: Intensity.
+        """
+        return self.__spec_ptr.intensity
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Data.
+
+        Returns:
+            pd.DataFrame: Data.
+        """
+
+        return pd.DataFrame({'index': self.index, 'mz': self.mz, 'intensity': self.intensity})
+
+    def __repr__(self):
+        return f"IndexedMzSpectrum(num_peaks={len(self.index)})"
+
+
 class MzSpectrum:
     def __init__(self, mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """MzSpectrum class.
