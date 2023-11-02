@@ -1,10 +1,10 @@
-mod pyhandle;
+mod py_handle;
 mod py_mz_spectrum;
 mod py_tims_frame;
 mod py_tims_slice;
 
 use pyo3::prelude::*;
-use crate::pyhandle::PyTimsDataHandle;
+use crate::py_handle::PyTimsDataHandle;
 use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum, PyMzSpectrumVectorized};
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
 use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
