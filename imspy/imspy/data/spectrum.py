@@ -1,6 +1,7 @@
+from __future__ import annotations
+import json
 import numpy as np
 from typing import List, Tuple
-from __future__ import annotations
 import pandas as pd
 from numpy.typing import NDArray
 
@@ -79,6 +80,18 @@ class IndexedMzSpectrum:
 
 
 class MzSpectrum:
+    
+    @classmethod
+    def from_jsons(cls, jsons:str) -> MzSpectrum:
+        json_dict:dict = json.loads(jsons)
+        mz = json_dict["mz"]
+        intensity = json_dict["intensity"]
+        return cls(mz, intensity)
+    
+    @classmethod
+    def from_spectra_list(cls, spectra_list:List[MzSpectrum], resolution: int, centroided: bool)->MzSpectrum:
+        pass
+    
     def __init__(self, mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """MzSpectrum class.
 
@@ -192,8 +205,18 @@ class MzSpectrum:
             MzSpectrumVectorized: Vectorized spectrum.
         """
         return MzSpectrumVectorized.from_py_mz_spectrum_vectorized(self.__spec_ptr.vectorized(resolution))
+    
+    def to_jsons(self) -> str:
+        """
+        generates json string representation of MzSpectrum
+        """
+        json_dict = {}
+        json_dict["mz"] = self.mz().tolist()
+        json_dict["intensity"] = self.intensity().tolist()
 
+        return json.dumps(json_dict)
 
+    
 class MzSpectrumVectorized:
     def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):
         """MzSpectrum class.
@@ -253,7 +276,7 @@ class MzSpectrumVectorized:
         return f"MzSpectrumVectorized(num_values={len(self.values)})"
 
 
-class TimsSpectrum:
+class TimsSpectrum(AbstractSpectrum):
     def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int,
                  index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsSpectrum class.
@@ -387,3 +410,6 @@ class TimsSpectrum:
         return (f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, "
                 f"scan={self.scan}, mobility={np.round(self.mobility, 2)}, ms_type={self.ms_type}, "
                 f"num_peaks={len(self.index)})")
+
+    def to_jsons(self) -> str:
+        return super().to_jsons()

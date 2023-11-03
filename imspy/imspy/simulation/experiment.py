@@ -106,6 +106,7 @@ class LcImsMsMs(ProteomicsExperiment):
             self.ion_mobility_separation_method.run(data_chunk)
             self.mz_separation_method.run(data_chunk)
             self.database.update(data_chunk)
+    
     @staticmethod
     def _assemble_frame_range(frame_range, scan_id_min, scan_id_max, default_abundance, resolution, output_path, database_path):
 

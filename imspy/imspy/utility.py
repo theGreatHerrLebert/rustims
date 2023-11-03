@@ -119,8 +119,8 @@ def get_ref_pattern_as_spectra(ref_patterns):
             mz = np.round(np.array(mz), 2) + 1.0
             i = np.array([int(x) for x in i])
 
-            spectum = MzSpectrum(None, -1, -1, mz, i)
-            spec_list.append((row['m'], row['z'], spectum, last_contrib))
+            spectrum = MzSpectrum(mz, i)
+            spec_list.append((row['m'], row['z'], spectrum, last_contrib))
 
     return spec_list
 

@@ -234,4 +234,8 @@ impl PyTimsSpectrum {
     pub fn mz_spectrum(&self) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.spectrum.mz_spectrum.clone() }
     }
+
+    pub fn to_resolution(&self, resolution: i32) -> Self {
+        PyTimsSpectrum{ inner: self.inner.to_resolution(resolution)}
+    }
 }

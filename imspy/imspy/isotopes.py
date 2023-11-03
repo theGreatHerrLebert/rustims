@@ -200,7 +200,7 @@ class AveragineGenerator(IsotopePatternGenerator):
                          min_intensity: int = 5) -> Tuple[ArrayLike, ArrayLike]:
         pass
 
-    def generate_spectrum(self, mass: int, charge: int, frame_id: int, scan_id: int, k: int = 7,
+    def generate_spectrum(self, mass: int, charge: int, k: int = 7,
                           amp :Optional[float] = None, resolution:float =3, min_intensity: int = 5, centroided: bool = True) -> MzSpectrum:
         if amp is None:
             amp = self.default_abundancy
@@ -212,17 +212,15 @@ class AveragineGenerator(IsotopePatternGenerator):
                                  mass=mass, charge=charge, amp=amp, k=k, resolution=resolution)
 
         if centroided:
-            return MzSpectrum(None, frame_id, scan_id, mz, i)\
+            return MzSpectrum(mz, i)\
                     .to_resolution(resolution).filter(lb,ub,min_intensity)\
                     .to_centroided(baseline_noise_level=max(min_intensity,1), sigma=1/np.power(10,resolution-1))
 
-        return MzSpectrum(None, frame_id, scan_id, mz, i).to_resolution(resolution).filter(lb,ub,min_intensity)
+        return MzSpectrum(mz, i).to_resolution(resolution).filter(lb,ub,min_intensity)
 
     def generate_spectrum_by_sampling(self,
                                       mass: float,
                                       charge: int,
-                                      frame_id:int,
-                                      scan_id: int,
                                       k:int =7,
                                       sigma: ArrayLike = 0.008492569002123142,
                                       ion_count:int = 1000000,
@@ -235,8 +233,8 @@ class AveragineGenerator(IsotopePatternGenerator):
         mz, i = numba_ion_sampler(mass, charge, sigma, k, ion_count, intensity_per_ion)
 
         if centroided:
-            return MzSpectrum(None,frame_id,scan_id,mz,i)\
-                    .to_resolution(resolution).filter(-1,-1,min_intensity)\
-                    .to_centroided(baseline_noise_level=max(min_intensity,1), sigma=1/np.power(10,resolution-1))
-        return MzSpectrum(None,frame_id,scan_id,mz,i)\
+            return MzSpectrum(mz,i)\
+                    .to_resolution(resolution).filter(-1,-1,min_intensity)\ 
+                    .to_centroided(baseline_noise_level=max(min_intensity,1), sigma=1/np.power(10,resolution-1)) #Todo implement centroid method
+        return MzSpectrum(mz,i)\
                 .to_resolution(resolution).filter(-1,-1,min_intensity)

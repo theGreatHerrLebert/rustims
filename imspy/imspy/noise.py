@@ -94,13 +94,13 @@ def baseline_shot_noise_window(window:MzSpectrum,
 
     """
     num_noise_peaks = np.random.poisson(lam=expected_noise_peaks)
-    noised_window = MzSpectrum(None,-1,-1,[],[])
+    noised_window = MzSpectrum([],[])
     for i in range(num_noise_peaks):
         location_i = np.random.uniform(window_theoretical_mz_min,window_theoretical_mz_max)
         intensity_i = np.random.exponential(expected_noise_intensity)
         sigma_i = np.random.exponential(expected_noise_sigma)
         noise_mz, noise_intensity = generate_noise_peak(location_i,sigma_i,intensity_i,resolution=resolution)
-        noise_peak = MzSpectrum(None,-1,-1, noise_mz, noise_intensity)
+        noise_peak = MzSpectrum(noise_mz, noise_intensity)
         noised_window = noised_window+noise_peak
     return noised_window
 
