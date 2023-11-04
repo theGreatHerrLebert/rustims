@@ -86,11 +86,20 @@ class MzSpectrum:
         json_dict:dict = json.loads(jsons)
         mz = json_dict["mz"]
         intensity = json_dict["intensity"]
-        return cls(mz, intensity)
+        return cls(np.array(mz, dtype=np.float64), np.array(intensity, dtype=np.float64))
     
     @classmethod
-    def from_spectra_list(cls, spectra_list:List[MzSpectrum], resolution: int, centroided: bool)->MzSpectrum:
-        pass
+    def from_mz_spectra_list(cls, spectra_list:List[MzSpectrum], resolution: int)->MzSpectrum:
+        """Generates a convoluted mass spectrum by adding all spectra in the given list.
+
+        Args:
+            spectra_list (List[MzSpectrum]): List of mass spectra.
+            resolution (int): Desired resolution of returned spectrum.
+
+        Returns:
+            MzSpectrum: Convoluted spectrum.
+        """
+        return cls.from_py_mz_spectrum(pims.PyMzSpectrum.from_mzspectra_list([spectrum.__spec_ptr for spectrum in spectra_list], resolution))
     
     def __init__(self, mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """MzSpectrum class.
@@ -149,6 +158,18 @@ class MzSpectrum:
 
     def __repr__(self):
         return f"MzSpectrum(num_peaks={len(self.mz)})"
+    
+    def __mul__(self, scale) -> MzSpectrum:
+        """Overwrite * operator for scaling of spectrum
+
+        Args:
+            scale (float): Scale.
+
+        Returns:
+            MzSpectrum: Scaled spectrum
+        """
+        tmp: pims.PyMzSpectrum =  self.__spec_ptr * scale
+        return self.from_py_mz_spectrum(tmp)
 
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
                    min_intensity: float = 1) -> Tuple[NDArray, List[MzSpectrum]]:
@@ -177,7 +198,7 @@ class MzSpectrum:
         Returns:
             MzSpectrum: A new `MzSpectrum` where m/z values are binned according to the given resolution.
         """
-        return self.__spec_ptr.to_resolution(resolution)
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_resolution(resolution))
     
     def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0,
                intensity_max: float = 1e9) -> MzSpectrum:
@@ -211,8 +232,8 @@ class MzSpectrum:
         generates json string representation of MzSpectrum
         """
         json_dict = {}
-        json_dict["mz"] = self.mz().tolist()
-        json_dict["intensity"] = self.intensity().tolist()
+        json_dict["mz"] = self.mz.tolist()
+        json_dict["intensity"] = self.intensity.tolist()
 
         return json.dumps(json_dict)
 
@@ -276,7 +297,7 @@ class MzSpectrumVectorized:
         return f"MzSpectrumVectorized(num_values={len(self.values)})"
 
 
-class TimsSpectrum(AbstractSpectrum):
+class TimsSpectrum:
     def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int,
                  index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsSpectrum class.
@@ -410,6 +431,3 @@ class TimsSpectrum(AbstractSpectrum):
         return (f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, "
                 f"scan={self.scan}, mobility={np.round(self.mobility, 2)}, ms_type={self.ms_type}, "
                 f"num_peaks={len(self.index)})")
-
-    def to_jsons(self) -> str:
-        return super().to_jsons()

@@ -110,8 +110,8 @@ def baseline_shot_noise(spectrum:MzSpectrum,window_size:float=50,expected_noise_
 
 
     """
-    min_mz = spectrum.mz().min()-0.1
-    max_mz = spectrum.mz().max()+0.1
+    min_mz = spectrum.mz.min()-0.1
+    max_mz = spectrum.mz.max()+0.1
     bins,windows = spectrum.windows(window_size,overlapping=False,min_peaks=0,min_intensity=0)
     noised_spectrum = spectrum
     for b,w in zip(bins,windows):

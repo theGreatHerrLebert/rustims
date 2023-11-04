@@ -247,7 +247,7 @@ class ProteomicsExperimentDatabaseHandle:
         if isinstance(column.iloc[0], (RTProfile, ScanProfile, ChargeProfile, TokenSequence)):
             return column.apply(lambda x: x.jsons)
         elif isinstance(column.iloc[0], MzSpectrum):
-            return column.apply(lambda x: x.to_jsons(only_spectrum = True))
+            return column.apply(lambda x: x.to_jsons())
         else:
             return column
 

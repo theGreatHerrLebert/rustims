@@ -293,6 +293,17 @@ impl std::ops::Add for MzSpectrum {
     }
 }
 
+impl std::ops::Mul<f64> for MzSpectrum {
+    type Output = Self;
+    fn mul(self, scale: f64) -> Self::Output{
+        let mut scaled_intensities: Vec<f64> = vec![0.0; self.intensity.len()];
+        for (idx,intensity) in self.intensity.iter().enumerate(){
+            scaled_intensities[idx] = scale*intensity;
+        }
+        Self{ mz: self.mz.clone(), intensity: scaled_intensities}
+
+    }
+}
 /// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
 #[derive(Clone)]
 pub struct IndexedMzSpectrum {

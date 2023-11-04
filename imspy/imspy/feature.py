@@ -123,7 +123,7 @@ class PrecursorFeatureGenerator(FeatureGenerator):
         frame_list = []
 
         spec = pattern_generator.generate_spectrum(mz, charge, min_intensity=5, centroided=True, k=12)
-        mz, intensity = spec.mz(), spec.intensity() / np.max(spec.intensity()) * 100
+        mz, intensity = spec.mz, spec.intensity / np.max(spec.intensity) * 100
 
         for i in range(num_rt):
 

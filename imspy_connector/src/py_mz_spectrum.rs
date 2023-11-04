@@ -25,11 +25,13 @@ impl PyMsType {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyMzSpectrum {
     pub inner: MzSpectrum,
 }
 
 #[pymethods]
+
 impl PyMzSpectrum {
     #[new]
     pub unsafe fn new(mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
@@ -37,8 +39,26 @@ impl PyMzSpectrum {
             inner: MzSpectrum {
                 mz: mz.as_slice()?.to_vec(),
                 intensity: intensity.as_slice()?.to_vec(),
-            },
+            }
         })
+    }
+    #[staticmethod]
+    pub unsafe fn from_mzspectra_list(list: Vec<PyMzSpectrum>, resolution: i32) -> PyResult<Self> {
+        if list.is_empty(){
+            Ok(PyMzSpectrum { 
+                inner: MzSpectrum {
+                    mz: Vec::new(),
+                    intensity: Vec::new(),
+                }
+            })
+        }
+        else {
+            let mut convoluted: MzSpectrum = MzSpectrum { mz: vec![], intensity: vec![] };
+            for spectrum in list {
+                convoluted = convoluted + spectrum.inner;
+            }
+            Ok(PyMzSpectrum { inner: convoluted.to_resolution(resolution) })
+        }
     }
 
     #[getter]
@@ -85,6 +105,12 @@ impl PyMzSpectrum {
             inner: filtered,
         };
         Ok(py_filtered)
+    }
+    pub fn __add__(&self, other: PyMzSpectrum) -> PyResult<PyMzSpectrum> {
+        Ok(PyMzSpectrum { inner: (self.inner.clone() + other.inner) })
+    }
+    pub fn __mul__(&self, scale: f64) -> PyResult<PyMzSpectrum> {
+        Ok(PyMzSpectrum { inner: (self.inner.clone() * scale) })
     }
 }
 

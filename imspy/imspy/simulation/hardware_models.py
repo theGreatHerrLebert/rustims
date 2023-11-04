@@ -761,6 +761,6 @@ class AveragineModel(MzSeparationModel):
         charges = joined_df["charge"].values
         spectra = []
         for (m, c) in zip(masses, charges):
-            spectrum = avg.generate_spectrum(m,c,-1,-1,amp = self.default_abundance, centroided=False)
+            spectrum = avg.generate_spectrum(m,c,amp = self.default_abundance, centroided=False)
             spectra.append(spectrum)
         return spectra
