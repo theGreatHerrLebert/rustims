@@ -1,11 +1,11 @@
 [package]
-name = "pyims_connector"
+name = "imspy_connector"
 version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-name = "pyims_connector"
+name = "imspy_connector"
 crate-type = ["cdylib"]
 
 [dependencies]
