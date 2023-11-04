@@ -7,7 +7,7 @@ from tensorflow import sparse as sp
 
 import numpy as np
 import pyims_connector as pims
-from pyims.spectrum import MzSpectrum, TimsSpectrum
+from pyims.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
 
 from pyims.utilities import re_index_indices
 
@@ -168,6 +168,14 @@ class TimsFrame:
 
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
                                                                            intensity_min, intensity_max))
+
+    def to_indexed_mz_spectrum(self) -> 'IndexedMzSpectrum':
+        """Convert the frame to an IndexedMzSpectrum.
+
+        Returns:
+            IndexedMzSpectrum: IndexedMzSpectrum.
+        """
+        return IndexedMzSpectrum.from_py_indexed_mz_spectrum(self.__frame_ptr.to_indexed_mz_spectrum())
 
     def to_resolution(self, resolution: int) -> 'TimsFrame':
         """Convert the frame to a given resolution.

@@ -206,6 +206,33 @@ impl TimsFrame {
         result
     }
 
+    pub fn to_indexed_mz_spectrum(&self) -> IndexedMzSpectrum {
+        let mut grouped_data: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();
+
+        // Group by 'tof' with 'mz' and 'intensity'
+        for (&tof, (&mz, &intensity)) in self.tof.iter().zip(self.ims_frame.mz.iter().zip(self.ims_frame.intensity.iter())) {
+            grouped_data.entry(tof).or_insert_with(Vec::new).push((mz, intensity));
+        }
+
+        let mut index = Vec::new();
+        let mut mz = Vec::new();
+        let mut intensity = Vec::new();
+
+        for (&tof_val, values) in &grouped_data {
+            let sum_intensity: f64 = values.iter().map(|&(_, i)| i).sum();
+            let avg_mz: f64 = values.iter().map(|&(m, _)| m).sum::<f64>() / values.len() as f64;
+
+            index.push(tof_val);
+            mz.push(avg_mz);
+            intensity.push(sum_intensity);
+        }
+
+        IndexedMzSpectrum {
+            index,
+            mz_spectrum: MzSpectrum { mz, intensity },
+        }
+    }
+
 }
 
 impl fmt::Display for TimsFrame {

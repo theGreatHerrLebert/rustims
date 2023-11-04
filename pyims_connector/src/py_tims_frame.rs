@@ -3,7 +3,7 @@ use numpy::{PyArray1, IntoPyArray};
 use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized};
 use pyo3::types::PyList;
 
-use crate::py_mz_spectrum::{PyMzSpectrum, PyTimsSpectrum};
+use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyMzSpectrum, PyTimsSpectrum};
 
 #[pyclass]
 #[derive(Clone)]
@@ -102,6 +102,10 @@ impl PyTimsFrame {
         }
 
         Ok(list.into())
+    }
+
+    pub fn to_indexed_mz_spectrum(&self) -> PyIndexedMzSpectrum {
+        PyIndexedMzSpectrum { inner: self.inner.to_indexed_mz_spectrum() }
     }
 
     pub fn vectorized(&self, resolution: i32) -> PyTimsFrameVectorized {

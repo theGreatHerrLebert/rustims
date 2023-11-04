@@ -2,11 +2,12 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use itertools::multizip;
 use crate::MsType;
 
 use crate::mz_spectrum::{MzSpectrum};
-use crate::tims_frame::{TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
+use crate::tims_frame::{ImsFrame, TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -120,6 +121,56 @@ impl TimsSlice {
         });
 
         TimsSliceVectorized { frames: result_frames }
+    }
+
+    pub fn from_flat_slice(frame_ids: Vec<i32>,
+                           scans: Vec<i32>,
+                           tofs: Vec<i32>,
+                           retention_times: Vec<f64>,
+                           mobilities: Vec<f64>,
+                           mzs: Vec<f64>,
+                           intensities: Vec<f64>) -> Self {
+
+        let mut frames = Vec::new();
+        let unique_frame_ids: BTreeSet<_> = frame_ids.iter().cloned().collect();
+
+        for frame_id in unique_frame_ids {
+            let indices: Vec<usize> = frame_ids.iter().enumerate().filter(|(_, &x)| x == frame_id).map(|(i, _)| i).collect();
+            let mut scan = Vec::new();
+            let mut tof = Vec::new();
+            let mut retention_time = Vec::new();
+            let mut mobility = Vec::new();
+            let mut mz = Vec::new();
+            let mut intensity = Vec::new();
+
+            for index in indices {
+                scan.push(scans[index]);
+                tof.push(tofs[index]);
+                retention_time.push(retention_times[index]);
+                mobility.push(mobilities[index]);
+                mz.push(mzs[index]);
+                intensity.push(intensities[index]);
+            }
+
+            let ims_frame = ImsFrame {
+                retention_time: retention_time[0],
+                mobility,
+                mz,
+                intensity,
+            };
+
+            let tims_frame = TimsFrame {
+                frame_id,
+                ms_type: MsType::Unknown,
+                scan,
+                tof,
+                ims_frame,
+            };
+
+            frames.push(tims_frame);
+        }
+
+        TimsSlice { frames }
     }
 
     pub fn flatten(&self) -> TimsSliceFlat {

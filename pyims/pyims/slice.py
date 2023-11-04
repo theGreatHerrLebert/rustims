@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from typing import List
 
+from numpy.typing import NDArray
 from tensorflow import sparse as sp
 
 from pyims.utilities import re_index_indices
@@ -12,8 +13,32 @@ from pyims.spectrum import MzSpectrum
 
 
 class TimsSlice:
-    def __int__(self):
-        self.__slice_ptr = None
+    def __init__(self,
+                 frame_id: NDArray[np.int32],
+                 scan: NDArray[np.int32],
+                 tof: NDArray[np.int32],
+                 retention_time: NDArray[np.float64],
+                 mobility: NDArray[np.float64],
+                 mz: NDArray[np.float64],
+                 intensity: NDArray[np.float64]):
+        """Create a TimsSlice.
+
+        Args:
+            frame_id (NDArray[np.int32]): Frame ID.
+            scan (NDArray[np.int32]): Scan.
+            tof (NDArray[np.int32]): TOF.
+            retention_time (NDArray[np.float64]): Retention time.
+            mobility (NDArray[np.float64]): Mobility.
+            mz (NDArray[np.float64]): m/z.
+            intensity (NDArray[np.float64]): Intensity.
+        """
+
+        assert len(frame_id) == len(scan) == len(tof) == len(retention_time) == len(mobility) == len(mz) == len(
+            intensity), "All arrays must have the same length."
+
+        self.__slice_ptr = pims.PyTimsSlice(
+            frame_id, scan, tof, retention_time, mobility, mz, intensity
+        )
         self.__current_index = 0
 
     @classmethod
@@ -80,8 +105,9 @@ class TimsSlice:
         Returns:
             TimsSlice: Filtered slice.
         """
-        return TimsSlice.from_py_tims_slice(self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
-                                                                           intensity_min, intensity_max, num_threads))
+        return TimsSlice.from_py_tims_slice(
+            self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
+                                           intensity_min, intensity_max, num_threads))
 
     @property
     def frames(self) -> List[TimsFrame]:
@@ -104,7 +130,8 @@ class TimsSlice:
         """
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.to_resolution(resolution, num_threads))
 
-    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5, min_intensity: float = 1, num_threads: int = 4) -> List[MzSpectrum]:
+    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
+                   min_intensity: float = 1, num_threads: int = 4) -> List[MzSpectrum]:
         """Convert the slice to a list of windows.
 
         Args:
@@ -157,9 +184,10 @@ class TimsSlice:
         """
         return TimsSliceVectorized.from_vectorized_py_tims_slice(self.__slice_ptr.vectorized(resolution, num_threads))
 
-
-    def get_tims_planes(self, tof_max_value: int = 400_000, num_chunks: int = 7, num_threads: int = 4) -> List['TimsPlane']:
-        return [TimsPlane.from_py_tims_plane(plane) for plane in self.__slice_ptr.to_tims_planes(tof_max_value, num_chunks, num_threads)]
+    def get_tims_planes(self, tof_max_value: int = 400_000, num_chunks: int = 7, num_threads: int = 4) -> List[
+        'TimsPlane']:
+        return [TimsPlane.from_py_tims_plane(plane) for plane in
+                self.__slice_ptr.to_tims_planes(tof_max_value, num_chunks, num_threads)]
 
 
 class TimsSliceVectorized:
@@ -215,7 +243,8 @@ class TimsSliceVectorized:
         Returns:
             List[TimsFrame]: Frames.
         """
-        return [TimsFrameVectorized.from_py_tims_frame_vectorized(frame) for frame in self.__slice_ptr.get_vectorized_frames()]
+        return [TimsFrameVectorized.from_py_tims_frame_vectorized(frame) for frame in
+                self.__slice_ptr.get_vectorized_frames()]
 
     @property
     def df(self) -> pd.DataFrame:
@@ -245,7 +274,8 @@ class TimsSliceVectorized:
     def __repr__(self):
         return f"TimsSliceVectorized({self.first_frame_id}, {self.last_frame_id})"
 
-    def get_tensor_repr(self, dense=True, zero_index=True, re_index=True, frame_max=None, scan_max=None, index_max=None):
+    def get_tensor_repr(self, dense=True, zero_index=True, re_index=True, frame_max=None, scan_max=None,
+                        index_max=None):
 
         frames, scans, _, _, _, indices, intensities = self.__slice_ptr.to_arrays()
 
@@ -272,7 +302,8 @@ class TimsSliceVectorized:
         else:
             m_f = frame_max + 1
 
-        sv = sp.reorder(sp.SparseTensor(indices=np.c_[frames, scans, indices], values=intensities, dense_shape=(m_f, m_s, m_i)))
+        sv = sp.reorder(
+            sp.SparseTensor(indices=np.c_[frames, scans, indices], values=intensities, dense_shape=(m_f, m_s, m_i)))
 
         if dense:
             return sp.to_dense(sv)
