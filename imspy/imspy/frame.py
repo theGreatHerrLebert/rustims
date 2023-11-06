@@ -6,10 +6,10 @@ from numpy.typing import NDArray
 from tensorflow import sparse as sp
 
 import numpy as np
-import pyims_connector as pims
-from pyims.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
+import imspy_connector as pims
+from imspy.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
 
-from pyims.utilities import re_index_indices
+from imspy.utilities import re_index_indices
 
 
 class TimsFrame:

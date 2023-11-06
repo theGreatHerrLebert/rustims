@@ -4,7 +4,7 @@ from typing import List, Tuple
 import pandas as pd
 from numpy.typing import NDArray
 
-import pyims_connector as pims
+import imspy_connector as pims
 
 
 class IndexedMzSpectrum:
