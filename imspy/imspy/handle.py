@@ -5,13 +5,13 @@ import pandas as pd
 import sqlite3
 from numpy.typing import NDArray
 
-import pyims_connector as pims
+import imspy_connector as pims
 import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from pyims.frame import TimsFrame
-from pyims.slice import TimsSlice
+from imspy.frame import TimsFrame
+from imspy.slice import TimsSlice
 
 
 class TimsDataset(ABC):

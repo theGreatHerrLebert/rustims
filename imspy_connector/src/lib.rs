@@ -10,7 +10,7 @@ use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
 use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 
 #[pymodule]
-fn pyims_connector(_py: Python, m: &PyModule) -> PyResult<()> {
+fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataHandle>()?;
     m.add_class::<PyMzSpectrum>()?;
     m.add_class::<PyMzSpectrumVectorized>()?;
