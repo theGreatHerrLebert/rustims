@@ -14,6 +14,16 @@ pub trait Vectorized<T> {
 }
 
 #[derive(Clone)]
+pub struct RawTimsFrame {
+    pub frame_id: i32,
+    pub retention_time: f64,
+    pub ms_type: MsType,
+    pub scan: Vec<i32>,
+    pub tof: Vec<i32>,
+    pub intensity: Vec<f64>,
+}
+
+#[derive(Clone)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
