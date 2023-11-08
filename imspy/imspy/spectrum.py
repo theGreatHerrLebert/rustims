@@ -64,6 +64,22 @@ class IndexedMzSpectrum:
         """
         return self.__spec_ptr.intensity
 
+    def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0,
+               intensity_max: float = 1e9) -> 'IndexedMzSpectrum':
+        """Filter the spectrum for a given m/z range and intensity range.
+
+        Args:
+            mz_min (float): Minimum m/z value.
+            mz_max (float): Maximum m/z value.
+            intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
+            intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
+
+        Returns:
+            IndexedMzSpectrum: Filtered spectrum.
+        """
+        return IndexedMzSpectrum.from_py_indexed_mz_spectrum(
+            self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
+
     @property
     def df(self) -> pd.DataFrame:
         """Data.

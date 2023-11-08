@@ -2,6 +2,7 @@ mod py_handle;
 mod py_mz_spectrum;
 mod py_tims_frame;
 mod py_tims_slice;
+mod py_timstof_dda;
 
 use pyo3::prelude::*;
 use crate::py_handle::PyTimsDataHandle;

@@ -1,6 +1,7 @@
 pub mod mz_spectrum;
 mod tims_frame;
 mod tims_slice;
+mod timstof_dda;
 
 pub use {
     mz_spectrum::MsType,
@@ -29,4 +30,6 @@ pub use {
     tims_slice::TimsSliceFlat,
 
     tims_slice::TimsPlane,
+
+    timstof_dda::TimsDDAPrecursor,
 };

@@ -398,6 +398,21 @@ impl IndexedMzSpectrum {
             }
         }
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min:f64, intensity_max: f64) -> Self {
+        let mut mz_vec: Vec<f64> = Vec::new();
+        let mut intensity_vec: Vec<f64> = Vec::new();
+        let mut index_vec: Vec<i32> = Vec::new();
+
+        for ((&mz, &intensity), &index) in self.mz_spectrum.mz.iter().zip(self.mz_spectrum.intensity.iter()).zip(self.index.iter()) {
+            if mz_min <= mz && mz <= mz_max && intensity >= intensity_min && intensity <= intensity_max {
+                mz_vec.push(mz);
+                intensity_vec.push(intensity);
+                index_vec.push(index);
+            }
+        }
+        IndexedMzSpectrum { index: index_vec, mz_spectrum: MzSpectrum { mz: mz_vec, intensity: intensity_vec } }
+    }
 }
 
 impl Display for IndexedMzSpectrum {
