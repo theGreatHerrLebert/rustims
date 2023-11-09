@@ -10,8 +10,8 @@ import math
 import pandas as pd
 
 from tqdm import tqdm
-from pyims.data import MzSpectrum
-# TODO bring to pyims
+from imspy.data import MzSpectrum
+# TODO bring to imspy
 #from proteolizardalgo.hashing import ReferencePattern
 
 

@@ -5,11 +5,11 @@ import numpy as np
 from numpy.typing import ArrayLike
 import pandas as pd
 import sqlite3
-from pyims.data import MzSpectrum
-from pyims.chemistry import get_mono_isotopic_weight, MASS_PROTON
+from imspy.data import MzSpectrum
+from imspy.chemistry import get_mono_isotopic_weight, MASS_PROTON
 
-from pyims.feature import RTProfile, ScanProfile, ChargeProfile
-from pyims.utility import tokenize_proforma_sequence, TokenSequence, get_aa_num_proforma_sequence
+from imspy.feature import RTProfile, ScanProfile, ChargeProfile
+from imspy.utility import tokenize_proforma_sequence, TokenSequence, get_aa_num_proforma_sequence
 from enum import Enum
 from abc import ABC, abstractmethod
 

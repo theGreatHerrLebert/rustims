@@ -8,10 +8,10 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
-from pyims.data import MzSpectrum, TimsFrame
-from pyims.proteome import PeptideDigest, ProteomicsExperimentSampleSlice, ProteomicsExperimentDatabaseHandle
-from pyims.isotopes import AveragineGenerator
-import pyims.simulation.hardware_models as hardware
+from imspy.data import MzSpectrum, TimsFrame
+from imspy.proteome import PeptideDigest, ProteomicsExperimentSampleSlice, ProteomicsExperimentDatabaseHandle
+from imspy.isotopes import AveragineGenerator
+import imspy.simulation.hardware_models as hardware
 
 class ProteomicsExperiment(ABC):
     def __init__(self, path: str):

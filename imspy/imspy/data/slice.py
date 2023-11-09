@@ -7,15 +7,9 @@ from tensorflow import sparse as sp
 
 from imspy.utilities import re_index_indices
 
-<<<<<<<< HEAD:imspy/imspy/slice.py
 import imspy_connector as pims
-from imspy.frame import TimsFrame, TimsFrameVectorized
-from imspy.spectrum import MzSpectrum
-========
-import pyims_connector as pims
-from pyims.data.frame import TimsFrame, TimsFrameVectorized
-from pyims.data.spectrum import MzSpectrum
->>>>>>>> 1cd02c1 (transfer simulation framework from proteolizard):imspy/imspy/data/slice.py
+from imspy.data.frame import TimsFrame, TimsFrameVectorized
+from imspy.data.spectrum import MzSpectrum
 
 
 class TimsSlice:

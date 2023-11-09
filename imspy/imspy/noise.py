@@ -5,8 +5,8 @@ import numpy as np
 import numba
 from typing import Callable, Optional, Tuple
 from numpy.typing import ArrayLike
-from pyims.data import MzSpectrum
-from pyims.utility import normal_pdf
+from imspy.data import MzSpectrum
+from imspy.utility import normal_pdf
 
 @numba.jit(nopython=True)
 def mu_function_normal_default(intensity: ArrayLike) -> ArrayLike:

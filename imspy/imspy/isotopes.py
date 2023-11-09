@@ -6,12 +6,12 @@ from numpy.typing import ArrayLike
 from abc import ABC, abstractmethod
 
 from scipy.signal import argrelextrema
-from pyims.data import MzSpectrum
-from pyims.utility import gaussian, exp_gaussian, normal_pdf
+from imspy.data import MzSpectrum
+from imspy.utility import gaussian, exp_gaussian, normal_pdf
 import numba
 import pyopenms
 
-from pyims.noise import detection_noise
+from imspy.noise import detection_noise
 
 MASS_PROTON = 1.007276466621
 MASS_NEUTRON = 1.00866491595

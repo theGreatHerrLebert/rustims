@@ -9,11 +9,11 @@ from numpy.typing import ArrayLike, NDArray
 import pandas as pd
 from scipy.stats import exponnorm, norm, binom, gamma
 
-from pyims.chemistry import  STANDARD_TEMPERATURE, STANDARD_PRESSURE, CCS_K0_CONVERSION_CONSTANT, BufferGas, get_num_protonizable_sites
-from pyims.proteome import ProteomicsExperimentSampleSlice
-from pyims.feature import RTProfile, ScanProfile, ChargeProfile
-from pyims.isotopes import AveragineGenerator
-from pyims.utility import tokenizer_from_json
+from imspy.chemistry import  STANDARD_TEMPERATURE, STANDARD_PRESSURE, CCS_K0_CONVERSION_CONSTANT, BufferGas, get_num_protonizable_sites
+from imspy.proteome import ProteomicsExperimentSampleSlice
+from imspy.feature import RTProfile, ScanProfile, ChargeProfile
+from imspy.isotopes import AveragineGenerator
+from imspy.utility import tokenizer_from_json
 
 class Device(ABC):
     def __init__(self, name:str):
