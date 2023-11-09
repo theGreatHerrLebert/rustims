@@ -6,12 +6,14 @@ pub struct TimsDataHandleDda {
 }
 
 impl TimsDataHandleDda {
+
     pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<TimsDataHandleDda, Box<dyn std::error::Error>> {
         let handle = TimsDataHandle::new(bruker_lib_path, data_path)?;
         Ok(TimsDataHandleDda {
             handle,
         })
     }
+
     pub fn get_selected_precursors(&self) -> Vec<DDAPrecursorMeta> {
         read_dda_precursor_meta(&self.handle.data_path).unwrap()
     }
