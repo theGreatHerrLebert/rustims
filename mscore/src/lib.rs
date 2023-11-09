@@ -1,8 +1,14 @@
 pub mod mz_spectrum;
 mod tims_frame;
 mod tims_slice;
+mod timstof_dda;
+mod chemistry;
 
 pub use {
+
+    chemistry::one_over_reduced_mobility_to_ccs,
+    chemistry::ccs_to_reduced_mobility,
+
     mz_spectrum::MsType,
 
     mz_spectrum::MzSpectrum,
@@ -17,6 +23,7 @@ pub use {
     tims_frame::ImsFrame,
     tims_frame::ImsFrameVectorized,
 
+    tims_frame::RawTimsFrame,
     tims_frame::TimsFrame,
     tims_frame::TimsFrameVectorized,
     tims_frame::ToResolution,
@@ -28,4 +35,6 @@ pub use {
     tims_slice::TimsSliceFlat,
 
     tims_slice::TimsPlane,
+
+    timstof_dda::TimsDDAPrecursor,
 };
