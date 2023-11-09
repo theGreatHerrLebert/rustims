@@ -2,8 +2,13 @@ pub mod mz_spectrum;
 mod tims_frame;
 mod tims_slice;
 mod timstof_dda;
+mod chemistry;
 
 pub use {
+
+    chemistry::one_over_reduced_mobility_to_ccs,
+    chemistry::ccs_to_reduced_mobility,
+
     mz_spectrum::MsType,
 
     mz_spectrum::MzSpectrum,
