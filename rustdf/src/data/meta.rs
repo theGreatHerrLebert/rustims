@@ -20,18 +20,6 @@ pub struct DDAPrecursorMeta {
     pub precursor_mz_highest_intensity: f64,
     pub precursor_mz_average: f64,
     pub precursor_mz_monoisotopic: Option<f64>,
-    pub precursor_charge: Option<u32>,
-    pub precursor_average_scan_number: f64,
-    pub precursor_total_intensity: f64,
-    pub precursor_frame_id: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct DDAPrecursorInfo {
-    pub precursor_id: i64,
-    pub precursor_mz_highest_intensity: f64,
-    pub precursor_mz_average: f64,
-    pub precursor_mz_monoisotopic: Option<f64>,
     pub precursor_charge: Option<i64>,
     pub precursor_average_scan_number: f64,
     pub precursor_total_intensity: f64,
@@ -99,7 +87,7 @@ struct GlobalMetaInternal {
     value: String,
 }
 
-pub fn read_dda_precursor_info(bruker_d_folder_name: &str) -> Result<Vec<DDAPrecursorInfo>, Box<dyn std::error::Error>> {
+pub fn read_dda_precursor_meta(bruker_d_folder_name: &str) -> Result<Vec<DDAPrecursorMeta>, Box<dyn std::error::Error>> {
     // Connect to the database
     let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
     let conn = Connection::open(db_path)?;
@@ -109,8 +97,8 @@ pub fn read_dda_precursor_info(bruker_d_folder_name: &str) -> Result<Vec<DDAPrec
     let query = format!("SELECT {} FROM Precursors", rows.join(", "));
 
     // execute the query
-    let frames_rows: Result<Vec<DDAPrecursorInfo>, _> = conn.prepare(&query)?.query_map([], |row| {
-        Ok(DDAPrecursorInfo {
+    let frames_rows: Result<Vec<DDAPrecursorMeta>, _> = conn.prepare(&query)?.query_map([], |row| {
+        Ok(DDAPrecursorMeta {
             precursor_id: row.get(0)?,
             precursor_mz_highest_intensity: row.get(1)?,
             precursor_mz_average: row.get(2)?,
