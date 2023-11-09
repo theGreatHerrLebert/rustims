@@ -17,3 +17,6 @@ __pycache__/
 
 # Poetrys lock file
 *.lock
+
+# vscode developing
+.vscode/
