@@ -5,17 +5,17 @@ use rustdf::data::handle::{TimsDataHandle};
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 
-#[pyclass]
-pub struct PyTimsDataHandle {
+#[pyclass(subclass)]
+pub struct PyTimsDataset {
     inner: TimsDataHandle,
 }
 
 #[pymethods]
-impl PyTimsDataHandle {
+impl PyTimsDataset {
     #[new]
     pub fn new(data_path: &str, bruker_lib_path: &str) -> Self {
-        let dataset = TimsDataHandle::new(bruker_lib_path, data_path).unwrap();
-        PyTimsDataHandle { inner: dataset }
+        let handle = TimsDataHandle::new(bruker_lib_path, data_path).unwrap();
+        PyTimsDataset { inner: handle }
     }
 
     #[getter]
