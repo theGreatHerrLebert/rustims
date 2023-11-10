@@ -16,3 +16,5 @@ zstd = "0.13.0"
 byteorder = "1.4.3"
 anyhow = "1.0.75"
 mscore = {path = "../mscore"}
+rayon = "1.8.0"
+futures = { version = "0.3.29", features = ["thread-pool"] }

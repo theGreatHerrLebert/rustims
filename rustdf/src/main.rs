@@ -1,5 +1,5 @@
 use std::env;
-use rustdf::data::meta::{read_dda_precursor_info};
+use rustdf::data::meta::{read_dda_precursor_meta};
 
 
 fn main() {
@@ -7,7 +7,7 @@ fn main() {
 
     let data_path = "/media/hd01/CCSPred/M210115_001_Slot1-1_1_850.d";
 
-    let result = read_dda_precursor_info(data_path);
+    let result = read_dda_precursor_meta(data_path);
 
     match result {
         Ok(precursors) => {
