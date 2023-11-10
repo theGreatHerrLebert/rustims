@@ -90,6 +90,14 @@ class IndexedMzSpectrum:
 
         return pd.DataFrame({'index': self.index, 'mz': self.mz, 'intensity': self.intensity})
 
+    def get_spec_ptr(self) -> pims.PyIndexedMzSpectrum:
+        """Get the spec_ptr.
+
+        Returns:
+            pims.PyIndexedMzSpectrum: spec_ptr.
+        """
+        return self.__spec_ptr
+
     def __repr__(self):
         return f"IndexedMzSpectrum(num_peaks={len(self.index)})"
 

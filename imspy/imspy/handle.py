@@ -10,6 +10,7 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
+from imspy.dda import FragmentDDA
 from imspy.frame import TimsFrame
 from imspy.slice import TimsSlice
 
@@ -21,19 +22,21 @@ class TimsDataset(ABC):
         Args:
             data_path (str): Path to the data.
         """
+        self.__dataset = None
+        self.binary_path = None
+
         self.data_path = data_path
-        self.bp: List[str] = obb.get_so_paths()
         self.meta_data = self.__load_meta_data()
         self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
         self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
-        self.__handle = None
         self.__current_index = 1
 
         # Try to load the data with the first binary found
         appropriate_found = False
-        for so_path in self.bp:
+        for so_path in obb.get_so_paths():
             try:
-                self.__handle = pims.PyTimsDataHandle(self.data_path, so_path)
+                self.__dataset = pims.PyTimsDataset(self.data_path, so_path)
+                self.binary_path = so_path
                 appropriate_found = True
                 break
             except Exception:
@@ -48,7 +51,7 @@ class TimsDataset(ABC):
         Returns:
             str: Acquisition mode.
         """
-        return self.__handle.get_acquisition_mode_as_string()
+        return self.__dataset.get_acquisition_mode_as_string()
 
     @property
     def acquisition_mode_numerical(self) -> int:
@@ -57,7 +60,7 @@ class TimsDataset(ABC):
         Returns:
             int: Acquisition mode as a numerical value.
         """
-        return self.__handle.get_acquisition_mode()
+        return self.__dataset.get_acquisition_mode()
 
     @property
     def frame_count(self) -> int:
@@ -66,7 +69,7 @@ class TimsDataset(ABC):
         Returns:
             int: Number of frames.
         """
-        return self.__handle.frame_count
+        return self.__dataset.frame_count
 
     def __load_meta_data(self) -> pd.DataFrame:
         """Get the meta data.
@@ -85,7 +88,7 @@ class TimsDataset(ABC):
         Returns:
             TimsFrame: TimsFrame.
         """
-        return TimsFrame.from_py_tims_frame(self.__handle.get_tims_frame(frame_id))
+        return TimsFrame.from_py_tims_frame(self.__dataset.get_frame(frame_id))
 
     def get_tims_slice(self, frame_ids: NDArray[np.int32]) -> TimsSlice:
         """Get a TimsFrame.
@@ -96,14 +99,14 @@ class TimsDataset(ABC):
         Returns:
             TimsFrame: TimsFrame.
         """
-        return TimsSlice.from_py_tims_slice(self.__handle.get_tims_slice(frame_ids))
+        return TimsSlice.from_py_tims_slice(self.__dataset.get_slice(frame_ids))
 
     def __iter__(self):
         return self
 
     def __next__(self):
         if self.__current_index <= self.frame_count:
-            frame_ptr = self.__handle.get_tims_frame(self.__current_index)
+            frame_ptr = self.__dataset.get_frame(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
                 return TimsFrame.from_py_tims_frame(frame_ptr)
@@ -120,6 +123,11 @@ class TimsDataset(ABC):
 
 
 class TimsDatasetDDA(TimsDataset):
+
+    def __init__(self, data_path: str):
+        super().__init__(data_path=data_path)
+        self.__dataset = pims.PyTimsDatasetDDA(self.data_path, self.binary_path)
+
     @property
     def selected_precursors(self):
         """Get precursors selected for fragmentation.
@@ -139,8 +147,24 @@ class TimsDatasetDDA(TimsDataset):
         return pd.read_sql_query("SELECT * from PasefFrameMsMsInfo",
                                  sqlite3.connect(self.data_path + "/analysis.tdf"))
 
+    def get_pasef_fragments(self, num_threads: int = 4):
+        """Get PASEF fragments.
+
+        Args:
+            num_threads (int, optional): Number of threads. Defaults to 4.
+
+        Returns:
+            List[FragmentDDA]: List of PASEF fragments.
+        """
+        pasef_fragments = self.__dataset.get_pasef_fragments(num_threads)
+        return [FragmentDDA.from_py_tims_fragment_dda(fragment) for fragment in pasef_fragments]
+
 
 class TimsDatasetDIA(TimsDataset):
+    def __init__(self, data_path: str):
+        super().__init__(data_path=data_path)
+        self.__dataset = pims.PyTimsDatasetDIA(self.data_path, self.binary_path)
+
     @property
     def pasef_meta_data(self):
         """Get PASEF meta data for DIA.

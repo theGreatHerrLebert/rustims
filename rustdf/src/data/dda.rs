@@ -10,17 +10,15 @@ pub struct PASEFDDAFragment {
     pub selected_fragment: IndexedMzSpectrum,
 }
 
-pub struct TimsTofDatasetDDA {
+pub struct TimsDatasetDDA {
     pub handle: TimsDataHandle,
 }
 
-impl TimsTofDatasetDDA {
+impl TimsDatasetDDA {
 
-    pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<TimsTofDatasetDDA, Box<dyn std::error::Error>> {
-        let handle = TimsDataHandle::new(bruker_lib_path, data_path)?;
-        Ok(TimsTofDatasetDDA {
-            handle,
-        })
+    pub fn new(bruker_lib_path: &str, data_path: &str) -> Self {
+        let handle = TimsDataHandle::new(bruker_lib_path, data_path).unwrap();
+        TimsDatasetDDA { handle }
     }
 
     pub fn get_selected_precursors(&self) -> Vec<DDAPrecursorMeta> {
@@ -36,11 +34,14 @@ impl TimsTofDatasetDDA {
         // extract fragment spectra information
         let pasef_info = self.get_pasef_frame_ms_ms_info();
 
-        // extract fragment spectra in parallel
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
-        let pasef_fragments: Vec<PASEFDDAFragment> = pool.install(|| {
 
-            pasef_info.par_iter().map(|pasef_info| {
+
+
+        let filtered_frames = pool.install(|| {
+
+            let result: Vec<_> = pasef_info.par_iter().map(|pasef_info| {
+
                 // get the frame
                 let frame = self.handle.get_frame(pasef_info.frame_id as u32).unwrap();
 
@@ -61,13 +62,16 @@ impl TimsTofDatasetDDA {
                     // flatten the spectrum
                     selected_fragment: filtered_frame.to_indexed_mz_spectrum(),
                 }
-            }).collect()
+            }).collect();
+
+            result
         });
-        pasef_fragments
+
+        filtered_frames
     }
 }
 
-impl TimsData for TimsTofDatasetDDA {
+impl TimsData for TimsDatasetDDA {
     fn get_frame(&self, frame_id: u32) -> TimsFrame {
         self.handle.get_frame(frame_id).unwrap()
     }

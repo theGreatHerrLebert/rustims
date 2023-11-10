@@ -22,15 +22,12 @@ impl TimsData for TimsDataset {
     fn get_aquisition_mode(&self) -> AcquisitionMode {
         self.handle.acquisition_mode.clone()
     }
-
     fn get_frame_count(&self) -> i32 {
         self.handle.get_frame_count()
     }
-
     fn get_data_path(&self) -> &str {
         &self.handle.data_path
     }
-
     fn get_bruker_lib_path(&self) -> &str {
         &self.handle.bruker_lib_path
     }
