@@ -147,7 +147,7 @@ class TimsDatasetDDA(TimsDataset):
         return pd.read_sql_query("SELECT * from PasefFrameMsMsInfo",
                                  sqlite3.connect(self.data_path + "/analysis.tdf"))
 
-    def get_pasef_fragments(self, num_threads: int = 4):
+    def get_pasef_fragments(self):
         """Get PASEF fragments.
 
         Args:
@@ -156,7 +156,7 @@ class TimsDatasetDDA(TimsDataset):
         Returns:
             List[FragmentDDA]: List of PASEF fragments.
         """
-        pasef_fragments = self.__dataset.get_pasef_fragments(num_threads)
+        pasef_fragments = self.__dataset.get_pasef_fragments(1)
         return [FragmentDDA.from_py_tims_fragment_dda(fragment) for fragment in pasef_fragments]
 
 
