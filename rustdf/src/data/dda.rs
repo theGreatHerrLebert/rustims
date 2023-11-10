@@ -6,6 +6,7 @@ use crate::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta
 
 #[derive(Clone)]
 pub struct PASEFDDAFragment {
+    pub frame_id: u32,
     pub precursor_id: u32,
     pub selected_fragment: IndexedMzSpectrum,
 }
@@ -58,6 +59,7 @@ impl TimsDatasetDDA {
                 );
 
                 PASEFDDAFragment {
+                    frame_id: pasef_info.frame_id as u32,
                     precursor_id: pasef_info.precursor_id as u32,
                     // flatten the spectrum
                     selected_fragment: filtered_frame.to_indexed_mz_spectrum(),
