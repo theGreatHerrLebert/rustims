@@ -10,6 +10,15 @@ use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
 use mscore::{TimsFrame, RawTimsFrame, ImsFrame, MsType, TimsSlice};
 
+pub trait TimsData {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame;
+    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
+    fn get_aquisition_mode(&self) -> AcquisitionMode;
+    fn get_frame_count(&self) -> i32;
+    fn get_data_path(&self) -> &str;
+    fn get_bruker_lib_path(&self) -> &str;
+}
+
 /// Decompresses a ZSTD compressed byte array
 ///
 /// # Arguments
@@ -101,7 +110,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AcquisitionMode {
     DDA,
     DIA,

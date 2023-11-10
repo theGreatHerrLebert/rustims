@@ -1,7 +1,7 @@
-use mscore::{IndexedMzSpectrum};
+use mscore::{IndexedMzSpectrum, TimsFrame, TimsSlice};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use crate::data::handle::TimsDataHandle;
+use crate::data::handle::{TimsDataHandle, TimsData, AcquisitionMode};
 use crate::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta, read_pasef_frame_ms_ms_info};
 
 #[derive(Clone)]
@@ -64,5 +64,31 @@ impl TimsTofDatasetDDA {
             }).collect()
         });
         pasef_fragments
+    }
+}
+
+impl TimsData for TimsTofDatasetDDA {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+        self.handle.get_frame(frame_id).unwrap()
+    }
+
+    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
+        self.handle.get_tims_slice(frame_ids)
+    }
+
+    fn get_aquisition_mode(&self) -> AcquisitionMode {
+        self.handle.acquisition_mode.clone()
+    }
+
+    fn get_frame_count(&self) -> i32 {
+        self.handle.get_frame_count()
+    }
+
+    fn get_data_path(&self) -> &str {
+        &self.handle.data_path
+    }
+
+    fn get_bruker_lib_path(&self) -> &str {
+        &self.handle.bruker_lib_path
     }
 }
