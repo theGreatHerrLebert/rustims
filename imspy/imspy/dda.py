@@ -3,12 +3,12 @@ import pandas as pd
 
 import imspy_connector as pims
 
-from imspy.spectrum import IndexedMzSpectrum
+from imspy.frame import TimsFrame
 
 
 class FragmentDDA:
-    def __init__(self, frame_id: int, precursor_id: int, selected_fragment: IndexedMzSpectrum):
-        self._fragment_ptr = pims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_spec_ptr())
+    def __init__(self, frame_id: int, precursor_id: int, selected_fragment: TimsFrame):
+        self._fragment_ptr = pims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_fragment_ptr())
 
     @classmethod
     def from_py_tims_fragment_dda(cls, fragment: pims.PyTimsFragmentDDA):
@@ -25,8 +25,8 @@ class FragmentDDA:
         return self._fragment_ptr.precursor_id
 
     @property
-    def selected_fragment(self) -> IndexedMzSpectrum:
-        return IndexedMzSpectrum.from_py_indexed_mz_spectrum(self._fragment_ptr.selected_fragment)
+    def selected_fragment(self) -> TimsFrame:
+        return TimsFrame.from_py_tims_frame(self._fragment_ptr.selected_fragment)
 
     def __repr__(self):
         return f"FragmentDDA(frame_id={self.frame_id}, precursor_id={self.precursor_id}, " \

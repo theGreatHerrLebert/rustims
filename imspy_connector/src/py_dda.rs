@@ -2,7 +2,6 @@ use pyo3::prelude::*;
 
 use rustdf::data::dda::{PASEFDDAFragment, TimsDatasetDDA};
 use rustdf::data::handle::TimsData;
-use crate::py_mz_spectrum::PyIndexedMzSpectrum;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
@@ -56,7 +55,7 @@ pub struct PyTimsFragmentDDA {
 #[pymethods]
 impl PyTimsFragmentDDA {
     #[new]
-    pub fn new(frame_id: u32, precursor_id: u32, selected_fragment: &PyIndexedMzSpectrum) -> PyResult<Self> {
+    pub fn new(frame_id: u32, precursor_id: u32, selected_fragment: &PyTimsFrame) -> PyResult<Self> {
 
         let pasef_fragment = PASEFDDAFragment {
             frame_id,
@@ -74,5 +73,5 @@ impl PyTimsFragmentDDA {
     pub fn precursor_id(&self) -> u32 { self.inner.precursor_id }
 
     #[getter]
-    pub fn selected_fragment(&self) -> PyIndexedMzSpectrum { PyIndexedMzSpectrum { inner: self.inner.selected_fragment.clone() } }
+    pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame { inner: self.inner.selected_fragment.clone() } }
 }
