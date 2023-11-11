@@ -223,6 +223,9 @@ class TimsFrame:
         return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__frame_ptr.to_windows(
             window_length, overlapping, min_num_peaks, min_intensity)]
 
+    def get_fragment_ptr(self):
+        return self.__frame_ptr
+
     def __repr__(self):
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
                 f"num_peaks={len(self.__frame_ptr.mz)})")
