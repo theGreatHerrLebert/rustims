@@ -21,7 +21,7 @@ class TimsDatasetDDA(TimsDataset):
                 'Charge': 'charge',
                 'ScanNumber': 'average_scan',
                 'Intensity': 'intensity',
-                'Parent': 'frame_id',
+                'Parent': 'parent_id',
             }
         )
         self.pasef_meta_data = self._load_pasef_meta_data().rename(
@@ -93,7 +93,7 @@ class TimsDatasetDDA(TimsDataset):
         
         return pd.merge(time, tmp2, left_on=['frame_id'], right_on=['frame_id'], how='inner')
         """
-        
+
 
 class FragmentDDA:
     def __init__(self, frame_id: int, precursor_id: int, selected_fragment: TimsFrame):
