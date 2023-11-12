@@ -81,7 +81,7 @@ class TimsDatasetDDA(TimsDataset):
             right_on=['precursor_id', 'frame_id'],
             how='inner',
         )
-        tmp = pd.merge(tmp, self.precursor_frames, left_on=['precursor_id'], right_on=['precursor_id'], how='inner')
+        tmp = pd.merge(tmp, self.fragmented_precursors, left_on=['precursor_id'], right_on=['precursor_id'], how='inner')
         return pd.merge(time, tmp, left_on=['frame_id'], right_on=['frame_id'], how='inner')
 
 
