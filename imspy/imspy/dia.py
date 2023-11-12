@@ -1,4 +1,4 @@
-from .data import TimsDataset
+from imspy.data import TimsDataset
 import pandas as pd
 
 import imspy_connector as pims

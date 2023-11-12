@@ -10,7 +10,6 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.dda import FragmentDDA
 from imspy.frame import TimsFrame
 from imspy.slice import TimsSlice
 
