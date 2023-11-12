@@ -71,28 +71,24 @@ class TimsDatasetDDA(TimsDataset):
             'raw_data': [s.selected_fragment for s in pasef_fragments]
         })
 
-        return pasef_fragments
-
-        """
-        tmp = pd.merge(
+        A = pd.merge(
             pasef_fragments, self.pasef_meta_data,
             left_on=['precursor_id', 'frame_id'],
             right_on=['precursor_id', 'frame_id'],
             how='inner',
         )
 
-        tmp2 = pd.merge(
-            tmp, self.fragmented_precursors,
-            left_on=['precursor_id', 'frame_id'],
-            right_on=['precursor_id', 'frame_id'],
+        B = pd.merge(
+            A, self.fragmented_precursors,
+            left_on=['precursor_id'],
+            right_on=['precursor_id'],
             how='inner'
         )
 
         time = self.meta_data[['frame_id']]
         time.insert(time.shape[1], "time", self.meta_data['Time'] / 60)
         
-        return pd.merge(time, tmp2, left_on=['frame_id'], right_on=['frame_id'], how='inner')
-        """
+        return pd.merge(time, B, left_on=['frame_id'], right_on=['frame_id'], how='inner')
 
 
 class FragmentDDA:
