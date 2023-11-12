@@ -1,3 +1,4 @@
+import sqlite3
 from imspy.data import TimsDataset
 import pandas as pd
 
