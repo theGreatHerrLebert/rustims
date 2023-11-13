@@ -1,5 +1,5 @@
-from pyims.simulation.experiment import LcImsMsMs
-from pyims.simulation.hardware_models import (NeuralChromatographyApex, 
+from imspy.simulation.experiment import LcImsMsMs
+from imspy.simulation.hardware_models import (NeuralChromatographyApex, 
                                               NormalChromatographyProfileModel, 
                                               LiquidChromatography, 
                                               ElectroSpray,
@@ -10,8 +10,8 @@ from pyims.simulation.hardware_models import (NeuralChromatographyApex,
                                               AveragineModel,
                                               BinomialIonSource
                                                 )
-from pyims.proteome import ProteinSample, Trypsin, ORGANISM
-from pyims.chemistry import BufferGas
+from imspy.proteome import ProteinSample, Trypsin, ORGANISM
+from imspy.chemistry import BufferGas
 
 import pandas as pd
 import numpy as np

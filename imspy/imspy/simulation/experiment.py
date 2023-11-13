@@ -167,7 +167,7 @@ class LcImsMsMs(ProteomicsExperiment):
             for (s_id,scan_spectra_list) in frame_dict.items():
 
                 if len(scan_spectra_list) > 0:
-                    scan_spectrum = MzSpectrum.from_mz_spectra_list(scan_spectra_list,resolution = resolution)
+                    scan_spectrum = MzSpectrum.from_mz_spectra_list(scan_spectra_list,resolution = resolution).vectorized(resolution=resolution).to_centroided()
                     output_dict["mz"].append(scan_spectrum.mz.tolist())
                     output_dict["intensity"].append(scan_spectrum.intensity.tolist())
                     output_dict["scan_id"].append(s_id)

@@ -133,6 +133,10 @@ impl PyMzSpectrumVectorized {
         })
     }
 
+    pub fn to_dense_spectrum(&self, max_index: Option<usize>) -> PyMzSpectrumVectorized {
+        PyMzSpectrumVectorized { inner: self.inner.to_dense_spectrum(max_index) }
+    }
+    
     #[getter]
     pub fn resolution(&self) -> i32 {
         self.inner.resolution
