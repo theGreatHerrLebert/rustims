@@ -1,5 +1,5 @@
 import sqlite3
-from imspy.data import TimsDataset
+from imspy.timstof.data import TimsDataset
 import pandas as pd
 
 import imspy_connector as pims

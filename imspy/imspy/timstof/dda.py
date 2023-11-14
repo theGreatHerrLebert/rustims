@@ -1,5 +1,5 @@
 import sqlite3
-from imspy.data import TimsDataset
+from imspy.timstof.data import TimsDataset
 import pandas as pd
 
 import imspy_connector as pims
@@ -119,4 +119,3 @@ class FragmentDDA:
 
     def get_fragment_ptr(self):
         return self._fragment_ptr
-

@@ -5,11 +5,11 @@ from typing import List
 from numpy.typing import NDArray
 from tensorflow import sparse as sp
 
-from imspy.utilities import re_index_indices
+from imspy.utility.utilities import re_index_indices
 
 import imspy_connector as pims
 from imspy.frame import TimsFrame, TimsFrameVectorized
-from imspy.spectrum import MzSpectrum
+from imspy.core.spectrum import MzSpectrum
 
 
 class TimsSlice:
