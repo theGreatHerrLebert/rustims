@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use mscore::{MsType, TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
 use numpy::{IntoPyArray, PyArray1};
-use crate::py_mz_spectrum::PyMzSpectrum;
+use crate::py_mz_spectrum::{PyTimsSpectrum};
 
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
 
@@ -90,7 +90,7 @@ impl PyTimsSlice {
         let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyMzSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
             list.as_ref(py).append(py_mz_spectrum)?;
         }
 

@@ -53,7 +53,7 @@ class TimsHasher:
 
     # create keys by random projection
     def calculate_keys(self, W: tf.Tensor):
-        
+
         S = (tf.sign(W @ self.hash_tensor) + 1) / 2
 
         if self.len_trial <= 32:

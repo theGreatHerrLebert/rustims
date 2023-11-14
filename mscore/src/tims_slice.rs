@@ -4,9 +4,8 @@ use rayon::ThreadPoolBuilder;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use itertools::multizip;
-use crate::MsType;
+use crate::{MsType, TimsSpectrum};
 
-use crate::mz_spectrum::{MzSpectrum};
 use crate::tims_frame::{ImsFrame, TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
 
 #[derive(Clone)]
@@ -204,7 +203,7 @@ impl TimsSlice {
         }
     }
 
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<MzSpectrum> {
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> Vec<TimsSpectrum> {
         // Create a thread pool
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
 

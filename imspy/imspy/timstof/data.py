@@ -8,8 +8,8 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.frame import TimsFrame
-from imspy.slice import TimsSlice
+from imspy.core import TimsFrame
+from imspy.core import TimsSlice
 
 
 class TimsDataset(ABC):
@@ -66,7 +66,7 @@ class TimsDataset(ABC):
         Returns:
             int: Number of frames.
         """
-        return self.__dataset.frame_count
+        return self.__dataset.frame_count()
 
     def __load_meta_data(self) -> pd.DataFrame:
         """Get the meta data.

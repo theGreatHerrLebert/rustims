@@ -399,3 +399,11 @@ class TimsSpectrum:
         return (f"TimsSpectrum(id={self.frame_id}, retention_time={np.round(self.retention_time, 2)}, "
                 f"scan={self.scan}, mobility={np.round(self.mobility, 2)}, ms_type={self.ms_type}, "
                 f"num_peaks={len(self.index)})")
+
+    def get_spec_ptr(self) -> pims.PyTimsSpectrum:
+        """Get the spec_ptr.
+
+        Returns:
+            pims.PyTimsSpectrum: spec_ptr.
+        """
+        return self.__spec_ptr

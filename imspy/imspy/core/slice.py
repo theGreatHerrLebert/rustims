@@ -8,8 +8,8 @@ from tensorflow import sparse as sp
 from imspy.utility.utilities import re_index_indices
 
 import imspy_connector as pims
-from imspy.frame import TimsFrame, TimsFrameVectorized
-from imspy.core.spectrum import MzSpectrum
+from imspy.core.frame import TimsFrame, TimsFrameVectorized
+from imspy.core.spectrum import MzSpectrum, TimsSpectrum
 
 
 class TimsSlice:
@@ -131,7 +131,7 @@ class TimsSlice:
         return TimsSlice.from_py_tims_slice(self.__slice_ptr.to_resolution(resolution, num_threads))
 
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
-                   min_intensity: float = 1, num_threads: int = 4) -> List[MzSpectrum]:
+                   min_intensity: float = 1, num_threads: int = 4) -> List[TimsSpectrum]:
         """Convert the slice to a list of windows.
 
         Args:
@@ -144,7 +144,7 @@ class TimsSlice:
         Returns:
             List[MzSpectrum]: List of windows.
         """
-        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__slice_ptr.to_windows(
+        return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__slice_ptr.to_windows(
             window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
 
     @property

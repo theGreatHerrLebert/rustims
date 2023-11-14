@@ -208,7 +208,7 @@ class TimsFrame:
         return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__frame_ptr.to_tims_spectra()]
 
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
-                   min_intensity: float = 1) -> List[MzSpectrum]:
+                   min_intensity: float = 1) -> List[TimsSpectrum]:
         """Convert the frame to a list of windows.
 
         Args:
@@ -220,8 +220,22 @@ class TimsFrame:
         Returns:
             List[MzSpectrum]: List of windows.
         """
-        return [MzSpectrum.from_py_mz_spectrum(spec) for spec in self.__frame_ptr.to_windows(
+        return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__frame_ptr.to_windows(
             window_length, overlapping, min_num_peaks, min_intensity)]
+
+    @classmethod
+    def from_windows(cls, windows: List[TimsSpectrum]) -> 'TimsFrame':
+        """Create a TimsFrame from a list of windows.
+
+        Args:
+            windows (List[TimsSpectrum]): List of windows.
+
+        Returns:
+            TimsFrame: TimsFrame created from the windows.
+        """
+        return TimsFrame.from_py_tims_frame(pims.PyTimsFrame.from_windows(
+            [spec.get_spec_ptr() for spec in windows]
+        ))
 
     def get_fragment_ptr(self):
         return self.__frame_ptr

@@ -3,7 +3,7 @@ from imspy.timstof.data import TimsDataset
 import pandas as pd
 
 import imspy_connector as pims
-from imspy.frame import TimsFrame
+from imspy.core.frame import TimsFrame
 
 
 class TimsDatasetDDA(TimsDataset):
@@ -89,6 +89,10 @@ class TimsDatasetDDA(TimsDataset):
         time.insert(time.shape[1], "time", self.meta_data['Time'] / 60)
         
         return pd.merge(time, B, left_on=['frame_id'], right_on=['frame_id'], how='inner')
+
+    def __repr__(self):
+        return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "
+                f"fragmented_precursors={self.fragmented_precursors.shape[0]})")
 
 
 class FragmentDDA:

@@ -41,4 +41,8 @@ impl PyTimsDataset {
     pub fn get_bruker_lib_path(&self) -> &str {
         self.inner.get_bruker_lib_path()
     }
+
+    pub fn frame_count(&self) -> i32 {
+        self.inner.get_frame_count()
+    }
 }
