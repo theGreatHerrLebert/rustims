@@ -119,4 +119,3 @@ class FragmentDDA:
 
     def get_fragment_ptr(self):
         return self._fragment_ptr
-
