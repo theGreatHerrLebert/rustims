@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
-use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame};
 use pyo3::types::PyList;
+use numpy::{PyArray1, IntoPyArray};
+use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame, TimsSpectrum};
 
-use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyMzSpectrum, PyTimsSpectrum};
+use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
 
 #[pyclass]
 #[derive(Clone)]
@@ -159,7 +159,7 @@ impl PyTimsFrame {
         let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyMzSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
             list.as_ref(py).append(py_mz_spectrum)?;
         }
 
@@ -180,6 +180,17 @@ impl PyTimsFrame {
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsFrame {
         return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
+    }
+
+    #[staticmethod]
+    pub fn from_windows(_py: Python, windows: &PyList) -> PyResult<Self> {
+        let mut spectra: Vec<TimsSpectrum> = Vec::new();
+        for window in windows.iter() {
+            let window: PyRef<PyTimsSpectrum> = window.extract()?;
+            spectra.push(window.inner.clone());
+        }
+
+        Ok(PyTimsFrame { inner: TimsFrame::from_windows(spectra) })
     }
 }
 

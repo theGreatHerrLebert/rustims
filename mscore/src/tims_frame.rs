@@ -197,24 +197,62 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {
-
+    pub fn to_windows_indexed(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> (Vec<i32>, Vec<i32>, Vec<TimsSpectrum>) {
+        // split by scan (ion mobility)
         let spectra = self.to_tims_spectra();
 
+        let scan_indices: Vec<_> = spectra.iter().map(|spectrum| spectrum.scan).collect();
+
         let windows: Vec<_> = spectra.iter().map(|spectrum|
-            spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
+            spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
             .collect();
 
-        let mut result: Vec<MzSpectrum> = Vec::new();
+        let mut spectra = Vec::new();
+        let mut window_indices = Vec::new();
 
         for window in windows {
-            for (_, spectrum) in window {
-                result.push(spectrum);
+            for (i, spectrum) in window {
+                spectra.push(spectrum);
+                window_indices.push(i);
             }
         }
 
-        result
+        (scan_indices, window_indices, spectra)
     }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<TimsSpectrum> {
+        let (_, _, widows) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        widows
+    }
+
+    pub fn from_windows(windows: Vec<TimsSpectrum>) -> TimsFrame {
+
+        let first_window = windows.first().unwrap();
+
+        let mut scan = Vec::new();
+        let mut tof = Vec::new();
+        let mut mzs = Vec::new();
+        let mut intensity = Vec::new();
+        let mut mobility = Vec::new();
+
+        for window in windows.iter() {
+            for (i, mz) in window.spectrum.mz_spectrum.mz.iter().enumerate() {
+                scan.push(window.scan);
+                mobility.push(window.mobility);
+                tof.push(window.spectrum.index[i]);
+                mzs.push(*mz);
+                intensity.push(window.spectrum.mz_spectrum.intensity[i]);
+            }
+        }
+
+        TimsFrame::new(first_window.frame_id, first_window.ms_type.clone(), first_window.retention_time, scan, mobility, tof, mzs, intensity)
+    }
+
+    /*
+    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) {
+        let (scan_indices, window_indices, spectra) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+    }
+    */
 
     pub fn to_indexed_mz_spectrum(&self) -> IndexedMzSpectrum {
         let mut grouped_data: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();
