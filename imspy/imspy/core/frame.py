@@ -237,6 +237,11 @@ class TimsFrame:
             [spec.get_spec_ptr() for spec in windows]
         ))
 
+    def to_dense_windows(self, window_length: float = 10, resolution: int = 1, overlapping: bool = True,
+                         min_num_peaks: int = 5, min_intensity: float = 0.0) -> NDArray[np.float64]:
+
+        return self.__frame_ptr.to_dense_windows(window_length, resolution, overlapping, min_num_peaks, min_intensity)
+
     def get_fragment_ptr(self):
         return self.__frame_ptr
 
