@@ -250,7 +250,7 @@ impl TimsFrame {
 
     pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, usize, usize) {
         let factor = (10.0f64).powi(resolution);
-        let num_colums = (window_length * factor).round() as usize;
+        let num_colums = ((window_length * factor).round() + 1) as usize;
 
         let (scan_indices, window_indices, spectra) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
         let vectorized_spectra = spectra.iter().map(|spectrum| spectrum.vectorized(resolution)).collect::<Vec<_>>();
