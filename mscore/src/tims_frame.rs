@@ -248,11 +248,28 @@ impl TimsFrame {
         TimsFrame::new(first_window.frame_id, first_window.ms_type.clone(), first_window.retention_time, scan, mobility, tof, mzs, intensity)
     }
 
-    /*
-    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) {
+    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, usize, usize) {
+        let factor = (10.0f64).powi(resolution);
+        let num_colums = (window_length * factor).round() as usize;
+
         let (scan_indices, window_indices, spectra) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        let vectorized_spectra = spectra.iter().map(|spectrum| spectrum.vectorized(resolution)).collect::<Vec<_>>();
+
+        let mut flat_matrix: Vec<f64> = vec![0.0; spectra.len() * num_colums];
+
+        for (row_index, (_, window_index, spectrum)) in itertools::multizip((scan_indices, window_indices, vectorized_spectra)).enumerate() {
+            let vectorized_window_index = match window_index >= 0 {
+                true => (window_index as f64 * window_length * factor).round() as i32,
+                false => ((window_index as f64 * window_length + (0.5 * window_length)) * factor).round() as i32,
+            };
+            for (i, index) in spectrum.vector.mz_vector.indices.iter().enumerate() {
+                let zero_based_index = (index - vectorized_window_index) as usize;
+                flat_matrix[row_index * num_colums + zero_based_index] = spectrum.vector.mz_vector.values[i];
+            }
+        }
+        (flat_matrix, spectra.len(), num_colums)
     }
-    */
+
 
     pub fn to_indexed_mz_spectrum(&self) -> IndexedMzSpectrum {
         let mut grouped_data: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();

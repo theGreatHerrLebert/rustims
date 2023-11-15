@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use numpy::{PyArray1, IntoPyArray};
+use numpy::{PyArray1, IntoPyArray, PyArray2};
 use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame, TimsSpectrum};
 
 use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
@@ -191,6 +191,13 @@ impl PyTimsFrame {
         }
 
         Ok(PyTimsFrame { inner: TimsFrame::from_windows(spectra) })
+    }
+
+    pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Py<PyArray2<f64>> {
+
+        let (data, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
+        let py_array: &PyArray1<f64> = data.into_pyarray(py);
+        py_array.reshape([rows, cols]).unwrap().to_owned()
     }
 }
 
