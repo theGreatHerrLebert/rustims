@@ -96,6 +96,11 @@ impl PyTimsSlice {
 
         Ok(list.into())
     }
+
+    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32, num_threads: usize) -> Vec<(Vec<f64>, Vec<i32>, Vec<i32>, usize, usize)> {
+        self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution, num_threads)
+    }
+
     pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
     }
