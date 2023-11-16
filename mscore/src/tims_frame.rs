@@ -275,6 +275,7 @@ impl TimsFrame {
                 let current_index = row_index * num_colums + zero_based_index;
                 flat_matrix[current_index] = spectrum.vector.mz_vector.values[i];
             }
+
         }
         (flat_matrix, scans, window_indices, spectra.len(), num_colums)
     }

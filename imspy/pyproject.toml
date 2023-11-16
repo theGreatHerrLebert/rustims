@@ -12,6 +12,7 @@ numpy = ">=1.21"
 tensorflow = ">=2.14"
 tensorflow-probability = ">=0.22.1"
 imspy-connector = ">=0.2.5"
+tqdm = ">=4.62.0"
 
 [build-system]
 requires = ["poetry-core"]
