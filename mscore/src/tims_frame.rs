@@ -258,14 +258,17 @@ impl TimsFrame {
         let mut flat_matrix: Vec<f64> = vec![0.0; spectra.len() * num_colums];
 
         for (row_index, (_, window_index, spectrum)) in itertools::multizip((scan_indices, window_indices, vectorized_spectra)).enumerate() {
+
             let vectorized_window_index = match window_index >= 0 {
                 true => (window_index as f64 * window_length * factor).round() as i32,
                 false => ((window_index as f64 * window_length + (0.5 * window_length)) * factor).round() as i32,
             };
+
             for (i, index) in spectrum.vector.mz_vector.indices.iter().enumerate() {
                 let zero_based_index = (index - vectorized_window_index) as usize;
                 flat_matrix[row_index * num_colums + zero_based_index] = spectrum.vector.mz_vector.values[i];
             }
+
         }
         (flat_matrix, spectra.len(), num_colums)
     }
