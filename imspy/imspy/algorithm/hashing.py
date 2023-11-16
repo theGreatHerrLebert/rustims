@@ -32,7 +32,7 @@ class CosimHasher:
         X = np.random.normal(0, 1, size=size).astype(np.float32)
         self.hash_tensor = tf.transpose(tf.constant(X))
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"CosimHasher(trials={self.trials}, len_trial={self.len_trial}, seed={self.seed}, " \
                f"target_vector_length={self.target_vector_length})"
 
@@ -68,13 +68,13 @@ class TimsHasher(CosimHasher):
         resolution (int): resolution of the random projection.
         num_dalton (int): number of dalton to use for random projection.
     """
-    def __init__(self, trials=32, len_trial=20, seed=5671, resolution=1, num_dalton=10):
+    def __init__(self, trials: int = 32, len_trial: int = 20, seed: int = 5671, resolution: int = 1, num_dalton: int = 10):
         res_factor = 10 ** resolution
         target_vector_length = num_dalton * res_factor + 1
         super().__init__(target_vector_length, trials, len_trial, seed)
         self.resolution = resolution
         self.num_dalton = num_dalton
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"TimsHasher(trials={self.trials}, len_trial={self.len_trial}, seed={self.seed}, " \
                f"resolution={self.resolution}, num_dalton={self.num_dalton})"
