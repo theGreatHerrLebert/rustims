@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import List
+from typing import List, Tuple, Any
 
 from numpy.typing import NDArray
 from tensorflow import sparse as sp
@@ -146,6 +146,23 @@ class TimsSlice:
         """
         return [TimsSpectrum.from_py_tims_spectrum(spec) for spec in self.__slice_ptr.to_windows(
             window_length, overlapping, min_num_peaks, min_intensity, num_threads)]
+
+    def to_dense_windows(self, window_length: float = 10, resolution: int = 1, overlapping: bool = True,
+                         min_num_peaks: int = 5, min_intensity: float = 0.0, num_theads: int = 4) -> (
+            tuple)[list[NDArray], list[NDArray], list[NDArray]]:
+
+        DW = self.__slice_ptr.to_dense_windows(window_length, overlapping, min_num_peaks, min_intensity, resolution,
+                                               num_theads)
+
+        scan_list, window_indices_list, values_list = [], [], []
+
+        for values, scans, bins, row, col in DW:
+            W = np.reshape(values, (row, col))
+            scan_list.append(scans)
+            window_indices_list.append(bins)
+            values_list.append(W)
+
+        return scan_list, window_indices_list, values_list
 
     @property
     def df(self) -> pd.DataFrame:

@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyo3::types::PyTuple;
 use numpy::{PyArray1, IntoPyArray};
 use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame, TimsSpectrum};
 
@@ -191,6 +192,17 @@ impl PyTimsFrame {
         }
 
         Ok(PyTimsFrame { inner: TimsFrame::from_windows(spectra) })
+    }
+
+    pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
+
+        let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
+        let py_array: &PyArray1<f64> = data.into_pyarray(py);
+        let py_scans: &PyArray1<i32> = scans.into_pyarray(py);
+        let py_window_indices: &PyArray1<i32> = window_indices.into_pyarray(py);
+        let tuple = PyTuple::new(py, &[rows.into_py(py), cols.into_py(py), py_array.to_owned().into_py(py), py_scans.to_owned().into_py(py), py_window_indices.to_owned().into_py(py)]);
+
+        Ok(tuple.into())
     }
 }
 
