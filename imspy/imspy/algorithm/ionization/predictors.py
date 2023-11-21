@@ -2,12 +2,10 @@ import tensorflow as tf
 
 
 class GRUChargeStatePredictor(tf.keras.models.Model):
-    """
-    Deep Learning model combining initial linear fit with sequence based features, both scalar and complex
-    Model architecture is inspired by Meier et al.: https://doi.org/10.1038/s41467-021-21352-8
-    """
 
-    def __init__(self, slopes, intercepts, num_tokens,
+    def __init__(self,
+                 num_tokens,
+                 max_charge=4,
                  seq_len=50,
                  emb_dim=128,
                  gru_1=128,
@@ -15,9 +13,6 @@ class GRUChargeStatePredictor(tf.keras.models.Model):
                  rdo=0.0,
                  do=0.2):
         super(GRUChargeStatePredictor, self).__init__()
-        self.__seq_len = seq_len
-
-        self.initial = ProjectToInitialSqrtCCS(slopes, intercepts)
 
         self.emb = tf.keras.layers.Embedding(input_dim=num_tokens + 1, output_dim=emb_dim, input_length=seq_len)
 
@@ -28,27 +23,25 @@ class GRUChargeStatePredictor(tf.keras.models.Model):
                                                                       name='GRU2',
                                                                       recurrent_dropout=rdo))
 
-        self.dense1 = tf.keras.layers.Dense(128, activation='relu',
-                                            kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
-        self.dense2 = tf.keras.layers.Dense(64, activation='relu',
+        self.dense1 = tf.keras.layers.Dense(128, activation='relu', name='Dense1',
                                             kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
 
-        self.dropout = tf.keras.layers.Dropout(do)
+        self.dense2 = tf.keras.layers.Dense(64, activation='relu', name='Dense2',
+                                            kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
 
-        self.out = tf.keras.layers.Dense(1, activation=None)
+        self.dropout = tf.keras.layers.Dropout(do, name='Dropout')
+
+        self.out = tf.keras.layers.Dense(max_charge, activation='softmax', name='Output')
 
     def call(self, inputs, **kwargs):
         """
-        :param inputs: should contain: (mz, charge_one_hot, seq_as_token_indices)
+        :param inputs: should contain: (sequence)
         """
         # get inputs
-        mz, charge, seq = inputs[0], inputs[1], inputs[2]
+        seq = inputs
         # sequence learning
         x_recurrent = self.gru2(self.gru1(self.emb(seq)))
-        # concat to feed to dense layers
-        concat = tf.keras.layers.Concatenate()([charge, x_recurrent])
         # regularize
-        d1 = self.dropout(self.dense1(concat))
-        d2 = self.dense2(d1)
-        # combine simple linear hypotheses with deep part
-        return self.initial([mz, charge]) + self.out(d2), self.out(d2)
+        d1 = self.dropout(self.dense1(x_recurrent))
+        # output
+        return self.out(self.dense2(d1))

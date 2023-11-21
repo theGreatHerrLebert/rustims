@@ -7,7 +7,8 @@ class GRURTPredictor(tf.keras.models.Model):
     Model architecture is inspired by Meier et al.: https://doi.org/10.1038/s41467-021-21352-8
     """
 
-    def __init__(self, slopes, intercepts, num_tokens,
+    def __init__(self,
+                 num_tokens,
                  seq_len=50,
                  emb_dim=128,
                  gru_1=128,
@@ -40,7 +41,7 @@ class GRURTPredictor(tf.keras.models.Model):
         :param inputs: should contain: (mz, charge_one_hot, seq_as_token_indices)
         """
         # get inputs
-        seq = inputs[0]
+        seq = inputs
         # sequence learning
         x_recurrent = self.gru2(self.gru1(self.emb(seq)))
         # regularize
