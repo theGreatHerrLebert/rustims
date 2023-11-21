@@ -29,12 +29,14 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
         self.tokenizer = tokenizer
 
     def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> np.array:
+        # TODO: change to UNIMOD annotated sequences
         char_tokens = [s.split(' ') for s in sequences]
         char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
 
     def _preprocess_sequence(self, sequence: str) -> np.array:
+        # TODO: change to UNIMOD annotated sequence
         return self._preprocess_sequences([sequence])
 
     def simulate_ionization(self, sequence: str, verbose: bool = False) -> int:

@@ -1,15 +1,24 @@
 import numpy as np
 import tensorflow as tf
-import importlib.resources as resources
-
-"""
-def get_model_path(model_name: str) -> str:
-    return resources.files('ionmob.pretrained_models').joinpath(model_name)
+from abc import ABC, abstractmethod
+from imspy.chemistry import ccs_to_one_over_k0
 
 
-def get_gru_predictor(model_name: str = 'GRUPredictor') -> tf.keras.models.Model:
-    return tf.keras.models.load_model(get_model_path(model_name))
-"""
+class PeptideIonMobilityApex(ABC):
+    """
+    ABSTRACT INTERFACE for simulation of ion-mobility apex value
+    """
+
+    def __init__(self):
+        pass
+
+    @abstractmethod
+    def simulate_ion_mobility(self, sequence: str, charge: int):
+        pass
+
+    @abstractmethod
+    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int]):
+        pass
 
 
 class ProjectToInitialSqrtCCS(tf.keras.layers.Layer):
@@ -22,17 +31,16 @@ class ProjectToInitialSqrtCCS(tf.keras.layers.Layer):
         self.slopes = tf.constant([slopes])
         self.intercepts = tf.constant([intercepts])
 
-    def call(self, inputs, **kwargs):
+    def call(self, inputs):
         mz, charge = inputs[0], inputs[1]
         # since charge is one-hot encoded, can use it to gate linear prediction by charge state
         return tf.expand_dims(tf.reduce_sum((self.slopes * tf.sqrt(mz) + self.intercepts) * tf.squeeze(charge), axis=1),
                               1)
 
 
-class GRUCCSPredictor(tf.keras.models.Model):
+class GRUIonMobilityPredictor(tf.keras.models.Model):
     """
     Deep Learning model combining initial linear fit with sequence based features, both scalar and complex
-    Model architecture is inspired by Meier et al.: https://doi.org/10.1038/s41467-021-21352-8
     """
 
     def __init__(self, slopes, intercepts, num_tokens,
@@ -42,7 +50,7 @@ class GRUCCSPredictor(tf.keras.models.Model):
                  gru_2=64,
                  rdo=0.0,
                  do=0.2):
-        super(GRUCCSPredictor, self).__init__()
+        super(GRUIonMobilityPredictor, self).__init__()
         self.__seq_len = seq_len
 
         self.initial = ProjectToInitialSqrtCCS(slopes, intercepts)
@@ -65,7 +73,7 @@ class GRUCCSPredictor(tf.keras.models.Model):
 
         self.out = tf.keras.layers.Dense(1, activation=None)
 
-    def call(self, inputs, **kwargs):
+    def call(self, inputs):
         """
         :param inputs: should contain: (mz, charge_one_hot, seq_as_token_indices)
         """
@@ -80,3 +88,49 @@ class GRUCCSPredictor(tf.keras.models.Model):
         d2 = self.dense2(d1)
         # combine simple linear hypotheses with deep part
         return self.initial([mz, charge]) + self.out(d2), self.out(d2)
+
+
+class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
+    def __init__(self, model: GRUIonMobilityPredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer):
+        super(DeepPeptideIonMobilityApex, self).__init__()
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50):
+        # TODO: change to UNIMOD annotated sequences
+        char_tokens = [s.split(' ') for s in sequences]
+        char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
+        char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
+        return char_tokens
+
+    def _preprocess_sequence(self, sequence: str, seq_len: int = 50):
+        # TODO: change to UNIMOD annotated sequence
+        char_tokens = sequence.split(' ')
+        char_tokens = self.tokenizer.texts_to_sequences([char_tokens])
+        char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, seq_len, padding='post')
+        return char_tokens
+
+    def simulate_ion_mobility(self, sequence: str, charge: int, mz: float, verbose: bool = False):
+        tokenized_sequence = self._preprocess_sequence(sequence)
+
+        # prepare masses, charges, sequences
+        m = np.expand_dims(np.array([mz]), 1)
+        charges_one_hot = tf.one_hot(np.array([charge]) - 1, 4)
+
+        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequence), np.zeros_like(m))).batch(1)
+
+        ccs, _ = self.model.predict(ds, verbose=verbose)
+
+        return ccs_to_one_over_k0(ccs[0], mz, charge)[0]
+
+    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], verbose: bool = False):
+        tokenized_sequences = self._preprocess_sequences(sequences)
+
+        # prepare masses, charges, sequences
+        m = np.expand_dims(mz, 1)
+        charges_one_hot = tf.one_hot(np.array(charges) - 1, 4)
+
+        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(mz))).batch(1024)
+        ccs, _ = self.model.predict(ds, verbose=verbose)
+
+        return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
