@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from abc import ABC, abstractmethod
+from numpy.typing import NDArray
 
 
 class PeptideChromatographyApex(ABC):
@@ -16,7 +17,7 @@ class PeptideChromatographyApex(ABC):
         pass
 
     @abstractmethod
-    def simulate_separation_times(self, sequences: list[str]) -> np.array:
+    def simulate_separation_times(self, sequences: list[str]) -> NDArray:
         pass
 
 
@@ -72,7 +73,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         self.model = model
         self.tokenizer = tokenizer
 
-    def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> np.array:
+    def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> NDArray:
         # TODO: change to UNIMOD annotated sequences
         char_tokens = [s.split(' ') for s in sequences]
         char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
@@ -87,7 +88,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         tokens = self._preprocess_sequence(sequence)
         return self.model.predict(tokens, verbose=verbose)[0]
 
-    def simulate_separation_times(self, sequences: list[str], batch_size: int = 1024, verbose: bool = False) -> np.array:
+    def simulate_separation_times(self, sequences: list[str], batch_size: int = 1024, verbose: bool = False) -> NDArray:
         tokens = self._preprocess_sequences(sequences)
         tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
 

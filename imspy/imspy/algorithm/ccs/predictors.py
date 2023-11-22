@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
+from numpy.typing import NDArray
 from imspy.chemistry import ccs_to_one_over_k0
 
 
@@ -13,11 +14,11 @@ class PeptideIonMobilityApex(ABC):
         pass
 
     @abstractmethod
-    def simulate_ion_mobility(self, sequence: str, charge: int):
+    def simulate_ion_mobility(self, sequence: str, charge: int) -> float:
         pass
 
     @abstractmethod
-    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int]):
+    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int]) -> NDArray:
         pass
 
 
@@ -110,7 +111,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, seq_len, padding='post')
         return char_tokens
 
-    def simulate_ion_mobility(self, sequence: str, charge: int, mz: float, verbose: bool = False):
+    def simulate_ion_mobility(self, sequence: str, charge: int, mz: float, verbose: bool = False) -> float:
         tokenized_sequence = self._preprocess_sequence(sequence)
 
         # prepare masses, charges, sequences
@@ -123,7 +124,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         return ccs_to_one_over_k0(ccs[0], mz, charge)[0]
 
-    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], verbose: bool = False):
+    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], verbose: bool = False) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences

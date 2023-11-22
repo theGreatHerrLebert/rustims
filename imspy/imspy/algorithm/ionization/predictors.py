@@ -2,6 +2,7 @@ import tensorflow as tf
 import numpy as np
 
 from abc import ABC, abstractmethod
+from numpy.typing import NDArray
 
 
 class PeptideChargeStateDistribution(ABC):
@@ -44,7 +45,7 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
         probabilities = self.model.predict(tokens, verbose=verbose)[0]
         return np.random.choice(range(1, len(probabilities) + 1), 1, p=probabilities)[0]
 
-    def simulate_ionizations(self, sequences: list[str], batch_size: int = 1024, verbose: bool = False) -> np.array:
+    def simulate_ionizations(self, sequences: list[str], batch_size: int = 1024, verbose: bool = False) -> NDArray:
         tokens = self._preprocess_sequences(sequences)
         tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
 

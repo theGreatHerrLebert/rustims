@@ -1,3 +1,5 @@
+from typing import List
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -39,12 +41,50 @@ def tokenize_sage_sequence(sequence: str, modifications: NDArray) -> list[str]:
     """
     assert len(sequence) == len(modifications), "Sequence and modifications list need to be same length."
     seq_list = []
-    # TODO: Acetyl N-term is not handled here
     start, end = ['<START>'], ['<END>']
-    for char, mod in zip(sequence, modifications):
+    start_acetylated = False
+    for i, (char, mod) in enumerate(zip(sequence, modifications)):
         if mod == 0:
             seq_list.append(char)
         else:
-            seq_list.append(char + mass_to_modification(mod))
+            if i == 0:
+                if mass_to_modification(mod) == '[UNIMOD:1]':
+                    start_acetylated = True
+                    seq_list.append(char)
+                else:
+                    seq_list.append(char + mass_to_modification(mod))
+            else:
+                seq_list.append(char + mass_to_modification(mod))
 
+    if start_acetylated:
+        return ['<START>[UNIMOD:1]'] + seq_list + end
     return start + seq_list + end
+
+
+def sage_sequence_to_unimod_sequence(sequence: str, modifications: NDArray) -> str:
+    """ Tokenize a sequence with modifications into a list of tokens that are ionmob compatible.
+
+    Args:
+        sequence: a string of amino acids
+        modifications: a numpy array of modifications, where 0 is no modification and mods are given as masses
+
+    Returns:
+        a list of tokens that are ionmob compatible
+    """
+    assert len(sequence) == len(modifications), "Sequence and modifications list need to be same length."
+
+    s = ''
+
+    for i, (char, mod) in enumerate(zip(sequence, modifications)):
+        if mod == 0:
+            s += char
+        else:
+            if i == 0:
+                if mass_to_modification(mod) == '[UNIMOD:1]':
+                    s += '[UNIMOD:1]'
+                    s += char
+                else:
+                    s += char + mass_to_modification(mod)
+            else:
+                s += char + mass_to_modification(mod)
+    return s
