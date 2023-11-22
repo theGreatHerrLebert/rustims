@@ -5,6 +5,7 @@ import numpy as np
 MASS_PROTON = 1.007276466583
 MASS_NEUTRON = 1.00866491597
 MASS_ELECTRON = 0.00054857990946
+MASS_H2O = 18.0105646863
 
 AMINO_ACIDS = {
     'Lysine': 'K',
@@ -145,7 +146,7 @@ def calculate_monoisotopic_mass(sequence):
     mass_sequence = np.sum([AMINO_ACID_MASSES[amino_acid] * count for amino_acid, count in aa_counts.items()])
     mass_modifics = np.sum([MODIFICATIONS_MZ_NUMERICAL[mod] * count for mod, count in mod_counts.items()])
 
-    return mass_sequence + mass_modifics
+    return mass_sequence + mass_modifics + MASS_H2O
 
 
 def calculate_mz(monoisotopic_mass, charge):
