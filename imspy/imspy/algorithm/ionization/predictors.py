@@ -3,6 +3,7 @@ import numpy as np
 
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
+from imspy.utility import tokenize_unimod_sequence
 
 
 class PeptideChargeStateDistribution(ABC):
@@ -11,10 +12,6 @@ class PeptideChargeStateDistribution(ABC):
     """
 
     def __init__(self):
-        pass
-
-    @abstractmethod
-    def simulate_ionization(self, sequence: str) -> int:
         pass
 
     @abstractmethod
@@ -30,20 +27,10 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
         self.tokenizer = tokenizer
 
     def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> np.array:
-        # TODO: change to UNIMOD annotated sequences
-        char_tokens = [s.split(' ') for s in sequences]
+        char_tokens = [tokenize_unimod_sequence(seq) for seq in sequences]
         char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
-
-    def _preprocess_sequence(self, sequence: str) -> np.array:
-        # TODO: change to UNIMOD annotated sequence
-        return self._preprocess_sequences([sequence])
-
-    def simulate_ionization(self, sequence: str, verbose: bool = False) -> int:
-        tokens = self.__preprocess_sequence(sequence)
-        probabilities = self.model.predict(tokens, verbose=verbose)[0]
-        return np.random.choice(range(1, len(probabilities) + 1), 1, p=probabilities)[0]
 
     def simulate_ionizations(self, sequences: list[str], batch_size: int = 1024, verbose: bool = False) -> NDArray:
         tokens = self._preprocess_sequences(sequences)
