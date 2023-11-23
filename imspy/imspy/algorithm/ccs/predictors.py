@@ -5,6 +5,16 @@ from numpy.typing import NDArray
 from imspy.chemistry import ccs_to_one_over_k0
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
+from imspy.algorithm.utilities import get_model_path
+
+
+def load_deep_ccs_predictor() -> tf.keras.models.Model:
+    """ Get a pretrained deep predictor model
+
+    Returns:
+        The pretrained deep predictor model
+    """
+    return tf.keras.models.load_model(get_model_path('DeepCCSPredictor'))
 
 
 class PeptideIonMobilityApex(ABC):

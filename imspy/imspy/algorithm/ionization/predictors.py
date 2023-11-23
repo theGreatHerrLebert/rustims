@@ -3,7 +3,18 @@ import numpy as np
 
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
+
+from imspy.algorithm.utilities import get_model_path
 from imspy.utility import tokenize_unimod_sequence
+
+
+def load_deep_charge_state_predictor() -> tf.keras.models.Model:
+    """ Get a pretrained deep predictor model
+
+    Returns:
+        The pretrained deep predictor model
+    """
+    return tf.keras.models.load_model(get_model_path('DeepChargeStatePredictor'))
 
 
 class PeptideChargeStateDistribution(ABC):
