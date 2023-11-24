@@ -20,10 +20,10 @@ jobs:
             publish: true
           - os: windows-latest
             python-version: '3.11'
-            publish: true
+            publish: false
           - os: macos-13
             python-version: '3.11'
-            publish: true
+            publish: false
 
     steps:
       - uses: actions/checkout@v3
@@ -59,4 +59,4 @@ jobs:
           MATURIN_PYPI_TOKEN: ${{ secrets.IMSPY_CONNECTOR_PYPI_API_TOKEN }}
         run: |
           cd imspy_connector
-          maturin publish
+          maturin publish --skip-existing
