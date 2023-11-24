@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "imspy"
-version = "0.2.12"
+version = "0.2.13"
 description = ""
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 readme = "README.md"
