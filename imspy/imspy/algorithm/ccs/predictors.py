@@ -3,6 +3,18 @@ import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 from imspy.chemistry import ccs_to_one_over_k0
+from scipy.optimize import curve_fit
+from imspy.utility import tokenize_unimod_sequence
+from imspy.algorithm.utilities import get_model_path
+
+
+def load_deep_ccs_predictor() -> tf.keras.models.Model:
+    """ Get a pretrained deep predictor model
+
+    Returns:
+        The pretrained deep predictor model
+    """
+    return tf.keras.models.load_model(get_model_path('DeepCCSPredictor'))
 
 
 class PeptideIonMobilityApex(ABC):
@@ -14,12 +26,49 @@ class PeptideIonMobilityApex(ABC):
         pass
 
     @abstractmethod
-    def simulate_ion_mobility(self, sequence: str, charge: int) -> float:
-        pass
-
-    @abstractmethod
     def simulate_ion_mobilities(self, sequences: list[str], charges: list[int]) -> NDArray:
         pass
+
+
+def get_sqrt_slopes_and_intercepts(mz: np.ndarray, charge: np.ndarray,
+                                   ccs: np.ndarray, fit_charge_state_one: bool = False) -> (np.ndarray, np.ndarray):
+    """
+
+    Args:
+        mz:
+        charge:
+        ccs:
+        fit_charge_state_one:
+
+    Returns:
+
+    """
+
+    if fit_charge_state_one:
+        slopes, intercepts = [], []
+    else:
+        slopes, intercepts = [0.0], [0.0]
+
+    if fit_charge_state_one:
+        c_begin = 1
+    else:
+        c_begin = 2
+
+    for c in range(c_begin, 5):
+        def fit_func(x, a, b):
+            return a * np.sqrt(x) + b
+
+        triples = list(filter(lambda x: x[1] == c, zip(mz, charge, ccs)))
+
+        mz_tmp, charge_tmp = np.array([x[0] for x in triples]), np.array([x[1] for x in triples])
+        ccs_tmp = np.array([x[2] for x in triples])
+
+        popt, _ = curve_fit(fit_func, mz_tmp, ccs_tmp)
+
+        slopes.append(popt[0])
+        intercepts.append(popt[1])
+
+    return np.array(slopes, np.float32), np.array(intercepts, np.float32)
 
 
 class ProjectToInitialSqrtCCS(tf.keras.layers.Layer):
@@ -39,7 +88,7 @@ class ProjectToInitialSqrtCCS(tf.keras.layers.Layer):
                               1)
 
 
-class GRUIonMobilityPredictor(tf.keras.models.Model):
+class GRUCCSPredictor(tf.keras.models.Model):
     """
     Deep Learning model combining initial linear fit with sequence based features, both scalar and complex
     """
@@ -51,7 +100,7 @@ class GRUIonMobilityPredictor(tf.keras.models.Model):
                  gru_2=64,
                  rdo=0.0,
                  do=0.2):
-        super(GRUIonMobilityPredictor, self).__init__()
+        super(GRUCCSPredictor, self).__init__()
         self.__seq_len = seq_len
 
         self.initial = ProjectToInitialSqrtCCS(slopes, intercepts)
@@ -92,46 +141,30 @@ class GRUIonMobilityPredictor(tf.keras.models.Model):
 
 
 class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
-    def __init__(self, model: GRUIonMobilityPredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer):
+    def __init__(self, model: GRUCCSPredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer):
         super(DeepPeptideIonMobilityApex, self).__init__()
         self.model = model
         self.tokenizer = tokenizer
 
-    def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50):
-        # TODO: change to UNIMOD annotated sequences
-        char_tokens = [s.split(' ') for s in sequences]
+    def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> NDArray:
+        char_tokens = [tokenize_unimod_sequence(sequence) for sequence in sequences]
         char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
 
-    def _preprocess_sequence(self, sequence: str, seq_len: int = 50):
-        # TODO: change to UNIMOD annotated sequence
-        char_tokens = sequence.split(' ')
-        char_tokens = self.tokenizer.texts_to_sequences([char_tokens])
-        char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, seq_len, padding='post')
-        return char_tokens
-
-    def simulate_ion_mobility(self, sequence: str, charge: int, mz: float, verbose: bool = False) -> float:
-        tokenized_sequence = self._preprocess_sequence(sequence)
-
-        # prepare masses, charges, sequences
-        m = np.expand_dims(np.array([mz]), 1)
-        charges_one_hot = tf.one_hot(np.array([charge]) - 1, 4)
-
-        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequence), np.zeros_like(m))).batch(1)
-
-        ccs, _ = self.model.predict(ds, verbose=verbose)
-
-        return ccs_to_one_over_k0(ccs[0], mz, charge)[0]
-
-    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], verbose: bool = False) -> NDArray:
+    def simulate_ion_mobilities(self,
+                                sequences: list[str],
+                                charges: list[int],
+                                mz: list[float],
+                                verbose: bool = False,
+                                batch_size: int = 1024) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences
         m = np.expand_dims(mz, 1)
         charges_one_hot = tf.one_hot(np.array(charges) - 1, 4)
 
-        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(mz))).batch(1024)
+        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(mz))).batch(batch_size)
         ccs, _ = self.model.predict(ds, verbose=verbose)
 
         return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])

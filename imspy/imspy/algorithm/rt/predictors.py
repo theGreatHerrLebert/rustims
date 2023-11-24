@@ -1,7 +1,18 @@
 import tensorflow as tf
-import numpy as np
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
+
+from imspy.algorithm.utilities import get_model_path
+from imspy.utility import tokenize_unimod_sequence
+
+
+def load_deep_retention_time() -> tf.keras.models.Model:
+    """ Get a pretrained deep predictor model
+
+    Returns:
+        The pretrained deep predictor model
+    """
+    return tf.keras.models.load_model(get_model_path('DeepRetentionTimePredictor'))
 
 
 class PeptideChromatographyApex(ABC):
@@ -10,10 +21,6 @@ class PeptideChromatographyApex(ABC):
     """
 
     def __init__(self):
-        pass
-
-    @abstractmethod
-    def simulate_separation_time(self, sequence: str) -> float:
         pass
 
     @abstractmethod
@@ -74,19 +81,10 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         self.tokenizer = tokenizer
 
     def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> NDArray:
-        # TODO: change to UNIMOD annotated sequences
-        char_tokens = [s.split(' ') for s in sequences]
+        char_tokens = [tokenize_unimod_sequence(seq) for seq in sequences]
         char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
-
-    def _preprocess_sequence(self, sequence: str) -> np.array:
-        # TODO: change to UNIMOD annotated sequence
-        return self._preprocess_sequences([sequence])
-
-    def simulate_separation_time(self, sequence: str, verbose: bool = False) -> int:
-        tokens = self._preprocess_sequence(sequence)
-        return self.model.predict(tokens, verbose=verbose)[0]
 
     def simulate_separation_times(self, sequences: list[str], batch_size: int = 1024, verbose: bool = False) -> NDArray:
         tokens = self._preprocess_sequences(sequences)

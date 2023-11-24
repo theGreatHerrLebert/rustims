@@ -1,2 +1,2 @@
-from .sequence_sage import tokenize_sage_sequence
 from .utilities import re_index_indices
+from .sequence import tokenize_unimod_sequence
