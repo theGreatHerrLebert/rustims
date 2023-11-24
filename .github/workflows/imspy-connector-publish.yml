@@ -38,15 +38,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install maturin
 
-      - name: Install dependencies (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          git clone https://github.com/microsoft/vcpkg.git
-          .\vcpkg\bootstrap-vcpkg.bat
-          .\vcpkg\vcpkg install sqlite3:x64-windows
-        shell: cmd
-
-
       - name: Set up Rust
         uses: actions-rs/toolchain@v1
         with:

@@ -10,7 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 libloading = "0.8.1"
-rusqlite = "0.29.0"
+rusqlite = { version = "0.30.0", features = ["bundled"] }
 lzf = "1.0.0"
 zstd = "0.13.0"
 byteorder = "1.4.3"
