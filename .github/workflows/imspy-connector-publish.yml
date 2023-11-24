@@ -8,23 +8,12 @@ permissions:
   contents: read
 
 jobs:
-  build-and-publish:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ['3.11']
-        include:
-          - os: ubuntu-latest
-            python-version: '3.11'
-            publish: true
-          - os: windows-latest
-            python-version: '3.11'
-            publish: false
-          - os: macos-13
-            python-version: '3.11'
-            publish: false
-
     steps:
       - uses: actions/checkout@v3
 
@@ -51,12 +40,37 @@ jobs:
       - name: Build with Maturin
         run: |
           cd imspy_connector
-          maturin build --release
+          maturin build --release --out ../wheelhouse
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: wheel-${{ matrix.os }}
+          path: ./wheelhouse
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.11'
+
+      - name: Install Maturin
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin
+
+      - uses: actions/download-artifact@v2
+        with:
+          path: wheelhouse
 
       - name: Publish
-        if: matrix.publish
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.IMSPY_CONNECTOR_PYPI_API_TOKEN }}
         run: |
-          cd imspy_connector
+          cd wheelhouse
           maturin publish --skip-existing
