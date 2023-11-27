@@ -5,7 +5,7 @@ from numpy.typing import ArrayLike
 import pandas as pd
 import sqlite3
 from imspy.core import MzSpectrum
-from imspy.chemistry.mass import get_mono_isotopic_weight, MASS_PROTON
+from imspy.chemistry.mass import get_mono_isotopic_weight, MASS_PROTON, calculate_monoisotopic_mass
 
 from imspy.simulation.feature import RTProfile, ScanProfile, ChargeProfile
 from imspy.utility.utilities import tokenize_proforma_sequence, TokenSequence, get_aa_num_proforma_sequence
@@ -159,7 +159,7 @@ class ProteinSample:
                     pep['gene_id'] = gene
                     pep['pep_id'] = f"{gene}_{pep_idx}"
                     pep['sequence_tokenized'] = tokenize_proforma_sequence(pep['sequence'])
-                    pep['mass_theoretical'] = get_mono_isotopic_weight(pep['sequence_tokenized'])
+                    pep['mass_theoretical'] = calculate_monoisotopic_mass(pep['sequence'])
                     pep['sequence_tokenized'] = TokenSequence(pep['sequence_tokenized'])
                     pep['sequence'] = '_' + pep['sequence'] + '_'
                     r_list.append(pep)
@@ -168,6 +168,7 @@ class ProteinSample:
 
     def __repr__(self):
         return f'ProteinSample(Organism: {self.name.name})'
+
 
 class ProteomicsExperimentDatabaseHandle:
     def __init__(self,path:str):

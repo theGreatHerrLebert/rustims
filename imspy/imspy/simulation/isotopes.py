@@ -51,6 +51,7 @@ def weight(mass: float, peak_nums: ArrayLike, normalize: bool = True):
         norm = weights.sum()
     return weights/norm
 
+
 def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenms.CoarseIsotopePatternGenerator):
     """
     Gets hypothetical intensities of isotopic peaks.
@@ -71,6 +72,7 @@ def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenm
     distribution = generator.run(formula)
     intensities = [i.getIntensity() for i in distribution.getContainer()]
     return intensities
+
 
 @numba.jit(nopython=True)
 def iso(x: ArrayLike, mass: float, charge: float, sigma: float, amp: float, K: int, step_size:float, add_detection_noise: bool = False, mass_neutron: float = MASS_NEUTRON):
@@ -123,6 +125,7 @@ def numba_generate_pattern(lower_bound: float,
 
     return mzs + MASS_PROTON, intensities
 
+
 #@numba.jit(nopython= True)
 def numba_ion_sampler(mass: float, charge: int, sigma: ArrayLike, k: int, ion_count: int, intensity_per_ion: int ):
         sigma = np.atleast_1d(sigma)
@@ -157,6 +160,7 @@ def numba_ion_sampler(mass: float, charge: int, sigma: ArrayLike, k: int, ion_co
         mz = ((comps*MASS_NEUTRON) + mass) / charge + MASS_PROTON + devs
         i = np.ones_like(mz) * intensity_per_ion
         return (mz, i)
+
 
 @numba.jit
 def create_initial_feature_distribution(num_rt: int, num_im: int,
@@ -199,7 +203,7 @@ class AveragineGenerator(IsotopePatternGenerator):
         pass
 
     def generate_spectrum(self, mass: int, charge: int, min_intensity: int = 5, k: int = 7,
-                          amp :Optional[float] = None, resolution:float =3,  centroided: bool = True) -> MzSpectrum:
+                          amp: Optional[float] = None, resolution: float=3,  centroided: bool = True) -> MzSpectrum:
         if amp is None:
             amp = self.default_abundancy
 

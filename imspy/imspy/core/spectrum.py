@@ -199,6 +199,17 @@ class MzSpectrum:
 
     def __repr__(self):
         return f"MzSpectrum(num_peaks={len(self.mz)})"
+
+    def __add__(self, other: MzSpectrum) -> MzSpectrum:
+        """Overwrite + operator for adding of spectra
+
+        Args:
+            other (MzSpectrum): Other spectrum.
+
+        Returns:
+            MzSpectrum: Sum of spectra
+        """
+        return self.from_py_mz_spectrum(self.__spec_ptr + other.__spec_ptr)
     
     def __mul__(self, scale) -> MzSpectrum:
         """Overwrite * operator for scaling of spectrum
@@ -209,8 +220,7 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Scaled spectrum
         """
-        tmp: pims.PyMzSpectrum =  self.__spec_ptr * scale
-        return self.from_py_mz_spectrum(tmp)
+        return self.from_py_mz_spectrum(self.__spec_ptr * scale)
 
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
                    min_intensity: float = 1) -> Tuple[NDArray, List[MzSpectrum]]:

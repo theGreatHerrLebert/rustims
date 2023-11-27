@@ -37,7 +37,8 @@ AMINO_ACIDS = {
     'Asparagine': 'N',
     'Proline': 'P',
     'Histidine': 'H',
-    'Aspartic Acid': 'D'
+    'Aspartic Acid': 'D',
+    'Selenocysteine': 'U',
 }
 
 AMINO_ACID_MASSES = {
@@ -60,7 +61,8 @@ AMINO_ACID_MASSES = {
     'T': 101.047679,
     'W': 186.079313,
     'Y': 163.063329,
-    'V': 99.068414
+    'V': 99.068414,
+    'U': 168.053,
 }
 
 MODIFICATIONS_MZ = {
@@ -123,7 +125,7 @@ def tokenize_amino_acids(sequence):
     return tokens
 
 
-def calculate_monoisotopic_mass(sequence):
+def calculate_monoisotopic_mass(sequence: str) -> float:
     """
     Calculates the monoisotopic mass of a sequence of amino acids with modifications.
 
