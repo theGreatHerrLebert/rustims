@@ -1,17 +1,15 @@
 from __future__ import annotations
 from typing import Optional, Tuple
-import warnings
 import numpy as np
 from numpy.typing import ArrayLike
 from abc import ABC, abstractmethod
 
-from scipy.signal import argrelextrema
-from imspy.data import MzSpectrum
-from imspy.utility import gaussian, exp_gaussian, normal_pdf
+from imspy.core import MzSpectrum
+from imspy.utility.utilities import gaussian, exp_gaussian, normal_pdf
 import numba
 import pyopenms
 
-from imspy.noise import detection_noise
+from imspy.simulation.noise import detection_noise
 
 MASS_PROTON = 1.007276466621
 MASS_NEUTRON = 1.00866491595

@@ -1,8 +1,91 @@
 import io
 import json
+import math
+import numba
 import numpy as np
 import tensorflow as tf
 from typing import List, Optional
+
+from numpy.typing import ArrayLike
+
+
+@numba.jit(nopython=True)
+def normal_pdf(x: ArrayLike, mass: float, s: float = 0.001, inv_sqrt_2pi: float = 0.3989422804014327, normalize: bool = False):
+    """
+    :param inv_sqrt_2pi:
+    :param x:
+    :param mass:
+    :param s:
+    :return:
+    """
+    a = (x - mass) / s
+    if normalize:
+        return np.exp(-0.5 * np.power(a,2))
+    else:
+        return inv_sqrt_2pi / s * np.exp(-0.5 * np.power(a,2))
+
+
+@numba.jit
+def gaussian(x, μ=0, σ=1):
+    """
+    Gaussian function
+    :param x:
+    :param μ:
+    :param σ:
+    :return:
+    """
+    A = 1 / np.sqrt(2 * np.pi * np.power(σ, 2))
+    B = np.exp(- (np.power(x - μ, 2) / 2 * np.power(σ, 2)))
+
+    return A * B
+
+
+@numba.jit
+def exp_distribution(x, λ=1):
+    """
+    Exponential function
+    :param x:
+    :param λ:
+    :return:
+    """
+    if x > 0:
+        return λ * np.exp(-λ * x)
+    return 0
+
+
+@numba.jit
+def exp_gaussian(x, μ=-3, σ=1, λ=.25):
+    """
+    laplacian distribution with exponential decay
+    :param x:
+    :param μ:
+    :param σ:
+    :param λ:
+    :return:
+    """
+    A = λ / 2 * np.exp(λ / 2 * (2 * μ + λ * np.power(σ, 2) - 2 * x))
+    B = math.erfc((μ + λ * np.power(σ, 2) - x) / (np.sqrt(2) * σ))
+    return A * B
+
+
+class NormalDistribution:
+    def __init__(self, μ: float, σ: float):
+        self.μ = μ
+        self.σ = σ
+
+    def __call__(self, x):
+        return gaussian(x, self.μ, self.σ)
+
+
+class ExponentialGaussianDistribution:
+    def __init__(self, μ: float = -3, σ: float = 1, λ: float = .25):
+        self.μ = μ
+        self.σ = σ
+        self.λ = λ
+
+    def __call__(self, x):
+        return exp_gaussian(x, self.μ, self.σ, self.λ)
+
 
 
 class TokenSequence:

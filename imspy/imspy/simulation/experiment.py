@@ -7,7 +7,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 from imspy.core import MzSpectrum
-from imspy.proteome import PeptideDigest, ProteomicsExperimentDatabaseHandle
+from imspy.simulation.proteome import PeptideDigest, ProteomicsExperimentDatabaseHandle
 import imspy.simulation.hardware_models as hardware
 
 

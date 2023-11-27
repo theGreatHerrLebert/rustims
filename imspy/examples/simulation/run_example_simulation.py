@@ -10,7 +10,7 @@ from imspy.simulation.hardware_models import (NeuralChromatographyApex,
                                               AveragineModel,
                                               BinomialIonSource
                                               )
-from imspy.proteome import ProteinSample, Trypsin, ORGANISM
+from imspy.simulation.proteome import ProteinSample, Trypsin, ORGANISM
 from imspy.chemistry.mass import BufferGas
 
 import pandas as pd
