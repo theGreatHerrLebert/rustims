@@ -56,16 +56,16 @@ def build_experiment():
 
     N2 = BufferGas("N2")
 
-    tokenizer_path = '/home/tim/Workspaces/ionmob/pretrained-models/tokenizers/tokenizer.json'
+    tokenizer_path = '../../imspy/algorithm/pretrained/tokenizer-ptm.json'
 
-    rt_model_weights = "/home/tim/Workspaces/Resources/models/DeepChromatograpy/"
-    t.lc_method.apex_model = NeuralChromatographyApex(rt_model_weights,tokenizer_path = tokenizer_path)
+    rt_model_weights = "../../imspy/algorithm/pretrained/DeepRetentionTimePredictor"
+    t.lc_method.apex_model = NeuralChromatographyApex(rt_model_weights, tokenizer_path=tokenizer_path)
 
     t.lc_method.profile_model = NormalChromatographyProfileModel()
     t.lc_method.irt_to_rt_converter = irt_to_rt
 
-    im_model_weights = "/home/tim/Workspaces/ionmob/pretrained-models/GRUPredictor"
-    t.ion_mobility_separation_method.apex_model = NeuralIonMobilityApex(im_model_weights, tokenizer_path = tokenizer_path)
+    im_model_weights = "../../imspy/algorithm/pretrained/DeepCCSPredictor"
+    t.ion_mobility_separation_method.apex_model = NeuralIonMobilityApex(im_model_weights, tokenizer_path=tokenizer_path)
 
     t.ion_mobility_separation_method.profile_model = NormalIonMobilityProfileModel()
     t.ion_mobility_separation_method.buffer_gas = N2
@@ -78,16 +78,15 @@ def build_experiment():
 
     rng = np.random.default_rng(2023)
     # read proteome
-    proteome = pd.read_feather('/home/tim/Workspaces/Resources/Homo-sapiens-proteome.feather')
-    random_abundances = rng.integers(1e3,1e7,size=proteome.shape[0])
-    proteome = proteome.assign(abundancy= random_abundances)
+    proteome = pd.read_feather('/home/administrator/Documents/promotion/EXPERIMENT/proteolizard-algorithm/notebook/resources/Homo-sapiens-proteome.feather')
+    random_abundances = rng.integers(1e3, 1e7, size=proteome.shape[0])
+    proteome = proteome.assign(abundancy=random_abundances)
     # create sample and sample digest; TODO: add missed cleavages to ENZYMEs
     sample = ProteinSample(proteome, ORGANISM.HOMO_SAPIENS)
     sample_digest = sample.digest(Trypsin())
 
     # to reduce computational load in example
-    sample_digest.data = sample_digest.data.sample(100, random_state= rng)
-
+    sample_digest.data = sample_digest.data.sample(100, random_state=rng)
 
     t.load_sample(sample_digest)
     return t
