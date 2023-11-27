@@ -9,14 +9,16 @@ from numpy.typing import ArrayLike, NDArray
 import pandas as pd
 from scipy.stats import exponnorm, norm, binom, gamma
 
-from imspy.chemistry import  STANDARD_TEMPERATURE, STANDARD_PRESSURE, CCS_K0_CONVERSION_CONSTANT, BufferGas, get_num_protonizable_sites
+from imspy.chemistry.mass import STANDARD_TEMPERATURE, STANDARD_PRESSURE, BufferGas, get_num_protonizable_sites
+from imspy.chemistry.mobility import SUMMARY_CONSTANT as CCS_K0_CONVERSION_CONSTANT
 from imspy.proteome import ProteomicsExperimentSampleSlice
 from imspy.feature import RTProfile, ScanProfile, ChargeProfile
 from imspy.isotopes import AveragineGenerator
-from imspy.utility import tokenizer_from_json
+from imspy.utility.utilities import tokenizer_from_json
+
 
 class Device(ABC):
-    def __init__(self, name:str):
+    def __init__(self, name: str):
         self.name = name
         self._temperature = STANDARD_TEMPERATURE
         self._pressure = STANDARD_PRESSURE
@@ -64,6 +66,7 @@ class Device(ABC):
     def run(self, sample: ProteomicsExperimentSampleSlice):
         pass
 
+
 class Model(ABC):
     def __init__(self):
         pass
@@ -72,8 +75,9 @@ class Model(ABC):
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: Device):
         pass
 
+
 class Chromatography(Device):
-    def __init__(self, name:str="ChromatographyDevice"):
+    def __init__(self, name: str="ChromatographyDevice"):
         super().__init__(name)
         self._apex_model = None
         self._profile_model = None
@@ -151,6 +155,7 @@ class Chromatography(Device):
     def frame_time_start(self, frame_id: ArrayLike):
         return self.frame_time_interval(frame_id)[:,0]
 
+
 class LiquidChromatography(Chromatography):
     def __init__(self, name: str = "LiquidChromatographyDevice"):
         super().__init__(name)
@@ -174,6 +179,7 @@ class LiquidChromatography(Chromatography):
         frame_id = (rt_minutes/self.frame_length*1000*60).astype(np.int64)+1
         return frame_id
 
+
 class ChromatographyApexModel(Model):
     def __init__(self):
         self._device = None
@@ -182,6 +188,7 @@ class ChromatographyApexModel(Model):
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: Chromatography) -> NDArray[np.float64]:
         pass
 
+
 class ChromatographyProfileModel(Model):
     def __init__(self):
         pass
@@ -189,6 +196,7 @@ class ChromatographyProfileModel(Model):
     @abstractmethod
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: Chromatography) -> List[RTProfile]:
         pass
+
 
 class EMGChromatographyProfileModel(ChromatographyProfileModel):
 

@@ -3,12 +3,24 @@ extern crate rusqlite;
 use rusqlite::{Connection, Result};
 use std::path::Path;
 
-pub struct DDAPrecursorInfo {
+#[derive(Debug, Clone)]
+pub struct PasefMsMsMeta {
+    pub frame_id: i64,
+    pub scan_num_begin: i64,
+    pub scan_num_end: i64,
+    pub isolation_mz: f64,
+    pub isolation_width: f64,
+    pub collision_energy: f64,
+    pub precursor_id: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DDAPrecursorMeta {
     pub precursor_id: i64,
     pub precursor_mz_highest_intensity: f64,
     pub precursor_mz_average: f64,
-    pub precursor_mz_monoisotopic: f64,
-    pub precursor_charge: i64,
+    pub precursor_mz_monoisotopic: Option<f64>,
+    pub precursor_charge: Option<i64>,
     pub precursor_average_scan_number: f64,
     pub precursor_total_intensity: f64,
     pub precursor_frame_id: i64,
@@ -73,6 +85,58 @@ pub struct FrameMeta {
 struct GlobalMetaInternal {
     key: String,
     value: String,
+}
+
+pub fn read_dda_precursor_meta(bruker_d_folder_name: &str) -> Result<Vec<DDAPrecursorMeta>, Box<dyn std::error::Error>> {
+    // Connect to the database
+    let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
+    let conn = Connection::open(db_path)?;
+
+    // prepare the query
+    let rows: Vec<&str> = vec!["Id", "LargestPeakMz", "AverageMz", "MonoisotopicMz", "Charge", "ScanNumber", "Intensity", "Parent"];
+    let query = format!("SELECT {} FROM Precursors", rows.join(", "));
+
+    // execute the query
+    let frames_rows: Result<Vec<DDAPrecursorMeta>, _> = conn.prepare(&query)?.query_map([], |row| {
+        Ok(DDAPrecursorMeta {
+            precursor_id: row.get(0)?,
+            precursor_mz_highest_intensity: row.get(1)?,
+            precursor_mz_average: row.get(2)?,
+            precursor_mz_monoisotopic: row.get(3)?,  // Now using Option<f64>
+            precursor_charge: row.get(4)?,           // Now using Option<i64>
+            precursor_average_scan_number: row.get(5)?,
+            precursor_total_intensity: row.get(6)?,
+            precursor_frame_id: row.get(7)?,
+        })
+    })?.collect();
+
+    // return the frames
+    Ok(frames_rows?)
+}
+
+pub fn read_pasef_frame_ms_ms_info(bruker_d_folder_name: &str) -> Result<Vec<PasefMsMsMeta>, Box<dyn std::error::Error>> {
+    // Connect to the database
+    let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
+    let conn = Connection::open(db_path)?;
+
+    // prepare the query
+    let rows: Vec<&str> = vec!["Frame", "ScanNumBegin", "ScanNumEnd", "IsolationMz", "IsolationWidth", "CollisionEnergy", "Precursor"];
+    let query = format!("SELECT {} FROM PasefFrameMsMsInfo", rows.join(", "));
+
+    // execute the query
+    let frames_rows: Result<Vec<PasefMsMsMeta>, _> = conn.prepare(&query)?.query_map([], |row| {
+        Ok(PasefMsMsMeta {
+        frame_id: row.get(0)?,
+        scan_num_begin: row.get(1)?,
+        scan_num_end: row.get(2)?,
+        isolation_mz: row.get(3)?,
+        isolation_width: row.get(4)?,
+        collision_energy: row.get(5)?,
+        precursor_id: row.get(6)?, })
+        })?.collect();
+
+    // return the frames
+    Ok(frames_rows?)
 }
 
 // Read the global meta data from the analysis.tdf file

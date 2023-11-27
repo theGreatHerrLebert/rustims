@@ -409,6 +409,21 @@ impl IndexedMzSpectrum {
             }
         }
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min:f64, intensity_max: f64) -> Self {
+        let mut mz_vec: Vec<f64> = Vec::new();
+        let mut intensity_vec: Vec<f64> = Vec::new();
+        let mut index_vec: Vec<i32> = Vec::new();
+
+        for ((&mz, &intensity), &index) in self.mz_spectrum.mz.iter().zip(self.mz_spectrum.intensity.iter()).zip(self.index.iter()) {
+            if mz_min <= mz && mz <= mz_max && intensity >= intensity_min && intensity <= intensity_max {
+                mz_vec.push(mz);
+                intensity_vec.push(intensity);
+                index_vec.push(index);
+            }
+        }
+        IndexedMzSpectrum { index: index_vec, mz_spectrum: MzSpectrum { mz: mz_vec, intensity: intensity_vec } }
+    }
 }
 
 impl Display for IndexedMzSpectrum {
@@ -462,6 +477,74 @@ impl TimsSpectrum {
     pub fn vectorized(&self, resolution: i32) -> TimsSpectrumVectorized {
         let vector = self.spectrum.vectorized(resolution);
         TimsSpectrumVectorized { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), vector }
+    }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, TimsSpectrum> {
+
+        let mut splits: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
+
+        for (i, &mz) in self.spectrum.mz_spectrum.mz.iter().enumerate() {
+            let intensity = self.spectrum.mz_spectrum.intensity[i];
+            let tof = self.spectrum.index[i];
+
+            let tmp_key = (mz / window_length).floor() as i32;
+
+            splits.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                Vec::new(), Vec::new(), Vec::new()))
+            ).spectrum.mz_spectrum.mz.push(mz);
+
+            splits.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                Vec::new(), Vec::new(), Vec::new()))
+            ).spectrum.mz_spectrum.intensity.push(intensity);
+
+            splits.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                Vec::new(), Vec::new(), Vec::new()))
+            ).spectrum.index.push(tof);
+        }
+
+        if overlapping {
+            let mut splits_offset = BTreeMap::new();
+
+            for (i, &mmz) in self.spectrum.mz_spectrum.mz.iter().enumerate() {
+                let intensity = self.spectrum.mz_spectrum.intensity[i];
+                let tof = self.spectrum.index[i];
+
+                let tmp_key = -((mmz + window_length / 2.0) / window_length).floor() as i32;
+
+                splits_offset.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                    Vec::new(), Vec::new(), Vec::new()))
+                ).spectrum.mz_spectrum.mz.push(mmz);
+
+                splits_offset.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                    Vec::new(), Vec::new(), Vec::new()))
+                ).spectrum.mz_spectrum.intensity.push(intensity);
+
+                splits_offset.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                    Vec::new(), Vec::new(), Vec::new()))
+                ).spectrum.index.push(tof);
+            }
+
+            for (key, val) in splits_offset {
+                splits.entry(key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                    Vec::new(), Vec::new(), Vec::new()))
+                ).spectrum.mz_spectrum.mz.extend(val.spectrum.mz_spectrum.mz);
+
+                splits.entry(key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                    Vec::new(), Vec::new(), Vec::new()))
+                ).spectrum.mz_spectrum.intensity.extend(val.spectrum.mz_spectrum.intensity);
+
+                splits.entry(key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
+                    Vec::new(), Vec::new(), Vec::new()))
+                ).spectrum.index.extend(val.spectrum.index);
+            }
+        }
+
+        splits.retain(|_, spectrum| {
+            spectrum.spectrum.mz_spectrum.mz.len() >= min_peaks && spectrum.spectrum.mz_spectrum.intensity.iter().cloned().max_by(
+                |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
+        });
+
+        splits
     }
 }
 

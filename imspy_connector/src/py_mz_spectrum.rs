@@ -184,6 +184,14 @@ impl PyIndexedMzSpectrum {
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
         self.inner.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyResult<PyIndexedMzSpectrum> {
+        let filtered = self.inner.filter_ranged(mz_min, mz_max, intensity_min, intensity_max);
+        let py_filtered = PyIndexedMzSpectrum {
+            inner: filtered,
+        };
+        Ok(py_filtered)
+    }
 }
 
 #[pyclass]

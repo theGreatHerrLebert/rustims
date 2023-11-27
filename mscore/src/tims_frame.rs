@@ -2,6 +2,7 @@ use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Formatter};
 use itertools;
+use itertools::izip;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, TimsSpectrum};
 
@@ -11,6 +12,16 @@ pub trait ToResolution {
 
 pub trait Vectorized<T> {
     fn vectorized(&self, resolution: i32) -> T;
+}
+
+#[derive(Clone)]
+pub struct RawTimsFrame {
+    pub frame_id: i32,
+    pub retention_time: f64,
+    pub ms_type: MsType,
+    pub scan: Vec<i32>,
+    pub tof: Vec<i32>,
+    pub intensity: Vec<f64>,
 }
 
 #[derive(Clone)]
@@ -187,24 +198,89 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
-    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<MzSpectrum> {
-
+    pub fn to_windows_indexed(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> (Vec<i32>, Vec<i32>, Vec<TimsSpectrum>) {
+        // split by scan (ion mobility)
         let spectra = self.to_tims_spectra();
 
         let windows: Vec<_> = spectra.iter().map(|spectrum|
-            spectrum.spectrum.mz_spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
+            spectrum.to_windows(window_length, overlapping, min_peaks, min_intensity))
             .collect();
 
-        let mut result: Vec<MzSpectrum> = Vec::new();
+        let mut scan_indices = Vec::new();
 
-        for window in windows {
-            for (_, spectrum) in window {
-                result.push(spectrum);
+        for tree in windows.iter() {
+            for (_, window) in tree {
+                scan_indices.push(window.scan)
             }
         }
 
-        result
+        let mut spectra = Vec::new();
+        let mut window_indices = Vec::new();
+
+        for window in windows {
+            for (i, spectrum) in window {
+                spectra.push(spectrum);
+                window_indices.push(i);
+            }
+        }
+
+        (scan_indices, window_indices, spectra)
     }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> Vec<TimsSpectrum> {
+        let (_, _, widows) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        widows
+    }
+
+    pub fn from_windows(windows: Vec<TimsSpectrum>) -> TimsFrame {
+
+        let first_window = windows.first().unwrap();
+
+        let mut scan = Vec::new();
+        let mut tof = Vec::new();
+        let mut mzs = Vec::new();
+        let mut intensity = Vec::new();
+        let mut mobility = Vec::new();
+
+        for window in windows.iter() {
+            for (i, mz) in window.spectrum.mz_spectrum.mz.iter().enumerate() {
+                scan.push(window.scan);
+                mobility.push(window.mobility);
+                tof.push(window.spectrum.index[i]);
+                mzs.push(*mz);
+                intensity.push(window.spectrum.mz_spectrum.intensity[i]);
+            }
+        }
+
+        TimsFrame::new(first_window.frame_id, first_window.ms_type.clone(), first_window.retention_time, scan, mobility, tof, mzs, intensity)
+    }
+
+    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
+        let factor = (10.0f64).powi(resolution);
+        let num_colums = ((window_length * factor).round() + 1.0) as usize;
+
+        let (scans, window_indices, spectra) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        let vectorized_spectra = spectra.iter().map(|spectrum| spectrum.vectorized(resolution)).collect::<Vec<_>>();
+
+        let mut flat_matrix: Vec<f64> = vec![0.0; spectra.len() * num_colums];
+
+        for (row_index, (window_index, spectrum)) in itertools::multizip((&window_indices, vectorized_spectra)).enumerate() {
+
+            let vectorized_window_index = match *window_index >= 0 {
+                true => (*window_index as f64 * window_length * factor).round() as i32,
+                false => (((-1.0 * (*window_index as f64)) * window_length - (0.5 * window_length)) * factor).round() as i32,
+            };
+
+            for (i, index) in spectrum.vector.mz_vector.indices.iter().enumerate() {
+                let zero_based_index = (index - vectorized_window_index) as usize;
+                let current_index = row_index * num_colums + zero_based_index;
+                flat_matrix[current_index] = spectrum.vector.mz_vector.values[i];
+            }
+
+        }
+        (flat_matrix, scans, window_indices, spectra.len(), num_colums)
+    }
+
 
     pub fn to_indexed_mz_spectrum(&self) -> IndexedMzSpectrum {
         let mut grouped_data: BTreeMap<i32, Vec<(f64, f64)>> = BTreeMap::new();
@@ -232,7 +308,68 @@ impl TimsFrame {
             mz_spectrum: MzSpectrum { mz, intensity },
         }
     }
+}
 
+struct AggregateData {
+    intensity_sum: f64,
+    ion_mobility_sum: f64,
+    tof_sum: i32,
+    count: i32,
+}
+
+impl std::ops::Add for TimsFrame {
+    type Output = Self;
+    fn add(self, other: Self) -> TimsFrame {
+        let mut combined_map: BTreeMap<(i64, i32), AggregateData> = BTreeMap::new();
+
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        let add_to_map = |map: &mut BTreeMap<(i64, i32), AggregateData>, mz, ion_mobility, tof, scan, intensity| {
+            let key = (quantize(mz), scan);
+            let entry = map.entry(key).or_insert(AggregateData { intensity_sum: 0.0, ion_mobility_sum: 0.0, tof_sum: 0, count: 0 });
+            entry.intensity_sum += intensity;
+            entry.ion_mobility_sum += ion_mobility;
+            entry.tof_sum += tof;
+            entry.count += 1;
+        };
+
+        for (mz, tof, ion_mobility, scan, intensity) in izip!(&self.ims_frame.mz, &self.tof, &self.ims_frame.mobility, &self.scan, &self.ims_frame.intensity) {
+            add_to_map(&mut combined_map, *mz, *ion_mobility, *tof, *scan, *intensity);
+        }
+
+        for (mz, tof, ion_mobility, scan, intensity) in izip!(&other.ims_frame.mz, &other.tof, &other.ims_frame.mobility, &other.scan, &other.ims_frame.intensity) {
+            add_to_map(&mut combined_map, *mz, *ion_mobility, *tof, *scan, *intensity);
+        }
+
+        let mut mz_combined = Vec::new();
+        let mut tof_combined = Vec::new();
+        let mut ion_mobility_combined = Vec::new();
+        let mut scan_combined = Vec::new();
+        let mut intensity_combined = Vec::new();
+
+        for ((quantized_mz, scan), data) in combined_map {
+            mz_combined.push(quantized_mz as f64 / 1_000_000.0);
+            tof_combined.push(data.tof_sum / data.count);
+            ion_mobility_combined.push(data.ion_mobility_sum / data.count as f64);
+            scan_combined.push(scan);
+            intensity_combined.push(data.intensity_sum);
+        }
+
+        TimsFrame {
+            frame_id: self.frame_id + other.frame_id,
+            ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
+            scan: scan_combined,
+            tof: tof_combined,
+            ims_frame: ImsFrame {
+                retention_time: (self.ims_frame.retention_time + other.ims_frame.retention_time) / 2.0,
+                mobility: ion_mobility_combined,
+                mz: mz_combined,
+                intensity: intensity_combined,
+            },
+        }
+    }
 }
 
 impl fmt::Display for TimsFrame {

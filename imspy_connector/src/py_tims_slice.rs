@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use mscore::{MsType, TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
 use numpy::{IntoPyArray, PyArray1};
-use crate::py_mz_spectrum::PyMzSpectrum;
+use crate::py_mz_spectrum::{PyTimsSpectrum};
 
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
 
@@ -90,12 +90,17 @@ impl PyTimsSlice {
         let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyMzSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
             list.as_ref(py).append(py_mz_spectrum)?;
         }
 
         Ok(list.into())
     }
+
+    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32, num_threads: usize) -> Vec<(Vec<f64>, Vec<i32>, Vec<i32>, usize, usize)> {
+        self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution, num_threads)
+    }
+
     pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
     }

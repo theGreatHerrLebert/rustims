@@ -9,15 +9,17 @@ from imspy.simulation.hardware_models import (NeuralChromatographyApex,
                                               NormalIonMobilityProfileModel,
                                               AveragineModel,
                                               BinomialIonSource
-                                                )
+                                              )
 from imspy.proteome import ProteinSample, Trypsin, ORGANISM
-from imspy.chemistry import BufferGas
+from imspy.chemistry.mass import BufferGas
 
 import pandas as pd
 import numpy as np
 
+
 def irt_to_rt(irt):
     return irt
+
 
 def scan_im_interval(scan_id):
     intercept = 1451.357
@@ -27,12 +29,14 @@ def scan_im_interval(scan_id):
     upper = ((scan_id+1) - intercept ) / slope
     return np.stack([1/lower, 1/upper], axis=1)
 
+
 def im_to_scan(reduced_ion_mobility):
     intercept = 1451.357
     slope = -877.361
     # TODO more appropriate function here ?
     one_over_k0 = 1/reduced_ion_mobility
     return np.round(one_over_k0 * slope + intercept).astype(np.int16)
+
 
 def build_experiment():
     t = LcImsMsMs("./timstofexp1_binomial_ion_source_21_7/") # maybe rather call this class LCIMSMSExperiment
@@ -60,10 +64,6 @@ def build_experiment():
     t.lc_method.profile_model = NormalChromatographyProfileModel()
     t.lc_method.irt_to_rt_converter = irt_to_rt
 
-
-
-
-
     im_model_weights = "/home/tim/Workspaces/ionmob/pretrained-models/GRUPredictor"
     t.ion_mobility_separation_method.apex_model = NeuralIonMobilityApex(im_model_weights, tokenizer_path = tokenizer_path)
 
@@ -74,9 +74,7 @@ def build_experiment():
 
     t.ionization_method.ionization_model = BinomialIonSource()
 
-
     t.mz_separation_method.model = AveragineModel()
-
 
     rng = np.random.default_rng(2023)
     # read proteome
@@ -87,7 +85,6 @@ def build_experiment():
     sample = ProteinSample(proteome, ORGANISM.HOMO_SAPIENS)
     sample_digest = sample.digest(Trypsin())
 
-
     # to reduce computational load in example
     sample_digest.data = sample_digest.data.sample(100, random_state= rng)
 
@@ -95,10 +92,10 @@ def build_experiment():
     t.load_sample(sample_digest)
     return t
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
 
     t = build_experiment()
 
     #cProfile.run("t.run(10000)", filename="profiler_10000_8_process",sort="cumtime")
-    t.run(100,frames_per_assemble_process=10)
+    t.run(100, frames_per_assemble_process=10)

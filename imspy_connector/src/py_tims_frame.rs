@@ -1,9 +1,72 @@
 use pyo3::prelude::*;
-use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized};
 use pyo3::types::PyList;
+use pyo3::types::PyTuple;
+use numpy::{PyArray1, IntoPyArray};
+use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame, TimsSpectrum};
 
-use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyMzSpectrum, PyTimsSpectrum};
+use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyRawTimsFrame {
+    pub inner: RawTimsFrame,
+}
+
+#[pymethods]
+impl PyRawTimsFrame {
+    #[new]
+    pub unsafe fn new(frame_id: i32,
+                      ms_type: i32,
+                      retention_time: f64,
+                      scan: &PyArray1<i32>,
+                      tof: &PyArray1<i32>,
+                      intensity: &PyArray1<f64>) -> PyResult<Self> {
+        Ok(PyRawTimsFrame {
+            inner: RawTimsFrame {
+                frame_id,
+                retention_time,
+                ms_type: MsType::new(ms_type),
+                scan: scan.as_slice()?.to_vec(),
+                tof: tof.as_slice()?.to_vec(),
+                intensity: intensity.as_slice()?.to_vec(),
+            },
+        })
+    }
+
+    #[getter]
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.intensity.clone().into_pyarray(py).to_owned()
+    }
+    #[getter]
+    pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
+        self.inner.scan.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
+        self.inner.tof.clone().into_pyarray(py).to_owned()
+    }
+
+    #[getter]
+    pub fn frame_id(&self) -> i32 {
+        self.inner.frame_id
+    }
+
+    #[getter]
+    pub fn ms_type_numeric(&self) -> i32 {
+        self.inner.ms_type.ms_type_numeric()
+    }
+
+    #[getter]
+    pub fn ms_type(&self) -> String {
+        self.inner.ms_type.to_string()
+    }
+
+    #[getter]
+    pub fn retention_time(&self) -> f64 {
+        self.inner.retention_time
+    }
+}
 
 #[pyclass]
 #[derive(Clone)]
@@ -97,7 +160,7 @@ impl PyTimsFrame {
         let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyMzSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
             list.as_ref(py).append(py_mz_spectrum)?;
         }
 
@@ -118,6 +181,33 @@ impl PyTimsFrame {
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsFrame {
         return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
+    }
+
+    #[staticmethod]
+    pub fn from_windows(_py: Python, windows: &PyList) -> PyResult<Self> {
+        let mut spectra: Vec<TimsSpectrum> = Vec::new();
+        for window in windows.iter() {
+            let window: PyRef<PyTimsSpectrum> = window.extract()?;
+            spectra.push(window.inner.clone());
+        }
+
+        Ok(PyTimsFrame { inner: TimsFrame::from_windows(spectra) })
+    }
+
+    pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
+
+        let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
+        let py_array: &PyArray1<f64> = data.into_pyarray(py);
+        let py_scans: &PyArray1<i32> = scans.into_pyarray(py);
+        let py_window_indices: &PyArray1<i32> = window_indices.into_pyarray(py);
+        let tuple = PyTuple::new(py, &[rows.into_py(py), cols.into_py(py), py_array.to_owned().into_py(py), py_scans.to_owned().into_py(py), py_window_indices.to_owned().into_py(py)]);
+
+        Ok(tuple.into())
+    }
+
+    fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
+        let result = self.inner.clone() + other.inner.clone();
+        return PyTimsFrame { inner: result }
     }
 }
 

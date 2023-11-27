@@ -1,0 +1,48 @@
+name: Build and Publish Python Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+        include:
+          - python-version: '3.11'
+            publish: true
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v3
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          pip install poetry
+
+      - name: Change to imspy directory
+        run: cd imspy
+
+      - name: Build package
+        run: |
+          cd imspy
+          poetry build
+
+      - name: Publish package
+        if: matrix.publish
+        env:
+          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.IMSPY_PYPI_API_TOKEN }}
+        run: |
+          cd imspy
+          poetry config http-basic.pypi __token__ $POETRY_PYPI_TOKEN_PYPI
+          poetry publish
