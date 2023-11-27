@@ -37,6 +37,17 @@ class TimsFrame:
 
         self.__frame_ptr = pims.PyTimsFrame(frame_id, ms_type, retention_time, scan, mobility, tof, mz, intensity)
 
+    def __add__(self, other: 'TimsFrame') -> 'TimsFrame':
+        """Add two TimsFrames together.
+
+        Args:
+            other (TimsFrame): TimsFrame to add.
+
+        Returns:
+            TimsFrame: Sum of the two TimsFrames.
+        """
+        return TimsFrame.from_py_tims_frame(self.__frame_ptr + other.__frame_ptr)
+
     @classmethod
     def from_py_tims_frame(cls, frame: pims.PyTimsFrame):
         """Create a TimsFrame from a PyTimsFrame.
