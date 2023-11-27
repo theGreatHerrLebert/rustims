@@ -204,6 +204,11 @@ impl PyTimsFrame {
 
         Ok(tuple.into())
     }
+
+    fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
+        let result = self.inner.clone() + other.inner.clone();
+        return PyTimsFrame { inner: result }
+    }
 }
 
 #[pyclass]
