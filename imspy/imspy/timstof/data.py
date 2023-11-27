@@ -8,8 +8,8 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.core import TimsFrame
-from imspy.core import TimsSlice
+from imspy.core.frame import TimsFrame
+from imspy.core.slice import TimsSlice
 
 
 class TimsDataset(ABC):

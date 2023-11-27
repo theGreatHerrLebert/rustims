@@ -8,6 +8,7 @@ from tensorflow import sparse as sp
 from imspy.utility.utilities import re_index_indices
 
 import imspy_connector as pims
+
 from imspy.core.frame import TimsFrame, TimsFrameVectorized
 from imspy.core.spectrum import MzSpectrum, TimsSpectrum
 

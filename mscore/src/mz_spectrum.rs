@@ -293,6 +293,17 @@ impl std::ops::Add for MzSpectrum {
     }
 }
 
+impl std::ops::Mul<f64> for MzSpectrum {
+    type Output = Self;
+    fn mul(self, scale: f64) -> Self::Output{
+        let mut scaled_intensities: Vec<f64> = vec![0.0; self.intensity.len()];
+        for (idx,intensity) in self.intensity.iter().enumerate(){
+            scaled_intensities[idx] = scale*intensity;
+        }
+        Self{ mz: self.mz.clone(), intensity: scaled_intensities}
+
+    }
+}
 /// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
 #[derive(Clone)]
 pub struct IndexedMzSpectrum {
@@ -559,15 +570,36 @@ impl MzSpectrumVectorized {
     /// # Arguments
     ///
     /// * `max_index` - The maximum index for the dense vector.
-    pub fn to_dense(&self, max_index: usize) -> DVector<f64> {
-        let mut dense = DVector::zeros(max_index + 1);
+    
+    fn get_max_index(&self) -> usize {
+        let base: i32 = 10;
+        let max_mz: i32 = 2000;
+        let max_index: usize = (max_mz*base.pow(self.resolution as u32)) as usize;
+        max_index
+    }
 
+    pub fn to_dense(&self, max_index: Option<usize>) -> DVector<f64> {
+        let max_index = match max_index {
+            Some(max_index) => max_index,
+            None => self.get_max_index(),
+        };
+        let mut dense_intensities: DVector<f64> = DVector::<f64>::zeros(max_index + 1);
         for (&index, &intensity) in self.indices.iter().zip(self.values.iter()) {
             if (index as usize) <= max_index {
-                dense[index as usize] = intensity;
+                dense_intensities[index as usize] = intensity;
             }
         }
-        dense
+        dense_intensities
+    }
+    pub fn to_dense_spectrum(&self, max_index: Option<usize>) -> MzSpectrumVectorized{
+        let max_index = match max_index {
+            Some(max_index) => max_index,
+            None => self.get_max_index(),
+        };
+        let dense_intensities: Vec<f64> = self.to_dense(Some(max_index)).data.into();
+        let dense_indices: Vec<i32> = (0..=max_index).map(|i| i as i32).collect();
+        let dense_spectrum: MzSpectrumVectorized = MzSpectrumVectorized { resolution: (self.resolution), indices: (dense_indices), values: (dense_intensities) };
+        dense_spectrum
     }
 }
 
