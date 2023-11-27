@@ -11,9 +11,9 @@ from scipy.stats import exponnorm, norm, binom, gamma
 
 from imspy.chemistry.mass import STANDARD_TEMPERATURE, STANDARD_PRESSURE, BufferGas, get_num_protonizable_sites
 from imspy.chemistry.mobility import SUMMARY_CONSTANT as CCS_K0_CONVERSION_CONSTANT
-from imspy.proteome import ProteomicsExperimentSampleSlice
-from imspy.feature import RTProfile, ScanProfile, ChargeProfile
-from imspy.isotopes import AveragineGenerator
+from imspy.simulation.proteome import ProteomicsExperimentSampleSlice
+from imspy.simulation.feature import RTProfile, ScanProfile, ChargeProfile
+from imspy.simulation.isotopes import AveragineGenerator
 from imspy.utility.utilities import tokenizer_from_json
 
 

@@ -5,21 +5,25 @@ import numpy as np
 import numba
 from typing import Callable, Optional, Tuple
 from numpy.typing import ArrayLike
-from imspy.data import MzSpectrum
-from imspy.utility import normal_pdf
+from imspy.core import MzSpectrum
+from imspy.utility.utilities import normal_pdf
+
 
 @numba.jit(nopython=True)
 def mu_function_normal_default(intensity: ArrayLike) -> ArrayLike:
     return intensity
 
+
 @numba.jit(nopython=True)
 def sigma_function_normal_default(intensity:ArrayLike) -> ArrayLike:
     return np.sqrt(intensity)
 
+
 @numba.jit(nopython=True)
 def mu_function_poisson_default(intensity:ArrayLike) -> ArrayLike:
     offset = 0
-    return intensity+ offset
+    return intensity + offset
+
 
 @numba.jit(nopython=True)
 def detection_noise(signal: ArrayLike,
@@ -73,6 +77,7 @@ def detection_noise(signal: ArrayLike,
 
     return noised_signal
 
+
 @numba.jit(nopython=True)
 def generate_noise_peak(pos:float, sigma: float, intensity: float, min_intensity:int = 0, resolution:float = 3):
     step_size = min(sigma/10,1/np.power(10,resolution))
@@ -119,6 +124,7 @@ def baseline_shot_noise(spectrum:MzSpectrum,window_size:float=50,expected_noise_
         upper = (b+1)*window_size
         noised_spectrum = noised_spectrum+baseline_shot_noise_window(w,lower,upper,window_size*expected_noise_peaks_per_Th)
     return noised_spectrum.to_resolution(resolution).filter(min_mz,max_mz,min_intensity)
+
 
 def baseline_noise():
     pass

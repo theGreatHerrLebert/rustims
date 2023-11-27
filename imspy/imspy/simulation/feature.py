@@ -4,11 +4,13 @@ from numpy.typing import ArrayLike
 
 import json
 
-from imspy.data import TimsSlice, TimsFrame
-from imspy.utility import gaussian, exp_gaussian
-from imspy.isotopes import IsotopePatternGenerator, create_initial_feature_distribution
+from imspy.core import TimsSlice, TimsFrame
+from imspy.utility.utilities import gaussian, exp_gaussian
+from imspy.simulation.isotopes import IsotopePatternGenerator, create_initial_feature_distribution
 from abc import ABC, abstractmethod
 from typing import Optional, Dict
+
+
 class Profile:
 
     def __init__(self,positions:Optional[ArrayLike] = None, rel_abundancies:Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
