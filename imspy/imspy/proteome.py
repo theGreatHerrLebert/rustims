@@ -1,19 +1,19 @@
 from __future__ import annotations
 import os
-import warnings
 import numpy as np
 from numpy.typing import ArrayLike
 import pandas as pd
 import sqlite3
-from imspy.data import MzSpectrum
-from imspy.chemistry import get_mono_isotopic_weight, MASS_PROTON
+from imspy.core import MzSpectrum
+from imspy.chemistry.mass import get_mono_isotopic_weight, MASS_PROTON
 
 from imspy.feature import RTProfile, ScanProfile, ChargeProfile
-from imspy.utility import tokenize_proforma_sequence, TokenSequence, get_aa_num_proforma_sequence
+from imspy.utility.utilities import tokenize_proforma_sequence, TokenSequence, get_aa_num_proforma_sequence
 from enum import Enum
 from abc import ABC, abstractmethod
 
 from typing import Optional, List, Union
+
 
 class ENZYME(Enum):
     TRYPSIN = 1
