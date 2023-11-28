@@ -15,6 +15,8 @@ from imspy.chemistry.mass import BufferGas
 
 import pandas as pd
 import numpy as np
+from sagepy.core import EnzymeBuilder, SageSearchConfiguration, validate_mods, validate_var_mods, SAGE_KNOWN_MODS
+from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Tolerance, Scorer, Representation
 
 
 def irt_to_rt(irt):
@@ -36,6 +38,46 @@ def im_to_scan(reduced_ion_mobility):
     # TODO more appropriate function here ?
     one_over_k0 = 1/reduced_ion_mobility
     return np.round(one_over_k0 * slope + intercept).astype(np.int16)
+
+
+def build_sage_db(fasta_path):
+    # configure a trypsin-like digestor of fasta files
+    enzyme_builder = EnzymeBuilder(
+        missed_cleavages=2,
+        min_len=5,
+        max_len=50,
+        cleave_at='KR',
+        restrict='P',
+        c_terminal=True,
+    )
+
+    # generate static cysteine modification
+    static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
+
+    # generate variable methionine modification
+    variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable()]}
+
+    # generate SAGE compatible mod representations
+    static = validate_mods(static_mods)
+    variab = validate_var_mods(variable_mods)
+
+    with open(fasta_path, 'r') as infile:
+        fasta = infile.read()
+
+    # set-up a config for a sage-database
+    sage_config = SageSearchConfiguration(
+        fasta=fasta,
+        static_mods=static,
+        variable_mods=variab,
+        enzyme_builder=enzyme_builder,
+        generate_decoys=True,
+        bucket_size=int(np.power(2, 14))
+    )
+
+    # generate the database for searching against
+    indexed_db = sage_config.generate_indexed_database()
+
+    return indexed_db
 
 
 def build_experiment():
@@ -93,8 +135,11 @@ def build_experiment():
 
 
 if __name__ == "__main__":
+    path = '/home/administrator/Documents/promotion/ccs-workflow/rescoring/data/human_20365_conts_172_2020-3-2_2-0-11_validated.fasta'
 
-    t = build_experiment()
+    sage_db = build_sage_db(path)
+
+    # t = build_experiment()
 
     #cProfile.run("t.run(10000)", filename="profiler_10000_8_process",sort="cumtime")
-    t.run(100, frames_per_assemble_process=10)
+    # t.run(100, frames_per_assemble_process=10)

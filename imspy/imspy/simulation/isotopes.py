@@ -127,7 +127,7 @@ def numba_generate_pattern(lower_bound: float,
 
 
 #@numba.jit(nopython= True)
-def numba_ion_sampler(mass: float, charge: int, sigma: ArrayLike, k: int, ion_count: int, intensity_per_ion: int ):
+def numba_ion_sampler(mass: float, charge: int, sigma: ArrayLike, k: int, ion_count: int, intensity_per_ion: int):
         sigma = np.atleast_1d(sigma)
         if sigma.size == 1:
             sigma = np.repeat(sigma,k)
@@ -162,7 +162,7 @@ def numba_ion_sampler(mass: float, charge: int, sigma: ArrayLike, k: int, ion_co
         return (mz, i)
 
 
-@numba.jit
+@numba.jit(nopython=True)
 def create_initial_feature_distribution(num_rt: int, num_im: int,
                                         rt_lower: float = -9,
                                         rt_upper: float = 18,
