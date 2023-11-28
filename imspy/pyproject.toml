@@ -14,6 +14,9 @@ tensorflow = ">=2.14"
 tensorflow-probability = ">=0.22.1"
 pyopenms = ">=2.6.0"
 
+pysage = ">=0.2.5"
+pysage-connector = ">=0.2.5"
+
 imspy-connector = ">=0.2.7"
 scipy = ">=1.7.1"
 tqdm = ">=4.66"
