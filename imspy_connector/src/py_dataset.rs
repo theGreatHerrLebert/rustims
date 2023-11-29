@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::TimsData;
+use rustdf::data::handle::{TimsData, AcquisitionMode};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
@@ -44,5 +44,28 @@ impl PyTimsDataset {
 
     pub fn frame_count(&self) -> i32 {
         self.inner.get_frame_count()
+    }
+}
+
+#[pyclass]
+pub struct PyAquisitionMode {
+    inner: AcquisitionMode,
+}
+
+#[pymethods]
+impl PyAquisitionMode {
+    #[new]
+    pub fn new(acquisition_mode: &str) -> Self {
+        PyAquisitionMode { inner: AcquisitionMode::from(acquisition_mode) }
+    }
+
+    #[getter]
+    pub fn acquisition_mode(&self) -> String {
+        self.inner.to_str().to_string()
+    }
+
+    #[getter]
+    pub fn acquisition_mode_numeric(&self) -> i32 {
+        self.inner.to_i32()
     }
 }
