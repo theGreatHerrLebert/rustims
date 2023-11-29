@@ -20,6 +20,8 @@ class PeptideDigest:
                  verbose: bool = True,
                  ):
 
+        self.verbose = verbose
+
         # generate enzyme (trypsin)
         enzyme_builder = EnzymeBuilder(
             missed_cleavages=missed_cleavages,
@@ -82,6 +84,8 @@ class PeptideDigest:
         """
         # write code to connect ot an existing database and write the peptide table,  or overwrite the existing one
         # if it exists
+        if self.verbose:
+            print("Writing peptides to sqlite database...")
         conn = sqlite3.connect(path)
         self.peptides.to_sql('peptides', conn, if_exists='replace', index=False)
         conn.close()
