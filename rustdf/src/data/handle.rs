@@ -108,8 +108,6 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
     Ok((scan_indices, adjusted_tof_indices, intensities))
 }
 
-
-
 #[derive(Debug, Clone)]
 pub enum AcquisitionMode {
     PRECURSOR,
@@ -129,6 +127,16 @@ impl AcquisitionMode {
             AcquisitionMode::Unknown => -1,
         }
     }
+
+    pub fn to_str(&self) -> &str {
+        match self {
+            AcquisitionMode::PRECURSOR => "PRECURSOR",
+            AcquisitionMode::DDA => "DDA",
+            AcquisitionMode::DIA => "DIA",
+            AcquisitionMode::MIDIA => "MIDIA",
+            AcquisitionMode::Unknown => "UNKNOWN",
+        }
+    }
 }
 
 impl Display for AcquisitionMode {
@@ -139,6 +147,30 @@ impl Display for AcquisitionMode {
             AcquisitionMode::DIA => write!(f, "DIA"),
             AcquisitionMode::MIDIA => write!(f, "MIDIA"),
             AcquisitionMode::Unknown => write!(f, "UNKNOWN"),
+        }
+    }
+}
+
+impl From<i32> for AcquisitionMode {
+    fn from(item: i32) -> Self {
+        match item {
+            0 => AcquisitionMode::PRECURSOR,
+            8 => AcquisitionMode::DDA,
+            9 => AcquisitionMode::DIA,
+            10 => AcquisitionMode::MIDIA,
+            _ => AcquisitionMode::Unknown,
+        }
+    }
+}
+
+impl From<&str> for AcquisitionMode {
+    fn from(item: &str) -> Self {
+        match item {
+            "PRECURSOR" => AcquisitionMode::PRECURSOR,
+            "DDA" => AcquisitionMode::DDA,
+            "DIA" => AcquisitionMode::DIA,
+            "MIDIA" => AcquisitionMode::MIDIA,
+            _ => AcquisitionMode::Unknown,
         }
     }
 }
