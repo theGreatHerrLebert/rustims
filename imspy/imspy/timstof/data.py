@@ -12,6 +12,44 @@ from imspy.core.frame import TimsFrame
 from imspy.core.slice import TimsSlice
 
 
+class AcquisitionMode:
+    def __init__(self, mode: str):
+        """AcquisitionMode class.
+
+        Args:
+            mode (str): Acquisition mode.
+        """
+        allowed_modes = ["DDA", "DIA", "MIDIA", "UNKNOWN", "PRECURSOR"]
+        assert mode in allowed_modes, f"Unknown acquisition mode, use one of {allowed_modes}"
+        self.__mode_ptr = pims.AcquisitionMode.from_string(mode)
+
+    @property
+    def mode(self) -> str:
+        """Get the acquisition mode.
+
+        Returns:
+            str: Acquisition mode.
+        """
+        return self.__mode_ptr.acquisition_mode
+
+    @classmethod
+    def from_ptr(cls, ptr: pims.AcquisitionMode):
+        """Get an AcquisitionMode from a pointer.
+
+        Args:
+            ptr (pims.AcquisitionMode): Pointer to an acquisition mode.
+
+        Returns:
+            AcquisitionMode: Acquisition mode.
+        """
+        instance = cls.__new__(cls)
+        instance.__mode_ptr = ptr
+        return instance
+
+    def __repr__(self):
+        return f"AcquisitionMode({self.mode})"
+
+
 class TimsDataset(ABC):
     def __init__(self, data_path: str):
         """TimsDataHandle class.
