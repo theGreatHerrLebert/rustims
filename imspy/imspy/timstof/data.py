@@ -21,7 +21,7 @@ class AcquisitionMode:
         """
         allowed_modes = ["DDA", "DIA", "MIDIA", "UNKNOWN", "PRECURSOR"]
         assert mode in allowed_modes, f"Unknown acquisition mode, use one of {allowed_modes}"
-        self.__mode_ptr = pims.AcquisitionMode.from_string(mode)
+        self.__mode_ptr = pims.PyAcquisitionMode.from_string(mode)
 
     @property
     def mode(self) -> str:
@@ -33,7 +33,7 @@ class AcquisitionMode:
         return self.__mode_ptr.acquisition_mode
 
     @classmethod
-    def from_ptr(cls, ptr: pims.AcquisitionMode):
+    def from_ptr(cls, ptr: pims.PyAcquisitionMode):
         """Get an AcquisitionMode from a pointer.
 
         Args:
