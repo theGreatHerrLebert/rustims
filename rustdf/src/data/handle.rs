@@ -112,6 +112,7 @@ fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(V
 
 #[derive(Debug, Clone)]
 pub enum AcquisitionMode {
+    PRECURSOR,
     DDA,
     DIA,
     MIDIA,
@@ -121,6 +122,7 @@ pub enum AcquisitionMode {
 impl AcquisitionMode {
     pub fn to_i32(&self) -> i32 {
         match self {
+            AcquisitionMode::PRECURSOR => 0,
             AcquisitionMode::DDA => 8,
             AcquisitionMode::DIA => 9,
             AcquisitionMode::MIDIA => 10,
@@ -132,6 +134,7 @@ impl AcquisitionMode {
 impl Display for AcquisitionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            AcquisitionMode::PRECURSOR => write!(f, "PRECURSOR"),
             AcquisitionMode::DDA => write!(f, "DDA"),
             AcquisitionMode::DIA => write!(f, "DIA"),
             AcquisitionMode::MIDIA => write!(f, "MIDIA"),
