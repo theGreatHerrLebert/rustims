@@ -48,15 +48,25 @@ impl PyTimsDataset {
 }
 
 #[pyclass]
-pub struct PyAquisitionMode {
+pub struct PyAcquisitionMode {
     inner: AcquisitionMode,
 }
 
 #[pymethods]
-impl PyAquisitionMode {
+impl PyAcquisitionMode {
     #[new]
     pub fn new(acquisition_mode: &str) -> Self {
-        PyAquisitionMode { inner: AcquisitionMode::from(acquisition_mode) }
+        PyAcquisitionMode { inner: AcquisitionMode::from(acquisition_mode) }
+    }
+
+    #[staticmethod]
+    pub fn from_numeric(acquisition_mode: i32) -> Self {
+        PyAcquisitionMode { inner: AcquisitionMode::from(acquisition_mode) }
+    }
+
+    #[staticmethod]
+    pub fn from_string(acquisition_mode: &str) -> Self {
+        PyAcquisitionMode { inner: AcquisitionMode::from(acquisition_mode) }
     }
 
     #[getter]
