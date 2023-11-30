@@ -6,7 +6,7 @@ from numpy.typing import NDArray
 from imspy.chemistry import ccs_to_one_over_k0
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
-from imspy.algorithm.utilities import get_model_path
+from imspy.algorithm.utility import get_model_path
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:

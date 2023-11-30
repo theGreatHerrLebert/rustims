@@ -3,7 +3,7 @@ import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 
-from imspy.algorithm.utilities import get_model_path
+from imspy.algorithm.utility import get_model_path
 from imspy.utility import tokenize_unimod_sequence
 from imspy.simulation.utility import irt_to_rts_numba
 

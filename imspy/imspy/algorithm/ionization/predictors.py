@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from scipy.stats import binom
 from tqdm import tqdm
 
-from imspy.algorithm.utilities import get_model_path
+from imspy.algorithm.utility import get_model_path
 from imspy.chemistry.mass import get_num_protonizable_sites
 from imspy.utility import tokenize_unimod_sequence
 
