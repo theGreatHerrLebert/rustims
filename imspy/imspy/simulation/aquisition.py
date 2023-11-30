@@ -81,13 +81,17 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  rt_cycle_length=0.109,
                  im_lower=0.6,
                  im_upper=1.6,
-                 num_scans=917):
+                 num_scans=917,
+                 mz_lower: float = 150,
+                 mz_upper: float = 1600):
         super().__init__(gradient_length, rt_cycle_length, im_lower, im_upper, num_scans)
         self.scan_table = None
         self.frame_table = None
         self.precursor_every = precursor_every
         self.acquisition_mode = AcquisitionMode('DDA')
         self.verbose = verbose
+        self.mz_lower = mz_lower
+        self.mz_upper = mz_upper
 
         self._setup(verbose=verbose)
 

@@ -51,29 +51,27 @@ class BinomialIonSource:
         self.verbose = verbose
         self.name = name
 
-    def simulate_charge_state_distribution_pandas(self, data: pd.DataFrame) -> pd.DataFrame:
-        sequences = data.sequence
+    def simulate_charge_state_distribution_pandas(self,
+                                                  data: pd.DataFrame, min_charge_contrib: float = .005) -> pd.DataFrame:
         vec_get_num_protonizable_sites = np.vectorize(get_num_protonizable_sites)
-        basic_aa_nums = vec_get_num_protonizable_sites(sequences)
+        basic_aa_nums = vec_get_num_protonizable_sites(data.sequence)
 
-        charge_state_distribtuions = []
+        r_table = []
 
         # TODO: make slow method go brrrrrrrr
-        for baa_num in tqdm(basic_aa_nums, ncols=80, desc='Simulating charge'):
+        for baa_num, (_, row) in tqdm(zip(basic_aa_nums, data.iterrows()), total=len(basic_aa_nums), ncols=80,
+                                      desc='Simulating charge'):
+
             rel_intensities = binom(baa_num, self.charged_probability).pmf(self.allowed_charges)
-            charge_state_distribtuions.append(
-                dict(filter(lambda x: x[1] > 0, zip(self.allowed_charges, rel_intensities))))
 
-        data[f'charge_states_{self.name}_json'] = charge_state_distribtuions
+            for i, charge in enumerate(rel_intensities, start=1):
+                if charge >= min_charge_contrib:
+                    r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})
 
-        # Convert array to dictionary with non-zero values and then to JSON string
-        data[f'charge_states_{self.name}'] = data[f'charge_states_{self.name}_json'].apply(
-            lambda r: json.dumps({int(x): float(np.round(y, 4)) for x, y in r.items()}))
-
-        return data
+        return pd.DataFrame(r_table)
 
 
-class DeepChargeStateDistribution(PeptideChargeStateDistribution):
+class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
 
     def __init__(self, model: 'GRUChargeStatePredictor', tokenizer: tf.keras.preprocessing.text.Tokenizer,
                  allowed_charges: NDArray = np.array([1, 2, 3, 4]),
@@ -106,14 +104,17 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
 
         return np.array(c_list)
 
-    def simulate_charge_state_distribution_pandas(self, data: pd.DataFrame, batch_size: int = 1024) -> pd.DataFrame:
+    def simulate_charge_state_distribution_pandas(self,
+                                                  data: pd.DataFrame,
+                                                  batch_size: int = 1024,
+                                                  min_charge_contrib: float = .005) -> pd.DataFrame:
         """
         Simulate charge state distribution for a pandas DataFrame containing peptide sequences
 
         Args:
             data: pandas DataFrame containing peptide sequences
             batch_size: batch size for prediction
-            verbose: verbosity
+            min_charge_contrib: minimum relative abundance of a charge state to be included in the output
 
         Returns:
             pandas DataFrame containing simulated charge state distributions
@@ -122,14 +123,16 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
         tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
 
         probabilities = self.model.predict(tf_ds, verbose=self.verbose)
-        col_name = f'charge_states_{self.name}_json'
-        data[col_name] = [dict(filter(lambda x: x[1] > 0.005, list(zip(self.allowed_charges, x)))) for x in
-                          probabilities]
 
-        data[col_name] = data[col_name].apply(
-            lambda r: json.dumps({int(x): float(np.round(y, 4)) for x, y in r.items()}))
+        r_table = []
 
-        return data
+        for charges, (_, row) in tqdm(zip(probabilities, data.iterrows()), desc='flatmap charges', ncols=80,
+                                      total=len(probabilities)):
+            for i, charge in enumerate(charges, start=1):
+                if charge >= min_charge_contrib:
+                    r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})
+
+        return pd.DataFrame(r_table)
 
 
 class GRUChargeStatePredictor(tf.keras.models.Model):
