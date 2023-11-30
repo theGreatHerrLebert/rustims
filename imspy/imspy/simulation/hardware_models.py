@@ -83,7 +83,7 @@ class Chromatography(Device):
         self._profile_model = None
         self._irt_to_rt_converter = None
         self._frame_length = 1200
-        self._gradient_length = 120*60*1000 # 120 minutes in miliseconds
+        self._gradient_length = 120 * 60 * 1000 # 120 minutes in miliseconds
 
     @property
     def frame_length(self):
@@ -370,11 +370,12 @@ class RandomIonSource(IonizationModel):
             charge_profiles.append(ChargeProfile([c],[i],model_params={"name":"RandomIonSource"}))
         return charge_profiles
 
-class BinomialIonSource():
+
+class BinomialIonSource:
     def __init__(self):
         super().__init__()
-        self._charged_probability =  0.5
-        self._allowed_charges =  np.array([1, 2, 3, 4], dtype=np.int8)
+        self._charged_probability = 0.5
+        self._allowed_charges = np.array([1, 2, 3, 4], dtype=np.int8)
 
     @property
     def allowed_charges(self):
@@ -402,6 +403,7 @@ class BinomialIonSource():
             rel_intensities = binom(baa_num,self.charged_probability).pmf(self.allowed_charges)
             charge_profiles.append(ChargeProfile(self.allowed_charges,rel_intensities,model_params={"name":"BinomialIonSource","basic_aa_num":baa_num}))
         return charge_profiles
+
 
 class IonMobilitySeparation(Device):
     def __init__(self, name:str = "IonMobilityDevice"):
@@ -596,7 +598,6 @@ class IonMobilitySeparation(Device):
         pass
 
 
-
 class TrappedIon(IonMobilitySeparation):
 
     def __init__(self, name:str = "TrappedIonMobilitySeparation"):
@@ -623,6 +624,7 @@ class IonMobilityApexModel(Model):
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: IonMobilitySeparation) -> NDArray[np.float64]:
         return super().simulate(sample, device)
 
+
 class IonMobilityProfileModel(Model):
     def __init__(self):
         pass
@@ -630,6 +632,7 @@ class IonMobilityProfileModel(Model):
     @abstractmethod
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: IonMobilitySeparation) -> NDArray:
         return super().simulate(sample, device)
+
 
 class NeuralIonMobilityApex(IonMobilityApexModel):
 
@@ -672,6 +675,7 @@ class NeuralIonMobilityApex(IonMobilityApexModel):
         K0s = device.ccs_to_reduced_im(np.squeeze(ccs), mz, data['charge'].values)
         scans = device.reduced_im_to_scan(K0s)
         return K0s,scans
+
 
 class NormalIonMobilityProfileModel(IonMobilityProfileModel):
     def __init__(self):
@@ -729,6 +733,7 @@ class MzSeparation(Device):
     def run(self, sample: ProteomicsExperimentSampleSlice):
         pass
 
+
 class TOF(MzSeparation):
     def __init__(self, name:str = "TimeOfFlightMassSpectrometer"):
         super().__init__(name)
@@ -736,6 +741,7 @@ class TOF(MzSeparation):
     def run(self, sample: ProteomicsExperimentSampleSlice):
         spectra = self.model.simulate(sample, self)
         sample.add_simulation("simulated_mz_spectrum", spectra)
+
 
 class MzSeparationModel(Model):
     def __init__(self):
@@ -752,6 +758,7 @@ class MzSeparationModel(Model):
     @abstractmethod
     def simulate(self, sample: ProteomicsExperimentSampleSlice, device: MzSeparation):
         return super().simulate(sample, device)
+
 
 class AveragineModel(MzSeparationModel):
     def __init__(self):

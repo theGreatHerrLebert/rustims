@@ -3,7 +3,7 @@
 """
 import numpy as np
 import numba
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional
 from numpy.typing import ArrayLike
 from imspy.core import MzSpectrum
 from imspy.utility.utilities import normal_pdf

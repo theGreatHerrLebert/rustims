@@ -30,6 +30,10 @@ class PeptideChromatographyApex(ABC):
     def simulate_separation_times(self, sequences: list[str]) -> NDArray:
         pass
 
+    @abstractmethod
+    def simulate_separation_times_pandas(self, data: pd.DataFrame) -> pd.DataFrame:
+        pass
+
 
 class GRURetentionTimePredictor(tf.keras.models.Model):
 
