@@ -1,9 +1,12 @@
+import pandas as pd
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 
 from imspy.algorithm.utilities import get_model_path
+from imspy.simulation.exp import ExperimentDataHandle
 from imspy.utility import tokenize_unimod_sequence
+from imspy.simulation.utility import irt_to_rts_numba
 
 
 def load_deep_retention_time() -> tf.keras.models.Model:
@@ -75,10 +78,12 @@ class GRURetentionTimePredictor(tf.keras.models.Model):
 
 class DeepChromatographyApex(PeptideChromatographyApex):
 
-    def __init__(self, model: GRURetentionTimePredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer):
+    def __init__(self, model: GRURetentionTimePredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer,
+                 name: str = 'gru_predictor'):
         super(DeepChromatographyApex, self).__init__()
         self.model = model
         self.tokenizer = tokenizer
+        self.name = name
 
     def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> NDArray:
         char_tokens = [tokenize_unimod_sequence(seq) for seq in sequences]
@@ -91,3 +96,14 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
 
         return self.model.predict(tf_ds, verbose=verbose)
+
+    def simulate_separation_times_pandas(self, data: pd.DataFrame,
+                                         gradient_length: float,
+                                         batch_size: int = 1024, verbose: bool = False) -> pd.DataFrame:
+        tokens = self._preprocess_sequences(data.sequence.values)
+        tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
+
+        irts = self.model.predict(tf_ds, verbose=verbose)
+        rts = irt_to_rts_numba(irts, new_max=gradient_length)
+        data[f'retention_time_{self.name}'] = rts
+        return data

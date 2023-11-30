@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
-import sqlite3
 
 from sagepy.core.database import PeptideIx
 from sagepy.core import EnzymeBuilder, SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration
 from tqdm import tqdm
+
+from imspy.simulation.exp import ExperimentDataHandle
 
 
 class PeptideDigest:
@@ -21,15 +22,32 @@ class PeptideDigest:
                  ):
 
         self.verbose = verbose
+        self.peptides = None
+        self.min_len = min_len
+        self.max_len = max_len
+        self.missed_cleavages = missed_cleavages
+        self.cleave_at = cleave_at
+        self.restrict = restrict
+        self.generate_decoys = generate_decoys
+        self.c_terminal = c_terminal
+        self.fasta_path = fasta_path
 
-        # generate enzyme (trypsin)
+        self._setup()
+
+    def _setup(self):
+        try:
+            fasta = open(self.fasta_path, 'r').read()
+        except FileNotFoundError:
+            print(f"Could not find fasta file at {self.fasta_path}")
+            raise FileNotFoundError
+
         enzyme_builder = EnzymeBuilder(
-            missed_cleavages=missed_cleavages,
-            min_len=min_len,
-            max_len=max_len,
-            cleave_at=cleave_at,
-            restrict=restrict,
-            c_terminal=c_terminal
+            missed_cleavages=self.missed_cleavages,
+            min_len=self.min_len,
+            max_len=self.max_len,
+            cleave_at=self.cleave_at,
+            restrict=self.restrict,
+            c_terminal=self.c_terminal
         )
 
         # generate static cysteine modification
@@ -42,16 +60,12 @@ class PeptideDigest:
         static = validate_mods(static_mods)
         variable = validate_var_mods(variable_mods)
 
-        # read fasta
-        with open(fasta_path, 'r') as f:
-            fasta = f.read()
-
         sage_config = SageSearchConfiguration(
             fasta=fasta,
             enzyme_builder=enzyme_builder,
             static_mods=static,
             variable_mods=variable,
-            generate_decoys=generate_decoys,
+            generate_decoys=self.generate_decoys,
             bucket_size=int(np.power(2, 6))
         )
 
@@ -59,7 +73,7 @@ class PeptideDigest:
 
         peptide_list = []
 
-        for i in tqdm(range(indexed_db.num_peptides), desc='Digesting peptides', disable=not verbose, ncols=80):
+        for i in tqdm(range(indexed_db.num_peptides), desc='Digesting peptides', disable=not self.verbose, ncols=80):
             idx = PeptideIx(idx=i)
             peptide = indexed_db[idx]
 
@@ -74,18 +88,8 @@ class PeptideDigest:
 
         self.peptides = pd.DataFrame(peptide_list)
 
-    def write_peptides_to_sqlite(self, path: str):
-        """ Write the peptides to a sqlite database
-
-        Parameters
-        ----------
-        path : str
-            Path to the sqlite database
-        """
-        # write code to connect ot an existing database and write the peptide table,  or overwrite the existing one
-        # if it exists
+    def write_to_sqlite(self, handle: ExperimentDataHandle):
         if self.verbose:
-            print("Writing peptides to sqlite database...")
-        conn = sqlite3.connect(path)
-        self.peptides.to_sql('peptides', conn, if_exists='replace', index=False)
-        conn.close()
+            print(f'writing {self.peptides.shape[0]} peptides to {handle.db_path}')
+
+        handle.create_table('peptides', self.peptides)

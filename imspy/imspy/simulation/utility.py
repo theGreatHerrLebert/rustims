@@ -41,7 +41,7 @@ def accumulated_intensity_cdf_numba(sample_start, sample_end, mean, std_dev):
 
 
 @jit(nopython=True)
-def irt_to_rts_numba(irt: NDArray, min_val: float, max_val: float, new_min=0, new_max=120):
+def irt_to_rts_numba(irt: NDArray, new_min=0, new_max=120):
     """
     Scale an array of values from the original range (min_val, max_val) to a new range (new_min, new_max).
 
@@ -49,10 +49,6 @@ def irt_to_rts_numba(irt: NDArray, min_val: float, max_val: float, new_min=0, ne
     ----------
     irt : NDArray
         Array of values to be scaled.
-    min_val : float
-        Minimum value of the original range.
-    max_val : float
-        Maximum value of the original range.
     new_min : float
         Minimum value of the new range.
     new_max : float
@@ -63,6 +59,8 @@ def irt_to_rts_numba(irt: NDArray, min_val: float, max_val: float, new_min=0, ne
     NDArray
         Array of scaled values.
     """
+    min_val = np.min(irt)
+    max_val = np.max(irt)
     scaled_values = new_min + (irt - min_val) * (new_max - new_min) / (max_val - min_val)
     return scaled_values * 60
 
