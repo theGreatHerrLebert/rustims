@@ -62,7 +62,7 @@ def irt_to_rts_numba(irt: NDArray, new_min=0, new_max=120):
     min_val = np.min(irt)
     max_val = np.max(irt)
     scaled_values = new_min + (irt - min_val) * (new_max - new_min) / (max_val - min_val)
-    return scaled_values * 60
+    return scaled_values
 
 
 @jit(nopython=True)
@@ -153,7 +153,6 @@ def get_frames_numba(rt_value, times_array, std_rt, z_score):
     NDArray
         Array of frame indices
     """
-
     rt_min, rt_max = calculate_bounds_numba(rt_value, std_rt, z_score)
     first_frame = np.argmin(np.abs(times_array - rt_min)) + 1
     last_frame = np.argmin(np.abs(times_array - rt_max)) + 1
