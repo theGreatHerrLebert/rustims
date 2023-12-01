@@ -112,6 +112,10 @@ impl PyMzSpectrum {
     pub fn __mul__(&self, scale: f64) -> PyResult<PyMzSpectrum> {
         Ok(PyMzSpectrum { inner: (self.inner.clone() * scale) })
     }
+
+    pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.to_centroided(baseline_noise_level, sigma) }
+    }
 }
 
 #[pyclass]
