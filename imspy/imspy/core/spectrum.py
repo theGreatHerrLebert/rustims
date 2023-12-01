@@ -288,14 +288,14 @@ class MzSpectrum:
 
         return json.dumps(json_dict)
 
-    def to_centroided(self, baseline_noise_level: int = 0.0, sigma: float = 0.1):
+    def to_centroided(self, baseline_noise_level: int = 0.0, sigma: float = 0.1, normalize: bool = True):
         """Convert the spectrum to a centroided spectrum.
 
         Returns:
             MzSpectrum: Centroided spectrum.
         """
         # first generate dense spectrum
-        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma))
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma, normalize))
 
     
 class MzSpectrumVectorized:
