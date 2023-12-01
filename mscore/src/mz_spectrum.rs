@@ -169,7 +169,7 @@ impl MzSpectrum {
         splits
     }
 
-    pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64) -> MzSpectrum {
+    pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> MzSpectrum {
 
         let filtered = self.filter_ranged(0.0, 1e9, baseline_noise_level as f64, 1e9);
 
@@ -204,6 +204,11 @@ impl MzSpectrum {
             mean_mz /= sum_i;
             cent_mz.push(mean_mz);
             cent_i.push(sum_i);
+        }
+
+        if normalize {
+            let max_i = cent_i.iter().cloned().max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0);
+            cent_i = cent_i.iter().map(|&i| i / max_i).collect();
         }
 
         MzSpectrum::new(cent_mz, cent_i)
