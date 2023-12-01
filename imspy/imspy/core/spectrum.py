@@ -288,6 +288,15 @@ class MzSpectrum:
 
         return json.dumps(json_dict)
 
+    def to_centroided(self, baseline_noise_level: int = 0.0, sigma: float = 0.1):
+        """Convert the spectrum to a centroided spectrum.
+
+        Returns:
+            MzSpectrum: Centroided spectrum.
+        """
+        # first generate dense spectrum
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma))
+
     
 class MzSpectrumVectorized:
     def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):
@@ -353,11 +362,11 @@ class MzSpectrumVectorized:
         # first generate dense spectrum
         dense_spectrum = MzSpectrumVectorized.from_py_mz_spectrum_vectorized(self.__spec_ptr.to_dense_spectrum(None))
         # find peaks in the dense spectrum and widths with scipy
-        peaks, peak_info = find_peaks(dense_spectrum.values, height=0, width=(0,0.5))
+        peaks, peak_info = find_peaks(dense_spectrum.values, height=0, width=(0, 0.5))
         # then get the peak integrals
         integrals = integrate_method(peaks, peak_info)
         # then create a new spectrum with the peak indices and the integrals
-        return MzSpectrum.from_py_mz_spectrum(pims.PyMzSpectrum(dense_spectrum.indices[peaks]/np.power(10,dense_spectrum.resolution), integrals))
+        return MzSpectrum.from_py_mz_spectrum(pims.PyMzSpectrum(dense_spectrum.indices[peaks]/np.power(10, dense_spectrum.resolution), integrals))
 
     def __repr__(self):
         return f"MzSpectrumVectorized(num_values={len(self.values)})"
