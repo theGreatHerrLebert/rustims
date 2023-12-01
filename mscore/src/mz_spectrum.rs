@@ -168,6 +168,46 @@ impl MzSpectrum {
 
         splits
     }
+
+    pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64) -> MzSpectrum {
+
+        let filtered = self.filter_ranged(0.0, 1e9, baseline_noise_level as f64, 1e9);
+
+        let mut cent_mz = Vec::new();
+        let mut cent_i: Vec<f64> = Vec::new();
+
+        let mut last_mz = 0.0;
+        let mut mean_mz = 0.0;
+        let mut sum_i = 0.0;
+
+        for (i, &current_mz) in filtered.mz.iter().enumerate() {
+            let current_intensity = filtered.intensity[i];
+
+            // If peak is too far away from last peak, push centroid
+            if current_mz - last_mz > sigma && mean_mz > 0.0 {
+                mean_mz /= sum_i;
+                cent_mz.push(mean_mz);
+                cent_i.push(sum_i);
+
+                // Start new centroid
+                sum_i = 0.0;
+                mean_mz = 0.0;
+            }
+
+            mean_mz += current_mz * current_intensity as f64;
+            sum_i += current_intensity;
+            last_mz = current_mz;
+        }
+
+        // Push back last remaining centroid
+        if mean_mz > 0.0 {
+            mean_mz /= sum_i;
+            cent_mz.push(mean_mz);
+            cent_i.push(sum_i);
+        }
+
+        MzSpectrum::new(cent_mz, cent_i)
+    }
 }
 
 impl ToResolution for MzSpectrum {
