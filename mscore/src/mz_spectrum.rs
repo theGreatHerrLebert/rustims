@@ -207,8 +207,8 @@ impl MzSpectrum {
         }
 
         if normalize {
-            let max_i = cent_i.iter().cloned().max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0);
-            cent_i = cent_i.iter().map(|&i| i / max_i).collect();
+            let sum_i: f64 = cent_i.iter().sum();
+            cent_i = cent_i.iter().map(|&i| i / sum_i).collect();
         }
 
         MzSpectrum::new(cent_mz, cent_i)
