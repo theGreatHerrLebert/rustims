@@ -1,11 +1,12 @@
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 from imspy.chemistry import ccs_to_one_over_k0
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
-from imspy.algorithm.utilities import get_model_path
+from imspy.algorithm.utility import get_model_path
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:
@@ -27,6 +28,10 @@ class PeptideIonMobilityApex(ABC):
 
     @abstractmethod
     def simulate_ion_mobilities(self, sequences: list[str], charges: list[int]) -> NDArray:
+        pass
+
+    @abstractmethod
+    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame) -> pd.DataFrame:
         pass
 
 
@@ -141,10 +146,14 @@ class GRUCCSPredictor(tf.keras.models.Model):
 
 
 class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
-    def __init__(self, model: GRUCCSPredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer):
+    def __init__(self, model: GRUCCSPredictor, tokenizer: tf.keras.preprocessing.text.Tokenizer,
+                 verbose: bool = False,
+                 name: str = 'gru_predictor'):
         super(DeepPeptideIonMobilityApex, self).__init__()
         self.model = model
         self.tokenizer = tokenizer
+        self.name = name
+        self.verbose = verbose
 
     def _preprocess_sequences(self, sequences: list[str], pad_len: int = 50) -> NDArray:
         char_tokens = [tokenize_unimod_sequence(sequence) for sequence in sequences]
@@ -156,7 +165,6 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                                 sequences: list[str],
                                 charges: list[int],
                                 mz: list[float],
-                                verbose: bool = False,
                                 batch_size: int = 1024) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
 
@@ -165,6 +173,23 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         charges_one_hot = tf.one_hot(np.array(charges) - 1, 4)
 
         ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(mz))).batch(batch_size)
-        ccs, _ = self.model.predict(ds, verbose=verbose)
+        ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
         return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
+
+    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024) -> pd.DataFrame:
+        tokenized_sequences = self._preprocess_sequences(data.sequence.values)
+
+        # prepare masses, charges, sequences
+        m = np.expand_dims(data.mz.values, 1)
+        charges_one_hot = tf.one_hot(np.array(data.charge.values) - 1, 4)
+
+        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(m))).batch(batch_size)
+        ccs, _ = self.model.predict(ds, verbose=self.verbose)
+
+        data[f'mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, m, data.charge.values)])
+        data = data[['peptide_id', 'mz', 'charge', 'relative_abundance', f'mobility_{self.name}']]
+        return data
+
+    def __repr__(self):
+        return f'DeepPeptideIonMobilityApex(name={self.name}, model={self.model})'

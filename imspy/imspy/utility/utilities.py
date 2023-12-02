@@ -25,7 +25,7 @@ def normal_pdf(x: ArrayLike, mass: float, s: float = 0.001, inv_sqrt_2pi: float 
         return inv_sqrt_2pi / s * np.exp(-0.5 * np.power(a,2))
 
 
-@numba.jit
+@numba.jit(nopython=True)
 def gaussian(x, μ=0, σ=1):
     """
     Gaussian function
@@ -40,7 +40,7 @@ def gaussian(x, μ=0, σ=1):
     return A * B
 
 
-@numba.jit
+@numba.jit(nopython=True)
 def exp_distribution(x, λ=1):
     """
     Exponential function
@@ -53,7 +53,7 @@ def exp_distribution(x, λ=1):
     return 0
 
 
-@numba.jit
+@numba.jit(nopython=True)
 def exp_gaussian(x, μ=-3, σ=1, λ=.25):
     """
     laplacian distribution with exponential decay
@@ -179,6 +179,7 @@ def tokenize_proforma_sequence(sequence: str):
     token_list.append("<END>")
 
     return token_list
+
 
 def get_aa_num_proforma_sequence(sequence:str):
     """

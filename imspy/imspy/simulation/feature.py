@@ -13,15 +13,18 @@ from typing import Optional, Dict
 
 class Profile:
 
-    def __init__(self,positions:Optional[ArrayLike] = None, rel_abundancies:Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
+    def __init__(self, positions: Optional[ArrayLike] = None, rel_abundances: Optional[ArrayLike] = None,
+                 model_params: Optional[Dict] = None, jsons:Optional[str] = None):
+
         if jsons is not None:
             self._jsons = jsons
-            self.positions, self.rel_abundancies, self.model_params, self.access_dictionary = self._from_jsons(jsons)
+            self.positions, self.rel_abundances, self.model_params, self.access_dictionary = self._from_jsons(jsons)
+
         else:
             self.positions = np.asarray(positions)
-            self.rel_abundancies = np.asarray(rel_abundancies)
+            self.rel_abundances = np.asarray(rel_abundances)
             self.model_params = model_params
-            self.access_dictionary = {p:i for p,i in zip(positions, rel_abundancies)}
+            self.access_dictionary = {p:i for p,i in zip(positions, rel_abundances)}
             self._jsons = self._to_jsons()
 
     def __iter__(self):
@@ -32,9 +35,9 @@ class Profile:
     def __next__(self):
         if self.__iterator_pos < self.__size:
             p = self.positions[self.__iterator_pos]
-            ra = self.rel_abundancies[self.__iterator_pos]
+            ra = self.rel_abundances[self.__iterator_pos]
             self.__iterator_pos += 1
-            return p,ra
+            return p, ra
         raise StopIteration
 
     def __getitem__(self, position: int):
@@ -42,55 +45,64 @@ class Profile:
 
     def _to_jsons(self):
         mp = {}
-        for key,val in self.model_params.items():
-            if isinstance(val,np.generic):
+        for key, val in self.model_params.items():
+            if isinstance(val, np.generic):
                 mp[key] = val.item()
             else:
                 mp[key] = val
 
         json_dict = {"positions": self.positions.tolist(),
-                     "rel_abundancies": self.rel_abundancies.tolist(),
+                     "rel_abundances": self.rel_abundances.tolist(),
                      "model_params": mp}
-        return json.dumps(json_dict, allow_nan = False)
+        return json.dumps(json_dict, allow_nan=False)
 
     def _from_jsons(self, jsons:str):
         json_dict = json.loads(jsons)
         positions = json_dict["positions"]
-        rel_abundancies = json_dict["rel_abundancies"]
-        access_dictionary = {p:i for p,i in zip(positions, rel_abundancies)}
-        return positions,rel_abundancies,json_dict["model_params"], access_dictionary
+        rel_abundances = json_dict["rel_abundances"]
+        access_dictionary = {p: i for p, i in zip(positions, rel_abundances)}
+        return positions, rel_abundances, json_dict["model_params"], access_dictionary
 
     @property
     def jsons(self):
         return self._jsons
 
+
 class RTProfile(Profile):
 
-    def __init__(self,frames:Optional[ArrayLike] = None, rel_abundancies:Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
-        super().__init__(frames, rel_abundancies, model_params, jsons)
+    def __init__(self, frames: Optional[ArrayLike] = None, rel_abundances: Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
+        super().__init__(frames, rel_abundances, model_params, jsons)
 
     @property
     def frames(self):
         return self.positions
 
+
 class ScanProfile(Profile):
 
-    def __init__(self,scans:Optional[ArrayLike] = None, rel_abundancies:Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
-        super().__init__(scans, rel_abundancies, model_params,  jsons)
+    def __init__(self, scans:Optional[ArrayLike] = None, rel_abundances:Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
+        super().__init__(scans, rel_abundances, model_params, jsons)
 
     @property
     def scans(self):
         return self.positions
 
+
 class ChargeProfile(Profile):
-    def __init__(self,charges:Optional[ArrayLike] = None, rel_abundancies:Optional[ArrayLike] = None, model_params: Optional[Dict] = None, jsons:Optional[str] = None):
-        abundant_charges = charges[rel_abundancies>0]
-        relative_abundancies_over_0 = rel_abundancies[rel_abundancies>0]
-        super().__init__(abundant_charges, relative_abundancies_over_0, model_params, jsons)
+
+    def __init__(self, charges: Optional[ArrayLike] = None, rel_abundance: Optional[ArrayLike] = None,
+                 model_params: Optional[Dict] = None, jsons: Optional[str] = None):
+
+        abundant_charges = charges[rel_abundance > 0]
+
+        relative_abundances_over_0 = rel_abundance[rel_abundance > 0]
+
+        super().__init__(abundant_charges, relative_abundances_over_0, model_params, jsons)
 
     @property
     def charges(self):
         return self.positions
+
 
 class FeatureGenerator(ABC):
     def __init__(self):
