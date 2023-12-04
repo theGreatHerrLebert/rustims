@@ -593,6 +593,50 @@ impl TimsSpectrum {
     }
 }
 
+impl std::ops::Add for TimsSpectrum {
+    type Output = Self;
+    fn add(self, other: Self) -> TimsSpectrum {
+        // only tims spectra with identical frame_id and scan can be added
+        assert_eq!(self.frame_id, other.frame_id);
+        assert_eq!(self.scan, other.scan);
+
+        // average the mobility and retention time
+        let average_mobility = (self.mobility + other.mobility) / 2.0;
+        let average_retention_time = (self.retention_time + other.retention_time) / 2.0;
+
+        // combine the spectra
+        let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
+
+        // Helper to quantize mz to an integer key
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        // Add the m/z and intensities from the first spectrum to the map
+        for (mz, intensity) in self.spectrum.mz_spectrum.mz.iter().zip(self.spectrum.mz_spectrum.intensity.iter()) {
+            let key = quantize(*mz);
+            combined_map.insert(key, *intensity);
+        }
+
+        // Combine the second spectrum into the map
+        for (mz, intensity) in other.spectrum.mz_spectrum.mz.iter().zip(other.spectrum.mz_spectrum.intensity.iter()) {
+            let key = quantize(*mz);
+            let entry = combined_map.entry(key).or_insert(0.0);
+            *entry += *intensity;
+        }
+
+        // Convert the combined map back into two Vec<f64>
+        let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
+        let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
+        let combined_spectrum = IndexedMzSpectrum { index: self.spectrum.index.clone(), mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
+
+        // if the ms types are identical, use the ms type of the first spectrum, otherwise use Unknown
+        let ms_type = if self.ms_type == other.ms_type { self.ms_type } else { MsType::Unknown };
+
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: average_retention_time, mobility: average_mobility, ms_type, spectrum: combined_spectrum }
+    }
+}
+
 impl Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.mobility, self.spectrum)

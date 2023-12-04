@@ -107,10 +107,10 @@ impl PyMzSpectrum {
         Ok(py_filtered)
     }
     pub fn __add__(&self, other: PyMzSpectrum) -> PyResult<PyMzSpectrum> {
-        Ok(PyMzSpectrum { inner: (self.inner.clone() + other.inner) })
+        Ok(PyMzSpectrum { inner: self.inner.clone() + other.inner })
     }
     pub fn __mul__(&self, scale: f64) -> PyResult<PyMzSpectrum> {
-        Ok(PyMzSpectrum { inner: (self.inner.clone() * scale) })
+        Ok(PyMzSpectrum { inner: self.inner.clone() * scale })
     }
 
     pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> PyMzSpectrum {
@@ -199,6 +199,7 @@ impl PyIndexedMzSpectrum {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyTimsSpectrum {
     pub inner: TimsSpectrum,
 }
@@ -279,5 +280,9 @@ impl PyTimsSpectrum {
 
     pub fn to_resolution(&self, resolution: i32) -> Self {
         PyTimsSpectrum{ inner: self.inner.to_resolution(resolution)}
+    }
+
+    pub fn __add__(&self, other: PyTimsSpectrum) -> PyResult<Self> {
+        Ok(PyTimsSpectrum { inner: self.inner.clone() + other.inner })
     }
 }
