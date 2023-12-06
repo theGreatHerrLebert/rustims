@@ -6,4 +6,5 @@ pub mod data {
     pub mod dda;
     pub mod dia;
     pub mod handle;
+    pub mod simulation;
 }

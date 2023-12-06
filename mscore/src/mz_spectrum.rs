@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
 use crate::tims_frame::{ToResolution, Vectorized};
+use serde::{Serialize, Deserialize};
 
 /// Represents the type of spectrum.
 ///
@@ -57,7 +58,7 @@ impl Display for MsType {
 }
 
 /// Represents a mass spectrum with associated m/z values and intensities.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MzSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
