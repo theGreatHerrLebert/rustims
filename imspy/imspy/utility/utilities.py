@@ -20,9 +20,9 @@ def normal_pdf(x: ArrayLike, mass: float, s: float = 0.001, inv_sqrt_2pi: float 
     """
     a = (x - mass) / s
     if normalize:
-        return np.exp(-0.5 * np.power(a,2))
+        return np.exp(-0.5 * np.power(a, 2))
     else:
-        return inv_sqrt_2pi / s * np.exp(-0.5 * np.power(a,2))
+        return inv_sqrt_2pi / s * np.exp(-0.5 * np.power(a, 2))
 
 
 @numba.jit(nopython=True)

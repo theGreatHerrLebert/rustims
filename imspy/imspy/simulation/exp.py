@@ -1,8 +1,25 @@
 import sqlite3
 import os
+from typing import List
 
 import numpy as np
 import pandas as pd
+import imspy_connector as pims
+
+from imspy.core import TimsFrame
+
+
+class TimsTofSyntheticAcquisitionBuilderDDA:
+    def __init__(self, db_path: str):
+        self.handle = pims.PyTimsTofSyntheticsDDA(db_path)
+
+    def get_frame(self, frame_id: int):
+        frame = self.handle.build_frame(frame_id)
+        return TimsFrame.from_py_tims_frame(frame)
+
+    def build_frames(self, frame_ids: List[int], num_threads: int = 4):
+        frames = self.handle.build_frames(frame_ids, num_threads)
+        return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
 
 class ExperimentDataHandle:

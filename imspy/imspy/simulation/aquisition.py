@@ -83,7 +83,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  im_upper=1.6,
                  num_scans=917,
                  mz_lower: float = 150,
-                 mz_upper: float = 1600):
+                 mz_upper: float = 1700):
         super().__init__(gradient_length, rt_cycle_length, im_lower, im_upper, num_scans)
         self.scan_table = None
         self.frame_table = None
