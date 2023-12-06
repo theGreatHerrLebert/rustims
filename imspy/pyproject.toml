@@ -25,7 +25,6 @@ scipy = ">=1.7.1"
 tqdm = ">=4.66"
 pyarrow =">=13.0"
 mendeleev = ">=0.7.0"
-tqdm = ">=4.62.0"
 
 [build-system]
 requires = ["poetry-core"]
