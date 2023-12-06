@@ -8,6 +8,7 @@ from tensorflow import sparse as sp
 from imspy.utility.utilities import re_index_indices
 
 import imspy_connector as pims
+
 from imspy.core.frame import TimsFrame, TimsFrameVectorized
 from imspy.core.spectrum import MzSpectrum, TimsSpectrum
 
@@ -55,6 +56,18 @@ class TimsSlice:
         instance.__slice_ptr = tims_slice
         instance.__current_index = 0
         return instance
+
+    @classmethod
+    def from_frames(cls, frames: List[TimsFrame]):
+        """Create a TimsSlice from a list of TimsFrames.
+
+        Args:
+            frames (List[TimsFrame]): List of TimsFrames.
+
+        Returns:
+            TimsSlice: TimsSlice created from the list of TimsFrames.
+        """
+        return cls.from_py_tims_slice(pims.PyTimsSlice.from_frames([frame.get_fragment_ptr() for frame in frames]))
 
     @property
     def first_frame_id(self) -> int:

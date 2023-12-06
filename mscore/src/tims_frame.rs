@@ -2,6 +2,7 @@ use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Formatter};
 use itertools;
+use itertools::izip;
 
 use crate::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, TimsSpectrum};
 
@@ -23,7 +24,7 @@ pub struct RawTimsFrame {
     pub intensity: Vec<f64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -68,7 +69,7 @@ pub struct ImsFrameVectorized {
     pub resolution: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,
@@ -254,6 +255,39 @@ impl TimsFrame {
         TimsFrame::new(first_window.frame_id, first_window.ms_type.clone(), first_window.retention_time, scan, mobility, tof, mzs, intensity)
     }
 
+    pub fn from_tims_spectra(spectra: Vec<TimsSpectrum>) -> TimsFrame {
+        let mut tree: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
+
+        for spectrum in &spectra {
+            tree.entry(spectrum.scan)
+                .and_modify(|e| *e = e.clone() + spectrum.clone())
+                .or_insert(spectrum.clone());
+        }
+
+        // Assuming an average size for each spectrum to pre-allocate vector sizes
+        let average_size = tree.values().next().map_or(0, |s| s.spectrum.mz_spectrum.mz.len());
+        let total_size = tree.len() * average_size;
+
+        let mut scans = Vec::with_capacity(total_size);
+        let mut tof = Vec::with_capacity(total_size);
+        let mut mzs = Vec::with_capacity(total_size);
+        let mut intensity = Vec::with_capacity(total_size);
+        let mut mobility = Vec::with_capacity(total_size);
+
+        for (scan, spectrum) in tree {
+            for (i, mz) in spectrum.spectrum.mz_spectrum.mz.iter().enumerate() {
+                scans.push(scan);
+                mobility.push(spectrum.mobility);
+                tof.push(spectrum.spectrum.index[i]); // Potential issue here
+                mzs.push(*mz);
+                intensity.push(spectrum.spectrum.mz_spectrum.intensity[i]); // Potential issue here
+            }
+        }
+
+        let first_spectrum = spectra.first().unwrap();
+        TimsFrame::new(first_spectrum.frame_id, first_spectrum.ms_type.clone(), first_spectrum.retention_time, scans, mobility, tof, mzs, intensity)
+    }
+
     pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
         let factor = (10.0f64).powi(resolution);
         let num_colums = ((window_length * factor).round() + 1.0) as usize;
@@ -307,7 +341,68 @@ impl TimsFrame {
             mz_spectrum: MzSpectrum { mz, intensity },
         }
     }
+}
 
+struct AggregateData {
+    intensity_sum: f64,
+    ion_mobility_sum: f64,
+    tof_sum: i32,
+    count: i32,
+}
+
+impl std::ops::Add for TimsFrame {
+    type Output = Self;
+    fn add(self, other: Self) -> TimsFrame {
+        let mut combined_map: BTreeMap<(i64, i32), AggregateData> = BTreeMap::new();
+
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        let add_to_map = |map: &mut BTreeMap<(i64, i32), AggregateData>, mz, ion_mobility, tof, scan, intensity| {
+            let key = (quantize(mz), scan);
+            let entry = map.entry(key).or_insert(AggregateData { intensity_sum: 0.0, ion_mobility_sum: 0.0, tof_sum: 0, count: 0 });
+            entry.intensity_sum += intensity;
+            entry.ion_mobility_sum += ion_mobility;
+            entry.tof_sum += tof;
+            entry.count += 1;
+        };
+
+        for (mz, tof, ion_mobility, scan, intensity) in izip!(&self.ims_frame.mz, &self.tof, &self.ims_frame.mobility, &self.scan, &self.ims_frame.intensity) {
+            add_to_map(&mut combined_map, *mz, *ion_mobility, *tof, *scan, *intensity);
+        }
+
+        for (mz, tof, ion_mobility, scan, intensity) in izip!(&other.ims_frame.mz, &other.tof, &other.ims_frame.mobility, &other.scan, &other.ims_frame.intensity) {
+            add_to_map(&mut combined_map, *mz, *ion_mobility, *tof, *scan, *intensity);
+        }
+
+        let mut mz_combined = Vec::new();
+        let mut tof_combined = Vec::new();
+        let mut ion_mobility_combined = Vec::new();
+        let mut scan_combined = Vec::new();
+        let mut intensity_combined = Vec::new();
+
+        for ((quantized_mz, scan), data) in combined_map {
+            mz_combined.push(quantized_mz as f64 / 1_000_000.0);
+            tof_combined.push(data.tof_sum / data.count);
+            ion_mobility_combined.push(data.ion_mobility_sum / data.count as f64);
+            scan_combined.push(scan);
+            intensity_combined.push(data.intensity_sum);
+        }
+
+        TimsFrame {
+            frame_id: self.frame_id + other.frame_id,
+            ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
+            scan: scan_combined,
+            tof: tof_combined,
+            ims_frame: ImsFrame {
+                retention_time: (self.ims_frame.retention_time + other.ims_frame.retention_time) / 2.0,
+                mobility: ion_mobility_combined,
+                mz: mz_combined,
+                intensity: intensity_combined,
+            },
+        }
+    }
 }
 
 impl fmt::Display for TimsFrame {

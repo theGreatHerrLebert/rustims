@@ -25,11 +25,13 @@ impl PyMsType {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyMzSpectrum {
     pub inner: MzSpectrum,
 }
 
 #[pymethods]
+
 impl PyMzSpectrum {
     #[new]
     pub unsafe fn new(mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
@@ -37,8 +39,26 @@ impl PyMzSpectrum {
             inner: MzSpectrum {
                 mz: mz.as_slice()?.to_vec(),
                 intensity: intensity.as_slice()?.to_vec(),
-            },
+            }
         })
+    }
+    #[staticmethod]
+    pub unsafe fn from_mzspectra_list(list: Vec<PyMzSpectrum>, resolution: i32) -> PyResult<Self> {
+        if list.is_empty(){
+            Ok(PyMzSpectrum { 
+                inner: MzSpectrum {
+                    mz: Vec::new(),
+                    intensity: Vec::new(),
+                }
+            })
+        }
+        else {
+            let mut convoluted: MzSpectrum = MzSpectrum { mz: vec![], intensity: vec![] };
+            for spectrum in list {
+                convoluted = convoluted + spectrum.inner;
+            }
+            Ok(PyMzSpectrum { inner: convoluted.to_resolution(resolution) })
+        }
     }
 
     #[getter]
@@ -86,6 +106,16 @@ impl PyMzSpectrum {
         };
         Ok(py_filtered)
     }
+    pub fn __add__(&self, other: PyMzSpectrum) -> PyResult<PyMzSpectrum> {
+        Ok(PyMzSpectrum { inner: self.inner.clone() + other.inner })
+    }
+    pub fn __mul__(&self, scale: f64) -> PyResult<PyMzSpectrum> {
+        Ok(PyMzSpectrum { inner: self.inner.clone() * scale })
+    }
+
+    pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.to_centroided(baseline_noise_level, sigma, normalize) }
+    }
 }
 
 #[pyclass]
@@ -107,6 +137,10 @@ impl PyMzSpectrumVectorized {
         })
     }
 
+    pub fn to_dense_spectrum(&self, max_index: Option<usize>) -> PyMzSpectrumVectorized {
+        PyMzSpectrumVectorized { inner: self.inner.to_dense_spectrum(max_index) }
+    }
+    
     #[getter]
     pub fn resolution(&self) -> i32 {
         self.inner.resolution
@@ -165,6 +199,7 @@ impl PyIndexedMzSpectrum {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyTimsSpectrum {
     pub inner: TimsSpectrum,
 }
@@ -241,5 +276,13 @@ impl PyTimsSpectrum {
     #[getter]
     pub fn mz_spectrum(&self) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.spectrum.mz_spectrum.clone() }
+    }
+
+    pub fn to_resolution(&self, resolution: i32) -> Self {
+        PyTimsSpectrum{ inner: self.inner.to_resolution(resolution)}
+    }
+
+    pub fn __add__(&self, other: PyTimsSpectrum) -> PyResult<Self> {
+        Ok(PyTimsSpectrum { inner: self.inner.clone() + other.inner })
     }
 }

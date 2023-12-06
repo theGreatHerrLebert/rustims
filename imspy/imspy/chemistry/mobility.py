@@ -1,5 +1,7 @@
 import numpy as np
 
+SUMMARY_CONSTANT = 18509.8632163405
+
 
 def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
     """
@@ -11,7 +13,6 @@ def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_d
     :param temp: temperature of the drift gas in C°
     :param t_diff: factor to translate from C° to K
     """
-    SUMMARY_CONSTANT = 18509.8632163405
     reduced_mass = (mz * charge * mass_gas) / (mz * charge + mass_gas)
     return (SUMMARY_CONSTANT * charge) / (np.sqrt(reduced_mass * (temp + t_diff)) * 1 / one_over_k0)
 
@@ -26,6 +27,5 @@ def ccs_to_one_over_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.
     :param temp: temperature of the drift gas in C°
     :param t_diff: factor to translate from C° to K
     """
-    SUMMARY_CONSTANT = 18509.8632163405
     reduced_mass = (mz * charge * mass_gas) / (mz * charge + mass_gas)
     return ((np.sqrt(reduced_mass * (temp + t_diff))) * ccs) / (SUMMARY_CONSTANT * charge)

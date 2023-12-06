@@ -7,6 +7,7 @@ from tensorflow import sparse as sp
 
 import numpy as np
 import imspy_connector as pims
+
 from imspy.core.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
 
 from imspy.utility.utilities import re_index_indices
@@ -36,6 +37,17 @@ class TimsFrame:
             "The length of the scan, mobility, tof, mz and intensity arrays must be equal."
 
         self.__frame_ptr = pims.PyTimsFrame(frame_id, ms_type, retention_time, scan, mobility, tof, mz, intensity)
+
+    def __add__(self, other: 'TimsFrame') -> 'TimsFrame':
+        """Add two TimsFrames together.
+
+        Args:
+            other (TimsFrame): TimsFrame to add.
+
+        Returns:
+            TimsFrame: Sum of the two TimsFrames.
+        """
+        return TimsFrame.from_py_tims_frame(self.__frame_ptr + other.__frame_ptr)
 
     @classmethod
     def from_py_tims_frame(cls, frame: pims.PyTimsFrame):
@@ -235,6 +247,20 @@ class TimsFrame:
         """
         return TimsFrame.from_py_tims_frame(pims.PyTimsFrame.from_windows(
             [spec.get_spec_ptr() for spec in windows]
+        ))
+
+    @classmethod
+    def from_tims_spectra(cls, spectra: List[TimsSpectrum]) -> 'TimsFrame':
+        """Create a TimsFrame from a list of TimsSpectrum.
+
+        Args:
+            spectra (List[TimsSpectrum]): List of TimsSpectrum.
+
+        Returns:
+            TimsFrame: TimsFrame created from the TimsSpectrum.
+        """
+        return TimsFrame.from_py_tims_frame(pims.PyTimsFrame.from_tims_spectra(
+            [spec.get_spec_ptr() for spec in spectra]
         ))
 
     def to_dense_windows(self, window_length: float = 10, resolution: int = 1, overlapping: bool = True,

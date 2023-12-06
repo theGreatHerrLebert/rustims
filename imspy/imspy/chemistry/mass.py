@@ -1,10 +1,21 @@
 import re
 from collections import defaultdict
 import numpy as np
+import mendeleev as me
 
 MASS_PROTON = 1.007276466583
 MASS_NEUTRON = 1.00866491597
 MASS_ELECTRON = 0.00054857990946
+MASS_WATER = 18.0105646863
+
+# IUPAC standard in Kelvin
+STANDARD_TEMPERATURE = 273.15
+# IUPAC standard in Pa
+STANDARD_PRESSURE = 1e5
+# IUPAC elementary charge
+ELEMENTARY_CHARGE = 1.602176634e-19
+# IUPAC BOLTZMANN'S CONSTANT
+K_BOLTZMANN = 1.380649e-23
 
 AMINO_ACIDS = {
     'Lysine': 'K',
@@ -26,7 +37,8 @@ AMINO_ACIDS = {
     'Asparagine': 'N',
     'Proline': 'P',
     'Histidine': 'H',
-    'Aspartic Acid': 'D'
+    'Aspartic Acid': 'D',
+    'Selenocysteine': 'U',
 }
 
 AMINO_ACID_MASSES = {
@@ -49,7 +61,8 @@ AMINO_ACID_MASSES = {
     'T': 101.047679,
     'W': 186.079313,
     'Y': 163.063329,
-    'V': 99.068414
+    'V': 99.068414,
+    'U': 168.053,
 }
 
 MODIFICATIONS_MZ = {
@@ -112,7 +125,7 @@ def tokenize_amino_acids(sequence):
     return tokens
 
 
-def calculate_monoisotopic_mass(sequence):
+def calculate_monoisotopic_mass(sequence: str) -> float:
     """
     Calculates the monoisotopic mass of a sequence of amino acids with modifications.
 
@@ -145,7 +158,7 @@ def calculate_monoisotopic_mass(sequence):
     mass_sequence = np.sum([AMINO_ACID_MASSES[amino_acid] * count for amino_acid, count in aa_counts.items()])
     mass_modifics = np.sum([MODIFICATIONS_MZ_NUMERICAL[mod] * count for mod, count in mod_counts.items()])
 
-    return mass_sequence + mass_modifics
+    return mass_sequence + mass_modifics + MASS_WATER
 
 
 def calculate_mz(monoisotopic_mass, charge):
@@ -173,3 +186,151 @@ def calculate_mz_from_sequence(sequence, charge):
     float: The m/z of the sequence.
     """
     return calculate_mz(calculate_monoisotopic_mass(sequence), charge)
+
+
+def get_monoisotopic_token_weight(token:str):
+    """
+    Gets monoisotopic weight of token
+
+    :param token: Token of aa sequence e.g. "<START>[UNIMOD:1]"
+    :type token: str
+    :return: Weight in Dalton.
+    :rtype: float
+    """
+    splits = token.split("[")
+    for i in range(1, len(splits)):
+        splits[i] = "["+splits[i]
+
+    mass = 0
+    for split in splits:
+        mass += AMINO_ACID_MASSES[split]
+    return mass
+
+
+def get_mono_isotopic_weight(sequence_tokenized: list[str]) -> float:
+    mass = 0
+    for token in sequence_tokenized:
+        mass += get_monoisotopic_token_weight(token)
+    return mass + MASS_WATER
+
+
+def get_mass_over_charge(mass: float, charge: int) -> float:
+    return (mass / charge) + MASS_PROTON
+
+
+def get_num_protonizable_sites(sequence: str) -> int:
+    """
+    Gets number of sites that can be protonized.
+    This function does not yet account for PTMs.
+
+    :param sequence: Amino acid sequence
+    :type sequence: str
+    :return: Number of protonizable sites
+    :rtype: int
+    """
+    sites = 1 # n-terminus
+    for s in sequence:
+        if s in ["H", "R", "K"]:
+            sites += 1
+    return sites
+
+
+class ChemicalCompound:
+
+    def _calculate_molecular_mass(self):
+        mass = 0
+        for (atom, abundance) in self.element_composition.items():
+            mass += me.element(atom).atomic_weight * abundance
+        return mass
+
+    def __init__(self, formula):
+        self.element_composition = self.get_composition(formula)
+        self.mass = self._calculate_molecular_mass()
+
+    def get_composition(self, formula: str):
+        """
+        Parse chemical formula into Dict[str:int] with
+        atoms as keys and the respective counts as values.
+
+        :param formula: Chemical formula of compound e.g. 'C6H12O6'
+        :type formula: str
+        :return: Dictionary Atom: Count
+        :rtype: Dict[str:int]
+        """
+        if formula.startswith("("):
+            assert formula.endswith(")")
+            formula = formula[1:-1]
+
+        tmp_group = ""
+        tmp_group_count = ""
+        depth = 0
+        comp_list = []
+        comp_counts = []
+
+        # extract components: everything in brackets and atoms
+        # extract component counts: number behind component or 1
+        for (i, e) in enumerate(formula):
+            if e == "(":
+                depth += 1
+                if depth == 1:
+                    if tmp_group != "":
+                        comp_list.append(tmp_group)
+                        tmp_group = ""
+                        if tmp_group_count == "":
+                            comp_counts.append(1)
+                        else:
+                            comp_counts.append(int(tmp_group_count))
+                            tmp_group_count = ""
+                tmp_group += e
+                continue
+            if e == ")":
+                depth -= 1
+                tmp_group += e
+                continue
+            if depth > 0:
+                tmp_group += e
+                continue
+            if e.isupper():
+                if tmp_group != "":
+                    comp_list.append(tmp_group)
+                    tmp_group = ""
+                    if tmp_group_count == "":
+                        comp_counts.append(1)
+                    else:
+                        comp_counts.append(int(tmp_group_count))
+                        tmp_group_count = ""
+                tmp_group += e
+                continue
+            if e.islower():
+                tmp_group += e
+                continue
+            if e.isnumeric():
+                tmp_group_count += e
+        if tmp_group != "":
+            comp_list.append(tmp_group)
+            if tmp_group_count == "":
+                comp_counts.append(1)
+            else:
+                comp_counts.append(int(tmp_group_count))
+
+        # assemble dictionary from component lists
+        atom_dict = {}
+        for (comp, count) in zip(comp_list, comp_counts):
+            if not comp.startswith("("):
+                atom_dict[comp] = count
+            else:
+                atom_dicts_depth = self.get_composition(comp)
+                for atom in atom_dicts_depth:
+                    atom_dicts_depth[atom] *= count
+                    if atom in atom_dict:
+                        atom_dict[atom] += atom_dicts_depth[atom]
+                    else:
+                        atom_dict[atom] = atom_dicts_depth[atom]
+                atom_dicts_depth = {}
+        return atom_dict
+
+
+class BufferGas(ChemicalCompound):
+
+    def __init__(self, formula: str):
+        super().__init__(formula)

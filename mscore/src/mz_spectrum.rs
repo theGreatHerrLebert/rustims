@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
 use crate::tims_frame::{ToResolution, Vectorized};
+use serde::{Serialize, Deserialize};
 
 /// Represents the type of spectrum.
 ///
@@ -10,7 +11,7 @@ use crate::tims_frame::{ToResolution, Vectorized};
 ///
 /// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
 ///
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum MsType {
     Precursor,
     FragmentDda,
@@ -57,7 +58,7 @@ impl Display for MsType {
 }
 
 /// Represents a mass spectrum with associated m/z values and intensities.
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MzSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
@@ -167,6 +168,51 @@ impl MzSpectrum {
         });
 
         splits
+    }
+
+    pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> MzSpectrum {
+
+        let filtered = self.filter_ranged(0.0, 1e9, baseline_noise_level as f64, 1e9);
+
+        let mut cent_mz = Vec::new();
+        let mut cent_i: Vec<f64> = Vec::new();
+
+        let mut last_mz = 0.0;
+        let mut mean_mz = 0.0;
+        let mut sum_i = 0.0;
+
+        for (i, &current_mz) in filtered.mz.iter().enumerate() {
+            let current_intensity = filtered.intensity[i];
+
+            // If peak is too far away from last peak, push centroid
+            if current_mz - last_mz > sigma && mean_mz > 0.0 {
+                mean_mz /= sum_i;
+                cent_mz.push(mean_mz);
+                cent_i.push(sum_i);
+
+                // Start new centroid
+                sum_i = 0.0;
+                mean_mz = 0.0;
+            }
+
+            mean_mz += current_mz * current_intensity as f64;
+            sum_i += current_intensity;
+            last_mz = current_mz;
+        }
+
+        // Push back last remaining centroid
+        if mean_mz > 0.0 {
+            mean_mz /= sum_i;
+            cent_mz.push(mean_mz);
+            cent_i.push(sum_i);
+        }
+
+        if normalize {
+            let sum_i: f64 = cent_i.iter().sum();
+            cent_i = cent_i.iter().map(|&i| i / sum_i).collect();
+        }
+
+        MzSpectrum::new(cent_mz, cent_i)
     }
 }
 
@@ -293,8 +339,19 @@ impl std::ops::Add for MzSpectrum {
     }
 }
 
+impl std::ops::Mul<f64> for MzSpectrum {
+    type Output = Self;
+    fn mul(self, scale: f64) -> Self::Output{
+        let mut scaled_intensities: Vec<f64> = vec![0.0; self.intensity.len()];
+        for (idx,intensity) in self.intensity.iter().enumerate(){
+            scaled_intensities[idx] = scale*intensity;
+        }
+        Self{ mz: self.mz.clone(), intensity: scaled_intensities}
+
+    }
+}
 /// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IndexedMzSpectrum {
     pub index: Vec<i32>,
     pub mz_spectrum: MzSpectrum,
@@ -426,7 +483,7 @@ impl Display for IndexedMzSpectrum {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TimsSpectrum {
     pub frame_id: i32,
     pub scan: i32,
@@ -537,6 +594,42 @@ impl TimsSpectrum {
     }
 }
 
+impl std::ops::Add for TimsSpectrum {
+    type Output = Self;
+
+    fn add(self, other: Self) -> TimsSpectrum {
+        assert_eq!(self.frame_id, other.frame_id);
+        assert_eq!(self.scan, other.scan);
+
+        let average_mobility = (self.mobility + other.mobility) / 2.0;
+        let average_retention_time = (self.retention_time + other.retention_time) / 2.0;
+
+        let mut combined_map: BTreeMap<i64, (f64, i32, i32)> = BTreeMap::new();
+        let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
+
+        for ((mz, intensity), index) in self.spectrum.mz_spectrum.mz.iter().zip(self.spectrum.mz_spectrum.intensity.iter()).zip(self.spectrum.index.iter()) {
+            let key = quantize(*mz);
+            combined_map.insert(key, (*intensity, *index, 1)); // Initialize count as 1
+        }
+
+        for ((mz, intensity), index) in other.spectrum.mz_spectrum.mz.iter().zip(other.spectrum.mz_spectrum.intensity.iter()).zip(other.spectrum.index.iter()) {
+            let key = quantize(*mz);
+            combined_map.entry(key).and_modify(|e| {
+                e.0 += *intensity; // Sum intensity
+                e.1 += *index;     // Sum index
+                e.2 += 1;          // Increment count
+            }).or_insert((*intensity, *index, 1));
+        }
+
+        let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
+        let intensity_combined: Vec<f64> = combined_map.values().map(|(intensity, _, _)| *intensity).collect();
+        let index_combined: Vec<i32> = combined_map.values().map(|(_, index, count)| index / count).collect(); // Average index
+
+        let spectrum = IndexedMzSpectrum { index: index_combined, mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: average_retention_time, mobility: average_mobility, ms_type: self.ms_type.clone(), spectrum }
+    }
+}
+
 impl Display for TimsSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "TimsSpectrum(frame_id: {}, scan_id: {}, retention_time: {}, mobility: {}, spectrum: {})", self.frame_id, self.scan, self.retention_time, self.mobility, self.spectrum)
@@ -559,15 +652,36 @@ impl MzSpectrumVectorized {
     /// # Arguments
     ///
     /// * `max_index` - The maximum index for the dense vector.
-    pub fn to_dense(&self, max_index: usize) -> DVector<f64> {
-        let mut dense = DVector::zeros(max_index + 1);
+    
+    fn get_max_index(&self) -> usize {
+        let base: i32 = 10;
+        let max_mz: i32 = 2000;
+        let max_index: usize = (max_mz*base.pow(self.resolution as u32)) as usize;
+        max_index
+    }
 
+    pub fn to_dense(&self, max_index: Option<usize>) -> DVector<f64> {
+        let max_index = match max_index {
+            Some(max_index) => max_index,
+            None => self.get_max_index(),
+        };
+        let mut dense_intensities: DVector<f64> = DVector::<f64>::zeros(max_index + 1);
         for (&index, &intensity) in self.indices.iter().zip(self.values.iter()) {
             if (index as usize) <= max_index {
-                dense[index as usize] = intensity;
+                dense_intensities[index as usize] = intensity;
             }
         }
-        dense
+        dense_intensities
+    }
+    pub fn to_dense_spectrum(&self, max_index: Option<usize>) -> MzSpectrumVectorized{
+        let max_index = match max_index {
+            Some(max_index) => max_index,
+            None => self.get_max_index(),
+        };
+        let dense_intensities: Vec<f64> = self.to_dense(Some(max_index)).data.into();
+        let dense_indices: Vec<i32> = (0..=max_index).map(|i| i as i32).collect();
+        let dense_spectrum: MzSpectrumVectorized = MzSpectrumVectorized { resolution: (self.resolution), indices: (dense_indices), values: (dense_intensities) };
+        dense_spectrum
     }
 }
 

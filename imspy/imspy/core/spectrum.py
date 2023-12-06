@@ -1,10 +1,28 @@
+from __future__ import annotations
+import json
 import numpy as np
-from typing import List, Tuple
-
+from typing import List, Tuple, Callable
 import pandas as pd
 from numpy.typing import NDArray
-
+from scipy.signal import find_peaks
 import imspy_connector as pims
+
+
+def get_peak_integral(peaks: NDArray[np.int32], peak_info: dict) -> NDArray[np.float64]:
+    """Calculates the integral of the peaks in a spectrum.
+
+    Args:
+        peaks (NDArray[np.int32]): Peak indices.
+        peak_info (dict): Peak info.
+
+    Returns:
+        NDArray[np.float64]: Peak integrals.
+    """
+    integrals = np.zeros(len(peaks), dtype=np.float64)
+    FWHM = peak_info['widths']
+    h = peak_info['prominences']
+    integrals = np.sqrt(2*np.pi) * h * FWHM / (2*np.sqrt(2*np.log(2)))
+    return integrals
 
 
 class IndexedMzSpectrum:
@@ -103,6 +121,27 @@ class IndexedMzSpectrum:
 
 
 class MzSpectrum:
+    
+    @classmethod
+    def from_jsons(cls, jsons: str) -> MzSpectrum:
+        json_dict:dict = json.loads(jsons)
+        mz = json_dict["mz"]
+        intensity = json_dict["intensity"]
+        return cls(np.array(mz, dtype=np.float64), np.array(intensity, dtype=np.float64))
+    
+    @classmethod
+    def from_mz_spectra_list(cls, spectra_list:List[MzSpectrum], resolution: int)->MzSpectrum:
+        """Generates a convoluted mass spectrum by adding all spectra in the given list.
+
+        Args:
+            spectra_list (List[MzSpectrum]): List of mass spectra.
+            resolution (int): Desired resolution of returned spectrum.
+
+        Returns:
+            MzSpectrum: Convoluted spectrum.
+        """
+        return cls.from_py_mz_spectrum(pims.PyMzSpectrum.from_mzspectra_list([spectrum.__spec_ptr for spectrum in spectra_list], resolution))
+    
     def __init__(self, mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """MzSpectrum class.
 
@@ -161,8 +200,30 @@ class MzSpectrum:
     def __repr__(self):
         return f"MzSpectrum(num_peaks={len(self.mz)})"
 
+    def __add__(self, other: MzSpectrum) -> MzSpectrum:
+        """Overwrite + operator for adding of spectra
+
+        Args:
+            other (MzSpectrum): Other spectrum.
+
+        Returns:
+            MzSpectrum: Sum of spectra
+        """
+        return self.from_py_mz_spectrum(self.__spec_ptr + other.__spec_ptr)
+    
+    def __mul__(self, scale) -> MzSpectrum:
+        """Overwrite * operator for scaling of spectrum
+
+        Args:
+            scale (float): Scale.
+
+        Returns:
+            MzSpectrum: Scaled spectrum
+        """
+        return self.from_py_mz_spectrum(self.__spec_ptr * scale)
+
     def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
-                   min_intensity: float = 1) -> Tuple[NDArray, List['MzSpectrum']]:
+                   min_intensity: float = 1) -> Tuple[NDArray, List[MzSpectrum]]:
         """Convert the spectrum to a list of windows.
 
         Args:
@@ -178,8 +239,20 @@ class MzSpectrum:
         indices, windows = self.__spec_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)
         return indices, [MzSpectrum.from_py_mz_spectrum(window) for window in windows]
 
+    def to_resolution(self, resolution: int) -> MzSpectrum:
+        """Bins the spectrum's m/z values to a 
+        given resolution and sums the intensities.
+
+        Args:
+            resolution (int): Negative decadic logarithm of bin size.
+
+        Returns:
+            MzSpectrum: A new `MzSpectrum` where m/z values are binned according to the given resolution.
+        """
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_resolution(resolution))
+    
     def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0,
-               intensity_max: float = 1e9) -> 'MzSpectrum':
+               intensity_max: float = 1e9) -> MzSpectrum:
         """Filter the spectrum for a given m/z range and intensity range.
 
         Args:
@@ -194,7 +267,7 @@ class MzSpectrum:
         return MzSpectrum.from_py_mz_spectrum(
             self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
 
-    def vectorized(self, resolution: int = 2) -> 'MzSpectrumVectorized':
+    def vectorized(self, resolution: int = 2) -> MzSpectrumVectorized:
         """Convert the spectrum to a vectorized spectrum.
 
         Args:
@@ -204,8 +277,27 @@ class MzSpectrum:
             MzSpectrumVectorized: Vectorized spectrum.
         """
         return MzSpectrumVectorized.from_py_mz_spectrum_vectorized(self.__spec_ptr.vectorized(resolution))
+    
+    def to_jsons(self) -> str:
+        """
+        generates json string representation of MzSpectrum
+        """
+        json_dict = {}
+        json_dict["mz"] = self.mz.tolist()
+        json_dict["intensity"] = self.intensity.tolist()
 
+        return json.dumps(json_dict)
 
+    def to_centroided(self, baseline_noise_level: int = 0.0, sigma: float = 0.1, normalize: bool = True):
+        """Convert the spectrum to a centroided spectrum.
+
+        Returns:
+            MzSpectrum: Centroided spectrum.
+        """
+        # first generate dense spectrum
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma, normalize))
+
+    
 class MzSpectrumVectorized:
     def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):
         """MzSpectrum class.
@@ -237,7 +329,7 @@ class MzSpectrumVectorized:
     @property
     def resolution(self) -> float:
         """Resolution.
-
+        
         Returns:
             float: Resolution.
         """
@@ -260,6 +352,21 @@ class MzSpectrumVectorized:
             NDArray[np.float64]: Intensity.
         """
         return self.__spec_ptr.values
+
+    def to_centroided(self, integrate_method: Callable = get_peak_integral) -> MzSpectrum:
+        """Convert the spectrum to a centroided spectrum.
+
+        Returns:
+            MzSpectrum: Centroided spectrum.
+        """
+        # first generate dense spectrum
+        dense_spectrum = MzSpectrumVectorized.from_py_mz_spectrum_vectorized(self.__spec_ptr.to_dense_spectrum(None))
+        # find peaks in the dense spectrum and widths with scipy
+        peaks, peak_info = find_peaks(dense_spectrum.values, height=0, width=(0, 0.5))
+        # then get the peak integrals
+        integrals = integrate_method(peaks, peak_info)
+        # then create a new spectrum with the peak indices and the integrals
+        return MzSpectrum.from_py_mz_spectrum(pims.PyMzSpectrum(dense_spectrum.indices[peaks]/np.power(10, dense_spectrum.resolution), integrals))
 
     def __repr__(self):
         return f"MzSpectrumVectorized(num_values={len(self.values)})"
@@ -407,3 +514,14 @@ class TimsSpectrum:
             pims.PyTimsSpectrum: spec_ptr.
         """
         return self.__spec_ptr
+
+    def __add__(self, other):
+        """Overwrite + operator for adding of spectra
+
+        Args:
+            other (TimsSpectrum): Other spectrum.
+
+        Returns:
+            TimsSpectrum: Sum of spectra
+        """
+        return self.from_py_tims_spectrum(self.__spec_ptr + other.__spec_ptr)
