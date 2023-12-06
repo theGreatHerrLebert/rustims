@@ -24,7 +24,7 @@ pub struct RawTimsFrame {
     pub intensity: Vec<f64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -69,7 +69,7 @@ pub struct ImsFrameVectorized {
     pub resolution: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,
