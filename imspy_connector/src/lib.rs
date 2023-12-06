@@ -4,6 +4,7 @@ mod py_tims_frame;
 mod py_tims_slice;
 mod py_dda;
 mod py_dia;
+mod py_simulation;
 
 use pyo3::prelude::*;
 use crate::py_dataset::{PyTimsDataset, PyAcquisitionMode};
@@ -11,6 +12,7 @@ use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum, P
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized, PyRawTimsFrame};
 use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
+use crate::py_simulation::PyTimsTofSyntheticsDDA;
 
 #[pymodule]
 fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -28,5 +30,6 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsPlane>()?;
     m.add_class::<PyTimsFragmentDDA>()?;
     m.add_class::<PyAcquisitionMode>()?;
+    m.add_class::<PyTimsTofSyntheticsDDA>()?;
     Ok(())
 }
