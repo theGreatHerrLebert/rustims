@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
 use crate::tims_frame::{ToResolution, Vectorized};
+use serde::{Serialize, Deserialize};
 
 /// Represents the type of spectrum.
 ///
@@ -10,7 +11,7 @@ use crate::tims_frame::{ToResolution, Vectorized};
 ///
 /// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
 ///
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum MsType {
     Precursor,
     FragmentDda,
@@ -57,7 +58,7 @@ impl Display for MsType {
 }
 
 /// Represents a mass spectrum with associated m/z values and intensities.
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MzSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
@@ -350,7 +351,7 @@ impl std::ops::Mul<f64> for MzSpectrum {
     }
 }
 /// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IndexedMzSpectrum {
     pub index: Vec<i32>,
     pub mz_spectrum: MzSpectrum,
@@ -482,7 +483,7 @@ impl Display for IndexedMzSpectrum {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TimsSpectrum {
     pub frame_id: i32,
     pub scan: i32,
@@ -590,6 +591,42 @@ impl TimsSpectrum {
         });
 
         splits
+    }
+}
+
+impl std::ops::Add for TimsSpectrum {
+    type Output = Self;
+
+    fn add(self, other: Self) -> TimsSpectrum {
+        assert_eq!(self.frame_id, other.frame_id);
+        assert_eq!(self.scan, other.scan);
+
+        let average_mobility = (self.mobility + other.mobility) / 2.0;
+        let average_retention_time = (self.retention_time + other.retention_time) / 2.0;
+
+        let mut combined_map: BTreeMap<i64, (f64, i32, i32)> = BTreeMap::new();
+        let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
+
+        for ((mz, intensity), index) in self.spectrum.mz_spectrum.mz.iter().zip(self.spectrum.mz_spectrum.intensity.iter()).zip(self.spectrum.index.iter()) {
+            let key = quantize(*mz);
+            combined_map.insert(key, (*intensity, *index, 1)); // Initialize count as 1
+        }
+
+        for ((mz, intensity), index) in other.spectrum.mz_spectrum.mz.iter().zip(other.spectrum.mz_spectrum.intensity.iter()).zip(other.spectrum.index.iter()) {
+            let key = quantize(*mz);
+            combined_map.entry(key).and_modify(|e| {
+                e.0 += *intensity; // Sum intensity
+                e.1 += *index;     // Sum index
+                e.2 += 1;          // Increment count
+            }).or_insert((*intensity, *index, 1));
+        }
+
+        let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
+        let intensity_combined: Vec<f64> = combined_map.values().map(|(intensity, _, _)| *intensity).collect();
+        let index_combined: Vec<i32> = combined_map.values().map(|(_, index, count)| index / count).collect(); // Average index
+
+        let spectrum = IndexedMzSpectrum { index: index_combined, mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: average_retention_time, mobility: average_mobility, ms_type: self.ms_type.clone(), spectrum }
     }
 }
 

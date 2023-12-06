@@ -105,12 +105,3 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table,
                                                                  precursor_every=self.precursor_every, verbose=verbose)
-
-    def write_to_sqlite(self, handle: ExperimentDataHandle):
-        if self.verbose:
-            print(f'writing {self.frame_table.shape[0]} frames to {handle.db_path}')
-        handle.create_table('frames', self.frame_table)
-
-        if self.verbose:
-            print(f'writing {self.scan_table.shape[0]} scans to {handle.db_path}')
-        handle.create_table('scans', self.scan_table)

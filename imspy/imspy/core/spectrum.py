@@ -514,3 +514,14 @@ class TimsSpectrum:
             pims.PyTimsSpectrum: spec_ptr.
         """
         return self.__spec_ptr
+
+    def __add__(self, other):
+        """Overwrite + operator for adding of spectra
+
+        Args:
+            other (TimsSpectrum): Other spectrum.
+
+        Returns:
+            TimsSpectrum: Sum of spectra
+        """
+        return self.from_py_tims_spectrum(self.__spec_ptr + other.__spec_ptr)

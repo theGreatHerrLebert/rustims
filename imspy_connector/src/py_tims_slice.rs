@@ -146,6 +146,11 @@ impl PyTimsSlice {
         };
         py_vectorized
     }
+
+    #[staticmethod]
+    pub fn from_frames(frames: Vec<PyTimsFrame>) -> PyTimsSlice {
+        PyTimsSlice { inner: TimsSlice::new(frames.iter().map(|frame| frame.inner.clone()).collect()) }
+    }
 }
 
 #[pyclass]

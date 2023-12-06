@@ -87,9 +87,3 @@ class PeptideDigest:
                                  'monoisotopic-mass': peptide.mono_isotopic})
 
         self.peptides = pd.DataFrame(peptide_list)
-
-    def write_to_sqlite(self, handle: ExperimentDataHandle):
-        if self.verbose:
-            print(f'writing {self.peptides.shape[0]} peptides to {handle.db_path}')
-
-        handle.create_table('peptides', self.peptides)
