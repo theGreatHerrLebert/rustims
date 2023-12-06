@@ -57,6 +57,18 @@ class TimsSlice:
         instance.__current_index = 0
         return instance
 
+    @classmethod
+    def from_frames(cls, frames: List[TimsFrame]):
+        """Create a TimsSlice from a list of TimsFrames.
+
+        Args:
+            frames (List[TimsFrame]): List of TimsFrames.
+
+        Returns:
+            TimsSlice: TimsSlice created from the list of TimsFrames.
+        """
+        return cls.from_py_tims_slice(pims.PyTimsSlice.from_frames([frame.get_fragment_ptr() for frame in frames]))
+
     @property
     def first_frame_id(self) -> int:
         """First frame ID.

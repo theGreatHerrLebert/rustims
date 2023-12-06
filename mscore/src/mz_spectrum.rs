@@ -10,7 +10,7 @@ use crate::tims_frame::{ToResolution, Vectorized};
 ///
 /// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
 ///
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum MsType {
     Precursor,
     FragmentDda,
@@ -57,7 +57,7 @@ impl Display for MsType {
 }
 
 /// Represents a mass spectrum with associated m/z values and intensities.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MzSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,
@@ -350,7 +350,7 @@ impl std::ops::Mul<f64> for MzSpectrum {
     }
 }
 /// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IndexedMzSpectrum {
     pub index: Vec<i32>,
     pub mz_spectrum: MzSpectrum,
@@ -482,7 +482,7 @@ impl Display for IndexedMzSpectrum {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TimsSpectrum {
     pub frame_id: i32,
     pub scan: i32,
@@ -595,45 +595,37 @@ impl TimsSpectrum {
 
 impl std::ops::Add for TimsSpectrum {
     type Output = Self;
+
     fn add(self, other: Self) -> TimsSpectrum {
-        // only tims spectra with identical frame_id and scan can be added
         assert_eq!(self.frame_id, other.frame_id);
         assert_eq!(self.scan, other.scan);
 
-        // average the mobility and retention time
         let average_mobility = (self.mobility + other.mobility) / 2.0;
         let average_retention_time = (self.retention_time + other.retention_time) / 2.0;
 
-        // combine the spectra
-        let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
+        let mut combined_map: BTreeMap<i64, (f64, i32, i32)> = BTreeMap::new();
+        let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
 
-        // Helper to quantize mz to an integer key
-        let quantize = |mz: f64| -> i64 {
-            (mz * 1_000_000.0).round() as i64
-        };
-
-        // Add the m/z and intensities from the first spectrum to the map
-        for (mz, intensity) in self.spectrum.mz_spectrum.mz.iter().zip(self.spectrum.mz_spectrum.intensity.iter()) {
+        for ((mz, intensity), index) in self.spectrum.mz_spectrum.mz.iter().zip(self.spectrum.mz_spectrum.intensity.iter()).zip(self.spectrum.index.iter()) {
             let key = quantize(*mz);
-            combined_map.insert(key, *intensity);
+            combined_map.insert(key, (*intensity, *index, 1)); // Initialize count as 1
         }
 
-        // Combine the second spectrum into the map
-        for (mz, intensity) in other.spectrum.mz_spectrum.mz.iter().zip(other.spectrum.mz_spectrum.intensity.iter()) {
+        for ((mz, intensity), index) in other.spectrum.mz_spectrum.mz.iter().zip(other.spectrum.mz_spectrum.intensity.iter()).zip(other.spectrum.index.iter()) {
             let key = quantize(*mz);
-            let entry = combined_map.entry(key).or_insert(0.0);
-            *entry += *intensity;
+            combined_map.entry(key).and_modify(|e| {
+                e.0 += *intensity; // Sum intensity
+                e.1 += *index;     // Sum index
+                e.2 += 1;          // Increment count
+            }).or_insert((*intensity, *index, 1));
         }
 
-        // Convert the combined map back into two Vec<f64>
         let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
-        let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
-        let combined_spectrum = IndexedMzSpectrum { index: self.spectrum.index.clone(), mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
+        let intensity_combined: Vec<f64> = combined_map.values().map(|(intensity, _, _)| *intensity).collect();
+        let index_combined: Vec<i32> = combined_map.values().map(|(_, index, count)| index / count).collect(); // Average index
 
-        // if the ms types are identical, use the ms type of the first spectrum, otherwise use Unknown
-        let ms_type = if self.ms_type == other.ms_type { self.ms_type } else { MsType::Unknown };
-
-        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: average_retention_time, mobility: average_mobility, ms_type, spectrum: combined_spectrum }
+        let spectrum = IndexedMzSpectrum { index: index_combined, mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: average_retention_time, mobility: average_mobility, ms_type: self.ms_type.clone(), spectrum }
     }
 }
 

@@ -194,6 +194,11 @@ impl PyTimsFrame {
         Ok(PyTimsFrame { inner: TimsFrame::from_windows(spectra) })
     }
 
+    #[staticmethod]
+    pub fn from_tims_spectra(_py: Python, spectra: Vec<PyTimsSpectrum>) -> PyResult<Self> {
+        Ok(PyTimsFrame { inner: TimsFrame::from_tims_spectra(spectra.iter().map(|spectrum| spectrum.inner.clone()).collect()) })
+    }
+
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
 
         let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
