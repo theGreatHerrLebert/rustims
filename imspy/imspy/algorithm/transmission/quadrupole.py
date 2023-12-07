@@ -71,4 +71,15 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
                 mz_max = mz[last_index]
                 spec_list.append(spectrum.filter(mz_min=mz_min, mz_max=mz_max))
 
-        return TimsFrame.from_tims_spectra(spec_list)
+        if len(spec_list) > 0:
+            return TimsFrame.from_tims_spectra(spec_list)
+        return TimsFrame(
+            frame_id=frame.frame_id,
+            ms_type=frame.ms_type_numeric,
+            retention_time=frame.retention_time,
+            scan=np.array([], dtype=np.int32),
+            mobility=np.array([], dtype=np.float64),
+            tof=np.array([], dtype=np.int32),
+            mz=np.array([], dtype=np.float64),
+            intensity=np.array([], dtype=np.float64)
+        )

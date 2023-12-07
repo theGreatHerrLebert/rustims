@@ -82,6 +82,15 @@ class TimsFrame:
         return self.__frame_ptr.ms_type_as_string
 
     @property
+    def ms_type_numeric(self) -> int:
+        """MS type.
+
+        Returns:
+            int: MS type.
+        """
+        return self.__frame_ptr.ms_type
+
+    @property
     def retention_time(self) -> float:
         """Retention time.
 
