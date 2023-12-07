@@ -87,6 +87,19 @@ class ExperimentDataHandleDIA(ExperimentDataHandle, ABC):
         self.dia_ms_ms_info = self.get_table('dia_ms_ms_info')
         self.dia_ms_ms_windows = self.get_table('dia_ms_ms_windows')
 
+    def get_frame_to_window_group(self):
+        return dict(zip(self.dia_ms_ms_info.frame, self.dia_ms_ms_info.window_group))
+
+    def get_window_group_settings(self):
+        window_group_settings = {}
+
+        for index, row in self.dia_ms_ms_windows.iterrows():
+            key = (row.window_group, row.scan_start)
+            value = (row.mz_mid, row.mz_width)
+            window_group_settings[key] = value
+
+        return window_group_settings
+
 
 if __name__ == '__main__':
 
