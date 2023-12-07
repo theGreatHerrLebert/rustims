@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from abc import ABC
 from typing import List
 
 import numpy as np
@@ -24,13 +25,13 @@ class TimsTofSyntheticAcquisitionBuilderDDA:
 
 class ExperimentDataHandle:
     def __init__(self,
-                 path: str,
-                 db_name: str = 'experiment_data.db',
+                 database_path: str,
+                 database_name: str = 'experiment_data.db',
                  verbose: bool = True,
                  ):
         self.verbose = verbose
-        self.base_path = path
-        self.db_path = os.path.join(self.base_path, db_name)
+        self.base_path = database_path
+        self.database_path = os.path.join(self.base_path, database_name)
         self.raw_data_path = os.path.join(self.base_path, 'raw_data')
         self.conn = None
 
@@ -45,8 +46,8 @@ class ExperimentDataHandle:
 
         # Connect to the SQLite database or create it if it doesn't exist
         if self.verbose:
-            print(f"Connecting to database: {self.db_path}")
-        self.conn = sqlite3.connect(self.db_path)
+            print(f"Connecting to database: {self.database_path}")
+        self.conn = sqlite3.connect(self.database_path)
 
     def create_table(self, table_name: str, table: pd.DataFrame):
         # Create a table from a pandas DataFrame
@@ -69,6 +70,22 @@ class ExperimentDataHandle:
     def get_table(self, table_name: str) -> pd.DataFrame:
         # Get a table as a pandas DataFrame
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
+
+
+class ExperimentDataHandleDIA(ExperimentDataHandle, ABC):
+    def __init__(self,
+                 database_path: str,
+                 database_name: str = 'experiment_data.db',
+                 verbose: bool = True,):
+        super().__init__(database_path, database_name, verbose)
+        self.dia_ms_ms_info = None
+        self.dia_ms_ms_windows = None
+
+        self._additional_setup()
+
+    def _additional_setup(self):
+        self.dia_ms_ms_info = self.get_table('dia_ms_ms_info')
+        self.dia_ms_ms_windows = self.get_table('dia_ms_ms_windows')
 
 
 if __name__ == '__main__':
