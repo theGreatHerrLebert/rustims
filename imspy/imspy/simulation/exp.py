@@ -14,7 +14,7 @@ class TimsTofSyntheticAcquisitionBuilderDDA:
     def __init__(self, db_path: str):
         self.handle = pims.PyTimsTofSyntheticsDDA(db_path)
 
-    def get_frame(self, frame_id: int):
+    def build_frame(self, frame_id: int):
         frame = self.handle.build_frame(frame_id)
         return TimsFrame.from_py_tims_frame(frame)
 
