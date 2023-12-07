@@ -515,6 +515,11 @@ impl TimsSpectrum {
         TimsSpectrum { frame_id, scan: scan_id, retention_time, mobility: mobility, ms_type, spectrum }
     }
 
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> Self {
+        let filtered = self.spectrum.filter_ranged(mz_min, mz_max, intensity_min, intensity_max);
+        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), spectrum: filtered }
+    }
+
     pub fn to_resolution(&self, resolution: i32) -> TimsSpectrum {
         let spectrum = self.spectrum.to_resolution(resolution);
         TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: self.retention_time, mobility: self.mobility, ms_type: self.ms_type.clone(), spectrum }
