@@ -146,6 +146,10 @@ class TimsDataset(ABC):
     def average_cycle_length(self) -> float:
         return np.mean(np.diff(self.meta_data.Time.values))
 
+    @property
+    def description(self) -> str:
+        return self.global_meta_data["Description"]
+
     def get_tims_frame(self, frame_id: int) -> TimsFrame:
         """Get a TimsFrame.
 
