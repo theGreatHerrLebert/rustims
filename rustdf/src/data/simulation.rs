@@ -7,7 +7,7 @@ use serde_json;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
-pub struct TimsTofSyntheticsDDA {
+pub struct TimsTofSynthetics {
     pub ions: Vec<IonsSim>,
     pub peptides: Vec<PeptidesSim>,
     pub scans: Vec<ScansSim>,
@@ -20,7 +20,7 @@ pub struct TimsTofSyntheticsDDA {
     pub peptide_to_events: BTreeMap<u32, f32>,
 }
 
-impl TimsTofSyntheticsDDA {
+impl TimsTofSynthetics {
     pub fn new(path: &Path) -> Result<Self> {
         let handle = SyntheticsDataHandle::new(path)?;
         let ions = handle.read_ions()?;
@@ -73,6 +73,8 @@ impl TimsTofSyntheticsDDA {
     }
 
     pub fn build_frame(&self, frame_id: u32) -> TimsFrame {
+        // TODO: This is a temporary hack to get the ms_type, need to make this faster and more robust
+        let ms_type = self.frames.iter().find(|frame| frame.frame_id == frame_id).unwrap().parse_ms_type();
 
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
@@ -95,7 +97,7 @@ impl TimsTofSyntheticsDDA {
                         *scan as i32,
                         *self.frame_to_rt.get(&frame_id).unwrap() as f64,
                         *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
-                        MsType::Precursor,
+                        ms_type.clone(),
                         IndexedMzSpectrum::new(index, scaled_spec.mz, scaled_spec.intensity),
                     );
                     tims_spectra.push(tims_spec);

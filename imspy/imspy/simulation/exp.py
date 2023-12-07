@@ -10,9 +10,9 @@ import imspy_connector as pims
 from imspy.core import TimsFrame
 
 
-class TimsTofSyntheticAcquisitionBuilderDDA:
+class TimsTofSyntheticAcquisitionBuilder:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSyntheticsDDA(db_path)
+        self.handle = pims.PyTimsTofSynthetics(db_path)
 
     def build_frame(self, frame_id: int):
         frame = self.handle.build_frame(frame_id)

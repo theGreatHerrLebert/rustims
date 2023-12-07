@@ -1,18 +1,18 @@
 use pyo3::prelude::*;
-use rustdf::data::simulation::{TimsTofSyntheticsDDA};
+use rustdf::data::simulation::{TimsTofSynthetics};
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
-pub struct PyTimsTofSyntheticsDDA {
-    pub inner: TimsTofSyntheticsDDA,
+pub struct PyTimsTofSynthetics {
+    pub inner: TimsTofSynthetics,
 }
 
 #[pymethods]
-impl PyTimsTofSyntheticsDDA {
+impl PyTimsTofSynthetics {
     #[new]
     pub fn new(db_path: &str) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsDDA { inner: TimsTofSyntheticsDDA::new(path).unwrap() }
+        PyTimsTofSynthetics { inner: TimsTofSynthetics::new(path).unwrap() }
     }
 
     pub fn build_frame(&self, frame_id: u32) -> PyTimsFrame {
