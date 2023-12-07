@@ -14,12 +14,12 @@ numba = ">=0.53"
 tensorflow = ">=2.14"
 tensorflow-probability = ">=0.22.1"
 
-pyopenms = ">=2.6.0"
+#pyopenms = ">=2.6.0"
 
-sagepy = ">=0.2.6"
-sagepy-connector = ">=0.2.6"
+#sagepy = ">=0.2.6"
+#sagepy-connector = ">=0.2.6"
 
-imspy-connector = ">=0.2.15"
+#imspy-connector = ">=0.2.15"
 
 scipy = ">=1.7.1"
 tqdm = ">=4.66"
