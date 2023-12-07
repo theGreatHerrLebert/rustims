@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 class TimsTofQuadrupoleSetting:
     @abstractmethod
-    def get_transmission_function(self, frame_id: int) -> Callable[[NDArray], NDArray]:
+    def get_transmission_function(self, frame_id: int, scan_id: int) -> Callable[[NDArray], NDArray]:
         pass
 
     @abstractmethod
@@ -16,7 +16,7 @@ class TimsTofQuadrupoleSetting:
 
 
 class TransmissionDDA(TimsTofQuadrupoleSetting):
-    def get_transmission_function(self, frame_id: int) -> Callable[[NDArray], NDArray]:
+    def get_transmission_function(self, frame_id: int, scan_id: int) -> Callable[[NDArray], NDArray]:
         pass
 
     def apply_transmission(self, frame: TimsFrame) -> TimsFrame:
@@ -24,7 +24,7 @@ class TransmissionDDA(TimsTofQuadrupoleSetting):
 
 
 class TransmissionDIA(TimsTofQuadrupoleSetting):
-    def get_transmission_function(self, frame_id: int) -> Callable[[NDArray], NDArray]:
+    def get_transmission_function(self, frame_id: int, scan_id: int) -> Callable[[NDArray], NDArray]:
         pass
 
     def apply_transmission(self, frame: TimsFrame) -> TimsFrame:
@@ -32,7 +32,7 @@ class TransmissionDIA(TimsTofQuadrupoleSetting):
 
 
 class TransmissionMIDIA(TimsTofQuadrupoleSetting):
-    def get_transmission_function(self, frame_id: int) -> Callable[[NDArray], NDArray]:
+    def get_transmission_function(self, frame_id: int, scan_id: int) -> Callable[[NDArray], NDArray]:
         pass
 
     def apply_transmission(self, frame: TimsFrame) -> TimsFrame:
