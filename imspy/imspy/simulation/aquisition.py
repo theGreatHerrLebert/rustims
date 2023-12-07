@@ -90,7 +90,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def calculate_frame_types(self, table: pd.DataFrame, precursor_every: int = 7, verbose: bool = True) -> NDArray:
         if verbose:
             print(f'calculating frame types, precursor frame will be taken every {precursor_every} rt cycles.')
-        return np.array([0 if (x - 1) % precursor_every == 0 else 8 for x in table.frame_id])
+        return np.array([0 if (x - 1) % (precursor_every + 1) == 0 else 8 for x in table.frame_id])
 
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
@@ -124,7 +124,7 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
     def calculate_frame_types(self, table: pd.DataFrame, verbose: bool = True) -> NDArray:
         if verbose:
             print(f'calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
-        return np.array([0 if (x - 1) % self.precursor_every == 0 else 9 for x in table.frame_id])
+        return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in table.frame_id])
 
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
