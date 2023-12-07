@@ -75,7 +75,7 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
             return TimsFrame.from_tims_spectra(spec_list)
         return TimsFrame(
             frame_id=frame.frame_id,
-            ms_type=frame.ms_type_numeric,
+            ms_type=frame.ms_type,
             retention_time=frame.retention_time,
             scan=np.array([], dtype=np.int32),
             mobility=np.array([], dtype=np.float64),
