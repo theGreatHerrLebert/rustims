@@ -142,7 +142,8 @@ class TimsDataset(ABC):
     def mz_upper(self):
         return float(self.global_meta_data["MzAcqRangeUpper"])
 
-    def get_average_cycle_length(self) -> float:
+    @property
+    def average_cycle_length(self) -> float:
         return np.mean(np.diff(self.meta_data.Time.values))
 
     def get_tims_frame(self, frame_id: int) -> TimsFrame:
