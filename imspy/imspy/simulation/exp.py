@@ -93,7 +93,7 @@ class ExperimentDataHandleDIA(ExperimentDataHandle, ABC):
     def get_window_group_settings(self):
         window_group_settings = {}
 
-        for index, row in self.dia_ms_ms_windows.iterrows():
+        for _, row in self.dia_ms_ms_windows.iterrows():
             key = (row.window_group, row.scan_start)
             value = (row.mz_mid, row.mz_width)
             window_group_settings[key] = value
