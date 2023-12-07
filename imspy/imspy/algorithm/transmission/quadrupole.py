@@ -63,16 +63,17 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
             mz = spectrum.mz
             mz_len = len(mz)
             transmission = f(mz)
-            first_index = np.argmax(transmission > 0.001)
-            last_index = mz_len - np.argmax(transmission[::-1] > 0) - 1
 
-            if (first_index != 0 or last_index != mz_len - 1) and np.sum(transmission) > 0.01:
+            if np.sum(transmission > 0.001) > 0:
+                first_index = np.argmax(transmission > 0.001)
+                last_index = mz_len - np.argmax(transmission[::-1] > 0) - 1
                 mz_min = mz[first_index]
                 mz_max = mz[last_index]
                 spec_list.append(spectrum.filter(mz_min=mz_min, mz_max=mz_max))
 
         if len(spec_list) > 0:
             return TimsFrame.from_tims_spectra(spec_list)
+        
         return TimsFrame(
             frame_id=frame.frame_id,
             ms_type=frame.ms_type,
