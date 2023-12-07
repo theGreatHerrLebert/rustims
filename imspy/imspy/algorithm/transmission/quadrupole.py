@@ -1,8 +1,10 @@
+import numpy as np
 from abc import abstractmethod
 from typing import Callable
 
 from imspy.core import TimsFrame
 from numpy.typing import NDArray
+from imspy.algorithm.transmission.utility import ion_transition_function_midpoint
 
 
 class TimsTofQuadrupoleSetting:
@@ -32,8 +34,41 @@ class TransmissionDIA(TimsTofQuadrupoleSetting):
 
 
 class TransmissionMIDIA(TimsTofQuadrupoleSetting):
+    def __init__(self, frame_to_window_group, window_group_settings):
+        self.frame_to_window_group = frame_to_window_group
+        self.window_group_settings = window_group_settings
+        self.transmission_functions = None
+        self._setup()
+
+    def _setup(self):
+        transmission_dict = {}
+        for (window_group, scan), (mz_mid, mz_length) in self.window_group_settings.items():
+            transmission_dict[(window_group, scan)] = ion_transition_function_midpoint(midpoint=mz_mid,
+                                                                                       window_length=mz_length)
+
+        self.transmission_functions = transmission_dict
+
     def get_transmission_function(self, frame_id: int, scan_id: int) -> Callable[[NDArray], NDArray]:
-        pass
+        window_group = self.frame_to_window_group[frame_id]
+        return self.transmission_functions[(window_group, scan_id)]
 
     def apply_transmission(self, frame: TimsFrame) -> TimsFrame:
-        pass
+
+        spectra = frame.to_tims_spectra()
+        spec_list = []
+
+        for spectrum in spectra:
+
+            f = self.get_transmission_function(spectrum.frame_id, spectrum.scan - 1)
+            mz = spectrum.mz
+            mz_len = len(mz)
+            transmission = f(mz)
+            first_index = np.argmax(transmission > 0.001)
+            last_index = mz_len - np.argmax(transmission[::-1] > 0) - 1
+
+            if (first_index != 0 or last_index != mz_len - 1) and np.sum(transmission) > 0.01:
+                mz_min = mz[first_index]
+                mz_max = mz[last_index]
+                spec_list.append(spectrum.filter(mz_min=mz_min, mz_max=mz_max))
+
+        return TimsFrame.from_tims_spectra(spec_list)
