@@ -126,15 +126,19 @@ class TimsDataset(ABC):
         d = pd.read_sql_query("SELECT * from GlobalMetaData", sqlite3.connect(self.data_path + "/analysis.tdf"))
         return dict(zip(d.Key, d.Value))
 
-    def get_im_lower(self):
+    @property
+    def im_lower(self):
         return float(self.global_meta_data["OneOverK0AcqRangeLower"])
 
-    def get_im_upper(self):
+    @property
+    def im_upper(self):
         return float(self.global_meta_data["OneOverK0AcqRangeUpper"])
 
+    @property
     def mz_lower(self):
         return float(self.global_meta_data["MzAcqRangeLower"])
 
+    @property
     def mz_upper(self):
         return float(self.global_meta_data["MzAcqRangeUpper"])
 
