@@ -132,6 +132,12 @@ class TimsDataset(ABC):
     def get_im_upper(self):
         return float(self.global_meta_data["OneOverK0AcqRangeUpper"])
 
+    def mz_lower(self):
+        return float(self.global_meta_data["MzAcqRangeLower"])
+
+    def mz_upper(self):
+        return float(self.global_meta_data["MzAcqRangeUpper"])
+
     def get_average_cycle_length(self) -> float:
         return np.mean(np.diff(self.meta_data.Time.values))
 
