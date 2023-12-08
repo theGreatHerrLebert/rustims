@@ -46,14 +46,16 @@ class TimsTofAcquisitionBuilder:
 
     def generate_scan_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
-            print('generating scan layout...')
+            print('Generating scan layout...')
         scans = []
-        # scans are in reverse order
-        scan_ids = list(range(self.num_scans))[::-1]
+
+        # Generating scan_ids in ascending order
+        scan_ids = list(range(self.num_scans))
         for index, value in enumerate(scan_ids):
             scan_id = value
-            time = self.im_lower + index * self.im_cycle_length
-            scans.append({'scan': scan_id, 'mobility': time})
+            # Start with the highest mobility value at the lowest scan index and decrease
+            mobility = self.im_upper - index * self.im_cycle_length
+            scans.append({'scan': scan_id, 'mobility': mobility})
 
         return pd.DataFrame(scans)
 
