@@ -182,7 +182,6 @@ def get_scans_numba(im_value, ims_array, std_im, z_score):
         Array of scan indices
     """
     im_min, im_max = calculate_bounds_numba(im_value, std_im, z_score)
-    # Since the scan values go from high to low, we invert the way we find the indices
     first_scan = len(ims_array) - np.argmin(np.abs(ims_array - im_max))
     last_scan = len(ims_array) - np.argmin(np.abs(ims_array - im_min))
 
@@ -190,6 +189,6 @@ def get_scans_numba(im_value, ims_array, std_im, z_score):
     if first_scan > last_scan:
         first_scan, last_scan = last_scan, first_scan
 
-    im_scans = np.arange(first_scan, last_scan + 1)
+    # Generate scan indices in descending order
+    im_scans = np.arange(last_scan, first_scan - 1, -1)
     return im_scans
-
