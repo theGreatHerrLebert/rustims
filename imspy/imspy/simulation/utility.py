@@ -160,6 +160,7 @@ def get_frames_numba(rt_value, times_array, std_rt, z_score):
 
     return rt_frames
 
+
 @jit(nopython=True)
 def get_scans_numba(im_value, ims_array, scans_array, std_im, z_score):
     """
@@ -174,4 +175,4 @@ def get_scans_numba(im_value, ims_array, scans_array, std_im, z_score):
 
     # Generate scan indices in the correct order given the inverse relationship
     im_scans = np.arange(scan_start, scan_end + 1)
-    return im_scans[::-1]
+    return im_scans
