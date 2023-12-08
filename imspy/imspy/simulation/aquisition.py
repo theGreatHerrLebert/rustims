@@ -48,9 +48,11 @@ class TimsTofAcquisitionBuilder:
         if verbose:
             print('generating scan layout...')
         scans = []
-        for i in range(self.num_scans):
-            scan_id = i
-            time = self.im_lower + i * self.im_cycle_length
+        # scans are in reverse order
+        scan_ids = list(range(self.num_scans))[::-1]
+        for index, value in enumerate(scan_ids):
+            scan_id = value
+            time = self.im_lower + index * self.im_cycle_length
             scans.append({'scan': scan_id, 'mobility': time})
 
         return pd.DataFrame(scans)
