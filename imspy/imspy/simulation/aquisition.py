@@ -106,7 +106,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  verbose: bool = True,
-                 precursor_every: int = 17,
+                 precursor_every: int = 16,
                  gradient_length=50 * 60,
                  rt_cycle_length=0.1054,
                  im_lower=0.6,
