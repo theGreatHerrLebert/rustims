@@ -7,11 +7,11 @@ fn main() {
     let db_path_str = "/home/administrator/Documents/promotion/rust/notebook/simulation/sim-data/EXP-MIDIDA-SMALL/experiment_data.db";
     let path = Path::new(db_path_str);
     let experiment = TimsTofSynthetics::new(path).unwrap();
-    let first_five_precursor_frames = experiment.precursor_frames.iter().map(|x| x.frame_id.clone()).take(150).collect::<Vec<_>>();
-    let frames = experiment.build_frames(first_five_precursor_frames, 16);
+    let first_frames = experiment.precursor_frames.iter().map(|x| x.frame_id.clone()).take(500).collect::<Vec<_>>();
 
-    for frame in frames {
-        println!("frame_id: {}", frame.frame_id);
-        println!("mz: {:?}", frame.ims_frame.mz);
+    for frame in first_frames {
+        println!("frame_id: {}", frame);
+        let build_frame = experiment.build_frame(frame);
+        println!("frame: {}", build_frame);
     }
 }
