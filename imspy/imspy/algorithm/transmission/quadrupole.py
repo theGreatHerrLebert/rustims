@@ -44,7 +44,7 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
 
     @staticmethod
     def _setup_frame_to_window_group(frame_to_window_group: pd.DataFrame) -> Dict[int, int]:
-        frame_ids = frame_to_window_group.frame_id.values
+        frame_ids = frame_to_window_group.frame.values
         window_groups = frame_to_window_group.window_group.values
         return dict(zip(frame_ids, window_groups))
 
