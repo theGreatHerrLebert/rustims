@@ -75,13 +75,10 @@ impl TimsTofSynthetics {
     pub fn build_frame(&self, frame_id: u32) -> TimsFrame {
         // TODO: This is a temporary hack to get the ms_type, need to make this faster and more robust
         let ms_type = self.frames.iter().find(|frame| frame.frame_id == frame_id).unwrap().parse_ms_type();
-        println!("ms_type: {:?}", ms_type);
 
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
         let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
-        println!("peptide_ids: {:?}", peptide_ids);
-        println!("abundances: {:?}", abundances);
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
             let (ion_abundances, scan_occurrences, scan_abundances, spectra) = self.peptide_to_ions.get(&peptide_id).unwrap();
 
@@ -92,7 +89,7 @@ impl TimsTofSynthetics {
 
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
                     let abundance_factor = abundance * ion_abundance * scan_abu * self.peptide_to_events.get(&peptide_id).unwrap();
-                    let scan_id = *scan as u32 - 1;
+                    let scan_id = *scan;
                     let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
                     let index = vec![0; scaled_spec.mz.len()];
                     let tims_spec = TimsSpectrum::new(
