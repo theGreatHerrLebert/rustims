@@ -1,6 +1,8 @@
 import numpy as np
 from abc import abstractmethod
-from typing import Callable
+from typing import Callable, Dict
+
+import pandas as pd
 
 from imspy.core import TimsFrame
 from numpy.typing import NDArray
@@ -34,11 +36,25 @@ class TransmissionDIA(TimsTofQuadrupoleSetting):
 
 
 class TransmissionMIDIA(TimsTofQuadrupoleSetting):
-    def __init__(self, frame_to_window_group, window_group_settings):
-        self.frame_to_window_group = frame_to_window_group
-        self.window_group_settings = window_group_settings
+    def __init__(self, frame_to_window_group: pd.DataFrame, window_group_settings: pd.DataFrame):
+        self.frame_to_window_group = self._setup_frame_to_window_group(frame_to_window_group)
+        self.window_group_settings = self._setup_window_group_settings(window_group_settings)
         self.transmission_functions = None
         self._setup()
+
+    @staticmethod
+    def _setup_frame_to_window_group(frame_to_window_group: pd.DataFrame) -> Dict[int, int]:
+        frame_ids = frame_to_window_group.frame_id.values
+        window_groups = frame_to_window_group.window_group.values
+        return dict(zip(frame_ids, window_groups))
+
+    @staticmethod
+    def _setup_window_group_settings(window_group_settings: pd.DataFrame) -> Dict[tuple, tuple]:
+        window_groups = window_group_settings.window_group.values
+        scans = window_group_settings.scan_start.values
+        mz_mid = window_group_settings.isolation_mz.values
+        mz_length = window_group_settings.isolation_width.values
+        return dict(zip(zip(window_groups, scans), zip(mz_mid, mz_length)))
 
     def _setup(self):
         transmission_dict = {}
