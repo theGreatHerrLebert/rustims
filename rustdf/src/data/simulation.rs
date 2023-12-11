@@ -359,7 +359,7 @@ impl SyntheticsDataHandle {
             let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    5,
+                    6,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -368,7 +368,7 @@ impl SyntheticsDataHandle {
             let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    6,
+                    7,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -377,7 +377,7 @@ impl SyntheticsDataHandle {
             let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    7,
+                    8,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
