@@ -4,7 +4,7 @@ use std::path::Path;
 fn main() {
     let _args: Vec<String> = env::args().collect();
 
-    let db_path_str = "/home/administrator/Documents/promotion/rust/notebook/simulation/EXP-SHORT/experiment_data.db";
+    let db_path_str = "/home/administrator/Documents/promotion/rust/notebook/simulation/sim-data/EXP-MIDIDA-SMALL/experiment_data.db";
     let path = Path::new(db_path_str);
     let experiment = TimsTofSynthetics::new(path).unwrap();
     let first_five_precursor_frames = experiment.precursor_frames.iter().map(|x| x.frame_id.clone()).take(150).collect::<Vec<_>>();
