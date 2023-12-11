@@ -352,9 +352,9 @@ impl SyntheticsDataHandle {
     pub fn read_ions(&self) -> Result<Vec<IonsSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
         let ions_iter = stmt.query_map([], |row| {
-            let simulated_spectrum_str: String = row.get(5)?;
-            let scan_occurrence_str: String = row.get(6)?;
-            let scan_abundance_str: String = row.get(7)?;
+            let simulated_spectrum_str: String = row.get(6)?;
+            let scan_occurrence_str: String = row.get(7)?;
+            let scan_abundance_str: String = row.get(8)?;
 
             let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
                 Ok(value) => value,
