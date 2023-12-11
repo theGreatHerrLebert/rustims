@@ -162,27 +162,17 @@ def get_frames_numba(rt_value, times_array, std_rt, z_score):
 
 
 @jit(nopython=True)
-def get_scans_numba(im_value, ims_array, std_im, z_score):
+def get_scans_numba(im_value, ims_array, scans_array, std_im, z_score):
     """
     Get the scans that will be acquired for a given ion mobility value.
-    Parameters
-    ----------
-    im_value : float
-        Ion mobility value
-    ims_array : NDArray
-        Array of ion mobility values
-    std_im : float
-        Standard deviation of the ion mobility
-    z_score : float
-        Z-score of the normal distribution
-
-    Returns
-    -------
-    NDArray
-        Array of scan indices
     """
     im_min, im_max = calculate_bounds_numba(im_value, std_im, z_score)
-    first_scan = np.argmin(np.abs(ims_array - im_min)) + 1
-    last_scan = np.argmin(np.abs(ims_array - im_max)) + 1
-    im_scans = np.arange(first_scan, last_scan + 1)
+    im_start = np.argmin(np.abs(ims_array - im_max))
+    im_end = np.argmin(np.abs(ims_array - im_min))
+
+    scan_start = scans_array[im_start]
+    scan_end = scans_array[im_end]
+
+    # Generate scan indices in the correct order given the inverse relationship
+    im_scans = np.arange(scan_start, scan_end + 1)
     return im_scans

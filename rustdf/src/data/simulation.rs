@@ -7,20 +7,20 @@ use serde_json;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
-pub struct TimsTofSyntheticsDDA {
+pub struct TimsTofSynthetics {
     pub ions: Vec<IonsSim>,
     pub peptides: Vec<PeptidesSim>,
     pub scans: Vec<ScansSim>,
     pub frames: Vec<FramesSim>,
     pub precursor_frames: Vec<FramesSim>,
-    pub frame_to_abundances: BTreeMap<i64, (Vec<i64>, Vec<f64>)>,
-    pub peptide_to_ions: BTreeMap<i64, (Vec<f64>, Vec<Vec<i64>>, Vec<Vec<f64>>, Vec<MzSpectrum>)>,
-    pub frame_to_rt: BTreeMap<i64, f64>,
-    pub scan_to_mobility: BTreeMap<i64, f64>,
-    pub peptide_to_events: BTreeMap<i64, f64>,
+    pub frame_to_abundances: BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
+    pub peptide_to_ions: BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)>,
+    pub frame_to_rt: BTreeMap<u32, f32>,
+    pub scan_to_mobility: BTreeMap<u32, f32>,
+    pub peptide_to_events: BTreeMap<u32, f32>,
 }
 
-impl TimsTofSyntheticsDDA {
+impl TimsTofSynthetics {
     pub fn new(path: &Path) -> Result<Self> {
         let handle = SyntheticsDataHandle::new(path)?;
         let ions = handle.read_ions()?;
@@ -48,7 +48,7 @@ impl TimsTofSyntheticsDDA {
             .collect()
     }
 
-    pub fn build_peptide_to_events(peptides: Vec<PeptidesSim>) -> BTreeMap<i64, f64> {
+    pub fn build_peptide_to_events(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, f32> {
         let mut peptide_to_events = BTreeMap::new();
         for peptide in peptides.iter() {
             peptide_to_events.insert(peptide.peptide_id, peptide.events);
@@ -56,7 +56,7 @@ impl TimsTofSyntheticsDDA {
         peptide_to_events
     }
 
-    pub fn build_frame_to_rt(frames: Vec<FramesSim>) -> BTreeMap<i64, f64> {
+    pub fn build_frame_to_rt(frames: Vec<FramesSim>) -> BTreeMap<u32, f32> {
         let mut frame_to_rt = BTreeMap::new();
         for frame in frames.iter() {
             frame_to_rt.insert(frame.frame_id, frame.time);
@@ -64,7 +64,7 @@ impl TimsTofSyntheticsDDA {
         frame_to_rt
     }
 
-    pub fn build_scan_to_mobility(scans: Vec<ScansSim>) -> BTreeMap<i64, f64> {
+    pub fn build_scan_to_mobility(scans: Vec<ScansSim>) -> BTreeMap<u32, f32> {
         let mut scan_to_mobility = BTreeMap::new();
         for scan in scans.iter() {
             scan_to_mobility.insert(scan.scan, scan.mobility);
@@ -72,7 +72,9 @@ impl TimsTofSyntheticsDDA {
         scan_to_mobility
     }
 
-    pub fn build_frame(&self, frame_id: i64) -> TimsFrame {
+    pub fn build_frame(&self, frame_id: u32) -> TimsFrame {
+        // TODO: This is a temporary hack to get the ms_type, need to make this faster and more robust
+        let ms_type = self.frames.iter().find(|frame| frame.frame_id == frame_id).unwrap().parse_ms_type();
 
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
@@ -87,14 +89,15 @@ impl TimsTofSyntheticsDDA {
 
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
                     let abundance_factor = abundance * ion_abundance * scan_abu * self.peptide_to_events.get(&peptide_id).unwrap();
-                    let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor;
+                    let scan_id = *scan;
+                    let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
                     let index = vec![0; scaled_spec.mz.len()];
                     let tims_spec = TimsSpectrum::new(
                         frame_id as i32,
                         *scan as i32,
-                        *self.frame_to_rt.get(&frame_id).unwrap(),
-                        *self.scan_to_mobility.get(&(*&scan - 1)).unwrap(),
-                        MsType::Precursor,
+                        *self.frame_to_rt.get(&frame_id).unwrap() as f64,
+                        *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
+                        ms_type.clone(),
                         IndexedMzSpectrum::new(index, scaled_spec.mz, scaled_spec.intensity),
                     );
                     tims_spectra.push(tims_spec);
@@ -117,7 +120,7 @@ impl TimsTofSyntheticsDDA {
     }
 
     // Method to build multiple frames in parallel
-    pub fn build_frames(&self, frame_ids: Vec<i64>, num_threads: usize) -> Vec<TimsFrame> {
+    pub fn build_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
@@ -128,7 +131,7 @@ impl TimsTofSyntheticsDDA {
         tims_frames
     }
 
-    pub fn build_frame_to_abundances(peptides: Vec<PeptidesSim>) -> BTreeMap<i64, (Vec<i64>, Vec<f64>)> {
+    pub fn build_frame_to_abundances(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, (Vec<u32>, Vec<f32>)> {
         let mut frame_to_abundances = BTreeMap::new();
 
         for peptide in peptides.iter() {
@@ -145,7 +148,7 @@ impl TimsTofSyntheticsDDA {
 
         frame_to_abundances
     }
-    pub fn build_peptide_to_ions(ions: Vec<IonsSim>) -> BTreeMap<i64, (Vec<f64>, Vec<Vec<i64>>, Vec<Vec<f64>>, Vec<MzSpectrum>)> {
+    pub fn build_peptide_to_ions(ions: Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)> {
         let mut peptide_to_ions = BTreeMap::new();
 
         for ion in ions.iter() {
@@ -168,29 +171,32 @@ impl TimsTofSyntheticsDDA {
 
 #[derive(Debug, Clone)]
 pub struct IonsSim {
-    pub peptide_id: i64,
-    pub mz: f64,
-    pub charge: i64,
-    pub relative_abundance: f64,
-    pub mobility: f64,
+    pub peptide_id: u32,
+    pub mono_isotopic_mass: f32,
+    pub mz: f32,
+    pub charge: i8,
+    pub relative_abundance: f32,
+    pub mobility: f32,
     pub simulated_spectrum: MzSpectrum,
-    pub scan_occurrence: Vec<i64>,
-    pub scan_abundance: Vec<f64>,
+    pub scan_occurrence: Vec<u32>,
+    pub scan_abundance: Vec<f32>,
 }
 
 impl IonsSim {
     pub fn new(
-        peptide_id: i64,
-        mz: f64,
-        charge: i64,
-        relative_abundance: f64,
-        mobility: f64,
+        peptide_id: u32,
+        mz: f32,
+        mono_isotopic_mass: f32,
+        charge: i8,
+        relative_abundance: f32,
+        mobility: f32,
         simulated_spectrum: MzSpectrum,
-        scan_occurrence: Vec<i64>,
-        scan_abundance: Vec<f64>,
+        scan_occurrence: Vec<u32>,
+        scan_abundance: Vec<f32>,
     ) -> Self {
         IonsSim {
             peptide_id,
+            mono_isotopic_mass,
             mz,
             charge,
             relative_abundance,
@@ -204,41 +210,41 @@ impl IonsSim {
 
 #[derive(Debug, Clone)]
 pub struct PeptidesSim {
-    pub peptide_id: i64,
+    pub peptide_id: u32,
     pub sequence: String,
     pub proteins: String,
     pub decoy: bool,
-    pub missed_cleavages: i64,
+    pub missed_cleavages: i8,
     pub n_term : Option<bool>,
     pub c_term : Option<bool>,
-    pub mono_isotopic_mass: f64,
-    pub retention_time: f64,
-    pub events: f64,
-    pub frame_occurrence: Vec<i64>,
-    pub frame_abundance: Vec<f64>,
+    pub mono_isotopic_mass: f32,
+    pub retention_time: f32,
+    pub events: f32,
+    pub frame_occurrence: Vec<u32>,
+    pub frame_abundance: Vec<f32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ScansSim {
-    pub scan: i64,
-    pub mobility: f64,
+    pub scan: u32,
+    pub mobility: f32,
 }
 
 impl ScansSim {
-    pub fn new(scan: i64, mobility: f64) -> Self {
+    pub fn new(scan: u32, mobility: f32) -> Self {
         ScansSim { scan, mobility }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct FramesSim {
-    pub frame_id: i64,
-    pub time: f64,
+    pub frame_id: u32,
+    pub time: f32,
     pub ms_type: i64,
 }
 
 impl FramesSim {
-    pub fn new(frame_id: i64, time: f64, ms_type: i64) -> Self {
+    pub fn new(frame_id: u32, time: f32, ms_type: i64) -> Self {
         FramesSim {
             frame_id,
             time,
@@ -303,7 +309,7 @@ impl SyntheticsDataHandle {
             let frame_occurrence_str: String = row.get(10)?;
             let frame_abundance_str: String = row.get(11)?;
 
-            let frame_occurrence: Vec<i64> = match serde_json::from_str(&frame_occurrence_str) {
+            let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     10,
@@ -312,7 +318,7 @@ impl SyntheticsDataHandle {
                 )),
             };
 
-            let frame_abundance: Vec<f64> = match serde_json::from_str(&frame_abundance_str) {
+            let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     11,
@@ -346,20 +352,11 @@ impl SyntheticsDataHandle {
     pub fn read_ions(&self) -> Result<Vec<IonsSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
         let ions_iter = stmt.query_map([], |row| {
-            let simulated_spectrum_str: String = row.get(5)?;
-            let scan_occurrence_str: String = row.get(6)?;
-            let scan_abundance_str: String = row.get(7)?;
+            let simulated_spectrum_str: String = row.get(6)?;
+            let scan_occurrence_str: String = row.get(7)?;
+            let scan_abundance_str: String = row.get(8)?;
 
             let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
-                Ok(value) => value,
-                Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    5,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )),
-            };
-
-            let scan_occurrence: Vec<i64> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     6,
@@ -368,10 +365,19 @@ impl SyntheticsDataHandle {
                 )),
             };
 
-            let scan_abundance: Vec<f64> = match serde_json::from_str(&scan_abundance_str) {
+            let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     7,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )),
+            };
+
+            let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
+                Ok(value) => value,
+                Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
+                    8,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -383,6 +389,7 @@ impl SyntheticsDataHandle {
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
                 simulated_spectrum,
                 scan_occurrence,
                 scan_abundance,

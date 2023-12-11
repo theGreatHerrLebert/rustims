@@ -1,12 +1,8 @@
-import os
-import sqlite3
-
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from abc import abstractmethod, ABC
 
-from imspy.simulation.exp import ExperimentDataHandle
 from imspy.timstof.data import AcquisitionMode
 from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing
 
@@ -50,12 +46,16 @@ class TimsTofAcquisitionBuilder:
 
     def generate_scan_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
-            print('generating scan layout...')
+            print('Generating scan layout...')
         scans = []
-        for i in range(self.num_scans):
-            scan_id = i
-            time = self.im_lower + i * self.im_cycle_length
-            scans.append({'scan': scan_id, 'mobility': time})
+
+        # Generating scan_ids in ascending order
+        scan_ids = list(range(self.num_scans))
+        for index, value in enumerate(scan_ids):
+            scan_id = value
+            # Start with the highest mobility value at the lowest scan index and decrease
+            mobility = self.im_upper - index * self.im_cycle_length
+            scans.append({'scan': scan_id, 'mobility': mobility})
 
         return pd.DataFrame(scans)
 
@@ -66,10 +66,6 @@ class TimsTofAcquisitionBuilder:
 
     @abstractmethod
     def calculate_frame_types(self, *args) -> NDArray:
-        pass
-
-    @abstractmethod
-    def build(self, *args) -> None:
         pass
 
 
@@ -98,10 +94,43 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def calculate_frame_types(self, table: pd.DataFrame, precursor_every: int = 7, verbose: bool = True) -> NDArray:
         if verbose:
             print(f'calculating frame types, precursor frame will be taken every {precursor_every} rt cycles.')
-        return np.array([0 if (x - 1) % precursor_every == 0 else 8 for x in table.frame_id])
+        return np.array([0 if (x - 1) % (precursor_every + 1) == 0 else 8 for x in table.frame_id])
 
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table,
                                                                  precursor_every=self.precursor_every, verbose=verbose)
+
+
+class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
+    def __init__(self,
+                 verbose: bool = True,
+                 precursor_every: int = 20,
+                 gradient_length=50 * 60,
+                 rt_cycle_length=0.056,
+                 im_lower=0.6,
+                 im_upper=1.5,
+                 num_scans=451,
+                 mz_lower: float = 150,
+                 mz_upper: float = 1200):
+        super().__init__(gradient_length, rt_cycle_length, im_lower, im_upper, num_scans)
+        self.scan_table = None
+        self.frame_table = None
+        self.acquisition_mode = AcquisitionMode('MIDIA')
+        self.verbose = verbose
+        self.mz_lower = mz_lower
+        self.mz_upper = mz_upper
+        self.precursor_every = precursor_every
+
+        self._setup(verbose=verbose)
+
+    def calculate_frame_types(self, table: pd.DataFrame, verbose: bool = True) -> NDArray:
+        if verbose:
+            print(f'calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
+        return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in table.frame_id])
+
+    def _setup(self, verbose: bool = True):
+        self.frame_table = self.generate_frame_table(verbose=verbose)
+        self.scan_table = self.generate_scan_table(verbose=verbose)
+        self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table, verbose=verbose)

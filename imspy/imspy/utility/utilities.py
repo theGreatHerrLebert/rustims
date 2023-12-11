@@ -94,7 +94,7 @@ class TokenSequence:
         if jsons is not None:
             self.sequence_tokenized = self._from_jsons(jsons)
             self._jsons = jsons
-        else :
+        else:
             self.sequence_tokenized = sequence_tokenized
             self._jsons = self._to_jsons()
 

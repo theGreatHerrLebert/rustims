@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from abc import ABC
 from typing import List
 
 import numpy as np
@@ -9,11 +10,11 @@ import imspy_connector as pims
 from imspy.core import TimsFrame
 
 
-class TimsTofSyntheticAcquisitionBuilderDDA:
+class TimsTofSyntheticAcquisitionBuilder:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSyntheticsDDA(db_path)
+        self.handle = pims.PyTimsTofSynthetics(db_path)
 
-    def get_frame(self, frame_id: int):
+    def build_frame(self, frame_id: int):
         frame = self.handle.build_frame(frame_id)
         return TimsFrame.from_py_tims_frame(frame)
 
@@ -24,13 +25,13 @@ class TimsTofSyntheticAcquisitionBuilderDDA:
 
 class ExperimentDataHandle:
     def __init__(self,
-                 path: str,
-                 db_name: str = 'experiment_data.db',
+                 database_path: str,
+                 database_name: str = 'experiment_data.db',
                  verbose: bool = True,
                  ):
         self.verbose = verbose
-        self.base_path = path
-        self.db_path = os.path.join(self.base_path, db_name)
+        self.base_path = database_path
+        self.database_path = os.path.join(self.base_path, database_name)
         self.raw_data_path = os.path.join(self.base_path, 'raw_data')
         self.conn = None
 
@@ -45,8 +46,8 @@ class ExperimentDataHandle:
 
         # Connect to the SQLite database or create it if it doesn't exist
         if self.verbose:
-            print(f"Connecting to database: {self.db_path}")
-        self.conn = sqlite3.connect(self.db_path)
+            print(f"Connecting to database: {self.database_path}")
+        self.conn = sqlite3.connect(self.database_path)
 
     def create_table(self, table_name: str, table: pd.DataFrame):
         # Create a table from a pandas DataFrame
@@ -69,6 +70,35 @@ class ExperimentDataHandle:
     def get_table(self, table_name: str) -> pd.DataFrame:
         # Get a table as a pandas DataFrame
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
+
+
+class ExperimentDataHandleDIA(ExperimentDataHandle, ABC):
+    def __init__(self,
+                 database_path: str,
+                 database_name: str = 'experiment_data.db',
+                 verbose: bool = True,):
+        super().__init__(database_path, database_name, verbose)
+        self.dia_ms_ms_info = None
+        self.dia_ms_ms_windows = None
+
+        self._additional_setup()
+
+    def _additional_setup(self):
+        self.dia_ms_ms_info = self.get_table('dia_ms_ms_info')
+        self.dia_ms_ms_windows = self.get_table('dia_ms_ms_windows')
+
+    def get_frame_to_window_group(self):
+        return dict(zip(self.dia_ms_ms_info.frame, self.dia_ms_ms_info.window_group))
+
+    def get_window_group_settings(self):
+        window_group_settings = {}
+
+        for _, row in self.dia_ms_ms_windows.iterrows():
+            key = (row.window_group, row.scan_start)
+            value = (row.mz_mid, row.mz_width)
+            window_group_settings[key] = value
+
+        return window_group_settings
 
 
 if __name__ == '__main__':

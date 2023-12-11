@@ -1,3 +1,5 @@
+from typing import Dict
+
 import numpy as np
 import pandas as pd
 import sqlite3
@@ -62,6 +64,7 @@ class TimsDataset(ABC):
 
         self.data_path = data_path
         self.meta_data = self.__load_meta_data()
+        self.global_meta_data = self.__load_global_meta_data()
         self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
         self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
         self.__current_index = 1
@@ -113,6 +116,39 @@ class TimsDataset(ABC):
             pd.DataFrame: Meta data.
         """
         return pd.read_sql_query("SELECT * from Frames", sqlite3.connect(self.data_path + "/analysis.tdf"))
+
+    def __load_global_meta_data(self) -> Dict[str, str]:
+        """Get the global meta data.
+
+        Returns:
+            pd.DataFrame: Global meta data.
+        """
+        d = pd.read_sql_query("SELECT * from GlobalMetaData", sqlite3.connect(self.data_path + "/analysis.tdf"))
+        return dict(zip(d.Key, d.Value))
+
+    @property
+    def im_lower(self):
+        return float(self.global_meta_data["OneOverK0AcqRangeLower"])
+
+    @property
+    def im_upper(self):
+        return float(self.global_meta_data["OneOverK0AcqRangeUpper"])
+
+    @property
+    def mz_lower(self):
+        return float(self.global_meta_data["MzAcqRangeLower"])
+
+    @property
+    def mz_upper(self):
+        return float(self.global_meta_data["MzAcqRangeUpper"])
+
+    @property
+    def average_cycle_length(self) -> float:
+        return np.mean(np.diff(self.meta_data.Time.values))
+
+    @property
+    def description(self) -> str:
+        return self.global_meta_data["Description"]
 
     def get_tims_frame(self, frame_id: int) -> TimsFrame:
         """Get a TimsFrame.
