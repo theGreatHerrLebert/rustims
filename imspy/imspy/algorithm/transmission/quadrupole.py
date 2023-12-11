@@ -46,8 +46,8 @@ class TransmissionDIA(TimsTofQuadrupoleSetting):
 
         for _, row in window_group_settings.iterrows():
             window_group = row.window_group
-            scan_start = row.scan_start
-            scan_end = row.scan_end
+            scan_start = int(row.scan_start)
+            scan_end = int(row.scan_end)
             isolation_mz = row.isolation_mz
             isolation_width = row.isolation_width
             for scan in range(scan_start, scan_end + 1):
