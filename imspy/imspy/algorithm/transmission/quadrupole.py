@@ -75,7 +75,7 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
 
         for spectrum in spectra:
 
-            f = self.get_transmission_function(frame.frame_id, spectrum.scan - 1)
+            f = self.get_transmission_function(frame.frame_id, spectrum.scan)
             mz = spectrum.mz
             mz_len = len(mz)
             transmission = f(mz)
