@@ -172,6 +172,7 @@ impl TimsTofSynthetics {
 #[derive(Debug, Clone)]
 pub struct IonsSim {
     pub peptide_id: u32,
+    pub mono_isotopic_mass: f32,
     pub mz: f32,
     pub charge: i8,
     pub relative_abundance: f32,
@@ -185,6 +186,7 @@ impl IonsSim {
     pub fn new(
         peptide_id: u32,
         mz: f32,
+        mono_isotopic_mass: f32,
         charge: i8,
         relative_abundance: f32,
         mobility: f32,
@@ -194,6 +196,7 @@ impl IonsSim {
     ) -> Self {
         IonsSim {
             peptide_id,
+            mono_isotopic_mass,
             mz,
             charge,
             relative_abundance,
@@ -386,6 +389,7 @@ impl SyntheticsDataHandle {
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
                 simulated_spectrum,
                 scan_occurrence,
                 scan_abundance,

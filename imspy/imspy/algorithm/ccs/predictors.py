@@ -188,7 +188,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
         data[f'mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, m, data.charge.values)])
-        data = data[['peptide_id', 'mz', 'charge', 'relative_abundance', f'mobility_{self.name}']]
+        data = data[['peptide_id', 'monoisotopic-mass', 'mz', 'charge', 'relative_abundance', f'mobility_{self.name}']]
         return data
 
     def __repr__(self):
