@@ -207,16 +207,17 @@ class TimsDataset(ABC):
         """
         return self.__dataset.compress_bytes_zstd(values)
 
-    def decompress_zstd(self, values: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    def decompress_zstd(self, values: NDArray[np.uint8], ignore_first_n: int = 8) -> NDArray[np.uint8]:
         """Decompress values using ZSTD.
 
         Args:
             values (NDArray[np.float64]): Values to decompress.
+            ignore_first_n (int): Number of bytes to ignore.
 
         Returns:
             NDArray[np.uint8]: Decompressed values.
         """
-        return self.__dataset.decompress_bytes_zstd(values)
+        return self.__dataset.decompress_bytes_zstd(values[ignore_first_n:])
 
     def indexed_values_to_compressed_bytes(self, scan_values: NDArray[np.int32], tof_values: NDArray[np.int32],
                                 intensity_values: NDArray[np.float64], total_scans: int) -> NDArray[np.uint8]:
@@ -236,7 +237,7 @@ class TimsDataset(ABC):
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
-        """Convert bytes to scan and intensity values.
+        """Convert bytes to scan, tof, and intensity values.
 
         Args:
             values (NDArray[np.uint8]): Bytes.
