@@ -86,6 +86,14 @@ impl BrukerTimsDataLibrary {
         Ok(())
     }
 
+    pub fn tims_mz_to_index(&self, frame_id: u32, mzs: &[c_double], indices: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
+        unsafe {
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_mz_to_index")?;
+            func(self.handle, frame_id, mzs.as_ptr(), indices.as_mut_ptr(), mzs.len() as u32);
+        }
+        Ok(())
+    }
+
     //
     // Convert the given indices to mz values.
     //

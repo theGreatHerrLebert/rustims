@@ -2,7 +2,7 @@ use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
@@ -17,6 +17,9 @@ pub trait TimsData {
     fn get_frame_count(&self) -> i32;
     fn get_data_path(&self) -> &str;
     fn get_bruker_lib_path(&self) -> &str;
+
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
 }
 
 /// Decompresses a ZSTD compressed byte array
@@ -29,12 +32,76 @@ pub trait TimsData {
 ///
 /// * `decompressed_data` - A vector of u8 that holds the decompressed data
 ///
-fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
+pub fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = zstd::Decoder::new(compressed_data)?;
     let mut decompressed_data = Vec::new();
     decoder.read_to_end(&mut decompressed_data)?;
     Ok(decompressed_data)
 }
+
+/// Compresses a byte array using ZSTD
+///
+/// # Arguments
+///
+/// * `decompressed_data` - A byte slice that holds the decompressed data
+///
+/// # Returns
+///
+/// * `compressed_data` - A vector of u8 that holds the compressed data
+///
+pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut encoder = zstd::Encoder::new(Vec::new(), 1)?;
+    encoder.write_all(decompressed_data)?;
+    let compressed_data = encoder.finish()?;
+    Ok(compressed_data)
+}
+
+pub fn reconstruct_compressed_data(
+    scans: Vec<u32>,
+    mut tofs: Vec<u32>,
+    intensities: Vec<u32>,
+    total_scans: u32,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Ensuring all vectors have the same length
+    assert_eq!(scans.len(), tofs.len());
+    assert_eq!(scans.len(), intensities.len());
+
+    // Modify TOFs based on scans
+    modify_tofs(&mut tofs, &scans);
+
+    // Get peak counts from total scans and scans
+    let peak_cnts = get_peak_cnts(total_scans, &scans);
+
+    // Interleave TOFs and intensities
+    let mut interleaved = Vec::new();
+    for (&tof, &intensity) in tofs.iter().zip(intensities.iter()) {
+        interleaved.push(tof);
+        interleaved.push(intensity);
+    }
+
+    // Get real data using the custom loop logic
+    let real_data = get_realdata(&peak_cnts, &interleaved);
+
+    // Compress real_data using zstd_compress
+    let compressed_data = zstd_compress(&real_data)?;
+
+    // Final data preparation with compressed data
+    let mut final_data = Vec::new();
+
+    // Include the length of the compressed data as a header (4 bytes)
+    final_data.extend_from_slice(&(compressed_data.len() as u32 + 8).to_le_bytes());
+
+    // Include total_scans as part of the header
+    final_data.extend_from_slice(&total_scans.to_le_bytes());
+
+    // Include the compressed data itself
+    final_data.extend_from_slice(&compressed_data);
+
+    Ok(final_data)
+}
+
+
+
 
 /// Parses the decompressed bruker binary data
 ///
@@ -48,7 +115,7 @@ fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `tof_indices` - A vector of u32 that holds the tof indices
 /// * `intensities` - A vector of u32 that holds the intensities
 ///
-fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
+pub fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
 
     let mut buffer_u32 = Vec::new();
 
@@ -266,6 +333,22 @@ impl TimsDataHandle {
         self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values).expect("Bruker binary call failed at: tims_index_to_mz;");
 
         mz_values
+    }
+
+    pub fn mz_to_tof(&self, frame_id: u32, mz: &Vec<f64>) -> Vec<u32> {
+        let mut dbl_mz: Vec<f64> = Vec::new();
+        dbl_mz.resize(mz.len(), 0.0);
+
+        for (i, &val) in mz.iter().enumerate() {
+            dbl_mz[i] = val as f64;
+        }
+
+        let mut tof_values: Vec<f64> = Vec::new();
+        tof_values.resize(mz.len(),  0.0);
+
+        self.bruker_lib.tims_mz_to_index(frame_id, &dbl_mz, &mut tof_values).expect("Bruker binary call failed at: tims_mz_to_index;");
+
+        tof_values.iter().map(|&x| x.round() as u32).collect()
     }
 
     /// translate scan to inverse mobility values calling the bruker library
@@ -501,3 +584,64 @@ impl TimsDataHandle {
         self.frame_meta_data.len() as i32
     }
 }
+
+fn get_peak_cnts(total_scans: u32, scans: &[u32]) -> Vec<u32> {
+    let mut peak_cnts = vec![total_scans];
+    let mut ii = 0;
+    for scan_id in 1..total_scans {
+        let mut counter = 0;
+        while ii < scans.len() && scans[ii] < scan_id {
+            ii += 1;
+            counter += 1;
+        }
+        peak_cnts.push(counter * 2);
+    }
+    peak_cnts
+}
+
+fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
+    let mut last_tof = -1i32; // Using i32 to allow -1
+    let mut last_scan = 0;
+    for ii in 0..tofs.len() {
+        if last_scan != scans[ii] {
+            last_tof = -1;
+            last_scan = scans[ii];
+        }
+        let val = tofs[ii] as i32; // Cast to i32 for calculation
+        tofs[ii] = (val - last_tof) as u32; // Cast back to u32
+        last_tof = val;
+    }
+}
+
+fn get_realdata(peak_cnts: &[u32], interleaved: &[u32]) -> Vec<u8> {
+    let mut back_data = Vec::new();
+
+    // Convert peak counts to bytes and add to back_data
+    for &cnt in peak_cnts {
+        back_data.extend_from_slice(&cnt.to_le_bytes());
+    }
+
+    // Convert interleaved data to bytes and add to back_data
+    for &value in interleaved {
+        back_data.extend_from_slice(&value.to_le_bytes());
+    }
+
+    // Call get_realdata_loop for data rearrangement
+    get_realdata_loop(&back_data)
+}
+
+fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
+    let mut real_data = vec![0u8; back_data.len()];
+    let mut reminder = 0;
+    let mut bd_idx = 0;
+    for rd_idx in 0..back_data.len() {
+        if bd_idx >= back_data.len() {
+            reminder += 1;
+            bd_idx = reminder;
+        }
+        real_data[rd_idx] = back_data[bd_idx];
+        bd_idx += 4;
+    }
+    real_data
+}
+

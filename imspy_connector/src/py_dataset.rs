@@ -1,9 +1,11 @@
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{TimsData, AcquisitionMode};
+use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress,
+                           parse_decompressed_bruker_binary_data, reconstruct_compressed_data};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
+use numpy::{IntoPyArray, PyArray1};
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -26,8 +28,12 @@ impl PyTimsDataset {
         PyTimsSlice { inner: self.inner.get_slice(frame_ids) }
     }
 
-    pub fn get_aquisition_mode(&self) -> String {
+    pub fn get_acquisition_mode(&self) -> String {
         self.inner.get_aquisition_mode().to_string()
+    }
+
+    pub fn get_acquisition_mode_numeric(&self) -> i32 {
+        self.inner.get_aquisition_mode().to_i32()
     }
 
     pub fn get_frame_count(&self) -> i32 {
@@ -44,6 +50,51 @@ impl PyTimsDataset {
 
     pub fn frame_count(&self) -> i32 {
         self.inner.get_frame_count()
+    }
+
+    // TODO: make this more efficient
+    pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
+        self.inner.mz_to_tof(frame_id, &mz_values.clone())
+    }
+
+    // TODO: make this more efficient
+    pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
+        self.inner.tof_to_mz(frame_id, &tof_values.clone())
+    }
+
+    #[staticmethod]
+    pub fn compress_bytes_zstd(bytes: Vec<u8>) -> Vec<u8> {
+        let result = zstd_compress(&bytes).unwrap();
+        result
+    }
+
+    #[staticmethod]
+    pub fn decompress_bytes_zstd(bytes: Vec<u8>) -> Vec<u8> {
+        let result = zstd_decompress(&bytes).unwrap();
+        result
+    }
+
+    #[staticmethod]
+    pub fn scan_tof_intensities_to_compressed_u8(py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32) -> Py<PyArray1<u8>> {
+        let result = reconstruct_compressed_data(scan_values, tof_values, intensity_values, total_scans).unwrap();
+        result.into_pyarray(py).to_owned()
+    }
+
+    #[staticmethod]
+    pub fn u8_to_scan_tof_intensities(py: Python<'_>, data: Vec<u8>) -> PyResult<(Py<PyArray1<u32>>, Py<PyArray1<u32>>, Py<PyArray1<u32>>)> {
+        let (scan_counts, tof, intensities) = parse_decompressed_bruker_binary_data(&data).unwrap();
+
+        // Expand the scan counts
+        let mut expanded_scans = Vec::new();
+        for (index, &count) in scan_counts.iter().enumerate() {
+            expanded_scans.extend(std::iter::repeat(index as u32).take(count as usize));
+        }
+
+        Ok((
+            expanded_scans.into_pyarray(py).to_owned(),
+            tof.into_pyarray(py).to_owned(),
+            intensities.into_pyarray(py).to_owned(),
+        ))
     }
 }
 

@@ -89,16 +89,16 @@ class TimsDataset(ABC):
         Returns:
             str: Acquisition mode.
         """
-        return self.__dataset.get_acquisition_mode_as_string()
+        return self.__dataset.get_acquisition_mode()
 
     @property
-    def acquisition_mode_numerical(self) -> int:
+    def acquisition_mode_numeric(self) -> int:
         """Get the acquisition mode as a numerical value.
 
         Returns:
             int: Acquisition mode as a numerical value.
         """
-        return self.__dataset.get_acquisition_mode()
+        return self.__dataset.get_acquisition_mode_numeric()
 
     @property
     def frame_count(self) -> int:
@@ -171,6 +171,84 @@ class TimsDataset(ABC):
             TimsFrame: TimsFrame.
         """
         return TimsSlice.from_py_tims_slice(self.__dataset.get_slice(frame_ids))
+
+    def tof_to_mz(self, frame_id: int, tof_values: NDArray[np.int32]) -> NDArray[np.float64]:
+        """Convert TOF values to m/z values.
+
+        Args:
+            frame_id (int): Frame ID.
+            tof_values (NDArray[np.int32]): TOF values.
+
+        Returns:
+            NDArray[np.float64]: m/z values.
+        """
+        return self.__dataset.tof_to_mz(frame_id, tof_values)
+
+    def mz_to_tof(self, frame_id: int, mz_values: NDArray[np.float64]) -> NDArray[np.int32]:
+        """Convert m/z values to TOF values.
+
+        Args:
+            frame_id (int): Frame ID.
+            mz_values (NDArray[np.float64]): m/z values.
+
+        Returns:
+            NDArray[np.int32]: TOF values.
+        """
+        return self.__dataset.mz_to_tof(frame_id, mz_values)
+
+    def compress_zstd(self, values: NDArray[np.uint8]) -> NDArray[np.uint8]:
+        """Compress values using ZSTD.
+
+        Args:
+            values (NDArray[np.float64]): Values to compress.
+
+        Returns:
+            NDArray[np.uint8]: Compressed values.
+        """
+        return self.__dataset.compress_bytes_zstd(values)
+
+    def decompress_zstd(self, values: NDArray[np.uint8], ignore_first_n: int = 8) -> NDArray[np.uint8]:
+        """Decompress values using ZSTD.
+
+        Args:
+            values (NDArray[np.float64]): Values to decompress.
+            ignore_first_n (int): Number of bytes to ignore.
+
+        Returns:
+            NDArray[np.uint8]: Decompressed values.
+        """
+        return self.__dataset.decompress_bytes_zstd(values[ignore_first_n:])
+
+    def indexed_values_to_compressed_bytes(self, scan_values: NDArray[np.int32], tof_values: NDArray[np.int32],
+                                intensity_values: NDArray[np.float64], total_scans: int) -> NDArray[np.uint8]:
+        """Convert scan and intensity values to bytes.
+
+        Args:
+            scan_values (NDArray[np.int32]): Scan values.
+            tof_values (NDArray[np.int32]): TOF values.
+            intensity_values (NDArray[np.float64]): Intensity values.
+            total_scans (int): Total number of scans.
+
+        Returns:
+            NDArray[np.uint8]: Bytes.
+        """
+        return self.__dataset.scan_tof_intensities_to_compressed_u8(scan_values, tof_values,
+                                                         intensity_values.astype(np.int32), total_scans)
+
+    def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
+            -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
+        """Convert bytes to scan, tof, and intensity values.
+
+        Args:
+            values (NDArray[np.uint8]): Bytes.
+
+        Returns:
+            NDArray[np.int32]: Scan values.
+            NDArray[np.int32]: TOF values.
+            NDArray[np.float64]: Intensity values.
+        """
+        scan_values, tof_values, intensity_values = self.__dataset.u8_to_scan_tof_intensities(values)
+        return scan_values, tof_values, intensity_values.astype(np.float64)
 
     def __iter__(self):
         return self
