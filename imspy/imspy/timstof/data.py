@@ -196,8 +196,7 @@ class TimsDataset(ABC):
         """
         return self.__dataset.mz_to_tof(frame_id, mz_values)
 
-    @staticmethod
-    def compress_zstd(values: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    def compress_zstd(self, values: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Compress values using ZSTD.
 
         Args:
@@ -206,10 +205,9 @@ class TimsDataset(ABC):
         Returns:
             NDArray[np.uint8]: Compressed values.
         """
-        return pims.compress_bytes_zstd(values)
+        return self.__dataset.compress_bytes_zstd(values)
 
-    @staticmethod
-    def decompress_zstd(values: NDArray[np.uint8]) -> NDArray[np.uint8]:
+    def decompress_zstd(self, values: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Decompress values using ZSTD.
 
         Args:
@@ -218,7 +216,7 @@ class TimsDataset(ABC):
         Returns:
             NDArray[np.uint8]: Decompressed values.
         """
-        return pims.decompress_bytes_zstd(values)
+        return self.__dataset.decompress_bytes_zstd(values)
 
     def __iter__(self):
         return self
