@@ -218,6 +218,35 @@ class TimsDataset(ABC):
         """
         return self.__dataset.decompress_bytes_zstd(values)
 
+    def indexed_values_to_bytes(self, scan_values: NDArray[np.int32], tof_values: NDArray[np.int32],
+                                intensity_values: NDArray[np.float64]) -> NDArray[np.uint8]:
+        """Convert scan and intensity values to bytes.
+
+        Args:
+            scan_values (NDArray[np.int32]): Scan values.
+            tof_values (NDArray[np.int32]): TOF values.
+            intensity_values (NDArray[np.float64]): Intensity values.
+
+        Returns:
+            NDArray[np.uint8]: Bytes.
+        """
+        return self.__dataset.scan_tof_intensities_to_u8(scan_values, tof_values, intensity_values.astype(np.int32))
+    
+    def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
+            -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
+        """Convert bytes to scan and intensity values.
+
+        Args:
+            values (NDArray[np.uint8]): Bytes.
+
+        Returns:
+            NDArray[np.int32]: Scan values.
+            NDArray[np.int32]: TOF values.
+            NDArray[np.float64]: Intensity values.
+        """
+        scan_values, tof_values, intensity_values = self.__dataset.u8_to_scan_tof_intensities(values)
+        return scan_values, tof_values, intensity_values.astype(np.float64)
+
     def __iter__(self):
         return self
 
