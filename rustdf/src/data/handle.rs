@@ -84,7 +84,14 @@ pub fn reconstruct_decompressed_data(
 
     // Final data preparation (without compression)
     let mut final_data = Vec::new();
+
+    // Include the length of the real_data as a header (4 bytes)
+    final_data.extend_from_slice(&(real_data.len() as u32 + 8).to_le_bytes());
+
+    // Include total_scans as part of the header
     final_data.extend_from_slice(&total_scans.to_le_bytes());
+
+    // Include the real_data itself
     final_data.extend_from_slice(&real_data);
 
     Ok(final_data)
