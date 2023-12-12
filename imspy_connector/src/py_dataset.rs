@@ -5,6 +5,7 @@ use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decomp
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
+use numpy::{IntoPyArray, PyArray1};
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -74,15 +75,19 @@ impl PyTimsDataset {
     }
 
     #[staticmethod]
-    pub fn scan_tof_intensities_to_compressed_u8(scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32) -> Vec<u8> {
+    pub fn scan_tof_intensities_to_compressed_u8(py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32) -> Py<PyArray1<u8>> {
         let result = reconstruct_compressed_data(scan_values, tof_values, intensity_values, total_scans).unwrap();
-        result
+        result.into_pyarray(py).to_owned()
     }
 
     #[staticmethod]
-    pub fn u8_to_scan_tof_intensities(data: Vec<u8>) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    pub fn u8_to_scan_tof_intensities(py: Python<'_>, data: Vec<u8>) -> PyResult<(Py<PyArray1<u32>>, Py<PyArray1<u32>>, Py<PyArray1<u32>>)> {
         let (scan, tof, intensities) = parse_decompressed_bruker_binary_data(&data).unwrap();
-        (scan, tof, intensities)
+        Ok((
+            scan.into_pyarray(py).to_owned(),
+            tof.into_pyarray(py).to_owned(),
+            intensities.into_pyarray(py).to_owned(),
+        ))
     }
 }
 
