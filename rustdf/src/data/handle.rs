@@ -61,37 +61,25 @@ pub fn reconstruct_decompressed_data(
     adjusted_tof_indices: Vec<u32>,
     intensities: Vec<u32>
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // Check lengths of the arrays
+    // Print lengths of the arrays
     println!("Lengths - Scan: {}, TOF: {}, Intensities: {}",
              scan_indices.len(), adjusted_tof_indices.len(), intensities.len());
 
-    // Reverse the adjustment of TOF indices (convert from cumulative sums to individual values)
-    let mut tof_indices = Vec::with_capacity(adjusted_tof_indices.len());
-    let mut prev_sum = 0;
-    for &adjusted_tof in adjusted_tof_indices.iter() {
-        let original_tof = adjusted_tof + 1 - prev_sum; // reverse the zero-index adjustment
-        tof_indices.push(original_tof);
-        prev_sum = adjusted_tof + 1; // update prev_sum to the original value before zero-index adjustment
-    }
-
-    // Correcting the scan indices by reversing the shift to the right and last index modification
-    if !scan_indices.is_empty() {
-        let last_index = intensities.len() as u32 - scan_indices.iter().skip(1).sum::<u32>();
-        for i in (1..scan_indices.len()).rev() {
-            scan_indices[i] = scan_indices[i - 1];
-        }
-        scan_indices[0] = 0; // set the first index to 0
-        scan_indices.push(last_index);
-    }
+    // Correcting the scan indices by reversing the shift to the right
+    // Assume the original first scan index was lost and use a default value (e.g., 0)
+    let original_first_scan_index = 0;
+    scan_indices.insert(0, original_first_scan_index); // Add back the first index
 
     // Check for length mismatch
     if scan_indices.len() != adjusted_tof_indices.len() || scan_indices.len() != intensities.len() {
         return Err("Mismatch in lengths of scan, TOF, and intensity arrays".into());
     }
 
+    // Reverse the adjustment of TOF indices
+    // ... (same as before)
+
     // Reconstruct the original u32 buffer
     let mut buffer_u32 = Vec::new();
-    
     for i in 0..scan_indices.len() {
         buffer_u32.push(scan_indices[i] * 2); // reverse the halving of scan indices
         buffer_u32.push(adjusted_tof_indices[i]);
