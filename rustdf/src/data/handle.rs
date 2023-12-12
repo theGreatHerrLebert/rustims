@@ -80,19 +80,22 @@ pub fn reconstruct_compressed_data(
     }
 
     // Get real data using the custom loop logic
-    let real_data = zstd_compress(get_realdata(&peak_cnts, &interleaved).as_slice())?;
+    let real_data = get_realdata(&peak_cnts, &interleaved);
 
-    // Final data preparation (without compression)
+    // Compress real_data using zstd_compress
+    let compressed_data = zstd_compress(&real_data)?;
+
+    // Final data preparation with compressed data
     let mut final_data = Vec::new();
 
-    // Include the length of the real_data as a header (4 bytes)
-    final_data.extend_from_slice(&(real_data.len() as u32 + 8).to_le_bytes());
+    // Include the length of the compressed data as a header (4 bytes)
+    final_data.extend_from_slice(&(compressed_data.len() as u32 + 8).to_le_bytes());
 
     // Include total_scans as part of the header
     final_data.extend_from_slice(&total_scans.to_le_bytes());
 
-    // Include the real_data itself
-    final_data.extend_from_slice(&real_data);
+    // Include the compressed data itself
+    final_data.extend_from_slice(&compressed_data);
 
     Ok(final_data)
 }
