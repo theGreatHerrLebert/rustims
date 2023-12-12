@@ -616,25 +616,11 @@ fn get_realdata(peak_cnts: &[u32], interleaved: &[u32]) -> Vec<u8> {
         back_data.extend_from_slice(&value.to_le_bytes());
     }
 
-    // Assuming get_realdata_loop does additional processing,
-    // you would implement that logic here.
-    // For now, we'll return back_data directly.
-    get_realdata_loop(&back_data, interleaved)
-
+    // Call get_realdata_loop for data rearrangement
+    get_realdata_loop(&back_data)
 }
 
-fn get_realdata_loop(peak_cnts: &Vec<u8>, interleaved: &[u32]) -> Vec<u8> {
-    let mut back_data = Vec::new();
-
-    // Convert peak counts and interleaved data to bytes
-    for &cnt in peak_cnts {
-        back_data.extend_from_slice(&cnt.to_le_bytes());
-    }
-    for &value in interleaved {
-        back_data.extend_from_slice(&value.to_le_bytes());
-    }
-
-    // Perform the data rearrangement
+fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
     let mut real_data = vec![0u8; back_data.len()];
     let mut reminder = 0;
     let mut bd_idx = 0;
@@ -646,6 +632,6 @@ fn get_realdata_loop(peak_cnts: &Vec<u8>, interleaved: &[u32]) -> Vec<u8> {
         real_data[rd_idx] = back_data[bd_idx];
         bd_idx += 4;
     }
-
     real_data
 }
+
