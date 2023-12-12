@@ -341,7 +341,7 @@ impl TimsDataHandle {
 
         self.bruker_lib.tims_mz_to_index(frame_id, &dbl_mz, &mut tof_values).expect("Bruker binary call failed at: tims_mz_to_index;");
 
-        tof_values.iter().map(|&x| x as u32).collect()
+        tof_values.iter().map(|&x| x.round() as u32).collect()
     }
 
     /// translate scan to inverse mobility values calling the bruker library
