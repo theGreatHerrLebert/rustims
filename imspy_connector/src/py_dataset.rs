@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{TimsData, AcquisitionMode};
+use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress, reconstruct_decompressed_data};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
@@ -58,6 +58,24 @@ impl PyTimsDataset {
     // TODO: make this more efficient
     pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
         self.inner.tof_to_mz(frame_id, &tof_values.clone())
+    }
+
+    #[staticmethod]
+    pub fn compress_bytes_zstd(bytes: Vec<u8>) -> Vec<u8> {
+        let result = zstd_compress(&bytes).unwrap();
+        result
+    }
+
+    #[staticmethod]
+    pub fn decompress_bytes_zstd(bytes: Vec<u8>) -> Vec<u8> {
+        let result = zstd_decompress(&bytes).unwrap();
+        result
+    }
+
+    #[staticmethod]
+    pub fn scan_tof_intensities_to_u8(scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>) -> Vec<u8> {
+        let result = reconstruct_decompressed_data(scan_values, tof_values, intensity_values).unwrap();
+        result
     }
 }
 
