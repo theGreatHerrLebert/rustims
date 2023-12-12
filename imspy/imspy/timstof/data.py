@@ -231,7 +231,7 @@ class TimsDataset(ABC):
             NDArray[np.uint8]: Bytes.
         """
         return self.__dataset.scan_tof_intensities_to_u8(scan_values, tof_values, intensity_values.astype(np.int32))
-    
+
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
         """Convert bytes to scan and intensity values.

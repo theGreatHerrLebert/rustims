@@ -76,7 +76,7 @@ pub fn reconstruct_decompressed_data(
     // Reconstruct the original u32 buffer
     let mut buffer_u32 = Vec::new();
     let total_elements = scan_indices.len() + tof_indices.len() + intensities.len();
-    buffer_u32.reserve(total_elements);
+    buffer_u32.reserve(total_elements + 1);
 
     // Assuming the first u32 is the number of scans
     buffer_u32.push(scan_indices.len() as u32);
