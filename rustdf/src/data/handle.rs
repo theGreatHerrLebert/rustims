@@ -86,13 +86,15 @@ pub fn reconstruct_decompressed_data(
 
     // Reconstruct the original u32 buffer
     let mut buffer_u32 = Vec::new();
-    for i in 0..scan_indices.len() {
-        if i >= tof_indices.len() || i >= intensities.len() {
-            return Err("Index out of bounds in buffer reconstruction".into());
-        }
+    let min_length = scan_indices.len().min(tof_indices.len()).min(intensities.len());
+    for i in 0..min_length {
         buffer_u32.push(scan_indices[i] * 2); // reverse the halving of scan indices
         buffer_u32.push(tof_indices[i]);
         buffer_u32.push(intensities[i]);
+    }
+
+    if min_length < scan_indices.len() || min_length < tof_indices.len() || min_length < intensities.len() {
+        println!("Warning: Mismatch in lengths of scan, TOF, and intensity arrays");
     }
 
     // Convert the u32 buffer to a byte array
