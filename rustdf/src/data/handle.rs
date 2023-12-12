@@ -57,38 +57,40 @@ pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 pub fn reconstruct_decompressed_data(
-    scan_indices: Vec<u32>,
-    mut tof_indices: Vec<u32>,
+    mut scan_indices: Vec<u32>,
+    adjusted_tof_indices: Vec<u32>,
     intensities: Vec<u32>
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Check lengths of the arrays
     println!("Lengths - Scan: {}, TOF: {}, Intensities: {}",
-             scan_indices.len(), tof_indices.len(), intensities.len());
+             scan_indices.len(), adjusted_tof_indices.len(), intensities.len());
 
-    // Reverse the TOF indices adjustments
-    let mut index = 0;
-    for &size in &scan_indices {
-        if index + size as usize > tof_indices.len() {
-            return Err("Index out of bounds in TOF indices adjustment".into());
+    // Reverse the adjustment of TOF indices (convert from cumulative sums to individual values)
+    let mut tof_indices = Vec::with_capacity(adjusted_tof_indices.len());
+    let mut prev_sum = 0;
+    for &adjusted_tof in adjusted_tof_indices.iter() {
+        let original_tof = adjusted_tof + 1 - prev_sum; // reverse the zero-index adjustment
+        tof_indices.push(original_tof);
+        prev_sum = adjusted_tof + 1; // update prev_sum to the original value before zero-index adjustment
+    }
+
+    // Correcting the scan indices by reversing the shift to the right and last index modification
+    if !scan_indices.is_empty() {
+        let last_index = intensities.len() as u32 - scan_indices.iter().skip(1).sum::<u32>();
+        for i in (1..scan_indices.len()).rev() {
+            scan_indices[i] = scan_indices[i - 1];
         }
-        let mut prev = 0;
-        for _ in 0..size {
-            let original = tof_indices[index] - prev;
-            tof_indices[index] = original;
-            prev += original;
-            index += 1;
-        }
+        scan_indices[0] = 0; // set the first index to 0
+        scan_indices.push(last_index);
     }
 
     // Reconstruct the original u32 buffer
     let mut buffer_u32 = Vec::new();
-    buffer_u32.push(scan_indices.len() as u32);
-
     for i in 0..scan_indices.len() {
         if i >= tof_indices.len() || i >= intensities.len() {
             return Err("Index out of bounds in buffer reconstruction".into());
         }
-        buffer_u32.push(scan_indices[i]);
+        buffer_u32.push(scan_indices[i] * 2); // reverse the halving of scan indices
         buffer_u32.push(tof_indices[i]);
         buffer_u32.push(intensities[i]);
     }
