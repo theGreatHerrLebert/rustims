@@ -2,7 +2,7 @@ use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
@@ -17,6 +17,9 @@ pub trait TimsData {
     fn get_frame_count(&self) -> i32;
     fn get_data_path(&self) -> &str;
     fn get_bruker_lib_path(&self) -> &str;
+
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
 }
 
 /// Decompresses a ZSTD compressed byte array
@@ -29,12 +32,69 @@ pub trait TimsData {
 ///
 /// * `decompressed_data` - A vector of u8 that holds the decompressed data
 ///
-fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
+pub fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
     let mut decoder = zstd::Decoder::new(compressed_data)?;
     let mut decompressed_data = Vec::new();
     decoder.read_to_end(&mut decompressed_data)?;
     Ok(decompressed_data)
 }
+
+/// Compresses a byte array using ZSTD
+///
+/// # Arguments
+///
+/// * `decompressed_data` - A byte slice that holds the decompressed data
+///
+/// # Returns
+///
+/// * `compressed_data` - A vector of u8 that holds the compressed data
+///
+pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut encoder = zstd::Encoder::new(Vec::new(), 0)?; // 0 is the compression level
+    encoder.write_all(decompressed_data)?;
+    let compressed_data = encoder.finish()?;
+    Ok(compressed_data)
+}
+
+pub fn reconstruct_decompressed_data(
+    scan_indices: Vec<u32>,
+    mut tof_indices: Vec<u32>,
+    intensities: Vec<u32>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+
+    // Correcting the TOF indices from cumulative sums back to original values
+    let mut index = 0;
+    for &size in &scan_indices {
+        let mut prev = 0;
+        for _ in 0..size {
+            let original = tof_indices[index] - prev;
+            tof_indices[index] = original;
+            prev += original;
+            index += 1;
+        }
+    }
+
+    // Reconstruct the original u32 buffer
+    let mut buffer_u32 = Vec::new();
+    let total_elements = scan_indices.len() + tof_indices.len() + intensities.len();
+    buffer_u32.reserve(total_elements);
+
+    // Assuming the first u32 is the number of scans
+    buffer_u32.push(scan_indices.len() as u32);
+
+    // Combine scan indices, tof indices, and intensities
+    for i in 0..scan_indices.len() {
+        buffer_u32.push(scan_indices[i]);
+        buffer_u32.push(tof_indices[i]);
+        buffer_u32.push(intensities[i]);
+    }
+
+    // Convert the u32 buffer to a byte array considering the original byte order
+    let mut decompressed_bytes = vec![0u8; buffer_u32.len() * 4];
+    LittleEndian::write_u32_into(&buffer_u32, &mut decompressed_bytes);
+
+    Ok(decompressed_bytes)
+}
+
 
 /// Parses the decompressed bruker binary data
 ///
@@ -48,7 +108,7 @@ fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `tof_indices` - A vector of u32 that holds the tof indices
 /// * `intensities` - A vector of u32 that holds the intensities
 ///
-fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
+pub fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
 
     let mut buffer_u32 = Vec::new();
 
@@ -266,6 +326,22 @@ impl TimsDataHandle {
         self.bruker_lib.tims_index_to_mz(frame_id, &dbl_tofs, &mut mz_values).expect("Bruker binary call failed at: tims_index_to_mz;");
 
         mz_values
+    }
+
+    pub fn mz_to_tof(&self, frame_id: u32, mz: &Vec<f64>) -> Vec<u32> {
+        let mut dbl_mz: Vec<f64> = Vec::new();
+        dbl_mz.resize(mz.len(), 0.0);
+
+        for (i, &val) in mz.iter().enumerate() {
+            dbl_mz[i] = val as f64;
+        }
+
+        let mut tof_values: Vec<f64> = Vec::new();
+        tof_values.resize(mz.len(),  0.0);
+
+        self.bruker_lib.tims_mz_to_index(frame_id, &dbl_mz, &mut tof_values).expect("Bruker binary call failed at: tims_mz_to_index;");
+
+        tof_values.iter().map(|&x| x as u32).collect()
     }
 
     /// translate scan to inverse mobility values calling the bruker library

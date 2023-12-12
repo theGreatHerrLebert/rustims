@@ -26,8 +26,12 @@ impl PyTimsDataset {
         PyTimsSlice { inner: self.inner.get_slice(frame_ids) }
     }
 
-    pub fn get_aquisition_mode(&self) -> String {
+    pub fn get_acquisition_mode(&self) -> String {
         self.inner.get_aquisition_mode().to_string()
+    }
+
+    pub fn get_acquisition_mode_numeric(&self) -> i32 {
+        self.inner.get_aquisition_mode().to_i32()
     }
 
     pub fn get_frame_count(&self) -> i32 {
@@ -44,6 +48,16 @@ impl PyTimsDataset {
 
     pub fn frame_count(&self) -> i32 {
         self.inner.get_frame_count()
+    }
+
+    // TODO: make this more efficient
+    pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
+        self.inner.mz_to_tof(frame_id, &mz_values.clone())
+    }
+
+    // TODO: make this more efficient
+    pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
+        self.inner.tof_to_mz(frame_id, &tof_values.clone())
     }
 }
 

@@ -31,4 +31,11 @@ impl TimsData for TimsDataset {
     fn get_bruker_lib_path(&self) -> &str {
         &self.handle.bruker_lib_path
     }
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        self.handle.tof_to_mz(frame_id, tof_values)
+    }
+
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        self.handle.mz_to_tof(frame_id, mz_values)
+    }
 }
