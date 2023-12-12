@@ -56,7 +56,7 @@ pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
     Ok(compressed_data)
 }
 
-pub fn reconstruct_decompressed_data(
+pub fn reconstruct_compressed_data(
     scans: Vec<u32>,
     mut tofs: Vec<u32>,
     intensities: Vec<u32>,
@@ -80,7 +80,7 @@ pub fn reconstruct_decompressed_data(
     }
 
     // Get real data using the custom loop logic
-    let real_data = get_realdata(&peak_cnts, &interleaved);
+    let real_data = zstd_compress(get_realdata(&peak_cnts, &interleaved).as_slice())?;
 
     // Final data preparation (without compression)
     let mut final_data = Vec::new();
