@@ -82,9 +82,16 @@ impl PyTimsDataset {
 
     #[staticmethod]
     pub fn u8_to_scan_tof_intensities(py: Python<'_>, data: Vec<u8>) -> PyResult<(Py<PyArray1<u32>>, Py<PyArray1<u32>>, Py<PyArray1<u32>>)> {
-        let (scan, tof, intensities) = parse_decompressed_bruker_binary_data(&data).unwrap();
+        let (scan_counts, tof, intensities) = parse_decompressed_bruker_binary_data(&data).unwrap();
+
+        // Expand the scan counts
+        let mut expanded_scans = Vec::new();
+        for (index, &count) in scan_counts.iter().enumerate() {
+            expanded_scans.extend(std::iter::repeat(index as u32).take(count as usize));
+        }
+
         Ok((
-            scan.into_pyarray(py).to_owned(),
+            expanded_scans.into_pyarray(py).to_owned(),
             tof.into_pyarray(py).to_owned(),
             intensities.into_pyarray(py).to_owned(),
         ))
