@@ -57,37 +57,39 @@ pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
 }
 
 pub fn reconstruct_decompressed_data(
-    mut scan_indices: Vec<u32>,
-    tof_indices: Vec<u32>,
-    intensities: Vec<u32>
+    scans: Vec<u32>,
+    mut tofs: Vec<u32>,
+    intensities: Vec<u32>,
+    total_scans: u32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Ensuring all vectors have the same length
+    assert_eq!(scans.len(), tofs.len());
+    assert_eq!(scans.len(), intensities.len());
 
-    // Step 1: Determine the total number of scans
-    let total_scans = scan_indices.len() as u32;
+    // Modify TOFs based on scans
+    modify_tofs(&mut tofs, &scans);
 
-    // Step 2: Reverse the halving of scan indices
-    for index in &mut scan_indices {
-        *index *= 2;
+    // Get peak counts from total scans and scans
+    let peak_cnts = get_peak_cnts(total_scans, &scans);
+
+    // Interleave TOFs and intensities
+    let mut interleaved = Vec::new();
+    for (&tof, &intensity) in tofs.iter().zip(intensities.iter()) {
+        interleaved.push(tof);
+        interleaved.push(intensity);
     }
 
-    // Step 3: Construct the beginning of buffer_u32 with total scans and scan indices
-    let mut buffer_u32 = Vec::new();
-    buffer_u32.push(total_scans);
-    buffer_u32.extend_from_slice(&scan_indices);
+    // Get real data using the custom loop logic
+    let real_data = get_realdata(&peak_cnts, &interleaved);
 
-    for i in 0..tof_indices.len() {
-        if i < intensities.len() {
-            buffer_u32.push(tof_indices[i]);
-            buffer_u32.push(intensities[i]);
-        }
-    }
+    // Final data preparation (without compression)
+    let mut final_data = Vec::new();
+    final_data.extend_from_slice(&total_scans.to_le_bytes());
+    final_data.extend_from_slice(&real_data);
 
-    // Convert the u32 buffer to a byte array
-    let mut decompressed_bytes = vec![0u8; buffer_u32.len() * 4];
-    LittleEndian::write_u32_into(&buffer_u32, &mut decompressed_bytes);
-
-    Ok(decompressed_bytes)
+    Ok(final_data)
 }
+
 
 
 
@@ -571,4 +573,79 @@ impl TimsDataHandle {
     pub fn get_frame_count(&self) -> i32 {
         self.frame_meta_data.len() as i32
     }
+}
+
+fn get_peak_cnts(total_scans: u32, scans: &[u32]) -> Vec<u32> {
+    let mut peak_cnts = vec![total_scans];
+    let mut ii = 0;
+    for scan_id in 1..total_scans {
+        let mut counter = 0;
+        while ii < scans.len() && scans[ii] < scan_id {
+            ii += 1;
+            counter += 1;
+        }
+        peak_cnts.push(counter * 2);
+    }
+    peak_cnts
+}
+
+fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
+    let mut last_tof = -1i32; // Using i32 to allow -1
+    let mut last_scan = 0;
+    for ii in 0..tofs.len() {
+        if last_scan != scans[ii] {
+            last_tof = -1;
+            last_scan = scans[ii];
+        }
+        let val = tofs[ii] as i32; // Cast to i32 for calculation
+        tofs[ii] = (val - last_tof) as u32; // Cast back to u32
+        last_tof = val;
+    }
+}
+
+fn get_realdata(peak_cnts: &[u32], interleaved: &[u32]) -> Vec<u8> {
+    let mut back_data = Vec::new();
+
+    // Convert peak counts to bytes and add to back_data
+    for &cnt in peak_cnts {
+        back_data.extend_from_slice(&cnt.to_le_bytes());
+    }
+
+    // Convert interleaved data to bytes and add to back_data
+    for &value in interleaved {
+        back_data.extend_from_slice(&value.to_le_bytes());
+    }
+
+    // Assuming get_realdata_loop does additional processing,
+    // you would implement that logic here.
+    // For now, we'll return back_data directly.
+    get_realdata_loop(&back_data, interleaved)
+
+}
+
+fn get_realdata_loop(peak_cnts: &Vec<u8>, interleaved: &[u32]) -> Vec<u8> {
+    let mut back_data = Vec::new();
+
+    // Convert peak counts and interleaved data to bytes
+    for &cnt in peak_cnts {
+        back_data.extend_from_slice(&cnt.to_le_bytes());
+    }
+    for &value in interleaved {
+        back_data.extend_from_slice(&value.to_le_bytes());
+    }
+
+    // Perform the data rearrangement
+    let mut real_data = vec![0u8; back_data.len()];
+    let mut reminder = 0;
+    let mut bd_idx = 0;
+    for rd_idx in 0..back_data.len() {
+        if bd_idx >= back_data.len() {
+            reminder += 1;
+            bd_idx = reminder;
+        }
+        real_data[rd_idx] = back_data[bd_idx];
+        bd_idx += 4;
+    }
+
+    real_data
 }

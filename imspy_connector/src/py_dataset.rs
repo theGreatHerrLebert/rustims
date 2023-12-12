@@ -73,8 +73,8 @@ impl PyTimsDataset {
     }
 
     #[staticmethod]
-    pub fn scan_tof_intensities_to_u8(scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>) -> Vec<u8> {
-        let result = reconstruct_decompressed_data(scan_values, tof_values, intensity_values).unwrap();
+    pub fn scan_tof_intensities_to_u8(scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32) -> Vec<u8> {
+        let result = reconstruct_decompressed_data(scan_values, tof_values, intensity_values, total_scans).unwrap();
         result
     }
 
