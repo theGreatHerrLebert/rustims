@@ -59,11 +59,18 @@ pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
 pub fn reconstruct_decompressed_data(
     scan_indices: Vec<u32>,
     mut tof_indices: Vec<u32>,
-    intensities: Vec<u32>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    intensities: Vec<u32>
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    // Check lengths of the arrays
+    println!("Lengths - Scan: {}, TOF: {}, Intensities: {}",
+             scan_indices.len(), tof_indices.len(), intensities.len());
 
-    // Correcting the TOF indices from cumulative sums back to original values
+    // Reverse the TOF indices adjustments
     let mut index = 0;
     for &size in &scan_indices {
+        if index + size as usize > tof_indices.len() {
+            return Err("Index out of bounds in TOF indices adjustment".into());
+        }
         let mut prev = 0;
         for _ in 0..size {
             let original = tof_indices[index] - prev;
@@ -75,25 +82,24 @@ pub fn reconstruct_decompressed_data(
 
     // Reconstruct the original u32 buffer
     let mut buffer_u32 = Vec::new();
-    let total_elements = scan_indices.len() + tof_indices.len() + intensities.len();
-    buffer_u32.reserve(total_elements + 1);
-
-    // Assuming the first u32 is the number of scans
     buffer_u32.push(scan_indices.len() as u32);
 
-    // Combine scan indices, tof indices, and intensities
     for i in 0..scan_indices.len() {
+        if i >= tof_indices.len() || i >= intensities.len() {
+            return Err("Index out of bounds in buffer reconstruction".into());
+        }
         buffer_u32.push(scan_indices[i]);
         buffer_u32.push(tof_indices[i]);
         buffer_u32.push(intensities[i]);
     }
 
-    // Convert the u32 buffer to a byte array considering the original byte order
+    // Convert the u32 buffer to a byte array
     let mut decompressed_bytes = vec![0u8; buffer_u32.len() * 4];
     LittleEndian::write_u32_into(&buffer_u32, &mut decompressed_bytes);
 
     Ok(decompressed_bytes)
 }
+
 
 
 /// Parses the decompressed bruker binary data
