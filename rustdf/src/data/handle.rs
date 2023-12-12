@@ -58,32 +58,28 @@ pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
 
 pub fn reconstruct_decompressed_data(
     mut scan_indices: Vec<u32>,
-    adjusted_tof_indices: Vec<u32>,
+    tof_indices: Vec<u32>,
     intensities: Vec<u32>
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    // Print lengths of the arrays
-    println!("Lengths - Scan: {}, TOF: {}, Intensities: {}",
-             scan_indices.len(), adjusted_tof_indices.len(), intensities.len());
 
-    // Correcting the scan indices by reversing the shift to the right
-    // Assume the original first scan index was lost and use a default value (e.g., 0)
-    let original_first_scan_index = 0;
-    scan_indices.insert(0, original_first_scan_index); // Add back the first index
+    // Step 1: Determine the total number of scans
+    let total_scans = scan_indices.len() as u32;
 
-    // Check for length mismatch
-    if scan_indices.len() != adjusted_tof_indices.len() || scan_indices.len() != intensities.len() {
-        return Err("Mismatch in lengths of scan, TOF, and intensity arrays".into());
+    // Step 2: Reverse the halving of scan indices
+    for index in &mut scan_indices {
+        *index *= 2;
     }
 
-    // Reverse the adjustment of TOF indices
-    // ... (same as before)
-
-    // Reconstruct the original u32 buffer
+    // Step 3: Construct the beginning of buffer_u32 with total scans and scan indices
     let mut buffer_u32 = Vec::new();
-    for i in 0..scan_indices.len() {
-        buffer_u32.push(scan_indices[i] * 2); // reverse the halving of scan indices
-        buffer_u32.push(adjusted_tof_indices[i]);
-        buffer_u32.push(intensities[i]);
+    buffer_u32.push(total_scans);
+    buffer_u32.extend_from_slice(&scan_indices);
+
+    for i in 0..tof_indices.len() {
+        if i < intensities.len() {
+            buffer_u32.push(tof_indices[i]);
+            buffer_u32.push(intensities[i]);
+        }
     }
 
     // Convert the u32 buffer to a byte array
