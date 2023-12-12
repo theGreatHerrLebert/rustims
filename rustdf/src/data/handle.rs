@@ -84,17 +84,18 @@ pub fn reconstruct_decompressed_data(
         scan_indices.push(last_index);
     }
 
-    // Reconstruct the original u32 buffer
-    let mut buffer_u32 = Vec::new();
-    let min_length = scan_indices.len().min(tof_indices.len()).min(intensities.len());
-    for i in 0..min_length {
-        buffer_u32.push(scan_indices[i] * 2); // reverse the halving of scan indices
-        buffer_u32.push(tof_indices[i]);
-        buffer_u32.push(intensities[i]);
+    // Check for length mismatch
+    if scan_indices.len() != adjusted_tof_indices.len() || scan_indices.len() != intensities.len() {
+        return Err("Mismatch in lengths of scan, TOF, and intensity arrays".into());
     }
 
-    if min_length < scan_indices.len() || min_length < tof_indices.len() || min_length < intensities.len() {
-        println!("Warning: Mismatch in lengths of scan, TOF, and intensity arrays");
+    // Reconstruct the original u32 buffer
+    let mut buffer_u32 = Vec::new();
+    
+    for i in 0..scan_indices.len() {
+        buffer_u32.push(scan_indices[i] * 2); // reverse the halving of scan indices
+        buffer_u32.push(adjusted_tof_indices[i]);
+        buffer_u32.push(intensities[i]);
     }
 
     // Convert the u32 buffer to a byte array
