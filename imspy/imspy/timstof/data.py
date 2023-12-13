@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -232,8 +232,26 @@ class TimsDataset(ABC):
         Returns:
             NDArray[np.uint8]: Bytes.
         """
-        return self.__dataset.scan_tof_intensities_to_compressed_u8(scan_values, tof_values,
-                                                         intensity_values.astype(np.int32), total_scans)
+        return self.__dataset.scan_tof_intensities_to_compressed_u8(
+            scan_values, 
+            tof_values,
+            intensity_values.astype(np.int32),
+            total_scans
+        )
+
+    def compress_frame_collection(self, frames: List[TimsFrame],
+                                  total_scans: int, num_threads: int = 4) -> List[NDArray[np.uint8]]:
+        """Compress a collection of frames.
+
+        Args:
+            frames (List[TimsFrame]): List of frames.
+            total_scans (int): Total number of scans.
+            num_threads (int): Number of threads to use.
+
+        Returns:
+            List[NDArray[np.uint8]]: List of compressed bytes.
+        """
+        return self.__dataset.compress_collection([f.get_fragment_ptr() for f in frames], total_scans, num_threads)
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):

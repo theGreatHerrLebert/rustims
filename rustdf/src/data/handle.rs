@@ -9,6 +9,8 @@ use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
 use mscore::{TimsFrame, RawTimsFrame, ImsFrame, MsType, TimsSlice};
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
@@ -98,6 +100,25 @@ pub fn reconstruct_compressed_data(
     final_data.extend_from_slice(&compressed_data);
 
     Ok(final_data)
+}
+
+pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, num_threads: usize) -> Vec<Vec<u8>> {
+
+    let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+
+    let result = pool.install(|| {
+        frames.par_iter().map(|frame| {
+                let compressed_data = reconstruct_compressed_data(
+                    frame.scan.iter().map(|&x| x as u32).collect(),
+                    frame.tof.iter().map(|&x| x as u32).collect(),
+                    frame.ims_frame.intensity.iter().map(|&x| x as u32).collect(),
+                    max_scan_count,
+                ).unwrap();
+                compressed_data
+            }).collect()
+    });
+
+    result
 }
 
 

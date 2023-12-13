@@ -1,11 +1,12 @@
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress,
-                           parse_decompressed_bruker_binary_data, reconstruct_compressed_data};
+use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress, parse_decompressed_bruker_binary_data, reconstruct_compressed_data, compress_collection};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
+use pyo3::types::PyList;
+use pyo3::{PyResult, Python, PyObject};
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -95,6 +96,20 @@ impl PyTimsDataset {
             tof.into_pyarray(py).to_owned(),
             intensities.into_pyarray(py).to_owned(),
         ))
+    }
+
+    #[staticmethod]
+    pub fn compress_collection(py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize) -> PyResult<PyObject> {
+        let compressed_frames = compress_collection(frames.iter().map(|x| x.inner.clone()).collect::<Vec<_>>(), total_scans, num_threads);
+
+        let py_list = PyList::empty(py);
+
+        for frame in compressed_frames {
+            let np_array = frame.into_pyarray(py).to_owned();
+            py_list.append(np_array)?;
+        }
+
+        Ok(py_list.into())
     }
 }
 
