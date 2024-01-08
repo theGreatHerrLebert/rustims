@@ -22,6 +22,9 @@ pub trait TimsData {
 
     fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
     fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
+
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64>;
+    fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32>;
 }
 
 /// Decompresses a ZSTD compressed byte array
@@ -361,7 +364,7 @@ impl TimsDataHandle {
         dbl_mz.resize(mz.len(), 0.0);
 
         for (i, &val) in mz.iter().enumerate() {
-            dbl_mz[i] = val as f64;
+            dbl_mz[i] = val;
         }
 
         let mut tof_values: Vec<f64> = Vec::new();
@@ -392,7 +395,7 @@ impl TimsDataHandle {
         }
 
         let mut inv_mob: Vec<f64> = Vec::new();
-        inv_mob.resize(scan.len() as usize, 0.0);
+        inv_mob.resize(scan.len(), 0.0);
 
         self.bruker_lib.tims_scan_to_inv_mob(frame_id, &dbl_scans, &mut inv_mob).expect("Bruker binary call failed at: tims_scannum_to_oneoverk0;");
 
@@ -415,7 +418,7 @@ impl TimsDataHandle {
         dbl_inv_mob.resize(inv_mob.len(), 0.0);
 
         for (i, &val) in inv_mob.iter().enumerate() {
-            dbl_inv_mob[i] = val as f64;
+            dbl_inv_mob[i] = val;
         }
 
         let mut scan_values: Vec<f64> = Vec::new();

@@ -53,14 +53,20 @@ impl PyTimsDataset {
         self.inner.get_frame_count()
     }
 
-    // TODO: make this more efficient
     pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
         self.inner.mz_to_tof(frame_id, &mz_values.clone())
     }
 
-    // TODO: make this more efficient
     pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
         self.inner.tof_to_mz(frame_id, &tof_values.clone())
+    }
+
+    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<i32>) -> Vec<f64> {
+        self.inner.scan_to_inverse_mobility(frame_id, &scan_values.clone())
+    }
+
+    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<i32> {
+        self.inner.inverse_mobility_to_scan(frame_id, &inverse_mobility_values.clone())
     }
 
     #[staticmethod]

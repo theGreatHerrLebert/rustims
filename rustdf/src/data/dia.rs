@@ -42,4 +42,12 @@ impl TimsData for TimsDatasetDIA {
     fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
         self.handle.mz_to_tof(frame_id, mz_values)
     }
+
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64> {
+        self.handle.scan_to_inverse_mobility(frame_id, scan_values)
+    }
+
+    fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32> {
+        self.handle.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+    }
 }
