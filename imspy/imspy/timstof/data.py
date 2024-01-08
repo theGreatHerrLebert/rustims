@@ -196,6 +196,30 @@ class TimsDataset(ABC):
         """
         return self.__dataset.mz_to_tof(frame_id, mz_values)
 
+    def scan_to_inverse_mobility(self, frame_id: int, scan_values: NDArray[np.int32]) -> NDArray[np.float64]:
+        """Convert scan values to inverse mobility values.
+
+        Args:
+            frame_id (int): Frame ID.
+            scan_values (NDArray[np.int32]): Scan values.
+
+        Returns:
+            NDArray[np.float64]: Inverse mobility values.
+        """
+        return self.__dataset.scan_to_inverse_mobility(frame_id, scan_values)
+
+    def inverse_mobility_to_scan(self, frame_id: int, im_values: NDArray[np.float64]) -> NDArray[np.int32]:
+        """Convert inverse mobility values to scan values.
+
+        Args:
+            frame_id (int): Frame ID.
+            im_values (NDArray[np.float64]): Inverse mobility values.
+
+        Returns:
+            NDArray[np.int32]: Scan values.
+        """
+        return self.__dataset.inverse_mobility_to_scan(frame_id, im_values)
+
     def compress_zstd(self, values: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Compress values using ZSTD.
 
