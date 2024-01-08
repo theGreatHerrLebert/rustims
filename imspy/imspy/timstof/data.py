@@ -311,3 +311,6 @@ class TimsDataset(ABC):
         if isinstance(index, slice):
             return self.get_tims_slice(np.arange(index.start, index.stop, index.step).astype(np.int32))
         return self.get_tims_frame(index)
+
+    def __repr__(self):
+        return f"TimsDataset({self.data_path})"
