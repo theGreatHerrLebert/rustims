@@ -399,6 +399,33 @@ impl TimsDataHandle {
         inv_mob
     }
 
+    /// translate inverse mobility to scan values calling the bruker library
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_id` - A u32 that holds the frame id
+    /// * `inv_mob` - A vector of f64 that holds the inverse mobility values
+    ///
+    /// # Returns
+    ///
+    /// * `scan_values` - A vector of i32 that holds the scan values
+    ///
+    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inv_mob: &Vec<f64>) -> Vec<i32> {
+        let mut dbl_inv_mob: Vec<f64> = Vec::new();
+        dbl_inv_mob.resize(inv_mob.len(), 0.0);
+
+        for (i, &val) in inv_mob.iter().enumerate() {
+            dbl_inv_mob[i] = val as f64;
+        }
+
+        let mut scan_values: Vec<f64> = Vec::new();
+        scan_values.resize(inv_mob.len(),  0.0);
+
+        self.bruker_lib.inv_mob_to_tims_scan(frame_id, &dbl_inv_mob, &mut scan_values).expect("Bruker binary call failed at: tims_oneoverk0_to_scannum;");
+
+        scan_values.iter().map(|&x| x.round() as i32).collect()
+    }
+
     /// helper function to flatten the scan values
     ///
     /// # Arguments

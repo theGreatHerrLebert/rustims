@@ -8,8 +8,14 @@ from imspy.simulation.utility import calculate_number_frames, calculate_mobility
 
 
 class TimsTofAcquisitionBuilder:
-    def __init__(self, gradient_length: float, rt_cycle_length: float, im_lower: float, im_upper: float,
-                 num_scans: int):
+    def __init__(
+            self,
+            gradient_length: float,
+            rt_cycle_length: float,
+            im_lower: float,
+            im_upper: float,
+            num_scans: int
+    ):
         """ Base class for building TimsTOF experiments
         Parameters
         ----------
