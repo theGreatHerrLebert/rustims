@@ -68,10 +68,10 @@ class SyntheticExperimentDataHandle:
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
 
-class ExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
+class SyntheticExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
     def __init__(self,
                  database_path: str,
-                 database_name: str = 'experiment_data.db',
+                 database_name: str = 'synthetic_data.db',
                  verbose: bool = True,):
         super().__init__(database_path, database_name, verbose)
         self.dia_ms_ms_info = None
