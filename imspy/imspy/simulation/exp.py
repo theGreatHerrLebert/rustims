@@ -8,7 +8,6 @@ import pandas as pd
 import imspy_connector as pims
 
 from imspy.core import TimsFrame
-from imspy.simulation.utility import get_native_dataset_path
 
 
 class TimsTofSyntheticAcquisitionBuilder:
@@ -27,24 +26,17 @@ class TimsTofSyntheticAcquisitionBuilder:
 class SyntheticExperimentDataHandle:
     def __init__(self,
                  database_path: str,
-                 database_name: str = 'synthetic_data.db',
+                 database_name: str = 'experiment_data.db',
                  verbose: bool = True,
                  ):
         self.verbose = verbose
         self.base_path = database_path
         self.database_path = os.path.join(self.base_path, database_name)
-        self.raw_data_path = os.path.join(self.base_path, 'raw_data')
         self.conn = None
 
         self._setup()
 
     def _setup(self):
-        # Create raw_data directory if it doesn't exist
-        if not os.path.exists(self.raw_data_path):
-            if self.verbose:
-                print(f"Creating raw data directory: {self.raw_data_path}")
-            os.makedirs(self.raw_data_path)
-
         # Connect to the SQLite database or create it if it doesn't exist
         if self.verbose:
             print(f"Connecting to database: {self.database_path}")
