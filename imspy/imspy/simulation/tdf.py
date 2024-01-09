@@ -1,8 +1,10 @@
 import sqlite3
 import pandas as pd
 import numpy as np
+from typing import List
 from pathlib import Path
 from imspy.simulation.utility import get_native_dataset_path
+from imspy.core.frame import TimsFrame
 from imspy.timstof import TimsDataset
 import shutil
 
@@ -16,8 +18,7 @@ class TDFWriter:
             im_lower: float = 0.6,
             im_upper: float = 1.6,
             mz_lower: float = 100.0,
-            mz_upper: float = 1700.0
-    ):
+            mz_upper: float = 1700.0):
         self.path = Path(path)
         self.exp_name = exp_name
         self.full_path = Path(path) / exp_name
@@ -26,6 +27,9 @@ class TDFWriter:
         self.im_upper = im_upper
         self.mz_lower = mz_lower
         self.mz_upper = mz_upper
+        self.position = 0
+        self.binary_file = self.full_path / "analysis.tdf_bin"
+        self.frame_meta_data = []
         self.conn = None
         self.__helper_handle = None
         self.__conn_native = None
@@ -79,9 +83,12 @@ class TDFWriter:
                      'dC1', 'dC2', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8',
                      'C9', 'C10', 'C11', 'C12', 'C13', 'C14']
 
-        values = [1, 2, 0.2, 25726.2, 25.668934607, 25.106384833, 20.0, 0.0, 313.511675468,
-                  154833.454288027, -7.359e-06, 313.511675468, -7.359e-06, 225.951491, 1519.712539, 7.0,
-                  0.058519442, -0.000541134, 1.863e-06, -3e-09, 0.0, 0.0, 0.0]
+        values = [1.0, 2.0, 0.19999999999999998, 25726.199999999997, 25.66893460672872, 25.10638483329421, 20.0, 0.0,
+                  313.51167546836524, 154833.4542880268, -7.3593189552069465e-06, 313.51167546836524,
+                  -7.3593189552069465e-06,
+                  225.951491, 1519.712539, 7.0, 0.058519441907584555, -0.0005411344569873044, 1.8634987450927556e-06,
+                  -3.1297916646308927e-09,
+                  2.7471965457754794e-12, -1.207997933655641e-15, 2.095848318930801e-19]
 
         return "MzCalibration", pd.DataFrame([values], columns=col_names)
 
@@ -111,7 +118,9 @@ class TDFWriter:
                        'MzAcqRangeUpper': f'{mz_upper}',
                        'AcquisitionSoftware': 'timsTOF',
                        'AcquisitionSoftwareVersion': '2.0.18.0',
-                       'AcquisitionFirmwareVersion': 'I4IT-9.481.28.81; ITPT-9.481.28.81; ITET-9.481.28.81; FXM3-0.0.1.6; MXMC-0.0.3.4; MXIF-0.0.1.1; MXRF-0.0.1.1; RFXS-0.1.3.1; RFXE-NOT_PRESENT',
+                       'AcquisitionFirmwareVersion': 'I4IT-9.481.28.81; ITPT-9.481.28.81; ITET-9.481.28.81; '
+                                                     'FXM3-0.0.1.6; MXMC-0.0.3.4; MXIF-0.0.1.1; MXRF-0.0.1.1; '
+                                                     'RFXS-0.1.3.1; RFXE-NOT_PRESENT',
                        'AcquisitionDateTime': '2021-01-15T16:15:32.327+01:00',
                        'InstrumentName': 'timsTOF Pro',
                        'InstrumentFamily': '9',
@@ -147,3 +156,43 @@ class TDFWriter:
         return f"TDFWriter(path={self.path}, db_name={self.exp_name}, num_scans={self.num_scans}, " \
                f"im_lower={self.im_lower}, im_upper={self.im_upper}, mz_lower={self.mz_lower}, " \
                f"mz_upper={self.mz_upper})"
+
+    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int):
+        r = self.__helper_handle.meta_data.iloc[0, :].copy()
+        r.Id = frame.frame_id
+        r.Time = frame.retention_time
+        r.ScanMode = scan_mode
+        r.MsMsType = frame.ms_type
+        r.TimsId = frame_start_pos
+        r.MaxIntensity = int(np.max(frame.intensity))
+        r.SummedIntensities = int(np.sum(frame.intensity))
+        r.NumScans = self.num_scans
+        r.NumPeaks = len(frame.mz)
+
+        return r
+
+    def generate_compressed_data(self, frame: TimsFrame):
+        # calculate TOF using the DH of the other frame
+        tof = self.mz_to_tof(frame.mz)
+        scan = self.inv_mobility_to_scan(frame.mobility)
+        return self.__helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
+                                                                       total_scans=self.num_scans)
+
+    def write_frame(self, frame: TimsFrame, scan_mode: int):
+        self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
+        compressed_data = self.generate_compressed_data(frame)
+
+        with open(self.binary_file, "ab") as bin_file:
+            bin_file.write(compressed_data)
+            self.position = bin_file.tell()
+
+    def write_frames(self, frames: List[TimsFrame], scan_mode: int, num_threads: int = 4):
+        compressed_data = self.__helper_handle.compress_frame_collection(frames, total_scans=self.num_scans,
+                                                                         num_threads=num_threads)
+        return compressed_data
+
+    def get_frame_meta_data(self) -> pd.DataFrame:
+        return pd.DataFrame(self.frame_meta_data)
+
+    def write_frame_meta_data(self) -> None:
+        self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
