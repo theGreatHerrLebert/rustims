@@ -26,7 +26,7 @@ class TimsTofSyntheticAcquisitionBuilder:
 class SyntheticExperimentDataHandle:
     def __init__(self,
                  database_path: str,
-                 database_name: str = 'experiment_data.db',
+                 database_name: str = 'synthetic_data.db',
                  verbose: bool = True,
                  ):
         self.verbose = verbose
