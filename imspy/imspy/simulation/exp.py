@@ -8,6 +8,7 @@ import pandas as pd
 import imspy_connector as pims
 
 from imspy.core import TimsFrame
+from imspy.simulation.utility import get_native_dataset_path
 
 
 class TimsTofSyntheticAcquisitionBuilder:
@@ -23,10 +24,10 @@ class TimsTofSyntheticAcquisitionBuilder:
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
 
-class ExperimentDataHandle:
+class SyntheticExperimentDataHandle:
     def __init__(self,
                  database_path: str,
-                 database_name: str = 'experiment_data.db',
+                 database_name: str = 'synthetic_data.db',
                  verbose: bool = True,
                  ):
         self.verbose = verbose
@@ -72,7 +73,7 @@ class ExperimentDataHandle:
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
 
-class ExperimentDataHandleDIA(ExperimentDataHandle, ABC):
+class ExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
     def __init__(self,
                  database_path: str,
                  database_name: str = 'experiment_data.db',
@@ -106,7 +107,7 @@ if __name__ == '__main__':
     # Example usage
     path = '/path/to/directory'
     db_name = 'experiment_data.db'
-    handle = ExperimentDataHandle(path, db_name)
+    handle = SyntheticExperimentDataHandle(path, db_name)
 
     # Create a table, for example
     sql_create_peptides_table = '''
