@@ -37,7 +37,10 @@ class SyntheticExperimentDataHandle:
         self._setup()
 
     def _setup(self):
-        # Connect to the SQLite database or create it if it doesn't exist
+        if not os.path.exists(self.base_path):
+            if self.verbose:
+                print(f"Creating data directory: {self.base_path}")
+            os.makedirs(self.base_path)
         if self.verbose:
             print(f"Connecting to database: {self.database_path}")
         self.conn = sqlite3.connect(self.database_path)
