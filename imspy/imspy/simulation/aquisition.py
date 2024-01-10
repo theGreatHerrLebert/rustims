@@ -81,17 +81,16 @@ class TimsTofAcquisitionBuilder:
     def generate_scan_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
             print('Generating scan layout...')
-        scans = []
 
-        # Generating scan_ids in ascending order
-        scan_ids = list(range(self.num_scans))
-        for index, value in enumerate(scan_ids):
-            # Start with the highest mobility value at the lowest scan index and decrease
-            mobility = self.im_upper - index * self.im_cycle_length
-            s = self.tdf_writer.inv_mobility_to_scan([mobility])[0]
-            scans.append({'scan': s, 'mobility': mobility})
+        mobilities = []
 
-        return pd.DataFrame(scans)
+        for scan_value in range(self.num_scans):
+            mobility = self.im_lower + scan_value * self.im_cycle_length
+            mobilities.append(mobility)
+
+        scans = self.tdf_writer.inv_mobility_to_scan(mobilities)
+
+        return pd.DataFrame({'scan': scans, 'mobility': mobilities})
 
     def __repr__(self):
         return (f"TimsTofAcquisitionBuilder(path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
