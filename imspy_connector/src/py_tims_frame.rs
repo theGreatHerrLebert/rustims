@@ -121,6 +121,11 @@ impl PyTimsFrame {
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
         self.inner.tof.clone().into_pyarray(py).to_owned()
     }
+    #[setter]
+    pub unsafe fn set_tof(&mut self, tof: &PyArray1<i32>) {
+        self.inner.tof = tof.as_slice().unwrap().to_vec();
+    }
+
     #[getter]
     pub fn frame_id(&self) -> i32 {
         self.inner.frame_id

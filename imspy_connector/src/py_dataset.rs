@@ -1,11 +1,12 @@
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress,
-                           parse_decompressed_bruker_binary_data, reconstruct_compressed_data};
+use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress, parse_decompressed_bruker_binary_data, reconstruct_compressed_data, compress_collection};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
+use pyo3::types::PyList;
+use pyo3::{PyResult, Python, PyObject};
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -52,14 +53,20 @@ impl PyTimsDataset {
         self.inner.get_frame_count()
     }
 
-    // TODO: make this more efficient
     pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
         self.inner.mz_to_tof(frame_id, &mz_values.clone())
     }
 
-    // TODO: make this more efficient
     pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
         self.inner.tof_to_mz(frame_id, &tof_values.clone())
+    }
+
+    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<i32>) -> Vec<f64> {
+        self.inner.scan_to_inverse_mobility(frame_id, &scan_values.clone())
+    }
+
+    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<i32> {
+        self.inner.inverse_mobility_to_scan(frame_id, &inverse_mobility_values.clone())
     }
 
     #[staticmethod]
@@ -95,6 +102,20 @@ impl PyTimsDataset {
             tof.into_pyarray(py).to_owned(),
             intensities.into_pyarray(py).to_owned(),
         ))
+    }
+
+    #[staticmethod]
+    pub fn compress_collection(py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize) -> PyResult<PyObject> {
+        let compressed_frames = compress_collection(frames.iter().map(|x| x.inner.clone()).collect::<Vec<_>>(), total_scans, num_threads);
+
+        let py_list = PyList::empty(py);
+
+        for frame in compressed_frames {
+            let np_array = frame.into_pyarray(py).to_owned();
+            py_list.append(np_array)?;
+        }
+
+        Ok(py_list.into())
     }
 }
 

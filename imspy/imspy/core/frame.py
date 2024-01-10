@@ -126,6 +126,10 @@ class TimsFrame:
         """
         return self.__frame_ptr.tof
 
+    @tof.setter
+    def tof(self, tof: NDArray[np.int32]):
+        self.__frame_ptr.tof = tof
+
     @property
     def mz(self) -> NDArray[np.float64]:
         """m/z.

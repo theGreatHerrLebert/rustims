@@ -128,6 +128,8 @@ impl TimsTofSynthetics {
             tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id)).collect();
         });
 
+        tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
+
         tims_frames
     }
 

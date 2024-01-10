@@ -5,8 +5,6 @@ from sagepy.core.database import PeptideIx
 from sagepy.core import EnzymeBuilder, SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration
 from tqdm import tqdm
 
-from imspy.simulation.exp import ExperimentDataHandle
-
 
 class PeptideDigest:
     def __init__(self,

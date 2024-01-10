@@ -23,28 +23,24 @@ class TimsTofSyntheticAcquisitionBuilder:
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
 
-class ExperimentDataHandle:
+class SyntheticExperimentDataHandle:
     def __init__(self,
                  database_path: str,
-                 database_name: str = 'experiment_data.db',
+                 database_name: str = 'synthetic_data.db',
                  verbose: bool = True,
                  ):
         self.verbose = verbose
         self.base_path = database_path
         self.database_path = os.path.join(self.base_path, database_name)
-        self.raw_data_path = os.path.join(self.base_path, 'raw_data')
         self.conn = None
 
         self._setup()
 
     def _setup(self):
-        # Create raw_data directory if it doesn't exist
-        if not os.path.exists(self.raw_data_path):
+        if not os.path.exists(self.base_path):
             if self.verbose:
-                print(f"Creating raw data directory: {self.raw_data_path}")
-            os.makedirs(self.raw_data_path)
-
-        # Connect to the SQLite database or create it if it doesn't exist
+                print(f"Creating data directory: {self.base_path}")
+            os.makedirs(self.base_path)
         if self.verbose:
             print(f"Connecting to database: {self.database_path}")
         self.conn = sqlite3.connect(self.database_path)
@@ -72,10 +68,10 @@ class ExperimentDataHandle:
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
 
-class ExperimentDataHandleDIA(ExperimentDataHandle, ABC):
+class SyntheticExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
     def __init__(self,
                  database_path: str,
-                 database_name: str = 'experiment_data.db',
+                 database_name: str = 'synthetic_data.db',
                  verbose: bool = True,):
         super().__init__(database_path, database_name, verbose)
         self.dia_ms_ms_info = None
@@ -106,7 +102,7 @@ if __name__ == '__main__':
     # Example usage
     path = '/path/to/directory'
     db_name = 'experiment_data.db'
-    handle = ExperimentDataHandle(path, db_name)
+    handle = SyntheticExperimentDataHandle(path, db_name)
 
     # Create a table, for example
     sql_create_peptides_table = '''

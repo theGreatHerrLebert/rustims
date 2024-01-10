@@ -3,6 +3,20 @@ import numpy as np
 from scipy.stats import norm
 from numpy.typing import NDArray
 import math
+import importlib.resources as resources
+from importlib.abc import Traversable
+
+
+def get_native_dataset_path(ds_name: str = 'NATIVE.d') -> str:
+    """ Get the path to a pretrained model
+
+    Args:
+        ds_name: The name of the dataset to load
+
+    Returns:
+        The path to the pretrained model
+    """
+    return str(resources.files('imspy.simulation.resources').joinpath(ds_name))
 
 
 @jit(nopython=True)

@@ -9,6 +9,8 @@ use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
 use mscore::{TimsFrame, RawTimsFrame, ImsFrame, MsType, TimsSlice};
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
@@ -20,6 +22,9 @@ pub trait TimsData {
 
     fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
     fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
+
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64>;
+    fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32>;
 }
 
 /// Decompresses a ZSTD compressed byte array
@@ -98,6 +103,25 @@ pub fn reconstruct_compressed_data(
     final_data.extend_from_slice(&compressed_data);
 
     Ok(final_data)
+}
+
+pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, num_threads: usize) -> Vec<Vec<u8>> {
+
+    let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+
+    let result = pool.install(|| {
+        frames.par_iter().map(|frame| {
+                let compressed_data = reconstruct_compressed_data(
+                    frame.scan.iter().map(|&x| x as u32).collect(),
+                    frame.tof.iter().map(|&x| x as u32).collect(),
+                    frame.ims_frame.intensity.iter().map(|&x| x as u32).collect(),
+                    max_scan_count,
+                ).unwrap();
+                compressed_data
+            }).collect()
+    });
+
+    result
 }
 
 
@@ -340,7 +364,7 @@ impl TimsDataHandle {
         dbl_mz.resize(mz.len(), 0.0);
 
         for (i, &val) in mz.iter().enumerate() {
-            dbl_mz[i] = val as f64;
+            dbl_mz[i] = val;
         }
 
         let mut tof_values: Vec<f64> = Vec::new();
@@ -371,11 +395,38 @@ impl TimsDataHandle {
         }
 
         let mut inv_mob: Vec<f64> = Vec::new();
-        inv_mob.resize(scan.len() as usize, 0.0);
+        inv_mob.resize(scan.len(), 0.0);
 
         self.bruker_lib.tims_scan_to_inv_mob(frame_id, &dbl_scans, &mut inv_mob).expect("Bruker binary call failed at: tims_scannum_to_oneoverk0;");
 
         inv_mob
+    }
+
+    /// translate inverse mobility to scan values calling the bruker library
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_id` - A u32 that holds the frame id
+    /// * `inv_mob` - A vector of f64 that holds the inverse mobility values
+    ///
+    /// # Returns
+    ///
+    /// * `scan_values` - A vector of i32 that holds the scan values
+    ///
+    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inv_mob: &Vec<f64>) -> Vec<i32> {
+        let mut dbl_inv_mob: Vec<f64> = Vec::new();
+        dbl_inv_mob.resize(inv_mob.len(), 0.0);
+
+        for (i, &val) in inv_mob.iter().enumerate() {
+            dbl_inv_mob[i] = val;
+        }
+
+        let mut scan_values: Vec<f64> = Vec::new();
+        scan_values.resize(inv_mob.len(),  0.0);
+
+        self.bruker_lib.inv_mob_to_tims_scan(frame_id, &dbl_inv_mob, &mut scan_values).expect("Bruker binary call failed at: tims_oneoverk0_to_scannum;");
+
+        scan_values.iter().map(|&x| x.round() as i32).collect()
     }
 
     /// helper function to flatten the scan values
