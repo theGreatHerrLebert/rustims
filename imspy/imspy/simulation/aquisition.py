@@ -73,11 +73,10 @@ class TimsTofAcquisitionBuilder:
         # Generating scan_ids in ascending order
         scan_ids = list(range(self.num_scans))
         for index, value in enumerate(scan_ids):
-            scan_id = value
             # Start with the highest mobility value at the lowest scan index and decrease
             mobility = self.im_upper - index * self.im_cycle_length
             s = self.tdf_writer.inv_mobility_to_scan([mobility])[0]
-            scans.append({'scan': scan_id, 'mobility': mobility})
+            scans.append({'scan': s, 'mobility': mobility})
 
         return pd.DataFrame(scans)
 
