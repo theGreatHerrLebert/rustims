@@ -89,7 +89,7 @@ class TimsTofAcquisitionBuilder:
             mobilities.append(mobility)
 
         scans = self.tdf_writer.inv_mobility_to_scan(mobilities)
-        condition = np.abs(scans - self.num_scans)
+        condition = np.abs(np.array(scans) - self.num_scans)
         reversed_index = np.argmin(condition[::-1])
         last_index = len(condition) - reversed_index - 1
 
