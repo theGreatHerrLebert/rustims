@@ -66,7 +66,6 @@ class TimsTofAcquisitionBuilder:
         self.synthetics_handle = SyntheticExperimentDataHandle(database_path=self.path)
         self.frame_table = None
         self.scan_table = None
-        self._setup()
 
     def generate_frame_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
@@ -93,20 +92,6 @@ class TimsTofAcquisitionBuilder:
             scans.append({'scan': s, 'mobility': mobility})
 
         return pd.DataFrame(scans)
-
-    def _setup(self, verbose: bool = True):
-
-        self.frame_table = self.generate_frame_table(verbose=verbose)
-        self.scan_table = self.generate_scan_table(verbose=verbose)
-
-        self.synthetics_handle.create_table(
-            table_name='frames',
-            table=self.frame_table
-        )
-        self.synthetics_handle.create_table(
-            table_name='scans',
-            table=self.scan_table
-        )
 
     def __repr__(self):
         return (f"TimsTofAcquisitionBuilder(path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
