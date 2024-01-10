@@ -150,6 +150,15 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table,
                                                                  precursor_every=self.precursor_every, verbose=verbose)
 
+        self.synthetics_handle.create_table(
+            table_name='frames',
+            table=self.frame_table
+        )
+        self.synthetics_handle.create_table(
+            table_name='scans',
+            table=self.scan_table
+        )
+
 
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
@@ -182,6 +191,15 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table, verbose=verbose)
 
+        self.synthetics_handle.create_table(
+            table_name='frames',
+            table=self.frame_table
+        )
+        self.synthetics_handle.create_table(
+            table_name='scans',
+            table=self.scan_table
+        )
+
 
 class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
@@ -213,3 +231,12 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table, verbose=verbose)
+
+        self.synthetics_handle.create_table(
+            table_name='frames',
+            table=self.frame_table
+        )
+        self.synthetics_handle.create_table(
+            table_name='scans',
+            table=self.scan_table
+        )
