@@ -3,6 +3,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from abc import abstractmethod, ABC
 
+from imspy.simulation.exp import SyntheticExperimentDataHandle
 from imspy.timstof.data import AcquisitionMode
 from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing
 from imspy.simulation.tdf import TDFWriter
@@ -23,6 +24,8 @@ class TimsTofAcquisitionBuilder:
         """ Base class for building TimsTOF experiments
         Parameters
         ----------
+        path : str
+            Path to the experiment directory
         gradient_length : float
             Length of the gradient in seconds
         rt_cycle_length : float
@@ -31,9 +34,14 @@ class TimsTofAcquisitionBuilder:
             Lower bound of the ion mobility range (IM first scan)
         im_upper : float
             Upper bound of the ion mobility range (IM last scan)
+        mz_lower : float
+            Lower bound of the m/z range (m/z first scan)
+        mz_upper : float
+            Upper bound of the m/z range (m/z last scan)
         num_scans : int
-            Number of scans (IM) to be acquired
+            Number of scans that will be taken during the acquisition
         """
+
         self.path = path
         self.gradient_length = gradient_length
         self.rt_cycle_length = rt_cycle_length
@@ -45,6 +53,7 @@ class TimsTofAcquisitionBuilder:
         self.im_cycle_length = calculate_mobility_spacing(im_lower, im_upper, num_scans)
         self.num_frames = calculate_number_frames(gradient_length, rt_cycle_length)
         self.num_scans = num_scans
+        # Create the TDFWriter, used to deal with bruker binary format writing and metadata for libtimsdata.so
         self.tdf_writer = TDFWriter(
             path=self.path,
             num_scans=self.num_scans,
@@ -53,6 +62,11 @@ class TimsTofAcquisitionBuilder:
             mz_lower=self.mz_lower,
             mz_upper=self.mz_upper
         )
+        # Create the SyntheticExperimentDataHandle, which is used to deal with the sqlite database of synthetic data
+        self.synthetics_handle = SyntheticExperimentDataHandle(database_path=self.path)
+        self.frame_table = None
+        self.scan_table = None
+        self._setup()
 
     def generate_frame_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
@@ -79,6 +93,20 @@ class TimsTofAcquisitionBuilder:
             scans.append({'scan': s, 'mobility': mobility})
 
         return pd.DataFrame(scans)
+
+    def _setup(self, verbose: bool = True):
+
+        self.frame_table = self.generate_frame_table(verbose=verbose)
+        self.scan_table = self.generate_scan_table(verbose=verbose)
+
+        self.synthetics_handle.create_table(
+            table_name='frames',
+            table=self.frame_table
+        )
+        self.synthetics_handle.create_table(
+            table_name='scans',
+            table=self.scan_table
+        )
 
     def __repr__(self):
         return (f"TimsTofAcquisitionBuilder(path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
