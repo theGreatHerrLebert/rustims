@@ -76,6 +76,7 @@ class TimsTofAcquisitionBuilder:
             scan_id = value
             # Start with the highest mobility value at the lowest scan index and decrease
             mobility = self.im_upper - index * self.im_cycle_length
+            s = self.tdf_writer.inv_mobility_to_scan([mobility])[0]
             scans.append({'scan': scan_id, 'mobility': mobility})
 
         return pd.DataFrame(scans)
