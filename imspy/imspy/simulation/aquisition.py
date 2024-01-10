@@ -82,16 +82,8 @@ class TimsTofAcquisitionBuilder:
         if verbose:
             print('Generating scan layout...')
 
-        mobilities = []
-
-        for scan_value in range(self.num_scans):
-            mobility = self.im_lower + scan_value * self.im_cycle_length
-            mobilities.append(mobility)
-
-        scans = self.tdf_writer.inv_mobility_to_scan(mobilities)
-        first_index = np.argmin(np.abs(np.array(scans) - self.num_scans))
-        scans = scans[first_index:]
-        mobilities = mobilities[first_index:]
+        scans = np.arange(self.num_scans)[::-1]
+        mobilities = self.tdf_writer.scan_to_inv_mobility(scans)
 
         return pd.DataFrame({'scan': scans, 'mobility': mobilities})
 
