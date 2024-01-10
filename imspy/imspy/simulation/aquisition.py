@@ -89,13 +89,9 @@ class TimsTofAcquisitionBuilder:
             mobilities.append(mobility)
 
         scans = self.tdf_writer.inv_mobility_to_scan(mobilities)
-        condition = np.abs(np.array(scans) - self.num_scans)
-        reversed_index = np.argmin(condition[::-1])
-        last_index = len(condition) - reversed_index - 1
-
-        # Include elements up to and including the last_index
-        scans = scans[:last_index + 1]
-        mobilities = mobilities[:last_index + 1]
+        last_index = np.argmin(np.abs(scans - self.num_scans))
+        scans = scans[:last_index]
+        mobilities = mobilities[:last_index]
 
         return pd.DataFrame({'scan': scans, 'mobility': mobilities})
 
