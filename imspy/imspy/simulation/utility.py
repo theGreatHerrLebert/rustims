@@ -5,7 +5,7 @@ import math
 import importlib.resources as resources
 
 from numpy.typing import NDArray
-from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_PROTON, MASS_WATER
+from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz
 
 
 def calculate_b_y_fragment_mz(sequence: str, modifications: NDArray, is_y: bool = False, charge: int = 1) -> float:
@@ -29,10 +29,10 @@ def calculate_b_y_fragment_mz(sequence: str, modifications: NDArray, is_y: bool 
 
     # if sequence is n-terminal, add water mass and calculate mz
     if is_y:
-        return (mass + MASS_WATER + MASS_PROTON * charge) / charge
+        return calculate_mz(mass + MASS_WATER, charge)
 
     # otherwise, calculate mz
-    return (mass + MASS_PROTON * charge) / charge
+    return calculate_mz(mass, charge)
 
 
 def calculate_b_y_ion_series(sequence: str, modifications, charge: int = 1):
