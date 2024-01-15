@@ -1,10 +1,76 @@
 from numba import jit
 import numpy as np
 from scipy.stats import norm
-from numpy.typing import NDArray
 import math
 import importlib.resources as resources
-from importlib.abc import Traversable
+
+from numpy.typing import NDArray
+from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_PROTON, MASS_WATER
+
+
+def calculate_b_y_fragment_mz(sequence: str, modifications: NDArray, is_y: bool = False, charge: int = 1) -> float:
+    """
+    Calculate the m/z value of a b or y fragment.
+    Args:
+        sequence: the peptide sequence
+        modifications: potential modifications
+        is_y: is the fragment a y ion
+        charge: the charge state of the peptide precursor
+
+    Returns:
+        m/z value of the fragment
+    """
+    # return mz of empty sequence
+    if len(sequence) == 0:
+        return 0.0
+
+    # add up raw amino acid masses and potential modifications
+    mass = np.sum([AMINO_ACID_MASSES[s] for s in sequence]) + np.sum(modifications)
+
+    # if sequence is n-terminal, add water mass and calculate mz
+    if is_y:
+        return (mass + MASS_WATER + MASS_PROTON * charge) / charge
+
+    # otherwise, calculate mz
+    return (mass + MASS_PROTON * charge) / charge
+
+
+def calculate_b_y_ion_series(sequence: str, modifications, charge: int = 1):
+    """
+    Calculate the b and y ion series for a given peptide sequence.
+    Args:
+        sequence: the peptide sequence
+        modifications: potential modifications
+        charge: the charge state of the peptide precursor
+
+    Returns:
+        b ion series, y ion series
+    """
+    b_ions, b_seqs, y_seqs = [], [], []
+    y_ions, b_masses, y_masses = [], [], []
+
+    # iterate over all possible cleavage sites
+    for i in range(len(sequence) + 1):
+        y = sequence[i:]
+        b = sequence[:i]
+        m_y = modifications[i:]
+        m_b = modifications[:i]
+
+        # calculate mz of b ions
+        if len(b) > 0 and len(b) != len(sequence):
+            b_mass = calculate_b_y_fragment_mz(b, m_b, is_y=False, charge=charge)
+            b_ions.append(f"b{i}")
+            b_seqs.append(b)
+            b_masses.append(np.round(b_mass, 6))
+
+        # calculate mz of y ions
+        if len(y) > 0 and len(y) != len(sequence):
+            y_ions.append(f"y{len(sequence) - i}")
+            y_mass = calculate_b_y_fragment_mz(y, m_y, is_y=True, charge=charge)
+            y_seqs.append(y)
+            y_masses.append(np.round(y_mass, 6))
+
+    return list(zip(b_masses, b_ions, b_seqs)), list(zip(y_masses, y_ions, y_seqs))
 
 
 def get_native_dataset_path(ds_name: str = 'NATIVE.d') -> str:
