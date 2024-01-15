@@ -59,13 +59,13 @@ def calculate_b_y_ion_series(sequence: str, modifications, charge: int = 1):
         # calculate mz of b ions
         if len(b) > 0 and len(b) != len(sequence):
             b_mass = calculate_b_y_fragment_mz(b, m_b, is_y=False, charge=charge)
-            b_ions.append(f"b{i}")
+            b_ions.append(f"b{i}+{charge}")
             b_seqs.append(b)
             b_masses.append(np.round(b_mass, 6))
 
         # calculate mz of y ions
         if len(y) > 0 and len(y) != len(sequence):
-            y_ions.append(f"y{len(sequence) - i}")
+            y_ions.append(f"y{len(sequence) - i}+{charge}")
             y_mass = calculate_b_y_fragment_mz(y, m_y, is_y=True, charge=charge)
             y_seqs.append(y)
             y_masses.append(np.round(y_mass, 6))
