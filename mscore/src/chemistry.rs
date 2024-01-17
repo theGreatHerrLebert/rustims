@@ -196,7 +196,7 @@ pub fn generate_averagine_spectra(
     num_threads: usize,
     amp: Option<f64>
 ) -> Vec<MzSpectrum> {
-    let amp = amp.unwrap_or(1e4);
+    let amp = amp.unwrap_or(1e5);
     let mut spectra: Vec<MzSpectrum> = Vec::new();
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
 

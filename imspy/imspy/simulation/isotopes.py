@@ -252,7 +252,8 @@ class AveragineGenerator(IsotopePatternGenerator):
             .to_resolution(resolution).filter(-1, -1, min_intensity)
 
 
-def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float = 150, k: int = 7, resolution: int = 3, centroid: bool = True):
+def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float = 150, k: int = 7, resolution: int = 3,
+                                  centroid: bool = True):
     return MzSpectrum.from_py_mz_spectrum(pims.generate_precursor_spectrum(
         mass=mass,
         charge=charge,
@@ -261,3 +262,16 @@ def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float
         resolution=resolution,
         centroid=centroid
     ))
+
+
+def generate_isotope_patterns_rust(masses: NDArray, charges: NDArray, min_intensity: float = 150, k: int = 7,
+                                   resolution: int = 3, centroid: bool = True, num_threads: int = 4):
+    return [MzSpectrum.from_py_mz_spectrum(x) for x in pims.generate_precursor_spectra(
+        masses=masses,
+        charges=charges,
+        min_intensity=min_intensity,
+        k=k,
+        resolution=resolution,
+        centroid=centroid,
+        num_threads=num_threads,
+    )]
