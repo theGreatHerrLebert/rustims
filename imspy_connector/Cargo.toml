@@ -8,7 +8,7 @@ name = "imspy_connector"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20.0", features = ["extension-module"] }
+pyo3 = { version = "0.20.2", features = ["extension-module"] }
 numpy = "0.20.0"
 mscore = {path = "../mscore"}
 rustdf = {path = "../rustdf"}

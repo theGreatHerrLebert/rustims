@@ -7,6 +7,7 @@ use serde_json;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
+
 pub struct TimsTofSynthetics {
     pub ions: Vec<IonsSim>,
     pub peptides: Vec<PeptidesSim>,
@@ -168,6 +169,51 @@ impl TimsTofSynthetics {
         }
 
         peptide_to_ions
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WindowGroupSettingsSim {
+    pub window_group: u32,
+    pub scan_start: u32,
+    pub scan_end: u32,
+    pub isolation_mz: f32,
+    pub isolation_width: f32,
+    pub collision_energy: f32,
+}
+
+impl WindowGroupSettingsSim {
+    pub fn new(
+        window_group: u32,
+        scan_start: u32,
+        scan_end: u32,
+        isolation_mz: f32,
+        isolation_width: f32,
+        collision_energy: f32,
+    ) -> Self {
+        WindowGroupSettingsSim {
+            window_group,
+            scan_start,
+            scan_end,
+            isolation_mz,
+            isolation_width,
+            collision_energy,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameToWindowGroupSim {
+    pub frame_id: u32,
+    pub window_group:u32,
+}
+
+impl FrameToWindowGroupSim {
+    pub fn new(frame_id: u32, window_group: u32) -> Self {
+        FrameToWindowGroupSim {
+            frame_id,
+            window_group,
+        }
     }
 }
 
@@ -402,5 +448,41 @@ impl SyntheticsDataHandle {
             ions.push(ion?);
         }
         Ok(ions)
+    }
+
+    pub fn read_window_group_settings(&self) -> Result<Vec<WindowGroupSettingsSim>> {
+        let mut stmt = self.connection.prepare("SELECT * FROM dia_ms_ms_windows")?;
+        let window_group_settings_iter = stmt.query_map([], |row| {
+            Ok(WindowGroupSettingsSim::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?;
+        let mut window_group_settings = Vec::new();
+        for window_group_setting in window_group_settings_iter {
+            window_group_settings.push(window_group_setting?);
+        }
+        Ok(window_group_settings)
+    }
+
+    pub fn read_frame_to_window_group(&self) -> Result<Vec<FrameToWindowGroupSim>> {
+        let mut stmt = self.connection.prepare("SELECT * FROM frame_to_window_group")?;
+        let frame_to_window_group_iter = stmt.query_map([], |row| {
+            Ok(FrameToWindowGroupSim::new(
+                row.get(0)?,
+                row.get(1)?,
+            ))
+        })?;
+
+        let mut frame_to_window_groups: Vec<FrameToWindowGroupSim> = Vec::new();
+        for frame_to_window_group in frame_to_window_group_iter {
+            frame_to_window_groups.push(frame_to_window_group?);
+        }
+
+        Ok(frame_to_window_groups)
     }
 }

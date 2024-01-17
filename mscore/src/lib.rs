@@ -2,11 +2,15 @@ pub mod mz_spectrum;
 mod tims_frame;
 mod tims_slice;
 mod chemistry;
+mod quadrupole;
 
 pub use {
 
     chemistry::one_over_reduced_mobility_to_ccs,
     chemistry::ccs_to_reduced_mobility,
+    chemistry::generate_averagine_spectrum,
+    chemistry::generate_averagine_spectra,
+    chemistry::factorial,
 
     mz_spectrum::MsType,
 
@@ -34,4 +38,6 @@ pub use {
     tims_slice::TimsSliceFlat,
 
     tims_slice::TimsPlane,
+
+    quadrupole::ion_transition_function_midpoint,
 };
