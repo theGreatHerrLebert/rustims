@@ -2,6 +2,7 @@ pub mod mz_spectrum;
 mod tims_frame;
 mod tims_slice;
 mod chemistry;
+mod quadrupole;
 
 pub use {
 
@@ -34,4 +35,6 @@ pub use {
     tims_slice::TimsSliceFlat,
 
     tims_slice::TimsPlane,
+
+    quadrupole::ion_transition_function_midpoint,
 };
