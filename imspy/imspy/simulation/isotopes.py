@@ -11,6 +11,7 @@ import numba
 import pyopenms
 
 from imspy.simulation.noise import detection_noise
+import imspy_connector as pims
 
 MASS_PROTON = 1.007276466621
 MASS_NEUTRON = 1.00866491595
@@ -249,3 +250,14 @@ class AveragineGenerator(IsotopePatternGenerator):
                     )
         return MzSpectrum(mz, i) \
             .to_resolution(resolution).filter(-1, -1, min_intensity)
+
+
+def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float = 150, k: int = 7, resolution: int = 3, centroid: bool = True):
+    return MzSpectrum.from_py_mz_spectrum(pims.generate_precursor_spectrum(
+        mass=mass,
+        charge=charge,
+        min_intensity=min_intensity,
+        k=k,
+        resolution=resolution,
+        centroid=centroid
+    ))
