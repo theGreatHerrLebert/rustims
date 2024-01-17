@@ -8,12 +8,14 @@ mod py_simulation;
 mod py_chemistry;
 
 use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
 use crate::py_dataset::{PyTimsDataset, PyAcquisitionMode};
 use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum, PyMzSpectrumVectorized};
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized, PyRawTimsFrame};
 use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
 use crate::py_simulation::PyTimsTofSynthetics;
+use crate::py_chemistry::generate_precursor_spectrum;
 
 #[pymodule]
 fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -32,5 +34,6 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsFragmentDDA>()?;
     m.add_class::<PyAcquisitionMode>()?;
     m.add_class::<PyTimsTofSynthetics>()?;
+    m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
     Ok(())
 }
