@@ -45,12 +45,12 @@ def weight(mass: float, peak_nums: NDArray, normalize: bool = True):
     """
     factorials = np.zeros_like(peak_nums)
     norm = 1
-    for i,k in enumerate(peak_nums):
+    for i, k in enumerate(peak_nums):
         factorials[i] = factorial(k)
     weights = np.exp(-lam(mass)) * np.power(lam(mass), peak_nums) / factorials
     if normalize:
         norm = weights.sum()
-    return weights/norm
+    return weights / norm
 
 
 def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenms.CoarseIsotopePatternGenerator):
@@ -94,9 +94,9 @@ def iso(x: NDArray, mass: float, charge: float, sigma: float, amp: float, K: int
     k = np.arange(K)
     means = ((mass + mass_neutron * k) / charge).reshape((1, -1))
     weights = weight(mass, k).reshape((1, -1))
-    intensities = np.sum(weights*normal_pdf(x.reshape((-1, 1)), means, sigma), axis=1) * step_size
+    intensities = np.sum(weights * normal_pdf(x.reshape((-1, 1)), means, sigma), axis=1) * step_size
     if add_detection_noise:
-        return detection_noise(intensities*amp)
+        return detection_noise(intensities * amp)
     else:
         return intensities * amp
 
@@ -122,8 +122,8 @@ def numba_generate_pattern(
     :param resolution:
     :return:
     """
-    step_size = min(sigma/10, 1/np.power(10, resolution))
-    size = int((upper_bound-lower_bound)//step_size+1)
+    step_size = min(sigma / 10, 1 / np.power(10, resolution))
+    size = int((upper_bound - lower_bound) // step_size + 1)
     mzs = np.linspace(lower_bound, upper_bound, size)
     intensities = iso(mzs, mass, charge, sigma, amp, k, step_size)
 
@@ -131,37 +131,37 @@ def numba_generate_pattern(
 
 
 def numba_ion_sampler(mass: float, charge: int, sigma: ArrayLike, k: int, ion_count: int, intensity_per_ion: int):
-        sigma = np.atleast_1d(sigma)
-        if sigma.size == 1:
-            sigma = np.repeat(sigma, k)
-        if sigma.size != k:
-            raise ValueError("Sigma must be either length 1 or k")
+    sigma = np.atleast_1d(sigma)
+    if sigma.size == 1:
+        sigma = np.repeat(sigma, k)
+    if sigma.size != k:
+        raise ValueError("Sigma must be either length 1 or k")
 
-        us = np.zeros(ion_count)
-        devs_std = np.zeros(ion_count)
-        for ion in range(ion_count):
-            u = np.random.uniform()
-            dev_std = np.random.normal()
-            us[ion] = u
-            devs_std[ion] = dev_std
+    us = np.zeros(ion_count)
+    devs_std = np.zeros(ion_count)
+    for ion in range(ion_count):
+        u = np.random.uniform()
+        dev_std = np.random.normal()
+        us[ion] = u
+        devs_std[ion] = dev_std
 
-        weights = weight(mass, np.arange(k)).cumsum()
+    weights = weight(mass, np.arange(k)).cumsum()
 
-        def _get_component(u: float, weights_cum_sum: ArrayLike = weights) -> int:
-            for idx, weight_sum in enumerate(weights_cum_sum):
-                if u < weight_sum:
-                    return idx
+    def _get_component(u: float, weights_cum_sum: ArrayLike = weights) -> int:
+        for idx, weight_sum in enumerate(weights_cum_sum):
+            if u < weight_sum:
+                return idx
 
-        comps = np.zeros_like(us)
-        devs = np.zeros_like(us)
-        for idx, u in enumerate(us):
-            comp = _get_component(u)
-            comps[idx] = comp
-            devs[idx] = sigma[comp] * devs_std[idx]
+    comps = np.zeros_like(us)
+    devs = np.zeros_like(us)
+    for idx, u in enumerate(us):
+        comp = _get_component(u)
+        comps[idx] = comp
+        devs[idx] = sigma[comp] * devs_std[idx]
 
-        mz = ((comps*MASS_NEUTRON) + mass) / charge + MASS_PROTON + devs
-        i = np.ones_like(mz) * intensity_per_ion
-        return mz, i
+    mz = ((comps * MASS_NEUTRON) + mass) / charge + MASS_PROTON + devs
+    i = np.ones_like(mz) * intensity_per_ion
+    return mz, i
 
 
 @numba.jit(nopython=True)
@@ -172,7 +172,6 @@ def create_initial_feature_distribution(num_rt: int, num_im: int,
                                         im_upper: float = 4,
                                         distr_im=gaussian,
                                         distr_rt=exp_gaussian) -> np.array:
-
     I = np.ones((num_rt, num_im)).astype(np.float32)
 
     for i, x in enumerate(np.linspace(im_lower, im_upper, num_im)):
@@ -203,7 +202,7 @@ class AveragineGenerator(IsotopePatternGenerator):
         pass
 
     def generate_spectrum(self, mass: int, charge: int, min_intensity: int = 5, k: int = 7,
-                          amp: Optional[float] = None, resolution: int = 3,  centroided: bool = True) -> MzSpectrum:
+                          amp: Optional[float] = None, resolution: int = 3, centroided: bool = True) -> MzSpectrum:
         if amp is None:
             amp = self.default_abundance
 
@@ -219,25 +218,26 @@ class AveragineGenerator(IsotopePatternGenerator):
             k=k,
             resolution=resolution
         )
-        #Todo implement centroid method
+
+        # TODO: implement centroid method
         if centroided:
-            return MzSpectrum(mz, i)\
-                    .to_resolution(resolution).filter(lb, ub, min_intensity)\
-                    .to_centroided(baseline_noise_level=max(min_intensity, 1), sigma=1 / np.power(10, resolution - 1))
+            return MzSpectrum(mz, i) \
+                .to_resolution(resolution).filter(lb, ub, min_intensity) \
+                .to_centroided(baseline_noise_level=max(min_intensity, 1), sigma=1 / np.power(10, resolution - 1))
 
         return MzSpectrum(mz, i).to_resolution(resolution).filter(lb, ub, min_intensity)
 
     @staticmethod
     def generate_spectrum_by_sampling(
-                                      mass: float,
-                                      charge: int,
-                                      k: int = 7,
-                                      sigma: ArrayLike = 0.008492569002123142,
-                                      ion_count: int = 1000000,
-                                      resolution: int = 3,
-                                      intensity_per_ion: int = 1,
-                                      centroided: bool = True,
-                                      min_intensity: int = 5) -> MzSpectrum:
+            mass: float,
+            charge: int,
+            k: int = 7,
+            sigma: ArrayLike = 0.008492569002123142,
+            ion_count: int = 1000000,
+            resolution: int = 3,
+            intensity_per_ion: int = 1,
+            centroided: bool = True,
+            min_intensity: int = 5) -> MzSpectrum:
 
         assert 100 <= mass / charge <= 2000, f"m/z should be between 100 and 2000, was: {mass / charge}"
         mz, i = numba_ion_sampler(mass, charge, sigma, k, ion_count, intensity_per_ion)
@@ -245,7 +245,7 @@ class AveragineGenerator(IsotopePatternGenerator):
         if centroided:
             return (MzSpectrum(mz, i)
                     .to_resolution(resolution).filter(-1, -1, min_intensity)
-                    .to_centroided(baseline_noise_level=max(min_intensity, 1), sigma=1/np.power(10, resolution - 1))
-            ) 
-        return MzSpectrum(mz,i)\
-                .to_resolution(resolution).filter(-1, -1, min_intensity)
+                    .to_centroided(baseline_noise_level=max(min_intensity, 1), sigma=1 / np.power(10, resolution - 1))
+                    )
+        return MzSpectrum(mz, i) \
+            .to_resolution(resolution).filter(-1, -1, min_intensity)

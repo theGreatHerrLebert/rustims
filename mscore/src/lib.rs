@@ -8,6 +8,8 @@ pub use {
 
     chemistry::one_over_reduced_mobility_to_ccs,
     chemistry::ccs_to_reduced_mobility,
+    chemistry::generate_averagine_spectrum,
+    chemistry::factorial,
 
     mz_spectrum::MsType,
 

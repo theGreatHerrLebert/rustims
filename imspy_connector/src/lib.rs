@@ -5,6 +5,7 @@ mod py_tims_slice;
 mod py_dda;
 mod py_dia;
 mod py_simulation;
+mod py_chemistry;
 
 use pyo3::prelude::*;
 use crate::py_dataset::{PyTimsDataset, PyAcquisitionMode};
