@@ -1,5 +1,7 @@
 extern crate statrs;
 use statrs::distribution::{Continuous, Normal};
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use crate::{MzSpectrum, ToResolution};
 
 fn normal_pdf(x: f64, mean: f64, std_dev: f64) -> f64 {
@@ -182,5 +184,28 @@ pub fn generate_averagine_spectrum(
     } else {
         spectrum
     }
+}
+
+pub fn generate_averagine_spectra(
+    masses: Vec<f64>,
+    charges: Vec<i32>,
+    min_intensity: i32,
+    k: i32,
+    resolution: i32,
+    centroid: bool,
+    num_threads: usize,
+    amp: Option<f64>
+) -> Vec<MzSpectrum> {
+    let amp = amp.unwrap_or(1e4);
+    let mut spectra: Vec<MzSpectrum> = Vec::new();
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+
+    thread_pool.install(|| {
+        spectra = masses.par_iter().zip(charges.par_iter()).map(|(&mass, &charge)| {
+            generate_averagine_spectrum(mass, charge, min_intensity, k, resolution, centroid, Some(amp))
+        }).collect();
+    });
+
+    spectra
 }
 
