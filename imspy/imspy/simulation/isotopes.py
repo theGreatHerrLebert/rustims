@@ -264,7 +264,7 @@ def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float
     ))
 
 
-def generate_isotope_patterns_rust(masses: NDArray, charges: NDArray, min_intensity: float = 150, k: int = 7,
+def generate_isotope_patterns_rust(masses: NDArray, charges: NDArray, min_intensity: float = 0, k: int = 7,
                                    resolution: int = 3, centroid: bool = True, num_threads: int = 4):
     return [MzSpectrum.from_py_mz_spectrum(x) for x in pims.generate_precursor_spectra(
         masses=masses,

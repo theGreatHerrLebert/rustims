@@ -26,6 +26,7 @@ tqdm = ">=4.66"
 pyarrow =">=13.0"
 mendeleev = ">=0.7.0"
 dlomix = ">=0.0.6"
+wandb = ">=0.12.1"
 
 [build-system]
 requires = ["poetry-core"]
