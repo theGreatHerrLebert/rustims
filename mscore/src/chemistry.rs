@@ -177,6 +177,71 @@ pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
     mass_sequence + mass_modifics + MASS_WATER
 }
 
+pub fn calculate_b_y_fragment_mz(sequence: &str, modifications: Vec<f64>, is_y: Option<bool>, charge: Option<i32>) -> f64 {
+    // Return mz of empty sequence
+    if sequence.is_empty() {
+        return 0.0;
+    }
+
+    let amino_acid_masses = amino_acid_masses();
+
+    // Add up raw amino acid masses and potential modifications
+    let mass_sequence: f64 = sequence.chars()
+        .map(|aa| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0))
+        .sum();
+
+    let mass_modifications: f64 = modifications.iter().sum();
+
+    // Calculate total mass
+    let mass = mass_sequence + mass_modifications;
+
+    // Set default values if None
+    let is_y = is_y.unwrap_or(false);
+    let charge = charge.unwrap_or(1);
+
+    // If sequence is n-terminal (is_y is true), add water mass and calculate mz
+    if is_y {
+        calculate_mz(mass + MASS_WATER, charge)
+    } else {
+        // Otherwise, calculate mz
+        calculate_mz(mass, charge)
+    }
+}
+
+pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge: Option<i32>) -> (Vec<(f64, String, String)>, Vec<(f64, String, String)>) {
+    let mut b_ions = Vec::new();
+    let mut y_ions = Vec::new();
+
+    let char_indices: Vec<usize> = sequence.char_indices().map(|(i, _)| i).collect();
+    let sequence_length = char_indices.len();
+
+    // Iterate over all possible cleavage sites
+    for i in 0..=sequence_length {
+        let b_index = *char_indices.get(i).unwrap_or(&sequence.len());
+        let y_index = *char_indices.get(i).unwrap_or(&0);
+
+        let y = &sequence[y_index..];
+        let b = &sequence[..b_index];
+        let m_y = &modifications[i..];
+        let m_b = &modifications[..i];
+
+        // Calculate mz of b ions
+        if !b.is_empty() && i != sequence_length {
+            let b_mass = calculate_b_y_fragment_mz(b, m_b.to_vec(), Some(false), charge);
+            b_ions.push((b_mass, format!("b{}+{}", i, charge.unwrap_or(1)), b.to_string()));
+        }
+
+        // Calculate mz of y ions
+        if !y.is_empty() && i != 0 {
+            let y_mass = calculate_b_y_fragment_mz(y, m_y.to_vec(), Some(true), charge);
+            y_ions.push((y_mass, format!("y{}+{}", sequence_length - i, charge.unwrap_or(1)), y.to_string()));
+        }
+    }
+
+    (b_ions, y_ions)
+}
+
+
 /// calculate the m/z of an ion
 ///
 /// Arguments:

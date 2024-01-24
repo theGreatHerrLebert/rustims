@@ -13,6 +13,8 @@ pub use {
     chemistry::factorial,
     chemistry::calculate_mz,
     chemistry::calculate_monoisotopic_mass,
+    chemistry::calculate_b_y_fragment_mz,
+    chemistry::calculate_b_y_ion_series,
 
     mz_spectrum::MsType,
 
