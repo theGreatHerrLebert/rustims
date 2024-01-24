@@ -1,16 +1,204 @@
 extern crate statrs;
 use statrs::distribution::{Continuous, Normal};
+use regex::Regex;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::{MzSpectrum, ToResolution};
+use std::collections::HashMap;
 
 fn normal_pdf(x: f64, mean: f64, std_dev: f64) -> f64 {
     let normal = Normal::new(mean, std_dev).unwrap();
     normal.pdf(x)
 }
 
-const MASS_PROTON: f64 = 1.007276466621;
-const MASS_NEUTRON: f64 = 1.00866491595;
+pub const MASS_PROTON: f64 = 1.007276466621;
+pub const MASS_NEUTRON: f64 = 1.00866491595;
+pub const MASS_ELECTRON: f64 = 0.00054857990946;
+pub const MASS_WATER: f64 = 18.0105646863;
+
+// IUPAC Standards
+pub const STANDARD_TEMPERATURE: f64 = 273.15; // Kelvin
+pub const STANDARD_PRESSURE: f64 = 1e5; // Pascal
+pub const ELEMENTARY_CHARGE: f64 = 1.602176634e-19;
+pub const K_BOLTZMANN: f64 = 1.380649e-23; // J/K
+
+// Amino Acids and Their Codes
+fn amino_acids() -> HashMap<&'static str, &'static str> {
+    let mut map = HashMap::new();
+    map.insert("Lysine", "K");
+    map.insert("Alanine", "A");
+    map.insert("Glycine", "G");
+    map.insert("Valine", "V");
+    map.insert("Tyrosine", "Y");
+    map.insert("Arginine", "R");
+    map.insert("Glutamic Acid", "E");
+    map.insert("Phenylalanine", "F");
+    map.insert("Tryptophan", "W");
+    map.insert("Leucine", "L");
+    map.insert("Threonine", "T");
+    map.insert("Cysteine", "C");
+    map.insert("Serine", "S");
+    map.insert("Glutamine", "Q");
+    map.insert("Methionine", "M");
+    map.insert("Isoleucine", "I");
+    map.insert("Asparagine", "N");
+    map.insert("Proline", "P");
+    map.insert("Histidine", "H");
+    map.insert("Aspartic Acid", "D");
+    map.insert("Selenocysteine", "U");
+    map
+}
+
+// Amino Acid Masses
+fn amino_acid_masses() -> HashMap<&'static str, f64> {
+    let mut map = HashMap::new();
+    map.insert("A", 71.037114);
+    map.insert("R", 156.101111);
+    map.insert("N", 114.042927);
+    map.insert("D", 115.026943);
+    map.insert("C", 103.009185);
+    map.insert("E", 129.042593);
+    map.insert("Q", 128.058578);
+    map.insert("G", 57.021464);
+    map.insert("H", 137.058912);
+    map.insert("I", 113.084064);
+    map.insert("L", 113.084064);
+    map.insert("K", 128.094963);
+    map.insert("M", 131.040485);
+    map.insert("F", 147.068414);
+    map.insert("P", 97.052764);
+    map.insert("S", 87.032028);
+    map.insert("T", 101.047679);
+    map.insert("W", 186.079313);
+    map.insert("Y", 163.063329);
+    map.insert("V", 99.068414);
+    map.insert("U", 168.053);
+    map
+}
+
+// MODIFICATIONS_MZ with string keys and float values
+fn modifications_mz() -> HashMap<&'static str, f64> {
+    let mut map = HashMap::new();
+    map.insert("[UNIMOD:58]", 56.026215);
+    map.insert("[UNIMOD:408]", 148.037173);
+    map.insert("[UNIMOD:43]", 203.079373);
+    map.insert("[UNIMOD:7]", 0.984016);
+    map.insert("[UNIMOD:1]", 42.010565);
+    map.insert("[UNIMOD:35]", 15.994915);
+    map.insert("[UNIMOD:1289]", 70.041865);
+    map.insert("[UNIMOD:3]", 226.077598);
+    map.insert("[UNIMOD:1363]", 68.026215);
+    map.insert("[UNIMOD:36]", 28.031300);
+    map.insert("[UNIMOD:122]", 27.994915);
+    map.insert("[UNIMOD:1848]", 114.031694);
+    map.insert("[UNIMOD:1849]", 86.036779);
+    map.insert("[UNIMOD:64]", 100.016044);
+    map.insert("[UNIMOD:37]", 42.046950);
+    map.insert("[UNIMOD:121]", 114.042927);
+    map.insert("[UNIMOD:747]", 86.000394);
+    map.insert("[UNIMOD:34]", 14.015650);
+    map.insert("[UNIMOD:354]", 44.985078);
+    map.insert("[UNIMOD:4]", 57.021464);
+    map.insert("[UNIMOD:21]", 79.966331);
+    map.insert("[UNIMOD:312]", 119.004099);
+    map
+}
+
+// MODIFICATIONS_MZ_NUMERICAL with integer keys and float values
+fn modifications_mz_numerical() -> HashMap<u32, f64> {
+    let mut map = HashMap::new();
+    map.insert(58, 56.026215);
+    map.insert(408, 148.037173);
+    map.insert(43, 203.079373);
+    map.insert(7, 0.984016);
+    map.insert(1, 42.010565);
+    map.insert(35, 15.994915);
+    map.insert(1289, 70.041865);
+    map.insert(3, 226.077598);
+    map.insert(1363, 68.026215);
+    map.insert(36, 28.031300);
+    map.insert(122, 27.994915);
+    map.insert(1848, 114.031694);
+    map.insert(1849, 86.036779);
+    map.insert(64, 100.016044);
+    map.insert(37, 42.046950);
+    map.insert(121, 114.042927);
+    map.insert(747, 86.000394);
+    map.insert(34, 14.015650);
+    map.insert(354, 44.985078);
+    map.insert(4, 57.021464);
+    map.insert(21, 79.966331);
+    map.insert(312, 119.004099);
+    map
+}
+
+/// calculate the monoisotopic mass of a peptide sequence
+///
+/// Arguments:
+///
+/// * `sequence` - peptide sequence
+///
+/// Returns:
+///
+/// * `mass` - monoisotopic mass of the peptide
+///
+/// # Examples
+///
+/// ```
+/// use mscore::calculate_monoisotopic_mass;
+///
+/// let mass = calculate_monoisotopic_mass("PEPTIDEC[UNIMOD:4]R");
+/// assert_eq!(mass, 1115.4917246863);
+/// ```
+pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
+    let amino_acid_masses = amino_acid_masses();
+    let modifications_mz_numerical = modifications_mz_numerical();
+    let pattern = Regex::new(r"\[UNIMOD:(\d+)\]").unwrap();
+
+    // Find all occurrences of the pattern
+    let modifications: Vec<u32> = pattern
+        .find_iter(sequence)
+        .filter_map(|mat| mat.as_str()[8..mat.as_str().len() - 1].parse().ok())
+        .collect();
+
+    // Remove the modifications from the sequence
+    let sequence = pattern.replace_all(sequence, "");
+
+    // Count occurrences of each amino acid
+    let mut aa_counts = HashMap::new();
+    for char in sequence.chars() {
+        *aa_counts.entry(char).or_insert(0) += 1;
+    }
+
+    // Mass of amino acids and modifications
+    let mass_sequence: f64 = aa_counts.iter().map(|(aa, &count)| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64).sum();
+    let mass_modifics: f64 = modifications.iter().map(|&mod_id| modifications_mz_numerical.get(&mod_id).unwrap_or(&0.0)).sum();
+
+    mass_sequence + mass_modifics + MASS_WATER
+}
+
+/// calculate the m/z of an ion
+///
+/// Arguments:
+///
+/// * `mono_mass` - monoisotopic mass of the ion
+/// * `charge` - charge state of the ion
+///
+/// Returns:
+///
+/// * `mz` - mass-over-charge of the ion
+///
+/// # Examples
+///
+/// ```
+/// use mscore::calculate_mz;
+///
+/// let mz = calculate_mz(1000.0, 2);
+/// assert_eq!(mz, 501.007276466621);
+/// ```
+pub fn calculate_mz(monoisotopic_mass: f64, charge: i32) -> f64 {
+    (monoisotopic_mass + charge as f64 * MASS_PROTON) / charge as f64
+}
 
 /// convert 1 over reduced ion mobility (1/k0) to CCS
 ///

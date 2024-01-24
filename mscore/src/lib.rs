@@ -11,6 +11,8 @@ pub use {
     chemistry::generate_averagine_spectrum,
     chemistry::generate_averagine_spectra,
     chemistry::factorial,
+    chemistry::calculate_mz,
+    chemistry::calculate_monoisotopic_mass,
 
     mz_spectrum::MsType,
 
