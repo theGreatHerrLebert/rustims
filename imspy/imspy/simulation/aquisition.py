@@ -69,7 +69,7 @@ class TimsTofAcquisitionBuilder:
 
     def generate_frame_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
-            print('generating frame layout...')
+            print('Generating frame layout.')
         frames = []
         for i in range(self.num_frames):
             frame_id = i + 1
@@ -80,7 +80,7 @@ class TimsTofAcquisitionBuilder:
 
     def generate_scan_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
-            print('Generating scan layout...')
+            print('Generating scan layout.')
 
         scans = np.arange(self.num_scans)[::-1]
         mobilities = self.tdf_writer.scan_to_inv_mobility(scans)
@@ -120,7 +120,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 
     def calculate_frame_types(self, table: pd.DataFrame, precursor_every: int = 7, verbose: bool = True) -> NDArray:
         if verbose:
-            print(f'calculating frame types, precursor frame will be taken every {precursor_every} rt cycles.')
+            print(f'Calculating frame types, precursor frame will be taken every {precursor_every} rt cycles.')
         return np.array([0 if (x - 1) % (precursor_every + 1) == 0 else 8 for x in table.frame_id])
 
     def _setup(self, verbose: bool = True):
@@ -173,7 +173,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
     def calculate_frame_types(self, verbose: bool = True) -> NDArray:
         if verbose:
-            print(f'calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
+            print(f'Calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
         return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in self.frame_table.frame_id])
 
     def generate_frame_to_window_group_table(self, precursors_every: int = 16, verbose: bool = True) -> pd.DataFrame:
@@ -192,7 +192,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
-        self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table, verbose=verbose)
+        self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
         self.frames_to_window_groups = self.generate_frame_to_window_group_table(precursors_every=self.precursor_every)
 
         self.synthetics_handle.create_table(
