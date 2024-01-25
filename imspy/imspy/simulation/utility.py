@@ -10,7 +10,8 @@ import pandas as pd
 from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz
 
 from dlomix.reports.postprocessing import reshape_dims, reshape_flat, normalize_base_peak, mask_outofcharge, mask_outofrange
-from typing import List
+from typing import List, Tuple
+import imspy_connector as ims
 
 
 def sequence_to_numpy(sequence: str, max_length: int = 30) -> NDArray:
@@ -135,7 +136,7 @@ def calculate_b_y_fragment_mz(sequence: str, modifications: NDArray, is_y: bool 
     return calculate_mz(mass, charge)
 
 
-def calculate_b_y_ion_series(sequence: str, modifications, charge: int = 1):
+def calculate_b_y_ion_series(sequence: str, modifications: NDArray, charge: int = 1) -> Tuple[List, List]:
     """
     Calculate the b and y ion series for a given peptide sequence.
     Args:
@@ -171,6 +172,20 @@ def calculate_b_y_ion_series(sequence: str, modifications, charge: int = 1):
             y_masses.append(np.round(y_mass, 6))
 
     return list(zip(b_masses, b_ions, b_seqs)), list(zip(y_masses, y_ions, y_seqs))
+
+
+def calculate_b_y_ion_series_ims(sequence: str, modifications: NDArray, charge: int = 1) -> Tuple[List, List]:
+    """
+    Calculate the b and y ion series for a given peptide sequence.
+    Args:
+        sequence: the peptide sequence
+        modifications: potential modifications
+        charge: the charge state of the peptide precursor
+
+    Returns:
+        b ion series, y ion series
+    """
+    return ims.calculate_b_y_ion_series(sequence, modifications, charge)
 
 
 def get_native_dataset_path(ds_name: str = 'NATIVE.d') -> str:

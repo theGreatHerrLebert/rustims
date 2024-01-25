@@ -232,7 +232,7 @@ pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge:
         }
 
         // Calculate mz of y ions
-        if !y.is_empty() && i != 0 {
+        if !y.is_empty() && i != 0 && i != sequence_length {
             let y_mass = calculate_b_y_fragment_mz(y, m_y.to_vec(), Some(true), charge);
             y_ions.push((y_mass, format!("y{}+{}", sequence_length - i, charge.unwrap_or(1)), y.to_string()));
         }

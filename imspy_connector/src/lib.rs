@@ -16,7 +16,7 @@ use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized, PyRawTimsFrame};
 use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
 use crate::py_simulation::PyTimsTofSynthetics;
-pub use py_chemistry::{generate_precursor_spectrum, generate_precursor_spectra};
+pub use py_chemistry::{generate_precursor_spectrum, generate_precursor_spectra, calculate_monoisotopic_mass, calculate_b_y_ion_series};
 
 
 #[pymodule]
@@ -38,5 +38,7 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsTofSynthetics>()?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_b_y_ion_series, m)?)?;
     Ok(())
 }
