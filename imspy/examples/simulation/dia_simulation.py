@@ -34,8 +34,7 @@ def main():
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
     parser.add_argument("name", type=str, help="Name of the experiment")
-    parser.add_argument("dia_window_groups", type=str, help="Path to the DIA window groups file")
-    parser.add_argument("dia_frame_to_window_group", type=str, help="Path to the DIA frame to window group file")
+    parser.add_argument("dia_ms_ms_windows", type=str, help="Path to the DIA window groups file")
     parser.add_argument("fasta", type=str, help="Path to the fasta file")
 
     # Optional verbosity flag
