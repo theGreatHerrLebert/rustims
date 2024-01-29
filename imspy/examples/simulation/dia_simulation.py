@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+from imspy.core import MzSpectrum
 from imspy.chemistry import calculate_mz
 
 from imspy.simulation.proteome import PeptideDigest
@@ -28,6 +29,11 @@ def list_to_json_string(lst, as_float=True):
     if as_float:
         return json.dumps([float(np.round(x, 4)) for x in lst])
     return json.dumps([int(x) for x in lst])
+
+
+# load peptides and ions
+def json_string_to_list(json_string):
+    return json.loads(json_string)
 
 
 def main():
@@ -81,12 +87,12 @@ def main():
 
     num_scans = args.num_scans
 
-    print(f"Gradient Length: {args.gradient_length}")
-    print(f"mz Lower Bound: {args.mz_lower}")
-    print(f"mz Upper Bound: {args.mz_upper}")
-    print(f"IM Lower Bound: {args.im_lower}")
-    print(f"IM Upper Bound: {args.im_upper}")
-    print(f"Number of Scans: {args.num_scans}")
+    print(f"Gradient Length: {args.gradient_length} seconds.")
+    print(f"mz Lower Bound: {args.mz_lower}.")
+    print(f"mz Upper Bound: {args.mz_upper}.")
+    print(f"IM Lower Bound: {args.im_lower}.")
+    print(f"IM Upper Bound: {args.im_upper}.")
+    print(f"Number of Scans: {args.num_scans}.")
 
     acquisition_builder = TimsTofAcquisitionBuilderDIA(
         Path(path) / name,
@@ -216,8 +222,11 @@ def main():
     total_list_frames = []
     total_list_frame_contributions = []
 
+    if verbose:
+        print("Calculating frame and scan distributions...")
+
     # generate frame_occurrence and frame_abundance columns
-    for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0]):
+    for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0], desc='frame distribution'):
         frame_occurrence, frame_abundance = [], []
 
         rt_value = row.retention_time_gru_predictor
@@ -235,6 +244,9 @@ def main():
 
         total_list_frames.append(frame_occurrence)
         total_list_frame_contributions.append(frame_abundance)
+
+    if verbose:
+        print("Saving frame distributions...")
 
     peptide_rt['frame_occurrence'] = [list(x) for x in total_list_frames]
     peptide_rt['frame_abundance'] = [list(x) for x in total_list_frame_contributions]
@@ -254,7 +266,7 @@ def main():
     im_scans = []
     im_contributions = []
 
-    for _, row in tqdm(ions.iterrows(), total=ions.shape[0]):
+    for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution'):
         scan_occurrence, scan_abundance = [], []
 
         im_value = row.mobility_gru_predictor
@@ -271,6 +283,9 @@ def main():
         im_scans.append(scan_occurrence)
         im_contributions.append(scan_abundance)
 
+    if verbose:
+        print("Saving scan distributions...")
+
     ions['scan_occurrence'] = [list(x) for x in im_scans]
     ions['scan_abundance'] = [list(x) for x in im_contributions]
 
@@ -281,6 +296,8 @@ def main():
         table_name='ions',
         table=ions
     )
+
+    print("Starting frame assembly...")
 
 
 if __name__ == '__main__':
