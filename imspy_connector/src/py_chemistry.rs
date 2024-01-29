@@ -21,3 +21,13 @@ pub fn generate_precursor_spectra(
     let result = generate_averagine_spectra(masses, charges, min_intensity, k, resolution, centroid, num_threads, None);
     result.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
 }
+
+#[pyfunction]
+pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
+    mscore::calculate_monoisotopic_mass(sequence)
+}
+
+#[pyfunction]
+pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge: Option<i32>) -> (Vec<(f64, String, String)>, Vec<(f64, String, String)>) {
+    mscore::calculate_b_y_ion_series(sequence, modifications, charge)
+}
