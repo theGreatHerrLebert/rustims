@@ -20,6 +20,7 @@ class TimsTofAcquisitionBuilder:
             mz_lower: float,
             mz_upper: float,
             num_scans: int,
+            exp_name: str = "RAW.d",
     ):
         """ Base class for building TimsTOF experiments
         Parameters
@@ -56,6 +57,7 @@ class TimsTofAcquisitionBuilder:
         # Create the TDFWriter, used to deal with bruker binary format writing and metadata for libtimsdata.so
         self.tdf_writer = TDFWriter(
             path=self.path,
+            exp_name=exp_name,
             num_scans=self.num_scans,
             im_lower=self.im_lower,
             im_upper=self.im_upper,
@@ -108,8 +110,10 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  im_upper=1.6,
                  num_scans=917,
                  mz_lower: float = 150,
-                 mz_upper: float = 1700):
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans)
+                 mz_upper: float = 1700,
+                 exp_name: str = "RAW.d"
+                 ):
+        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
         self.scan_table = None
         self.frame_table = None
         self.precursor_every = precursor_every
@@ -151,9 +155,11 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  im_upper=1.5,
                  num_scans=927,
                  mz_lower: float = 100,
-                 mz_upper: float = 1700):
+                 mz_upper: float = 1700,
+                 exp_name: str = "RAW.d"
+                 ):
 
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans)
+        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
 
         self.scan_table = None
         self.frame_table = None
@@ -224,8 +230,10 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
                  im_upper=1.5,
                  num_scans=451,
                  mz_lower: float = 150,
-                 mz_upper: float = 1200):
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans)
+                 mz_upper: float = 1200,
+                 exp_name: str = "RAW.d"
+                 ):
+        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
         self.scan_table = None
         self.frame_table = None
         self.acquisition_mode = AcquisitionMode('MIDIA')

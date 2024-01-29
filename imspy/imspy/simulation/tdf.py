@@ -12,8 +12,8 @@ import shutil
 class TDFWriter:
     def __init__(
             self,
-            exp_name: str = "RAW.d",
             path: str = "./",
+            exp_name: str = "RAW.d",
             num_scans: int = 917,
             im_lower: float = 0.6,
             im_upper: float = 1.6,
