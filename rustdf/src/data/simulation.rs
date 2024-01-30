@@ -42,9 +42,7 @@ impl TimsTofSynthetics {
         })
     }
     pub fn build_precursor_frames(frames: Vec<FramesSim>) -> Vec<FramesSim> {
-        frames
-            .iter()
-            .filter(|frame| frame.parse_ms_type() == MsType::Precursor)
+        frames.iter().filter(|frame| frame.parse_ms_type() == MsType::Precursor)
             .cloned()
             .collect()
     }
@@ -78,6 +76,21 @@ impl TimsTofSynthetics {
         let ms_type = self.frames.iter().find(|frame| frame.frame_id == frame_id).unwrap().parse_ms_type();
 
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
+
+        // TODO: make sure that the frame_id is in the frame_to_abundances map
+        if !self.frame_to_abundances.contains_key(&frame_id) {
+            return TimsFrame::new(
+                frame_id as i32,
+                ms_type.clone(),
+                *self.frame_to_rt.get(&frame_id).unwrap() as f64,
+                vec![100],
+                vec![1.0],
+                vec![0],
+                vec![1000.0],
+                vec![1.0],
+            );
+        }
+
 
         let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
@@ -115,7 +128,7 @@ impl TimsTofSynthetics {
             2000,
             0.0,
             10.0,
-            15.0,
+            1.0,
             1e9,
         )
     }
