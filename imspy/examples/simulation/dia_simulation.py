@@ -3,8 +3,8 @@ import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from imspy.core import MzSpectrum
 from imspy.chemistry import calculate_mz
+from imspy.algorithm.transmission.quadrupole import TransmissionDIA
 
 from imspy.simulation.proteome import PeptideDigest
 from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
@@ -16,6 +16,8 @@ from imspy.simulation.utility import generate_events
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba, irt_to_rts_numba,
                                       accumulated_intensity_cdf_numba)
+
+from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilder
 
 from pathlib import Path
 import json
@@ -57,12 +59,34 @@ def main():
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
 
     # Other arguments with default values
-    parser.add_argument("--gradient_length", type=int, default=60 * 120, help="Gradient length (default: 7200)")
+    parser.add_argument("--gradient_length", type=int, default=60 * 60, help="Gradient length (default: 7200)")
     parser.add_argument("--mz_lower", type=int, default=100, help="Lower bound for mz (default: 100)")
     parser.add_argument("--mz_upper", type=int, default=1700, help="Upper bound for mz (default: 1700)")
     parser.add_argument("--im_lower", type=float, default=0.6, help="Lower bound for IM (default: 0.6)")
     parser.add_argument("--im_upper", type=float, default=1.6, help="Upper bound for IM (default: 1.6)")
     parser.add_argument("--num_scans", type=int, default=927, help="Number of scans to simulate (default: 927)")
+
+    # Peptide digestion arguments
+    parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
+    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--max_len", type=int, default=50, help="Maximum peptide length (default: 50)")
+    parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
+    parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
+    parser.add_argument("--decoys", type=bool, default=False, help="Generate decoys (default: False)")
+    parser.add_argument("--sample-fraction", type=float, default=0.01, help="Sample fraction (default: 0.01)")
+
+    # Peptide intensities
+    parser.add_argument("--intensity_mean", type=float, default=1e6, help="Mean peptide intensity (default: 1e6)")
+    parser.add_argument("--intensity_min", type=float, default=1e5, help="Std peptide intensity (default: 1e5)")
+    parser.add_argument("--intensity_max", type=float, default=1e5, help="Min peptide intensity (default: 1e9)")
+
+    # Precursor isotopic pattern settings
+    parser.add_argument("--isotope_k", type=int, default=8, help="Number of isotopes to simulate (default: 8)")
+    parser.add_argument("--isotope_min_intensity", type=float, default=5, help="Min intensity for isotopes (default: 5)")
+    parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
+
+    # Number of cores to use
+    parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -109,20 +133,21 @@ def main():
 
     if verbose:
         print("Digesting peptides...")
+
     digest = PeptideDigest(
         fasta,
-        missed_cleavages=2,
-        min_len=7,
-        max_len=50,
-        cleave_at='KR',
-        restrict='P',
-        generate_decoys=False,
+        missed_cleavages=args.missed_cleavages,
+        min_len=args.min_len,
+        max_len=args.max_len,
+        cleave_at=args.cleave_at,
+        restrict=args.restrict,
+        generate_decoys=args.decoys,
         verbose=verbose,
     )
 
     acquisition_builder.synthetics_handle.create_table(
         table_name='peptides',
-        table=digest.peptides.sample(frac=.02),
+        table=digest.peptides.sample(frac=args.sample_fraction),
     )
 
     if verbose:
@@ -132,7 +157,7 @@ def main():
     RTColumn = DeepChromatographyApex(
         model=load_deep_retention_time(),
         tokenizer=load_tokenizer_from_resources(),
-        verbose=True
+        verbose=verbose
     )
 
     # predict rts
@@ -142,7 +167,13 @@ def main():
     )
 
     # call this peptide counts instead
-    events = generate_events(n=peptide_rt.shape[0], mean=1_000_000, min_val=50_000, max_val=1e9)
+    events = generate_events(
+        n=peptide_rt.shape[0],
+        mean=args.intensity_mean,
+        min_val=args.intensity_min,
+        max_val=args.intensity_max
+    )
+
     peptide_rt['events'] = events
 
     # update peptides table in database
@@ -158,7 +189,7 @@ def main():
     IonSource = DeepChargeStateDistribution(
         model=load_deep_charge_state_predictor(),
         tokenizer=load_tokenizer_from_resources(),
-        verbose=True
+        verbose=verbose
     )
 
     # predict charge states
@@ -170,7 +201,7 @@ def main():
 
     # TODO: CHECK IF THIS TAKES MODIFICATIONS INTO ACCOUNT
     ions['mz'] = ions.apply(lambda r: calculate_mz(r['monoisotopic-mass'], r['charge']), axis=1)
-    ions = ions[(ions.mz >= 100) & (ions.mz <= 1700)]
+    ions = ions[(ions.mz >= mz_lower) & (ions.mz <= mz_upper)]
 
     if verbose:
         print("Simulating ion mobilities...")
@@ -179,7 +210,7 @@ def main():
     IMS = DeepPeptideIonMobilityApex(
         model=load_deep_ccs_predictor(),
         tokenizer=load_tokenizer_from_resources(),
-        verbose=True
+        verbose=verbose
     )
 
     # simulate mobilities
@@ -194,7 +225,14 @@ def main():
     if verbose:
         print("Simulating precursor spectra...")
 
-    specs = generate_isotope_patterns_rust(ions.mz, ions.charge, min_intensity=5, k=8, centroid=True, num_threads=16)
+    specs = generate_isotope_patterns_rust(
+        ions.mz, ions.charge,
+        min_intensity=args.isotope_min_intensity,
+        k=args.isotope_k,
+        centroid=True,
+        num_threads=args.num_threads,
+    )
+
     specs = [spec.to_jsons() for spec in specs]
     ions.insert(6, 'simulated_spectrum', specs)
 
@@ -277,6 +315,8 @@ def main():
             start = im - acquisition_builder.im_cycle_length
             i = accumulated_intensity_cdf_numba(start, im, im_value, std_im)
 
+            # TODO: ADD NOISE HERE AS WELL?
+
             scan_occurrence.append(scan)
             scan_abundance.append(i)
 
@@ -298,6 +338,43 @@ def main():
     )
 
     print("Starting frame assembly...")
+
+    wg = acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows')
+    info = acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info')
+
+    fragment_frames = set(frames[frames.ms_type > 0].frame_id.values)
+
+    quadrupole = TransmissionDIA(
+        frame_to_window_group=info,
+        window_group_settings=wg,
+    )
+
+    batch_size = 128
+    num_batches = len(frames) // batch_size + 1
+    frame_ids = frames.frame_id.values
+
+    frame_builder = TimsTofSyntheticAcquisitionBuilder(
+        db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+    )
+
+    # go over all frames in batches
+    for i in tqdm(range(num_batches)):
+        start_index = i * batch_size
+        stop_index = (i + 1) * batch_size
+        ids = frame_ids[start_index:stop_index]
+        built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
+
+        # apply transmission to fragment frames
+        for j, frame in enumerate(built_frames):
+            if frame.frame_id in fragment_frames:
+                transmitted_frame = quadrupole.apply_transmission(frame)
+                built_frames[j] = transmitted_frame
+
+        # write frames to binary file, DIA = 9
+        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9)
+
+    # write frame meta data to database
+    acquisition_builder.tdf_writer.write_frame_meta_data()
 
 
 if __name__ == '__main__':
