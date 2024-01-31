@@ -268,7 +268,7 @@ def main():
         print("Calculating frame and scan distributions...")
 
     # generate frame_occurrence and frame_abundance columns
-    for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0], desc='frame distribution'):
+    for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0], desc='frame distribution', ncols=100):
         frame_occurrence, frame_abundance = [], []
 
         rt_value = row.retention_time_gru_predictor
@@ -308,7 +308,7 @@ def main():
     im_scans = []
     im_contributions = []
 
-    for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution'):
+    for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
         scan_occurrence, scan_abundance = [], []
 
         im_value = row.mobility_gru_predictor
