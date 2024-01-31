@@ -27,14 +27,14 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 # Function to convert a list (or a pandas series) to a JSON string
-def list_to_json_string(lst, as_float=True):
+def python_list_to_json_string(lst, as_float=True):
     if as_float:
         return json.dumps([float(np.round(x, 4)) for x in lst])
     return json.dumps([int(x) for x in lst])
 
 
 # load peptides and ions
-def json_string_to_list(json_string):
+def json_string_to_python_list(json_string):
     return json.loads(json_string)
 
 
@@ -67,10 +67,10 @@ def main():
     parser.add_argument("--num_scans", type=int, default=927, help="Number of scans to simulate (default: 927)")
 
     # Peptide digestion arguments
-    parser.add_argument("--sample-fraction", type=float, default=0.001, help="Sample fraction (default: 0.01)")
+    parser.add_argument("--sample-fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
-    parser.add_argument("--max_len", type=int, default=40, help="Maximum peptide length (default: 50)")
+    parser.add_argument("--max_len", type=int, default=40, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
     parser.add_argument("--decoys", type=bool, default=False, help="Generate decoys (default: False)")
@@ -88,13 +88,14 @@ def main():
     # Distribution parameters
     parser.add_argument("--z_score", type=float, default=.99,
                         help="Z-score for frame and scan distributions (default: .99)")
-    parser.add_argument("--std_rt", type=float, default=1.6,
+    parser.add_argument("--std_rt", type=float, default=3.3,
                         help="Standard deviation for retention time distribution (default: 1.6)")
     parser.add_argument("--std_im", type=float, default=0.008,
                         help="Standard deviation for mobility distribution (default: 0.008)")
 
     # Number of cores to use
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size (default: 256)")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -192,18 +193,6 @@ def main():
         table=peptide_rt,
     )
 
-    """
-    # load charge state predictor
-    IonSource = DeepChargeStateDistribution(
-        model=load_deep_charge_state_predictor(),
-        tokenizer=load_tokenizer_from_resources(),
-        verbose=verbose
-    )
-
-    # predict charge states
-    # TODO: configure
-    peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptide_rt)
-    """
     if verbose:
         print("Simulating charge states...")
 
@@ -305,8 +294,8 @@ def main():
     peptide_rt['frame_abundance'] = [list(x) for x in total_list_frame_contributions]
 
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
-        lambda x: list_to_json_string(x, as_float=False))
-    peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(list_to_json_string)
+        lambda x: python_list_to_json_string(x, as_float=False))
+    peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(python_list_to_json_string)
 
     # save peptide_rt to database
     acquisition_builder.synthetics_handle.create_table(
@@ -344,8 +333,8 @@ def main():
     ions['scan_occurrence'] = [list(x) for x in im_scans]
     ions['scan_abundance'] = [list(x) for x in im_contributions]
 
-    ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: list_to_json_string(x, as_float=False))
-    ions['scan_abundance'] = ions['scan_abundance'].apply(list_to_json_string)
+    ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: python_list_to_json_string(x, as_float=False))
+    ions['scan_abundance'] = ions['scan_abundance'].apply(python_list_to_json_string)
 
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
@@ -364,7 +353,7 @@ def main():
         window_group_settings=wg,
     )
 
-    batch_size = 128
+    batch_size = args.batch_size
     num_batches = len(frames) // batch_size + 1
     frame_ids = frames.frame_id.values
 
