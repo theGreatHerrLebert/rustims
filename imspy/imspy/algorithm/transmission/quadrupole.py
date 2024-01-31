@@ -26,6 +26,9 @@ class TransmissionDDA(TimsTofQuadrupoleSetting):
     def apply_transmission(self, frame: TimsFrame) -> TimsFrame:
         pass
 
+    def apply_transmission_mz(self, frame_id: int, scan_id: int, mz: NDArray) -> NDArray:
+        pass
+
 
 class TransmissionDIA(TimsTofQuadrupoleSetting):
     def __init__(self, frame_to_window_group: pd.DataFrame, window_group_settings: pd.DataFrame):
@@ -100,6 +103,10 @@ class TransmissionDIA(TimsTofQuadrupoleSetting):
                 intensity=np.array([], dtype=np.float64)
             )
 
+    def apply_transmission_mz(self, frame_id: int, scan_id: int, mz: NDArray) -> NDArray:
+        f = self.get_transmission_function(frame_id, scan_id)
+        return f(mz)
+
 
 class TransmissionMIDIA(TimsTofQuadrupoleSetting):
     def __init__(self, frame_to_window_group: pd.DataFrame, window_group_settings: pd.DataFrame):
@@ -166,3 +173,7 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
             mz=np.array([], dtype=np.float64),
             intensity=np.array([], dtype=np.float64)
         )
+
+    def apply_transmission_mz(self, frame_id: int, scan_id: int, mz: NDArray) -> NDArray:
+        f = self.get_transmission_function(frame_id, scan_id)
+        return f(mz)
