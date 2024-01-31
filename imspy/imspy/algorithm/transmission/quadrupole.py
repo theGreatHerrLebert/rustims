@@ -4,7 +4,7 @@ from typing import Callable, Dict
 
 import pandas as pd
 
-from imspy.core import TimsFrame
+from imspy.core import TimsFrame, MzSpectrum
 from numpy.typing import NDArray
 from imspy.algorithm.transmission.utility import ion_transition_function_midpoint
 
@@ -18,6 +18,14 @@ class TimsTofQuadrupoleSetting:
     def apply_transmission(self, frame: TimsFrame) -> TimsFrame:
         pass
 
+    @abstractmethod
+    def apply_transmission_mz(self, frame_id: int, scan_id: int, mz: NDArray) -> NDArray:
+        pass
+
+    @abstractmethod
+    def apply_transmission_spectrum(self, frame_id: int, scan_id: int, spectrum: MzSpectrum) -> MzSpectrum:
+        pass
+
 
 class TransmissionDDA(TimsTofQuadrupoleSetting):
     def get_transmission_function(self, frame_id: int, scan_id: int) -> Callable[[NDArray], NDArray]:
@@ -27,6 +35,9 @@ class TransmissionDDA(TimsTofQuadrupoleSetting):
         pass
 
     def apply_transmission_mz(self, frame_id: int, scan_id: int, mz: NDArray) -> NDArray:
+        pass
+
+    def apply_transmission_spectrum(self, frame_id: int, scan_id: int, spectrum: MzSpectrum) -> MzSpectrum:
         pass
 
 
@@ -107,6 +118,26 @@ class TransmissionDIA(TimsTofQuadrupoleSetting):
         f = self.get_transmission_function(frame_id, scan_id)
         return f(mz)
 
+    def apply_transmission_spectrum(self, frame_id: int, scan_id: int, spectrum: MzSpectrum) -> MzSpectrum:
+
+        f = self.get_transmission_function(frame_id, scan_id)
+        mz = spectrum.mz
+        mz_len = len(mz)
+        transmission = f(mz)
+
+        if np.sum(transmission > 0.001) > 0:
+            first_index = np.argmax(transmission > 0.001)
+            last_index = mz_len - np.argmax(transmission[::-1] > 0) - 1
+            mz_min = mz[first_index]
+            mz_max = mz[last_index]
+            return spectrum.filter(mz_min=mz_min, mz_max=mz_max)
+
+        else:
+            return MzSpectrum(
+                mz=np.array([1000.0], dtype=np.float64),
+                intensity=np.array([1.0], dtype=np.float64)
+            )
+
 
 class TransmissionMIDIA(TimsTofQuadrupoleSetting):
     def __init__(self, frame_to_window_group: pd.DataFrame, window_group_settings: pd.DataFrame):
@@ -177,3 +208,23 @@ class TransmissionMIDIA(TimsTofQuadrupoleSetting):
     def apply_transmission_mz(self, frame_id: int, scan_id: int, mz: NDArray) -> NDArray:
         f = self.get_transmission_function(frame_id, scan_id)
         return f(mz)
+
+    def apply_transmission_spectrum(self, frame_id: int, scan_id: int, spectrum: MzSpectrum) -> MzSpectrum:
+
+        f = self.get_transmission_function(frame_id, scan_id)
+        mz = spectrum.mz
+        mz_len = len(mz)
+        transmission = f(mz)
+
+        if np.sum(transmission > 0.001) > 0:
+            first_index = np.argmax(transmission > 0.001)
+            last_index = mz_len - np.argmax(transmission[::-1] > 0) - 1
+            mz_min = mz[first_index]
+            mz_max = mz[last_index]
+            return spectrum.filter(mz_min=mz_min, mz_max=mz_max)
+
+        else:
+            return MzSpectrum(
+                mz=np.array([1000.0], dtype=np.float64),
+                intensity=np.array([1.0], dtype=np.float64)
+            )
