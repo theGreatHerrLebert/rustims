@@ -31,3 +31,13 @@ pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
 pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge: Option<i32>) -> (Vec<(f64, String, String)>, Vec<(f64, String, String)>) {
     mscore::calculate_b_y_ion_series(sequence, modifications, charge)
 }
+
+#[pyfunction]
+pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<f64> {
+    mscore::simulate_charge_state_for_sequence(sequence, max_charge, charge_probability)
+}
+
+#[pyfunction]
+pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
+    mscore::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
+}

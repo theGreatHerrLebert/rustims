@@ -8,16 +8,16 @@ from imspy.algorithm.transmission.quadrupole import TransmissionDIA
 
 from imspy.simulation.proteome import PeptideDigest
 from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
-from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex, DeepChargeStateDistribution
-from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time,
-                             load_deep_charge_state_predictor, load_deep_ccs_predictor)
+from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
+from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
 from imspy.simulation.utility import generate_events
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
-from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba, irt_to_rts_numba,
+from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
 
 from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilder
+from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
 
 from pathlib import Path
 import json
@@ -44,10 +44,10 @@ def main():
                                                  'with DIA acquisition on a BRUKER TimsTOF.')
 
     # check if the path exists
-    def check_path(path):
-        if not os.path.exists(path):
-            raise argparse.ArgumentTypeError(f"Invalid path: {path}")
-        return path
+    def check_path(p):
+        if not os.path.exists(p):
+            raise argparse.ArgumentTypeError(f"Invalid path: {p}")
+        return p
 
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
@@ -67,23 +67,31 @@ def main():
     parser.add_argument("--num_scans", type=int, default=927, help="Number of scans to simulate (default: 927)")
 
     # Peptide digestion arguments
+    parser.add_argument("--sample-fraction", type=float, default=0.001, help="Sample fraction (default: 0.01)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
-    parser.add_argument("--max_len", type=int, default=50, help="Maximum peptide length (default: 50)")
+    parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--max_len", type=int, default=40, help="Maximum peptide length (default: 50)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
     parser.add_argument("--decoys", type=bool, default=False, help="Generate decoys (default: False)")
-    parser.add_argument("--sample-fraction", type=float, default=0.01, help="Sample fraction (default: 0.01)")
 
     # Peptide intensities
     parser.add_argument("--intensity_mean", type=float, default=1e6, help="Mean peptide intensity (default: 1e6)")
     parser.add_argument("--intensity_min", type=float, default=1e5, help="Std peptide intensity (default: 1e5)")
-    parser.add_argument("--intensity_max", type=float, default=1e5, help="Min peptide intensity (default: 1e9)")
+    parser.add_argument("--intensity_max", type=float, default=1e9, help="Min peptide intensity (default: 1e9)")
 
     # Precursor isotopic pattern settings
     parser.add_argument("--isotope_k", type=int, default=8, help="Number of isotopes to simulate (default: 8)")
-    parser.add_argument("--isotope_min_intensity", type=float, default=5, help="Min intensity for isotopes (default: 5)")
+    parser.add_argument("--isotope_min_intensity", type=int, default=1, help="Min intensity for isotopes (default: 1)")
     parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
+
+    # Distribution parameters
+    parser.add_argument("--z_score", type=float, default=.99,
+                        help="Z-score for frame and scan distributions (default: .99)")
+    parser.add_argument("--std_rt", type=float, default=1.6,
+                        help="Standard deviation for retention time distribution (default: 1.6)")
+    parser.add_argument("--std_im", type=float, default=0.008,
+                        help="Standard deviation for mobility distribution (default: 0.008)")
 
     # Number of cores to use
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
@@ -108,6 +116,8 @@ def main():
     im_lower = args.im_lower
     im_upper = args.im_upper
     assert 0.5 < im_lower < im_upper < 2, f"IM bounds must be between 0.5 and 2, were {im_lower} and {im_upper}"
+
+    assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
     num_scans = args.num_scans
 
@@ -182,9 +192,7 @@ def main():
         table=peptide_rt,
     )
 
-    if verbose:
-        print("Simulating charge states...")
-
+    """
     # load charge state predictor
     IonSource = DeepChargeStateDistribution(
         model=load_deep_charge_state_predictor(),
@@ -194,6 +202,12 @@ def main():
 
     # predict charge states
     # TODO: configure
+    peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptide_rt)
+    """
+    if verbose:
+        print("Simulating charge states...")
+
+    IonSource = BinomialChargeStateDistributionModel()
     peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptide_rt)
 
     # merge tables to have sequences with ions, remove mz values outside scope
@@ -244,9 +258,10 @@ def main():
     frames = acquisition_builder.frame_table
     scans = acquisition_builder.scan_table
 
-    z_score = get_z_score_for_percentile(target_score=.99)
-    std_rt = 1.6
-    std_im = 0.008
+    # distribution parameters
+    z_score = get_z_score_for_percentile(target_score=args.z_score)
+    std_rt = args.std_rt
+    std_im = args.std_im
 
     frames_np = frames.time.values
     mobility_np = scans.mobility.values
@@ -370,8 +385,11 @@ def main():
                 transmitted_frame = quadrupole.apply_transmission(frame)
                 built_frames[j] = transmitted_frame
 
-        # write frames to binary file, DIA = 9
-        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9)
+        for frame in built_frames:
+            acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
+
+    if verbose:
+        print("Writing frame meta data to database...")
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()

@@ -94,6 +94,26 @@ impl TimsTofSynthetics {
 
         let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
+
+            // check if the peptide_id is in the peptide_to_ions map
+            if !self.peptide_to_ions.contains_key(&peptide_id) {
+                return TimsFrame::new(
+                    frame_id as i32,
+                    ms_type.clone(),
+                    *self.frame_to_rt.get(&frame_id).unwrap() as f64,
+                    vec![100],
+                    vec![1.0],
+                    vec![0],
+                    vec![1000.0],
+                    vec![1.0],
+                );
+            }
+
+            // jump to next peptide if the peptide_id is not in the peptide_to_ions map
+            if !self.peptide_to_ions.contains_key(&peptide_id) {
+                continue;
+            }
+
             let (ion_abundances, scan_occurrences, scan_abundances, spectra) = self.peptide_to_ions.get(&peptide_id).unwrap();
 
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {

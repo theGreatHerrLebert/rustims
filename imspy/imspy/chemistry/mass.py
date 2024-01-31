@@ -188,7 +188,7 @@ def calculate_mz_from_sequence(sequence, charge):
     return calculate_mz(calculate_monoisotopic_mass(sequence), charge)
 
 
-def get_monoisotopic_token_weight(token:str):
+def get_monoisotopic_token_weight(token: str):
     """
     Gets monoisotopic weight of token
 

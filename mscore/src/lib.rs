@@ -15,6 +15,8 @@ pub use {
     chemistry::calculate_monoisotopic_mass,
     chemistry::calculate_b_y_fragment_mz,
     chemistry::calculate_b_y_ion_series,
+    chemistry::simulate_charge_state_for_sequence,
+    chemistry::simulate_charge_states_for_sequences,
 
     mz_spectrum::MsType,
 
