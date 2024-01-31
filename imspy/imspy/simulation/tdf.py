@@ -18,7 +18,9 @@ class TDFWriter:
             im_lower: float = 0.6,
             im_upper: float = 1.6,
             mz_lower: float = 100.0,
-            mz_upper: float = 1700.0):
+            mz_upper: float = 1700.0)\
+            -> None:
+
         self.path = Path(path)
         self.exp_name = exp_name
         self.full_path = Path(path) / exp_name
@@ -164,8 +166,8 @@ class TDFWriter:
         r.ScanMode = scan_mode
         r.MsMsType = frame.ms_type
         r.TimsId = frame_start_pos
-        r.MaxIntensity = int(np.max(frame.intensity))
-        r.SummedIntensities = int(np.sum(frame.intensity))
+        r.MaxIntensity = int(np.max(frame.intensity)) if len(frame.intensity) > 0 else 0
+        r.SummedIntensities = int(np.sum(frame.intensity)) if len(frame.intensity) > 0 else 0
         r.NumScans = self.num_scans
         r.NumPeaks = len(frame.mz)
 
@@ -178,7 +180,7 @@ class TDFWriter:
         return self.__helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
                                                                        total_scans=self.num_scans)
 
-    def write_frame(self, frame: TimsFrame, scan_mode: int):
+    def write_frame(self, frame: TimsFrame, scan_mode: int) -> None:
         self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
         compressed_data = self.generate_compressed_data(frame)
 
@@ -186,10 +188,26 @@ class TDFWriter:
             bin_file.write(compressed_data)
             self.position = bin_file.tell()
 
-    def write_frames(self, frames: List[TimsFrame], scan_mode: int, num_threads: int = 4):
-        compressed_data = self.__helper_handle.compress_frame_collection(frames, total_scans=self.num_scans,
-                                                                         num_threads=num_threads)
-        return compressed_data
+    def write_frames(self, frames: List[TimsFrame], scan_mode: int, num_threads: int = 4) -> None:
+
+        # generate meta data
+        meta_data = [self.build_frame_meta_row(frame, scan_mode, self.position) for frame in frames]
+
+        # append to frame meta data table
+        for data in meta_data:
+            self.frame_meta_data.append(data)
+
+        compressed_data = self.__helper_handle.compress_frame_collection(
+            frames,
+            total_scans=self.num_scans,
+            num_threads=num_threads
+        )
+
+        # write to binary file
+        with open(self.binary_file, "ab") as bin_file:
+            for data in compressed_data:
+                bin_file.write(data)
+                self.position = bin_file.tell()
 
     def get_frame_meta_data(self) -> pd.DataFrame:
         return pd.DataFrame(self.frame_meta_data)

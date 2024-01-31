@@ -1,5 +1,7 @@
 import json
 
+import imspy_connector as ims
+
 import pandas as pd
 import tensorflow as tf
 import numpy as np
@@ -21,6 +23,16 @@ def load_deep_charge_state_predictor() -> tf.keras.models.Model:
         The pretrained deep predictor model
     """
     return tf.keras.models.load_model(get_model_path('DeepChargeStatePredictor'))
+
+
+def charge_state_distribution_from_sequence_rust(sequence: str, max_charge: int = None,
+                                                 charge_probability: float = None) -> NDArray:
+    return np.array(ims.simulate_charge_state_for_sequence(sequence, max_charge, charge_probability))
+
+
+def charge_state_distributions_from_sequences_rust(sequences: list[str], n_threads: int = 4, max_charge: int = None,
+                                                   charge_probability: float = None) -> NDArray:
+    return np.array(ims.simulate_charge_states_for_sequences(sequences, n_threads, max_charge, charge_probability))
 
 
 class PeptideChargeStateDistribution(ABC):
@@ -65,6 +77,36 @@ class BinomialIonSource:
             rel_intensities = binom(baa_num, self.charged_probability).pmf(self.allowed_charges)
 
             for i, charge in enumerate(rel_intensities, start=1):
+                if charge >= min_charge_contrib:
+                    r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})
+
+        return pd.DataFrame(r_table)
+
+
+class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution, ABC):
+
+    def __init__(self,
+                 charged_probability: float = .5,
+                 max_charge: int = 4,
+                 ):
+        self.charged_probability = charged_probability
+        self.max_charge = max_charge
+
+    def simulate_ionizations(self, sequences: list[str]) -> np.array:
+        return charge_state_distributions_from_sequences_rust(sequences, max_charge=self.max_charge,
+                                                              charge_probability=self.charged_probability)
+
+    def simulate_charge_state_distribution_pandas(self, data: pd.DataFrame, min_charge_contrib: float = .005) -> pd.DataFrame:
+        probabilities = charge_state_distributions_from_sequences_rust(data.sequence.values, max_charge=self.max_charge,
+                                                                       charge_probability=self.charged_probability)
+
+        probabilities = probabilities / np.expand_dims(np.sum(probabilities, axis=1), axis=1)
+
+        r_table = []
+
+        for charges, (_, row) in tqdm(zip(probabilities, data.iterrows()), desc='flatmap charges', ncols=80,
+                                      total=len(probabilities)):
+            for i, charge in enumerate(charges, start=1):
                 if charge >= min_charge_contrib:
                     r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})
 
