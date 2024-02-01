@@ -229,7 +229,7 @@ def main():
         print("Simulating precursor spectra...")
 
     specs = generate_isotope_patterns_rust(
-        ions.mz, ions.charge,
+        ions['monoisotopic-mass'], ions.charge,
         min_intensity=args.isotope_min_intensity,
         k=args.isotope_k,
         centroid=True,
@@ -371,7 +371,7 @@ def main():
         # apply transmission to fragment frames
         for j, frame in enumerate(built_frames):
             if frame.frame_id in fragment_frames:
-                transmitted_frame = quadrupole.apply_transmission(frame)
+                transmitted_frame = quadrupole.filter_frame(frame)
                 built_frames[j] = transmitted_frame
 
         for frame in built_frames:
