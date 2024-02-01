@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::f64::consts::E;
-use crate::{ImsFrame, MzSpectrum, TimsFrame};
+use crate::{MzSpectrum, TimsFrame};
 
 // step function for quadrupole selection simulation
 fn smooth_step(x: &Vec<f64>, up_start: f64, up_end: f64, k: f64) -> Vec<f64> {
@@ -57,12 +58,12 @@ pub trait IonTransmission {
         }
     }
 
-    fn filter_tims_frame(&self, frame: &TimsFrame) -> TimsFrame {
+    fn filter_tims_frame(&self, frame: &TimsFrame, min_probability: Option<f64>) -> TimsFrame {
         let spectra = frame.to_tims_spectra();
         let mut filtered_spectra = Vec::new();
 
         for mut spectrum in spectra {
-            let filtered_spectrum = self.filter_spectrum(frame.frame_id, spectrum.scan, spectrum.spectrum.mz_spectrum);
+            let filtered_spectrum = self.filter_spectrum(frame.frame_id, spectrum.scan, spectrum.spectrum.mz_spectrum, min_probability);
             if filtered_spectrum.mz.len() > 0 {
                 spectrum.spectrum.mz_spectrum = filtered_spectrum;
                 filtered_spectra.push(spectrum);
@@ -82,6 +83,81 @@ pub trait IonTransmission {
                 vec![],
                 vec![]
             )
+        }
+    }
+}
+
+pub struct TimsTransmissionDIA {
+    frame_to_window_group: HashMap<i32, i32>,
+    transmission_functions: HashMap<(i32, i32), Box<dyn Fn(Vec<f64>) -> Vec<f64>>>,
+}
+
+impl TimsTransmissionDIA {
+    pub fn new(
+        frame: Vec<i32>,
+        frame_window_group: Vec<i32>,
+
+        window_group: Vec<i32>,
+        scan_start: Vec<i32>,
+        scan_end: Vec<i32>,
+        isolation_mz: Vec<f64>,
+        isolation_width: Vec<f64>,
+        k: Option<f64>,
+    ) -> Self {
+        // hashmap from frame to window group
+        let frame_to_window_group = frame.iter().zip(frame_window_group.iter()).map(|(&f, &wg)| (f, wg)).collect::<HashMap<i32, i32>>();
+        let mut window_group_settings: HashMap<(i32, i32), (f64, f64)> = HashMap::new();
+
+        for (index, &wg) in window_group.iter().enumerate() {
+            let scan_start = scan_start[index];
+            let scan_end = scan_end[index];
+            let isolation_mz = isolation_mz[index];
+            let isolation_width = isolation_width[index];
+
+            let value = (isolation_mz, isolation_width);
+
+            for scan in scan_start..scan_end {
+                let key = (wg, scan);
+                window_group_settings.insert(key, value);
+            }
+        }
+
+        let mut transmission_functions: HashMap<(i32, i32), Box<dyn Fn(Vec<f64>) -> Vec<f64>>> = HashMap::new();
+
+        for (&(wg, scan), &(isolation_mz, isolation_width)) in window_group_settings.iter() {
+            let midpoint = isolation_mz;
+            let window_length = isolation_width;
+            let k = k.unwrap_or(15.0);
+            let transmission_function = ion_transition_function_midpoint(midpoint, window_length, k);
+            transmission_functions.insert((wg, scan), Box::new(transmission_function));
+        }
+
+        Self {
+            frame_to_window_group,
+            transmission_functions,
+        }
+    }
+    pub fn get_transmission_function(&self, frame_id: i32, scan_id: i32) -> Option<&Box<dyn Fn(Vec<f64>) -> Vec<f64>>> {
+        let window_group = self.frame_to_window_group.get(&frame_id);
+        match window_group {
+            Some(&wg) => {
+                let transmission_function = self.transmission_functions.get(&(wg, scan_id));
+                match transmission_function {
+                    Some(tf) => Some(tf),
+                    None => None,
+                }
+            },
+            None => None,
+        }
+    }
+}
+
+impl IonTransmission for TimsTransmissionDIA {
+    fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64> {
+        let transmission_function = self.get_transmission_function(frame_id, scan_id);
+        match transmission_function {
+            Some(tf) => tf(mz.clone()),
+            None => vec![1.0; mz.len()],
         }
     }
 }
