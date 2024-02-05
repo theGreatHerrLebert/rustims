@@ -4,7 +4,7 @@ use mscore::{IonTransmission, TimsTransmissionDIA};
 use crate::py_mz_spectrum::PyMzSpectrum;
 use crate::py_tims_frame::PyTimsFrame;
 
-#[pyclass]
+#[pyclass(unsendable)]
 pub struct PyTimsTransmissionDIA {
     pub inner: TimsTransmissionDIA,
 }
@@ -34,8 +34,8 @@ impl PyTimsTransmissionDIA {
         }
     }
 
-    pub fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64> {
-        self.inner.apply_transmission(frame_id, scan_id, mz)
+    pub fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>) -> Vec<f64> {
+        self.inner.apply_transmission(frame_id, scan_id, &mz)
     }
 
     pub fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: PyMzSpectrum, min_probability: Option<f64>) -> PyMzSpectrum {
