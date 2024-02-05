@@ -34,7 +34,7 @@ pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f6
 pub trait IonTransmission {
     fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64>;
 
-    fn filter_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: MzSpectrum, min_probability: Option<f64>) -> MzSpectrum {
+    fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: MzSpectrum, min_probability: Option<f64>) -> MzSpectrum {
 
         let probability_cutoff = min_probability.unwrap_or(0.5);
 
@@ -58,12 +58,12 @@ pub trait IonTransmission {
         }
     }
 
-    fn filter_tims_frame(&self, frame: &TimsFrame, min_probability: Option<f64>) -> TimsFrame {
+    fn transmit_tims_frame(&self, frame: &TimsFrame, min_probability: Option<f64>) -> TimsFrame {
         let spectra = frame.to_tims_spectra();
         let mut filtered_spectra = Vec::new();
 
         for mut spectrum in spectra {
-            let filtered_spectrum = self.filter_spectrum(frame.frame_id, spectrum.scan, spectrum.spectrum.mz_spectrum, min_probability);
+            let filtered_spectrum = self.transmit_spectrum(frame.frame_id, spectrum.scan, spectrum.spectrum.mz_spectrum, min_probability);
             if filtered_spectrum.mz.len() > 0 {
                 spectrum.spectrum.mz_spectrum = filtered_spectrum;
                 filtered_spectra.push(spectrum);

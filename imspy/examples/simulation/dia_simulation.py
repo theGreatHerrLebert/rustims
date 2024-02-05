@@ -1,7 +1,6 @@
 import os
 import argparse
 import pandas as pd
-import numpy as np
 from tqdm import tqdm
 from imspy.chemistry import calculate_mz
 from imspy.algorithm.transmission.quadrupole import TransmissionDIA
@@ -11,7 +10,7 @@ from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
-from imspy.simulation.utility import generate_events
+from imspy.simulation.utility import generate_events, python_list_to_json_string
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
@@ -20,22 +19,9 @@ from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilder
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
 
 from pathlib import Path
-import json
 
 os.environ["WANDB_SILENT"] = "true"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-
-# Function to convert a list (or a pandas series) to a JSON string
-def python_list_to_json_string(lst, as_float=True):
-    if as_float:
-        return json.dumps([float(np.round(x, 4)) for x in lst])
-    return json.dumps([int(x) for x in lst])
-
-
-# load peptides and ions
-def json_string_to_python_list(json_string):
-    return json.loads(json_string)
 
 
 def main():
@@ -70,7 +56,7 @@ def main():
     parser.add_argument("--sample-fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
-    parser.add_argument("--max_len", type=int, default=40, help="Maximum peptide length (default: 30)")
+    parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
     parser.add_argument("--decoys", type=bool, default=False, help="Generate decoys (default: False)")
