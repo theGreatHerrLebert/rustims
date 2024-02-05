@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::f64;
 use std::f64::consts::E;
 use crate::{MzSpectrum, TimsFrame};
 
@@ -29,6 +30,10 @@ pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f6
     move |mz: Vec<f64>| -> Vec<f64> {
         smooth_step_up_down(&mz, up_start, up_end, down_start, down_end, k)
     }
+}
+
+pub fn apply_transmission(midpoint: f64, window_length: f64, k: Option<f64>, mz: Vec<f64>) -> Vec<f64> {
+    ion_transition_function_midpoint(midpoint, window_length, k.unwrap_or(15.0))(mz)
 }
 
 pub trait IonTransmission {
@@ -89,6 +94,7 @@ pub trait IonTransmission {
 
 pub struct TimsTransmissionDIA {
     frame_to_window_group: HashMap<i32, i32>,
+    window_group_settings: HashMap<(i32, i32), (f64, f64)>,
     transmission_functions: HashMap<(i32, i32), Box<dyn Fn(Vec<f64>) -> Vec<f64>>>,
 }
 
@@ -116,7 +122,7 @@ impl TimsTransmissionDIA {
 
             let value = (isolation_mz, isolation_width);
 
-            for scan in scan_start..scan_end {
+            for scan in scan_start..scan_end + 1 {
                 let key = (wg, scan);
                 window_group_settings.insert(key, value);
             }
@@ -128,12 +134,14 @@ impl TimsTransmissionDIA {
             let midpoint = isolation_mz;
             let window_length = isolation_width;
             let k = k.unwrap_or(15.0);
+
             let transmission_function = ion_transition_function_midpoint(midpoint, window_length, k);
             transmission_functions.insert((wg, scan), Box::new(transmission_function));
         }
 
         Self {
             frame_to_window_group,
+            window_group_settings,
             transmission_functions,
         }
     }
@@ -148,6 +156,33 @@ impl TimsTransmissionDIA {
                 }
             },
             None => None,
+        }
+    }
+
+    pub fn frame_to_window_group(&self, frame_id: i32) -> i32 {
+        let window_group = self.frame_to_window_group.get(&frame_id);
+        match window_group {
+            Some(&wg) => wg,
+            None => -1,
+        }
+    }
+
+    pub fn get_setting(&self, window_group: i32, scan_id: i32) -> Option<&(f64, f64)> {
+        let setting = self.window_group_settings.get(&(window_group, scan_id));
+        match setting {
+            Some(s) => Some(s),
+            None => None,
+        }
+    }
+
+    pub fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64) -> bool {
+        let transmission_function = self.get_transmission_function(frame_id, scan_id);
+        match transmission_function {
+            Some(tf) => {
+                let transmission_probability = tf(vec![mz]);
+                transmission_probability[0] > 0.5
+            },
+            None => true,
         }
     }
 }

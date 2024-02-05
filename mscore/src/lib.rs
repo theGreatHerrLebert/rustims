@@ -58,6 +58,7 @@ pub use {
     tims_slice::TimsPlane,
 
     quadrupole::ion_transition_function_midpoint,
+    quadrupole::apply_transmission,
     quadrupole::IonTransmission,
     quadrupole::TimsTransmissionDIA,
 };
