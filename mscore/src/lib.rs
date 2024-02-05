@@ -6,6 +6,18 @@ mod quadrupole;
 
 pub use {
 
+    chemistry::K_BOLTZMANN,
+    chemistry::MASS_ELECTRON,
+    chemistry::MASS_NEUTRON,
+    chemistry::MASS_PROTON,
+    chemistry::MASS_WATER,
+    chemistry::STANDARD_PRESSURE,
+    chemistry::STANDARD_TEMPERATURE,
+    chemistry::ELEMENTARY_CHARGE,
+    chemistry::amino_acids,
+    chemistry::amino_acid_masses,
+    chemistry::modifications_mz,
+    chemistry::modifications_mz_numerical,
     chemistry::one_over_reduced_mobility_to_ccs,
     chemistry::ccs_to_reduced_mobility,
     chemistry::generate_averagine_spectrum,
