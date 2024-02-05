@@ -139,10 +139,6 @@ impl TimsTransmissionDIA {
             transmission_functions.insert((wg, scan), Box::new(transmission_function));
         }
 
-        for (&(wg, scan), _) in transmission_functions.iter() {
-            println!("{} {}", wg, scan);
-        }
-
         Self {
             frame_to_window_group,
             window_group_settings,
@@ -176,6 +172,17 @@ impl TimsTransmissionDIA {
         match setting {
             Some(s) => Some(s),
             None => None,
+        }
+    }
+
+    pub fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64) -> bool {
+        let transmission_function = self.get_transmission_function(frame_id, scan_id);
+        match transmission_function {
+            Some(tf) => {
+                let transmission_probability = tf(vec![mz]);
+                transmission_probability[0] > 0.5
+            },
+            None => true,
         }
     }
 }
