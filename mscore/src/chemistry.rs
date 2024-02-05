@@ -23,7 +23,7 @@ pub const ELEMENTARY_CHARGE: f64 = 1.602176634e-19;
 pub const K_BOLTZMANN: f64 = 1.380649e-23; // J/K
 
 // Amino Acids and Their Codes
-fn amino_acids() -> HashMap<&'static str, &'static str> {
+pub fn amino_acids() -> HashMap<&'static str, &'static str> {
     let mut map = HashMap::new();
     map.insert("Lysine", "K");
     map.insert("Alanine", "A");
@@ -50,7 +50,7 @@ fn amino_acids() -> HashMap<&'static str, &'static str> {
 }
 
 // Amino Acid Masses
-fn amino_acid_masses() -> HashMap<&'static str, f64> {
+pub fn amino_acid_masses() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("A", 71.037114);
     map.insert("R", 156.101111);
@@ -77,7 +77,7 @@ fn amino_acid_masses() -> HashMap<&'static str, f64> {
 }
 
 // MODIFICATIONS_MZ with string keys and float values
-fn modifications_mz() -> HashMap<&'static str, f64> {
+pub fn modifications_mz() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("[UNIMOD:58]", 56.026215);
     map.insert("[UNIMOD:408]", 148.037173);
@@ -105,7 +105,7 @@ fn modifications_mz() -> HashMap<&'static str, f64> {
 }
 
 // MODIFICATIONS_MZ_NUMERICAL with integer keys and float values
-fn modifications_mz_numerical() -> HashMap<u32, f64> {
+pub fn modifications_mz_numerical() -> HashMap<u32, f64> {
     let mut map = HashMap::new();
     map.insert(58, 56.026215);
     map.insert(408, 148.037173);

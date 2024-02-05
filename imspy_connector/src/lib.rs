@@ -6,6 +6,7 @@ mod py_dda;
 mod py_dia;
 mod py_simulation;
 mod py_chemistry;
+mod py_quadrupole;
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;

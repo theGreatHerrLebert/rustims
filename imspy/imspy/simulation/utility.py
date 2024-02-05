@@ -1,3 +1,5 @@
+import json
+
 from numba import jit
 import tensorflow as tf
 import numpy as np
@@ -12,6 +14,18 @@ from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz
 from dlomix.reports.postprocessing import reshape_dims, reshape_flat, normalize_base_peak, mask_outofcharge, mask_outofrange
 from typing import List, Tuple
 import imspy_connector as ims
+
+# Function to convert a list (or a pandas series) to a JSON string
+def python_list_to_json_string(lst, as_float=True):
+    if as_float:
+        return json.dumps([float(np.round(x, 4)) for x in lst])
+    return json.dumps([int(x) for x in lst])
+
+
+# load peptides and ions
+def json_string_to_python_list(json_string):
+    return json.loads(json_string)
+
 
 
 def sequence_to_numpy(sequence: str, max_length: int = 30) -> NDArray:
