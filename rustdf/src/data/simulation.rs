@@ -33,11 +33,11 @@ impl TimsTofSyntheticsDIA {
         })
     }
 
-    pub fn build_frame(&self, frame_id: u32) -> TimsFrame {
+    pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
         let tims_frame = self.synthetics.build_precursor_frame(frame_id);
         tims_frame
     }
-    pub fn build_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
+    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
         let tims_frames = self.synthetics.build_precursor_frames(frame_ids, num_threads);
         tims_frames
     }
