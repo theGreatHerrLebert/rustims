@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use rustdf::data::simulation::{TimsTofSynthetics};
+use rustdf::data::simulation::{TimsTofSynthetics, TimsTofSyntheticsDIA};
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
@@ -16,11 +16,34 @@ impl PyTimsTofSynthetics {
     }
 
     pub fn build_frame(&self, frame_id: u32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.build_frame(frame_id) }
+        PyTimsFrame { inner: self.inner.build_precursor_frame(frame_id) }
     }
 
     pub fn build_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<PyTimsFrame> {
-        let frames = self.inner.build_frames(frame_ids, num_threads);
+        let frames = self.inner.build_precursor_frames(frame_ids, num_threads);
+        frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
+    }
+}
+
+#[pyclass(unsendable)]
+pub struct PyTimsTofSyntheticsDIA {
+    pub inner: TimsTofSyntheticsDIA,
+}
+
+#[pymethods]
+impl PyTimsTofSyntheticsDIA {
+    #[new]
+    pub fn new(db_path: &str) -> Self {
+        let path = std::path::Path::new(db_path);
+        PyTimsTofSyntheticsDIA { inner: TimsTofSyntheticsDIA::new(path).unwrap() }
+    }
+
+    pub fn build_frame(&self, frame_id: u32, fragment: bool) -> PyTimsFrame {
+        PyTimsFrame { inner: self.inner.build_frame(frame_id, fragment) }
+    }
+
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames(frame_ids, fragment, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
     }
 }
