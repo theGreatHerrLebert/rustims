@@ -9,6 +9,19 @@ import imspy_connector as pims
 from imspy.core import TimsFrame
 
 
+class TimsTofSyntheticAcquisitionBuilderDIA:
+    def __init__(self, db_path: str):
+        self.handle = pims.PyTimsTofSyntheticsDIA(db_path)
+
+    def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
+        frame = self.handle.build_frame(frame_id, fragment)
+        return TimsFrame.from_py_tims_frame(frame)
+
+    def build_frames(self, frame_ids: List[int], fragment: bool = True, num_threads: int = 4) -> List[TimsFrame]:
+        frames = self.handle.build_frames(frame_ids, fragment, num_threads)
+        return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
+
+
 class TimsTofSyntheticAcquisitionBuilder:
     def __init__(self, db_path: str):
         self.handle = pims.PyTimsTofSynthetics(db_path)
