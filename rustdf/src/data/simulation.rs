@@ -9,7 +9,7 @@ use rayon::ThreadPoolBuilder;
 
 pub struct TimsTofSyntheticsDIA {
     pub synthetics: TimsTofSynthetics,
-    pub quadrupole: TimsTransmissionDIA,
+    pub transmission_settings: TimsTransmissionDIA,
 }
 
 impl TimsTofSyntheticsDIA {
@@ -17,7 +17,7 @@ impl TimsTofSyntheticsDIA {
         let synthetics = TimsTofSynthetics::new(path)?;
         let frame_to_window_group = SyntheticsDataHandle::new(path)?.read_frame_to_window_group()?;
         let window_group_settings = SyntheticsDataHandle::new(path)?.read_window_group_settings()?;
-        let quadrupole = TimsTransmissionDIA::new(
+        let transmission_settings = TimsTransmissionDIA::new(
             frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
             frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
             window_group_settings.iter().map(|x| x.window_group as i32).collect(),
@@ -29,7 +29,7 @@ impl TimsTofSyntheticsDIA {
         );
         Ok(Self {
             synthetics,
-            quadrupole,
+            transmission_settings,
         })
     }
 
@@ -59,7 +59,11 @@ impl TimsTofSyntheticsDIA {
     }
     fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
         match fragmentation {
-            false => self.quadrupole.transmit_tims_frame(&self.build_ms1_frame(frame_id), None),
+            false => {
+                let mut frame = self.transmission_settings.transmit_tims_frame(&self.build_ms1_frame(frame_id), None);
+                frame.ms_type = MsType::FragmentDia;
+                frame
+            },
             true => self.build_fragment_frame(frame_id),
         }
     }
@@ -567,7 +571,7 @@ impl SyntheticsDataHandle {
     }
 
     pub fn read_frame_to_window_group(&self) -> Result<Vec<FrameToWindowGroupSim>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM frame_to_window_group")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM dia_ms_ms_info")?;
         let frame_to_window_group_iter = stmt.query_map([], |row| {
             Ok(FrameToWindowGroupSim::new(
                 row.get(0)?,

@@ -42,9 +42,7 @@ pub trait IonTransmission {
     fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: MzSpectrum, min_probability: Option<f64>) -> MzSpectrum {
 
         let probability_cutoff = min_probability.unwrap_or(0.5);
-
-        let mz = spectrum.mz.clone();
-        let transmission_probability = self.apply_transmission(frame_id, scan_id, &mz);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, &spectrum.mz);
 
         let mut filtered_mz = Vec::new();
         let mut filtered_intensity = Vec::new();
