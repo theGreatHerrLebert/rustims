@@ -17,6 +17,14 @@ struct Args {
     /// Fragment the precursors into product ions
     #[arg(short, long, default_value_t = false)]
     fragment: bool,
+
+    /// Batch size
+    #[arg(short, long, default_value_t = 128)]
+    batch_size: usize,
+
+    /// Number of frames to process
+    #[arg(short, long, default_value_t = 4096)]
+    num_frames: usize,
 }
 
 
@@ -30,10 +38,10 @@ fn main() {
     let fragment = args.fragment;
 
     let experiment = TimsTofSyntheticsDIA::new(path).unwrap();
-    let first_frames = experiment.synthetics.frames.iter().map(|x| x.frame_id.clone()).take(4096).collect::<Vec<_>>();
+    let first_frames = experiment.synthetics.frames.iter().map(|x| x.frame_id.clone()).take(args.num_frames).collect::<Vec<_>>();
 
     // go over the frames in batches of 256
-    for frame_batch in first_frames.chunks(32) {
+    for frame_batch in first_frames.chunks(args.batch_size) {
         let frames = experiment.build_frames(frame_batch.to_vec(), fragment, num_threads);
         for frame in frames {
             println!("frame_id: {}", frame.frame_id);
