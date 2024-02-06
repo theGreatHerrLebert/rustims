@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use mscore::{IndexedMzSpectrum, MsType, MzSpectrum, TimsFrame, TimsSpectrum, TimsTransmissionDIA};
 use rusqlite::{Connection, Result};
 use std::path::Path;
@@ -6,20 +6,6 @@ use serde_json;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-
-
-pub struct TimsTofSynthetics {
-    pub ions: Vec<IonsSim>,
-    pub peptides: Vec<PeptidesSim>,
-    pub scans: Vec<ScansSim>,
-    pub frames: Vec<FramesSim>,
-    pub precursor_frames: Vec<FramesSim>,
-    pub frame_to_abundances: BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
-    pub peptide_to_ions: BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)>,
-    pub frame_to_rt: BTreeMap<u32, f32>,
-    pub scan_to_mobility: BTreeMap<u32, f32>,
-    pub peptide_to_events: BTreeMap<u32, f32>,
-}
 
 pub struct TimsTofSyntheticsDIA {
     pub synthetics: TimsTofSynthetics,
@@ -46,6 +32,29 @@ impl TimsTofSyntheticsDIA {
             quadrupole,
         })
     }
+
+    pub fn build_frame(&self, frame_id: u32) -> TimsFrame {
+        let tims_frame = self.synthetics.build_precursor_frame(frame_id);
+        tims_frame
+    }
+    pub fn build_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
+        let tims_frames = self.synthetics.build_precursor_frames(frame_ids, num_threads);
+        tims_frames
+    }
+}
+
+
+pub struct TimsTofSynthetics {
+    pub ions: Vec<IonsSim>,
+    pub peptides: Vec<PeptidesSim>,
+    pub scans: Vec<ScansSim>,
+    pub frames: Vec<FramesSim>,
+    pub precursor_frame_id_set: HashSet<u32>,
+    pub frame_to_abundances: BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
+    pub peptide_to_ions: BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)>,
+    pub frame_to_rt: BTreeMap<u32, f32>,
+    pub scan_to_mobility: BTreeMap<u32, f32>,
+    pub peptide_to_events: BTreeMap<u32, f32>,
 }
 
 impl TimsTofSynthetics {
@@ -60,7 +69,7 @@ impl TimsTofSynthetics {
             peptides: peptides.clone(),
             scans: scans.clone(),
             frames: frames.clone(),
-            precursor_frames: Self::build_precursor_frames(frames.clone()),
+            precursor_frame_id_set: Self::build_precursor_frame_id_set(frames.clone()),
             frame_to_abundances: Self::build_frame_to_abundances(peptides.clone()),
             peptide_to_ions: Self::build_peptide_to_ions(ions.clone()),
             frame_to_rt: Self::build_frame_to_rt(frames.clone()),
@@ -68,9 +77,9 @@ impl TimsTofSynthetics {
             peptide_to_events: Self::build_peptide_to_events(peptides.clone()),
         })
     }
-    pub fn build_precursor_frames(frames: Vec<FramesSim>) -> Vec<FramesSim> {
+    pub fn build_precursor_frame_id_set(frames: Vec<FramesSim>) -> HashSet<u32> {
         frames.iter().filter(|frame| frame.parse_ms_type() == MsType::Precursor)
-            .cloned()
+            .map(|frame| frame.frame_id)
             .collect()
     }
 
@@ -98,9 +107,12 @@ impl TimsTofSynthetics {
         scan_to_mobility
     }
 
-    pub fn build_frame(&self, frame_id: u32) -> TimsFrame {
-        // TODO: This is a temporary hack to get the ms_type, need to make this faster and more robust
-        let ms_type = self.frames.iter().find(|frame| frame.frame_id == frame_id).unwrap().parse_ms_type();
+    pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
+
+        let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
+            true => MsType::Precursor,
+            false => MsType::Unknown,
+        };
 
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
@@ -181,12 +193,12 @@ impl TimsTofSynthetics {
     }
 
     // Method to build multiple frames in parallel
-    pub fn build_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
+    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
         thread_pool.install(|| {
-            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id)).collect();
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_precursor_frame(*frame_id)).collect();
         });
 
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
