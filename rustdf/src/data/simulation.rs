@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use mscore::{IndexedMzSpectrum, MsType, MzSpectrum, TimsFrame, TimsSpectrum};
+use mscore::{IndexedMzSpectrum, MsType, MzSpectrum, TimsFrame, TimsSpectrum, TimsTransmissionDIA};
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use serde_json;
@@ -19,6 +19,33 @@ pub struct TimsTofSynthetics {
     pub frame_to_rt: BTreeMap<u32, f32>,
     pub scan_to_mobility: BTreeMap<u32, f32>,
     pub peptide_to_events: BTreeMap<u32, f32>,
+}
+
+pub struct TimsTofSyntheticsDIA {
+    pub synthetics: TimsTofSynthetics,
+    pub quadrupole: TimsTransmissionDIA,
+}
+
+impl TimsTofSyntheticsDIA {
+    pub fn new(path: &Path) -> Result<Self> {
+        let synthetics = TimsTofSynthetics::new(path)?;
+        let frame_to_window_group = SyntheticsDataHandle::new(path)?.read_frame_to_window_group()?;
+        let window_group_settings = SyntheticsDataHandle::new(path)?.read_window_group_settings()?;
+        let quadrupole = TimsTransmissionDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
+            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
+            None,
+        );
+        Ok(Self {
+            synthetics,
+            quadrupole,
+        })
+    }
 }
 
 impl TimsTofSynthetics {
