@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use mscore::{IndexedMzSpectrum, MsType, MzSpectrum, TimsFrame, TimsSpectrum, TimsTransmissionDIA};
+use mscore::{IndexedMzSpectrum, IonTransmission, MsType, MzSpectrum, TimsFrame, TimsSpectrum, TimsTransmissionDIA};
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use serde_json;
@@ -33,13 +33,38 @@ impl TimsTofSyntheticsDIA {
         })
     }
 
-    pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
+    pub fn build_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+        match self.synthetics.precursor_frame_id_set.contains(&frame_id) {
+            true => self.build_ms1_frame(frame_id),
+            false => self.build_ms2_frame(frame_id, fragmentation),
+        }
+    }
+
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let mut tims_frames: Vec<TimsFrame> = Vec::new();
+
+        thread_pool.install(|| {
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, fragmentation)).collect();
+        });
+
+        tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
+
+        tims_frames
+    }
+
+    fn build_ms1_frame(&self, frame_id: u32) -> TimsFrame {
         let tims_frame = self.synthetics.build_precursor_frame(frame_id);
         tims_frame
     }
-    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
-        let tims_frames = self.synthetics.build_precursor_frames(frame_ids, num_threads);
-        tims_frames
+    fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+        match fragmentation {
+            false => self.quadrupole.transmit_tims_frame(&self.build_ms1_frame(frame_id), None),
+            true => self.build_fragment_frame(frame_id),
+        }
+    }
+    fn build_fragment_frame(&self, _frame_id: u32) -> TimsFrame {
+        todo!("implement the method to build a fragment frame")
     }
 }
 
