@@ -300,40 +300,6 @@ impl TimsFrame {
         }
 
         TimsFrame::new(frame_id, ms_type, retention_time, scan, mobility, tof, mzs, intensity)
-
-
-        /*
-        let mut tree: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
-
-        for spectrum in &spectra {
-            tree.entry(spectrum.scan)
-                .and_modify(|e| *e = e.clone() + spectrum.clone())
-                .or_insert(spectrum.clone());
-        }
-
-        // Assuming an average size for each spectrum to pre-allocate vector sizes
-        let average_size = tree.values().next().map_or(0, |s| s.spectrum.mz_spectrum.mz.len());
-        let total_size = tree.len() * average_size;
-
-        let mut scans = Vec::with_capacity(total_size);
-        let mut tof = Vec::with_capacity(total_size);
-        let mut mzs = Vec::with_capacity(total_size);
-        let mut intensity = Vec::with_capacity(total_size);
-        let mut mobility = Vec::with_capacity(total_size);
-
-        for (scan, spectrum) in tree {
-            for (i, mz) in spectrum.spectrum.mz_spectrum.mz.iter().enumerate() {
-                scans.push(scan);
-                mobility.push(spectrum.mobility);
-                tof.push(spectrum.spectrum.index[i]); // Potential issue here
-                mzs.push(*mz);
-                intensity.push(spectrum.spectrum.mz_spectrum.intensity[i]); // Potential issue here
-            }
-        }
-
-        let first_spectrum = spectra.first().unwrap();
-        TimsFrame::new(first_spectrum.frame_id, first_spectrum.ms_type.clone(), first_spectrum.retention_time, scans, mobility, tof, mzs, intensity)
-         */
     }
 
     pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
