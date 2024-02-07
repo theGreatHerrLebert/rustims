@@ -72,7 +72,6 @@ impl TimsTofSyntheticsDIA {
     }
 }
 
-
 pub struct TimsTofSynthetics {
     pub ions: Vec<IonsSim>,
     pub peptides: Vec<PeptidesSim>,
@@ -87,6 +86,16 @@ pub struct TimsTofSynthetics {
 }
 
 impl TimsTofSynthetics {
+    /// Create a new instance of TimsTofSynthetics
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A reference to a Path
+    ///
+    /// # Returns
+    ///
+    /// * A Result containing the TimsTofSynthetics instance
+    ///
     pub fn new(path: &Path) -> Result<Self> {
         let handle = SyntheticsDataHandle::new(path)?;
         let ions = handle.read_ions()?;
@@ -106,13 +115,16 @@ impl TimsTofSynthetics {
             peptide_to_events: Self::build_peptide_to_events(peptides.clone()),
         })
     }
-    pub fn build_precursor_frame_id_set(frames: Vec<FramesSim>) -> HashSet<u32> {
+
+    // Method to build a set of precursor frame ids, can be used to check if a frame is a precursor frame
+    fn build_precursor_frame_id_set(frames: Vec<FramesSim>) -> HashSet<u32> {
         frames.iter().filter(|frame| frame.parse_ms_type() == MsType::Precursor)
             .map(|frame| frame.frame_id)
             .collect()
     }
 
-    pub fn build_peptide_to_events(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, f32> {
+    // Method to build a map from peptide id to events (absolute number of events in the simulation)
+     fn build_peptide_to_events(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, f32> {
         let mut peptide_to_events = BTreeMap::new();
         for peptide in peptides.iter() {
             peptide_to_events.insert(peptide.peptide_id, peptide.events);
@@ -120,7 +132,8 @@ impl TimsTofSynthetics {
         peptide_to_events
     }
 
-    pub fn build_frame_to_rt(frames: Vec<FramesSim>) -> BTreeMap<u32, f32> {
+    // Method to build a map from frame id to retention time
+    fn build_frame_to_rt(frames: Vec<FramesSim>) -> BTreeMap<u32, f32> {
         let mut frame_to_rt = BTreeMap::new();
         for frame in frames.iter() {
             frame_to_rt.insert(frame.frame_id, frame.time);
@@ -128,14 +141,50 @@ impl TimsTofSynthetics {
         frame_to_rt
     }
 
-    pub fn build_scan_to_mobility(scans: Vec<ScansSim>) -> BTreeMap<u32, f32> {
+    // Method to build a map from scan id to mobility
+    fn build_scan_to_mobility(scans: Vec<ScansSim>) -> BTreeMap<u32, f32> {
         let mut scan_to_mobility = BTreeMap::new();
         for scan in scans.iter() {
             scan_to_mobility.insert(scan.scan, scan.mobility);
         }
         scan_to_mobility
     }
+    fn build_frame_to_abundances(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, (Vec<u32>, Vec<f32>)> {
+        let mut frame_to_abundances = BTreeMap::new();
 
+        for peptide in peptides.iter() {
+            let peptide_id = peptide.peptide_id;
+            let frame_occurrence = peptide.frame_occurrence.clone();
+            let frame_abundance = peptide.frame_abundance.clone();
+
+            for (frame_id, abundance) in frame_occurrence.iter().zip(frame_abundance.iter()) {
+                let (occurrences, abundances) = frame_to_abundances.entry(*frame_id).or_insert((vec![], vec![]));
+                occurrences.push(peptide_id);
+                abundances.push(*abundance);
+            }
+        }
+
+        frame_to_abundances
+    }
+    fn build_peptide_to_ions(ions: Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)> {
+        let mut peptide_to_ions = BTreeMap::new();
+
+        for ion in ions.iter() {
+            let peptide_id = ion.peptide_id;
+            let abundance = ion.relative_abundance;
+            let scan_occurrence = ion.scan_occurrence.clone();
+            let scan_abundance = ion.scan_abundance.clone();
+            let spectrum = ion.simulated_spectrum.clone();
+
+            let (abundances, scan_occurrences, scan_abundances, spectra) = peptide_to_ions.entry(peptide_id).or_insert((vec![], vec![], vec![], vec![]));
+            abundances.push(abundance);
+            scan_occurrences.push(scan_occurrence);
+            scan_abundances.push(scan_abundance);
+            spectra.push(spectrum);
+        }
+
+        peptide_to_ions
+    }
     pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
 
         let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
@@ -233,43 +282,6 @@ impl TimsTofSynthetics {
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
 
         tims_frames
-    }
-
-    pub fn build_frame_to_abundances(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, (Vec<u32>, Vec<f32>)> {
-        let mut frame_to_abundances = BTreeMap::new();
-
-        for peptide in peptides.iter() {
-            let peptide_id = peptide.peptide_id;
-            let frame_occurrence = peptide.frame_occurrence.clone();
-            let frame_abundance = peptide.frame_abundance.clone();
-
-            for (frame_id, abundance) in frame_occurrence.iter().zip(frame_abundance.iter()) {
-                let (occurrences, abundances) = frame_to_abundances.entry(*frame_id).or_insert((vec![], vec![]));
-                occurrences.push(peptide_id);
-                abundances.push(*abundance);
-            }
-        }
-
-        frame_to_abundances
-    }
-    pub fn build_peptide_to_ions(ions: Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)> {
-        let mut peptide_to_ions = BTreeMap::new();
-
-        for ion in ions.iter() {
-            let peptide_id = ion.peptide_id;
-            let abundance = ion.relative_abundance;
-            let scan_occurrence = ion.scan_occurrence.clone();
-            let scan_abundance = ion.scan_abundance.clone();
-            let spectrum = ion.simulated_spectrum.clone();
-
-            let (abundances, scan_occurrences, scan_abundances, spectra) = peptide_to_ions.entry(peptide_id).or_insert((vec![], vec![], vec![], vec![]));
-            abundances.push(abundance);
-            scan_occurrences.push(scan_occurrence);
-            scan_abundances.push(scan_abundance);
-            spectra.push(spectrum);
-        }
-
-        peptide_to_ions
     }
 }
 

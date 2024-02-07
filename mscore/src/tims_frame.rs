@@ -256,36 +256,50 @@ impl TimsFrame {
     }
 
     pub fn from_tims_spectra(spectra: Vec<TimsSpectrum>) -> TimsFrame {
-        let mut tree: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
 
+        // Helper to quantize mz to an integer key
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        // Step 1: Get frame coordinates
+        let frame_id = spectra.first().unwrap().frame_id;
+        let ms_type = spectra.first().unwrap().ms_type.clone();
+        let retention_time = spectra.first().unwrap().retention_time;
+
+        let mut frame_map: BTreeMap<i32, (f64, BTreeMap<i64, (i32, f64)>)> = BTreeMap::new();
+        let mut capacity_count = 0;
+
+        // Step 2: Group by scan and unroll all spectra to a single vector per scan
         for spectrum in &spectra {
-            tree.entry(spectrum.scan)
-                .and_modify(|e| *e = e.clone() + spectrum.clone())
-                .or_insert(spectrum.clone());
-        }
-
-        // Assuming an average size for each spectrum to pre-allocate vector sizes
-        let average_size = tree.values().next().map_or(0, |s| s.spectrum.mz_spectrum.mz.len());
-        let total_size = tree.len() * average_size;
-
-        let mut scans = Vec::with_capacity(total_size);
-        let mut tof = Vec::with_capacity(total_size);
-        let mut mzs = Vec::with_capacity(total_size);
-        let mut intensity = Vec::with_capacity(total_size);
-        let mut mobility = Vec::with_capacity(total_size);
-
-        for (scan, spectrum) in tree {
+            let inv_mobility = spectrum.mobility;
+            let entry = frame_map.entry(spectrum.scan).or_insert_with(|| (inv_mobility, BTreeMap::new()));
             for (i, mz) in spectrum.spectrum.mz_spectrum.mz.iter().enumerate() {
-                scans.push(scan);
-                mobility.push(spectrum.mobility);
-                tof.push(spectrum.spectrum.index[i]); // Potential issue here
-                mzs.push(*mz);
-                intensity.push(spectrum.spectrum.mz_spectrum.intensity[i]); // Potential issue here
+                let tof = spectrum.spectrum.index[i];
+                let intensity = spectrum.spectrum.mz_spectrum.intensity[i];
+                entry.1.entry(quantize(*mz)).and_modify(|e| *e = (tof, e.1 + intensity)).or_insert((tof, intensity));
+                capacity_count += 1;
             }
         }
 
-        let first_spectrum = spectra.first().unwrap();
-        TimsFrame::new(first_spectrum.frame_id, first_spectrum.ms_type.clone(), first_spectrum.retention_time, scans, mobility, tof, mzs, intensity)
+        // Step 3: Unroll the map to vectors
+        let mut scan = Vec::with_capacity(capacity_count);
+        let mut mobility = Vec::with_capacity(capacity_count);
+        let mut tof = Vec::with_capacity(capacity_count);
+        let mut mzs = Vec::with_capacity(capacity_count);
+        let mut intensity = Vec::with_capacity(capacity_count);
+
+        for (scan_val, (mobility_val, mz_map)) in frame_map {
+            for (mz_val, (tof_val, intensity_val)) in mz_map {
+                scan.push(scan_val);
+                mobility.push(mobility_val);
+                tof.push(tof_val);
+                mzs.push(mz_val as f64 / 1_000_000.0);
+                intensity.push(intensity_val);
+            }
+        }
+
+        TimsFrame::new(frame_id, ms_type, retention_time, scan, mobility, tof, mzs, intensity)
     }
 
     pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {

@@ -19,7 +19,7 @@ struct Args {
     fragment: bool,
 
     /// Batch size
-    #[arg(short, long, default_value_t = 128)]
+    #[arg(short, long, default_value_t = 256)]
     batch_size: usize,
 
     /// Number of frames to process
@@ -40,9 +40,17 @@ fn main() {
     let experiment = TimsTofSyntheticsDIA::new(path).unwrap();
     let first_frames = experiment.synthetics.frames.iter().map(|x| x.frame_id.clone()).take(args.num_frames).collect::<Vec<_>>();
 
+    /*
+    for frame in first_frames.iter() {
+        let build_frame = experiment.build_frame(*frame, fragment);
+        println!("frame_id: {}", build_frame.frame_id);
+    }
+    */
+
     // go over the frames in batches of 256
     for frame_batch in first_frames.chunks(args.batch_size) {
         let frames = experiment.build_frames(frame_batch.to_vec(), fragment, num_threads);
+
         for frame in frames {
             println!("frame_id: {}", frame.frame_id);
             println!("frame: {}", frame);
