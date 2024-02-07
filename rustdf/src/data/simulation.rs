@@ -200,11 +200,11 @@ impl TimsTofSynthetics {
                 frame_id as i32,
                 ms_type.clone(),
                 *self.frame_to_rt.get(&frame_id).unwrap() as f64,
-                vec![100],
-                vec![1.0],
-                vec![0],
-                vec![1000.0],
-                vec![1.0],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
             );
         }
 
@@ -218,11 +218,11 @@ impl TimsTofSynthetics {
                     frame_id as i32,
                     ms_type.clone(),
                     *self.frame_to_rt.get(&frame_id).unwrap() as f64,
-                    vec![100],
-                    vec![1.0],
-                    vec![0],
-                    vec![1000.0],
-                    vec![1.0],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
                 );
             }
 
