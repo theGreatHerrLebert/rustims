@@ -122,6 +122,56 @@ class TimsSlice:
             self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
                                            intensity_min, intensity_max, num_threads))
 
+    def filter_by_type(self,
+                       mz_min_ms1: float = 0,
+                       mz_max_ms1: float = 2000,
+                       scan_min_ms1: int = 0,
+                       scan_max_ms1: int = 1000,
+                       inv_mob_min_ms1: float = 0,
+                       inv_mob_max_ms1: float = 2,
+                       intensity_min_ms1: float = 0,
+                       intensity_max_ms1: float = 1e9,
+                       mz_min_ms2: float = 0,
+                       mz_max_ms2: float = 2000,
+                       scan_min_ms2: int = 0,
+                       scan_max_ms2: int = 1000,
+                       inv_mob_min_ms2: float = 0,
+                       inv_mob_max_ms2: float = 2,
+                       intensity_min_ms2: float = 0,
+                       intensity_max_ms2: float = 1e9,
+                       num_threads: int = 4) -> 'TimsSlice':
+        
+        """Filter the slice by m/z, scan and intensity, for MS1 and MS2 with different ranges.
+
+        Args:
+            mz_min_ms1 (float, optional): Minimum m/z value for MS1. Defaults to 0.
+            mz_max_ms1 (float, optional): Maximum m/z value for MS1. Defaults to 2000.
+            scan_min_ms1 (int, optional): Minimum scan value for MS1. Defaults to 0.
+            scan_max_ms1 (int, optional): Maximum scan value for MS1. Defaults to 1000.
+            inv_mob_min_ms1 (float, optional): Minimum inverse mobility value for MS1. Defaults to 0.
+            inv_mob_max_ms1 (float, optional): Maximum inverse mobility value for MS1. Defaults to 2.
+            intensity_min_ms1 (float, optional): Minimum intensity value for MS1. Defaults to 0.
+            intensity_max_ms1 (float, optional): Maximum intensity value for MS1. Defaults to 1e9.
+            mz_min_ms2 (float, optional): Minimum m/z value for MS2. Defaults to 0.
+            mz_max_ms2 (float, optional): Maximum m/z value for MS2. Defaults to 2000.
+            scan_min_ms2 (int, optional): Minimum scan value for MS2. Defaults to 0.
+            scan_max_ms2 (int, optional): Maximum scan value for MS2. Defaults to 1000.
+            inv_mob_min_ms2 (float, optional): Minimum inverse mobility value for MS2. Defaults to 0.
+            inv_mob_max_ms2 (float, optional): Maximum inverse mobility value for MS2. Defaults to 2.
+            intensity_min_ms2 (float, optional): Minimum intensity value for MS2. Defaults to 0.
+            intensity_max_ms2 (float, optional): Maximum intensity value for MS2. Defaults to 1e9.
+            num_threads (int, optional): Number of threads to use. Defaults to 4.
+
+        Returns:
+            TimsSlice: Filtered slice.
+        """
+        return TimsSlice.from_py_tims_slice(
+            self.__slice_ptr.filter_ranged_ms_type_specific(
+                mz_min_ms1, mz_max_ms1, scan_min_ms1, scan_max_ms1, inv_mob_min_ms1,
+                inv_mob_max_ms1, intensity_min_ms1, intensity_max_ms1, mz_min_ms2, mz_max_ms2,
+                scan_min_ms2, scan_max_ms2, inv_mob_min_ms2, inv_mob_max_ms2, intensity_min_ms2,
+                intensity_max_ms2, num_threads))
+
     @property
     def frames(self) -> List[TimsFrame]:
         """Get the frames.

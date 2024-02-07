@@ -60,6 +60,30 @@ impl PyTimsSlice {
         PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, num_threads) }
     }
 
+    pub fn filter_ranged_ms_type_specific(&self,
+                                          mz_min_ms1: f64,
+                                          mz_max_ms1: f64,
+                                          scan_min_ms1: i32,
+                                          scan_max_ms1: i32,
+                                          inv_mob_min_ms1: f64,
+                                          inv_mob_max_ms1: f64,
+                                          intensity_min_ms1: f64,
+                                          intensity_max_ms1: f64,
+                                          mz_min_ms2: f64,
+                                          mz_max_ms2: f64,
+                                          scan_min_ms2: i32,
+                                          scan_max_ms2: i32,
+                                          inv_mob_min_ms2: f64,
+                                          inv_mob_max_ms2: f64,
+                                          intensity_min_ms2: f64,
+                                          intensity_max_ms2: f64,
+                                          num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.filter_ranged_ms_type_specific(
+            mz_min_ms1, mz_max_ms1, scan_min_ms1, scan_max_ms1, inv_mob_min_ms1, inv_mob_max_ms1, intensity_min_ms1, intensity_max_ms1,
+            mz_min_ms2, mz_max_ms2, scan_min_ms2, scan_max_ms2, inv_mob_min_ms2, inv_mob_max_ms2, intensity_min_ms2, intensity_max_ms2,
+            num_threads) }
+    }
+
     pub fn get_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
         let list: Py<PyList> = PyList::empty(py).into();
