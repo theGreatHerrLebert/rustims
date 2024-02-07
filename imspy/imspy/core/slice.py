@@ -140,7 +140,7 @@ class TimsSlice:
                        intensity_min_ms2: float = 0,
                        intensity_max_ms2: float = 1e9,
                        num_threads: int = 4) -> 'TimsSlice':
-        
+
         """Filter the slice by m/z, scan and intensity, for MS1 and MS2 with different ranges.
 
         Args:
