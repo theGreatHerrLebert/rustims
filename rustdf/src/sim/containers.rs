@@ -9,21 +9,13 @@ pub struct FragmentIonSim {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FragmentSpectraSim {
+pub struct FragmentIonSeriesSim {
     charge: i32,
     b_ions: Vec<FragmentIonSim>,
     y_ions: Vec<FragmentIonSim>,
 }
 
-impl FragmentSpectraSim {
-    pub fn new(charge: i32, b_ions: Vec<FragmentIonSim>, y_ions: Vec<FragmentIonSim>) -> Self {
-        FragmentSpectraSim {
-            charge,
-            b_ions,
-            y_ions,
-        }
-    }
-
+impl FragmentIonSeriesSim {
     pub fn to_mz_spectrum(&self) -> MzSpectrum {
 
         // create a tuple vector from the fragment spectra
@@ -50,6 +42,23 @@ impl FragmentSpectraSim {
 
     }
 
+}
+
+#[derive(Debug, Clone)]
+pub struct PeptidesSim {
+    pub peptide_id: u32,
+    pub sequence: String,
+    pub proteins: String,
+    pub decoy: bool,
+    pub missed_cleavages: i8,
+    pub n_term : Option<bool>,
+    pub c_term : Option<bool>,
+    pub mono_isotopic_mass: f32,
+    pub retention_time: f32,
+    pub events: f32,
+    pub frame_occurrence: Vec<u32>,
+    pub frame_abundance: Vec<f32>,
+    pub fragments: Vec<FragmentIonSeriesSim>,
 }
 
 #[derive(Debug, Clone)]
@@ -136,22 +145,6 @@ impl IonsSim {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PeptidesSim {
-    pub peptide_id: u32,
-    pub sequence: String,
-    pub proteins: String,
-    pub decoy: bool,
-    pub missed_cleavages: i8,
-    pub n_term : Option<bool>,
-    pub c_term : Option<bool>,
-    pub mono_isotopic_mass: f32,
-    pub retention_time: f32,
-    pub events: f32,
-    pub frame_occurrence: Vec<u32>,
-    pub frame_abundance: Vec<f32>,
-    pub fragments: Vec<FragmentIonSim>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ScansSim {
