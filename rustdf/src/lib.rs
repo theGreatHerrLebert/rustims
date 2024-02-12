@@ -6,5 +6,10 @@ pub mod data {
     pub mod dda;
     pub mod dia;
     pub mod handle;
-    pub mod simulation;
+}
+
+pub mod sim {
+    pub mod containers;
+    pub mod utility;
+    pub mod  simulation;
 }

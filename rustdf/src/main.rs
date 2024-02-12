@@ -1,4 +1,4 @@
-use rustdf::data::simulation::{TimsTofSyntheticsDIA};
+use rustdf::sim::simulation::TimsTofSyntheticsDIA;
 use std::path::Path;
 use clap::Parser;
 
