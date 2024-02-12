@@ -90,6 +90,7 @@ pub trait IonTransmission {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct TimsTransmissionDIA {
     frame_to_window_group: HashMap<i32, i32>,
     window_group_settings: HashMap<(i32, i32), (f64, f64)>,
