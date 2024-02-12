@@ -57,8 +57,12 @@ impl PyTimsTransmissionDIA {
         self.inner.frame_to_window_group(frame_id)
     }
 
-    pub fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64) -> bool {
-        self.inner.is_transmitted(frame_id, scan_id, mz)
+    pub fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64, min_proba: Option<f64>) -> bool {
+        self.inner.is_transmitted(frame_id, scan_id, mz, min_proba)
+    }
+
+    pub fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
+        self.inner.any_transmitted(frame_id, scan_id, &mz, min_proba)
     }
 }
 
