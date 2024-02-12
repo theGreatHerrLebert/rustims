@@ -15,26 +15,25 @@ pub struct FragmentSpectraSim {
     y_ions: Vec<FragmentIonSim>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FragmentSpectraListSim(Vec<FragmentSpectraSim>);
-
-
-impl FragmentSpectraListSim {
-    pub fn new(spectra: Vec<FragmentSpectraSim>) -> Self {
-        FragmentSpectraListSim(spectra)
+impl FragmentSpectraSim {
+    pub fn new(charge: i32, b_ions: Vec<FragmentIonSim>, y_ions: Vec<FragmentIonSim>) -> Self {
+        FragmentSpectraSim {
+            charge,
+            b_ions,
+            y_ions,
+        }
     }
 
     pub fn to_mz_spectrum(&self) -> MzSpectrum {
 
         // create a tuple vector from the fragment spectra
         let mut tuples = Vec::new();
-        for spectrum in &self.0 {
-            for ion in &spectrum.b_ions {
-                tuples.push((ion.mz, ion.intensity));
-            }
-            for ion in &spectrum.y_ions {
-                tuples.push((ion.mz, ion.intensity));
-            }
+
+        for ion in &self.b_ions {
+            tuples.push((ion.mz, ion.intensity));
+        }
+        for ion in &self.y_ions {
+            tuples.push((ion.mz, ion.intensity));
         }
 
         // sort the tuples by mz
@@ -50,6 +49,7 @@ impl FragmentSpectraListSim {
         }
 
     }
+
 }
 
 #[derive(Debug, Clone)]
@@ -150,7 +150,7 @@ pub struct PeptidesSim {
     pub events: f32,
     pub frame_occurrence: Vec<u32>,
     pub frame_abundance: Vec<f32>,
-    pub fragments: Vec<FragmentSpectraListSim>,
+    pub fragments: Vec<FragmentIonSim>,
 }
 
 #[derive(Debug, Clone)]

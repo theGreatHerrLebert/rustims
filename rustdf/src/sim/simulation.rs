@@ -6,7 +6,7 @@ use serde_json;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use crate::sim::containers::{FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim, FragmentSpectraListSim};
+use crate::sim::containers::{FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim, FragmentIonSim};
 
 pub struct TimsTofSyntheticsDIA {
     pub synthetics: TimsTofSynthetics,
@@ -352,7 +352,7 @@ impl SyntheticsDataHandle {
                 )),
             };
 
-            let fragment_ion_sim: Vec<FragmentSpectraListSim> = match serde_json::from_str(&fragment_ion_list_str) {
+            let fragment_ion_sim: Vec<FragmentIonSim> = match serde_json::from_str(&fragment_ion_list_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     12,
