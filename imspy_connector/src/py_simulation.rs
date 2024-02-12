@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use rustdf::data::simulation::{TimsTofSynthetics, TimsTofSyntheticsDIA};
+use rustdf::sim::simulation::{TimsTofSynthetics, TimsTofSyntheticsDIA};
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
