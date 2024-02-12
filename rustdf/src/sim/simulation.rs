@@ -6,7 +6,7 @@ use serde_json;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use crate::sim::containers::{FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
+use crate::sim::containers::{FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim, FragmentIonSeriesSim};
 
 pub struct TimsTofSyntheticsDIA {
     pub synthetics: TimsTofSynthetics,
@@ -332,6 +332,7 @@ impl SyntheticsDataHandle {
         let peptides_iter = stmt.query_map([], |row| {
             let frame_occurrence_str: String = row.get(10)?;
             let frame_abundance_str: String = row.get(11)?;
+            let fragment_ion_list_str: String = row.get(12)?;
 
             let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
                 Ok(value) => value,
@@ -351,6 +352,15 @@ impl SyntheticsDataHandle {
                 )),
             };
 
+            let fragment_ion_sim: Vec<FragmentIonSeriesSim> = match serde_json::from_str(&fragment_ion_list_str) {
+                Ok(value) => value,
+                Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
+                    12,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )),
+            };
+
             Ok(PeptidesSim {
                 peptide_id: row.get(0)?,
                 sequence: row.get(1)?,
@@ -364,6 +374,7 @@ impl SyntheticsDataHandle {
                 events: row.get(9)?,
                 frame_occurrence,
                 frame_abundance,
+                fragments: fragment_ion_sim,
             })
         })?;
         let mut peptides = Vec::new();
