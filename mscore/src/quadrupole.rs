@@ -61,6 +61,18 @@ pub trait IonTransmission {
         }
     }
 
+    fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64, min_proba: Option<f64>) -> bool {
+        let probability_cutoff = min_proba.unwrap_or(0.5);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, &vec![mz]);
+        transmission_probability[0] > probability_cutoff
+    }
+
+    fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>, min_proba: Option<f64>) -> bool {
+        let probability_cutoff = min_proba.unwrap_or(0.5);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, mz);
+        transmission_probability.iter().any(|&p| p > probability_cutoff)
+    }
+
     fn transmit_tims_frame(&self, frame: &TimsFrame, min_probability: Option<f64>) -> TimsFrame {
         let spectra = frame.to_tims_spectra();
         let mut filtered_spectra = Vec::new();
@@ -90,6 +102,7 @@ pub trait IonTransmission {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct TimsTransmissionDIA {
     frame_to_window_group: HashMap<i32, i32>,
     window_group_settings: HashMap<(i32, i32), (f64, f64)>,
@@ -146,19 +159,6 @@ impl TimsTransmissionDIA {
         match setting {
             Some(s) => Some(s),
             None => None,
-        }
-    }
-
-    pub fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64) -> bool {
-
-        let setting = self.get_setting(self.frame_to_window_group(frame_id), scan_id);
-
-        match setting {
-            Some((isolation_mz, isolation_width)) => {
-                let transmission_probability = apply_transmission(*isolation_mz, *isolation_width, self.k, vec![mz]);
-                transmission_probability[0] > 0.5
-            },
-            None => false,
         }
     }
 }

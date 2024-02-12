@@ -3,16 +3,16 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FragmentIonSim {
-    mz: f64,
-    kind: String,
-    intensity: f64,
+    pub mz: f64,
+    pub kind: String,
+    pub intensity: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FragmentIonSeriesSim {
-    charge: i32,
-    b_ions: Vec<FragmentIonSim>,
-    y_ions: Vec<FragmentIonSim>,
+    pub charge: i32,
+    pub b_ions: Vec<FragmentIonSim>,
+    pub y_ions: Vec<FragmentIonSim>,
 }
 
 impl FragmentIonSeriesSim {
