@@ -71,7 +71,7 @@ impl TimsTofSyntheticsDIA {
     }
     fn build_fragment_frame(&self, frame_id: u32) -> TimsFrame {
         let ms_type = MsType::FragmentDia;
-        let frame = self.synthetics.build_fragment_frame(frame_id, ms_type, Box::new(self.transmission_settings.clone()));
+        let frame = self.synthetics.build_fragment_frame(frame_id, ms_type, Box::new(self.transmission_settings.clone()), None, None, None);
         frame
     }
 }
@@ -296,7 +296,7 @@ impl TimsTofSynthetics {
         )
     }
 
-    pub fn build_fragment_frame(&self, frame_id: u32, ms_type: MsType, transmission: Box<dyn IonTransmission>) -> TimsFrame {
+    pub fn build_fragment_frame(&self, frame_id: u32, ms_type: MsType, transmission: Box<dyn IonTransmission>, mz_min: Option<f64>, mz_max: Option<f64>, intensity_min: Option<f64>) -> TimsFrame {
         // check frame id
         let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
             false => ms_type.clone(),
@@ -385,13 +385,13 @@ impl TimsTofSynthetics {
 
         let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
         tims_frame.filter_ranged(
-            0.0,
-            2000.0,
+            mz_min.unwrap_or(100.0),
+            mz_max.unwrap_or(1700.0),
             0,
             1000,
             0.0,
             10.0,
-            1.0,
+            intensity_min.unwrap_or(1.0),
             1e9,
         )
     }
