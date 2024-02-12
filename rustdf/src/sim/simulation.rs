@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::collections::{BTreeMap, HashSet};
 use mscore::{IndexedMzSpectrum, IonTransmission, MsType, MzSpectrum, TimsFrame, TimsSpectrum, TimsTransmissionDIA};
 use rusqlite::{Connection, Result};
@@ -76,8 +77,8 @@ impl TimsTofSyntheticsDIA {
 }
 
 pub struct TimsTofSynthetics {
-    pub ions: Vec<IonsSim>,
-    pub peptides: Vec<PeptidesSim>,
+    pub ions: BTreeMap<u32, IonsSim>,
+    pub peptides: BTreeMap<u32, PeptidesSim>,
     pub scans: Vec<ScansSim>,
     pub frames: Vec<FramesSim>,
     pub precursor_frame_id_set: HashSet<u32>,
@@ -86,7 +87,7 @@ pub struct TimsTofSynthetics {
     pub frame_to_rt: BTreeMap<u32, f32>,
     pub scan_to_mobility: BTreeMap<u32, f32>,
     pub peptide_to_events: BTreeMap<u32, f32>,
-    pub peptide_to_fragment_ion_series: BTreeMap<u32, Vec<FragmentIonSeriesSim>>,
+    pub peptide_to_fragment_ion_series: BTreeMap<u32, BTreeMap<i8, FragmentIonSeriesSim>>,
 }
 
 impl TimsTofSynthetics {
@@ -107,8 +108,8 @@ impl TimsTofSynthetics {
         let scans = handle.read_scans()?;
         let frames = handle.read_frames()?;
         Ok(Self {
-            ions: ions.clone(),
-            peptides: peptides.clone(),
+            ions: Self::build_ion_map(&ions),
+            peptides: Self::build_peptide_map(&peptides),
             scans: scans.clone(),
             frames: frames.clone(),
             precursor_frame_id_set: Self::build_precursor_frame_id_set(&frames),
@@ -120,6 +121,23 @@ impl TimsTofSynthetics {
             peptide_to_fragment_ion_series: Self::build_fragment_ion_series(&peptides),
         })
     }
+
+    fn build_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, IonsSim> {
+        let mut ion_map = BTreeMap::new();
+        for ion in ions.iter() {
+            ion_map.insert(ion.peptide_id, ion.clone());
+        }
+        ion_map
+    }
+
+    fn build_peptide_map(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, PeptidesSim> {
+        let mut peptide_map = BTreeMap::new();
+        for peptide in peptides.iter() {
+            peptide_map.insert(peptide.peptide_id, peptide.clone());
+        }
+        peptide_map
+    }
+
 
     // Method to build a set of precursor frame ids, can be used to check if a frame is a precursor frame
     fn build_precursor_frame_id_set(frames: &Vec<FramesSim>) -> HashSet<u32> {
@@ -191,14 +209,18 @@ impl TimsTofSynthetics {
         peptide_to_ions
     }
 
-    fn build_fragment_ion_series(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, Vec<FragmentIonSeriesSim>> {
+    fn build_fragment_ion_series(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, BTreeMap<i8, FragmentIonSeriesSim>> {
 
         let mut peptide_to_fragment_ion_series = BTreeMap::new();
 
         for peptide in peptides.iter() {
             let peptide_id = peptide.peptide_id;
-            let fragment_ion_series = peptide.fragments.clone();
-            peptide_to_fragment_ion_series.insert(peptide_id, fragment_ion_series);
+            let mut inner_map = BTreeMap::new();
+            for fragment in peptide.fragments.iter() {
+                inner_map.insert(fragment.charge as i8, fragment.clone());
+            }
+
+            peptide_to_fragment_ion_series.insert(peptide_id, inner_map);
         }
 
         peptide_to_fragment_ion_series
@@ -213,7 +235,7 @@ impl TimsTofSynthetics {
 
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
-        // TODO: make sure that the frame_id is in the frame_to_abundances map
+        // Frame might not have any peptides
         if !self.frame_to_abundances.contains_key(&frame_id) {
             return TimsFrame::new(
                 frame_id as i32,
@@ -226,9 +248,9 @@ impl TimsTofSynthetics {
                 vec![],
             );
         }
-
-
+        // Get the peptide ids and abundances for the frame, should now save to unwrap since we checked if the frame is in the map
         let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
+
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
             // jump to next peptide if the peptide_id is not in the peptide_to_ions map
             if !self.peptide_to_ions.contains_key(&peptide_id) {
@@ -277,11 +299,101 @@ impl TimsTofSynthetics {
     pub fn build_fragment_frame(&self, frame_id: u32, ms_type: MsType, transmission: Box<dyn IonTransmission>) -> TimsFrame {
         // check frame id
         let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
-            false => ms_type,
+            false => ms_type.clone(),
             true => MsType::Unknown,
         };
 
-        todo!("Implement build_fragment_frame")
+        let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
+
+        // Frame might not have any peptides
+        if !self.frame_to_abundances.contains_key(&frame_id) {
+            return TimsFrame::new(
+                frame_id as i32,
+                ms_type.clone(),
+                *self.frame_to_rt.get(&frame_id).unwrap() as f64,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            );
+        }
+
+        // Get the peptide ids and abundances for the frame, should now save to unwrap since we checked if the frame is in the map
+        let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
+
+        // Go over all peptides in the frame with their respective abundances
+        for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
+
+            // jump to next peptide if the peptide_id is not in the peptide_to_ions map
+            if !self.peptide_to_ions.contains_key(&peptide_id) {
+                continue;
+            }
+
+            // get all the ions for the peptide
+            let (ion_abundances, scan_occurrences, scan_abundances, spectra) = self.peptide_to_ions.get(&peptide_id).unwrap();
+
+            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
+                // occurrence and abundance of the ion in the scan
+                let scan_occurrence = scan_occurrences.get(index).unwrap();
+                let scan_abundance = scan_abundances.get(index).unwrap();
+
+                // get precursor spectrum for the ion
+                let spectrum = spectra.get(index).unwrap();
+
+                // go over occurrence and abundance of the ion in the scan
+                for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
+
+                    // first, check if precursor is transmitted
+                    let scan_id = *scan;
+                    if !transmission.any_transmitted(frame_id as i32, scan_id as i32, &spectrum.mz, None) {
+                        continue;
+                    }
+
+                    // calculate abundance factor
+                    let abundance_factor = abundance * ion_abundance * scan_abu * self.peptide_to_events.get(&peptide_id).unwrap();
+
+                    // go over all fragment ion series
+                    let fragments = self.peptide_to_fragment_ion_series.get(&peptide_id).unwrap();
+
+                    // max charge is 3 or the charge of the ion, whichever is smaller
+                    let max_charge = min(3, self.ions.get(&peptide_id).unwrap().charge);
+
+                    // go over all charges from 1 to max charge
+                    for charge in 1..=max_charge {
+
+                        // get fragment ion series for the charge
+                        let fragment_ion_series = fragments.get(&charge).unwrap();
+
+                        // build mz spectrum from fragment ion series
+                        let scaled_spec = fragment_ion_series.to_mz_spectrum() * abundance_factor as f64;
+
+                        tims_spectra.push(
+                            TimsSpectrum::new(
+                                frame_id as i32,
+                                scan_id as i32,
+                                *self.frame_to_rt.get(&frame_id).unwrap() as f64,
+                                *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
+                                ms_type.clone(),
+                                IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity),
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
+        tims_frame.filter_ranged(
+            0.0,
+            2000.0,
+            0,
+            1000,
+            0.0,
+            10.0,
+            1.0,
+            1e9,
+        )
     }
 
     // Method to build multiple frames in parallel
