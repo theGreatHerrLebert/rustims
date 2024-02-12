@@ -68,8 +68,10 @@ impl TimsTofSyntheticsDIA {
             true => self.build_fragment_frame(frame_id),
         }
     }
-    fn build_fragment_frame(&self, _frame_id: u32) -> TimsFrame {
-        todo!("implement the method to build a fragment frame")
+    fn build_fragment_frame(&self, frame_id: u32) -> TimsFrame {
+        let ms_type = MsType::FragmentDia;
+        let frame = self.synthetics.build_fragment_frame(frame_id, ms_type, Box::new(self.transmission_settings.clone()));
+        frame
     }
 }
 
@@ -84,6 +86,7 @@ pub struct TimsTofSynthetics {
     pub frame_to_rt: BTreeMap<u32, f32>,
     pub scan_to_mobility: BTreeMap<u32, f32>,
     pub peptide_to_events: BTreeMap<u32, f32>,
+    pub peptide_to_fragment_ion_series: BTreeMap<u32, Vec<FragmentIonSeriesSim>>,
 }
 
 impl TimsTofSynthetics {
@@ -108,24 +111,25 @@ impl TimsTofSynthetics {
             peptides: peptides.clone(),
             scans: scans.clone(),
             frames: frames.clone(),
-            precursor_frame_id_set: Self::build_precursor_frame_id_set(frames.clone()),
-            frame_to_abundances: Self::build_frame_to_abundances(peptides.clone()),
-            peptide_to_ions: Self::build_peptide_to_ions(ions.clone()),
-            frame_to_rt: Self::build_frame_to_rt(frames.clone()),
-            scan_to_mobility: Self::build_scan_to_mobility(scans.clone()),
-            peptide_to_events: Self::build_peptide_to_events(peptides.clone()),
+            precursor_frame_id_set: Self::build_precursor_frame_id_set(&frames),
+            frame_to_abundances: Self::build_frame_to_abundances(&peptides),
+            peptide_to_ions: Self::build_peptide_to_ions(&ions),
+            frame_to_rt: Self::build_frame_to_rt(&frames),
+            scan_to_mobility: Self::build_scan_to_mobility(&scans),
+            peptide_to_events: Self::build_peptide_to_events(&peptides),
+            peptide_to_fragment_ion_series: Self::build_fragment_ion_series(&peptides),
         })
     }
 
     // Method to build a set of precursor frame ids, can be used to check if a frame is a precursor frame
-    fn build_precursor_frame_id_set(frames: Vec<FramesSim>) -> HashSet<u32> {
+    fn build_precursor_frame_id_set(frames: &Vec<FramesSim>) -> HashSet<u32> {
         frames.iter().filter(|frame| frame.parse_ms_type() == MsType::Precursor)
             .map(|frame| frame.frame_id)
             .collect()
     }
 
     // Method to build a map from peptide id to events (absolute number of events in the simulation)
-     fn build_peptide_to_events(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, f32> {
+     fn build_peptide_to_events(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, f32> {
         let mut peptide_to_events = BTreeMap::new();
         for peptide in peptides.iter() {
             peptide_to_events.insert(peptide.peptide_id, peptide.events);
@@ -134,7 +138,7 @@ impl TimsTofSynthetics {
     }
 
     // Method to build a map from frame id to retention time
-    fn build_frame_to_rt(frames: Vec<FramesSim>) -> BTreeMap<u32, f32> {
+    fn build_frame_to_rt(frames: &Vec<FramesSim>) -> BTreeMap<u32, f32> {
         let mut frame_to_rt = BTreeMap::new();
         for frame in frames.iter() {
             frame_to_rt.insert(frame.frame_id, frame.time);
@@ -143,14 +147,14 @@ impl TimsTofSynthetics {
     }
 
     // Method to build a map from scan id to mobility
-    fn build_scan_to_mobility(scans: Vec<ScansSim>) -> BTreeMap<u32, f32> {
+    fn build_scan_to_mobility(scans: &Vec<ScansSim>) -> BTreeMap<u32, f32> {
         let mut scan_to_mobility = BTreeMap::new();
         for scan in scans.iter() {
             scan_to_mobility.insert(scan.scan, scan.mobility);
         }
         scan_to_mobility
     }
-    fn build_frame_to_abundances(peptides: Vec<PeptidesSim>) -> BTreeMap<u32, (Vec<u32>, Vec<f32>)> {
+    fn build_frame_to_abundances(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, (Vec<u32>, Vec<f32>)> {
         let mut frame_to_abundances = BTreeMap::new();
 
         for peptide in peptides.iter() {
@@ -167,7 +171,7 @@ impl TimsTofSynthetics {
 
         frame_to_abundances
     }
-    fn build_peptide_to_ions(ions: Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)> {
+    fn build_peptide_to_ions(ions: &Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)> {
         let mut peptide_to_ions = BTreeMap::new();
 
         for ion in ions.iter() {
@@ -186,6 +190,20 @@ impl TimsTofSynthetics {
 
         peptide_to_ions
     }
+
+    fn build_fragment_ion_series(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, Vec<FragmentIonSeriesSim>> {
+
+        let mut peptide_to_fragment_ion_series = BTreeMap::new();
+
+        for peptide in peptides.iter() {
+            let peptide_id = peptide.peptide_id;
+            let fragment_ion_series = peptide.fragments.clone();
+            peptide_to_fragment_ion_series.insert(peptide_id, fragment_ion_series);
+        }
+
+        peptide_to_fragment_ion_series
+    }
+
     pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
 
         let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
@@ -212,21 +230,6 @@ impl TimsTofSynthetics {
 
         let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-
-            // check if the peptide_id is in the peptide_to_ions map
-            if !self.peptide_to_ions.contains_key(&peptide_id) {
-                return TimsFrame::new(
-                    frame_id as i32,
-                    ms_type.clone(),
-                    *self.frame_to_rt.get(&frame_id).unwrap() as f64,
-                    vec![],
-                    vec![],
-                    vec![],
-                    vec![],
-                    vec![],
-                );
-            }
-
             // jump to next peptide if the peptide_id is not in the peptide_to_ions map
             if !self.peptide_to_ions.contains_key(&peptide_id) {
                 continue;
@@ -269,6 +272,16 @@ impl TimsTofSynthetics {
             1.0,
             1e9,
         )
+    }
+
+    pub fn build_fragment_frame(&self, frame_id: u32, ms_type: MsType, transmission: Box<dyn IonTransmission>) -> TimsFrame {
+        // check frame id
+        let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
+            false => ms_type,
+            true => MsType::Unknown,
+        };
+
+        todo!("Implement build_fragment_frame")
     }
 
     // Method to build multiple frames in parallel
