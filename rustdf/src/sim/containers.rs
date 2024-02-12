@@ -1,4 +1,56 @@
 use mscore::{MsType, MzSpectrum};
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FragmentIonSim {
+    mz: f64,
+    kind: String,
+    intensity: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FragmentSpectraSim {
+    charge: i32,
+    b_ions: Vec<FragmentIonSim>,
+    y_ions: Vec<FragmentIonSim>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FragmentSpectraListSim(Vec<FragmentSpectraSim>);
+
+
+impl FragmentSpectraListSim {
+    pub fn new(spectra: Vec<FragmentSpectraSim>) -> Self {
+        FragmentSpectraListSim(spectra)
+    }
+
+    pub fn to_mz_spectrum(&self) -> MzSpectrum {
+
+        // create a tuple vector from the fragment spectra
+        let mut tuples = Vec::new();
+        for spectrum in &self.0 {
+            for ion in &spectrum.b_ions {
+                tuples.push((ion.mz, ion.intensity));
+            }
+            for ion in &spectrum.y_ions {
+                tuples.push((ion.mz, ion.intensity));
+            }
+        }
+
+        // sort the tuples by mz
+        tuples.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        // create the mz and intensity vectors
+        let mz = tuples.iter().map(|(m, _)| *m).collect();
+        let intensity = tuples.iter().map(|(_, i)| *i).collect();
+
+        MzSpectrum {
+            mz,
+            intensity,
+        }
+
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WindowGroupSettingsSim {
@@ -98,6 +150,7 @@ pub struct PeptidesSim {
     pub events: f32,
     pub frame_occurrence: Vec<u32>,
     pub frame_abundance: Vec<f32>,
+    pub fragments: Vec<FragmentSpectraListSim>,
 }
 
 #[derive(Debug, Clone)]
