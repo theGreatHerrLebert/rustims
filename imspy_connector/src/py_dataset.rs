@@ -104,9 +104,9 @@ impl PyTimsDataset {
         ))
     }
 
-    #[staticmethod]
-    pub fn compress_collection(py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize) -> PyResult<PyObject> {
-        let compressed_frames = compress_collection(frames.iter().map(|x| x.inner.clone()).collect::<Vec<_>>(), total_scans, num_threads);
+    pub fn compress_collection(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize) -> PyResult<PyObject> {
+
+        let compressed_frames = compress_collection(frames.iter().map(|x| x.inner.clone()).collect::<Vec<_>>(), total_scans, num_threads, Some(&self.inner.handle));
 
         let py_list = PyList::empty(py);
 
