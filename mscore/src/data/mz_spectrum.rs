@@ -2,7 +2,7 @@ use std::fmt;
 use std::collections::BTreeMap;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
-use crate::tims_frame::{ToResolution, Vectorized};
+use crate::data::tims_frame::{ToResolution, Vectorized};
 use serde::{Serialize, Deserialize};
 
 /// Represents the type of spectrum.
@@ -79,7 +79,7 @@ impl MzSpectrum {
     /// # Example
     ///
     /// ```rust
-    /// # use mscore::MzSpectrum;
+    /// # use mscore::data::mz_spectrum::MzSpectrum;
     /// let spectrum = MzSpectrum::new(vec![100.0, 200.0], vec![10.0, 20.0]);
     /// assert_eq!(spectrum.mz, vec![100.0, 200.0]);
     /// assert_eq!(spectrum.intensity, vec![10.0, 20.0]);
@@ -126,7 +126,7 @@ impl MzSpectrum {
     /// # Example
     ///
     /// ```rust
-    /// # use mscore::MzSpectrum;
+    /// # use mscore::data::mz_spectrum::MzSpectrum;
     /// let spectrum = MzSpectrum::new(vec![100.0, 101.0, 102.5, 103.0], vec![10.0, 20.0, 30.0, 40.0]);
     /// let windowed_spectrum = spectrum.to_windows(1.0, false, 1, 10.0);
     /// assert!(windowed_spectrum.contains_key(&100));
@@ -231,8 +231,8 @@ impl ToResolution for MzSpectrum {
     /// # Example
     ///
     /// ```rust
-    /// # use mscore::MzSpectrum;
-    /// # use mscore::ToResolution;
+    /// # use mscore::data::mz_spectrum::MzSpectrum;
+    /// # use mscore::data::tims_frame::ToResolution;
     /// let spectrum = MzSpectrum::new(vec![100.123, 100.121, 100.131], vec![10.0, 20.0, 30.0]);
     /// let binned_spectrum_1 = spectrum.to_resolution(1);
     /// let binned_spectrum_2 = spectrum.to_resolution(2);
@@ -301,7 +301,7 @@ impl std::ops::Add for MzSpectrum {
     ///
     /// # Example
     /// ```
-    /// # use mscore::MzSpectrum;
+    /// # use mscore::data::mz_spectrum::MzSpectrum;
     /// let spectrum1 = MzSpectrum { mz: vec![100.523, 101.923], intensity: vec![10.0, 20.0] };
     /// let spectrum2 = MzSpectrum { mz: vec![101.235, 105.112], intensity: vec![15.0, 30.0] };
     ///
@@ -369,7 +369,8 @@ impl IndexedMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{MzSpectrum, IndexedMzSpectrum};
+    /// use mscore::data::mz_spectrum::IndexedMzSpectrum;
+    /// use mscore::data::mz_spectrum::MzSpectrum;
     ///
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
@@ -386,7 +387,7 @@ impl IndexedMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::IndexedMzSpectrum;
+    /// use mscore::data::mz_spectrum::IndexedMzSpectrum;
     ///
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
@@ -429,7 +430,7 @@ impl IndexedMzSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::IndexedMzSpectrum;
+    /// use mscore::data::mz_spectrum::IndexedMzSpectrum;
     ///
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
@@ -507,7 +508,7 @@ impl TimsSpectrum {
     /// # Examples
     ///
     /// ```
-    /// use mscore::{TimsSpectrum, IndexedMzSpectrum, MsType};
+    /// use mscore::data::mz_spectrum::{TimsSpectrum, IndexedMzSpectrum, MsType};
     ///
     /// let spectrum = TimsSpectrum::new(1, 1, 100.0, 0.1, MsType::FragmentDda, IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]));
     /// ```
