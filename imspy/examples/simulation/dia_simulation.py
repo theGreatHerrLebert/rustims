@@ -34,7 +34,6 @@ if gpus:
         # Virtual devices must be set before GPUs have been initialized
         print(e)
 
-
 os.environ["WANDB_SILENT"] = "true"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -372,12 +371,10 @@ def main():
         ids = frame_ids[start_index:stop_index]
 
         built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
-        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
+        # acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
 
-        """
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
-        """
 
     if verbose:
         print("Writing frame meta data to database...")
