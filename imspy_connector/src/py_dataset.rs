@@ -1,3 +1,4 @@
+use mscore::data::tims_frame::TimsFrame;
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
 use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress, parse_decompressed_bruker_binary_data, reconstruct_compressed_data, compress_collection};
@@ -81,8 +82,7 @@ impl PyTimsDataset {
         result
     }
 
-    #[staticmethod]
-    pub fn scan_tof_intensities_to_compressed_u8(py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32) -> Py<PyArray1<u8>> {
+    pub fn scan_tof_intensities_to_compressed_u8(&self, py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32) -> Py<PyArray1<u8>> {
         let result = reconstruct_compressed_data(scan_values, tof_values, intensity_values, total_scans).unwrap();
         result.into_pyarray(py).to_owned()
     }
@@ -104,10 +104,64 @@ impl PyTimsDataset {
         ))
     }
 
-    pub fn compress_collection(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize) -> PyResult<PyObject> {
+    pub fn compress_frame(&self, py: Python<'_>, frame: PyTimsFrame, total_scans: u32, use_frame_id: Option<bool>) -> PyResult<PyObject> {
 
-        let compressed_frames = compress_collection(frames.iter().map(|x| x.inner.clone()).collect::<Vec<_>>(), total_scans, num_threads, Some(&self.inner.handle));
+        let frame_id = if use_frame_id.unwrap_or(false) {
+            frame.inner.frame_id
+        } else {
+            1
+        };
 
+        let mz = frame.inner.ims_frame.mz.clone();
+        let tof = self.inner.mz_to_tof(frame_id as u32, &mz);
+        let inv_mob = frame.inner.ims_frame.mobility.clone();
+        let scan = self.inner.inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
+
+        let compressed_frame = reconstruct_compressed_data(
+            scan,
+            tof,
+            frame.inner.ims_frame.intensity.clone().iter().map(|x| *x as u32).collect::<Vec<_>>(),
+            total_scans).unwrap();
+
+        let py_array: &PyArray1<u8> = compressed_frame.into_pyarray(py);
+        Ok(py_array.to_owned().into())
+    }
+
+    pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>) -> PyResult<PyObject> {
+
+        let mut filled_tims_frames = Vec::with_capacity(frames.len());
+
+        // translate mz to tof, inv_mob to scan for each frame
+        for frame in frames {
+            let frame_id = if use_frame_id.unwrap_or(false) {
+                frame.inner.frame_id
+            } else {
+                1
+            };
+
+            let mz = frame.inner.ims_frame.mz.clone();
+            let tof = self.inner.mz_to_tof(frame_id as u32, &mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
+            let inv_mob = frame.inner.ims_frame.mobility.clone();
+            let scan = self.inner.inverse_mobility_to_scan(1, &inv_mob);
+
+            let frame = TimsFrame::new(
+                frame.inner.frame_id,
+                frame.inner.ms_type.clone(),
+                frame.inner.ims_frame.retention_time,
+                scan,
+                inv_mob,
+                tof,
+                mz,
+                frame.inner.ims_frame.intensity,
+            );
+
+            filled_tims_frames.push(frame);
+        }
+
+        // compress the frames
+        let compressed_frames = compress_collection(filled_tims_frames, total_scans, num_threads);
+
+        // convert the compressed frames to a python list of numpy arrays
         let py_list = PyList::empty(py);
 
         for frame in compressed_frames {
