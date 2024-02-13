@@ -3,7 +3,6 @@ import argparse
 import pandas as pd
 from tqdm import tqdm
 from imspy.chemistry import calculate_mz
-from imspy.algorithm.transmission.quadrupole import TransmissionDIA
 
 from imspy.simulation.proteome import PeptideDigest
 from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
@@ -15,7 +14,7 @@ from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
 
-from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilder
+from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilderDIA
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
 
 from pathlib import Path
@@ -180,18 +179,6 @@ def main():
     )
 
     if verbose:
-        print("Generating fragment ions...")
-
-    fragments = peptide_rt.apply(lambda p: sequence_to_all_ions(p.sequence), axis=1)
-    peptide_rt['fragments'] = fragments
-
-    # update peptides table in database
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=peptide_rt,
-    )
-
-    if verbose:
         print("Simulating charge states...")
 
     IonSource = BinomialChargeStateDistributionModel()
@@ -224,7 +211,7 @@ def main():
                 ions.mobility_gru_predictor <= acquisition_builder.im_upper)]
 
     if verbose:
-        print("Simulating precursor spectra...")
+        print("Simulating precursor isotopic distributions...")
 
     specs = generate_isotope_patterns_rust(
         ions['monoisotopic-mass'], ions.charge,
@@ -339,23 +326,26 @@ def main():
         table=ions
     )
 
-    print("Starting frame assembly...")
+    if verbose:
+        print("Generating fragment ions...")
 
-    wg = acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows')
-    info = acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info')
+    fragments = peptide_rt.apply(lambda p: sequence_to_all_ions(p.sequence), axis=1)
+    peptide_rt['fragments'] = fragments
 
-    fragment_frames = set(frames[frames.ms_type > 0].frame_id.values)
-
-    quadrupole = TransmissionDIA(
-        frame_to_window_group=info,
-        window_group_settings=wg,
+    # update peptides table in database
+    acquisition_builder.synthetics_handle.create_table(
+        table_name='peptides',
+        table=peptide_rt,
     )
+
+    if verbose:
+        print("Starting frame assembly...")
 
     batch_size = args.batch_size
     num_batches = len(frames) // batch_size + 1
     frame_ids = frames.frame_id.values
 
-    frame_builder = TimsTofSyntheticAcquisitionBuilder(
+    frame_builder = TimsTofSyntheticAcquisitionBuilderDIA(
         db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
     )
 
@@ -366,14 +356,12 @@ def main():
         ids = frame_ids[start_index:stop_index]
         built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
 
-        # apply transmission to fragment frames
-        for j, frame in enumerate(built_frames):
-            if frame.frame_id in fragment_frames:
-                transmitted_frame = quadrupole.filter_frame(frame)
-                built_frames[j] = transmitted_frame
+        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
 
+        """
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
+        """
 
     if verbose:
         print("Writing frame meta data to database...")
