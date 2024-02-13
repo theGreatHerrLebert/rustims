@@ -19,6 +19,21 @@ from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributio
 
 from pathlib import Path
 
+import tensorflow as tf
+
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
+        tf.config.experimental.set_virtual_device_configuration(
+            gpus[0],
+            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * 4)]
+        )
+        print("GPU memory restricted to 4GB.")
+    except RuntimeError as e:
+        # Virtual devices must be set before GPUs have been initialized
+        print(e)
+
 os.environ["WANDB_SILENT"] = "true"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -356,12 +371,10 @@ def main():
         ids = frame_ids[start_index:stop_index]
 
         built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
-        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
+        # acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
 
-        """
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
-        """
 
     if verbose:
         print("Writing frame meta data to database...")

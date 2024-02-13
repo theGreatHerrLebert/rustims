@@ -263,7 +263,7 @@ class TimsDataset(ABC):
             total_scans
         )
 
-    def compress_frame_collection(self, frames: List[TimsFrame],
+    def compress_frames(self, frames: List[TimsFrame],
                                   total_scans: int, num_threads: int = 4) -> List[NDArray[np.uint8]]:
         """Compress a collection of frames.
 
@@ -275,7 +275,7 @@ class TimsDataset(ABC):
         Returns:
             List[NDArray[np.uint8]]: List of compressed bytes.
         """
-        return self.__dataset.compress_collection([f.get_fragment_ptr() for f in frames], total_scans, num_threads)
+        return self.__dataset.compress_frames([f.get_fragment_ptr() for f in frames], total_scans, num_threads)
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
