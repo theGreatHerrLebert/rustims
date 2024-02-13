@@ -1,6 +1,7 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{MzSpectrum, IndexedMzSpectrum, TimsSpectrum, MsType, MzSpectrumVectorized, ToResolution, Vectorized};
+use mscore::data::tims_frame::{ToResolution, Vectorized};
+use mscore::data::mz_spectrum::{MzSpectrum, IndexedMzSpectrum, MsType, MzSpectrumVectorized, TimsSpectrum};
 use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]

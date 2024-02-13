@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use mscore::{IonTransmission, TimsTransmissionDIA};
+use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use crate::py_mz_spectrum::PyMzSpectrum;
 use crate::py_tims_frame::PyTimsFrame;
 
@@ -68,5 +68,5 @@ impl PyTimsTransmissionDIA {
 
 #[pyfunction]
 pub fn apply_transmission(midpoint: f64, window_length: f64, mz: Vec<f64>, k: Option<f64>) -> Vec<f64> {
-    mscore::apply_transmission(midpoint, window_length, k.unwrap_or(15.0), mz)
+    mscore::algorithm::quadrupole::apply_transmission(midpoint, window_length, k.unwrap_or(15.0), mz)
 }
