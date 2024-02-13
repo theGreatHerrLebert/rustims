@@ -201,7 +201,7 @@ class TDFWriter:
         for data in meta_data:
             self.frame_meta_data.append(data)
 
-        compressed_data = self.__helper_handle.compress_frame_collection(
+        compressed_data = self.__helper_handle.compress_frames(
             frames,
             total_scans=self.num_scans,
             num_threads=num_threads
