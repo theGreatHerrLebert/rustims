@@ -2,7 +2,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::types::PyTuple;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::{TimsFrame, ImsFrame, MsType, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame, TimsSpectrum};
+use mscore::data::mz_spectrum::{MsType, TimsSpectrum};
+use mscore::data::tims_frame::{TimsFrame, ImsFrame, TimsFrameVectorized, ImsFrameVectorized, ToResolution, Vectorized, RawTimsFrame};
 
 use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
 

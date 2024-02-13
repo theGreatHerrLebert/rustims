@@ -1,4 +1,5 @@
-use mscore::{TimsFrame, TimsSlice};
+use mscore::data::tims_frame::TimsFrame;
+use mscore::data::tims_slice::TimsSlice;
 use crate::data::handle::{AcquisitionMode, TimsData, TimsDataHandle};
 
 pub struct TimsDatasetDIA {

@@ -8,7 +8,10 @@ use std::fs::File;
 use std::io::{Seek, SeekFrom, Cursor};
 use byteorder::{LittleEndian, ByteOrder, ReadBytesExt};
 
-use mscore::{TimsFrame, RawTimsFrame, ImsFrame, MsType, TimsSlice};
+use mscore::data::mz_spectrum::MsType;
+use mscore::data::tims_frame::{TimsFrame, ImsFrame, RawTimsFrame};
+use mscore::data::tims_slice::TimsSlice;
+
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 

@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
-use mscore::{MsType, TimsPlane, TimsSlice, TimsSliceVectorized};
+use mscore::data::mz_spectrum::{MsType};
+use mscore::data::tims_slice::{TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
 use numpy::{IntoPyArray, PyArray1};
 use crate::py_mz_spectrum::{PyTimsSpectrum};

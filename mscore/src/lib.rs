@@ -1,64 +1,23 @@
-pub mod mz_spectrum;
-mod tims_frame;
-mod tims_slice;
-mod chemistry;
-mod quadrupole;
+// chemistry module
+pub mod chemistry {
+    pub mod atoms;
+    pub mod amino_acids;
+    pub mod unimod;
+    pub mod aa_sequence;
+    pub mod constants;
+    pub mod formulas;
+}
 
-pub use {
+// algorithm module
+pub mod algorithm {
+    pub mod quadrupole;
+    pub mod isotope_distributions;
+    pub mod aa_sequence;
+}
 
-    chemistry::K_BOLTZMANN,
-    chemistry::MASS_ELECTRON,
-    chemistry::MASS_NEUTRON,
-    chemistry::MASS_PROTON,
-    chemistry::MASS_WATER,
-    chemistry::STANDARD_PRESSURE,
-    chemistry::STANDARD_TEMPERATURE,
-    chemistry::ELEMENTARY_CHARGE,
-    chemistry::amino_acids,
-    chemistry::amino_acid_masses,
-    chemistry::modifications_mz,
-    chemistry::modifications_mz_numerical,
-    chemistry::one_over_reduced_mobility_to_ccs,
-    chemistry::ccs_to_reduced_mobility,
-    chemistry::generate_averagine_spectrum,
-    chemistry::generate_averagine_spectra,
-    chemistry::factorial,
-    chemistry::calculate_mz,
-    chemistry::calculate_monoisotopic_mass,
-    chemistry::calculate_b_y_fragment_mz,
-    chemistry::calculate_b_y_ion_series,
-    chemistry::simulate_charge_state_for_sequence,
-    chemistry::simulate_charge_states_for_sequences,
-
-    mz_spectrum::MsType,
-
-    mz_spectrum::MzSpectrum,
-    mz_spectrum::MzSpectrumVectorized,
-
-    mz_spectrum::IndexedMzSpectrum,
-    mz_spectrum::IndexedMzSpectrumVectorized,
-
-    mz_spectrum::TimsSpectrum,
-    mz_spectrum::TimsSpectrumVectorized,
-
-    tims_frame::ImsFrame,
-    tims_frame::ImsFrameVectorized,
-
-    tims_frame::RawTimsFrame,
-    tims_frame::TimsFrame,
-    tims_frame::TimsFrameVectorized,
-    tims_frame::ToResolution,
-    tims_frame::Vectorized,
-
-    tims_slice::TimsSlice,
-    tims_slice::TimsSliceVectorized,
-
-    tims_slice::TimsSliceFlat,
-
-    tims_slice::TimsPlane,
-
-    quadrupole::ion_transition_function_midpoint,
-    quadrupole::apply_transmission,
-    quadrupole::IonTransmission,
-    quadrupole::TimsTransmissionDIA,
-};
+// data module
+pub mod data {
+    pub mod mz_spectrum;
+    pub mod tims_frame;
+    pub mod tims_slice;
+}

@@ -1,4 +1,5 @@
-use mscore::{TimsFrame, TimsSlice};
+use mscore::data::tims_frame::TimsFrame;
+use mscore::data::tims_slice::TimsSlice;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::data::handle::{TimsDataHandle, TimsData, AcquisitionMode};

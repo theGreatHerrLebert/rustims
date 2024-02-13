@@ -128,7 +128,7 @@ class GRUCCSPredictor(tf.keras.models.Model):
 
         self.out = tf.keras.layers.Dense(1, activation=None)
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
         """
         :param inputs: should contain: (mz, charge_one_hot, seq_as_token_indices)
         """

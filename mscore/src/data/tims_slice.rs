@@ -4,9 +4,9 @@ use rayon::ThreadPoolBuilder;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use itertools::multizip;
-use crate::{MsType, TimsSpectrum};
 
-use crate::tims_frame::{ImsFrame, TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
+use crate::data::mz_spectrum::{MsType, TimsSpectrum};
+use crate::data::tims_frame::{ImsFrame, TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -28,7 +28,7 @@ impl TimsSlice {
     /// # Example
     ///
     /// ```
-    /// use mscore::TimsSlice;
+    /// use mscore::data::tims_slice::TimsSlice;
     ///
     /// let slice = TimsSlice::new(vec![]);
     /// ```
@@ -55,7 +55,7 @@ impl TimsSlice {
     /// # Example
     ///
     /// ```
-    /// use mscore::TimsSlice;
+    /// use mscore::data::tims_slice::TimsSlice;
     ///
     /// let slice = TimsSlice::new(vec![]);
     /// let filtered_slice = slice.filter_ranged(400.0, 2000.0, 0, 1000, 0.0, 100000.0, 0.0, 1.6, 4);
