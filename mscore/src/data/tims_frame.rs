@@ -470,7 +470,7 @@ impl Vectorized<TimsFrameVectorized> for TimsFrame {
 /// ```
 /// use mscore::data::mz_spectrum::MsType;
 /// use mscore::data::tims_frame::TimsFrame;
-/// use mscore::data::tims_frame::TimsSpectrum;
+/// use mscore::data::mz_spectrum::TimsSpectrum;
 /// use mscore::data::mz_spectrum::IndexedMzSpectrum;
 /// use mscore::data::tims_frame::ToResolution;
 ///
