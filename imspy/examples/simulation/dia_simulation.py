@@ -211,7 +211,7 @@ def main():
                 ions.mobility_gru_predictor <= acquisition_builder.im_upper)]
 
     if verbose:
-        print("Simulating precursor spectra...")
+        print("Simulating precursor isotopic distributions...")
 
     specs = generate_isotope_patterns_rust(
         ions['monoisotopic-mass'], ions.charge,
