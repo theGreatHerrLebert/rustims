@@ -108,22 +108,36 @@ pub fn reconstruct_compressed_data(
     Ok(final_data)
 }
 
-pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, num_threads: usize) -> Vec<Vec<u8>> {
+pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, num_threads: usize, handle: Option<&TimsDataHandle>) -> Vec<Vec<u8>> {
 
     let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
 
     let result = pool.install(|| {
         frames.par_iter().map(|frame| {
-                let compressed_data = reconstruct_compressed_data(
-                    frame.scan.iter().map(|&x| x as u32).collect(),
-                    frame.tof.iter().map(|&x| x as u32).collect(),
-                    frame.ims_frame.intensity.iter().map(|&x| x as u32).collect(),
-                    max_scan_count,
-                ).unwrap();
-                compressed_data
-            }).collect()
+            // if tims data handle is not None, translate mz to tof, inv_mob to scan:
+            let frame = match handle {
+                Some(ref handle) => {
+                    let tof = handle.mz_to_tof(frame.frame_id as u32, &frame.ims_frame.mz);
+                    let scan = handle.inverse_mobility_to_scan(frame.frame_id as u32, &frame.ims_frame.mobility);
+                    TimsFrame {
+                        frame_id: frame.frame_id,
+                        ms_type: frame.ms_type.clone(),
+                        scan,
+                        tof: tof.iter().map(|&x| x as i32).collect(),
+                        ims_frame: frame.ims_frame.clone(),
+                    }
+                },
+                None => frame.clone(),
+            };
+            let compressed_data = reconstruct_compressed_data(
+                frame.scan.iter().map(|&x| x as u32).collect(),
+                frame.tof.iter().map(|&x| x as u32).collect(),
+                frame.ims_frame.intensity.iter().map(|&x| x as u32).collect(),
+                max_scan_count,
+            ).unwrap();
+            compressed_data
+        }).collect()
     });
-
     result
 }
 

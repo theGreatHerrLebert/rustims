@@ -354,8 +354,8 @@ def main():
         start_index = i * batch_size
         stop_index = (i + 1) * batch_size
         ids = frame_ids[start_index:stop_index]
-        built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
 
+        built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
         acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
 
         """
