@@ -173,19 +173,20 @@ class TDFWriter:
 
         return r
 
-    def generate_compressed_data(self, frame: TimsFrame):
+    def compress_frame(self, frame: TimsFrame) -> bytes:
         # calculate TOF using the DH of the other frame
+        # TODO: move translation of mz -> tof and inv_mob -> scan to the helper handle
         tof = self.mz_to_tof(frame.mz)
         scan = self.inv_mobility_to_scan(frame.mobility)
         return self.__helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
                                                                        total_scans=self.num_scans)
 
-    def generate_compressed_data_collection(self, frames: List[TimsFrame], num_threads: int = 4):
+    def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[bytes]:
         return self.__helper_handle.compress_frame_collection(frames, total_scans=self.num_scans, num_threads=num_threads)
 
     def write_frame(self, frame: TimsFrame, scan_mode: int) -> None:
         self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
-        compressed_data = self.generate_compressed_data(frame)
+        compressed_data = self.compress_frame(frame)
 
         with open(self.binary_file, "ab") as bin_file:
             bin_file.write(compressed_data)
