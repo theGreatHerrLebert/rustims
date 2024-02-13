@@ -1,7 +1,6 @@
 use libloading::{Library, Symbol};
 use std::os::raw::{c_char, c_double};
 
-
 //
 // A struct that holds a handle to the raw data
 //

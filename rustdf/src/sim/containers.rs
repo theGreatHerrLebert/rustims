@@ -1,4 +1,4 @@
-use mscore::{MsType, MzSpectrum};
+use mscore::data::mz_spectrum::{MzSpectrum, MsType};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -1,6 +1,8 @@
 use std::cmp::min;
 use std::collections::{BTreeMap, HashSet};
-use mscore::{IndexedMzSpectrum, IonTransmission, MsType, MzSpectrum, TimsFrame, TimsSpectrum, TimsTransmissionDIA};
+use mscore::data::tims_frame::TimsFrame;
+use mscore::data::mz_spectrum::{MzSpectrum, MsType, IndexedMzSpectrum, TimsSpectrum};
+use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use serde_json;
