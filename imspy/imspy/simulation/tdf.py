@@ -182,7 +182,7 @@ class TDFWriter:
                                                                        total_scans=self.num_scans)
 
     def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[bytes]:
-        return self.__helper_handle.compress_frame_collection(frames, total_scans=self.num_scans, num_threads=num_threads)
+        return self.__helper_handle.compress_frames(frames, total_scans=self.num_scans, num_threads=num_threads)
 
     def write_frame(self, frame: TimsFrame, scan_mode: int) -> None:
         self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
