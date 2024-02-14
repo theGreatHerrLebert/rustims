@@ -1,3 +1,4 @@
+use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use pyo3::prelude::*;
 
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
@@ -63,6 +64,44 @@ impl PyTimsTransmissionDIA {
 
     pub fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
         self.inner.any_transmitted(frame_id, scan_id, &mz, min_proba)
+    }
+}
+
+#[pyclass]
+pub struct PyTimsTofCollisionEnergyDIA {
+    pub inner: TimsTofCollisionEnergyDIA,
+}
+
+#[pymethods]
+impl PyTimsTofCollisionEnergyDIA {
+    #[new]
+    pub fn new(frame: Vec<i32>,
+               frame_window_group: Vec<i32>,
+               window_group: Vec<i32>,
+               scan_start: Vec<i32>,
+               scan_end: Vec<i32>,
+               collision_energy: Vec<f64>) -> Self {
+        PyTimsTofCollisionEnergyDIA {
+            inner: TimsTofCollisionEnergyDIA::new(
+            frame,
+            frame_window_group,
+            window_group,
+            scan_start,
+            scan_end,
+            collision_energy)
+        }
+    }
+
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.inner.get_collision_energy(frame_id, scan_id)
+    }
+
+    pub fn get_collision_energies(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>) -> Vec<f64> {
+        let mut collision_energies = Vec::with_capacity(frame_ids.len());
+        for (frame_id, scan_id) in frame_ids.iter().zip(scan_ids.iter()) {
+            collision_energies.push(self.inner.get_collision_energy(*frame_id, *scan_id));
+        }
+        collision_energies
     }
 }
 

@@ -6,13 +6,13 @@ import tensorflow as tf
 from imspy.algorithm.utility import get_model_path
 
 
-def load_prosit_2019_predictor() -> tf.keras.models.Model:
+def load_prosit_2023_timsTOF_predictor():
     """ Get a pretrained deep predictor model
 
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('Prosit2019Predictor'))
+    return tf.saved_model.load(get_model_path('Prosit2023TimsTOFPredictor'))
 
 
 class IonIntensityPredictor(ABC):

@@ -14,7 +14,7 @@ from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
 
-from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilderDIA
+from imspy.simulation.exp import TimsTofSyntheticFrameBuilderDIA
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
 
 from pathlib import Path

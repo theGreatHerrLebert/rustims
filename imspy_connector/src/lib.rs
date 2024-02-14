@@ -16,9 +16,9 @@ use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum, P
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized, PyRawTimsFrame};
 use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
-use crate::py_simulation::{PyTimsTofSynthetics, PyTimsTofSyntheticsDIA};
+use crate::py_simulation::{PyTimsTofSyntheticsFrameBuilder, PyTimsTofSyntheticsFrameBuilderDIA};
 pub use py_chemistry::{generate_precursor_spectrum, generate_precursor_spectra, calculate_monoisotopic_mass, calculate_b_y_ion_series, simulate_charge_state_for_sequence, simulate_charge_states_for_sequences};
-use crate::py_quadrupole::{PyTimsTransmissionDIA, apply_transmission};
+use crate::py_quadrupole::{PyTimsTransmissionDIA, apply_transmission, PyTimsTofCollisionEnergyDIA};
 
 
 #[pymodule]
@@ -37,9 +37,10 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsPlane>()?;
     m.add_class::<PyTimsFragmentDDA>()?;
     m.add_class::<PyAcquisitionMode>()?;
-    m.add_class::<PyTimsTofSynthetics>()?;
+    m.add_class::<PyTimsTofSyntheticsFrameBuilder>()?;
     m.add_class::<PyTimsTransmissionDIA>()?;
-    m.add_class::<PyTimsTofSyntheticsDIA>()?;
+    m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
+    m.add_class::<PyTimsTofCollisionEnergyDIA>()?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;
