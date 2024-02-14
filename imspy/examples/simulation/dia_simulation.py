@@ -97,6 +97,9 @@ def main():
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size (default: 256)")
 
+    # charge state probabilities
+    parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -121,6 +124,9 @@ def main():
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
     num_scans = args.num_scans
+
+    p_charge = args.p_charge
+    assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
     print(f"Gradient Length: {args.gradient_length} seconds.")
     print(f"mz Lower Bound: {args.mz_lower}.")
@@ -196,7 +202,7 @@ def main():
     if verbose:
         print("Simulating charge states...")
 
-    IonSource = BinomialChargeStateDistributionModel()
+    IonSource = BinomialChargeStateDistributionModel(charged_probability=p_charge)
     peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptide_rt)
 
     # merge tables to have sequences with ions, remove mz values outside scope
@@ -372,11 +378,6 @@ def main():
 
         built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
         acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
-
-        """
-        for frame in built_frames:
-            acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
-        """
 
     if verbose:
         print("Writing frame meta data to database...")
