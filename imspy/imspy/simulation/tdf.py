@@ -194,13 +194,7 @@ class TDFWriter:
 
     def write_frames(self, frames: List[TimsFrame], scan_mode: int, num_threads: int = 4) -> None:
 
-        # generate meta data
-        meta_data = [self.build_frame_meta_row(frame, scan_mode, self.position) for frame in frames]
-
-        # append to frame meta data table
-        for data in meta_data:
-            self.frame_meta_data.append(data)
-
+        # compress frames
         compressed_data = self.__helper_handle.compress_frames(
             frames,
             total_scans=self.num_scans,
@@ -209,7 +203,9 @@ class TDFWriter:
 
         # write to binary file
         with open(self.binary_file, "ab") as bin_file:
-            for data in compressed_data:
+            # write compressed data to binary file, and add frame meta data to list
+            for frame, data in zip(frames, compressed_data):
+                self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
                 bin_file.write(data)
                 self.position = bin_file.tell()
 
