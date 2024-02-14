@@ -14,7 +14,7 @@ from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
 
-from imspy.simulation.exp import TimsTofSyntheticAcquisitionBuilderDIA
+from imspy.simulation.exp import TimsTofSyntheticFrameBuilderDIA
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
 
 from pathlib import Path
@@ -360,7 +360,7 @@ def main():
     num_batches = len(frames) // batch_size + 1
     frame_ids = frames.frame_id.values
 
-    frame_builder = TimsTofSyntheticAcquisitionBuilderDIA(
+    frame_builder = TimsTofSyntheticFrameBuilderDIA(
         db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
     )
 

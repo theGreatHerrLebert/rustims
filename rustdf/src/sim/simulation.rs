@@ -12,15 +12,15 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::sim::containers::{FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim, FragmentIonSeriesSim};
 
-pub struct TimsTofSyntheticsDIA {
-    pub synthetics: TimsTofSynthetics,
+pub struct TimsTofSyntheticsFrameBuilderDIA {
+    pub synthetics: TimsTofSyntheticsFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
 }
 
-impl TimsTofSyntheticsDIA {
+impl TimsTofSyntheticsFrameBuilderDIA {
     pub fn new(path: &Path) -> Result<Self> {
-        let synthetics = TimsTofSynthetics::new(path)?;
+        let synthetics = TimsTofSyntheticsFrameBuilder::new(path)?;
         let frame_to_window_group = SyntheticsDataHandle::new(path)?.read_frame_to_window_group()?;
         let window_group_settings = SyntheticsDataHandle::new(path)?.read_window_group_settings()?;
 
@@ -92,7 +92,7 @@ impl TimsTofSyntheticsDIA {
     }
 }
 
-pub struct TimsTofSynthetics {
+pub struct TimsTofSyntheticsFrameBuilder {
     pub ions: BTreeMap<u32, IonsSim>,
     pub peptides: BTreeMap<u32, PeptidesSim>,
     pub scans: Vec<ScansSim>,
@@ -106,7 +106,7 @@ pub struct TimsTofSynthetics {
     pub peptide_to_fragment_ion_series: BTreeMap<u32, BTreeMap<i8, FragmentIonSeriesSim>>,
 }
 
-impl TimsTofSynthetics {
+impl TimsTofSyntheticsFrameBuilder {
     /// Create a new instance of TimsTofSynthetics
     ///
     /// # Arguments
@@ -615,7 +615,7 @@ impl SyntheticsDataHandle {
     }
 }
 
-impl TimsTofCollisionEnergy for TimsTofSyntheticsDIA {
+impl TimsTofCollisionEnergy for TimsTofSyntheticsFrameBuilderDIA {
     fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
         self.fragmentation_settings.get_collision_energy(frame_id, scan_id)
     }

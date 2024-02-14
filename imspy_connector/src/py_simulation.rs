@@ -1,19 +1,19 @@
 use mscore::algorithm::fragmentation::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
-use rustdf::sim::simulation::{TimsTofSynthetics, TimsTofSyntheticsDIA};
+use rustdf::sim::simulation::{TimsTofSyntheticsFrameBuilder, TimsTofSyntheticsFrameBuilderDIA};
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
-pub struct PyTimsTofSynthetics {
-    pub inner: TimsTofSynthetics,
+pub struct PyTimsTofSyntheticsFrameBuilder {
+    pub inner: TimsTofSyntheticsFrameBuilder,
 }
 
 #[pymethods]
-impl PyTimsTofSynthetics {
+impl PyTimsTofSyntheticsFrameBuilder {
     #[new]
     pub fn new(db_path: &str) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSynthetics { inner: TimsTofSynthetics::new(path).unwrap() }
+        PyTimsTofSyntheticsFrameBuilder { inner: TimsTofSyntheticsFrameBuilder::new(path).unwrap() }
     }
 
     pub fn build_frame(&self, frame_id: u32) -> PyTimsFrame {
@@ -27,16 +27,16 @@ impl PyTimsTofSynthetics {
 }
 
 #[pyclass(unsendable)]
-pub struct PyTimsTofSyntheticsDIA {
-    pub inner: TimsTofSyntheticsDIA,
+pub struct PyTimsTofSyntheticsFrameBuilderDIA {
+    pub inner: TimsTofSyntheticsFrameBuilderDIA,
 }
 
 #[pymethods]
-impl PyTimsTofSyntheticsDIA {
+impl PyTimsTofSyntheticsFrameBuilderDIA {
     #[new]
     pub fn new(db_path: &str) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsDIA { inner: TimsTofSyntheticsDIA::new(path).unwrap() }
+        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path).unwrap() }
     }
 
     pub fn build_frame(&self, frame_id: u32, fragment: bool) -> PyTimsFrame {

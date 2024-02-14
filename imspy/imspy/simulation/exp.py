@@ -9,9 +9,9 @@ import imspy_connector as pims
 from imspy.core import TimsFrame
 
 
-class TimsTofSyntheticAcquisitionBuilderDIA:
+class TimsTofSyntheticFrameBuilderDIA:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSyntheticsDIA(db_path)
+        self.handle = pims.PyTimsTofSyntheticsFrameBuilderDIA(db_path)
 
     def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
         frame = self.handle.build_frame(frame_id, fragment)
@@ -28,9 +28,9 @@ class TimsTofSyntheticAcquisitionBuilderDIA:
         return self.handle.get_collision_energies(frame_ids, scan_ids)
 
 
-class TimsTofSyntheticAcquisitionBuilder:
+class TimsTofSyntheticFrameBuilder:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSynthetics(db_path)
+        self.handle = pims.PyTimsTofSyntheticsFrameBuilder(db_path)
 
     def build_frame(self, frame_id: int):
         frame = self.handle.build_frame(frame_id)
