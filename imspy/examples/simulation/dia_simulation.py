@@ -24,12 +24,13 @@ import tensorflow as tf
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
-        # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
-        tf.config.experimental.set_virtual_device_configuration(
-            gpus[0],
-            [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * 4)]
-        )
-        print("GPU memory restricted to 4GB.")
+        for i, _ in enumerate(gpus):
+            # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
+            tf.config.experimental.set_virtual_device_configuration(
+                gpus[i],
+                [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * 4)]
+            )
+            print(f"GPU: {i} memory restricted to 4GB.")
     except RuntimeError as e:
         # Virtual devices must be set before GPUs have been initialized
         print(e)
