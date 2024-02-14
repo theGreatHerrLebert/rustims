@@ -275,7 +275,7 @@ class TimsDataset(ABC):
         Returns:
             List[NDArray[np.uint8]]: List of compressed bytes.
         """
-        return self.__dataset.compress_frames([f.get_fragment_ptr() for f in frames], total_scans, num_threads)
+        return self.__dataset.compress_frames([f.get_frame_ptr() for f in frames], total_scans, num_threads)
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):

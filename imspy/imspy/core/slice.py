@@ -67,7 +67,7 @@ class TimsSlice:
         Returns:
             TimsSlice: TimsSlice created from the list of TimsFrames.
         """
-        return cls.from_py_tims_slice(pims.PyTimsSlice.from_frames([frame.get_fragment_ptr() for frame in frames]))
+        return cls.from_py_tims_slice(pims.PyTimsSlice.from_frames([frame.get_frame_ptr() for frame in frames]))
 
     @property
     def first_frame_id(self) -> int:

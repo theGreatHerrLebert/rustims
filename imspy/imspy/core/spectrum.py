@@ -297,6 +297,14 @@ class MzSpectrum:
         # first generate dense spectrum
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma, normalize))
 
+    def get_spec_ptr(self) -> pims.PyMzSpectrum:
+        """Get the spec_ptr.
+
+        Returns:
+            pims.PyMzSpectrum: spec_ptr.
+        """
+        return self.__spec_ptr
+
     
 class MzSpectrumVectorized:
     def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):

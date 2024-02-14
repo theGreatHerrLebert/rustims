@@ -97,7 +97,7 @@ class TimsDatasetDDA(TimsDataset):
 
 class FragmentDDA:
     def __init__(self, frame_id: int, precursor_id: int, selected_fragment: TimsFrame):
-        self._fragment_ptr = pims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_fragment_ptr())
+        self._fragment_ptr = pims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_frame_ptr())
 
     @classmethod
     def from_py_tims_fragment_dda(cls, fragment: pims.PyTimsFragmentDDA):

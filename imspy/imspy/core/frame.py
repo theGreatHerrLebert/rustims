@@ -285,7 +285,7 @@ class TimsFrame:
 
         return scans, window_indices, np.reshape(values, (rows, cols))
 
-    def get_fragment_ptr(self):
+    def get_frame_ptr(self):
         return self.__frame_ptr
 
     def __repr__(self):
