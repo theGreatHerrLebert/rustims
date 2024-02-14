@@ -36,6 +36,9 @@ class TimsTofQuadrupoleDIA:
     def any_transmitted(self, frame_id: int, scan_id: int, mz: NDArray, min_proba: float | None = None) -> bool:
         return self.handle.any_transmitted(frame_id, scan_id, mz, min_proba)
 
+    def is_precursor(self, frame_id: int) -> bool:
+        return self.handle.is_precursor(frame_id)
+
 
 class TimsTofQuadrupoleSetting:
     @abstractmethod

@@ -162,6 +162,15 @@ impl TimsTransmissionDIA {
             None => None,
         }
     }
+
+    // check if a frame is a precursor frame
+    pub fn is_precursor(&self, frame_id: i32) -> bool {
+        // if frame id is in the hashmap, it is not a precursor frame
+        match self.frame_to_window_group.contains_key(&frame_id) {
+            true => false,
+            false => true,
+        }
+    }
 }
 
 impl IonTransmission for TimsTransmissionDIA {
