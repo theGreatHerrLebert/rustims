@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use mscore::data::tims_frame::TimsFrame;
 use mscore::data::mz_spectrum::{MzSpectrum, MsType, IndexedMzSpectrum, TimsSpectrum};
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::algorithm::fragmentation::{TimsTofCollisionEnergyDIA, TimsTofCollisionEnergy};
 use rusqlite::{Connection, Result};
 use std::path::Path;
 use serde_json;
@@ -14,6 +15,7 @@ use crate::sim::containers::{FramesSim, FrameToWindowGroupSim, IonsSim, Peptides
 pub struct TimsTofSyntheticsDIA {
     pub synthetics: TimsTofSynthetics,
     pub transmission_settings: TimsTransmissionDIA,
+    pub fragmentation_settings: TimsTofCollisionEnergyDIA,
 }
 
 impl TimsTofSyntheticsDIA {
@@ -21,6 +23,17 @@ impl TimsTofSyntheticsDIA {
         let synthetics = TimsTofSynthetics::new(path)?;
         let frame_to_window_group = SyntheticsDataHandle::new(path)?.read_frame_to_window_group()?;
         let window_group_settings = SyntheticsDataHandle::new(path)?.read_window_group_settings()?;
+
+        // get collision energy settings per window group
+        let fragmentation_settings = TimsTofCollisionEnergyDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
+        );
+
         let transmission_settings = TimsTransmissionDIA::new(
             frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
             frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
@@ -34,6 +47,7 @@ impl TimsTofSyntheticsDIA {
         Ok(Self {
             synthetics,
             transmission_settings,
+            fragmentation_settings,
         })
     }
 
@@ -598,5 +612,11 @@ impl SyntheticsDataHandle {
         }
 
         Ok(frame_to_window_groups)
+    }
+}
+
+impl TimsTofCollisionEnergy for TimsTofSyntheticsDIA {
+    fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.fragmentation_settings.get_collision_energy(frame_id, scan_id)
     }
 }

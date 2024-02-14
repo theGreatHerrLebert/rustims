@@ -1,3 +1,4 @@
+use mscore::algorithm::fragmentation::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
 use rustdf::sim::simulation::{TimsTofSynthetics, TimsTofSyntheticsDIA};
 use crate::py_tims_frame::PyTimsFrame;
@@ -45,5 +46,17 @@ impl PyTimsTofSyntheticsDIA {
     pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize) -> Vec<PyTimsFrame> {
         let frames = self.inner.build_frames(frame_ids, fragment, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
+    }
+
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.inner.get_collision_energy(frame_id, scan_id)
+    }
+
+    pub fn get_collision_energies(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>) -> Vec<f64> {
+        let mut result = Vec::with_capacity(frame_ids.len());
+        for (frame_id, scan_id) in frame_ids.iter().zip(scan_ids.iter()) {
+            result.push(self.inner.get_collision_energy(*frame_id, *scan_id));
+        }
+        result
     }
 }

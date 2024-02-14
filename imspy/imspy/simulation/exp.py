@@ -21,6 +21,12 @@ class TimsTofSyntheticAcquisitionBuilderDIA:
         frames = self.handle.build_frames(frame_ids, fragment, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
+    def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
+        return self.handle.get_collision_energy(frame_id, scan_id)
+
+    def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
+        return self.handle.get_collision_energies(frame_ids, scan_ids)
+
 
 class TimsTofSyntheticAcquisitionBuilder:
     def __init__(self, db_path: str):
