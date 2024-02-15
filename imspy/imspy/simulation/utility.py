@@ -70,11 +70,12 @@ def find_unimod_patterns(input_string: str):
     return stripped_sequence, mods
 
 
-def sequence_to_all_ions(sequence: str, max_charge: int = 3) -> str:
+def sequence_to_all_ions(sequence: str, max_charge: int = 3, keep_ends: bool = True) -> str:
     """Generate a list of all b and y ions for a given peptide sequence.
     Args:
         sequence: the peptide sequence
         max_charge: the maximum charge state to calculate the ions for
+        keep_ends: whether to keep the N-terminal and C-terminal ions
 
     Returns:
         JSON string of all b and y ions for the sequence
@@ -84,7 +85,7 @@ def sequence_to_all_ions(sequence: str, max_charge: int = 3) -> str:
     for c in range(1, max_charge + 1):
         stripped_sequence, mods = find_unimod_patterns(sequence)
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=c)
-        json_str = generate_fragments_json(stripped_sequence, b_ions=b, y_ions=y, charge=c)
+        json_str = generate_fragments_json(stripped_sequence, b_ions=b, y_ions=y, charge=c, keep_ends=keep_ends)
         r_list.append(json_str)
 
     return json.dumps(r_list)
