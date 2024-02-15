@@ -67,7 +67,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         # Iterate over the dataset and call the model with unpacked inputs
         for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
                                                                           total=len(data) // 512 + 1,
-                                                                          silent=not self.verbose):
+                                                                          disable=not self.verbose):
             model_input = [peptides_in, precursor_charge_in, collision_energy_in]
             model_output = self.model(model_input).numpy()
             intensity_predictions.append(model_output)
