@@ -102,8 +102,8 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray) ->
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
 
         # extract intensity for given charge state only
-        intensity_b = intensity_pred[:len(sequence) - 1, 0, z - 1]
-        intensity_y = intensity_pred[:len(sequence) - 1, 1, z - 1]
+        intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
+        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
 
         json_str = generate_fragments_json(stripped_sequence,
                                            b_ions=b,
