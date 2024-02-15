@@ -47,7 +47,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
     def simulate_ion_intensities(self, sequences: list[str], charges: list[int], collision_energies) -> NDArray:
         pass
 
-    def simulate_ion_intensities_pandas(self, data: pd.DataFrame) -> pd.DataFrame:
+    def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512) -> pd.DataFrame:
 
         data['sequence_unmod'] = data.apply(lambda r: remove_unimod_annotation(r.sequence), axis=1)
         data['collision_energy'] = data.apply(lambda r: r.collision_energy / 1e3, axis=1)
@@ -57,7 +57,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             data.sequence_unmod,
             data.charge,
             np.expand_dims(data.collision_energy, 1)
-        ).batch(512)
+        ).batch(batch_size)
 
         # Map the unpacking function over the dataset
         ds_unpacked = tf_ds.map(unpack_dict)
@@ -66,7 +66,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
         # Iterate over the dataset and call the model with unpacked inputs
         for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
-                                                                          total=len(data) // 512 + 1,
+                                                                          total=len(data) // batch_size + 1, ncols=100,
                                                                           disable=not self.verbose):
             model_input = [peptides_in, precursor_charge_in, collision_energy_in]
             model_output = self.model(model_input).numpy()
