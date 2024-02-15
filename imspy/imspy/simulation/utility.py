@@ -8,11 +8,7 @@ from scipy.stats import norm
 import math
 import importlib.resources as resources
 
-import pandas as pd
 from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz, MODIFICATIONS_MZ
-
-from dlomix.reports.postprocessing import reshape_dims, reshape_flat, normalize_base_peak, mask_outofcharge, \
-    mask_outofrange
 
 import imspy_connector as ims
 
@@ -70,21 +66,49 @@ def find_unimod_patterns(input_string: str):
     return stripped_sequence, mods
 
 
-def sequence_to_all_ions(sequence: str, max_charge: int = 3) -> str:
+def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, normalize: bool = True) -> str:
     """Generate a list of all b and y ions for a given peptide sequence.
     Args:
         sequence: the peptide sequence
-        max_charge: the maximum charge state to calculate the ions for
+        intensity_pred: the predicted fragment intensities
+        charge: the charge state of the peptide precursor
+        normalize: whether to normalize the fragment intensities, will result in sum of intensities to be 1.0
 
     Returns:
         JSON string of all b and y ions for the sequence
     """
-    r_list = []
+    stripped_sequence, mods = find_unimod_patterns(sequence)
 
-    for c in range(1, max_charge + 1):
-        stripped_sequence, mods = find_unimod_patterns(sequence)
-        b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=c)
-        json_str = generate_fragments_json(stripped_sequence, b_ions=b, y_ions=y, charge=c)
+    r_list = []
+    sum_intensity = 0.0
+    max_charge = np.min([charge, 4])
+
+    if normalize:
+        # sum all intensities, needed for normalization
+        for z in range(1, max_charge):
+
+            intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
+            intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+
+            sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
+    else:
+        sum_intensity = 1.0
+
+    for z in range(1, max_charge):
+        b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
+
+        # extract intensity for given charge state only
+        intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
+        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+
+        json_str = generate_fragments_json(stripped_sequence,
+                                           b_ions=b,
+                                           intensity_b=intensity_b / sum_intensity,
+                                           intensity_y=intensity_y / sum_intensity,
+                                           y_ions=y,
+                                           charge=z
+                                           )
+
         r_list.append(json_str)
 
     return json.dumps(r_list)
@@ -98,14 +122,9 @@ def generate_fragments_json(
         intensity_b: NDArray | None = None,
         intensity_y: NDArray | None = None,
         num_decimals: int = 4,
-        keep_ends: bool = False,
         default_b: float = 1.0,
         default_y: float = 1.0,
 ):
-    if not keep_ends:
-        b_ions = b_ions[1:-1]
-        y_ions = y_ions[1:-1]
-
     peptide_ion_data = {
         # "sequence": sequence,  # Example sequence
         "charge": charge,  # Example charge state
@@ -116,10 +135,10 @@ def generate_fragments_json(
     # Populate b ions with a default intensity value
     for i, (mz, ion_type, _) in enumerate(b_ions):  # Adjusted to match the new structure without sequence
         if intensity_b is not None:
-            default_b = intensity_b[i]
+            default_b = np.round(intensity_b[i].astype(np.float64), 9)
 
         peptide_ion_data["b_ions"].append({
-            "mz": np.round(mz, num_decimals),
+            "mz": float(np.round(mz, num_decimals)),
             "kind": ion_type[:-2],
             "intensity": default_b,  # Default intensity value
         })
@@ -127,9 +146,9 @@ def generate_fragments_json(
     # Populate y ions similarly, with a default intensity value
     for i, (mz, ion_type, _) in enumerate(y_ions):  # Adjusted loop, replace with actual y ions data
         if intensity_y is not None:
-            default_y = intensity_y[i]
+            default_y = np.round(intensity_y[i].astype(np.float64), 9)
         peptide_ion_data["y_ions"].append({
-            "mz": np.round(mz, num_decimals),
+            "mz": float(np.round(mz, num_decimals)),
             "kind": ion_type[:-2],
             "intensity": default_y,  # Default intensity value
         })
@@ -163,85 +182,6 @@ def sequence_to_numpy(sequence: str, max_length: int = 30) -> NDArray:
     for i, char in enumerate(sequence):
         arr[0, i] = char
     return np.squeeze(arr)
-
-
-def to_prosit_tensor(sequences: List) -> tf.Tensor:
-    """
-    translate a list of fixed length numpy arrays into a tensorflow tensor
-    Args:
-        sequences: list of numpy arrays, representing peptide sequences
-
-    Returns:
-        tensorflow tensor
-    """
-    return tf.convert_to_tensor(sequences, dtype=tf.string)
-
-
-def generate_prosit_intensity_prediction_dataset(sequences: List[str], charges: NDArray, collision_energies=None):
-    """
-    generate a tensorflow dataset for the prediction of fragment intensities with prosit
-    Args:
-        sequences: list of peptide sequences
-        charges: list of precursor charges
-        collision_energies: list of collision energies
-
-    Returns:
-        tensorflow dataset
-    """
-
-    # if no collision energies are given, use 0.35 as default (training data value)
-    if collision_energies is None:
-        collision_energies = np.expand_dims(np.repeat([0.35], len(charges)), 1)
-
-    charges = tf.one_hot(charges - 1, depth=6)
-    sequences = to_prosit_tensor([sequence_to_numpy(s) for s in sequences])
-
-    return tf.data.Dataset.from_tensor_slices({"sequence": sequences,
-                                               "precursor_charge": charges,
-                                               "collision_energy": collision_energies})
-
-
-def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
-    """
-    post process the predicted fragment intensities
-    Args:
-        data_pred: dataframe containing the predicted fragment intensities
-
-    Returns:
-        numpy array of fragment intensities
-    """
-    # get sequence length for masking out of sequence
-    sequence_lengths = data_pred["sequence"].apply(lambda x: len(x))
-
-    # get data
-    intensities = np.stack(data_pred["predicted_intensity"].to_numpy()).astype(np.float32)
-    # set negative intensity values to 0
-    intensities[intensities < 0] = 0
-    intensities = reshape_dims(intensities)
-
-    # mask out of sequence and out of charge
-    intensities = mask_outofrange(intensities, sequence_lengths)
-    intensities = mask_outofcharge(intensities, data_pred.charge)
-    intensities = reshape_flat(intensities)
-
-    # save indices of -1.0 values, will be altered by intensity normalization
-    m_idx = intensities == -1.0
-    # normalize to base peak
-    intensities = normalize_base_peak(intensities)
-    intensities[m_idx] = -1.0
-    return intensities
-
-
-def reshape_pred(flat_intensities: NDArray) -> NDArray:
-    """
-    reshape the predicted fragment intensities to (peptide_fragment, fragment_type, charge)
-    Args:
-        flat_intensities: numpy array of fragment intensities
-
-    Returns:
-        numpy array of fragment intensities, reshaped to (peptide_fragment, fragment_type, charge)
-    """
-    return flat_intensities.reshape([29, 2, 3])
 
 
 def calculate_b_y_fragment_mz(sequence: str, modifications: NDArray, is_y: bool = False, charge: int = 1) -> float:

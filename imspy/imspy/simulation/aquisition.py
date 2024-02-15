@@ -3,9 +3,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from abc import abstractmethod, ABC
 
-from pathlib import Path
-
-from imspy.simulation.exp import SyntheticExperimentDataHandle, TimsTofSyntheticFrameBuilder
+from imspy.simulation.exp import SyntheticExperimentDataHandle
 from imspy.timstof.data import AcquisitionMode
 from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing
 from imspy.simulation.tdf import TDFWriter

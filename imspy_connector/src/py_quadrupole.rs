@@ -65,6 +65,10 @@ impl PyTimsTransmissionDIA {
     pub fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
         self.inner.any_transmitted(frame_id, scan_id, &mz, min_proba)
     }
+
+    pub fn is_precursor(&self, frame_id: i32) -> bool {
+        self.inner.is_precursor(frame_id)
+    }
 }
 
 #[pyclass]
