@@ -70,7 +70,7 @@ def find_unimod_patterns(input_string: str):
     return stripped_sequence, mods
 
 
-def sequence_to_all_ions(sequence: str, intensity_pred: NDArray) -> str:
+def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray) -> str:
     """Generate a list of all b and y ions for a given peptide sequence.
     Args:
         sequence: the peptide sequence
@@ -84,8 +84,10 @@ def sequence_to_all_ions(sequence: str, intensity_pred: NDArray) -> str:
 
     sum_intensity = 0.0
 
+    max_charge = np.min([charge, 3])
+
     # sum all intensities, needed for normalization
-    for c in range(1, 4):
+    for c in range(1, max_charge + 1):
 
         intensity_b = intensity_pred[:, 0, c - 1]
         intensity_b = intensity_b[intensity_b >= 0]
@@ -94,7 +96,7 @@ def sequence_to_all_ions(sequence: str, intensity_pred: NDArray) -> str:
 
         sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
 
-    for c in range(1, 4):
+    for c in range(1, max_charge + 1):
         stripped_sequence, mods = find_unimod_patterns(sequence)
 
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=c)
