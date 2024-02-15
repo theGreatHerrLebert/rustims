@@ -101,6 +101,9 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, no
         intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
         intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
 
+        if max_charge == 1:
+            sum_intensity *= 2
+
         json_str = generate_fragments_json(stripped_sequence,
                                            b_ions=b,
                                            intensity_b=intensity_b / sum_intensity,
