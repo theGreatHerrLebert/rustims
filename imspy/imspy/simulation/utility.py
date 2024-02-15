@@ -94,7 +94,7 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, no
     else:
         sum_intensity = 1.0
 
-    for z in range(1, max_charge):
+    for z in range(1, np.max([max_charge, 2])):
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
 
         # extract intensity for given charge state only
