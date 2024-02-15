@@ -85,7 +85,7 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, no
 
     if normalize:
         # sum all intensities, needed for normalization
-        for z in range(1, np.max(max_charge, 2)):
+        for z in range(1, np.max([max_charge, 2])):
 
             intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
             intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
