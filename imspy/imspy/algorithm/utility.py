@@ -19,10 +19,8 @@ def get_model_path(model_name: str) -> Traversable:
 def load_tokenizer_from_resources() -> tf.keras.preprocessing.text.Tokenizer:
     """ Load a tokenizer from resources
 
-    Args:
-        model_name: The name of the model to load
-
     Returns:
         The pretrained tokenizer
     """
     return tokenizer_from_json(resources.files('imspy.algorithm.pretrained').joinpath('tokenizer-ptm.json'))
+
