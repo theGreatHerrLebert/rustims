@@ -100,7 +100,7 @@ def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
     intensities = normalize_base_peak(intensities)
     intensities[m_idx] = -1.0
 
-    return np.squeeze(reshape_dims(intensities))
+    return intensities
 
 
 def to_prosit_tensor(sequences: List) -> tf.Tensor:
