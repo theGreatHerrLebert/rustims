@@ -70,12 +70,13 @@ def find_unimod_patterns(input_string: str):
     return stripped_sequence, mods
 
 
-def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray) -> str:
+def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, normalize: bool = True) -> str:
     """Generate a list of all b and y ions for a given peptide sequence.
     Args:
         sequence: the peptide sequence
         intensity_pred: the predicted fragment intensities
-        keep_ends: whether to keep the N-terminal and C-terminal ions
+        charge: the charge state of the peptide precursor
+        normalize: whether to normalize the fragment intensities, will result in sum of intensities to be 1.0
 
     Returns:
         JSON string of all b and y ions for the sequence
@@ -84,17 +85,20 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray) ->
 
     r_list = []
     sum_intensity = 0.0
-    max_charge = np.min([charge, 3])
+    max_charge = np.min([charge, 4])
 
-    # sum all intensities, needed for normalization
-    for z in range(1, max_charge + 1):
+    if normalize:
+        # sum all intensities, needed for normalization
+        for z in range(1, max_charge):
 
-        intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
-        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+            intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
+            intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
 
-        sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
+            sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
+    else:
+        sum_intensity = 1.0
 
-    for z in range(1, max_charge + 1):
+    for z in range(1, max_charge):
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
 
         # extract intensity for given charge state only
