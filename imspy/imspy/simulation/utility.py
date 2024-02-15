@@ -70,11 +70,11 @@ def find_unimod_patterns(input_string: str):
     return stripped_sequence, mods
 
 
-def sequence_to_all_ions(sequence: str, max_charge: int = 3, keep_ends: bool = True) -> str:
+def sequence_to_all_ions(sequence: str, intensity_pred: NDArray) -> str:
     """Generate a list of all b and y ions for a given peptide sequence.
     Args:
         sequence: the peptide sequence
-        max_charge: the maximum charge state to calculate the ions for
+        intensity_pred: the predicted fragment intensities
         keep_ends: whether to keep the N-terminal and C-terminal ions
 
     Returns:
@@ -82,10 +82,22 @@ def sequence_to_all_ions(sequence: str, max_charge: int = 3, keep_ends: bool = T
     """
     r_list = []
 
-    for c in range(1, max_charge + 1):
+    for c in range(1, 4):
         stripped_sequence, mods = find_unimod_patterns(sequence)
+
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=c)
-        json_str = generate_fragments_json(stripped_sequence, b_ions=b, y_ions=y, charge=c, keep_ends=keep_ends)
+
+        intensity_b = intensity_pred[:, 0, c - 1]
+        intensity_y = intensity_pred[:, 1, c - 1]
+
+        json_str = generate_fragments_json(stripped_sequence,
+                                           b_ions=b,
+                                           intensity_b=intensity_b,
+                                           intensity_y=intensity_y,
+                                           y_ions=y,
+                                           charge=c
+                                           )
+
         r_list.append(json_str)
 
     return json.dumps(r_list)
@@ -99,14 +111,9 @@ def generate_fragments_json(
         intensity_b: NDArray | None = None,
         intensity_y: NDArray | None = None,
         num_decimals: int = 4,
-        keep_ends: bool = False,
         default_b: float = 1.0,
         default_y: float = 1.0,
 ):
-    if not keep_ends:
-        b_ions = b_ions[1:-1]
-        y_ions = y_ions[1:-1]
-
     peptide_ion_data = {
         # "sequence": sequence,  # Example sequence
         "charge": charge,  # Example charge state
@@ -117,10 +124,10 @@ def generate_fragments_json(
     # Populate b ions with a default intensity value
     for i, (mz, ion_type, _) in enumerate(b_ions):  # Adjusted to match the new structure without sequence
         if intensity_b is not None:
-            default_b = intensity_b[i]
+            default_b = np.round(intensity_b[i].astype(np.float64), 6)
 
         peptide_ion_data["b_ions"].append({
-            "mz": np.round(mz, num_decimals),
+            "mz": float(np.round(mz, num_decimals)),
             "kind": ion_type[:-2],
             "intensity": default_b,  # Default intensity value
         })
@@ -128,9 +135,9 @@ def generate_fragments_json(
     # Populate y ions similarly, with a default intensity value
     for i, (mz, ion_type, _) in enumerate(y_ions):  # Adjusted loop, replace with actual y ions data
         if intensity_y is not None:
-            default_y = intensity_y[i]
+            default_y = np.round(intensity_y[i].astype(np.float64), 6)
         peptide_ion_data["y_ions"].append({
-            "mz": np.round(mz, num_decimals),
+            "mz": float(np.round(mz, num_decimals)),
             "kind": ion_type[:-2],
             "intensity": default_y,  # Default intensity value
         })
