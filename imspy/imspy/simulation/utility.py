@@ -80,25 +80,21 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray) ->
     Returns:
         JSON string of all b and y ions for the sequence
     """
+    stripped_sequence, mods = find_unimod_patterns(sequence)
+
     r_list = []
-
     sum_intensity = 0.0
-
     max_charge = np.min([charge, 3])
 
     # sum all intensities, needed for normalization
     for z in range(1, max_charge + 1):
 
-        intensity_b = intensity_pred[:, 0, z - 1]
-        intensity_b = intensity_b[intensity_b >= 0]
-        intensity_y = intensity_pred[:, 1, z - 1]
-        intensity_y = intensity_y[intensity_y >= 0]
+        intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
+        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
 
         sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
 
     for z in range(1, max_charge + 1):
-        stripped_sequence, mods = find_unimod_patterns(sequence)
-
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
 
         # extract intensity for given charge state only
