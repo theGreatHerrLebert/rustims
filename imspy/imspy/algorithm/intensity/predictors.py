@@ -6,8 +6,9 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
-from imspy.simulation.utility import remove_unimod_annotation, reshape_dims
-from imspy.algorithm.intensity.utility import generate_prosit_intensity_prediction_dataset, unpack_dict, post_process_predicted_fragment_spectra
+from imspy.simulation.utility import remove_unimod_annotation
+from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
+                                               post_process_predicted_fragment_spectra, reshape_dims)
 
 
 def load_prosit_2023_timsTOF_predictor():

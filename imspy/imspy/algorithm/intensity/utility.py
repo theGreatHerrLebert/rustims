@@ -10,9 +10,8 @@ from imspy.simulation.utility import sequence_to_numpy
 from dlomix.constants import ALPHABET_UNMOD
 
 from tensorflow.keras.layers.experimental import preprocessing
-from imspy.simulation.utility import reshape_dims
 
-from dlomix.reports.postprocessing import (reshape_flat,
+from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 
 
@@ -48,7 +47,7 @@ def generate_prosit_intensity_prediction_dataset(
     )
 
     charges = tf.one_hot(charges - 1, depth=6)
-    sequences = tf.cast([string_lookup(sequence_to_numpy(s)) for s in sequences], dtype=tf.int32)
+    sequences = tf.cast(string_lookup([sequence_to_numpy(s) for s in sequences]), dtype=tf.int32)
 
     # Create a dataset that yields batches in the format expected by the model??
     dataset = tf.data.Dataset.from_tensor_slices((
@@ -101,4 +100,16 @@ def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
     intensities = normalize_base_peak(intensities)
     intensities[m_idx] = -1.0
 
-    return intensities
+    return np.squeeze(reshape_dims(intensities))
+
+
+def to_prosit_tensor(sequences: List) -> tf.Tensor:
+    """
+    translate a list of fixed length numpy arrays into a tensorflow tensor
+    Args:
+        sequences: list of numpy arrays, representing peptide sequences
+
+    Returns:
+        tensorflow tensor
+    """
+    return tf.convert_to_tensor(sequences, dtype=tf.string)
