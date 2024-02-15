@@ -135,7 +135,7 @@ def generate_fragments_json(
     # Populate b ions with a default intensity value
     for i, (mz, ion_type, _) in enumerate(b_ions):  # Adjusted to match the new structure without sequence
         if intensity_b is not None:
-            default_b = np.round(intensity_b[i].astype(np.float64), 6)
+            default_b = np.round(intensity_b[i].astype(np.float64), 9)
 
         peptide_ion_data["b_ions"].append({
             "mz": float(np.round(mz, num_decimals)),
@@ -146,7 +146,7 @@ def generate_fragments_json(
     # Populate y ions similarly, with a default intensity value
     for i, (mz, ion_type, _) in enumerate(y_ions):  # Adjusted loop, replace with actual y ions data
         if intensity_y is not None:
-            default_y = np.round(intensity_y[i].astype(np.float64), 6)
+            default_y = np.round(intensity_y[i].astype(np.float64), 9)
         peptide_ion_data["y_ions"].append({
             "mz": float(np.round(mz, num_decimals)),
             "kind": ion_type[:-2],
