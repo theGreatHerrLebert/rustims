@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
 import tensorflow as tf
+from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
 from imspy.simulation.utility import remove_unimod_annotation, reshape_dims
@@ -36,7 +37,7 @@ class IonIntensityPredictor(ABC):
 
 
 class Prosit2023TimsTofWrapper(IonIntensityPredictor):
-    def __init__(self, verbose: bool = False, model_name: str = 'deep_ion_intensity_predictor'):
+    def __init__(self, verbose: bool = True, model_name: str = 'deep_ion_intensity_predictor'):
         super().__init__()
 
         self.verbose = verbose
@@ -64,7 +65,9 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         intensity_predictions = []
 
         # Iterate over the dataset and call the model with unpacked inputs
-        for peptides_in, precursor_charge_in, collision_energy_in in ds_unpacked:
+        for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
+                                                                          total=len(data) // 512 + 1,
+                                                                          silent=not self.verbose):
             model_input = [peptides_in, precursor_charge_in, collision_energy_in]
             model_output = self.model(model_input).numpy()
             intensity_predictions.append(model_output)
