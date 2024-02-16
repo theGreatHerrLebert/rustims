@@ -18,6 +18,7 @@ use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
 use crate::py_simulation::{PyTimsTofSyntheticsPrecursorFrameBuilder, PyTimsTofSyntheticsFrameBuilderDIA};
 pub use py_chemistry::{generate_precursor_spectrum, generate_precursor_spectra, calculate_monoisotopic_mass, calculate_b_y_ion_series, simulate_charge_state_for_sequence, simulate_charge_states_for_sequences};
+use crate::py_dia::PyTimsDatasetDIA;
 use crate::py_quadrupole::{PyTimsTransmissionDIA, apply_transmission, PyTimsTofCollisionEnergyDIA};
 
 
@@ -25,6 +26,7 @@ use crate::py_quadrupole::{PyTimsTransmissionDIA, apply_transmission, PyTimsTofC
 fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyTimsDatasetDDA>()?;
+    m.add_class::<PyTimsDatasetDIA>()?;
     m.add_class::<PyMzSpectrum>()?;
     m.add_class::<PyMzSpectrumVectorized>()?;
     m.add_class::<PyIndexedMzSpectrum>()?;
