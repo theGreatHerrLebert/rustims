@@ -360,9 +360,9 @@ def main():
     )
 
     # go over all frames in batches
-    for i in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
-        start_index = i * batch_size
-        stop_index = (i + 1) * batch_size
+    for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
+        start_index = b * batch_size
+        stop_index = (b + 1) * batch_size
         ids = frame_ids[start_index:stop_index]
 
         built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
