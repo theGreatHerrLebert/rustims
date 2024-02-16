@@ -10,7 +10,7 @@ use crate::sim::containers::{FramesSim, IonsSim, PeptidesSim, ScansSim};
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 
 pub struct TimsTofSyntheticsPrecursorFrameBuilder {
-    pub ions: BTreeMap<u32, IonsSim>,
+    pub ions: BTreeMap<u32, Vec<IonsSim>>,
     pub peptides: BTreeMap<u32, PeptidesSim>,
     pub scans: Vec<ScansSim>,
     pub frames: Vec<FramesSim>,
