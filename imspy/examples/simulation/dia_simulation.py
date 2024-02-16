@@ -349,18 +349,6 @@ def main():
     )
 
     if verbose:
-        print("Generating fragment ions...")
-
-    fragments = peptide_rt.apply(lambda p: sequence_to_all_ions(p.sequence), axis=1)
-    peptide_rt['fragments'] = fragments
-
-    # update peptides table in database
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=peptide_rt,
-    )
-
-    if verbose:
         print("Starting frame assembly...")
 
     batch_size = args.batch_size
