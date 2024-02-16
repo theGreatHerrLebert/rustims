@@ -106,7 +106,8 @@ def sequence_to_all_ions(
 
         # extract intensity for given charge state only
         intensity_b = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
-        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
+        # reverse the intensity array to match the order of the y ions, small masses come first in prosit output
+        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1][::-1]
 
         if max_charge == 1 and half_charge_one:
             sum_intensity *= 2
