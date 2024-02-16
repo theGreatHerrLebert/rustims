@@ -59,7 +59,19 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         })
     }
 
+    /// Build a frame for DIA synthetic experiment
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_id` - The frame id
+    /// * `fragmentation` - A boolean indicating if fragmentation is enabled, if false, the frame has same mz distribution as the precursor frame but will be quadrupole filtered
+    ///
+    /// # Returns
+    ///
+    /// A TimsFrame
+    ///
     pub fn build_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+        // determine if the frame is a precursor frame
         match self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
             true => self.build_ms1_frame(frame_id),
             false => self.build_ms2_frame(frame_id, fragmentation),
@@ -94,6 +106,19 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         }
     }
 
+    /// Build a fragment frame
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_id` - The frame id
+    /// * `mz_min` - The minimum m/z value in fragment spectrum
+    /// * `mz_max` - The maximum m/z value in fragment spectrum
+    /// * `intensity_min` - The minimum intensity value in fragment spectrum
+    ///
+    /// # Returns
+    ///
+    /// A TimsFrame
+    ///
     fn build_fragment_frame(
         &self,
         frame_id: u32,
@@ -161,11 +186,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     // get collision energy for the ion
                     let collision_energy = self.fragmentation_settings.get_collision_energy(frame_id as i32, *scan as i32);
                     let collision_energy_quantized = (collision_energy * 1e3).round() as i8;
-                    let charge_state = chages.get(index).unwrap();
 
+                    // get charge state for the ion
+                    let charge_state = chages.get(index).unwrap();
+                    // extract fragment ions for the peptide, charge state and collision energy
                     let fragment_ions = self.fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
 
-                    // jump to next peptide if the fragment_ions is None
+                    // jump to next peptide if the fragment_ions is None (can this happen?)
                     if fragment_ions.is_none() {
                         continue;
                     }

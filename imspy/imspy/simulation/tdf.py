@@ -214,3 +214,23 @@ class TDFWriter:
 
     def write_frame_meta_data(self) -> None:
         self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
+
+    def write_dia_ms_ms_info(self, dia_ms_ms_info: pd.DataFrame) -> None:
+        out = dia_ms_ms_info.rename(columns={
+            'frame_id': 'Frame',
+            'window_group': 'WindowGroup',
+        })
+
+        self._create_table(self.conn, out, "DiaFrameMsMsInfo")
+
+    def write_dia_ms_ms_windows(self, dia_ms_ms_windows: pd.DataFrame) -> None:
+        out = dia_ms_ms_windows.rename(columns={
+            'window_group': 'WindowGroup',
+            'scan_start': 'ScanNumBegin',
+            'scan_end': 'ScanNumEnd',
+            'isolation_mz': 'IsolationMz',
+            'isolation_width': 'IsolationWidth',
+            'collision_energy': 'CollisionEnergy',
+        })
+
+        self._create_table(self.conn, out, "DiaFrameMsMsWindows")

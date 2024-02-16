@@ -53,6 +53,15 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         })
     }
 
+    /// Build a precursor frame
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_id` - A u32 representing the frame id
+    ///
+    /// # Returns
+    ///
+    /// * A TimsFrame instance
     pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
 
         let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
