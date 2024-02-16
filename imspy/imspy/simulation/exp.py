@@ -28,16 +28,16 @@ class TimsTofSyntheticFrameBuilderDIA:
         return self.handle.get_collision_energies(frame_ids, scan_ids)
 
 
-class TimsTofSyntheticFrameBuilder:
+class TimsTofSyntheticPrecursorFrameBuilder:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSyntheticsFrameBuilder(db_path)
+        self.handle = pims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
-    def build_frame(self, frame_id: int):
-        frame = self.handle.build_frame(frame_id)
+    def build_precursor_frame(self, frame_id: int):
+        frame = self.handle.build_precursor_frame(frame_id)
         return TimsFrame.from_py_tims_frame(frame)
 
-    def build_frames(self, frame_ids: List[int], num_threads: int = 4):
-        frames = self.handle.build_frames(frame_ids, num_threads)
+    def build_precursor_frames(self, frame_ids: List[int], num_threads: int = 4):
+        frames = self.handle.build_precursor_frames(frame_ids, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
 
