@@ -2,20 +2,20 @@ use mscore::data::mz_spectrum::{MzSpectrum, MsType};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FragmentIonSim {
+pub struct FragmentIon {
     pub mz: f64,
     pub kind: String,
     pub intensity: f64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FragmentIonSeriesSim {
+pub struct FragmentIonSeries {
     pub charge: i32,
-    pub b_ions: Vec<FragmentIonSim>,
-    pub y_ions: Vec<FragmentIonSim>,
+    pub b_ions: Vec<FragmentIon>,
+    pub y_ions: Vec<FragmentIon>,
 }
 
-impl FragmentIonSeriesSim {
+impl FragmentIonSeries {
     pub fn to_mz_spectrum(&self) -> MzSpectrum {
 
         // create a tuple vector from the fragment spectra
@@ -58,7 +58,6 @@ pub struct PeptidesSim {
     pub events: f32,
     pub frame_occurrence: Vec<u32>,
     pub frame_abundance: Vec<f32>,
-    pub fragments: Vec<FragmentIonSeriesSim>,
 }
 
 #[derive(Debug, Clone)]
@@ -181,5 +180,28 @@ impl FramesSim {
             _ => MsType::Unknown,
         }
 
+    }
+}
+
+pub struct FragmentIonSim {
+    pub peptide_id: u32,
+    pub charge: i8,
+    pub collision_energy: i8,
+    pub fragment_intensities: Vec<FragmentIonSeries>,
+}
+
+impl FragmentIonSim {
+    pub fn new(
+        peptide_id: u32,
+        charge: i8,
+        collision_energy: i8,
+        fragment_intensities: Vec<FragmentIonSeries>,
+    ) -> Self {
+        FragmentIonSim {
+            peptide_id,
+            charge,
+            collision_energy,
+            fragment_intensities,
+        }
     }
 }

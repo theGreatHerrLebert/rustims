@@ -50,6 +50,8 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
     def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512) -> pd.DataFrame:
 
+        if self.verbose:
+            print("Generating Prosit compatible input data...")
         data['sequence_unmod'] = data.apply(lambda r: remove_unimod_annotation(r.sequence), axis=1)
         data['collision_energy'] = data.apply(lambda r: r.collision_energy / 1e3, axis=1)
         data['sequence_length'] = data.apply(lambda r: len(r.sequence_unmod), axis=1)
