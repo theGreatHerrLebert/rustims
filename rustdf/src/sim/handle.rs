@@ -214,10 +214,11 @@ impl TimsTofSyntheticsDataHandle {
         Ok(fragment_ion_sim)
     }
 
-    pub fn build_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, IonsSim> {
+    pub fn build_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
         let mut ion_map = BTreeMap::new();
         for ion in ions.iter() {
-            ion_map.insert(ion.peptide_id, ion.clone());
+            let ions = ion_map.entry(ion.peptide_id).or_insert_with(Vec::new);
+            ions.push(ion.clone());
         }
         ion_map
     }
@@ -311,5 +312,24 @@ impl TimsTofSyntheticsDataHandle {
             fragment_ion_map.entry(key).or_insert_with(Vec::new).extend(value);
         }
         fragment_ion_map
+    }
+
+    pub fn build_dia_fragment_ions(&self) {
+
+        let ions = self.read_ions().unwrap();
+        let ion_map = TimsTofSyntheticsDataHandle::build_ion_map(&ions);
+
+        let peptides = self.read_peptides().unwrap();
+        let _peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
+
+        for peptide in peptides.iter() {
+            let peptide_id = peptide.peptide_id;
+            let _ion_list = ion_map.get(&peptide_id).unwrap();
+            let _frame_occurrence = &peptide.frame_occurrence;
+
+            for ion in _ion_list.iter() {
+                let _scan_occurrence = &ion.scan_occurrence;
+            }
+        }
     }
 }
