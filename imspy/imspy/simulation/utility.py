@@ -66,13 +66,20 @@ def find_unimod_patterns(input_string: str):
     return stripped_sequence, mods
 
 
-def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, normalize: bool = True) -> str:
+def sequence_to_all_ions(
+        sequence: str,
+        charge: int,
+        intensity_pred: NDArray,
+        normalize: bool = True,
+        half_charge_one: bool = True
+) -> str:
     """Generate a list of all b and y ions for a given peptide sequence.
     Args:
         sequence: the peptide sequence
         intensity_pred: the predicted fragment intensities
         charge: the charge state of the peptide precursor
         normalize: whether to normalize the fragment intensities, will result in sum of intensities to be 1.0
+        half_charge_one: whether to double the intensity of the b and y ions for charge 1
 
     Returns:
         JSON string of all b and y ions for the sequence
@@ -87,8 +94,8 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, no
         # sum all intensities, needed for normalization
         for z in range(1, np.max([max_charge, 2])):
 
-            intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
-            intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+            intensity_b = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+            intensity_y = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
 
             sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
     else:
@@ -98,10 +105,10 @@ def sequence_to_all_ions(sequence: str, charge: int, intensity_pred: NDArray, no
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
 
         # extract intensity for given charge state only
-        intensity_b = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
-        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+        intensity_b = intensity_pred[:len(stripped_sequence) - 1, 1, z - 1]
+        intensity_y = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
 
-        if max_charge == 1:
+        if max_charge == 1 and half_charge_one:
             sum_intensity *= 2
 
         json_str = generate_fragments_json(stripped_sequence,
