@@ -1,11 +1,12 @@
 use mscore::algorithm::fragmentation::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
-use rustdf::sim::simulation::{TimsTofSyntheticsFrameBuilder, TimsTofSyntheticsFrameBuilderDIA};
+use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
+use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
 pub struct PyTimsTofSyntheticsFrameBuilder {
-    pub inner: TimsTofSyntheticsFrameBuilder,
+    pub inner: TimsTofSyntheticsPrecursorFrameBuilder,
 }
 
 #[pymethods]
@@ -13,7 +14,7 @@ impl PyTimsTofSyntheticsFrameBuilder {
     #[new]
     pub fn new(db_path: &str) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsFrameBuilder { inner: TimsTofSyntheticsFrameBuilder::new(path).unwrap() }
+        PyTimsTofSyntheticsFrameBuilder { inner: TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap() }
     }
 
     pub fn build_frame(&self, frame_id: u32) -> PyTimsFrame {

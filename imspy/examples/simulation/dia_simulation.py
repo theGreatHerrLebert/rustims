@@ -349,18 +349,6 @@ def main():
     )
 
     if verbose:
-        print("Generating fragment ions...")
-
-    fragments = peptide_rt.apply(lambda p: sequence_to_all_ions(p.sequence), axis=1)
-    peptide_rt['fragments'] = fragments
-
-    # update peptides table in database
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=peptide_rt,
-    )
-
-    if verbose:
         print("Starting frame assembly...")
 
     batch_size = args.batch_size
@@ -372,9 +360,9 @@ def main():
     )
 
     # go over all frames in batches
-    for i in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
-        start_index = i * batch_size
-        stop_index = (i + 1) * batch_size
+    for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
+        start_index = b * batch_size
+        stop_index = (b + 1) * batch_size
         ids = frame_ids[start_index:stop_index]
 
         built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)

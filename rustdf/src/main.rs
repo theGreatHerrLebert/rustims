@@ -1,4 +1,4 @@
-use rustdf::sim::simulation::TimsTofSyntheticsFrameBuilderDIA;
+use rustdf::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
 use std::path::Path;
 use clap::Parser;
 
@@ -38,7 +38,7 @@ fn main() {
     let fragment = args.fragment;
 
     let experiment = TimsTofSyntheticsFrameBuilderDIA::new(path).unwrap();
-    let first_frames = experiment.synthetics.frames.iter().map(|x| x.frame_id.clone()).take(args.num_frames).collect::<Vec<_>>();
+    let first_frames = experiment.precursor_frame_builder.frames.iter().map(|x| x.frame_id.clone()).take(args.num_frames).collect::<Vec<_>>();
 
     /*
     for frame in first_frames.iter() {

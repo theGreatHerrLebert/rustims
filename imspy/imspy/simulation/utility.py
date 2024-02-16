@@ -87,10 +87,11 @@ def sequence_to_all_ions(
     stripped_sequence, mods = find_unimod_patterns(sequence)
 
     r_list = []
-    sum_intensity = 0.0
+    sum_intensity = 1.0
     max_charge = np.min([charge, 4])
 
     if normalize:
+        sum_intensity = 0.0
         # sum all intensities, needed for normalization
         for z in range(1, np.max([max_charge, 2])):
 
@@ -98,8 +99,6 @@ def sequence_to_all_ions(
             intensity_y = intensity_pred[:len(stripped_sequence) - 1, 0, z - 1]
 
             sum_intensity += np.sum(intensity_b) + np.sum(intensity_y)
-    else:
-        sum_intensity = 1.0
 
     for z in range(1, np.max([max_charge, 2])):
         b, y = calculate_b_y_ion_series_ims(stripped_sequence, mods, charge=z)
