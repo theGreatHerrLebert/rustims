@@ -16,7 +16,7 @@ pub struct TimsTofSyntheticsPrecursorFrameBuilder {
     pub frames: Vec<FramesSim>,
     pub precursor_frame_id_set: HashSet<u32>,
     pub frame_to_abundances: BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
-    pub peptide_to_ions: BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)>,
+    pub peptide_to_ions: BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)>,
     pub frame_to_rt: BTreeMap<u32, f32>,
     pub scan_to_mobility: BTreeMap<u32, f32>,
     pub peptide_to_events: BTreeMap<u32, f32>,
@@ -84,7 +84,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
                 continue;
             }
 
-            let (ion_abundances, scan_occurrences, scan_abundances, spectra) = self.peptide_to_ions.get(&peptide_id).unwrap();
+            let (ion_abundances, scan_occurrences, scan_abundances, _, spectra) = self.peptide_to_ions.get(&peptide_id).unwrap();
 
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
                 let scan_occurrence = scan_occurrences.get(index).unwrap();

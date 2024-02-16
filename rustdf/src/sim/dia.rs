@@ -136,7 +136,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             }
 
             // get all the ions for the peptide
-            let (ion_abundances, scan_occurrences, scan_abundances, spectra) = self.precursor_frame_builder.peptide_to_ions.get(&peptide_id).unwrap();
+            let (ion_abundances, scan_occurrences, scan_abundances, chages, spectra) = self.precursor_frame_builder.peptide_to_ions.get(&peptide_id).unwrap();
 
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
                 // occurrence and abundance of the ion in the scan
@@ -150,8 +150,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                 for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
 
                     // first, check if precursor is transmitted
-                    let scan_id = *scan;
-                    if !self.transmission_settings.any_transmitted(frame_id as i32, scan_id as i32, &spectrum.mz, None) {
+                    if !self.transmission_settings.any_transmitted(frame_id as i32, *scan as i32, &spectrum.mz, None) {
                         continue;
                     }
 
@@ -160,9 +159,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
 
                     // get collision energy for the ion
-                    let collision_energy = self.fragmentation_settings.get_collision_energy(frame_id as i32, scan_id as i32);
+                    let collision_energy = self.fragmentation_settings.get_collision_energy(frame_id as i32, *scan as i32);
                     let collision_energy_quantized = (collision_energy * 1e3).round() as i8;
-                    let fragment_ions = self.fragment_ions.get(&(*peptide_id, scan_id as i8, collision_energy_quantized));
+                    let charge_state = chages.get(index).unwrap();
+
+                    let fragment_ions = self.fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
 
                     // jump to next peptide if the fragment_ions is None
                     if fragment_ions.is_none() {
@@ -177,9 +178,9 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                         tims_spectra.push(
                             TimsSpectrum::new(
                                 frame_id as i32,
-                                scan_id as i32,
+                                *scan as i32,
                                 *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
-                                *self.precursor_frame_builder.scan_to_mobility.get(&scan_id).unwrap() as f64,
+                                *self.precursor_frame_builder.scan_to_mobility.get(&scan).unwrap() as f64,
                                 ms_type.clone(),
                                 IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity),
                             )

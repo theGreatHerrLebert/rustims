@@ -281,7 +281,7 @@ impl TimsTofSyntheticsDataHandle {
 
         frame_to_abundances
     }
-    pub fn build_peptide_to_ions(ions: &Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<MzSpectrum>)> {
+    pub fn build_peptide_to_ions(ions: &Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)> {
         let mut peptide_to_ions = BTreeMap::new();
 
         for ion in ions.iter() {
@@ -289,12 +289,14 @@ impl TimsTofSyntheticsDataHandle {
             let abundance = ion.relative_abundance;
             let scan_occurrence = ion.scan_occurrence.clone();
             let scan_abundance = ion.scan_abundance.clone();
+            let charge = ion.charge;
             let spectrum = ion.simulated_spectrum.clone();
 
-            let (abundances, scan_occurrences, scan_abundances, spectra) = peptide_to_ions.entry(peptide_id).or_insert((vec![], vec![], vec![], vec![]));
+            let (abundances, scan_occurrences, scan_abundances, charges, spectra) = peptide_to_ions.entry(peptide_id).or_insert((vec![], vec![], vec![], vec![], vec![]));
             abundances.push(abundance);
             scan_occurrences.push(scan_occurrence);
             scan_abundances.push(scan_abundance);
+            charges.push(charge);
             spectra.push(spectrum);
         }
 
