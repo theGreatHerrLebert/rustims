@@ -200,8 +200,8 @@ impl TimsTofSyntheticsDataHandle {
 
             Ok(FragmentIonSim::new(
                 row.get(0)?,
-                row.get(2)?,
                 row.get(1)?,
+                row.get(2)?,
                 fragment_ion_sim,
             ))
         })?;
@@ -304,7 +304,7 @@ impl TimsTofSyntheticsDataHandle {
     pub fn build_fragment_ions(fragment_ions: &Vec<FragmentIonSim>) -> BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>> {
         let mut fragment_ion_map: BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>> = BTreeMap::new();
         for fragment_ion in fragment_ions.iter() {
-            let key = (fragment_ion.peptide_id, fragment_ion.charge, fragment_ion.collision_energy);
+            let key = (fragment_ion.peptide_id, fragment_ion.charge, (fragment_ion.collision_energy * 1e3).round() as i8);
             let value = fragment_ion.fragment_intensities.clone();
             fragment_ion_map.entry(key).or_insert_with(Vec::new).extend(value);
         }
