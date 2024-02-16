@@ -200,8 +200,8 @@ impl TimsTofSyntheticsDataHandle {
 
             Ok(FragmentIonSim::new(
                 row.get(0)?,
-                row.get(1)?,
                 row.get(2)?,
+                row.get(1)?,
                 fragment_ion_sim,
             ))
         })?;
