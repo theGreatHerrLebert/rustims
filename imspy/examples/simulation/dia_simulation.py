@@ -373,6 +373,10 @@ def main():
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
+    # write frame ms/ms info to database
+    acquisition_builder.tdf_writer.write_dia_ms_ms_info(acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
+    # write frame ms/ms windows to database
+    acquisition_builder.tdf_writer.write_dia_ms_ms_windows(acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
 
 
 if __name__ == '__main__':
