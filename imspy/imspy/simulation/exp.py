@@ -27,15 +27,6 @@ class TimsTofSyntheticFrameBuilderDIA:
     def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
         return self.handle.get_collision_energies(frame_ids, scan_ids)
 
-    # (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>)
-    def transmitted_fragment_ions_with_collision_energy(self) -> pd.DataFrame:
-        peptide_ids, charges, collision_energies = self.handle.get_ions_with_collision_energy()
-        return pd.DataFrame({
-            'peptide_id': peptide_ids,
-            'charge': charges,
-            'collision_energy': collision_energies,
-        })
-
 
 class TimsTofSyntheticPrecursorFrameBuilder:
     def __init__(self, db_path: str):

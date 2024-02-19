@@ -17,7 +17,6 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
     pub fragment_ions: BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>>,
-    pub fragment_ions_with_collision_energies: (Vec<i32>, Vec<i8>, Vec<f32>),
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
@@ -32,35 +31,15 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions);
 
         // get collision energy settings per window group
-        let fragmentation_settings = TimsTofCollisionEnergyDIA::new(
-            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
-            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
-            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
-        );
-
+        let fragmentation_settings = handle.get_collision_energy_dia();
         // get ion transmission settings per window group
-        let transmission_settings = TimsTransmissionDIA::new(
-            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
-            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
-            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
-            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
-            None,
-        );
-
-        let fragment_ions_with_collision_energies = handle.build_dia_transmitted_fragment_ions_with_collision_energies();
+        let transmission_settings = handle.get_transmission_dia();
 
         Ok(Self {
             precursor_frame_builder: synthetics,
             transmission_settings,
             fragmentation_settings,
             fragment_ions,
-            fragment_ions_with_collision_energies,
         })
     }
 

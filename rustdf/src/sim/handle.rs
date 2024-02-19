@@ -218,13 +218,34 @@ impl TimsTofSyntheticsDataHandle {
         Ok(fragment_ion_sim)
     }
 
-    pub fn get_peptide_to_ions(&self) -> (Vec<i32>, Vec<i8>) {
+    pub fn get_transmission_dia(&self) -> TimsTransmissionDIA {
+        let frame_to_window_group = self.read_frame_to_window_group().unwrap();
+        let window_group_settings = self.read_window_group_settings().unwrap();
 
-        let ions = self.read_ions().unwrap();
-        let peptide_ids = ions.iter().map(|x| x.peptide_id as i32).collect::<Vec<_>>();
-        let charge_states = ions.iter().map(|x| x.charge).collect::<Vec<_>>();
+        TimsTransmissionDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
+            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
+            None,
+        )
+    }
 
-        (peptide_ids, charge_states)
+    pub fn get_collision_energy_dia(&self) -> TimsTofCollisionEnergyDIA {
+        let frame_to_window_group = self.read_frame_to_window_group().unwrap();
+        let window_group_settings = self.read_window_group_settings().unwrap();
+
+        TimsTofCollisionEnergyDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
+        )
     }
 
     pub fn build_peptide_to_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
@@ -339,28 +360,11 @@ impl TimsTofSyntheticsDataHandle {
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
         let window_group_settings = self.read_window_group_settings().unwrap();
 
-        // TODO: avoid code duplication with DIA handle
         // get collision energy settings per window group
-        let fragmentation_settings = TimsTofCollisionEnergyDIA::new(
-            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
-            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
-            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
-        );
+        let fragmentation_settings = self.get_collision_energy_dia();
 
         // get ion transmission settings per window group
-        let transmission_settings = TimsTransmissionDIA::new(
-            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
-            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
-            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
-            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
-            None,
-        );
+        let transmission_settings = self.get_transmission_dia();
 
         let mut ret_set: HashSet<(i32, i8, i32)> = HashSet::new();
 
