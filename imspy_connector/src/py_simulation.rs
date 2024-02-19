@@ -61,7 +61,7 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         result
     }
 
-    pub fn get_ions_with_collision_energy(&self) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f324>) {
+    pub fn get_ions_with_collision_energy(&self) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
         self.inner.fragment_ions_with_collision_energies.clone()
     }
 }
