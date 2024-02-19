@@ -259,10 +259,7 @@ impl TimsTofSyntheticsDataHandle {
         let transmission = self.get_transmission_dia();
         let collision_energy = self.get_collision_energy_dia();
 
-        let mut peptide_ids = Vec::new();
-        let mut sequences = Vec::new();
-        let mut charges = Vec::new();
-        let mut abundances = Vec::new();
+        let mut ret_tree: BTreeMap<(i32, i8, i8), String> = BTreeMap::new();
 
         for ion in ions.iter() {
 
@@ -277,17 +274,29 @@ impl TimsTofSyntheticsDataHandle {
                         // check if the ion is transmitted
                         if transmission.is_transmitted(*frame as i32, *scan as i32, mono_mz as f64, None) {
                             let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
-                            peptide_ids.push(ion.peptide_id as i32);
-                            sequences.push(peptide.sequence.clone());
-                            charges.push(ion.charge);
-                            abundances.push(collision_energy as f32);
+                            let quantized_energy = (collision_energy * 10.0).round() as i8;
+                            ret_tree.insert((*frame as i32, ion.charge, quantized_energy), peptide.sequence.clone());
                         }
                     }
                 }
             }
         }
 
-        (peptide_ids, sequences, charges, abundances)
+        // flatten map
+        let mut frame_ids = Vec::new();
+        let mut sequences = Vec::new();
+        let mut charges = Vec::new();
+        let mut collision_energies = Vec::new();
+
+        for ((frame_id, charge, collision_energy), sequence) in ret_tree.iter() {
+            frame_ids.push(*frame_id);
+            sequences.push(sequence.clone());
+            charges.push(*charge);
+            collision_energies.push(*collision_energy as f32 / 10.0);
+        }
+
+
+        (frame_ids, sequences, charges, collision_energies)
     }
 
     pub fn build_peptide_to_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
