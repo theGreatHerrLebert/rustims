@@ -6,6 +6,8 @@ use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
 
+use rayon::prelude::*;
+
 #[derive(Debug)]
 pub struct TimsTofSyntheticsDataHandle {
     pub connection: Connection,
@@ -349,33 +351,43 @@ impl TimsTofSyntheticsDataHandle {
             None,
         );
 
-        let mut peptide_ids: Vec<i32> = Vec::new();
-        let mut charges: Vec<i8> = Vec::new();
-        let mut collision_energies: Vec<f32> = Vec::new();
-
-        for ion in ions.iter() {
-
+        // Parallel processing starts here
+        let (peptide_ids, charges, collision_energies): (Vec<i32>, Vec<i8>, Vec<f32>) = ions.par_iter().flat_map(|ion| {
             let peptide_id = ion.peptide_id;
             let maybe_peptide = peptide_map.get(&peptide_id);
 
-            // TODO: CAN THIS EVEN HAPPEN?
             if maybe_peptide.is_none() {
-                continue;
+                return None;
             }
 
             let peptide = maybe_peptide.unwrap();
+            let mut local_peptide_ids = Vec::new();
+            let mut local_charges = Vec::new();
+            let mut local_collision_energies = Vec::new();
 
             for frame_id in peptide.frame_occurrence.iter() {
                 for scan_id in ion.scan_occurrence.iter() {
                     if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
                         let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
-                        peptide_ids.push(peptide_id as i32);
-                        charges.push(ion.charge);
-                        collision_energies.push(collision_energy as f32);
+                        local_peptide_ids.push(peptide_id as i32);
+                        local_charges.push(ion.charge);
+                        local_collision_energies.push(collision_energy as f32);
                     }
                 }
             }
-        }
+
+            Some((local_peptide_ids, local_charges, local_collision_energies))
+        })
+            .reduce(|| (Vec::new(), Vec::new(), Vec::new()), |mut acc, val| {
+                let (ref mut ids, ref mut charges, ref mut energies) = acc;
+                let (v_ids, v_charges, v_energies) = val;
+
+                ids.extend(v_ids);
+                charges.extend(v_charges);
+                energies.extend(v_energies);
+
+                acc
+            });
 
         (peptide_ids, charges, collision_energies)
     }
