@@ -378,6 +378,7 @@ impl TimsTofSyntheticsDataHandle {
 
             Some((local_peptide_ids, local_charges, local_collision_energies))
         })
+            .filter(|(peptide_ids, _, _)| !peptide_ids.is_empty())
             .reduce(|| (Vec::new(), Vec::new(), Vec::new()), |mut acc, val| {
                 let (ref mut ids, ref mut charges, ref mut energies) = acc;
                 let (v_ids, v_charges, v_energies) = val;
