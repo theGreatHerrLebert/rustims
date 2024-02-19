@@ -17,6 +17,10 @@ impl PyTimsTofSyntheticsDataHandle {
         let path = std::path::Path::new(db_path);
         PyTimsTofSyntheticsDataHandle { inner: TimsTofSyntheticsDataHandle::new(path).unwrap() }
     }
+
+    pub fn get_transmitted_ions(&self) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+        self.inner.get_transmitted_ions()
+    }
 }
 
 #[pyclass]

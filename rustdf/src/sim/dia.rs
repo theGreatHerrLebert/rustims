@@ -25,8 +25,6 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path)?;
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
-        let frame_to_window_group = handle.read_frame_to_window_group()?;
-        let window_group_settings = handle.read_window_group_settings()?;
         let fragment_ions = handle.read_fragment_ions()?;
         let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions);
 

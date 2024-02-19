@@ -14,3 +14,12 @@ class TimsTofSyntheticsDataHandleRust:
 
     def __repr__(self):
         return f"TimsTofSyntheticsDataHandleRust(path={self.path})"
+
+    def get_transmitted_ions(self) -> pd.DataFrame:
+        peptide_ids, sequences, charges, collision_energies = self.__handle.get_transmitted_ions()
+        return pd.DataFrame({
+            'peptide_id': peptide_ids,
+            'sequence': sequences,
+            'charge': charges,
+            'collision_energy': collision_energies
+        })
