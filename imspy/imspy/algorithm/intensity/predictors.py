@@ -48,19 +48,19 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
     def simulate_ion_intensities(self, sequences: list[str], charges: list[int], collision_energies) -> NDArray:
         pass
 
-    def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512) -> pd.DataFrame:
+    def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512, divide_collision_energy_by: float = 1e2) -> pd.DataFrame:
 
         if self.verbose:
             print("Generating Prosit compatible input data...")
+
         data['sequence_unmod'] = data.apply(lambda r: remove_unimod_annotation(r.sequence), axis=1)
-        data['collision_energy'] = data.apply(lambda r: r.collision_energy / 1e3, axis=1)
+        data['collision_energy'] = data.apply(lambda r: r.collision_energy / divide_collision_energy_by, axis=1)
         data['sequence_length'] = data.apply(lambda r: len(r.sequence_unmod), axis=1)
 
-        tf_ds = generate_prosit_intensity_prediction_dataset(
+        tf_ds = (generate_prosit_intensity_prediction_dataset(
             data.sequence_unmod,
             data.charge,
-            np.expand_dims(data.collision_energy, 1)
-        ).batch(batch_size)
+            np.expand_dims(data.collision_energy, 1)).batch(batch_size))
 
         # Map the unpacking function over the dataset
         ds_unpacked = tf_ds.map(unpack_dict)

@@ -1,12 +1,13 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::chemistry::aa_sequence::calculate_mz;
 use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
-
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 #[derive(Debug)]
 pub struct TimsTofSyntheticsDataHandle {
@@ -218,6 +219,105 @@ impl TimsTofSyntheticsDataHandle {
         Ok(fragment_ion_sim)
     }
 
+    pub fn get_transmission_dia(&self) -> TimsTransmissionDIA {
+        let frame_to_window_group = self.read_frame_to_window_group().unwrap();
+        let window_group_settings = self.read_window_group_settings().unwrap();
+
+        TimsTransmissionDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
+            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
+            None,
+        )
+    }
+
+    pub fn get_collision_energy_dia(&self) -> TimsTofCollisionEnergyDIA {
+        let frame_to_window_group = self.read_frame_to_window_group().unwrap();
+        let window_group_settings = self.read_window_group_settings().unwrap();
+
+        TimsTofCollisionEnergyDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
+        )
+    }
+
+    fn ion_map_fn(
+        ion: IonsSim,
+        peptide_map: &BTreeMap<u32, PeptidesSim>,
+        precursor_frames: &HashSet<u32>,
+        transmission: &TimsTransmissionDIA,
+        collision_energy: &TimsTofCollisionEnergyDIA) -> BTreeSet<(u32, String, i8, i32)> {
+
+        let peptide = peptide_map.get(&ion.peptide_id).unwrap();
+        let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
+
+        // go over all frames the ion occurs in
+        for frame in peptide.frame_occurrence.iter() {
+
+            // only consider fragment frames
+            if !precursor_frames.contains(frame) {
+                // go over all scans the ion occurs in
+                for scan in &ion.scan_occurrence {
+                    let mz = calculate_mz(peptide.mono_isotopic_mass as f64, ion.charge as i32);
+                    if transmission.is_transmitted(*frame as i32, *scan as i32, mz, None) {
+
+                        let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
+                        let quantized_energy = (collision_energy * 100.0).round() as i32;
+
+                        ret_tree.insert((ion.peptide_id, peptide.sequence.clone(), ion.charge, quantized_energy));
+                    }
+                }
+            }
+        }
+        ret_tree
+    }
+
+    // TODO: take isotopic envelope into account
+    pub fn get_transmitted_ions(&self, num_threads: usize) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // create a thread pool
+        let peptides = self.read_peptides().unwrap();
+        let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
+        let precursor_frames = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&self.read_frames().unwrap());
+
+        let transmission = self.get_transmission_dia();
+        let collision_energy = self.get_collision_energy_dia();
+
+        let ions = self.read_ions().unwrap();
+
+        let trees = thread_pool.install(|| { ions.par_iter().map(|ion| {
+            TimsTofSyntheticsDataHandle::ion_map_fn(ion.clone(), &peptide_map, &precursor_frames, &transmission, &collision_energy)
+        }).collect::<Vec<_>>()
+        });
+
+        let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
+        for tree in trees {
+            ret_tree.extend(tree);
+        }
+
+        let mut ret_frame = Vec::new();
+        let mut ret_sequence = Vec::new();
+        let mut ret_charge = Vec::new();
+        let mut ret_energy = Vec::new();
+
+        for (frame, sequence, charge, energy) in ret_tree {
+            ret_frame.push(frame as i32);
+            ret_sequence.push(sequence);
+            ret_charge.push(charge);
+            ret_energy.push(energy as f32 / 100.0);
+        }
+
+        (ret_frame, ret_sequence, ret_charge, ret_energy)
+    }
+
     pub fn build_peptide_to_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
         let mut ion_map = BTreeMap::new();
         for ion in ions.iter() {
@@ -316,96 +416,5 @@ impl TimsTofSyntheticsDataHandle {
             fragment_ion_map.entry(key).or_insert_with(Vec::new).extend(value);
         }
         fragment_ion_map
-    }
-
-    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<i32>, Vec<i8>, Vec<f32>) {
-
-        let ions = self.read_ions().unwrap();
-        let peptides = self.read_peptides().unwrap();
-        let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
-        let frames = self.read_frames().unwrap();
-        let precursor_frame_ids = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&frames);
-
-        // quadrupole and collision energy
-        let frame_to_window_group = self.read_frame_to_window_group().unwrap();
-        let window_group_settings = self.read_window_group_settings().unwrap();
-
-        // TODO: avoid code duplication with DIA handle
-        // get collision energy settings per window group
-        let fragmentation_settings = TimsTofCollisionEnergyDIA::new(
-            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
-            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
-            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
-        );
-
-        // get ion transmission settings per window group
-        let transmission_settings = TimsTransmissionDIA::new(
-            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
-            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
-            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
-            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
-            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
-            None,
-        );
-
-        // Parallel processing starts here
-        let (peptide_ids, charges, collision_energies): (Vec<i32>, Vec<i8>, Vec<f32>) = ions.par_iter().flat_map(|ion| {
-
-            let peptide = peptide_map.get(&ion.peptide_id).unwrap();
-            let mut local_peptide_ids = Vec::new();
-            let mut local_charges = Vec::new();
-            let mut local_collision_energies = Vec::new();
-
-            for frame_id in peptide.frame_occurrence.iter() {
-
-                // skip all precursor frames
-                if precursor_frame_ids.contains(frame_id) {
-                    continue;
-                }
-
-                for scan_id in ion.scan_occurrence.iter() {
-                    if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
-                        let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
-                        local_peptide_ids.push(ion.peptide_id as i32);
-                        local_charges.push(ion.charge);
-                        local_collision_energies.push(collision_energy as f32);
-                    }
-                }
-            }
-
-            Some((local_peptide_ids, local_charges, local_collision_energies))
-        })
-            .filter(|(peptide_ids, _, _)| !peptide_ids.is_empty())
-            .reduce(|| (Vec::new(), Vec::new(), Vec::new()), |mut acc, val| {
-                let (ref mut ids, ref mut charges, ref mut energies) = acc;
-                let (v_ids, v_charges, v_energies) = val;
-
-                ids.extend(v_ids);
-                charges.extend(v_charges);
-                energies.extend(v_energies);
-
-                acc
-            });
-
-        // make combinations of peptide_ids, charges and collision_energies unique
-        let mut unique_combinations = HashSet::new();
-
-        for (peptide_id, (charge, collision_energy)) in peptide_ids.iter().zip(charges.iter().zip(collision_energies.iter())) {
-            // quantize collision energy to 3 decimal places
-            let collision_energy = (collision_energy * 1e3).round() as i32;
-            unique_combinations.insert((*peptide_id, *charge, collision_energy));
-        }
-
-        // unpack unique combinations and revert quantization of collision energy
-        let peptide_ids: Vec<i32> = unique_combinations.iter().map(|(id, _, _)| *id).collect();
-        let charges: Vec<i8> = unique_combinations.iter().map(|(_, charge, _)| *charge).collect();
-        let collision_energies: Vec<f32> = unique_combinations.iter().map(|(_, _, energy)| *energy as f32 / 1e3).collect();
-
-        (peptide_ids, charges, collision_energies)
     }
 }

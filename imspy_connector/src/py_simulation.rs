@@ -2,7 +2,27 @@ use mscore::algorithm::fragmentation::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
+use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::py_tims_frame::PyTimsFrame;
+
+#[pyclass]
+pub struct PyTimsTofSyntheticsDataHandle {
+    pub inner: TimsTofSyntheticsDataHandle,
+}
+
+#[pymethods]
+impl PyTimsTofSyntheticsDataHandle {
+    #[new]
+    pub fn new(db_path: &str) -> Self {
+        let path = std::path::Path::new(db_path);
+        PyTimsTofSyntheticsDataHandle { inner: TimsTofSyntheticsDataHandle::new(path).unwrap() }
+    }
+
+    pub fn get_transmitted_ions(&self, num_threads: Option<usize>) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+        let threads = num_threads.unwrap_or(4);
+        self.inner.get_transmitted_ions(threads)
+    }
+}
 
 #[pyclass]
 pub struct PyTimsTofSyntheticsPrecursorFrameBuilder {
@@ -59,9 +79,5 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
             result.push(self.inner.get_collision_energy(*frame_id, *scan_id));
         }
         result
-    }
-
-    pub fn get_ions_with_collision_energy(&self) -> (Vec<i32>, Vec<i8>, Vec<f32>) {
-        self.inner.fragment_ions_with_collision_energies.clone()
     }
 }
