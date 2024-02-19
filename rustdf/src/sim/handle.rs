@@ -316,7 +316,7 @@ impl TimsTofSyntheticsDataHandle {
         fragment_ion_map
     }
 
-    pub fn build_dia_fragment_ions(&self) -> (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>) {
+    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>) {
 
         let ions = self.read_ions().unwrap();
         let ion_map = TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions);
