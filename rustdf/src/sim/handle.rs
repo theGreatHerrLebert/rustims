@@ -259,7 +259,7 @@ impl TimsTofSyntheticsDataHandle {
         let transmission = self.get_transmission_dia();
         let collision_energy = self.get_collision_energy_dia();
 
-        let mut ret_tree: BTreeMap<(i32, i8, i8), String> = BTreeMap::new();
+        let mut ret_tree: BTreeMap<(i32, i8, i32), String> = BTreeMap::new();
 
         for ion in ions.iter() {
 
@@ -274,7 +274,7 @@ impl TimsTofSyntheticsDataHandle {
                         // check if the ion is transmitted
                         if transmission.is_transmitted(*frame as i32, *scan as i32, mono_mz as f64, None) {
                             let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
-                            let quantized_energy = (collision_energy * 10.0).round() as i8;
+                            let quantized_energy = (collision_energy * 10.0).round() as i32;
                             ret_tree.insert((*frame as i32, ion.charge, quantized_energy), peptide.sequence.clone());
                         }
                     }
