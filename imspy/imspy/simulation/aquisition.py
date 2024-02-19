@@ -228,12 +228,12 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
                  rt_cycle_length=0.056,
                  im_lower=0.6,
                  im_upper=1.5,
-                 num_scans=451,
+                 num_scans=927,
                  mz_lower: float = 150,
                  mz_upper: float = 1200,
                  exp_name: str = "RAW.d"
                  ):
-        super().__init__(path, window_group_file, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
+        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
         self.scan_table = None
         self.frame_table = None
         self.frames_to_window_groups = None
