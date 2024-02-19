@@ -254,25 +254,25 @@ impl TimsTofSyntheticsDataHandle {
         peptide_map: &BTreeMap<u32, PeptidesSim>,
         precursor_frames: &HashSet<u32>,
         transmission: &TimsTransmissionDIA,
-        collision_energy: &TimsTofCollisionEnergyDIA) -> BTreeSet<(i32, String, i8, i32)> {
+        collision_energy: &TimsTofCollisionEnergyDIA) -> BTreeSet<(u32, String, i8, i32)> {
 
         let peptide = peptide_map.get(&ion.peptide_id).unwrap();
-        let mut ret_tree: BTreeSet<(i32, String, i8, i32)> = BTreeSet::new();
+        let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
 
         // go over all frames the ion occurs in
         for frame in peptide.frame_occurrence.iter() {
+
             // only consider fragment frames
             if !precursor_frames.contains(frame) {
                 // go over all scans the ion occurs in
                 for scan in &ion.scan_occurrence {
                     let mz = calculate_mz(peptide.mono_isotopic_mass as f64, ion.charge as i32);
                     if transmission.is_transmitted(*frame as i32, *scan as i32, mz, None) {
+
                         let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                         let quantized_energy = (collision_energy * 100.0).round() as i32;
 
-                        if !ret_tree.contains(&(*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy)) {
-                            ret_tree.insert((*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy));
-                        }
+                        ret_tree.insert((*ion.peptide_id, peptide.sequence.clone(), ion.charge, quantized_energy));
                     }
                 }
             }
@@ -284,9 +284,6 @@ impl TimsTofSyntheticsDataHandle {
     pub fn get_transmitted_ions(&self, num_threads: usize) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // create a thread pool
-
-        let ions = self.read_ions().unwrap();
-
         let peptides = self.read_peptides().unwrap();
         let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
         let precursor_frames = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&self.read_frames().unwrap());
@@ -294,18 +291,16 @@ impl TimsTofSyntheticsDataHandle {
         let transmission = self.get_transmission_dia();
         let collision_energy = self.get_collision_energy_dia();
 
+        let ions = self.read_ions().unwrap();
+
         let trees = thread_pool.install(|| { ions.par_iter().map(|ion| {
             TimsTofSyntheticsDataHandle::ion_map_fn(ion.clone(), &peptide_map, &precursor_frames, &transmission, &collision_energy)
         }).collect::<Vec<_>>()
         });
 
-        let mut ret_tree: BTreeSet<(i32, String, i8, i32)> = BTreeSet::new();
+        let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
         for tree in trees {
-            for t in tree {
-                if !ret_tree.contains(&t) {
-                    ret_tree.insert(t);
-                }
-            }
+            ret_tree.extend(tree);
         }
 
         let mut ret_frame = Vec::new();
@@ -314,7 +309,7 @@ impl TimsTofSyntheticsDataHandle {
         let mut ret_energy = Vec::new();
 
         for (frame, sequence, charge, energy) in ret_tree {
-            ret_frame.push(frame);
+            ret_frame.push(frame as i32);
             ret_sequence.push(sequence);
             ret_charge.push(charge);
             ret_energy.push(energy as f32 / 100.0);
