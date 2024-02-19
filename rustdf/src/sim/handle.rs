@@ -360,55 +360,25 @@ impl TimsTofSyntheticsDataHandle {
             let peptide_id = ion.peptide_id;
             let maybe_peptide = peptide_map.get(&peptide_id);
 
-            // if no fragment ions are available for the peptide, skip it
-            // TODO: WHY SHOULD THIS HAPPEN AT ALL? INVESTIGATE
+            // TODO: CAN THIS EVEN HAPPEN?
             if maybe_peptide.is_none() {
                 continue;
             }
 
             let peptide = maybe_peptide.unwrap();
 
-            peptide_ids.push(peptide.peptide_id as i32);
-            charges.push(ion.charge);
-            sequences.push(peptide.sequence.clone());
-            collision_energies.push(1.0);
-        }
-
-        /*
-        // go over all peptides
-        for peptide in peptides.iter() {
-
-            // get frame occurrence and abundance for peptide
-            let frame_occurrence = &peptide.frame_occurrence;
-
-            // get peptide id, key for ion_map
-            let peptide_id = peptide.peptide_id;
-
-            // get all ions for peptide
-            let ion_list = ion_map.get(&peptide_id).unwrap();
-
-            // go over all ions for a given peptide
-            for ion in ion_list.iter() {
-                // TODO: calculate full transmission for precursor ions and deal with isotopes
-                let mz_mono = &ion.mz;
-                let scan_occurrences = &ion.scan_occurrence;
-
-                for frame in frame_occurrence.iter() {
-                    for scan in scan_occurrences.iter() {
-                        if transmission_settings.is_transmitted(*frame as i32, *scan as i32, *mz_mono as f64, None) {
-                            let collision_energy = fragmentation_settings.get_collision_energy(*frame as i32, *scan as i32);
-                            peptide_ids.push(peptide_id);
-                            sequences.push(peptide.sequence.clone());
-                            charges.push(ion.charge);
-                            collision_energies.push(collision_energy);
-                        }
+            for frame_id in peptide.frame_occurrence.iter() {
+                for scan_id in ion.scan_occurrence.iter() {
+                    if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
+                        let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
+                        peptide_ids.push(peptide_id as i32);
+                        sequences.push(peptide.sequence.clone());
+                        charges.push(ion.charge);
+                        collision_energies.push(collision_energy as f32);
                     }
                 }
             }
         }
-
-        (peptide_ids, sequences, charges, collision_energies)
-         */
 
         (peptide_ids, sequences, charges, collision_energies)
     }
