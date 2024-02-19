@@ -320,8 +320,8 @@ impl TimsTofSyntheticsDataHandle {
     pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>) {
 
         let ions = self.read_ions().unwrap();
-        let ion_map = TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions);
         let peptides = self.read_peptides().unwrap();
+        let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
 
         // quadrupole and collision energy
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
@@ -355,20 +355,21 @@ impl TimsTofSyntheticsDataHandle {
         let mut charges: Vec<i8> = Vec::new();
         let mut collision_energies: Vec<f32> = Vec::new();
 
-        for peptide in peptides.iter() {
-            let id = peptide.peptide_id;
+        for ion in ions.iter() {
 
-            let maybe_fragment_ions = ion_map.get(&id);
+            let peptide_id = ion.peptide_id;
+            let maybe_peptide = peptide_map.get(&peptide_id);
 
             // if no fragment ions are available for the peptide, skip it
             // TODO: WHY SHOULD THIS HAPPEN AT ALL? INVESTIGATE
-            if maybe_fragment_ions.is_none() {
+            if maybe_peptide.is_none() {
                 continue;
             }
 
-            let fragment_ions = ion_map.get(&id).unwrap();
-            peptide_ids.push(id as i32);
-            charges.push(fragment_ions[0].charge);
+            let peptide = maybe_peptide.unwrap();
+
+            peptide_ids.push(peptide.peptide_id as i32);
+            charges.push(ion[0].charge);
             sequences.push(peptide.sequence.clone());
             collision_energies.push(1.0);
         }
