@@ -354,9 +354,13 @@ def main():
     if verbose:
         print("Simulating fragment ion intensity distributions...")
 
-    native_handle = TimsTofSyntheticsDataHandleRust(path / name / 'synthetic_data.db')
+    native_path = Path(path) / name / 'synthetic_data.db'
+
+    native_handle = TimsTofSyntheticsDataHandleRust(str(native_path))
     transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=args.num_threads)
+
     IntensityPredictor = Prosit2023TimsTofWrapper()
+
     i_pred = IntensityPredictor.simulate_ion_intensities_pandas(transmitted_fragment_ions, batch_size=args.batch_size)
     i_pred['fragment_intensities'] = i_pred.apply(
         lambda s: sequence_to_all_ions(s.sequence, s.charge, s.intensity, normalize=True), axis=1
