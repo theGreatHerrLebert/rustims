@@ -369,7 +369,7 @@ impl TimsTofSyntheticsDataHandle {
             let peptide = maybe_peptide.unwrap();
 
             peptide_ids.push(peptide.peptide_id as i32);
-            charges.push(ion[0].charge);
+            charges.push(ion.charge);
             sequences.push(peptide.sequence.clone());
             collision_energies.push(1.0);
         }
