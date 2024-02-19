@@ -269,7 +269,10 @@ impl TimsTofSyntheticsDataHandle {
                     if transmission.is_transmitted(*frame as i32, *scan as i32, mz, None) {
                         let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                         let quantized_energy = (collision_energy * 100.0).round() as i32;
-                        ret_tree.insert((*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy));
+
+                        if !ret_tree.contains(&(*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy)) {
+                            ret_tree.insert((*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy));
+                        }
                     }
                 }
             }
@@ -298,7 +301,11 @@ impl TimsTofSyntheticsDataHandle {
 
         let mut ret_tree: BTreeSet<(i32, String, i8, i32)> = BTreeSet::new();
         for tree in trees {
-            ret_tree.extend(tree);
+            for t in tree {
+                if !ret_tree.contains(&t) {
+                    ret_tree.insert(t);
+                }
+            }
         }
 
         let mut ret_frame = Vec::new();
