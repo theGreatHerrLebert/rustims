@@ -40,6 +40,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
         );
 
+        // get ion transmission settings per window group
         let transmission_settings = TimsTransmissionDIA::new(
             frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
             frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),

@@ -40,7 +40,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         let scans = handle.read_scans()?;
         let frames = handle.read_frames()?;
         Ok(Self {
-            ions: TimsTofSyntheticsDataHandle::build_ion_map(&ions),
+            ions: TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions),
             peptides: TimsTofSyntheticsDataHandle::build_peptide_map(&peptides),
             scans: scans.clone(),
             frames: frames.clone(),
