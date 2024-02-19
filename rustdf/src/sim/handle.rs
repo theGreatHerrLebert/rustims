@@ -392,6 +392,15 @@ impl TimsTofSyntheticsDataHandle {
                 acc
             });
 
+        // make combinations of peptide_ids, charges and collision_energies unique
+        let mut unique_combinations = HashSet::new();
+
+        for (peptide_id, (charge, collision_energy)) in peptide_ids.iter().zip(charges.iter().zip(collision_energies.iter())) {
+            unique_combinations.insert((*peptide_id, *charge, *collision_energy));
+        }
+
+        let (peptide_ids, charges, collision_energies): (Vec<i32>, Vec<i8>, Vec<f32>) = unique_combinations.into_iter().unzip_n();
+
         (peptide_ids, charges, collision_energies)
     }
 }
