@@ -4,6 +4,7 @@ use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionE
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
+use sage_core::peptide;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
 
 #[derive(Debug)]
@@ -353,6 +354,15 @@ impl TimsTofSyntheticsDataHandle {
         let mut sequences: Vec<String> = Vec::new();
         let mut charges: Vec<i8> = Vec::new();
         let mut collision_energies: Vec<f32> = Vec::new();
+
+        for peptide in peptides.iter() {
+            let id = peptide.peptide_id;
+            let fragment_ions = ion_map.get(&id).unwrap();
+            peptide_ids.push(id as i32);
+            charges.push(fragment_ions[0].charge);
+            sequences.push(peptide.sequence.clone());
+            collision_energies.push(1.0);
+        }
 
         /*
         // go over all peptides
