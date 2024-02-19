@@ -316,7 +316,7 @@ impl TimsTofSyntheticsDataHandle {
         fragment_ion_map
     }
 
-    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<i32>, Vec<i8>, Vec<f32>) {
 
         let ions = self.read_ions().unwrap();
         let peptides = self.read_peptides().unwrap();
@@ -350,7 +350,6 @@ impl TimsTofSyntheticsDataHandle {
         );
 
         let mut peptide_ids: Vec<i32> = Vec::new();
-        let mut sequences: Vec<String> = Vec::new();
         let mut charges: Vec<i8> = Vec::new();
         let mut collision_energies: Vec<f32> = Vec::new();
 
@@ -371,7 +370,6 @@ impl TimsTofSyntheticsDataHandle {
                     if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
                         let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
                         peptide_ids.push(peptide_id as i32);
-                        sequences.push(peptide.sequence.clone());
                         charges.push(ion.charge);
                         collision_energies.push(collision_energy as f32);
                     }
@@ -379,6 +377,6 @@ impl TimsTofSyntheticsDataHandle {
             }
         }
 
-        (peptide_ids, sequences, charges, collision_energies)
+        (peptide_ids, charges, collision_energies)
     }
 }
