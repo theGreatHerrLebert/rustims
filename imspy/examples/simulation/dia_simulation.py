@@ -22,8 +22,13 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
 from pathlib import Path
 
+# silence warnings, will spam the console otherwise
+os.environ["WANDB_SILENT"] = "true"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import tensorflow as tf
 
+# don't use all the memory for the GPU (if available)
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
@@ -37,9 +42,6 @@ if gpus:
     except RuntimeError as e:
         # Virtual devices must be set before GPUs have been initialized
         print(e)
-
-os.environ["WANDB_SILENT"] = "true"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 def main():

@@ -221,6 +221,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
+                 window_group_file: str,
                  verbose: bool = True,
                  precursor_every: int = 20,
                  gradient_length=50 * 60,
@@ -232,9 +233,11 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
                  mz_upper: float = 1200,
                  exp_name: str = "RAW.d"
                  ):
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
+        super().__init__(path, window_group_file, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
         self.scan_table = None
         self.frame_table = None
+        self.frames_to_window_groups = None
+        self.dia_ms_ms_windows = pd.read_csv(window_group_file)
         self.acquisition_mode = AcquisitionMode('MIDIA')
         self.verbose = verbose
         self.precursor_every = precursor_every
@@ -246,10 +249,23 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
             print(f'calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
         return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in table.frame_id])
 
+    def generate_frame_to_window_group_table(self, precursors_every: int = 16, verbose: bool = True) -> pd.DataFrame:
+        if verbose:
+            print(f'generating frame to window group table.')
+
+        table_list = []
+        frame_ids = self.frame_table[self.frame_table.ms_type > 0].frame_id.values
+        for i, frame_id in enumerate(frame_ids):
+            wg = i % precursors_every + 1
+            table_list.append({'frame': frame_id, 'window_group': wg})
+
+        return pd.DataFrame(table_list)
+
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table, verbose=verbose)
+        self.frames_to_window_groups = self.generate_frame_to_window_group_table(precursors_every=self.precursor_every)
 
         self.synthetics_handle.create_table(
             table_name='frames',
@@ -258,4 +274,12 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
         self.synthetics_handle.create_table(
             table_name='scans',
             table=self.scan_table
+        )
+        self.synthetics_handle.create_table(
+            table_name='dia_ms_ms_info',
+            table=self.frames_to_window_groups
+        )
+        self.synthetics_handle.create_table(
+            table_name='dia_ms_ms_windows',
+            table=self.dia_ms_ms_windows
         )
