@@ -397,7 +397,7 @@ impl TimsTofSyntheticsDataHandle {
 
         for (peptide_id, (charge, collision_energy)) in peptide_ids.iter().zip(charges.iter().zip(collision_energies.iter())) {
             // quantize collision energy to 3 decimal places
-            let collision_energy = (collision_energy * 1e3).round() as i8;
+            let collision_energy = (collision_energy * 1e3).round() as i32;
             unique_combinations.insert((*peptide_id, *charge, collision_energy));
         }
 
