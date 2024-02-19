@@ -357,6 +357,15 @@ impl TimsTofSyntheticsDataHandle {
 
         for peptide in peptides.iter() {
             let id = peptide.peptide_id;
+
+            let maybe_fragment_ions = ion_map.get(&id);
+
+            // if no fragment ions are available for the peptide, skip it
+            // TODO: WHY SHOULD THIS HAPPEN AT ALL? INVESTIGATE
+            if maybe_fragment_ions.is_none() {
+                continue;
+            }
+
             let fragment_ions = ion_map.get(&id).unwrap();
             peptide_ids.push(id as i32);
             charges.push(fragment_ions[0].charge);
