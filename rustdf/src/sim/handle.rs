@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
+use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
+use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
@@ -214,7 +216,7 @@ impl TimsTofSyntheticsDataHandle {
         Ok(fragment_ion_sim)
     }
 
-    pub fn build_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
+    pub fn build_peptide_to_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
         let mut ion_map = BTreeMap::new();
         for ion in ions.iter() {
             let ions = ion_map.entry(ion.peptide_id).or_insert_with(Vec::new);
@@ -314,22 +316,76 @@ impl TimsTofSyntheticsDataHandle {
         fragment_ion_map
     }
 
-    pub fn build_dia_fragment_ions(&self) {
+    pub fn build_dia_fragment_ions(&self) -> (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>) {
 
         let ions = self.read_ions().unwrap();
-        let ion_map = TimsTofSyntheticsDataHandle::build_ion_map(&ions);
-
+        let ion_map = TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions);
         let peptides = self.read_peptides().unwrap();
-        let _peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
 
+        // quadrupole and collision energy
+        let frame_to_window_group = self.read_frame_to_window_group().unwrap();
+        let window_group_settings = self.read_window_group_settings().unwrap();
+
+        // TODO: avoid code duplication with DIA handle
+        // get collision energy settings per window group
+        let fragmentation_settings = TimsTofCollisionEnergyDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.collision_energy as f64).collect(),
+        );
+
+        // get ion transmission settings per window group
+        let transmission_settings = TimsTransmissionDIA::new(
+            frame_to_window_group.iter().map(|x| x.frame_id as i32).collect(),
+            frame_to_window_group.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.window_group as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_start as i32).collect(),
+            window_group_settings.iter().map(|x| x.scan_end as i32).collect(),
+            window_group_settings.iter().map(|x| x.isolation_mz as f64).collect(),
+            window_group_settings.iter().map(|x| x.isolation_width as f64).collect(),
+            None,
+        );
+
+        let mut peptide_ids = Vec::new();
+        let mut sequences = Vec::new();
+        let mut charges = Vec::new();
+        let mut collision_energies = Vec::new();
+
+        // go over all peptides
         for peptide in peptides.iter() {
-            let peptide_id = peptide.peptide_id;
-            let _ion_list = ion_map.get(&peptide_id).unwrap();
-            let _frame_occurrence = &peptide.frame_occurrence;
 
-            for ion in _ion_list.iter() {
-                let _scan_occurrence = &ion.scan_occurrence;
+            // get frame occurrence and abundance for peptide
+            let frame_occurrence = &peptide.frame_occurrence;
+
+            // get peptide id, key for ion_map
+            let peptide_id = peptide.peptide_id;
+
+            // get all ions for peptide
+            let ion_list = ion_map.get(&peptide_id).unwrap();
+
+            // go over all ions for a given peptide
+            for ion in ion_list.iter() {
+                // TODO: calculate full transmission for precursor ions and deal with isotopes
+                let mz_mono = &ion.mz;
+                let scan_occurrences = &ion.scan_occurrence;
+
+                for frame in frame_occurrence.iter() {
+                    for scan in scan_occurrences.iter() {
+                        if transmission_settings.is_transmitted(*frame as i32, *scan as i32, *mz_mono as f64, None) {
+                            let collision_energy = fragmentation_settings.get_collision_energy(*frame as i32, *scan as i32);
+                            peptide_ids.push(peptide_id);
+                            sequences.push(peptide.sequence.clone());
+                            charges.push(ion.charge);
+                            collision_energies.push(collision_energy);
+                        }
+                    }
+                }
             }
         }
+
+        (peptide_ids, sequences, charges, collision_energies)
     }
 }
