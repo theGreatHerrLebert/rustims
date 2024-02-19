@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
@@ -259,7 +259,7 @@ impl TimsTofSyntheticsDataHandle {
         let transmission = self.get_transmission_dia();
         let collision_energy = self.get_collision_energy_dia();
 
-        let mut ret_tree: BTreeMap<(i32, i8, i32), String> = BTreeMap::new();
+        let mut ret_tree: BTreeSet<(i32, String, i8, i32)> = BTreeSet::new();
 
         for ion in ions.iter() {
 
@@ -275,7 +275,7 @@ impl TimsTofSyntheticsDataHandle {
                         if transmission.is_transmitted(*frame as i32, *scan as i32, mono_mz as f64, None) {
                             let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                             let quantized_energy = (collision_energy * 10.0).round() as i32;
-                            ret_tree.insert((*frame as i32, ion.charge, quantized_energy), peptide.sequence.clone());
+                            ret_tree.insert((*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy));
                         }
                     }
                 }
@@ -283,12 +283,12 @@ impl TimsTofSyntheticsDataHandle {
         }
 
         // flatten map
-        let mut frame_ids = Vec::new();
-        let mut sequences = Vec::new();
-        let mut charges = Vec::new();
-        let mut collision_energies = Vec::new();
+        let mut frame_ids = Vec::with_capacity(ret_tree.len());
+        let mut sequences = Vec::with_capacity(ret_tree.len());
+        let mut charges = Vec::with_capacity(ret_tree.len());
+        let mut collision_energies = Vec::with_capacity(ret_tree.len());
 
-        for ((frame_id, charge, collision_energy), sequence) in ret_tree.iter() {
+        for (frame_id, sequence, charge, collision_energy) in ret_tree.iter() {
             frame_ids.push(*frame_id);
             sequences.push(sequence.clone());
             charges.push(*charge);
