@@ -18,8 +18,9 @@ impl PyTimsTofSyntheticsDataHandle {
         PyTimsTofSyntheticsDataHandle { inner: TimsTofSyntheticsDataHandle::new(path).unwrap() }
     }
 
-    pub fn get_transmitted_ions(&self) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
-        self.inner.get_transmitted_ions()
+    pub fn get_transmitted_ions(&self, num_threads: Option<usize>) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+        let threads = num_threads.unwrap_or(4);
+        self.inner.get_transmitted_ions(threads)
     }
 }
 
