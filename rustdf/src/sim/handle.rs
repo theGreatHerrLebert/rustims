@@ -218,6 +218,15 @@ impl TimsTofSyntheticsDataHandle {
         Ok(fragment_ion_sim)
     }
 
+    pub fn get_peptide_to_ions(&self) -> (Vec<i32>, Vec<i8>) {
+
+        let ions = self.read_ions().unwrap();
+        let peptide_ids = ions.iter().map(|x| x.peptide_id as i32).collect::<Vec<_>>();
+        let charge_states = ions.iter().map(|x| x.charge).collect::<Vec<_>>();
+
+        (peptide_ids, charge_states)
+    }
+
     pub fn build_peptide_to_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
         let mut ion_map = BTreeMap::new();
         for ion in ions.iter() {
@@ -353,7 +362,9 @@ impl TimsTofSyntheticsDataHandle {
             None,
         );
 
-        let mut ret_set = HashSet::new();
+        let mut ret_set: HashSet<(i32, i8, i32)> = HashSet::new();
+
+        /*
 
         for ion in ions.iter() {
             let peptide = peptide_map.get(&ion.peptide_id).unwrap();
@@ -374,10 +385,11 @@ impl TimsTofSyntheticsDataHandle {
                 }
             }
         }
+         */
 
-        let mut peptide_ids = Vec::with_capacity(ret_set.len());
-        let mut charges = Vec::with_capacity(ret_set.len());
-        let mut collision_energies = Vec::with_capacity(ret_set.len());
+        let mut peptide_ids: Vec<i32> = Vec::with_capacity(ret_set.len());
+        let mut charges: Vec<i8> = Vec::with_capacity(ret_set.len());
+        let mut collision_energies: Vec<f32> = Vec::with_capacity(ret_set.len());
 
         for (peptide_id, charge, collision_energy) in ret_set.iter() {
             peptide_ids.push(*peptide_id as i32);
