@@ -181,11 +181,17 @@ def main():
         verbose=verbose
     )
 
+    if verbose:
+        print("Simulating retention times...")
+
     # predict rts
     peptide_rt = RTColumn.simulate_separation_times_pandas(
         data=acquisition_builder.synthetics_handle.get_table('peptides'),
         gradient_length=acquisition_builder.gradient_length,
     )
+
+    if verbose:
+        print("Sampling peptide intensities...")
 
     # call this peptide counts instead
     events = generate_events(
