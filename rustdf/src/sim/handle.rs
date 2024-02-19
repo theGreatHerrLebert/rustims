@@ -349,11 +349,12 @@ impl TimsTofSyntheticsDataHandle {
             None,
         );
 
-        let mut peptide_ids = Vec::new();
-        let mut sequences = Vec::new();
-        let mut charges = Vec::new();
-        let mut collision_energies = Vec::new();
+        let mut peptide_ids: Vec<i32> = Vec::new();
+        let mut sequences: Vec<String> = Vec::new();
+        let mut charges: Vec<i8> = Vec::new();
+        let mut collision_energies: Vec<f32> = Vec::new();
 
+        /*
         // go over all peptides
         for peptide in peptides.iter() {
 
@@ -387,5 +388,8 @@ impl TimsTofSyntheticsDataHandle {
         }
 
         (peptide_ids, sequences, charges, collision_energies)
+         */
+
+        (vec![], vec![], vec![], vec![])
     }
 }
