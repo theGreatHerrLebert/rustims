@@ -17,10 +17,6 @@ impl PyTimsTofSyntheticsDataHandle {
         let path = std::path::Path::new(db_path);
         PyTimsTofSyntheticsDataHandle { inner: TimsTofSyntheticsDataHandle::new(path).unwrap() }
     }
-
-    pub fn get_peptide_ions(&self) -> (Vec<i32>, Vec<i8>) {
-        self.inner.get_peptide_to_ions()
-    }
 }
 
 #[pyclass]
