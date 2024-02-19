@@ -263,7 +263,7 @@ impl TimsTofSyntheticsDataHandle {
             // only consider fragment frames
             if !precursor_frames.contains(frame) {
                 // go over all scans the ion occurs in
-                for scan in &ion.scan_abundance {
+                for scan in &ion.scan_occurrence {
                     let mono_mz = ion.mz;
                     // check if the ion is transmitted
                     if transmission.is_transmitted(*frame as i32, *scan as i32, mono_mz as f64, None) {
