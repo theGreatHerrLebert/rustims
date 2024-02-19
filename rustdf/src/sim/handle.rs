@@ -4,7 +4,6 @@ use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionE
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
-use sage_core::peptide;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
 
 #[derive(Debug)]
