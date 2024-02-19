@@ -363,11 +363,19 @@ def main():
     native_path = Path(path) / name / 'synthetic_data.db'
 
     native_handle = TimsTofSyntheticsDataHandleRust(str(native_path))
+
+    if verbose:
+        print("Calculating precursor ion transmissions and collision energies...")
+
     transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=args.num_threads)
 
     IntensityPredictor = Prosit2023TimsTofWrapper()
 
     i_pred = IntensityPredictor.simulate_ion_intensities_pandas(transmitted_fragment_ions, batch_size=args.batch_size)
+
+    if verbose:
+        print("Mapping fragment ion intensity distributions to b and y ions...")
+
     i_pred['fragment_intensities'] = i_pred.apply(
         lambda s: sequence_to_all_ions(s.sequence, s.charge, s.intensity, normalize=True), axis=1
     )
