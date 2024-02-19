@@ -6,6 +6,8 @@ use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
 
+use rayon::prelude::*;
+
 #[derive(Debug)]
 pub struct TimsTofSyntheticsDataHandle {
     pub connection: Connection,
@@ -316,11 +318,13 @@ impl TimsTofSyntheticsDataHandle {
         fragment_ion_map
     }
 
-    pub fn build_dia_fragment_ions(&self) -> (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>) {
+    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<i32>, Vec<i8>, Vec<f32>) {
 
         let ions = self.read_ions().unwrap();
-        let ion_map = TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions);
         let peptides = self.read_peptides().unwrap();
+        let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
+        let frames = self.read_frames().unwrap();
+        let precursor_frame_ids = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&frames);
 
         // quadrupole and collision energy
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
@@ -349,43 +353,59 @@ impl TimsTofSyntheticsDataHandle {
             None,
         );
 
-        let mut peptide_ids = Vec::new();
-        let mut sequences = Vec::new();
-        let mut charges = Vec::new();
-        let mut collision_energies = Vec::new();
+        // Parallel processing starts here
+        let (peptide_ids, charges, collision_energies): (Vec<i32>, Vec<i8>, Vec<f32>) = ions.par_iter().flat_map(|ion| {
 
-        // go over all peptides
-        for peptide in peptides.iter() {
+            let peptide = peptide_map.get(&ion.peptide_id).unwrap();
+            let mut local_peptide_ids = Vec::new();
+            let mut local_charges = Vec::new();
+            let mut local_collision_energies = Vec::new();
 
-            // get frame occurrence and abundance for peptide
-            let frame_occurrence = &peptide.frame_occurrence;
+            for frame_id in peptide.frame_occurrence.iter() {
 
-            // get peptide id, key for ion_map
-            let peptide_id = peptide.peptide_id;
+                // skip all precursor frames
+                if precursor_frame_ids.contains(frame_id) {
+                    continue;
+                }
 
-            // get all ions for peptide
-            let ion_list = ion_map.get(&peptide_id).unwrap();
-
-            // go over all ions for a given peptide
-            for ion in ion_list.iter() {
-                // TODO: calculate full transmission for precursor ions and deal with isotopes
-                let mz_mono = &ion.mz;
-                let scan_occurrences = &ion.scan_occurrence;
-
-                for frame in frame_occurrence.iter() {
-                    for scan in scan_occurrences.iter() {
-                        if transmission_settings.is_transmitted(*frame as i32, *scan as i32, *mz_mono as f64, None) {
-                            let collision_energy = fragmentation_settings.get_collision_energy(*frame as i32, *scan as i32);
-                            peptide_ids.push(peptide_id);
-                            sequences.push(peptide.sequence.clone());
-                            charges.push(ion.charge);
-                            collision_energies.push(collision_energy);
-                        }
+                for scan_id in ion.scan_occurrence.iter() {
+                    if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
+                        let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
+                        local_peptide_ids.push(ion.peptide_id as i32);
+                        local_charges.push(ion.charge);
+                        local_collision_energies.push(collision_energy as f32);
                     }
                 }
             }
+
+            Some((local_peptide_ids, local_charges, local_collision_energies))
+        })
+            .filter(|(peptide_ids, _, _)| !peptide_ids.is_empty())
+            .reduce(|| (Vec::new(), Vec::new(), Vec::new()), |mut acc, val| {
+                let (ref mut ids, ref mut charges, ref mut energies) = acc;
+                let (v_ids, v_charges, v_energies) = val;
+
+                ids.extend(v_ids);
+                charges.extend(v_charges);
+                energies.extend(v_energies);
+
+                acc
+            });
+
+        // make combinations of peptide_ids, charges and collision_energies unique
+        let mut unique_combinations = HashSet::new();
+
+        for (peptide_id, (charge, collision_energy)) in peptide_ids.iter().zip(charges.iter().zip(collision_energies.iter())) {
+            // quantize collision energy to 3 decimal places
+            let collision_energy = (collision_energy * 1e3).round() as i32;
+            unique_combinations.insert((*peptide_id, *charge, collision_energy));
         }
 
-        (peptide_ids, sequences, charges, collision_energies)
+        // unpack unique combinations and revert quantization of collision energy
+        let peptide_ids: Vec<i32> = unique_combinations.iter().map(|(id, _, _)| *id).collect();
+        let charges: Vec<i8> = unique_combinations.iter().map(|(_, charge, _)| *charge).collect();
+        let collision_energies: Vec<f32> = unique_combinations.iter().map(|(_, _, energy)| *energy as f32 / 1e3).collect();
+
+        (peptide_ids, charges, collision_energies)
     }
 }
