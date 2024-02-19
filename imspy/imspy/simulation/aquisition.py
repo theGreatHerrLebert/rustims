@@ -184,8 +184,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
     def generate_frame_to_window_group_table(self, precursors_every: int = 16, verbose: bool = True) -> pd.DataFrame:
         if verbose:
-            print(f'generating frame to window group table, precursor frame will be taken every {precursors_every} '
-                  f'rt cycles.')
+            print(f'generating frame to window group table.')
 
         table_list = []
         frame_ids = self.frame_table[self.frame_table.ms_type > 0].frame_id.values
