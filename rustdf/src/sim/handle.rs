@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::chemistry::aa_sequence::calculate_mz;
 use mscore::data::mz_spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
@@ -264,9 +265,8 @@ impl TimsTofSyntheticsDataHandle {
             if !precursor_frames.contains(frame) {
                 // go over all scans the ion occurs in
                 for scan in &ion.scan_occurrence {
-                    let mono_mz = ion.mz;
-                    // check if the ion is transmitted
-                    if transmission.is_transmitted(*frame as i32, *scan as i32, mono_mz as f64, None) {
+                    let mz = calculate_mz(peptide.mono_isotopic_mass as f64, ion.charge as i32);
+                    if transmission.is_transmitted(*frame as i32, *scan as i32, mz, None) {
                         let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                         let quantized_energy = (collision_energy * 100.0).round() as i32;
                         ret_tree.insert((*frame as i32, peptide.sequence.clone(), ion.charge, quantized_energy));
