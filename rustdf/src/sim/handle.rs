@@ -323,8 +323,8 @@ impl TimsTofSyntheticsDataHandle {
         let ions = self.read_ions().unwrap();
         let peptides = self.read_peptides().unwrap();
         let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
-        let frame_type = self.read_frames().unwrap();
-        let precursor_frame_id_set = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&frame_type);
+        let frames = self.read_frames().unwrap();
+        let precursor_frame_ids = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&frames);
 
         // quadrupole and collision energy
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
@@ -355,14 +355,8 @@ impl TimsTofSyntheticsDataHandle {
 
         // Parallel processing starts here
         let (peptide_ids, charges, collision_energies): (Vec<i32>, Vec<i8>, Vec<f32>) = ions.par_iter().flat_map(|ion| {
-            let peptide_id = ion.peptide_id;
-            let maybe_peptide = peptide_map.get(&peptide_id);
 
-            if maybe_peptide.is_none() {
-                return None;
-            }
-
-            let peptide = maybe_peptide.unwrap();
+            let peptide = peptide_map.get(&ion.peptide_id).unwrap();
             let mut local_peptide_ids = Vec::new();
             let mut local_charges = Vec::new();
             let mut local_collision_energies = Vec::new();
@@ -370,14 +364,14 @@ impl TimsTofSyntheticsDataHandle {
             for frame_id in peptide.frame_occurrence.iter() {
 
                 // skip all precursor frames
-                if precursor_frame_id_set.contains(frame_id) {
+                if precursor_frame_ids.contains(frame_id) {
                     continue;
                 }
 
                 for scan_id in ion.scan_occurrence.iter() {
                     if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
                         let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
-                        local_peptide_ids.push(peptide_id as i32);
+                        local_peptide_ids.push(ion.peptide_id as i32);
                         local_charges.push(ion.charge);
                         local_collision_energies.push(collision_energy as f32);
                     }
