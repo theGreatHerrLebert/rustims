@@ -224,7 +224,7 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
                  window_group_file: str,
                  verbose: bool = True,
                  precursor_every: int = 20,
-                 gradient_length=50 * 60,
+                 gradient_length=90 * 60,
                  rt_cycle_length=0.056,
                  im_lower=0.6,
                  im_upper=1.5,
