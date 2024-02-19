@@ -4,18 +4,21 @@ import pandas as pd
 from tqdm import tqdm
 from imspy.chemistry import calculate_mz
 
+from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
+
 from imspy.simulation.proteome import PeptideDigest
 from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
-from imspy.simulation.utility import generate_events, python_list_to_json_string
+from imspy.simulation.utility import generate_events, python_list_to_json_string, sequence_to_all_ions
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
 
 from imspy.simulation.exp import TimsTofSyntheticFrameBuilderDIA
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
+from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
 from pathlib import Path
 
@@ -104,7 +107,7 @@ def main():
     # Parse the arguments
     args = parser.parse_args()
 
-    # Use the arguments in your program
+    # Use the arguments
     path = check_path(args.path)
     name = args.name
     dia_window_groups = check_path(args.dia_ms_ms_windows)
@@ -346,6 +349,27 @@ def main():
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
         table=ions
+    )
+
+    if verbose:
+        print("Simulating fragment ion intensity distributions...")
+
+    native_handle = TimsTofSyntheticsDataHandleRust(path / name / 'synthetic_data.db')
+    transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=args.num_threads)
+    IntensityPredictor = Prosit2023TimsTofWrapper()
+    i_pred = IntensityPredictor.simulate_ion_intensities_pandas(transmitted_fragment_ions, batch_size=args.batch_size)
+    i_pred['fragment_intensities'] = i_pred.apply(
+        lambda s: sequence_to_all_ions(s.sequence, s.charge, s.intensity, normalize=True), axis=1
+    )
+
+    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
+
+    if verbose:
+        print("Saving fragment ion intensity distributions...")
+
+    acquisition_builder.synthetics_handle.create_table(
+        table=fragment_spectra,
+        table_name='fragment_ions'
     )
 
     if verbose:
