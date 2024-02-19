@@ -17,7 +17,7 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
     pub fragment_ions: BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>>,
-    pub fragment_ions_with_collision_energies: (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>),
+    pub fragment_ions_with_collision_energies: (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>),
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {

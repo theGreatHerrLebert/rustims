@@ -317,7 +317,7 @@ impl TimsTofSyntheticsDataHandle {
         fragment_ion_map
     }
 
-    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<u32>, Vec<String>, Vec<i8>, Vec<f64>) {
+    pub fn build_dia_transmitted_fragment_ions_with_collision_energies(&self) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
 
         let ions = self.read_ions().unwrap();
         let peptides = self.read_peptides().unwrap();
@@ -410,6 +410,6 @@ impl TimsTofSyntheticsDataHandle {
         (peptide_ids, sequences, charges, collision_energies)
          */
 
-        (vec![], vec![], vec![], vec![])
+        (peptide_ids, sequences, charges, collision_energies)
     }
 }
