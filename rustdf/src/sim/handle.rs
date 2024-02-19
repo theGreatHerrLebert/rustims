@@ -323,6 +323,8 @@ impl TimsTofSyntheticsDataHandle {
         let ions = self.read_ions().unwrap();
         let peptides = self.read_peptides().unwrap();
         let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
+        let frame_type = self.read_frames().unwrap();
+        let precursor_frame_id_set = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&frame_type);
 
         // quadrupole and collision energy
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
@@ -366,6 +368,12 @@ impl TimsTofSyntheticsDataHandle {
             let mut local_collision_energies = Vec::new();
 
             for frame_id in peptide.frame_occurrence.iter() {
+
+                // skip all precursor frames
+                if precursor_frame_id_set.contains(frame_id) {
+                    continue;
+                }
+
                 for scan_id in ion.scan_occurrence.iter() {
                     if transmission_settings.is_transmitted(*frame_id as i32, *scan_id as i32, ion.mz as f64, None) {
                         let collision_energy = fragmentation_settings.get_collision_energy(*frame_id as i32, *scan_id as i32);
