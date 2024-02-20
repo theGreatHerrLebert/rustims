@@ -149,9 +149,10 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
-                 name: str,
                  path: str,
                  window_group_file: str,
+                 acquisition_name: str = "dia",
+                 exp_name: str = "RAW",
                  verbose: bool = True,
                  precursor_every: int = 16,
                  gradient_length=50 * 60,
@@ -161,12 +162,12 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  num_scans=927,
                  mz_lower: float = 100,
                  mz_upper: float = 1700,
-                 exp_name: str = "RAW.d"
                  ):
 
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
+        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans,
+                         exp_name=exp_name)
 
-        self.name = name
+        self.acquisition_name = acquisition_name
         self.scan_table = None
         self.frame_table = None
         self.frames_to_window_groups = None
@@ -224,18 +225,22 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         )
 
     @staticmethod
-    def from_config(path: str, exp_name: str, config: Dict[str, any], verbose: bool = True) \
-            -> 'TimsTofAcquisitionBuilderDIA':
+    def from_config(
+            path: str,
+            exp_name: str,
+            config: Dict[str, any],
+            verbose: bool = True
+    ) -> 'TimsTofAcquisitionBuilderDIA':
 
         acquisition_name = config['name'].lower().replace('pasef', '')
         window_group_file = get_ms_ms_window_layout_resource_path(acquisition_name)
 
         return TimsTofAcquisitionBuilderDIA(
             path=Path(path) / exp_name,
-            exp_name=exp_name + ".d",
             window_group_file=window_group_file,
+            exp_name=exp_name + ".d",
             verbose=verbose,
-            name=exp_name,
+            acquisition_name=acquisition_name,
             precursor_every=config['precursor_every'],
             gradient_length=config['gradient_length'],
             rt_cycle_length=config['rt_cycle_length'],
