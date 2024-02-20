@@ -66,7 +66,7 @@ def main():
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
 
     # Peptide digestion arguments
-    parser.add_argument("--sample-fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
+    parser.add_argument("--sample_fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
