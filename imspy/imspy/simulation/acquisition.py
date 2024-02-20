@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Dict
 
 import numpy as np
@@ -230,7 +231,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         window_group_file = get_ms_ms_window_layout_resource_path(name)
 
         return TimsTofAcquisitionBuilderDIA(
-            path=path,
+            path=Path(path) / name,
             exp_name=exp_name,
             window_group_file=window_group_file,
             verbose=verbose,
