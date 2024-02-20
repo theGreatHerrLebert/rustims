@@ -373,7 +373,8 @@ def main():
 
     IntensityPredictor = Prosit2023TimsTofWrapper()
 
-    i_pred = IntensityPredictor.simulate_ion_intensities_pandas(transmitted_fragment_ions, batch_size=args.batch_size)
+    i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(transmitted_fragment_ions,
+                                                                        batch_size_tf_ds=args.batch_size)
 
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
