@@ -118,14 +118,11 @@ def main():
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
-    print(f"Gradient Length: {args.gradient_length} seconds.")
-    print(f"mz Lower Bound: {args.mz_lower}.")
-    print(f"mz Upper Bound: {args.mz_upper}.")
-    print(f"IM Lower Bound: {args.im_lower}.")
-    print(f"IM Upper Bound: {args.im_upper}.")
-    print(f"Number of Scans: {args.num_scans}.")
-
     config = read_acquisition_config(acquisition_name=acquisition_type)['acquisition']
+
+    if verbose:
+        print(f"Using acquisition type: {acquisition_type}")
+        print(config)
 
     acquisition_builder = TimsTofAcquisitionBuilderDIA.from_config(
         path=path,
