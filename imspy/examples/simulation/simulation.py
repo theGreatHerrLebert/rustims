@@ -124,6 +124,12 @@ def main():
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
 
+    mz_lower = config['mz_lower']
+    mz_upper = config['mz_upper']
+
+    im_lower = config['im_lower']
+    im_upper = config['im_upper']
+
     acquisition_builder = TimsTofAcquisitionBuilderDIA.from_config(
         path=path,
         exp_name=name,
@@ -198,7 +204,7 @@ def main():
 
     # TODO: CHECK IF THIS TAKES MODIFICATIONS INTO ACCOUNT
     ions['mz'] = ions.apply(lambda r: calculate_mz(r['monoisotopic-mass'], r['charge']), axis=1)
-    ions = ions[(ions.mz >= mz_lower) & (ions.mz <= mz_upper)]
+    ions = ions[(ions.mz >= acquisition_builder.mz_lower) & (ions.mz <= acquisition_builder.mz_upper)]
 
     if verbose:
         print("Simulating ion mobilities...")
