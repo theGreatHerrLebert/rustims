@@ -142,7 +142,7 @@ def main():
     print(f"Number of Scans: {args.num_scans}.")
 
     acquisition_builder = TimsTofAcquisitionBuilderDIA(
-        Path(path) / name,
+        path=Path(path) / name,
         exp_name=name + ".d",
         window_group_file=dia_window_groups,
         gradient_length=gradient_length,
