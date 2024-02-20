@@ -227,15 +227,15 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def from_config(path: str, exp_name: str, config: Dict[str, any], verbose: bool = True) \
             -> 'TimsTofAcquisitionBuilderDIA':
 
-        name = config['name'].lower().replace('pasef', '')
-        window_group_file = get_ms_ms_window_layout_resource_path(name)
+        acquisition_name = config['name'].lower().replace('pasef', '')
+        window_group_file = get_ms_ms_window_layout_resource_path(acquisition_name)
 
         return TimsTofAcquisitionBuilderDIA(
             path=Path(path) / exp_name,
             exp_name=exp_name + ".d",
             window_group_file=window_group_file,
             verbose=verbose,
-            name=name,
+            name=exp_name,
             precursor_every=config['precursor_every'],
             gradient_length=config['gradient_length'],
             rt_cycle_length=config['rt_cycle_length'],
