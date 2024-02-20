@@ -47,6 +47,9 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         self.model_name = model_name
         self.model = load_prosit_2023_timsTOF_predictor()
 
+    def simulate_ion_intensities(self, sequences: list[str], charges: list[int], collision_energies) -> NDArray:
+        raise NotImplementedError('This method is not implemented for Prosit2023TimsTofWrapper')
+
     def simulate_ion_intensities_pandas_batched(self, data: pd.DataFrame,
                                                 batch_size_tf_ds: int = 1024,
                                                 batch_size: int = int(4e5),
