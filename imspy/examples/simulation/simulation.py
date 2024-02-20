@@ -59,8 +59,8 @@ def main():
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
     parser.add_argument("name", type=str, help="Name of the experiment")
-    parser.add_argument("fasta", type=str, help="Path to the fasta file")
     parser.add_argument("acquisition_type", type=str, help="Type of acquisition to simulate")
+    parser.add_argument("fasta", type=str, help="Path to the fasta file")
 
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
