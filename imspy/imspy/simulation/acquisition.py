@@ -232,7 +232,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         return TimsTofAcquisitionBuilderDIA(
             path=Path(path) / exp_name,
-            exp_name=exp_name,
+            exp_name=exp_name + ".d",
             window_group_file=window_group_file,
             verbose=verbose,
             name=name,
