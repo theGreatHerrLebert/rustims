@@ -143,7 +143,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             }
 
             // get all the ions for the peptide
-            let (ion_abundances, scan_occurrences, scan_abundances, chages, spectra) = self.precursor_frame_builder.peptide_to_ions.get(&peptide_id).unwrap();
+            let (ion_abundances, scan_occurrences, scan_abundances, charges, spectra) = self.precursor_frame_builder.peptide_to_ions.get(&peptide_id).unwrap();
 
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
                 // occurrence and abundance of the ion in the scan
@@ -170,7 +170,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let collision_energy_quantized = (collision_energy * 1e3).round() as i8;
 
                     // get charge state for the ion
-                    let charge_state = chages.get(index).unwrap();
+                    let charge_state = charges.get(index).unwrap();
                     // extract fragment ions for the peptide, charge state and collision energy
                     let fragment_ions = self.fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
 
@@ -197,6 +197,19 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     }
                 }
             }
+        }
+
+        if tims_spectra.is_empty() {
+            return TimsFrame::new(
+                frame_id as i32,
+                ms_type.clone(),
+                *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            );
         }
 
         let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
