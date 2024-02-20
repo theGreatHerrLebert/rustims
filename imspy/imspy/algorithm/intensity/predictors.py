@@ -1,8 +1,10 @@
+from typing import Tuple
+
 from numpy.typing import NDArray
 import pandas as pd
 import numpy as np
-from abc import ABC, abstractmethod
 import tensorflow as tf
+from abc import ABC, abstractmethod
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
@@ -45,10 +47,25 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         self.model_name = model_name
         self.model = load_prosit_2023_timsTOF_predictor()
 
-    def simulate_ion_intensities(self, sequences: list[str], charges: list[int], collision_energies) -> NDArray:
-        pass
+    def simulate_ion_intensities_pandas_batched(self, data: pd.DataFrame,
+                                                batch_size_tf_ds: int = 1024,
+                                                batch_size: int = int(4e5),
+                                                divide_collision_energy_by: float = 1e2) -> pd.DataFrame:
 
-    def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512, divide_collision_energy_by: float = 1e2) -> pd.DataFrame:
+        tables = []
+        for batch_indices in tqdm(np.array_split(data.index, np.ceil(len(data) / batch_size)),
+                                  total=int(np.ceil(len(data) / batch_size)),
+                                  desc='Simulating intensities', ncols=100, disable=not self.verbose):
+
+            batch = data.loc[batch_indices].reset_index(drop=True)
+            data_pred = self.simulate_ion_intensities_pandas(batch, batch_size=batch_size_tf_ds,
+                                                             divide_collision_energy_by=divide_collision_energy_by)
+            tables.append(data_pred)
+
+        return pd.concat(tables)
+
+    def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512,
+                                        divide_collision_energy_by: float = 1e2, verbose: bool = False) -> pd.DataFrame:
 
         if self.verbose:
             print("Generating Prosit compatible input data...")
@@ -70,7 +87,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         # Iterate over the dataset and call the model with unpacked inputs
         for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
                                                                           total=len(data) // batch_size + 1, ncols=100,
-                                                                          disable=not self.verbose):
+                                                                          disable=not verbose):
             model_input = [peptides_in, precursor_charge_in, collision_energy_in]
             model_output = self.model(model_input).numpy()
             intensity_predictions.append(model_output)
