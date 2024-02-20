@@ -71,7 +71,7 @@ class PeptideDigest:
 
         peptide_list = []
 
-        for i in tqdm(range(indexed_db.num_peptides), desc='Digesting peptides', disable=not self.verbose, ncols=80):
+        for i in tqdm(range(indexed_db.num_peptides), desc='Digesting peptides', disable=not self.verbose, ncols=100):
             idx = PeptideIx(idx=i)
             peptide = indexed_db[idx]
 

@@ -357,13 +357,13 @@ def main():
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
-    N = int(1e4)
+    N = int(5e5)
     batch_list = []
 
     for batch_indices in tqdm(
             np.array_split(i_pred.index, np.ceil(len(i_pred)/N)),
             total=int(np.ceil(len(i_pred)/N)),
-            desc='fragment ion intensity distributions',
+            desc='matching b/y ions with intensities',
             ncols=100,
             disable=(not verbose)
     ):
