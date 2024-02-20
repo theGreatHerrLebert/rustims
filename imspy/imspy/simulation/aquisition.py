@@ -240,6 +240,11 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             mz_upper=config['mz_upper'],
         )
 
+    def __repr__(self):
+        return (f"TimsTofAcquisitionBuilderDIA(name={self.name}, path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
+                f"min, mobility_range: {self.im_lower}-{self.im_upper}, "
+                f"num_frames: {self.num_frames}, num_scans: {self.num_scans})")
+
 
 class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
