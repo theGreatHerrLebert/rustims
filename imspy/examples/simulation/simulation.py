@@ -360,7 +360,13 @@ def main():
     N = int(1e4)
     batch_list = []
 
-    for batch_indices in tqdm(np.array_split(i_pred.index, np.ceil(len(i_pred)/N)), total=int(np.ceil(len(i_pred)/N))):
+    for batch_indices in tqdm(
+            np.array_split(i_pred.index, np.ceil(len(i_pred)/N)),
+            total=int(np.ceil(len(i_pred)/N)),
+            desc='fragment ion intensity distributions',
+            ncols=100,
+            disable=(not verbose)
+    ):
 
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
 
