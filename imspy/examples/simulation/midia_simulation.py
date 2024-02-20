@@ -7,7 +7,7 @@ from imspy.chemistry import calculate_mz
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
 
 from imspy.simulation.proteome import PeptideDigest
-from imspy.simulation.aquisition import TimsTofAcquisitionBuilderMIDIA
+from imspy.simulation.acquisition import TimsTofAcquisitionBuilderMIDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
