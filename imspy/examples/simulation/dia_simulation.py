@@ -7,7 +7,7 @@ from imspy.chemistry import calculate_mz
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
 
 from imspy.simulation.proteome import PeptideDigest
-from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
+from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
@@ -22,8 +22,13 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
 from pathlib import Path
 
+# silence warnings, will spam the console otherwise
+os.environ["WANDB_SILENT"] = "true"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import tensorflow as tf
 
+# don't use all the memory for the GPU (if available)
 gpus = tf.config.experimental.list_physical_devices('GPU')
 if gpus:
     try:
@@ -37,9 +42,6 @@ if gpus:
     except RuntimeError as e:
         # Virtual devices must be set before GPUs have been initialized
         print(e)
-
-os.environ["WANDB_SILENT"] = "true"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
 def main():
@@ -140,7 +142,7 @@ def main():
     print(f"Number of Scans: {args.num_scans}.")
 
     acquisition_builder = TimsTofAcquisitionBuilderDIA(
-        Path(path) / name,
+        path=Path(path) / name,
         exp_name=name + ".d",
         window_group_file=dia_window_groups,
         gradient_length=gradient_length,

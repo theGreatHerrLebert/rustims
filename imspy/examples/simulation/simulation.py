@@ -7,11 +7,12 @@ from imspy.chemistry import calculate_mz
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
 
 from imspy.simulation.proteome import PeptideDigest
-from imspy.simulation.acquisition import TimsTofAcquisitionBuilderMIDIA
+from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
-from imspy.simulation.utility import generate_events, python_list_to_json_string, sequence_to_all_ions
+from imspy.simulation.utility import generate_events, python_list_to_json_string, sequence_to_all_ions, \
+    read_acquisition_config
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
@@ -58,22 +59,14 @@ def main():
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
     parser.add_argument("name", type=str, help="Name of the experiment")
-    parser.add_argument("dia_ms_ms_windows", type=str, help="Path to the DIA window groups file")
+    parser.add_argument("acquisition_type", type=str, help="Type of acquisition to simulate")
     parser.add_argument("fasta", type=str, help="Path to the fasta file")
 
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
 
-    # Other arguments with default values
-    parser.add_argument("--gradient_length", type=int, default=60 * 60, help="Gradient length (default: 7200)")
-    parser.add_argument("--mz_lower", type=int, default=100, help="Lower bound for mz (default: 100)")
-    parser.add_argument("--mz_upper", type=int, default=1700, help="Upper bound for mz (default: 1700)")
-    parser.add_argument("--im_lower", type=float, default=0.6, help="Lower bound for IM (default: 0.6)")
-    parser.add_argument("--im_upper", type=float, default=1.6, help="Upper bound for IM (default: 1.6)")
-    parser.add_argument("--num_scans", type=int, default=927, help="Number of scans to simulate (default: 927)")
-
     # Peptide digestion arguments
-    parser.add_argument("--sample-fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
+    parser.add_argument("--sample_fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
@@ -112,46 +105,29 @@ def main():
     # Use the arguments
     path = check_path(args.path)
     name = args.name
-    dia_window_groups = check_path(args.dia_ms_ms_windows)
     fasta = check_path(args.fasta)
     verbose = args.verbose
 
-    gradient_length = args.gradient_length
-    assert 0 < gradient_length < 240 * 60, f"Gradient length must be between 0 and 240 minutes, was {gradient_length}"
+    acquisition_type = args.acquisition_type.lower()
 
-    mz_lower = args.mz_lower
-    mz_upper = args.mz_upper
-    assert 50 < mz_lower < mz_upper < 2000, f"mz bounds must be between 50 and 2000, were {mz_lower} and {mz_upper}"
-
-    im_lower = args.im_lower
-    im_upper = args.im_upper
-    assert 0.5 < im_lower < im_upper < 2, f"IM bounds must be between 0.5 and 2, were {im_lower} and {im_upper}"
+    assert acquisition_type in ['dia', 'midia', 'slice', 'synchro'], \
+        f"Acquisition type must be 'dia', 'midia', 'slice' or 'synchro', was {args.acquisition_type}"
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
-
-    num_scans = args.num_scans
 
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
-    print(f"Gradient Length: {args.gradient_length} seconds.")
-    print(f"mz Lower Bound: {args.mz_lower}.")
-    print(f"mz Upper Bound: {args.mz_upper}.")
-    print(f"IM Lower Bound: {args.im_lower}.")
-    print(f"IM Upper Bound: {args.im_upper}.")
-    print(f"Number of Scans: {args.num_scans}.")
+    config = read_acquisition_config(acquisition_name=acquisition_type)['acquisition']
 
-    acquisition_builder = TimsTofAcquisitionBuilderMIDIA(
-        Path(path) / name,
-        exp_name=name + ".d",
-        window_group_file=dia_window_groups,
-        gradient_length=gradient_length,
-        im_lower=im_lower,
-        im_upper=im_upper,
-        mz_lower=mz_lower,
-        mz_upper=mz_upper,
-        num_scans=num_scans,
-        verbose=verbose,
+    if verbose:
+        print(f"Using acquisition type: {acquisition_type}")
+        print(config)
+
+    acquisition_builder = TimsTofAcquisitionBuilderDIA.from_config(
+        path=path,
+        exp_name=name,
+        config=config,
     )
 
     if verbose:
@@ -222,7 +198,7 @@ def main():
 
     # TODO: CHECK IF THIS TAKES MODIFICATIONS INTO ACCOUNT
     ions['mz'] = ions.apply(lambda r: calculate_mz(r['monoisotopic-mass'], r['charge']), axis=1)
-    ions = ions[(ions.mz >= mz_lower) & (ions.mz <= mz_upper)]
+    ions = ions[(ions.mz >= acquisition_builder.mz_lower) & (ions.mz <= acquisition_builder.mz_upper)]
 
     if verbose:
         print("Simulating ion mobilities...")

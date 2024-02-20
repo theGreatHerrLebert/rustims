@@ -1,3 +1,6 @@
+from pathlib import Path
+from typing import Dict
+
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -5,7 +8,8 @@ from abc import abstractmethod, ABC
 
 from imspy.simulation.exp import SyntheticExperimentDataHandle
 from imspy.timstof.data import AcquisitionMode
-from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing
+from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing, \
+    get_ms_ms_window_layout_resource_path
 from imspy.simulation.tdf import TDFWriter
 
 
@@ -147,6 +151,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
                  window_group_file: str,
+                 acquisition_name: str = "dia",
+                 exp_name: str = "RAW",
                  verbose: bool = True,
                  precursor_every: int = 16,
                  gradient_length=50 * 60,
@@ -156,11 +162,12 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  num_scans=927,
                  mz_lower: float = 100,
                  mz_upper: float = 1700,
-                 exp_name: str = "RAW.d"
                  ):
 
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
+        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans,
+                         exp_name=exp_name)
 
+        self.acquisition_name = acquisition_name
         self.scan_table = None
         self.frame_table = None
         self.frames_to_window_groups = None
@@ -217,17 +224,50 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             table=self.dia_ms_ms_windows
         )
 
+    @staticmethod
+    def from_config(
+            path: str,
+            exp_name: str,
+            config: Dict[str, any],
+            verbose: bool = True
+    ) -> 'TimsTofAcquisitionBuilderDIA':
+
+        acquisition_name = config['name'].lower().replace('pasef', '')
+        window_group_file = get_ms_ms_window_layout_resource_path(acquisition_name)
+
+        return TimsTofAcquisitionBuilderDIA(
+            path=Path(path) / exp_name,
+            window_group_file=window_group_file,
+            exp_name=exp_name + ".d",
+            verbose=verbose,
+            acquisition_name=acquisition_name,
+            precursor_every=config['precursor_every'],
+            gradient_length=config['gradient_length'],
+            rt_cycle_length=config['rt_cycle_length'],
+            im_lower=config['im_lower'],
+            im_upper=config['im_upper'],
+            num_scans=config['num_scans'],
+            mz_lower=config['mz_lower'],
+            mz_upper=config['mz_upper'],
+        )
+
+    def __repr__(self):
+        return (f"TimsTofAcquisitionBuilderDIA(name={self.name}, path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
+                f"min, mobility_range: {self.im_lower}-{self.im_upper}, "
+                f"num_frames: {self.num_frames}, num_scans: {self.num_scans})")
+
 
 class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
+                 window_group_file: str,
                  verbose: bool = True,
                  precursor_every: int = 20,
-                 gradient_length=50 * 60,
+                 gradient_length=90 * 60,
                  rt_cycle_length=0.056,
                  im_lower=0.6,
                  im_upper=1.5,
-                 num_scans=451,
+                 num_scans=927,
                  mz_lower: float = 150,
                  mz_upper: float = 1200,
                  exp_name: str = "RAW.d"
@@ -235,6 +275,8 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
         super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
         self.scan_table = None
         self.frame_table = None
+        self.frames_to_window_groups = None
+        self.dia_ms_ms_windows = pd.read_csv(window_group_file)
         self.acquisition_mode = AcquisitionMode('MIDIA')
         self.verbose = verbose
         self.precursor_every = precursor_every
@@ -246,10 +288,23 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
             print(f'calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
         return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in table.frame_id])
 
+    def generate_frame_to_window_group_table(self, precursors_every: int = 16, verbose: bool = True) -> pd.DataFrame:
+        if verbose:
+            print(f'generating frame to window group table.')
+
+        table_list = []
+        frame_ids = self.frame_table[self.frame_table.ms_type > 0].frame_id.values
+        for i, frame_id in enumerate(frame_ids):
+            wg = i % precursors_every + 1
+            table_list.append({'frame': frame_id, 'window_group': wg})
+
+        return pd.DataFrame(table_list)
+
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table, verbose=verbose)
+        self.frames_to_window_groups = self.generate_frame_to_window_group_table(precursors_every=self.precursor_every)
 
         self.synthetics_handle.create_table(
             table_name='frames',
@@ -258,4 +313,12 @@ class TimsTofAcquisitionBuilderMIDIA(TimsTofAcquisitionBuilder, ABC):
         self.synthetics_handle.create_table(
             table_name='scans',
             table=self.scan_table
+        )
+        self.synthetics_handle.create_table(
+            table_name='dia_ms_ms_info',
+            table=self.frames_to_window_groups
+        )
+        self.synthetics_handle.create_table(
+            table_name='dia_ms_ms_windows',
+            table=self.dia_ms_ms_windows
         )

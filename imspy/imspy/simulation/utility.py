@@ -1,8 +1,8 @@
 import json
 import re
+from importlib.abc import Traversable
 
 from numba import jit
-import tensorflow as tf
 import numpy as np
 from scipy.stats import norm
 import math
@@ -14,6 +14,46 @@ import imspy_connector as ims
 
 from typing import List, Tuple
 from numpy.typing import NDArray
+
+import toml
+from typing import Any, Dict
+
+
+def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Traversable:
+    """ Get the path to a pretrained model
+
+    Args:
+        acquisition_mode: The name of the model to load
+
+    Returns:
+        The path to the pretrained model
+    """
+    assert acquisition_mode in ['dia', 'midia', 'slice', 'synchro'], \
+        f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
+
+    return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
+
+
+def get_ms_ms_window_layout_resource_path(acquisition_mode: str) -> Traversable:
+    """ Get the path to a pretrained model
+
+    Returns:
+        The path to the pretrained model
+    """
+
+    assert acquisition_mode in ['dia', 'midia', 'slice', 'synchro'], \
+        f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
+
+    return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + '_ms_ms_windows.csv')
+
+
+def read_acquisition_config(acquisition_name: str = 'dia') -> Dict[str, Any]:
+
+    file_path = get_acquisition_builder_resource_path(acquisition_name)
+
+    with open(file_path, 'r') as config_file:
+        config_data = toml.load(config_file)
+    return config_data
 
 
 def remove_unimod_annotation(sequence: str) -> str:
