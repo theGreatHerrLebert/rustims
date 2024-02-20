@@ -7,7 +7,8 @@ from abc import abstractmethod, ABC
 
 from imspy.simulation.exp import SyntheticExperimentDataHandle
 from imspy.timstof.data import AcquisitionMode
-from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing
+from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing, \
+    get_ms_ms_window_layout_resource_path
 from imspy.simulation.tdf import TDFWriter
 
 
@@ -222,14 +223,18 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         )
 
     @staticmethod
-    def from_config(path: str, exp_name: str, window_group_file: str, config: Dict[str, any], verbose: bool = True) \
+    def from_config(path: str, exp_name: str, config: Dict[str, any], verbose: bool = True) \
             -> 'TimsTofAcquisitionBuilderDIA':
+
+        name = config['name'].lower().replace('pasef', '')
+        window_group_file = get_ms_ms_window_layout_resource_path(name)
+
         return TimsTofAcquisitionBuilderDIA(
             path=path,
             exp_name=exp_name,
             window_group_file=window_group_file,
             verbose=verbose,
-            name=config['name'],
+            name=name,
             precursor_every=config['precursor_every'],
             gradient_length=config['gradient_length'],
             rt_cycle_length=config['rt_cycle_length'],

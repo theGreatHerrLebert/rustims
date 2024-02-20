@@ -19,7 +19,7 @@ import toml
 from typing import Any, Dict
 
 
-def get_resource_path(acquisition_mode: str = 'dia') -> Traversable:
+def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Traversable:
     """ Get the path to a pretrained model
 
     Args:
@@ -34,9 +34,22 @@ def get_resource_path(acquisition_mode: str = 'dia') -> Traversable:
     return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
 
 
+def get_ms_ms_window_layout_resource_path(acquisition_mode: str) -> Traversable:
+    """ Get the path to a pretrained model
+
+    Returns:
+        The path to the pretrained model
+    """
+
+    assert acquisition_mode in ['dia', 'midia', 'slice', 'synchro'], \
+        f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
+
+    return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + '_ms_ms_windows.csv')
+
+
 def read_acquisition_config(acquisition_name: str = 'dia') -> Dict[str, Any]:
 
-    file_path = get_resource_path(acquisition_name)
+    file_path = get_acquisition_builder_resource_path(acquisition_name)
 
     with open(file_path, 'r') as config_file:
         config_data = toml.load(config_file)
