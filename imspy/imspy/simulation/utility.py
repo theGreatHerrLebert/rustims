@@ -3,7 +3,6 @@ import re
 from importlib.abc import Traversable
 
 from numba import jit
-import tensorflow as tf
 import numpy as np
 from scipy.stats import norm
 import math
@@ -18,7 +17,6 @@ from numpy.typing import NDArray
 
 import toml
 from typing import Any, Dict
-from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
 
 
 def get_resource_path(acquisition_mode: str = 'dia') -> Traversable:
@@ -40,10 +38,6 @@ def read_config(file_path: str = get_resource_path()) -> Dict[str, Any]:
     with open(file_path, 'r') as config_file:
         config_data = toml.load(config_file)
     return config_data
-
-
-def acquisition_from_config(config: Dict[str, Any]) -> TimsTofAcquisitionBuilderDIA:
-    return TimsTofAcquisitionBuilderDIA.from_config(config)
 
 
 def remove_unimod_annotation(sequence: str) -> str:
