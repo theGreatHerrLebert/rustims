@@ -124,12 +124,6 @@ def main():
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
 
-    mz_lower = config['mz_lower']
-    mz_upper = config['mz_upper']
-
-    im_lower = config['im_lower']
-    im_upper = config['im_upper']
-
     acquisition_builder = TimsTofAcquisitionBuilderDIA.from_config(
         path=path,
         exp_name=name,
