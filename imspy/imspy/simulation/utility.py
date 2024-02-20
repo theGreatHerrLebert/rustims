@@ -1,5 +1,6 @@
 import json
 import re
+from importlib.abc import Traversable
 
 from numba import jit
 import tensorflow as tf
@@ -14,6 +15,35 @@ import imspy_connector as ims
 
 from typing import List, Tuple
 from numpy.typing import NDArray
+
+import toml
+from typing import Any, Dict
+from imspy.simulation.aquisition import TimsTofAcquisitionBuilderDIA
+
+
+def get_resource_path(acquisition_mode: str = 'dia') -> Traversable:
+    """ Get the path to a pretrained model
+
+    Args:
+        acquisition_mode: The name of the model to load
+
+    Returns:
+        The path to the pretrained model
+    """
+    assert acquisition_mode in ['dia', 'midia', 'slice', 'synchro'], \
+        f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
+
+    return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
+
+
+def read_config(file_path: str = get_resource_path()) -> Dict[str, Any]:
+    with open(file_path, 'r') as config_file:
+        config_data = toml.load(config_file)
+    return config_data
+
+
+def acquisition_from_config(config: Dict[str, Any]) -> TimsTofAcquisitionBuilderDIA:
+    return TimsTofAcquisitionBuilderDIA.from_config(config)
 
 
 def remove_unimod_annotation(sequence: str) -> str:

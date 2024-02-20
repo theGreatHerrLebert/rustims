@@ -1,3 +1,5 @@
+from typing import Dict
+
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -145,6 +147,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
+                 name: str,
                  path: str,
                  window_group_file: str,
                  verbose: bool = True,
@@ -161,6 +164,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
 
+        self.name = name
         self.scan_table = None
         self.frame_table = None
         self.frames_to_window_groups = None
@@ -215,6 +219,25 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.synthetics_handle.create_table(
             table_name='dia_ms_ms_windows',
             table=self.dia_ms_ms_windows
+        )
+
+    @staticmethod
+    def from_config(path: str, exp_name: str, window_group_file: str, config: Dict[str, any], verbose: bool = True) \
+            -> 'TimsTofAcquisitionBuilderDIA':
+        return TimsTofAcquisitionBuilderDIA(
+            path=path,
+            exp_name=exp_name,
+            window_group_file=window_group_file,
+            verbose=verbose,
+            name=config['name'],
+            precursor_every=config['precursor_every'],
+            gradient_length=config['gradient_length'],
+            rt_cycle_length=config['rt_cycle_length'],
+            im_lower=config['im_lower'],
+            im_upper=config['im_upper'],
+            num_scans=config['num_scans'],
+            mz_lower=config['mz_lower'],
+            mz_upper=config['mz_upper'],
         )
 
 
