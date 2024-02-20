@@ -1,5 +1,7 @@
 import os
 import argparse
+
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from imspy.chemistry import calculate_mz
@@ -355,11 +357,21 @@ def main():
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
-    i_pred['fragment_intensities'] = i_pred.apply(
-        lambda s: sequence_to_all_ions(s.sequence, s.charge, s.intensity, normalize=True), axis=1
-    )
+    N = int(1e4)
+    batch_list = []
 
-    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
+    for batch_indices in tqdm(np.array_split(i_pred.index, np.ceil(len(i_pred)/N)), total=int(np.ceil(len(i_pred)/N))):
+
+        batch = i_pred.loc[batch_indices].reset_index(drop=True)
+
+        batch['fragment_intensities'] = batch.apply(
+            lambda s: sequence_to_all_ions(s.sequence, s.charge, s.intensity, normalize=True), axis=1)
+
+        batch_list.append(batch)
+
+    i_pred = pd.concat(batch_list)
+    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']].sort_values(
+        by=['peptide_id', 'charge'])
 
     if verbose:
         print("Saving fragment ion intensity distributions...")
