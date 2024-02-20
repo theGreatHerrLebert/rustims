@@ -34,7 +34,10 @@ def get_resource_path(acquisition_mode: str = 'dia') -> Traversable:
     return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
 
 
-def read_acquisition_config(file_path: str = get_resource_path()) -> Dict[str, Any]:
+def read_acquisition_config(acquisition_name: str = 'dia') -> Dict[str, Any]:
+
+    file_path = get_resource_path(acquisition_name)
+
     with open(file_path, 'r') as config_file:
         config_data = toml.load(config_file)
     return config_data
