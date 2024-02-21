@@ -51,5 +51,6 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(simulate_charge_state_for_sequence, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_charge_states_for_sequences, m)?)?;
     m.add_function(wrap_pyfunction!(apply_transmission, m)?)?;
+    m.add_function(wrap_pyfunction!(py_chemistry::find_unimod_annotations, m)?)?;
     Ok(())
 }

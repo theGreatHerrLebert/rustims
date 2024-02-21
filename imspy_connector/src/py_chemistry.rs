@@ -41,3 +41,8 @@ pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usi
 pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
     mscore::algorithm::aa_sequence::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
 }
+
+#[pyfunction]
+pub fn find_unimod_annotations(sequence: &str) -> (String, Vec<f64>) {
+    rustdf::sim::utility::find_unimod_patterns(sequence)
+}
