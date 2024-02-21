@@ -143,14 +143,15 @@ pub fn sequence_to_all_ions(
     let (stripped_sequence, mods) = find_unimod_patterns(sequence);
     let seq_len = stripped_sequence.len() - 1; // Adjust for indexing
 
-    let max_charge = std::cmp::min(charge, 4).max(2); // Ensure at least 2 for loop range
+    let max_charge = std::cmp::min(charge, 3).max(2); // Ensure at least 2 for loop range
     let mut sum_intensity = if normalize { 0.0 } else { 1.0 };
     let intensity_pred = reshape_prosit_array(intensity_pred_flat.clone());
 
     if normalize {
         for z in 1..=max_charge {
-            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z - 1]).collect();
-            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z - 1]).collect();
+            let c = z as i32;
+            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][c - 1]).collect();
+            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][c - 1]).collect();
 
             sum_intensity += intensity_b.iter().sum::<f64>() + intensity_y.iter().sum::<f64>();
         }
@@ -162,8 +163,8 @@ pub fn sequence_to_all_ions(
         let c = z as i32;
         let (b, y) = calculate_b_y_ion_series(&stripped_sequence, mods.clone(), Some(c));
 
-        let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z - 1]).collect();
-        let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z - 1]).rev().collect(); // Reverse for y
+        let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][c - 1]).collect();
+        let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][c - 1]).rev().collect(); // Reverse for y
 
         let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
