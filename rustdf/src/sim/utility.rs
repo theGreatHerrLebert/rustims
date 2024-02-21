@@ -1,6 +1,9 @@
 use regex::Regex;
 use mscore::chemistry::unimod::unimod_modifications_mz;
 
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+
 pub fn find_unimod_patterns(input_string: &str) -> (String, Vec<f64>) {
     let results = extract_unimod_patterns(input_string);
     let stripped_sequence = remove_unimod_annotation(input_string);
@@ -50,4 +53,12 @@ fn calculate_modifications(index_list: &[(usize, String)], stripped_sequence: &s
         }
     }
     mods
+}
+
+pub fn find_unimod_patterns_pa(sequences: Vec<&str>, num_threads: usize) -> Vec<(String, Vec<f64>)> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().map(|seq| find_unimod_patterns(seq)).collect()
+    });
+    result
 }

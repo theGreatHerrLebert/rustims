@@ -46,3 +46,8 @@ pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: u
 pub fn find_unimod_annotations(sequence: &str) -> (String, Vec<f64>) {
     rustdf::sim::utility::find_unimod_patterns(sequence)
 }
+
+#[pyfunction]
+pub fn find_unimod_annotations_par(sequences: Vec<&str>, num_threads: usize) -> Vec<(String, Vec<f64>)> {
+    rustdf::sim::utility::find_unimod_patterns_pa(sequences, num_threads)
+}
