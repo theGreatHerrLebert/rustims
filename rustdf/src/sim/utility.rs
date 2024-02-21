@@ -135,7 +135,7 @@ pub fn reshape_prosit_array(array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
 
 pub fn sequence_to_all_ions(
     sequence: &str,
-    charge: usize,
+    charge: i32,
     intensity_pred_flat: &Vec<f64>, // Assuming this is the reshaped intensity predictions array
     normalize: bool,
     half_charge_one: bool,
@@ -149,8 +149,8 @@ pub fn sequence_to_all_ions(
 
     if normalize {
         for z in 1..=max_charge {
-            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z - 1]).collect();
-            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z - 1]).collect();
+            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).collect();
+            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
 
             sum_intensity += intensity_b.iter().sum::<f64>() + intensity_y.iter().sum::<f64>();
         }
@@ -162,8 +162,8 @@ pub fn sequence_to_all_ions(
         let c = z as i32;
         let (b, y) = calculate_b_y_ion_series(&stripped_sequence, mods.clone(), Some(c));
 
-        let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z - 1]).collect();
-        let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z - 1]).rev().collect(); // Reverse for y
+        let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
+        let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
 
         let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
@@ -180,4 +180,21 @@ pub fn sequence_to_all_ions(
     }
 
     to_string(&r_list).unwrap_or_else(|_| "[]".to_string())
+}
+
+pub fn sequence_to_all_ions_par(
+    sequences: Vec<&str>,
+    charges: Vec<i32>,
+    intensities_pred_flat: Vec<Vec<f64>>,
+    normalize: bool,
+    half_charge_one: bool,
+    num_threads: usize,
+) -> Vec<String> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().zip(charges.par_iter()).zip(intensities_pred_flat.par_iter())
+            .map(|((seq, charge), intensities)| sequence_to_all_ions(seq, *charge, intensities, normalize, half_charge_one))
+            .collect()
+    });
+    result
 }
