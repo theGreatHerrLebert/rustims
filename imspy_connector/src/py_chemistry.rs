@@ -54,10 +54,15 @@ pub fn find_unimod_annotations_par(sequences: Vec<&str>, num_threads: usize) -> 
 
 #[pyfunction]
 pub fn sequence_to_all_ions_ims(sequence: &str, charge: i32, intensities: Vec<f64>, normalize: bool, half_charge_one: bool) -> String {
-    rustdf::sim::utility::sequence_to_all_ions(sequence, charge as usize, &intensities, normalize, half_charge_one)
+    rustdf::sim::utility::sequence_to_all_ions(sequence, charge, &intensities, normalize, half_charge_one)
 }
 
 #[pyfunction]
 pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
     rustdf::sim::utility::reshape_prosit_array(flat_array)
+}
+
+#[pyfunction]
+pub fn sequence_to_all_ions_par(sequences: Vec<&str>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, ) -> Vec<String> {
+    rustdf::sim::utility::sequence_to_all_ions_par(sequences, charges, intensities, normalize, half_charge_one, num_threads)
 }
