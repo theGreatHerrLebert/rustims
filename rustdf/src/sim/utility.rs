@@ -113,7 +113,7 @@ impl RoundDecimals for f64 {
     }
 }
 
-fn reshape_prosit_array(array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
+pub fn reshape_prosit_array(array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
     let mut array_return: Vec<Vec<Vec<f64>>> = vec![vec![vec![0.0; 3]; 2]; 29];
     let mut ptr = 0;
 
