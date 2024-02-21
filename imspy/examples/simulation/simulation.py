@@ -360,7 +360,7 @@ def main():
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
-    N = int(1e6)
+    N = int(5e4)
     batch_list = []
 
     for batch_indices in tqdm(
