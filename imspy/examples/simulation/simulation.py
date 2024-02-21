@@ -1,3 +1,4 @@
+import json
 import os
 import argparse
 
@@ -359,7 +360,7 @@ def main():
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
-    N = int(5e4)
+    N = int(1e6)
     batch_list = []
 
     for batch_indices in tqdm(
@@ -374,9 +375,12 @@ def main():
 
         batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
 
-        batch['fragment_intensities'] = ims.sequence_to_all_ions_par(
+        all_ions = ims.sequence_to_all_ions_par(
             batch.sequence, batch.charge, batch.intensity_flat, True, True, args.num_threads
         )
+
+        batch['fragment_intensities'] = [json.dumps(json.loads(x)) for x in all_ions]
+
 
         batch_list.append(batch)
 
