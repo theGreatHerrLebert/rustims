@@ -1,5 +1,9 @@
 import os
 import argparse
+
+import imspy_connector as ims
+
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from imspy.chemistry import calculate_mz
@@ -12,7 +16,7 @@ from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
 from imspy.simulation.utility import generate_events, python_list_to_json_string, sequence_to_all_ions, \
-    read_acquisition_config
+    read_acquisition_config, flatten_prosit_array
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
@@ -355,11 +359,30 @@ def main():
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
-    i_pred['fragment_intensities'] = i_pred.apply(
-        lambda s: sequence_to_all_ions(s.sequence, s.charge, s.intensity, normalize=True), axis=1
-    )
+    N = int(5e4)
+    batch_list = []
 
-    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
+    for batch_indices in tqdm(
+            np.array_split(i_pred.index, np.ceil(len(i_pred)/N)),
+            total=int(np.ceil(len(i_pred)/N)),
+            desc='matching b/y ions with intensities',
+            ncols=100,
+            disable=(not verbose)
+    ):
+
+        batch = i_pred.loc[batch_indices].reset_index(drop=True)
+
+        batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
+
+        batch['fragment_intensities'] = ims.sequence_to_all_ions_par(
+            batch.sequence, batch.charge, batch.intensity_flat, True, True, args.num_threads
+        )
+
+        batch_list.append(batch)
+
+    i_pred = pd.concat(batch_list)
+    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']].sort_values(
+        by=['peptide_id', 'charge'])
 
     if verbose:
         print("Saving fragment ion intensity distributions...")

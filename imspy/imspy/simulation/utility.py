@@ -19,6 +19,24 @@ import toml
 from typing import Any, Dict
 
 
+@jit(nopython=True)
+def flatten_prosit_array(array):
+    array_return = np.zeros(174)
+
+    ptr = 0
+
+    for c in range(3):
+        i_y = array[:, 0, c]
+        array_return[ptr:ptr + 29] = i_y
+        ptr += 29
+
+        i_b = array[:, 1, c]
+        array_return[ptr:ptr + 29] = i_b
+        ptr += 29
+
+    return array_return
+
+
 def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Traversable:
     """ Get the path to a pretrained model
 
