@@ -53,5 +53,6 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_transmission, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::find_unimod_annotations, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::find_unimod_annotations_par, m)?)?;
+    m.add_function(wrap_pyfunction!(py_chemistry::sequence_to_all_ions_ims, m)?)?;
     Ok(())
 }
