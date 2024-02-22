@@ -16,12 +16,12 @@ pub fn find_unimod_patterns(input_string: &str) -> (String, Vec<f64>) {
 }
 
 fn remove_unimod_annotation(sequence: &str) -> String {
-    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
+    let pattern = Regex::new(r"\[UNIMOD:\d+]").unwrap();
     pattern.replace_all(sequence, "").to_string()
 }
 
 fn extract_unimod_patterns(input_string: &str) -> Vec<(usize, usize, String)> {
-    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
+    let pattern = Regex::new(r"\[UNIMOD:\d+]").unwrap();
     pattern.find_iter(input_string)
         .map(|mat| (mat.start(), mat.end(), mat.as_str().to_string()))
         .collect()
@@ -159,8 +159,8 @@ pub fn sequence_to_all_ions(
     let mut r_list = Vec::new();
 
     for z in 1..=max_charge {
-        let c = z as i32;
-        let (b, y) = calculate_b_y_ion_series(&stripped_sequence, mods.clone(), Some(c));
+
+        let (b, y) = calculate_b_y_ion_series(&stripped_sequence, mods.clone(), Some(z));
 
         let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
         let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
@@ -168,7 +168,7 @@ pub fn sequence_to_all_ions(
         let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
         let fragments = generate_fragments(
-            c,
+            z,
             b.iter().map(|t| (t.0, t.1.clone())).collect::<Vec<(f64, String)>>(),
             y.iter().map(|t| (t.0, t.1.clone())).collect::<Vec<(f64, String)>>(),
             intensity_b.iter().map(|&i| i / adjusted_sum_intensity).collect::<Vec<f64>>(),
