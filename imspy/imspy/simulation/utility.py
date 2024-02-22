@@ -8,7 +8,7 @@ from scipy.stats import norm
 import math
 import importlib.resources as resources
 
-from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz, MODIFICATIONS_MZ
+from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz
 
 import imspy_connector as ims
 
@@ -35,6 +35,50 @@ def flatten_prosit_array(array):
         ptr += 29
 
     return array_return
+
+
+def sequences_to_all_ions(
+        sequences: List[str],
+        charges: List[int],
+        intensities_flat: List[List[float]],
+        normalized: bool = True,
+        half_charge_one: bool = True,
+        num_threads: int = 4) -> List[str]:
+    """
+    Simulate ion intensities for a list of peptide sequences, charges, and collision energies.
+    Args:
+        sequences: List of peptide sequences
+        charges: List of peptide charges
+        intensities_flat: List of intensities
+        normalized: Whether to normalize the intensities
+        half_charge_one: Whether to divide the intensity by 2 if the charge is 1
+        num_threads: Number of threads to use for the calculation
+
+    Returns:
+        NDArray: Array of ion intensities
+    """
+    return ims.sequence_to_all_ions_par(sequences, charges, intensities_flat, normalized, half_charge_one, num_threads)
+
+
+def sequence_to_all_ions(
+        sequence: str,
+        charge: int,
+        intensities_flat: List[float],
+        normalized: bool = True,
+        half_charge_one: bool = True) -> List[str]:
+    """
+    Simulate ion intensities for a peptide sequence, charge, and collision energy.
+    Args:
+        sequence: Peptide sequence
+        charge: Peptide charge
+        intensities_flat: List of intensities
+        normalized: Whether to normalize the intensities
+        half_charge_one: Whether to divide the intensity by 2 if the charge is 1
+
+    Returns:
+        NDArray: Array of ion intensities
+    """
+    return ims.sequence_to_all_ions_ims(sequence, charge, intensities_flat, normalized, half_charge_one)
 
 
 def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Traversable:
