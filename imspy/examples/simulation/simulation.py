@@ -360,7 +360,7 @@ def main():
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
     N = int(5e4)
-    b_counter = 0
+    batch_counter = 0
 
     for batch_indices in tqdm(
             np.array_split(i_pred.index, np.ceil(len(i_pred)/N)),
@@ -371,7 +371,6 @@ def main():
     ):
 
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
-
         batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
 
         all_ions = ims.sequence_to_all_ions_par(
@@ -381,7 +380,7 @@ def main():
         batch['fragment_intensities'] = all_ions
         batch = batch[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
 
-        if b_counter == 0:
+        if batch_counter == 0:
             acquisition_builder.synthetics_handle.create_table(
                 table=batch,
                 table_name='fragment_ions'
@@ -392,7 +391,7 @@ def main():
                 table_name='fragment_ions'
             )
 
-        b_counter += 1
+        batch_counter += 1
 
     if verbose:
         print("Starting frame assembly...")
