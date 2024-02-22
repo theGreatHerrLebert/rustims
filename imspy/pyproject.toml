@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "imspy"
-version = "0.2.15"
+version = "0.2.16"
 description = ""
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 readme = "README.md"
@@ -19,7 +19,7 @@ pyopenms = ">=2.6.0"
 sagepy = ">=0.2.6"
 sagepy-connector = ">=0.2.6"
 
-imspy-connector = ">=0.2.15"
+imspy-connector = ">=0.2.16"
 
 scipy = ">=1.7.1"
 tqdm = ">=4.66"
