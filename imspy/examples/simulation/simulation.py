@@ -380,8 +380,6 @@ def main():
         )
 
         batch['fragment_intensities'] = [json.dumps(json.loads(x)) for x in all_ions]
-
-
         batch_list.append(batch)
 
     i_pred = pd.concat(batch_list)
