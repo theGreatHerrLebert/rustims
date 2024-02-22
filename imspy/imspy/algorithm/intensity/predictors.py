@@ -11,6 +11,7 @@ from tqdm import tqdm
 from imspy.algorithm.utility import get_model_path
 from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims)
+from imspy.simulation.exp import SyntheticExperimentDataHandle
 
 
 def remove_unimod_annotation(sequence: str) -> str:
@@ -61,11 +62,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         raise NotImplementedError('This method is not implemented for Prosit2023TimsTofWrapper')
 
     def simulate_ion_intensities_pandas_batched(self, data: pd.DataFrame,
+                                                # handle: SyntheticExperimentDataHandle,
                                                 batch_size_tf_ds: int = 1024,
                                                 batch_size: int = int(4e5),
-                                                divide_collision_energy_by: float = 1e2) -> pd.DataFrame:
+                                                divide_collision_energy_by: float = 1e2
+                                                ) -> pd.DataFrame:
 
         tables = []
+
+        batch_counter = 0
         for batch_indices in tqdm(np.array_split(data.index, np.ceil(len(data) / batch_size)),
                                   total=int(np.ceil(len(data) / batch_size)),
                                   desc='Simulating intensities', ncols=100, disable=not self.verbose):
@@ -73,7 +78,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             batch = data.loc[batch_indices].reset_index(drop=True)
             data_pred = self.simulate_ion_intensities_pandas(batch, batch_size=batch_size_tf_ds,
                                                              divide_collision_energy_by=divide_collision_energy_by)
+
+            # TODO: Save the data_pred to a database per batch, so that we don't have to keep everything in memory
+            """
+            if batch_counter == 0:
+                handle.create_table('intensity_predictions', data_pred)
+            """
+
             tables.append(data_pred)
+            batch_counter += 1
 
         return pd.concat(tables)
 

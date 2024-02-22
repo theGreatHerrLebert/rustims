@@ -1,22 +1,22 @@
 import os
 import argparse
 
-import imspy_connector as ims
-
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
+from examples.simulation.jobs.build_acquisition import build_acquisition
+from examples.simulation.jobs.digest_fasta import digest_fasta
+from examples.simulation.utility import check_path
 from imspy.chemistry import calculate_mz
 
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
 
-from imspy.simulation.proteome import PeptideDigest
-from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
-from imspy.simulation.utility import generate_events, python_list_to_json_string, \
-    read_acquisition_config, flatten_prosit_array
+from imspy.simulation.utility import (generate_events, python_list_to_json_string, flatten_prosit_array,
+                                      sequences_to_all_ions)
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
                                       accumulated_intensity_cdf_numba)
@@ -53,12 +53,6 @@ def main():
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='Run a proteomics experiment simulation '
                                                  'with DIA acquisition on a BRUKER TimsTOF.')
-
-    # check if the path exists
-    def check_path(p):
-        if not os.path.exists(p):
-            raise argparse.ArgumentTypeError(f"Invalid path: {p}")
-        return p
 
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
@@ -112,39 +106,28 @@ def main():
     fasta = check_path(args.fasta)
     verbose = args.verbose
 
-    acquisition_type = args.acquisition_type.lower()
-
-    assert acquisition_type in ['dia', 'midia', 'slice', 'synchro'], \
-        f"Acquisition type must be 'dia', 'midia', 'slice' or 'synchro', was {args.acquisition_type}"
-
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
-    config = read_acquisition_config(acquisition_name=acquisition_type)['acquisition']
-
-    if verbose:
-        print(f"Using acquisition type: {acquisition_type}")
-        print(config)
-
-    acquisition_builder = TimsTofAcquisitionBuilderDIA.from_config(
+    # create acquisition
+    acquisition_builder = build_acquisition(
         path=path,
         exp_name=name,
-        config=config,
+        acquisition_type=args.acquisition_type,
+        verbose=verbose
     )
 
-    if verbose:
-        print("Digesting peptides...")
-
-    digest = PeptideDigest(
-        fasta,
+    # TODO: check if peptides already exist in database
+    digest = digest_fasta(
+        fasta_file_path=fasta,
         missed_cleavages=args.missed_cleavages,
         min_len=args.min_len,
         max_len=args.max_len,
         cleave_at=args.cleave_at,
         restrict=args.restrict,
-        generate_decoys=args.decoys,
+        decoys=args.decoys,
         verbose=verbose,
     )
 
@@ -162,9 +145,6 @@ def main():
         tokenizer=load_tokenizer_from_resources(),
         verbose=verbose
     )
-
-    if verbose:
-        print("Simulating retention times...")
 
     # predict rts
     peptide_rt = RTColumn.simulate_separation_times_pandas(
@@ -360,7 +340,7 @@ def main():
         print("Mapping fragment ion intensity distributions to b and y ions...")
 
     N = int(5e4)
-    batch_list = []
+    batch_counter = 0
 
     for batch_indices in tqdm(
             np.array_split(i_pred.index, np.ceil(len(i_pred)/N)),
@@ -371,27 +351,27 @@ def main():
     ):
 
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
-
         batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
 
-        all_ions = ims.sequence_to_all_ions_par(
+        all_ions = sequences_to_all_ions(
             batch.sequence, batch.charge, batch.intensity_flat, True, True, args.num_threads
         )
 
         batch['fragment_intensities'] = all_ions
-        batch_list.append(batch)
+        batch = batch[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
 
-    i_pred = pd.concat(batch_list)
-    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']].sort_values(
-        by=['peptide_id', 'charge'])
+        if batch_counter == 0:
+            acquisition_builder.synthetics_handle.create_table(
+                table=batch,
+                table_name='fragment_ions'
+            )
+        else:
+            acquisition_builder.synthetics_handle.append_table(
+                table=batch,
+                table_name='fragment_ions'
+            )
 
-    if verbose:
-        print("Saving fragment ion intensity distributions...")
-
-    acquisition_builder.synthetics_handle.create_table(
-        table=fragment_spectra,
-        table_name='fragment_ions'
-    )
+        batch_counter += 1
 
     if verbose:
         print("Starting frame assembly...")
