@@ -1,31 +1,19 @@
 import os
 import argparse
 
-import numpy as np
-import pandas as pd
-from tqdm import tqdm
-
+from examples.simulation.jobs.assemble_frames import assemble_frames
 from examples.simulation.jobs.build_acquisition import build_acquisition
 from examples.simulation.jobs.digest_fasta import digest_fasta
+from examples.simulation.jobs.simulate_charge_states import simulate_charge_states
+from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
+from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
+from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
+from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra
+from examples.simulation.jobs.simulate_retention_time import simulate_retention_times
+from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
 from examples.simulation.utility import check_path
-from imspy.chemistry import calculate_mz
 
-from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
-
-from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
-from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
-
-from imspy.simulation.utility import (generate_events, python_list_to_json_string, flatten_prosit_array,
-                                      sequences_to_all_ions)
-from imspy.simulation.isotopes import generate_isotope_patterns_rust
-from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
-                                      accumulated_intensity_cdf_numba)
-
-from imspy.simulation.exp import TimsTofSyntheticFrameBuilderDIA
-from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
-from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
-
-from pathlib import Path
+from imspy.simulation.utility import (generate_events)
 
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"
@@ -119,7 +107,7 @@ def main():
         verbose=verbose
     )
 
-    # TODO: check if peptides already exist in database
+    # JOB 1: Digest the fasta file
     digest = digest_fasta(
         fasta_file_path=fasta,
         missed_cleavages=args.missed_cleavages,
@@ -136,26 +124,17 @@ def main():
         table=digest.peptides.sample(frac=args.sample_fraction),
     )
 
-    if verbose:
-        print("Simulating retention times...")
-
-    # create RTColumn instance
-    RTColumn = DeepChromatographyApex(
-        model=load_deep_retention_time(),
-        tokenizer=load_tokenizer_from_resources(),
-        verbose=verbose
-    )
-
-    # predict rts
-    peptide_rt = RTColumn.simulate_separation_times_pandas(
-        data=acquisition_builder.synthetics_handle.get_table('peptides'),
-        gradient_length=acquisition_builder.gradient_length,
+    # JOB 2: Simulate retention times
+    peptide_rt = simulate_retention_times(
+        peptides=acquisition_builder.synthetics_handle.get_table('peptides'),
+        verbose=verbose,
+        gradient_length=acquisition_builder.gradient_length
     )
 
     if verbose:
         print("Sampling peptide intensities...")
 
-    # call this peptide counts instead
+    # JOB 3: Simulate peptide intensities
     events = generate_events(
         n=peptide_rt.shape[0],
         mean=args.intensity_mean,
@@ -171,109 +150,45 @@ def main():
         table=peptide_rt,
     )
 
-    if verbose:
-        print("Simulating charge states...")
+    # JOB 4: Simulate charge states
+    ions = simulate_charge_states(
+        peptide_rt=peptide_rt,
+        mz_lower=acquisition_builder.mz_lower,
+        mz_upper=acquisition_builder.mz_upper,
+        p_charge=p_charge
+    )
 
-    IonSource = BinomialChargeStateDistributionModel(charged_probability=p_charge)
-    peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptide_rt)
-
-    # merge tables to have sequences with ions, remove mz values outside scope
-    ions = pd.merge(left=peptide_ions, right=peptide_rt, left_on=['peptide_id'], right_on=['peptide_id'])
-
-    # TODO: CHECK IF THIS TAKES MODIFICATIONS INTO ACCOUNT
-    ions['mz'] = ions.apply(lambda r: calculate_mz(r['monoisotopic-mass'], r['charge']), axis=1)
-    ions = ions[(ions.mz >= acquisition_builder.mz_lower) & (ions.mz <= acquisition_builder.mz_upper)]
-
-    if verbose:
-        print("Simulating ion mobilities...")
-
-    # load IM predictor
-    IMS = DeepPeptideIonMobilityApex(
-        model=load_deep_ccs_predictor(),
-        tokenizer=load_tokenizer_from_resources(),
+    # JOB 5: Simulate ion mobilities
+    ions = simulate_ion_mobilities(
+        ions=ions,
+        im_lower=acquisition_builder.im_lower,
+        im_upper=acquisition_builder.im_upper,
         verbose=verbose
     )
 
-    # simulate mobilities
-    dp = IMS.simulate_ion_mobilities_pandas(
-        ions
-    )
-
-    # filter by mobility range
-    ions = dp[(dp.mobility_gru_predictor >= acquisition_builder.im_lower) & (
-            ions.mobility_gru_predictor <= acquisition_builder.im_upper)]
-
-    if verbose:
-        print("Simulating precursor isotopic distributions...")
-
-    specs = generate_isotope_patterns_rust(
-        ions['monoisotopic-mass'], ions.charge,
-        min_intensity=args.isotope_min_intensity,
-        k=args.isotope_k,
-        centroid=True,
+    # JOB 6: Simulate precursor isotopic distributions
+    ions = simulate_precursor_spectra(
+        ions=ions,
+        isotope_min_intensity=args.isotope_min_intensity,
+        isotope_k=args.isotope_k,
         num_threads=args.num_threads,
+        verbose=verbose
     )
-
-    specs = [spec.to_jsons() for spec in specs]
-    ions.insert(6, 'simulated_spectrum', specs)
 
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
         table=ions,
     )
 
-    frames = acquisition_builder.frame_table
-    scans = acquisition_builder.scan_table
-
-    # distribution parameters
-    z_score = get_z_score_for_percentile(target_score=args.z_score)
-    std_rt = args.std_rt
-    std_im = args.std_im
-
-    frames_np = frames.time.values
-    mobility_np = scans.mobility.values
-    scans_np = scans.scan.values
-
-    time_dict = dict(zip(frames.frame_id.values, frames.time.values))
-    im_dict = dict(zip(scans.scan, scans.mobility))
-
-    peptide_rt = acquisition_builder.synthetics_handle.get_table('peptides')
-
-    total_list_frames = []
-    total_list_frame_contributions = []
-
-    if verbose:
-        print("Calculating frame and scan distributions...")
-
-    # generate frame_occurrence and frame_abundance columns
-    for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0], desc='frame distribution', ncols=100):
-        frame_occurrence, frame_abundance = [], []
-
-        rt_value = row.retention_time_gru_predictor
-        contributing_frames = get_frames_numba(rt_value, frames_np, std_rt, z_score)
-
-        for frame in contributing_frames:
-            time = time_dict[frame]
-            start = time - acquisition_builder.rt_cycle_length
-            i = accumulated_intensity_cdf_numba(start, time, rt_value, std_rt)
-
-            # TODO: ADD NOISE HERE?
-
-            frame_occurrence.append(frame)
-            frame_abundance.append(i)
-
-        total_list_frames.append(frame_occurrence)
-        total_list_frame_contributions.append(frame_abundance)
-
-    if verbose:
-        print("Saving frame distributions...")
-
-    peptide_rt['frame_occurrence'] = [list(x) for x in total_list_frames]
-    peptide_rt['frame_abundance'] = [list(x) for x in total_list_frame_contributions]
-
-    peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
-        lambda x: python_list_to_json_string(x, as_float=False))
-    peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(python_list_to_json_string)
+    # JOB 7: Simulate frame
+    peptide_rt = simulate_frame_distributions(
+        peptides=acquisition_builder.synthetics_handle.get_table('peptides'),
+        frames=acquisition_builder.frame_table,
+        z_score=args.z_score,
+        std_rt=args.std_rt,
+        rt_cycle_length=acquisition_builder.rt_cycle_length,
+        verbose=verbose
+    )
 
     # save peptide_rt to database
     acquisition_builder.synthetics_handle.create_table(
@@ -281,129 +196,39 @@ def main():
         table=peptide_rt
     )
 
-    ions = acquisition_builder.synthetics_handle.get_table('ions')
-
-    im_scans = []
-    im_contributions = []
-
-    for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
-        scan_occurrence, scan_abundance = [], []
-
-        im_value = row.mobility_gru_predictor
-        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im, z_score)
-
-        for scan in contributing_scans:
-            im = im_dict[scan]
-            start = im - acquisition_builder.im_cycle_length
-            i = accumulated_intensity_cdf_numba(start, im, im_value, std_im)
-
-            # TODO: ADD NOISE HERE AS WELL?
-
-            scan_occurrence.append(scan)
-            scan_abundance.append(i)
-
-        im_scans.append(scan_occurrence)
-        im_contributions.append(scan_abundance)
-
-    if verbose:
-        print("Saving scan distributions...")
-
-    ions['scan_occurrence'] = [list(x) for x in im_scans]
-    ions['scan_abundance'] = [list(x) for x in im_contributions]
-
-    ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: python_list_to_json_string(x, as_float=False))
-    ions['scan_abundance'] = ions['scan_abundance'].apply(python_list_to_json_string)
+    # JOB 8: Simulate scan distributions
+    ions = simulate_scan_distributions(
+        ions=acquisition_builder.synthetics_handle.get_table('ions'),
+        scans=acquisition_builder.scan_table,
+        z_score=args.z_score,
+        std_im=args.std_im,
+        im_cycle_length=acquisition_builder.im_cycle_length,
+        verbose=verbose
+    )
 
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
         table=ions
     )
 
-    if verbose:
-        print("Simulating fragment ion intensity distributions...")
-
-    native_path = Path(path) / name / 'synthetic_data.db'
-
-    native_handle = TimsTofSyntheticsDataHandleRust(str(native_path))
-
-    if verbose:
-        print("Calculating precursor ion transmissions and collision energies...")
-
-    transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=args.num_threads)
-
-    IntensityPredictor = Prosit2023TimsTofWrapper()
-
-    i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(transmitted_fragment_ions,
-                                                                        batch_size_tf_ds=args.batch_size)
-
-    if verbose:
-        print("Mapping fragment ion intensity distributions to b and y ions...")
-
-    N = int(5e4)
-    batch_counter = 0
-
-    for batch_indices in tqdm(
-            np.array_split(i_pred.index, np.ceil(len(i_pred)/N)),
-            total=int(np.ceil(len(i_pred)/N)),
-            desc='matching b/y ions with intensities',
-            ncols=100,
-            disable=(not verbose)
-    ):
-
-        batch = i_pred.loc[batch_indices].reset_index(drop=True)
-        batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
-
-        all_ions = sequences_to_all_ions(
-            batch.sequence, batch.charge, batch.intensity_flat, True, True, args.num_threads
-        )
-
-        batch['fragment_intensities'] = all_ions
-        batch = batch[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
-
-        if batch_counter == 0:
-            acquisition_builder.synthetics_handle.create_table(
-                table=batch,
-                table_name='fragment_ions'
-            )
-        else:
-            acquisition_builder.synthetics_handle.append_table(
-                table=batch,
-                table_name='fragment_ions'
-            )
-
-        batch_counter += 1
-
-    if verbose:
-        print("Starting frame assembly...")
-
-    batch_size = args.batch_size
-    num_batches = len(frames) // batch_size + 1
-    frame_ids = frames.frame_id.values
-
-    frame_builder = TimsTofSyntheticFrameBuilderDIA(
-        db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+    # JOB 9: Simulate fragment ion intensities
+    simulate_fragment_intensities(
+        path=path,
+        name=name,
+        acquisition_builder=acquisition_builder,
+        batch_size=args.batch_size,
+        verbose=verbose,
+        num_threads=args.num_threads,
     )
 
-    # go over all frames in batches
-    for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
-        start_index = b * batch_size
-        stop_index = (b + 1) * batch_size
-        ids = frame_ids[start_index:stop_index]
-
-        built_frames = frame_builder.build_frames(ids, num_threads=args.num_threads)
-        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=args.num_threads)
-
-    if verbose:
-        print("Writing frame meta data to database...")
-
-    # write frame meta data to database
-    acquisition_builder.tdf_writer.write_frame_meta_data()
-    # write frame ms/ms info to database
-    acquisition_builder.tdf_writer.write_dia_ms_ms_info(
-        acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
-    # write frame ms/ms windows to database
-    acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
-        acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+    # JOB 10: Assemble frames
+    assemble_frames(
+        acquisition_builder=acquisition_builder,
+        frames=acquisition_builder.frame_table,
+        batch_size=args.batch_size,
+        verbose=verbose,
+        num_threads=args.num_threads,
+    )
 
 
 if __name__ == '__main__':
