@@ -4,6 +4,10 @@ import argparse
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
+from examples.simulation.jobs.build_acquisition import build_acquisition
+from examples.simulation.jobs.digest_fasta import digest_fasta
+from examples.simulation.utility import check_path
 from imspy.chemistry import calculate_mz
 
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
@@ -51,12 +55,6 @@ def main():
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='Run a proteomics experiment simulation '
                                                  'with DIA acquisition on a BRUKER TimsTOF.')
-
-    # check if the path exists
-    def check_path(p):
-        if not os.path.exists(p):
-            raise argparse.ArgumentTypeError(f"Invalid path: {p}")
-        return p
 
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
@@ -110,39 +108,28 @@ def main():
     fasta = check_path(args.fasta)
     verbose = args.verbose
 
-    acquisition_type = args.acquisition_type.lower()
-
-    assert acquisition_type in ['dia', 'midia', 'slice', 'synchro'], \
-        f"Acquisition type must be 'dia', 'midia', 'slice' or 'synchro', was {args.acquisition_type}"
-
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
-    config = read_acquisition_config(acquisition_name=acquisition_type)['acquisition']
-
-    if verbose:
-        print(f"Using acquisition type: {acquisition_type}")
-        print(config)
-
-    acquisition_builder = TimsTofAcquisitionBuilderDIA.from_config(
+    # create acquisition
+    acquisition_builder = build_acquisition(
         path=path,
         exp_name=name,
-        config=config,
+        acquisition_type=args.acquisition_type,
+        verbose=verbose
     )
 
-    if verbose:
-        print("Digesting peptides...")
-
-    digest = PeptideDigest(
-        fasta,
+    # TODO: check if peptides already exist in database
+    digest = digest_fasta(
+        fasta_file_path=fasta,
         missed_cleavages=args.missed_cleavages,
         min_len=args.min_len,
         max_len=args.max_len,
         cleave_at=args.cleave_at,
         restrict=args.restrict,
-        generate_decoys=args.decoys,
+        decoys=args.decoys,
         verbose=verbose,
     )
 
@@ -160,9 +147,6 @@ def main():
         tokenizer=load_tokenizer_from_resources(),
         verbose=verbose
     )
-
-    if verbose:
-        print("Simulating retention times...")
 
     # predict rts
     peptide_rt = RTColumn.simulate_separation_times_pandas(
