@@ -66,14 +66,14 @@ pub fn find_unimod_patterns_par(sequences: Vec<&str>, num_threads: usize) -> Vec
     result
 }
 
-pub fn generate_fragments_json(
+pub fn generate_fragments(
     charge: i32,
     b_ions: Vec<(f64, String)>, // Assuming a tuple of (mz, ion_type)
     y_ions: Vec<(f64, String)>,
     intensity_b:Vec<f64>, // Optional intensity vectors
     intensity_y: Vec<f64>,
     num_decimals: u32,
-) -> String {
+) -> FragmentIonSeries {
     let mut peptide_ion_data = FragmentIonSeries {
         charge,
         b_ions: Vec::new(),
@@ -99,7 +99,7 @@ pub fn generate_fragments_json(
         });
     }
 
-    to_string(&peptide_ion_data).unwrap_or_default()
+    peptide_ion_data
 }
 
 trait RoundDecimals {
@@ -167,7 +167,7 @@ pub fn sequence_to_all_ions(
 
         let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
-        let json_str = generate_fragments_json(
+        let fragments = generate_fragments(
             c,
             b.iter().map(|t| (t.0, t.1.clone())).collect::<Vec<(f64, String)>>(),
             y.iter().map(|t| (t.0, t.1.clone())).collect::<Vec<(f64, String)>>(),
@@ -176,7 +176,7 @@ pub fn sequence_to_all_ions(
             4,
         );
 
-        r_list.push(json_str);
+        r_list.push(fragments);
     }
 
     to_string(&r_list).unwrap_or_else(|_| "[]".to_string())

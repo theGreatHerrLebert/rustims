@@ -15,7 +15,7 @@ from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex
 from imspy.algorithm import (load_tokenizer_from_resources, load_deep_retention_time, load_deep_ccs_predictor)
 
-from imspy.simulation.utility import generate_events, python_list_to_json_string, sequence_to_all_ions, \
+from imspy.simulation.utility import generate_events, python_list_to_json_string, \
     read_acquisition_config, flatten_prosit_array
 from imspy.simulation.isotopes import generate_isotope_patterns_rust
 from imspy.simulation.utility import (get_z_score_for_percentile, get_frames_numba, get_scans_numba,
@@ -374,10 +374,11 @@ def main():
 
         batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
 
-        batch['fragment_intensities'] = ims.sequence_to_all_ions_par(
+        all_ions = ims.sequence_to_all_ions_par(
             batch.sequence, batch.charge, batch.intensity_flat, True, True, args.num_threads
         )
 
+        batch['fragment_intensities'] = all_ions
         batch_list.append(batch)
 
     i_pred = pd.concat(batch_list)

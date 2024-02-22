@@ -1,3 +1,4 @@
+import re
 from typing import Tuple
 
 from numpy.typing import NDArray
@@ -8,14 +9,20 @@ from abc import ABC, abstractmethod
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
-from imspy.simulation.utility import remove_unimod_annotation
 from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims)
+
+
+def remove_unimod_annotation(sequence: str) -> str:
+    """Remove [UNIMOD:N] annotations from the sequence."""
+    pattern = r'\[UNIMOD:\d+\]'
+    return re.sub(pattern, '', sequence)
 
 
 def load_prosit_2023_timsTOF_predictor():
     """ Get a pretrained deep predictor model
     This model was downloaded from ZENODO: https://zenodo.org/records/8211811
+    PAPER : https://doi.org/10.1101/2023.07.17.549401
     Returns:
         The pretrained deep predictor model
     """
@@ -40,6 +47,9 @@ class IonIntensityPredictor(ABC):
 
 
 class Prosit2023TimsTofWrapper(IonIntensityPredictor):
+    """
+    Wrapper for the Prosit 2023 TIMS-TOF predictor
+    """
     def __init__(self, verbose: bool = True, model_name: str = 'deep_ion_intensity_predictor'):
         super().__init__()
 
