@@ -1,8 +1,6 @@
 import os
 import argparse
 
-import imspy_connector as ims
-
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
