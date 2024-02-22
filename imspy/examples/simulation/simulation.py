@@ -50,7 +50,7 @@ def main():
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
     parser.add_argument("--acquisition_type", type=str, help="Type of acquisition to simulate", default='dia')
-    parser.add_argument("name", type=str, help="Name of the experiment", default=f'imsym-PLACEHOLDER-{int(time.time())}')
+    parser.add_argument("--name", type=str, help="Name of the experiment", default=f'imsym-PLACEHOLDER-{int(time.time())}')
 
     # Peptide digestion arguments
     parser.add_argument("--sample_fraction", type=float, default=0.005, help="Sample fraction (default: 0.005)")
