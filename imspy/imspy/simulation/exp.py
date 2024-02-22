@@ -67,6 +67,10 @@ class SyntheticExperimentDataHandle:
         # Create a table from a pandas DataFrame
         table.to_sql(table_name, self.conn, if_exists='replace', index=False)
 
+    def append_table(self, table_name: str, table: pd.DataFrame):
+        # Append a table to an existing table in the database
+        table.to_sql(table_name, self.conn, if_exists='append', index=False)
+
     def create_table_sql(self, sql):
         # Create a table as per the provided SQL statement
         try:
