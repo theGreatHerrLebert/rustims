@@ -379,11 +379,10 @@ def main():
         )
 
         batch['fragment_intensities'] = all_ions
+        batch = batch[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']]
         batch_list.append(batch)
 
-    i_pred = pd.concat(batch_list)
-    fragment_spectra = i_pred[['peptide_id', 'collision_energy', 'charge', 'fragment_intensities']].sort_values(
-        by=['peptide_id', 'charge'])
+    fragment_spectra = pd.concat(batch_list).sort_values(by=['peptide_id', 'charge'])
 
     if verbose:
         print("Saving fragment ion intensity distributions...")
