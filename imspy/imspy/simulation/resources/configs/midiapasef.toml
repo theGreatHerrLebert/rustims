@@ -6,5 +6,5 @@ rt_cycle_length = 0.1054
 im_lower = 0.6
 im_upper = 1.5
 num_scans = 927
-mz_lower = 50.0
+mz_lower = 100.0
 mz_upper = 1500.0
