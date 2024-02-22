@@ -379,7 +379,7 @@ def main():
             batch.sequence, batch.charge, batch.intensity_flat, True, True, args.num_threads
         )
 
-        batch['fragment_intensities'] = [json.dumps(json.loads(x)) for x in all_ions]
+        batch['fragment_intensities'] = all_ions
         batch_list.append(batch)
 
     i_pred = pd.concat(batch_list)
