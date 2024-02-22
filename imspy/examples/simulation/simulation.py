@@ -71,6 +71,7 @@ def main():
     parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
 
     # Distribution parameters
+    parser.add_argument("--gradient-length", type=float, default=60 * 60, help="Length of the gradient (default: 3600)")
     parser.add_argument("--z_score", type=float, default=.99,
                         help="Z-score for frame and scan distributions (default: .99)")
     parser.add_argument("--std_rt", type=float, default=3.3,
@@ -104,7 +105,8 @@ def main():
         path=path,
         exp_name=name,
         acquisition_type=args.acquisition_type,
-        verbose=verbose
+        verbose=verbose,
+        gradient_length=args.gradient_length,
     )
 
     # JOB 1: Digest the fasta file

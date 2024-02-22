@@ -7,6 +7,7 @@ def build_acquisition(
         exp_name: str,
         acquisition_type: str,
         verbose: bool = False,
+        gradient_length: float = None,
         job_name: str = "build_acquisition"
 
 ) -> TimsTofAcquisitionBuilderDIA:
@@ -21,6 +22,9 @@ def build_acquisition(
     if verbose:
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
+
+    if gradient_length is not None:
+        config['gradient_length'] = gradient_length
 
     return TimsTofAcquisitionBuilderDIA.from_config(
         path=path,
