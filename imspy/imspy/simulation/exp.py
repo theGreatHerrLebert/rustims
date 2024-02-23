@@ -89,6 +89,16 @@ class SyntheticExperimentDataHandle:
         # Get a table as a pandas DataFrame
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
+    def list_tables(self):
+        self.conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = self.conn.fetchall()
+        return [table[0] for table in tables]
+
+    def list_columns(self, table_name):
+        self.conn.execute(f"PRAGMA table_info({table_name});")
+        columns = self.conn.fetchall()
+        return [column[1] for column in columns]
+
 
 class SyntheticExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
     def __init__(self,
