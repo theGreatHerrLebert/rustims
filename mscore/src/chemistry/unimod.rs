@@ -1,27 +1,24 @@
 use std::collections::HashMap;
 
-pub fn modification_composition() -> HashMap<&'static str, HashMap<char, i32>> {
-    let mut composition = HashMap::new();
-
-    composition.insert("[UNIMOD:1]", HashMap::from([('C', 2), ('H', 2), ('O', 1)])); // Acetyl
-    composition.insert("[UNIMOD:3]", HashMap::from([('C', 2), ('H', 2), ('O', 1)])); // Deamidated
-    composition.insert("[UNIMOD:4]", HashMap::from([('C', 2), ('H', 3), ('O', 1)])); // Carbamidomethyl
-    composition.insert("[UNIMOD:7]", HashMap::from([('H', 1)])); // Hydroxylation
-    composition.insert("[UNIMOD:21]", HashMap::from([('O', 1)])); // Oxidation
-    composition.insert("[UNIMOD:34]", HashMap::from([('C', 1), ('H', 1), ('O', 1)])); // Dehydrated
-    composition.insert("[UNIMOD:35]", HashMap::from([('O', 1)])); // Phosphorylation
-    composition.insert("[UNIMOD:36]", HashMap::from([('C', 2), ('H', 3), ('O', 1)])); // Pyroglutamic Acid
-    composition.insert("[UNIMOD:37]", HashMap::from([('C', 2), ('H', 3), ('O', 1)])); // Pyroglutamic Acid
-    composition.insert("[UNIMOD:43]", HashMap::from([('C', 7), ('H', 10), ('N', 1), ('O', 2)])); // Carboxymethyl
-    composition.insert("[UNIMOD:58]", HashMap::from([('C', 2), ('H', 2), ('O', 1)])); // Dimethyl
-    composition.insert("[UNIMOD:121]", HashMap::from([('C', 3), ('H', 4), ('O', 1)])); // Methylthio
-    composition.insert("[UNIMOD:122]", HashMap::from([('C', 3), ('H', 4), ('O', 1)])); // Methylthio
-    composition.insert("[UNIMOD:312]", HashMap::from([('C', 3), ('H', 4), ('O', 1)])); // Methylthio
-    composition.insert("[UNIMOD:354]", HashMap::from([('C', 2), ('H', 4), ('O', 1)])); // Formyl
-    composition.insert("[UNIMOD:408]", HashMap::from([('C', 5), ('H', 8), ('N', 1), ('O', 2)])); // Glutathione
-    composition.insert("[UNIMOD:747]", HashMap::from([('C', 2), ('H', 2), ('O', 1)])); // Dimethyl:2H(6)
-    composition.insert("[UNIMOD:1289]", HashMap::from([('C', 2), ('H', 2), ('O', 1)])); // Dimethyl:2H(6)
-    composition.insert("[UNIMOD:1363]", HashMap::from([('C', 2), ('H', 2), ('O', 1)])); // Dimethyl:2H(6)
+pub fn modification_composition() -> HashMap<String, HashMap<&'static str, i32>> {
+    let mut composition: HashMap<String, HashMap<&'static str, i32>> = HashMap::new();
+    composition.insert("[UNIMOD:1]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Acetyl
+    composition.insert("[UNIMOD:3]".to_string(), HashMap::from([("N", -1), ("H", -2), ("O", 1)])); // Deamidated
+    composition.insert("[UNIMOD:4]".to_string(), HashMap::from([("C", 2), ("H", 3), ("O", 1), ("N", 1)])); // Carbamidomethyl
+    composition.insert("[UNIMOD:7]".to_string(), HashMap::from([("H", 1)])); // Hydroxylation
+    composition.insert("[UNIMOD:21]".to_string(), HashMap::from([("O", 1)])); // Oxidation
+    composition.insert("[UNIMOD:34]".to_string(), HashMap::from([("H", -2), ("O", -1)])); // Dehydrated
+    composition.insert("[UNIMOD:35]".to_string(), HashMap::from([("O", 4), ("P", 1)])); // Phosphorylation
+    composition.insert("[UNIMOD:43]".to_string(), HashMap::from([("C", 7), ("H", 10), ("N", 1), ("O", 2)])); // Carboxymethyl
+    composition.insert("[UNIMOD:58]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Dimethyl
+    composition.insert("[UNIMOD:121]".to_string(), HashMap::from([("C", 3), ("H", 4), ("O", 1)])); // Methylthio
+    composition.insert("[UNIMOD:122]".to_string(), HashMap::from([("C", 3), ("H", 4), ("O", 1)])); // Methylthio
+    composition.insert("[UNIMOD:312]".to_string(), HashMap::from([("C", 3), ("H", 4), ("O", 1)])); // Methylthio
+    composition.insert("[UNIMOD:354]".to_string(), HashMap::from([("C", 2), ("H", 4), ("O", 1)])); // Formyl
+    composition.insert("[UNIMOD:408]".to_string(), HashMap::from([("C", 5), ("H", 8), ("N", 1), ("O", 2)])); // Glutathione
+    composition.insert("[UNIMOD:747]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Dimethyl:2H(6)
+    composition.insert("[UNIMOD:1289]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Dimethyl:2H(6)
+    composition.insert("[UNIMOD:1363]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Dimethyl:2H(6)
 
     composition
 }

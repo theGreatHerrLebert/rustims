@@ -66,3 +66,18 @@ pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
 pub fn sequence_to_all_ions_par(sequences: Vec<&str>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, ) -> Vec<String> {
     rustdf::sim::utility::sequence_to_all_ions_par(sequences, charges, intensities, normalize, half_charge_one, num_threads)
 }
+
+#[pyfunction]
+pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
+    mscore::chemistry::aa_sequence::unimod_sequence_to_tokens(sequence)
+}
+
+#[pyfunction]
+pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&str, i32)> {
+    mscore::chemistry::aa_sequence::unimod_sequence_to_atomic_composition(sequence)
+}
+
+#[pyfunction]
+pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
+    mscore::chemistry::aa_sequence::average_mass_from_unimod_sequence(sequence)
+}

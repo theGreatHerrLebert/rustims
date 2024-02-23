@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use regex::Regex;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
-use crate::chemistry::amino_acids::amino_acid_masses;
-use crate::chemistry::unimod::unimod_modifications_mz_numerical;
+use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
+use crate::chemistry::atoms::atomic_weights_isotope_averaged;
+use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
 
 /// calculate the monoisotopic mass of a peptide sequence
 ///
@@ -135,4 +136,85 @@ pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge:
 /// ```
 pub fn calculate_mz(monoisotopic_mass: f64, charge: i32) -> f64 {
     (monoisotopic_mass + charge as f64 * MASS_PROTON) / charge as f64
+}
+
+pub fn calculate_atomic_composition(sequence: &str) -> HashMap<String, i32> {
+    let mut composition = HashMap::new();
+    for char in sequence.chars() {
+        *composition.entry(char.to_string()).or_insert(0) += 1;
+    }
+    composition
+}
+
+pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
+    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
+    let mut tokens = Vec::new();
+    let mut last_index = 0;
+
+    for mat in pattern.find_iter(sequence) {
+        // Extract the amino acids before the current UNIMOD and add them as individual tokens
+        let aa_sequence = &sequence[last_index..mat.start()];
+        tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
+
+        // Add the UNIMOD as its own token
+        let unimod = &sequence[mat.start()..mat.end()];
+        tokens.push(unimod.to_string());
+
+        // Update last_index to the end of the current UNIMOD
+        last_index = mat.end();
+    }
+
+    // Add the remaining amino acids after the last UNIMOD as individual tokens
+    let remaining_aa_sequence = &sequence[last_index..];
+    tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
+
+    tokens
+}
+
+pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static str, i32)> {
+    let token_sequence = unimod_sequence_to_tokens(sequence);
+    let mut collection: HashMap<&'static str, i32> = HashMap::new();
+
+    // Assuming amino_acid_composition and modification_composition return appropriate mappings...
+    let aa_compositions = amino_acid_composition();
+    let mod_compositions = modification_composition();
+
+    // No need for conversion to HashMap<String, ...> as long as you're directly accessing
+    // the HashMap provided by modification_composition() if it uses String keys.
+    for token in token_sequence {
+        if token.len() == 1 {
+            let char = token.chars().next().unwrap();
+            if let Some(composition) = aa_compositions.get(&char) {
+                for (key, value) in composition.iter() {
+                    *collection.entry(key).or_insert(0) += *value;
+                }
+            }
+        } else {
+            // Directly use &token without .as_str() conversion
+            if let Some(composition) = mod_compositions.get(&token) {
+                for (key, value) in composition.iter() {
+                    *collection.entry(key).or_insert(0) += *value;
+                }
+            }
+        }
+    }
+
+    // Add water
+    *collection.entry("H").or_insert(0) += 2; //
+    *collection.entry("O").or_insert(0) += 1; //
+
+    collection.iter().map(|(&k, &v)| (k, v)).collect()
+}
+
+pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
+
+    let composition = unimod_sequence_to_atomic_composition(sequence);
+    let average_masses = atomic_weights_isotope_averaged();
+
+    let mut mass = 0.0;
+    for (element, count) in composition {
+        mass += average_masses.get(element).unwrap_or(&0.0) * count as f64;
+    }
+
+    mass
 }
