@@ -58,7 +58,7 @@ pub fn amino_acid_composition() -> HashMap<char, HashMap<&'static str, i32>> {
 
     let mut composition: HashMap<char, HashMap<&'static str, i32>> = HashMap::new();
 
-    composition.insert('G', HashMap::from([("C", 2), ("H", 3), ("N", 1), ("O", 2)])); // Glycine
+    composition.insert('G', HashMap::from([("C", 2), ("H", 3), ("N", 1), ("O", 1)])); // Glycine
     composition.insert('A', HashMap::from([("C", 3), ("H", 5), ("N", 1), ("O", 1)])); // Alanine
     composition.insert('S', HashMap::from([("C", 3), ("H", 5), ("N", 1), ("O", 2)])); // Serine
     composition.insert('P', HashMap::from([("C", 5), ("H", 7), ("N", 1), ("O", 1)])); // Proline

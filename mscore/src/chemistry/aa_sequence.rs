@@ -1,8 +1,11 @@
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+
 use std::collections::HashMap;
 use regex::Regex;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
-use crate::chemistry::atoms::atomic_weights_isotope_averaged;
+use crate::chemistry::atoms::atomic_weights_mono_isotopic;
 use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
 
 /// calculate the monoisotopic mass of a peptide sequence
@@ -171,7 +174,7 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
     tokens
 }
 
-pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static str, i32)> {
+pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> HashMap<&'static str, i32> {
     let token_sequence = unimod_sequence_to_tokens(sequence);
     let mut collection: HashMap<&'static str, i32> = HashMap::new();
 
@@ -203,13 +206,25 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static st
     *collection.entry("H").or_insert(0) += 2; //
     *collection.entry("O").or_insert(0) += 1; //
 
-    collection.iter().map(|(&k, &v)| (k, v)).collect()
+    collection
 }
 
-pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
+pub fn atomic_composition_to_monoisotopic_mass(composition: &Vec<(&str, i32)>) -> f64 {
+
+    let mono_masses = atomic_weights_mono_isotopic();
+
+    let mut mass = 0.0;
+    for (element, count) in composition {
+        mass += mono_masses.get(element).unwrap_or(&0.0) * *count as f64;
+    }
+
+    mass
+}
+
+pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
 
     let composition = unimod_sequence_to_atomic_composition(sequence);
-    let average_masses = atomic_weights_isotope_averaged();
+    let average_masses = atomic_weights_mono_isotopic();
 
     let mut mass = 0.0;
     for (element, count) in composition {
@@ -217,4 +232,32 @@ pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
     }
 
     mass
+}
+
+pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>) -> Vec<(&str, i32)> {
+
+    let mut composition = unimod_sequence_to_atomic_composition(sequence);
+
+    if !is_y.unwrap_or(false) {
+        *composition.entry("H").or_insert(0) -= 2;
+        *composition.entry("O").or_insert(0) -= 1;
+    }
+
+    composition.iter().map(|(k, v)| (*k, *v)).collect()
+}
+
+pub fn b_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().map(|seq| mono_isotopic_b_y_fragment_composition(seq, Some(false))).collect()
+    });
+    result
+}
+
+pub fn y_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().map(|seq| mono_isotopic_b_y_fragment_composition(seq, Some(true))).collect()
+    });
+    result
 }
