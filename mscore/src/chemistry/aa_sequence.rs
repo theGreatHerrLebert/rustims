@@ -198,5 +198,12 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static st
         }
     }
 
+    // Adjust for peptide bonds: subtract the composition of water (H2O) for each bond
+    if sequence.len() > 1 {
+        let peptide_bonds = sequence.len() as i32 - 1;
+        *collection.entry("H").or_insert(0) -= 2 * peptide_bonds;
+        *collection.entry("O").or_insert(0) -= peptide_bonds;
+    }
+
     collection.iter().map(|(&k, &v)| (k, v)).collect()
 }
