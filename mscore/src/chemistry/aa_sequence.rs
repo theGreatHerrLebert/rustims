@@ -144,7 +144,6 @@ pub fn calculate_atomic_composition(sequence: &str) -> HashMap<String, i32> {
     }
     composition
 }
-use regex::Regex;
 
 pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
     let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
