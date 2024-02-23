@@ -59,7 +59,7 @@ class TimsTofQuadrupoleDIA:
         Returns:
 
         """
-        return self.handle.iso_transmitted(frame_id, scan_id, mz_mono, mz, min_proba)
+        return self.handle.isotopes_transmitted(frame_id, scan_id, mz_mono, mz, min_proba)
 
 
 class TimsTofQuadrupoleSetting:
