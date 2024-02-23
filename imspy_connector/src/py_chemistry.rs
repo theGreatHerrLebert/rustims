@@ -78,6 +78,6 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&str, i32)>
 }
 
 #[pyfunction]
-pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
-    mscore::chemistry::aa_sequence::average_mass_from_unimod_sequence(sequence)
+pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
+    mscore::chemistry::aa_sequence::mono_isotopic_mass_from_unimod_sequence(sequence)
 }
