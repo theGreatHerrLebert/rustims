@@ -171,7 +171,7 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
     tokens
 }
 
-pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static str, i32)> {
+pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> HashMap<&'static str, i32> {
     let token_sequence = unimod_sequence_to_tokens(sequence);
     let mut collection: HashMap<&'static str, i32> = HashMap::new();
 
@@ -203,7 +203,7 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static st
     *collection.entry("H").or_insert(0) += 2; //
     *collection.entry("O").or_insert(0) += 1; //
 
-    collection.iter().map(|(&k, &v)| (k, v)).collect()
+    collection
 }
 
 pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
@@ -217,4 +217,20 @@ pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
     }
 
     mass
+}
+
+pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>) -> Vec<(&str, i32)> {
+
+    let mut composition = unimod_sequence_to_atomic_composition(sequence);
+
+    if is_y.unwrap_or(false) {
+        *composition.entry("H").or_insert(0) += 2;
+        *composition.entry("O").or_insert(0) += 1;
+    }
+    else {
+        *composition.entry("H").or_insert(0) -= 2;
+        *composition.entry("O").or_insert(0) += 1;
+    }
+
+    composition.iter().map(|(k, v)| (*k, *v)).collect()
 }

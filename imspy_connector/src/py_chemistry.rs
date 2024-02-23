@@ -74,7 +74,12 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
 
 #[pyfunction]
 pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&str, i32)> {
-    mscore::chemistry::aa_sequence::unimod_sequence_to_atomic_composition(sequence)
+    mscore::chemistry::aa_sequence::unimod_sequence_to_atomic_composition(sequence).iter().map(|(k, v)| (*k, *v)).collect()
+}
+
+#[pyfunction]
+pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>) -> Vec<(&str, i32)> {
+    mscore::chemistry::aa_sequence::mono_isotopic_b_y_fragment_composition(sequence, is_y)
 }
 
 #[pyfunction]
