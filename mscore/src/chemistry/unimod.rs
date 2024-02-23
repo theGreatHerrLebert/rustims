@@ -9,7 +9,7 @@ pub fn modification_composition() -> HashMap<String, HashMap<&'static str, i32>>
     composition.insert("[UNIMOD:21]".to_string(), HashMap::from([("H", 1),("O", 3), ("P", 1)])); // Phosphorylation
     composition.insert("[UNIMOD:34]".to_string(), HashMap::from([("H", 2), ("C", 1)])); //  Methylation
     composition.insert("[UNIMOD:35]".to_string(), HashMap::from([("O", 1)])); // Hydroxylation
-    composition.insert("[UNIMOD:43]".to_string(), HashMap::from([("C", 8), ("H", 15), ("N", 1), ("O", 6)])); // HexNAc
+    // composition.insert("[UNIMOD:43]".to_string(), HashMap::from([("C", 8), ("H", 15), ("N", 1), ("O", 6)])); // HexNAc ??
     composition.insert("[UNIMOD:58]".to_string(), HashMap::from([("C", 3), ("H", 4), ("O", 1)])); // Propionyl
     composition.insert("[UNIMOD:121]".to_string(), HashMap::from([("C", 4), ("H", 6), ("O", 2), ("N", 2)])); // ubiquitinylation residue
     composition.insert("[UNIMOD:122]".to_string(), HashMap::from([("C", 1), ("O", 1)])); // Formylation
