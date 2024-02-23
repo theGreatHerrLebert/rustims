@@ -90,6 +90,7 @@ def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Trav
     Returns:
         The path to the pretrained model
     """
+    acquisition_mode = acquisition_mode.lower()
     assert acquisition_mode in ['dia', 'midia', 'slice', 'synchro'], \
         f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
 
