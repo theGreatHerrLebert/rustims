@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use regex::Regex;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
-use crate::chemistry::amino_acids::amino_acid_masses;
-use crate::chemistry::unimod::unimod_modifications_mz_numerical;
+use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
+use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
 
 /// calculate the monoisotopic mass of a peptide sequence
 ///
@@ -168,4 +168,35 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
     tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
 
     tokens
+}
+
+pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static str, i32)> {
+    let token_sequence = unimod_sequence_to_tokens(sequence);
+    let mut collection: HashMap<&'static str, i32> = HashMap::new();
+
+    // Assuming amino_acid_composition and modification_composition return appropriate mappings...
+    let aa_compositions = amino_acid_composition();
+    let mod_compositions = modification_composition();
+
+    // No need for conversion to HashMap<String, ...> as long as you're directly accessing
+    // the HashMap provided by modification_composition() if it uses String keys.
+    for token in token_sequence {
+        if token.len() == 1 {
+            let char = token.chars().next().unwrap();
+            if let Some(composition) = aa_compositions.get(&char) {
+                for (key, value) in composition.iter() {
+                    *collection.entry(key).or_insert(0) += *value;
+                }
+            }
+        } else {
+            // Directly use &token without .as_str() conversion
+            if let Some(composition) = mod_compositions.get(&token) {
+                for (key, value) in composition.iter() {
+                    *collection.entry(key).or_insert(0) += *value;
+                }
+            }
+        }
+    }
+
+    collection.iter().map(|(&k, &v)| (k, v)).collect()
 }
