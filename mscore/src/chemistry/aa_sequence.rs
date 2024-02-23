@@ -136,3 +136,29 @@ pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge:
 pub fn calculate_mz(monoisotopic_mass: f64, charge: i32) -> f64 {
     (monoisotopic_mass + charge as f64 * MASS_PROTON) / charge as f64
 }
+
+pub fn calculate_atomic_composition(sequence: &str) -> HashMap<String, i32> {
+    let mut composition = HashMap::new();
+    for char in sequence.chars() {
+        *composition.entry(char.to_string()).or_insert(0) += 1;
+    }
+    composition
+}
+pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
+    let pattern = Regex::new(r"\[UNIMOD:(\d+)\]").unwrap();
+    let mut tokens = Vec::new();
+    let mut last_index = 0;
+
+    for mat in pattern.find_iter(sequence) {
+        let start = mat.start();
+        let end = mat.end();
+        let mod_id = &sequence[start + 8..end - 1];
+        let aa = &sequence[last_index..start];
+        tokens.push(aa.to_string());
+        tokens.push(mod_id.to_string());
+        last_index = end;
+    }
+
+    tokens.push(sequence[last_index..].to_string());
+    tokens
+}
