@@ -99,6 +99,9 @@ class SyntheticExperimentDataHandle:
         columns = self.conn.fetchall()
         return [column[1] for column in columns]
 
+    def __repr__(self):
+        return f"SyntheticExperimentDataHandle(database_path={self.database_path})"
+
 
 class SyntheticExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
     def __init__(self,
