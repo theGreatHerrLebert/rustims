@@ -235,11 +235,7 @@ pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>
 
     let mut composition = unimod_sequence_to_atomic_composition(sequence);
 
-    if is_y.unwrap_or(false) {
-        *composition.entry("H").or_insert(0) += 2;
-        *composition.entry("O").or_insert(0) += 1;
-    }
-    else {
+    if !is_y.unwrap_or(false) {
         *composition.entry("H").or_insert(0) -= 2;
         *composition.entry("O").or_insert(0) -= 1;
     }
