@@ -241,7 +241,7 @@ pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>
     }
     else {
         *composition.entry("H").or_insert(0) -= 2;
-        *composition.entry("O").or_insert(0) += 1;
+        *composition.entry("O").or_insert(0) -= 1;
     }
 
     composition.iter().map(|(k, v)| (*k, *v)).collect()
