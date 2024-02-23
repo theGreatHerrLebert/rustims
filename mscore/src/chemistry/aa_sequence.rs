@@ -199,18 +199,9 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static st
         }
     }
 
-    // If the sequence is only 1 amino acid long, adjust for the missing water molecule
-    if sequence.len() == 1 {
-        *collection.entry("H").or_insert(0) += 2; // Add back the 2 hydrogen
-        *collection.entry("O").or_insert(0) += 1; // Add back the 1 oxygen
-    }
-
-    // If the sequence is longer than 1 amino acid, adjust for the missing water molecule and peptide bond(s)
-    else if sequence.len() > 1 {
-        let peptide_bonds = sequence.len() as i32 - 1;
-        *collection.entry("H").or_insert(0) -= 2 * peptide_bonds;
-        *collection.entry("O").or_insert(0) -= peptide_bonds;
-    }
+    // Add water
+    *collection.entry("H").or_insert(0) += 2; //
+    *collection.entry("O").or_insert(0) += 1; //
 
     collection.iter().map(|(&k, &v)| (k, v)).collect()
 }
