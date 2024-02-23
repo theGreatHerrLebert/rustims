@@ -76,3 +76,8 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
 pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&str, i32)> {
     mscore::chemistry::aa_sequence::unimod_sequence_to_atomic_composition(sequence)
 }
+
+#[pyfunction]
+pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
+    mscore::chemistry::aa_sequence::average_mass_from_unimod_sequence(sequence)
+}
