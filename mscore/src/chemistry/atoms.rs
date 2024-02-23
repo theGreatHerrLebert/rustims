@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-pub fn atomic_weights_isotope_averaged() -> HashMap<&'static str, f64> {
+pub fn atomic_weights_mono_isotopic() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("H", 1.00782503223);
     map.insert("He", 4.00260325415);

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
-use crate::chemistry::atoms::atomic_weights_isotope_averaged;
+use crate::chemistry::atoms::atomic_weights_mono_isotopic;
 use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
 
 /// calculate the monoisotopic mass of a peptide sequence
@@ -206,10 +206,10 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&'static st
     collection.iter().map(|(&k, &v)| (k, v)).collect()
 }
 
-pub fn average_mass_from_unimod_sequence(sequence: &str) -> f64 {
+pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
 
     let composition = unimod_sequence_to_atomic_composition(sequence);
-    let average_masses = atomic_weights_isotope_averaged();
+    let average_masses = atomic_weights_mono_isotopic();
 
     let mut mass = 0.0;
     for (element, count) in composition {
