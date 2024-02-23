@@ -39,6 +39,28 @@ class TimsTofQuadrupoleDIA:
     def is_precursor(self, frame_id: int) -> bool:
         return self.handle.is_precursor(frame_id)
 
+    def isotopes_transmitted(
+            self,
+            frame_id: int,
+            scan_id: int,
+            mz_mono: float,
+            mz: NDArray,
+            min_proba: float | None = None
+    ) -> tuple[float, list[tuple[float, float]]]:
+        """
+        Get the transmission probability for a list of isotopes
+        Args:
+            frame_id:
+            scan_id:
+            mz_mono:
+            mz:
+            min_proba:
+
+        Returns:
+
+        """
+        return self.handle.iso_transmitted(frame_id, scan_id, mz_mono, mz, min_proba)
+
 
 class TimsTofQuadrupoleSetting:
     @abstractmethod

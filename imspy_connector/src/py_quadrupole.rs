@@ -69,6 +69,10 @@ impl PyTimsTransmissionDIA {
     pub fn is_precursor(&self, frame_id: i32) -> bool {
         self.inner.is_precursor(frame_id)
     }
+
+    pub fn isotopes_transmitted(&self, frame_id: i32, scan_id: i32, mz_mono: f64, mz: Vec<f64>, min_proba: Option<f64>) -> (f64, Vec<(f64, f64)>) {
+        self.inner.isotopes_transmitted(frame_id, scan_id, mz_mono, &mz, min_proba)
+    }
 }
 
 #[pyclass]
