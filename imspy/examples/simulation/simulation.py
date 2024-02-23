@@ -1,5 +1,6 @@
 import os
 import argparse
+import time
 
 from examples.simulation.jobs.assemble_frames import assemble_frames
 from examples.simulation.jobs.build_acquisition import build_acquisition
@@ -44,15 +45,15 @@ def main():
 
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
-    parser.add_argument("name", type=str, help="Name of the experiment")
-    parser.add_argument("acquisition_type", type=str, help="Type of acquisition to simulate")
     parser.add_argument("fasta", type=str, help="Path to the fasta file")
 
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
+    parser.add_argument("--acquisition_type", type=str, help="Type of acquisition to simulate", default='dia')
+    parser.add_argument("--name", type=str, help="Name of the experiment", default=f'imsym-PLACEHOLDER-{int(time.time())}')
 
     # Peptide digestion arguments
-    parser.add_argument("--sample_fraction", type=float, default=0.1, help="Sample fraction (default: 0.1)")
+    parser.add_argument("--sample_fraction", type=float, default=0.005, help="Sample fraction (default: 0.005)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
@@ -71,6 +72,7 @@ def main():
     parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
 
     # Distribution parameters
+    parser.add_argument("--gradient_length", type=float, default=60 * 60, help="Length of the gradient (default: 900)")
     parser.add_argument("--z_score", type=float, default=.99,
                         help="Z-score for frame and scan distributions (default: .99)")
     parser.add_argument("--std_rt", type=float, default=3.3,
@@ -90,7 +92,7 @@ def main():
 
     # Use the arguments
     path = check_path(args.path)
-    name = args.name
+    name = args.name.replace('PLACEHOLDER', f'{args.acquisition_type}')
     fasta = check_path(args.fasta)
     verbose = args.verbose
 
@@ -104,7 +106,8 @@ def main():
         path=path,
         exp_name=name,
         acquisition_type=args.acquisition_type,
-        verbose=verbose
+        verbose=verbose,
+        gradient_length=args.gradient_length,
     )
 
     # JOB 1: Digest the fasta file

@@ -89,6 +89,26 @@ class SyntheticExperimentDataHandle:
         # Get a table as a pandas DataFrame
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
+    def list_tables(self):
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            return [table[0] for table in tables]
+
+    def list_columns(self, table_name):
+        if table_name not in self.list_tables():
+            raise ValueError(f"Table '{table_name}' does not exist in the database.")
+
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(f"PRAGMA table_info({table_name});")
+            columns = cursor.fetchall()
+            return [column[1] for column in columns]
+
+    def __repr__(self):
+        return f"SyntheticExperimentDataHandle(database_path={self.database_path})"
+
 
 class SyntheticExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
     def __init__(self,

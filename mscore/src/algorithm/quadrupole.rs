@@ -101,6 +101,21 @@ pub trait IonTransmission {
             )
         }
     }
+
+    fn isotopes_transmitted(&self, frame_id: i32, scan_id: i32, mz_mono: f64, isotopic_envelope: &Vec<f64>, min_probability: Option<f64>) -> (f64, Vec<(f64, f64)>) {
+
+        let probability_cutoff = min_probability.unwrap_or(0.5);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, &isotopic_envelope);
+        let mut result: Vec<(f64, f64)> = Vec::new();
+
+        for (mz, p) in isotopic_envelope.iter().zip(transmission_probability.iter()) {
+            if *p > probability_cutoff {
+                result.push((*mz - mz_mono, *p));
+            }
+        }
+
+        (mz_mono, result)
+    }
 }
 
 #[derive(Clone, Debug)]
