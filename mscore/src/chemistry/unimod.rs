@@ -3,14 +3,12 @@ use std::collections::HashMap;
 pub fn modification_composition() -> HashMap<String, HashMap<&'static str, i32>> {
     let mut composition: HashMap<String, HashMap<&'static str, i32>> = HashMap::new();
     composition.insert("[UNIMOD:1]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Acetyl
-    composition.insert("[UNIMOD:3]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Deamidated
+    composition.insert("[UNIMOD:3]".to_string(), HashMap::from([("N", -1), ("H", -2), ("O", 1)])); // Deamidated
     composition.insert("[UNIMOD:4]".to_string(), HashMap::from([("C", 2), ("H", 3), ("O", 1)])); // Carbamidomethyl
     composition.insert("[UNIMOD:7]".to_string(), HashMap::from([("H", 1)])); // Hydroxylation
     composition.insert("[UNIMOD:21]".to_string(), HashMap::from([("O", 1)])); // Oxidation
-    composition.insert("[UNIMOD:34]".to_string(), HashMap::from([("C", 1), ("H", 1), ("O", 1)])); // Dehydrated
-    composition.insert("[UNIMOD:35]".to_string(), HashMap::from([("O", 1)])); // Phosphorylation
-    composition.insert("[UNIMOD:36]".to_string(), HashMap::from([("C", 2), ("H", 3), ("O", 1)])); // Pyroglutamic Acid
-    composition.insert("[UNIMOD:37]".to_string(), HashMap::from([("C", 2), ("H", 3), ("O", 1)])); // Pyroglutamic Acid
+    composition.insert("[UNIMOD:34]".to_string(), HashMap::from([("H", -2), ("O", -1)])); // Dehydrated
+    composition.insert("[UNIMOD:35]".to_string(), HashMap::from([("O", 4), ("P", 1)])); // Phosphorylation
     composition.insert("[UNIMOD:43]".to_string(), HashMap::from([("C", 7), ("H", 10), ("N", 1), ("O", 2)])); // Carboxymethyl
     composition.insert("[UNIMOD:58]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Dimethyl
     composition.insert("[UNIMOD:121]".to_string(), HashMap::from([("C", 3), ("H", 4), ("O", 1)])); // Methylthio
