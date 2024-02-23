@@ -71,3 +71,8 @@ pub fn sequence_to_all_ions_par(sequences: Vec<&str>, charges: Vec<i32>, intensi
 pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
     mscore::chemistry::aa_sequence::unimod_sequence_to_tokens(sequence)
 }
+
+#[pyfunction]
+pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&str, i32)> {
+    mscore::chemistry::aa_sequence::unimod_sequence_to_atomic_composition(sequence)
+}

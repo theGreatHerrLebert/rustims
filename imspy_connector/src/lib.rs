@@ -57,5 +57,6 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_chemistry::reshape_prosit_array, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::sequence_to_all_ions_par, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_tokens, m)?)?;
+    m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_atomic_composition, m)?)?;
     Ok(())
 }
