@@ -68,8 +68,8 @@ pub fn find_unimod_patterns_par(sequences: Vec<&str>, num_threads: usize) -> Vec
 
 pub fn generate_fragments(
     charge: i32,
-    b_ions: Vec<(f64, String)>, // Assuming a tuple of (mz, ion_type)
-    y_ions: Vec<(f64, String)>,
+    b_ions: Vec<(f64, String, String)>, // Assuming a tuple of (mz, ion_type)
+    y_ions: Vec<(f64, String, String)>,
     intensity_b:Vec<f64>, // Optional intensity vectors
     intensity_y: Vec<f64>,
     num_decimals: u32,
@@ -80,21 +80,23 @@ pub fn generate_fragments(
         y_ions: Vec::new(),
     };
 
-    for (i, (mz, ion_type)) in b_ions.into_iter().enumerate() {
+    for (i, (mz, ion_type, sequence)) in b_ions.into_iter().enumerate() {
         let intensity = intensity_b[i].round_decimals(num_decimals);
         peptide_ion_data.b_ions.push(FragmentIon {
             mz: mz.round_decimals(num_decimals),
             kind: ion_type.trim_end_matches(char::is_numeric).to_string(),
+            sequence: sequence.to_string(),
             intensity,
         });
     }
 
-    for (i, (mz, ion_type)) in y_ions.into_iter().enumerate() {
+    for (i, (mz, ion_type, sequence)) in y_ions.into_iter().enumerate() {
         let intensity = intensity_y[i].round_decimals(num_decimals);
 
         peptide_ion_data.y_ions.push(FragmentIon {
             mz: mz.round_decimals(num_decimals),
             kind: ion_type.trim_end_matches(char::is_numeric).to_string(),
+            sequence: sequence.to_string(),
             intensity,
         });
     }
@@ -169,8 +171,8 @@ pub fn sequence_to_all_ions(
 
         let fragments = generate_fragments(
             z,
-            b.iter().map(|t| (t.0, t.1.clone())).collect::<Vec<(f64, String)>>(),
-            y.iter().map(|t| (t.0, t.1.clone())).collect::<Vec<(f64, String)>>(),
+            b.iter().map(|t| (t.0, t.1.clone(), t.2.clone())).collect::<Vec<(f64, String, String)>>(),
+            y.iter().map(|t| (t.0, t.1.clone(), t.2.clone())).collect::<Vec<(f64, String, String)>>(),
             intensity_b.iter().map(|&i| i / adjusted_sum_intensity).collect::<Vec<f64>>(),
             intensity_y.iter().map(|&i| i / adjusted_sum_intensity).collect::<Vec<f64>>(),
             4,

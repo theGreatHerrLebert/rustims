@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize};
 pub struct FragmentIon {
     pub mz: f64,
     pub kind: String,
+    pub sequence: String,
     pub intensity: f64,
 }
 
