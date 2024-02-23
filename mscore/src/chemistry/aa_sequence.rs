@@ -144,21 +144,29 @@ pub fn calculate_atomic_composition(sequence: &str) -> HashMap<String, i32> {
     }
     composition
 }
+use regex::Regex;
+
 pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
-    let pattern = Regex::new(r"\[UNIMOD:(\d+)\]").unwrap();
+    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
     let mut tokens = Vec::new();
     let mut last_index = 0;
 
     for mat in pattern.find_iter(sequence) {
-        let start = mat.start();
-        let end = mat.end();
-        let mod_id = &sequence[start + 8..end - 1];
-        let aa = &sequence[last_index..start];
-        tokens.push(aa.to_string());
-        tokens.push(mod_id.to_string());
-        last_index = end;
+        // Extract the amino acids before the current UNIMOD and add them as individual tokens
+        let aa_sequence = &sequence[last_index..mat.start()];
+        tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
+
+        // Add the UNIMOD as its own token
+        let unimod = &sequence[mat.start()..mat.end()];
+        tokens.push(unimod.to_string());
+
+        // Update last_index to the end of the current UNIMOD
+        last_index = mat.end();
     }
 
-    tokens.push(sequence[last_index..].to_string());
+    // Add the remaining amino acids after the last UNIMOD as individual tokens
+    let remaining_aa_sequence = &sequence[last_index..];
+    tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
+
     tokens
 }
