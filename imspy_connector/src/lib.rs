@@ -61,5 +61,7 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_mass_from_unimod_sequence, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_b_y_fragment_composition, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::atomic_composition_to_monoisotopic_mass, m)?)?;
+    m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_b_fragments_to_composition, m)?)?;
+    m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_y_fragments_to_composition, m)?)?;
     Ok(())
 }

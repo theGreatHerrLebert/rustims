@@ -88,6 +88,16 @@ pub fn atomic_composition_to_monoisotopic_mass(composition: Vec<(&str, i32)>) ->
 }
 
 #[pyfunction]
+pub fn mono_isotopic_b_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+    mscore::chemistry::aa_sequence::mono_isotopic_b_fragments_to_composition(sequences, num_threads)
+}
+
+#[pyfunction]
+pub fn mono_isotopic_y_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+    mscore::chemistry::aa_sequence::mono_isotopic_y_fragments_to_composition(sequences, num_threads)
+}
+
+#[pyfunction]
 pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
     mscore::chemistry::aa_sequence::mono_isotopic_mass_from_unimod_sequence(sequence)
 }

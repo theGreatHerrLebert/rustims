@@ -1,3 +1,6 @@
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+
 use std::collections::HashMap;
 use regex::Regex;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
@@ -241,4 +244,20 @@ pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>
     }
 
     composition.iter().map(|(k, v)| (*k, *v)).collect()
+}
+
+pub fn mono_isotopic_b_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().map(|seq| mono_isotopic_b_y_fragment_composition(seq, Some(false))).collect()
+    });
+    result
+}
+
+pub fn mono_isotopic_y_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().map(|seq| mono_isotopic_b_y_fragment_composition(seq, Some(true))).collect()
+    });
+    result
 }
