@@ -206,6 +206,18 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> HashMap<&'static
     collection
 }
 
+pub fn atomic_composition_to_monoisotopic_mass(composition: &Vec<(&str, i32)>) -> f64 {
+
+    let mono_masses = atomic_weights_mono_isotopic();
+
+    let mut mass = 0.0;
+    for (element, count) in composition {
+        mass += mono_masses.get(element).unwrap_or(&0.0) * *count as f64;
+    }
+
+    mass
+}
+
 pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
 
     let composition = unimod_sequence_to_atomic_composition(sequence);
