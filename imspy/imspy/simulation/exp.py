@@ -97,9 +97,12 @@ class SyntheticExperimentDataHandle:
             return [table[0] for table in tables]
 
     def list_columns(self, table_name):
+        if table_name not in self.list_tables():
+            raise ValueError(f"Table '{table_name}' does not exist in the database.")
+
         with self.conn:
             cursor = self.conn.cursor()
-            cursor.execute("PRAGMA table_info(?);", (table_name,))
+            cursor.execute(f"PRAGMA table_info({table_name});")
             columns = cursor.fetchall()
             return [column[1] for column in columns]
 
