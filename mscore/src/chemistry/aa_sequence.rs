@@ -3,10 +3,70 @@ use rayon::ThreadPoolBuilder;
 
 use std::collections::HashMap;
 use regex::Regex;
+use crate::algorithm::isotope_distributions::generate_averagine_spectrum;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
 use crate::chemistry::atoms::atomic_weights_mono_isotopic;
 use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
+use crate::data::mz_spectrum::MzSpectrum;
+
+pub struct AminoAcidSequence {
+    pub sequence: String,
+}
+
+impl AminoAcidSequence {
+    pub fn new(raw_sequence: String) -> Self {
+
+        // constructor will parse the sequence and check if it is valid
+        let pattern = Regex::new(r"\[UNIMOD:(\d+)]").unwrap();
+
+        // remove the modifications from the sequence
+        let sequence = pattern.replace_all(&raw_sequence, "").to_string();
+
+        // check if all remaining characters are valid amino acids
+        let valid_amino_acids = sequence.chars().all(|c| amino_acid_masses().contains_key(&c.to_string()[..]));
+        if !valid_amino_acids {
+            panic!("Invalid amino acid sequence, use only valid amino acids: ARNDCQEGHILKMFPSTWYVU, and modifications in the format [UNIMOD:ID]");
+        }
+        AminoAcidSequence { sequence: sequence.to_string() }
+    }
+
+    pub fn calculate_monoisotopic_mass(&self) -> f64 {
+        let amino_acid_masses = amino_acid_masses();
+        let modifications_mz_numerical = unimod_modifications_mz_numerical();
+        let pattern = Regex::new(r"\[UNIMOD:(\d+)\]").unwrap();
+
+        // Find all occurrences of the pattern
+        let modifications: Vec<u32> = pattern
+            .find_iter(&*self.sequence)
+            .filter_map(|mat| mat.as_str()[8..mat.as_str().len() - 1].parse().ok())
+            .collect();
+
+        // Remove the modifications from the sequence
+        let sequence = pattern.replace_all(&*self.sequence, "");
+
+        // Count occurrences of each amino acid
+        let mut aa_counts = HashMap::new();
+        for char in sequence.chars() {
+            *aa_counts.entry(char).or_insert(0) += 1;
+        }
+
+        // Mass of amino acids and modifications
+        let mass_sequence: f64 = aa_counts.iter().map(|(aa, &count)| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64).sum();
+        let mass_modifics: f64 = modifications.iter().map(|&mod_id| modifications_mz_numerical.get(&mod_id).unwrap_or(&0.0)).sum();
+
+        mass_sequence + mass_modifics + MASS_WATER
+    }
+
+    pub fn calculate_mz(&self, charge: i32) -> f64 {
+        let mass = self.calculate_monoisotopic_mass();
+        calculate_mz(mass, charge)
+    }
+
+    pub fn precursor_spectrum_averagine(&self, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> MzSpectrum {
+        generate_averagine_spectrum(self.calculate_monoisotopic_mass(), charge, min_intensity, k, resolution, centroid, None)
+    }
+}
 
 /// calculate the monoisotopic mass of a peptide sequence
 ///
