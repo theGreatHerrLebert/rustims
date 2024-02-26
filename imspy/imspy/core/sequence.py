@@ -28,9 +28,10 @@ class AminoAcidSequence:
         return instance
 
     # min_intensity: i32, k: i32, resolution: i32, centroid: bool
-    def precursor_spectrum_averagine(self, min_intensity: int = 1, k: int = 10, resolution: int = 3, centroid: bool = True) -> MzSpectrum:
+    def precursor_spectrum_averagine(self, charge: int = 1, min_intensity: int = 1, k: int = 10,
+                                     resolution: int = 3, centroid: bool = True) -> MzSpectrum:
         return MzSpectrum.from_py_mz_spectrum(self.__ptr.precursor_spectrum_averagine(
-            min_intensity, k, resolution, centroid
+            charge, min_intensity, k, resolution, centroid
         ))
 
     def __repr__(self):
