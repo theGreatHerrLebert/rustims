@@ -32,30 +32,11 @@ impl AminoAcidSequence {
     }
 
     pub fn calculate_monoisotopic_mass(&self) -> f64 {
-        let amino_acid_masses = amino_acid_masses();
-        let modifications_mz_numerical = unimod_modifications_mz_numerical();
-        let pattern = Regex::new(r"\[UNIMOD:(\d+)\]").unwrap();
+        calculate_monoisotopic_mass(&*self.sequence)
+    }
 
-        // Find all occurrences of the pattern
-        let modifications: Vec<u32> = pattern
-            .find_iter(&*self.sequence)
-            .filter_map(|mat| mat.as_str()[8..mat.as_str().len() - 1].parse().ok())
-            .collect();
-
-        // Remove the modifications from the sequence
-        let sequence = pattern.replace_all(&*self.sequence, "");
-
-        // Count occurrences of each amino acid
-        let mut aa_counts = HashMap::new();
-        for char in sequence.chars() {
-            *aa_counts.entry(char).or_insert(0) += 1;
-        }
-
-        // Mass of amino acids and modifications
-        let mass_sequence: f64 = aa_counts.iter().map(|(aa, &count)| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64).sum();
-        let mass_modifics: f64 = modifications.iter().map(|&mod_id| modifications_mz_numerical.get(&mod_id).unwrap_or(&0.0)).sum();
-
-        mass_sequence + mass_modifics + MASS_WATER
+    pub fn calculate_monoisotopic_mass_from_atomic_composition(&self) -> f64 {
+        calculate_monoisotopic_mass_from_atomic_composition(&*self.sequence)
     }
 
     pub fn calculate_mz(&self, charge: i32) -> f64 {
@@ -65,6 +46,10 @@ impl AminoAcidSequence {
 
     pub fn precursor_spectrum_averagine(&self, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> MzSpectrum {
         generate_averagine_spectrum(self.calculate_monoisotopic_mass(), charge, min_intensity, k, resolution, centroid, None)
+    }
+
+    pub fn calculate_atomic_composition(&self) -> HashMap<&str, i32> {
+        unimod_sequence_to_atomic_composition(&*self.sequence)
     }
 }
 
@@ -201,7 +186,7 @@ pub fn calculate_mz(monoisotopic_mass: f64, charge: i32) -> f64 {
     (monoisotopic_mass + charge as f64 * MASS_PROTON) / charge as f64
 }
 
-pub fn calculate_atomic_composition(sequence: &str) -> HashMap<String, i32> {
+pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> {
     let mut composition = HashMap::new();
     for char in sequence.chars() {
         *composition.entry(char.to_string()).or_insert(0) += 1;
@@ -281,7 +266,7 @@ pub fn atomic_composition_to_monoisotopic_mass(composition: &Vec<(&str, i32)>) -
     mass
 }
 
-pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
+pub fn calculate_monoisotopic_mass_from_atomic_composition(sequence: &str) -> f64 {
 
     let composition = unimod_sequence_to_atomic_composition(sequence);
     let average_masses = atomic_weights_mono_isotopic();
