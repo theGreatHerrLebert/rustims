@@ -33,6 +33,14 @@ class AminoAcidSequence:
             charge, min_intensity, k, resolution, centroid
         ))
 
+    def precursor_spectrum_from_atomic_composition(self, charge,
+                                                   mass_tolerance: float = 1e-6,
+                                                   abundance_threshold: float = 1e-7,
+                                                   max_result: int = 200) -> MzSpectrum:
+        return MzSpectrum.from_py_mz_spectrum(self.__ptr.precursor_spectrum_from_atomic_composition(
+            charge, mass_tolerance, abundance_threshold, max_result
+        ))
+
     def get_atomic_composition(self):
         return self.__ptr.get_atomic_composition()
 

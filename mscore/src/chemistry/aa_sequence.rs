@@ -3,6 +3,7 @@ use rayon::ThreadPoolBuilder;
 
 use std::collections::HashMap;
 use regex::Regex;
+use crate::algorithm::aa_sequence::generate_isotope_distribution;
 use crate::algorithm::isotope_distributions::generate_averagine_spectrum;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
@@ -46,6 +47,22 @@ impl AminoAcidSequence {
 
     pub fn precursor_spectrum_averagine(&self, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> MzSpectrum {
         generate_averagine_spectrum(self.calculate_monoisotopic_mass(), charge, min_intensity, k, resolution, centroid, None)
+    }
+
+    pub fn precursor_spectrum_from_atomic_composition(&self, charge: i32, mass_tolerance: f64, abundance_threshold: f64, max_result: i32) -> MzSpectrum {
+        let composition: HashMap<String, i32> = unimod_sequence_to_atomic_composition(&*self.sequence).iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+        let spec = generate_isotope_distribution(
+            &composition,
+            mass_tolerance,
+            abundance_threshold,
+            max_result,
+        );
+
+        let masses: Vec<f64> = spec.iter().map(|(m, _)| *m).collect();
+        let intensities: Vec<f64> = spec.iter().map(|(_, i)| *i).collect();
+
+        let mzs = masses.iter().map(|&m| calculate_mz(m, charge)).collect();
+        MzSpectrum::new(mzs, intensities)
     }
 
     pub fn calculate_atomic_composition(&self) -> HashMap<&str, i32> {
