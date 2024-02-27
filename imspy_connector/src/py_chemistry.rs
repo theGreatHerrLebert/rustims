@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use pyo3::prelude::*;
 
 use mscore::algorithm::isotope_distributions::{generate_averagine_spectra, generate_averagine_spectrum};
@@ -26,8 +27,16 @@ impl PyAminoAcidSequence {
         self.inner.calculate_monoisotopic_mass()
     }
 
+    pub fn monoisotopic_mass_from_atomic_composition(&self) -> f64 {
+        self.inner.calculate_monoisotopic_mass_from_atomic_composition()
+    }
+
     pub fn get_mz(&self, charge: i32) -> f64 {
         self.inner.calculate_mz(charge)
+    }
+
+    pub fn get_atomic_composition(&self) -> HashMap<&str, i32> {
+        self.inner.calculate_atomic_composition()
     }
 
     pub fn precursor_spectrum_averagine(&self, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> PyMzSpectrum {
@@ -130,7 +139,13 @@ pub fn y_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> V
 }
 
 #[pyfunction]
-pub fn mono_isotopic_mass_from_unimod_sequence(sequence: &str) -> f64 {
-    mscore::chemistry::aa_sequence::mono_isotopic_mass_from_unimod_sequence(sequence)
+pub fn mono_isotopic_mass_from_atomic_composition(sequence: &str) -> f64 {
+    mscore::chemistry::aa_sequence::calculate_monoisotopic_mass_from_atomic_composition(sequence)
+}
+
+#[pyfunction]
+pub fn generate_isotope_distribution(atomic_composition: Vec<(String, f64)>, mass_tolerance: f64, abundance_threshold: f64, max_result: i32) -> Vec<(f64, f64)> {
+    mscore::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition.iter().map(|(k, v)| (k.to_string(), *v as i32)).collect(),
+        mass_tolerance, abundance_threshold, max_result)
 }
 
