@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use pyo3::prelude::*;
 
-use mscore::chemistry::aa_sequence::{FragmentType, PeptideSequence, ProductIon};
+use mscore::chemistry::aa_sequence::{FragmentType, PeptideSequence, PeptideProductIon};
 
 #[pyclass]
 pub struct PyPeptideSequence {
@@ -37,21 +37,21 @@ impl PyPeptideSequence {
         self.inner.to_sage_representation()
     }
 
-    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<PyProductIon>, Vec<PyProductIon>) {
+    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<PyPeptideProductIon>, Vec<PyPeptideProductIon>) {
         let (b, y) = self.inner.calculate_b_y_product_ion_series(charge);
-        let b_ions: Vec<PyProductIon> = b.iter().map(|ion| PyProductIon { inner: ion.clone() }).collect();
-        let y_ions: Vec<PyProductIon> = y.iter().map(|ion| PyProductIon { inner: ion.clone() }).collect();
+        let b_ions: Vec<PyPeptideProductIon> = b.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        let y_ions: Vec<PyPeptideProductIon> = y.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
         (b_ions, y_ions)
     }
 }
 
 #[pyclass]
-pub struct PyProductIon {
-    pub inner: ProductIon,
+pub struct PyPeptideProductIon {
+    pub inner: PeptideProductIon,
 }
 
 #[pymethods]
-impl PyProductIon {
+impl PyPeptideProductIon {
     #[new]
     pub fn new(kind: &str, sequence: String, charge: i32, intensity: f64) -> Self {
 
@@ -65,7 +65,7 @@ impl PyProductIon {
             _ => panic!("Invalid product ion kind"),
         };
 
-        PyProductIon { inner: ProductIon::new(kind, sequence, charge, intensity) }
+        PyPeptideProductIon { inner: PeptideProductIon::new(kind, sequence, charge, intensity) }
     }
     #[getter]
     pub fn kind(&self) -> String {
@@ -80,11 +80,11 @@ impl PyProductIon {
     }
     #[getter]
     pub fn sequence(&self) -> String {
-        self.inner.sequence.sequence.clone()
+        self.inner.ion.sequence.sequence.clone()
     }
     #[getter]
     pub fn charge(&self) -> i32 {
-        self.inner.charge
+        self.inner.ion.charge
     }
     #[getter]
     pub fn mz(&self) -> f64 {
@@ -92,7 +92,7 @@ impl PyProductIon {
     }
     #[getter]
     pub fn intensity(&self) -> f64 {
-        self.inner.intensity
+        self.inner.ion.intensity
     }
     #[getter]
     pub fn mono_isotopic_mass(&self) -> f64 {
@@ -111,6 +111,6 @@ impl PyProductIon {
 #[pymodule]
 pub fn py_sequence(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
-    m.add_class::<PyProductIon>()?;
+    m.add_class::<PyPeptideProductIon>()?;
     Ok(())
 }
