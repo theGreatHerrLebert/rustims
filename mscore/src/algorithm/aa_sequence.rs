@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use statrs::distribution::{Binomial, Discrete};
-use crate::chemistry::atoms::{atoms_isotopic_weights, isotopic_abundance};
+use crate::chemistry::elements::{atoms_isotopic_weights, isotopic_abundance};
 
 fn convolve(dist_a: &Vec<(f64, f64)>, dist_b: &Vec<(f64, f64)>, mass_tolerance: f64, abundance_threshold: f64, max_results: usize) -> Vec<(f64, f64)> {
     let mut result: Vec<(f64, f64)> = Vec::new();
