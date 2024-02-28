@@ -9,3 +9,4 @@ pub const STANDARD_TEMPERATURE: f64 = 273.15; // Kelvin
 pub const STANDARD_PRESSURE: f64 = 1e5; // Pascal
 pub const ELEMENTARY_CHARGE: f64 = 1.602176634e-19; // Coulombs
 pub const K_BOLTZMANN: f64 = 1.380649e-23; // J/K
+pub const AVOGADRO: f64 = 6.02214076e23; // mol^-1
