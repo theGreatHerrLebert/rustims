@@ -1,5 +1,5 @@
 use std::slice;
-use mscore::TimsFrame;
+use mscore::data::tims_frame::TimsFrame;
 
 #[repr(C)]
 pub struct CTimsFrame {

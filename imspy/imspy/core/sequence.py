@@ -4,6 +4,14 @@ import imspy_connector as ims
 
 class ProductIon:
     def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0):
+        """Create a new product ion.
+
+        Args:
+            kind: The kind of product ion, must be one of 'a', 'b', 'c', 'x', 'y', 'z'.
+            sequence: The sequence of the product ion.
+            charge: The charge of the product ion.
+            intensity: The intensity of the product ion.
+        """
         assert kind in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid kind: {kind}, "
                                                         f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
         self.__ptr = ims.PyPeptideProductIon(
@@ -40,10 +48,6 @@ class ProductIon:
     def atomic_composition(self):
         return self.__ptr.atomic_composition()
 
-    def isotope_distribution(self, mass_tolerance: float = 1e-3, abundance_threshold: float = 1e-8,
-                             max_result: int = 200, intensity_min: float = 1e-4) -> List[Tuple[float, float]]:
-        return self.__ptr.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
-
     def get_ptr(self):
         return self.__ptr
 
@@ -53,6 +57,21 @@ class ProductIon:
         instance.__ptr = product_ion
         return instance
 
+    def isotope_distribution(self, mass_tolerance: float = 1e-3, abundance_threshold: float = 1e-8,
+                             max_result: int = 200, intensity_min: float = 1e-4) -> List[Tuple[float, float]]:
+        """Calculate the isotope distribution of the product ion.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotope distribution calculation.
+            abundance_threshold: The abundance threshold for the isotope distribution calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotope distribution.
+
+        Returns:
+            The isotope distribution of the product ion.
+        """
+        return self.__ptr.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
+
     def __repr__(self):
         return (f"ProductIon(kind={self.kind}, sequence={self.sequence}, charge={self.charge}, mz={self.mz}, "
                 f" intensity={self.intensity})")
@@ -60,6 +79,11 @@ class ProductIon:
 
 class PeptideSequence:
     def __init__(self, sequence: str):
+        """Create a new peptide sequence.
+
+        Args:
+            sequence: The sequence of the peptide.
+        """
         self.__ptr = ims.PyPeptideSequence(sequence)
 
     @property
@@ -84,6 +108,14 @@ class PeptideSequence:
         return self.__ptr
 
     def calculate_b_y_product_ion_series(self, charge: int = 1) -> Tuple[List[ProductIon], List[ProductIon]]:
+        """Calculate the b and y product ion series of the peptide sequence.
+
+        Args:
+            charge: The charge of the product ions.
+
+        Returns:
+            The b and y product ion series of the peptide sequence.
+        """
         b_ions, y_ions = self.__ptr.calculate_b_y_product_ion_series(charge)
         return [ProductIon.from_py_ptr(ion) for ion in b_ions], [ProductIon.from_py_ptr(ion) for ion in y_ions][::-1]
 
