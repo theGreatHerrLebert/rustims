@@ -8,6 +8,8 @@ mod py_simulation;
 mod py_chemistry;
 mod py_quadrupole;
 mod py_sequence;
+mod py_constants;
+mod py_elements;
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -67,5 +69,17 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_chemistry::b_fragments_to_composition, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::y_fragments_to_composition, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::generate_isotope_distribution, m)?)?;
+    m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_weight_map, m)?)?;
+    m.add_function(wrap_pyfunction!(py_elements::get_elemental_mono_isotopic_weight_map, m)?)?;
+    m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_abundance_map, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::elementary_charge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::k_boltzmann, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::standard_pressure, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::standard_temperature, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_electron, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_proton, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_neutron, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_water, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::avogadro, m)?)?;
     Ok(())
 }

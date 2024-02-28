@@ -205,3 +205,10 @@ impl PyAcquisitionMode {
         self.inner.to_i32()
     }
 }
+
+#[pymodule]
+pub fn py_dataset(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyTimsDataset>()?;
+    m.add_class::<PyAcquisitionMode>()?;
+    Ok(())
+}

@@ -81,3 +81,11 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         result
     }
 }
+
+#[pymodule]
+fn py_tims_synthetic(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
+    m.add_class::<PyTimsTofSyntheticsPrecursorFrameBuilder>()?;
+    m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
+    Ok(())
+}

@@ -75,3 +75,10 @@ impl PyTimsFragmentDDA {
     #[getter]
     pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame { inner: self.inner.selected_fragment.clone() } }
 }
+
+#[pymodule]
+pub fn py_dda(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyTimsDatasetDDA>()?;
+    m.add_class::<PyTimsFragmentDDA>()?;
+    Ok(())
+}

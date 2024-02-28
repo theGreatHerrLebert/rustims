@@ -46,3 +46,9 @@ impl PyAminoAcidSequence {
         PyMzSpectrum { inner: self.inner.precursor_spectrum_from_atomic_composition(charge, mass_tolerance, abundance_threshold, max_result) }
     }
 }
+
+#[pymodule]
+pub fn py_sequence(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyAminoAcidSequence>()?;
+    Ok(())
+}
