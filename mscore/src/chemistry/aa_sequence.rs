@@ -13,29 +13,68 @@ type Mass = f64;
 type Abundance = f64;
 type IsotopeDistribution = Vec<(Mass, Abundance)>;
 
-#[derive(Debug, Clone, Copy)]
-pub enum FragmentType { A, B, C, X, Y, Z, }
-
 #[derive(Debug, Clone)]
-pub struct ProductIon {
-    pub kind: FragmentType,
+pub struct PeptideIon {
     pub sequence: PeptideSequence,
     pub charge: i32,
     pub intensity: f64,
 }
 
-impl ProductIon {
-    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64) -> Self {
-        ProductIon {
-            kind,
+impl PeptideIon {
+    pub fn new(sequence: String, charge: i32, intensity: f64) -> Self {
+        PeptideIon {
             sequence: PeptideSequence::new(sequence),
             charge,
             intensity,
         }
     }
+    pub fn mz(&self) -> f64 {
+        calculate_mz(self.sequence.mono_isotopic_mass(), self.charge)
+    }
+
+    pub fn isotope_distribution(
+        &self,
+        mass_tolerance: f64,
+        abundance_threshold: f64,
+        max_result: i32,
+        intensity_min: f64,
+    ) -> IsotopeDistribution {
+
+        let atomic_composition: HashMap<String, i32> = self.sequence.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
+
+        let distribution: IsotopeDistribution = crate::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
+            .into_iter().filter(|&(_, abundance)| abundance > intensity_min).collect();
+
+        let mz_distribution = distribution.iter().map(|(mass, _)| calculate_mz(*mass, self.charge))
+            .zip(distribution.iter().map(|&(_, abundance)| abundance)).collect();
+
+        mz_distribution
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FragmentType { A, B, C, X, Y, Z, }
+
+#[derive(Debug, Clone)]
+pub struct PeptideProductIon {
+    pub kind: FragmentType,
+    pub ion: PeptideIon,
+}
+
+impl PeptideProductIon {
+    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64) -> Self {
+        PeptideProductIon {
+            kind,
+            ion: PeptideIon {
+                sequence: PeptideSequence::new(sequence),
+                charge,
+                intensity,
+            },
+        }
+    }
 
     pub fn mono_isotopic_mass(&self) -> f64 {
-        let peptide_mass = self.sequence.mono_isotopic_mass();
+        let peptide_mass = self.ion.sequence.mono_isotopic_mass();
         match self.kind {
             // FragmentType::A => peptide_mass - MASS_CO,
             FragmentType::B => peptide_mass - MASS_WATER,
@@ -48,7 +87,7 @@ impl ProductIon {
     }
 
     pub fn atomic_composition(&self) -> HashMap<&str, i32> {
-        let mut peptide_comp = peptide_sequence_to_atomic_composition(&self.sequence);
+        let mut peptide_comp = peptide_sequence_to_atomic_composition(&self.ion.sequence);
         match self.kind {
             FragmentType::A => {
                 ()
@@ -74,7 +113,7 @@ impl ProductIon {
     }
 
     pub fn mz(&self) -> f64 {
-        calculate_mz(self.mono_isotopic_mass(), self.charge)
+        calculate_mz(self.mono_isotopic_mass(), self.ion.charge)
     }
 
     pub fn isotope_distribution(&self,
@@ -83,10 +122,15 @@ impl ProductIon {
                                 max_result: i32,
                                 intensity_min: f64,
     ) -> IsotopeDistribution {
+
         let atomic_composition: HashMap<String, i32> = self.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
-        let distribution = crate::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
+
+        let distribution: IsotopeDistribution = crate::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
             .into_iter().filter(|&(_, abundance)| abundance > intensity_min).collect();
-        distribution
+
+        let mz_distribution = distribution.iter().map(|(mass, _)| calculate_mz(*mass, self.ion.charge)).zip(distribution.iter().map(|&(_, abundance)| abundance)).collect();
+
+        mz_distribution
     }
 }
 
@@ -128,7 +172,7 @@ impl PeptideSequence {
         find_unimod_patterns(&*self.sequence)
     }
 
-    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<ProductIon>, Vec<ProductIon>){
+    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>){
 
         // TODO: check for n-terminal modifications
         let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
@@ -138,26 +182,30 @@ impl PeptideSequence {
         // Generate b ions
         for i in 1..tokens.len() {
             let b_ion_seq = tokens[..i].join("");
-            b_ions.push(ProductIon {
+            b_ions.push(PeptideProductIon {
                 kind: FragmentType::B,
-                sequence: PeptideSequence {
-                    sequence: b_ion_seq,
+                ion: PeptideIon {
+                    sequence: PeptideSequence {
+                        sequence: b_ion_seq,
+                    },
+                    charge, // Assuming charge 1 for simplicity
+                    intensity: 1.0, // Placeholder intensity
                 },
-                charge, // Assuming charge 1 for simplicity
-                intensity: 1.0, // Placeholder intensity
             });
         }
 
         // Generate y ions
         for i in 1..tokens.len() {
             let y_ion_seq = tokens[tokens.len() - i..].join("");
-            y_ions.push(ProductIon {
+            y_ions.push(PeptideProductIon {
                 kind: FragmentType::Y,
-                sequence: PeptideSequence {
-                    sequence: y_ion_seq,
+                ion: PeptideIon {
+                    sequence: PeptideSequence {
+                        sequence: y_ion_seq,
+                    },
+                    charge, // Assuming charge 1 for simplicity
+                    intensity: 1.0, // Placeholder intensity
                 },
-                charge, // Assuming charge 1 for simplicity
-                intensity: 1.0, // Placeholder intensity
             });
         }
 
@@ -390,9 +438,9 @@ pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence
     collection
 }
 
-pub fn mono_isotopic_product_ion_composition(product_ion: &ProductIon) -> Vec<(&str, i32)> {
+pub fn mono_isotopic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&str, i32)> {
 
-    let mut composition = peptide_sequence_to_atomic_composition(&product_ion.sequence);
+    let mut composition = peptide_sequence_to_atomic_composition(&product_ion.ion.sequence);
 
     match product_ion.kind {
         FragmentType::A => {
@@ -419,7 +467,7 @@ pub fn mono_isotopic_product_ion_composition(product_ion: &ProductIon) -> Vec<(&
     composition.iter().map(|(k, v)| (*k, *v)).collect()
 }
 
-pub fn fragments_to_composition(product_ions: Vec<ProductIon>, num_threads: usize) -> Vec<Vec<(String, i32)>> {
+pub fn fragments_to_composition(product_ions: Vec<PeptideProductIon>, num_threads: usize) -> Vec<Vec<(String, i32)>> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
     let result = thread_pool.install(|| {
         product_ions.par_iter().map(|ion| mono_isotopic_product_ion_composition(ion)).map(|composition| {

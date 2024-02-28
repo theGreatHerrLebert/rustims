@@ -6,7 +6,7 @@ class ProductIon:
     def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0):
         assert kind in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid kind: {kind}, "
                                                         f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
-        self.__ptr = ims.PyProductIon(
+        self.__ptr = ims.PyPeptideProductIon(
             kind=kind,
             sequence=sequence,
             charge=charge,
@@ -48,7 +48,7 @@ class ProductIon:
         return self.__ptr
 
     @classmethod
-    def from_py_ptr(cls, product_ion: ims.PyProductIon):
+    def from_py_ptr(cls, product_ion: ims.PyPeptideProductIon):
         instance = cls.__new__(cls)
         instance.__ptr = product_ion
         return instance
