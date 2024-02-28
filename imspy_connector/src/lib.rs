@@ -62,12 +62,6 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_chemistry::reshape_prosit_array, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::sequence_to_all_ions_par, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_tokens, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_atomic_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_mass_from_atomic_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_b_y_fragment_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::atomic_composition_to_monoisotopic_mass, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::b_fragments_to_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::y_fragments_to_composition, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::generate_isotope_distribution, m)?)?;
     m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_weight_map, m)?)?;
     m.add_function(wrap_pyfunction!(py_elements::get_elemental_mono_isotopic_weight_map, m)?)?;

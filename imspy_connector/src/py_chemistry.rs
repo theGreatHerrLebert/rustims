@@ -73,36 +73,6 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
 }
 
 #[pyfunction]
-pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> Vec<(&str, i32)> {
-    mscore::chemistry::aa_sequence::unimod_sequence_to_atomic_composition(sequence).iter().map(|(k, v)| (*k, *v)).collect()
-}
-
-#[pyfunction]
-pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>) -> Vec<(&str, i32)> {
-    mscore::chemistry::aa_sequence::mono_isotopic_b_y_fragment_composition(sequence, is_y)
-}
-
-#[pyfunction]
-pub fn atomic_composition_to_monoisotopic_mass(composition: Vec<(&str, i32)>) -> f64 {
-    mscore::chemistry::aa_sequence::atomic_composition_to_monoisotopic_mass(&composition)
-}
-
-#[pyfunction]
-pub fn b_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
-    mscore::chemistry::aa_sequence::b_fragments_to_composition(sequences, num_threads)
-}
-
-#[pyfunction]
-pub fn y_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
-    mscore::chemistry::aa_sequence::y_fragments_to_composition(sequences, num_threads)
-}
-
-#[pyfunction]
-pub fn mono_isotopic_mass_from_atomic_composition(sequence: &str) -> f64 {
-    mscore::chemistry::aa_sequence::calculate_monoisotopic_mass_from_atomic_composition(sequence)
-}
-
-#[pyfunction]
 pub fn generate_isotope_distribution(atomic_composition: Vec<(String, f64)>, mass_tolerance: f64, abundance_threshold: f64, max_result: i32) -> Vec<(f64, f64)> {
     mscore::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition.iter().map(|(k, v)| (k.to_string(), *v as i32)).collect(),
         mass_tolerance, abundance_threshold, max_result)
