@@ -3,19 +3,88 @@ use rayon::ThreadPoolBuilder;
 
 use std::collections::HashMap;
 use regex::Regex;
-use crate::algorithm::aa_sequence::generate_isotope_distribution;
-use crate::algorithm::isotope_distributions::generate_averagine_spectrum;
-use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
+use crate::chemistry::constants::{MASS_WATER, MASS_PROTON, MASS_CO, MASS_NH};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
-use crate::chemistry::atoms::atomic_weights_mono_isotopic;
-use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
-use crate::data::mz_spectrum::MzSpectrum;
+use crate::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
+use crate::chemistry::utility::find_unimod_patterns;
 
-pub struct AminoAcidSequence {
+#[derive(Debug, Clone, Copy)]
+pub enum FragmentType { A, B, C, X, Y, Z, }
+
+pub struct ProductIon {
+    pub kind: FragmentType,
+    pub sequence: PeptideSequence,
+    pub charge: i32,
+    pub intensity: f64,
+}
+
+impl ProductIon {
+    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64) -> Self {
+        ProductIon {
+            kind,
+            sequence: PeptideSequence::new(sequence),
+            charge,
+            intensity,
+        }
+    }
+
+    pub fn mono_isotopic_mass(&self) -> f64 {
+        let peptide_mass = self.sequence.mono_isotopic_mass();
+        match self.kind {
+            FragmentType::A => peptide_mass - MASS_CO,
+            FragmentType::B => peptide_mass - MASS_WATER,
+            FragmentType::C => peptide_mass + MASS_PROTON, // Adding the mass of a proton (H) for the c-ion
+            FragmentType::X => peptide_mass + MASS_CO + 2.0 * MASS_PROTON, // Adjusting for x-ion specific mass change; adding CO and 2*H
+            FragmentType::Y => peptide_mass,
+            FragmentType::Z => peptide_mass - MASS_NH - MASS_PROTON, // Subtracting NH (or its relevant mass) and a proton (H)
+        }
+    }
+
+    pub fn atomic_composition(&self) -> HashMap<&str, i32> {
+        let mut peptide_comp = peptide_sequence_to_atomic_composition(&self.sequence);
+        match self.kind {
+            FragmentType::A => {
+                *peptide_comp.entry("C").or_insert(0) -= 1;
+                *peptide_comp.entry("O").or_insert(0) -= 1;
+            },
+            FragmentType::B => {
+                *peptide_comp.entry("H").or_insert(0) -= 2;
+                *peptide_comp.entry("O").or_insert(0) -= 1;
+            },
+            FragmentType::C => {
+                *peptide_comp.entry("H").or_insert(0) += 1;
+            },
+            FragmentType::X => {
+                *peptide_comp.entry("C").or_insert(0) += 1;
+                *peptide_comp.entry("O").or_insert(0) += 1;
+                *peptide_comp.entry("H").or_insert(0) += 2;
+            },
+            FragmentType::Y => {
+                ()
+            },
+            FragmentType::Z => {
+                *peptide_comp.entry("H").or_insert(0) += 1;
+                *peptide_comp.entry("N").or_insert(0) += 1;
+            },
+        }
+        peptide_comp
+    }
+
+    pub fn mz(&self) -> f64 {
+        calculate_mz(self.mono_isotopic_mass(), self.charge)
+    }
+}
+
+// helper types for easier reading
+type Mass = f64;
+type Abundance = f64;
+type IsotopeDistribution = Vec<(Mass, Abundance)>;
+
+pub struct PeptideSequence {
     pub sequence: String,
 }
 
-impl AminoAcidSequence {
+impl PeptideSequence {
     pub fn new(raw_sequence: String) -> Self {
 
         // constructor will parse the sequence and check if it is valid
@@ -29,44 +98,23 @@ impl AminoAcidSequence {
         if !valid_amino_acids {
             panic!("Invalid amino acid sequence, use only valid amino acids: ARNDCQEGHILKMFPSTWYVU, and modifications in the format [UNIMOD:ID]");
         }
-        AminoAcidSequence { sequence: sequence.to_string() }
+        PeptideSequence { sequence: raw_sequence }
     }
 
-    pub fn calculate_monoisotopic_mass(&self) -> f64 {
-        calculate_monoisotopic_mass(&*self.sequence)
+    pub fn mono_isotopic_mass(&self) -> f64 {
+        calculate_peptide_mono_isotopic_mass(&*self.sequence)
     }
 
-    pub fn calculate_monoisotopic_mass_from_atomic_composition(&self) -> f64 {
-        calculate_monoisotopic_mass_from_atomic_composition(&*self.sequence)
+    pub fn atomic_composition(&self) -> HashMap<&str, i32> {
+        peptide_sequence_to_atomic_composition(self)
     }
 
-    pub fn calculate_mz(&self, charge: i32) -> f64 {
-        let mass = self.calculate_monoisotopic_mass();
-        calculate_mz(mass, charge)
+    pub fn to_tokens(&self) -> Vec<String> {
+        unimod_sequence_to_tokens(&*self.sequence)
     }
 
-    pub fn precursor_spectrum_averagine(&self, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> MzSpectrum {
-        generate_averagine_spectrum(self.calculate_monoisotopic_mass(), charge, min_intensity, k, resolution, centroid, None)
-    }
-
-    pub fn precursor_spectrum_from_atomic_composition(&self, charge: i32, mass_tolerance: f64, abundance_threshold: f64, max_result: i32) -> MzSpectrum {
-        let composition: HashMap<String, i32> = unimod_sequence_to_atomic_composition(&*self.sequence).iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
-        let spec = generate_isotope_distribution(
-            &composition,
-            mass_tolerance,
-            abundance_threshold,
-            max_result,
-        );
-
-        let masses: Vec<f64> = spec.iter().map(|(m, _)| *m).collect();
-        let intensities: Vec<f64> = spec.iter().map(|(_, i)| *i).collect();
-
-        let mzs = masses.iter().map(|&m| calculate_mz(m, charge)).collect();
-        MzSpectrum::new(mzs, intensities)
-    }
-
-    pub fn calculate_atomic_composition(&self) -> HashMap<&str, i32> {
-        unimod_sequence_to_atomic_composition(&*self.sequence)
+    pub fn to_sage_representation(&self) -> (String, Vec<f64>) {
+        find_unimod_patterns(&*self.sequence)
     }
 }
 
@@ -83,14 +131,14 @@ impl AminoAcidSequence {
 /// # Examples
 ///
 /// ```
-/// use mscore::chemistry::aa_sequence::calculate_monoisotopic_mass;
+/// use mscore::chemistry::aa_sequence::calculate_peptide_mono_isotopic_mass;
 ///
-/// let mass = calculate_monoisotopic_mass("PEPTIDEC[UNIMOD:4]R");
+/// let mass = calculate_peptide_mono_isotopic_mass("PEPTIDEC[UNIMOD:4]R");
 /// // assert_eq!(mass, 1115.4917246863);
 /// ```
-pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
+pub fn calculate_peptide_mono_isotopic_mass(sequence: &str) -> f64 {
     let amino_acid_masses = amino_acid_masses();
-    let modifications_mz_numerical = unimod_modifications_mz_numerical();
+    let modifications_mz_numerical = unimod_modifications_mass_numerical();
     let pattern = Regex::new(r"\[UNIMOD:(\d+)\]").unwrap();
 
     // Find all occurrences of the pattern
@@ -115,7 +163,8 @@ pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
     mass_sequence + mass_modifics + MASS_WATER
 }
 
-pub fn calculate_b_y_fragment_mz(sequence: &str, modifications: Vec<f64>, is_y: Option<bool>, charge: Option<i32>) -> f64 {
+pub fn calculate_product_ion_mono_isotopic_mass(sequence: &str, modifications: Vec<f64>, kind: FragmentType) -> f64 {
+
     // Return mz of empty sequence
     if sequence.is_empty() {
         return 0.0;
@@ -133,20 +182,25 @@ pub fn calculate_b_y_fragment_mz(sequence: &str, modifications: Vec<f64>, is_y: 
     // Calculate total mass
     let mass = mass_sequence + mass_modifications;
 
-    // Set default values if None
-    let is_y = is_y.unwrap_or(false);
-    let charge = charge.unwrap_or(1);
+    let mass = match kind {
+        FragmentType::A => panic!("Fragment type A not yet supported"),
+        FragmentType::B => mass,
+        FragmentType::C => panic!("Fragment type C not yet supported"),
+        FragmentType::X => panic!("Fragment type X not yet supported"),
+        FragmentType::Y => mass,
+        FragmentType::Z => panic!("Fragment type Z not yet supported"),
+    };
 
-    // If sequence is n-terminal (is_y is true), add water mass and calculate mz
-    if is_y {
-        calculate_mz(mass + MASS_WATER, charge)
-    } else {
-        // Otherwise, calculate mz
-        calculate_mz(mass, charge)
-    }
+    mass
+}
+
+pub fn calculate_product_ion_mz(sequence: &str, modifications: Vec<f64>, kind: FragmentType, charge: Option<i32>) -> f64 {
+    let mass = calculate_product_ion_mono_isotopic_mass(sequence, modifications, kind);
+    calculate_mz(mass, charge.unwrap_or(1))
 }
 
 pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge: Option<i32>) -> (Vec<(f64, String, String)>, Vec<(f64, String, String)>) {
+
     let mut b_ions = Vec::new();
     let mut y_ions = Vec::new();
 
@@ -165,13 +219,13 @@ pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge:
 
         // Calculate mz of b ions
         if !b.is_empty() && i != sequence_length {
-            let b_mass = calculate_b_y_fragment_mz(b, m_b.to_vec(), Some(false), charge);
+            let b_mass = calculate_product_ion_mz(b, m_b.to_vec(), FragmentType::B, charge);
             b_ions.push((b_mass, format!("b{}+{}", i, charge.unwrap_or(1)), b.to_string()));
         }
 
         // Calculate mz of y ions
         if !y.is_empty() && i != 0 && i != sequence_length {
-            let y_mass = calculate_b_y_fragment_mz(y, m_y.to_vec(), Some(true), charge);
+            let y_mass = calculate_product_ion_mz(y, m_y.to_vec(), FragmentType::Y, charge);
             y_ions.push((y_mass, format!("y{}+{}", sequence_length - i, charge.unwrap_or(1)), y.to_string()));
         }
     }
@@ -236,13 +290,14 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
     tokens
 }
 
-pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> HashMap<&'static str, i32> {
-    let token_sequence = unimod_sequence_to_tokens(sequence);
+pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
+
+    let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str());
     let mut collection: HashMap<&'static str, i32> = HashMap::new();
 
     // Assuming amino_acid_composition and modification_composition return appropriate mappings...
     let aa_compositions = amino_acid_composition();
-    let mod_compositions = modification_composition();
+    let mod_compositions = modification_atomic_composition();
 
     // No need for conversion to HashMap<String, ...> as long as you're directly accessing
     // the HashMap provided by modification_composition() if it uses String keys.
@@ -271,55 +326,41 @@ pub fn unimod_sequence_to_atomic_composition(sequence: &str) -> HashMap<&'static
     collection
 }
 
-pub fn atomic_composition_to_monoisotopic_mass(composition: &Vec<(&str, i32)>) -> f64 {
+pub fn mono_isotopic_product_ion_composition(product_ion: &ProductIon) -> Vec<(&str, i32)> {
 
-    let mono_masses = atomic_weights_mono_isotopic();
+    let mut composition = peptide_sequence_to_atomic_composition(&product_ion.sequence);
 
-    let mut mass = 0.0;
-    for (element, count) in composition {
-        mass += mono_masses.get(element).unwrap_or(&0.0) * *count as f64;
-    }
-
-    mass
-}
-
-pub fn calculate_monoisotopic_mass_from_atomic_composition(sequence: &str) -> f64 {
-
-    let composition = unimod_sequence_to_atomic_composition(sequence);
-    let average_masses = atomic_weights_mono_isotopic();
-
-    let mut mass = 0.0;
-    for (element, count) in composition {
-        mass += average_masses.get(element).unwrap_or(&0.0) * count as f64;
-    }
-
-    mass
-}
-
-pub fn mono_isotopic_b_y_fragment_composition(sequence: &str, is_y: Option<bool>) -> Vec<(&str, i32)> {
-
-    let mut composition = unimod_sequence_to_atomic_composition(sequence);
-
-    if !is_y.unwrap_or(false) {
-        *composition.entry("H").or_insert(0) -= 2;
-        *composition.entry("O").or_insert(0) -= 1;
+    match product_ion.kind {
+        FragmentType::A => {
+            ()
+        },
+        FragmentType::B => {
+            *composition.entry("H").or_insert(0) -= 2;
+            *composition.entry("O").or_insert(0) -= 1;
+        },
+        FragmentType::C => {
+            ()
+        },
+        FragmentType::X => {
+            ()
+        },
+        FragmentType::Y => {
+            ()
+        },
+        FragmentType::Z => {
+            ()
+        },
     }
 
     composition.iter().map(|(k, v)| (*k, *v)).collect()
 }
 
-pub fn b_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
+pub fn fragments_to_composition(product_ions: Vec<ProductIon>, num_threads: usize) -> Vec<Vec<(String, i32)>> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
     let result = thread_pool.install(|| {
-        sequences.par_iter().map(|seq| mono_isotopic_b_y_fragment_composition(seq, Some(false))).collect()
-    });
-    result
-}
-
-pub fn y_fragments_to_composition(sequences: Vec<&str>, num_threads: usize) -> Vec<Vec<(&str, i32)>> {
-    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
-    let result = thread_pool.install(|| {
-        sequences.par_iter().map(|seq| mono_isotopic_b_y_fragment_composition(seq, Some(true))).collect()
+        product_ions.par_iter().map(|ion| mono_isotopic_product_ion_composition(ion)).map(|composition| {
+            composition.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+        }).collect()
     });
     result
 }

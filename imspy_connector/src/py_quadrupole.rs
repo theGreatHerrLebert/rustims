@@ -117,3 +117,11 @@ impl PyTimsTofCollisionEnergyDIA {
 pub fn apply_transmission(midpoint: f64, window_length: f64, mz: Vec<f64>, k: Option<f64>) -> Vec<f64> {
     mscore::algorithm::quadrupole::apply_transmission(midpoint, window_length, k.unwrap_or(15.0), mz)
 }
+
+#[pymodule]
+pub fn py_quadrupole(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyTimsTransmissionDIA>()?;
+    m.add_class::<PyTimsTofCollisionEnergyDIA>()?;
+    m.add_function(wrap_pyfunction!(apply_transmission, m)?)?;
+    Ok(())
+}

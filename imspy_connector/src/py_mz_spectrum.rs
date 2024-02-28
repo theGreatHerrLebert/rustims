@@ -295,3 +295,13 @@ impl PyTimsSpectrum {
         Ok(PyTimsSpectrum { inner: self.inner.clone() + other.inner })
     }
 }
+
+#[pymodule]
+pub fn py_mz_spectrum(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyMsType>()?;
+    m.add_class::<PyMzSpectrum>()?;
+    m.add_class::<PyMzSpectrumVectorized>()?;
+    m.add_class::<PyIndexedMzSpectrum>()?;
+    m.add_class::<PyTimsSpectrum>()?;
+    Ok(())
+}

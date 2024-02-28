@@ -41,3 +41,9 @@ impl PyTimsDatasetDIA {
         self.inner.get_bruker_lib_path()
     }
 }
+
+#[pymodule]
+pub fn py_dia(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyTimsDatasetDIA>()?;
+    Ok(())
+}

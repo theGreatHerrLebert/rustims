@@ -1,19 +1,18 @@
 use std::collections::HashMap;
 use pyo3::prelude::*;
 
-use mscore::chemistry::aa_sequence::AminoAcidSequence;
-use crate::py_mz_spectrum::PyMzSpectrum;
+use mscore::chemistry::aa_sequence::{FragmentType, PeptideSequence, ProductIon};
 
 #[pyclass]
-pub struct  PyAminoAcidSequence {
-    pub inner: AminoAcidSequence,
+pub struct PyPeptideSequence {
+    pub inner: PeptideSequence,
 }
 
 #[pymethods]
-impl PyAminoAcidSequence {
+impl PyPeptideSequence {
     #[new]
     pub fn new(sequence: String) -> Self {
-        PyAminoAcidSequence { inner: AminoAcidSequence::new(sequence) }
+        PyPeptideSequence { inner: PeptideSequence::new(sequence) }
     }
 
     #[getter]
@@ -22,27 +21,84 @@ impl PyAminoAcidSequence {
     }
 
     #[getter]
-    pub fn monoisotopic_mass(&self) -> f64 {
-        self.inner.calculate_monoisotopic_mass()
+    pub fn mono_isotopic_mass(&self) -> f64 {
+        self.inner.mono_isotopic_mass()
     }
 
-    pub fn monoisotopic_mass_from_atomic_composition(&self) -> f64 {
-        self.inner.calculate_monoisotopic_mass_from_atomic_composition()
+    pub fn atomic_composition(&self) -> HashMap<&str, i32> {
+        self.inner.atomic_composition()
     }
 
-    pub fn get_mz(&self, charge: i32) -> f64 {
-        self.inner.calculate_mz(charge)
+    pub fn to_tokens(&self) -> Vec<String> {
+        self.inner.to_tokens()
     }
 
-    pub fn get_atomic_composition(&self) -> HashMap<&str, i32> {
-        self.inner.calculate_atomic_composition()
+    pub fn to_sage_representation(&self) -> (String, Vec<f64>) {
+        self.inner.to_sage_representation()
     }
+}
 
-    pub fn precursor_spectrum_averagine(&self, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.precursor_spectrum_averagine(charge, min_intensity, k, resolution, centroid) }
-    }
+#[pyclass]
+pub struct PyProductIon {
+    pub inner: ProductIon,
+}
 
-    pub fn precursor_spectrum_from_atomic_composition(&self, charge: i32, mass_tolerance: f64, abundance_threshold: f64, max_result: i32) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.precursor_spectrum_from_atomic_composition(charge, mass_tolerance, abundance_threshold, max_result) }
+#[pymethods]
+impl PyProductIon {
+    #[new]
+    pub fn new(kind: &str, sequence: String, charge: i32, intensity: f64) -> Self {
+
+        let kind = match kind {
+            "a" => FragmentType::A,
+            "b" => FragmentType::B,
+            "c" => FragmentType::C,
+            "x" => FragmentType::X,
+            "y" => FragmentType::Y,
+            "z" => FragmentType::Z,
+            _ => panic!("Invalid product ion kind"),
+        };
+
+        PyProductIon { inner: ProductIon::new(kind, sequence, charge, intensity) }
     }
+    #[getter]
+    pub fn kind(&self) -> String {
+        match self.inner.kind {
+            FragmentType::A => "a".to_string(),
+            FragmentType::B => "b".to_string(),
+            FragmentType::C => "c".to_string(),
+            FragmentType::X => "x".to_string(),
+            FragmentType::Y => "y".to_string(),
+            FragmentType::Z => "z".to_string(),
+        }
+    }
+    #[getter]
+    pub fn sequence(&self) -> String {
+        self.inner.sequence.sequence.clone()
+    }
+    #[getter]
+    pub fn charge(&self) -> i32 {
+        self.inner.charge
+    }
+    #[getter]
+    pub fn mz(&self) -> f64 {
+        self.inner.mz()
+    }
+    #[getter]
+    pub fn intensity(&self) -> f64 {
+        self.inner.intensity
+    }
+    #[getter]
+    pub fn mono_isotopic_mass(&self) -> f64 {
+        self.inner.mono_isotopic_mass()
+    }
+    pub fn atomic_composition(&self) -> HashMap<&str, i32> {
+        self.inner.atomic_composition()
+    }
+}
+
+#[pymodule]
+pub fn py_sequence(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<PyPeptideSequence>()?;
+    m.add_class::<PyProductIon>()?;
+    Ok(())
 }

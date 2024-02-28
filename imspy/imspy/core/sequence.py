@@ -1,48 +1,86 @@
+from typing import List, Tuple
 import imspy_connector as ims
 
-from imspy import MzSpectrum
 
+class ProductIon:
+    def __init__(self, kind: str, sequence: str, charge: int, intensity: float):
+        assert kind in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid kind: {kind}, "
+                                                        f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
+        self.__ptr = ims.PyProductIon(
+            kind=kind,
+            sequence=sequence,
+            charge=charge,
+            intensity=intensity
+        )
 
-class AminoAcidSequence:
-    def __init__(self, sequence: str):
-        self.__ptr = ims.PyAminoAcidSequence(sequence)
+    @property
+    def kind(self) -> str:
+        return self.__ptr.kind
 
     @property
     def sequence(self) -> str:
         return self.__ptr.sequence
 
     @property
-    def monoisotopic_mass(self) -> float:
-        return self.__ptr.monoisotopic_mass
+    def charge(self) -> int:
+        return self.__ptr.charge
 
-    def get_mz(self, charge: int) -> float:
-        return self.__ptr.get_mz(charge)
+    @property
+    def intensity(self) -> float:
+        return self.__ptr.intensity
+
+    @property
+    def mono_isotopic_mass(self) -> float:
+        return self.__ptr.mono_isotopic_mass()
+
+    @property
+    def mz(self) -> float:
+        return self.__ptr.mz()
 
     def get_ptr(self):
         return self.__ptr
 
     @classmethod
-    def fom_py_ptr(cls, seq: ims.PyAminoAcidSequence):
+    def from_py_ptr(cls, product_ion: ims.PyProductIon):
+        instance = cls.__new__(cls)
+        instance.__ptr = product_ion
+        return instance
+
+    def __repr__(self):
+        return (f"ProductIon(kind={self.kind}, sequence={self.sequence}, charge={self.charge}, mz={self.mz}, "
+                f" intensity={self.intensity})")
+
+
+class PeptideSequence:
+    def __init__(self, sequence: str):
+        self.__ptr = ims.PyPeptideSequence(sequence)
+
+    @property
+    def sequence(self) -> str:
+        return self.__ptr.sequence
+
+    @property
+    def mono_isotopic_mass(self) -> float:
+        return self.__ptr.mono_isotopic_mass
+
+    @property
+    def atomic_composition(self):
+        return self.__ptr.atomic_composition()
+
+    def to_tokens(self) -> List[str]:
+        return self.__ptr.to_tokens()
+
+    def to_sage_representation(self) -> Tuple[str, List[float]]:
+        return self.__ptr.to_sage_representation()
+
+    def get_ptr(self):
+        return self.__ptr
+
+    @classmethod
+    def fom_py_ptr(cls, seq: ims.PyPeptideSequence):
         instance = cls.__new__(cls)
         instance.__ptr = seq
         return instance
 
-    def precursor_spectrum_averagine(self, charge: int = 1, min_intensity: int = 1, k: int = 10,
-                                     resolution: int = 3, centroid: bool = True) -> MzSpectrum:
-        return MzSpectrum.from_py_mz_spectrum(self.__ptr.precursor_spectrum_averagine(
-            charge, min_intensity, k, resolution, centroid
-        ))
-
-    def precursor_spectrum_from_atomic_composition(self, charge,
-                                                   mass_tolerance: float = 1e-6,
-                                                   abundance_threshold: float = 1e-7,
-                                                   max_result: int = 200) -> MzSpectrum:
-        return MzSpectrum.from_py_mz_spectrum(self.__ptr.precursor_spectrum_from_atomic_composition(
-            charge, mass_tolerance, abundance_threshold, max_result
-        ))
-
-    def get_atomic_composition(self):
-        return self.__ptr.get_atomic_composition()
-
     def __repr__(self):
-        return f"AminoAcidSequence(sequence={self.sequence}, monoisotopic_mass={self.monoisotopic_mass})"
+        return f"AminoAcidSequence(sequence={self.sequence}, mono_isotopic_mass={self.mono_isotopic_mass})"

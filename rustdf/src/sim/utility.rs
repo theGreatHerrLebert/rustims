@@ -1,6 +1,6 @@
 use mscore::chemistry::aa_sequence::calculate_b_y_ion_series;
 use regex::Regex;
-use mscore::chemistry::unimod::unimod_modifications_mz;
+use mscore::chemistry::unimod::unimod_modifications_mass;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -51,7 +51,7 @@ fn generate_index_list(results: &[(usize, usize, String)], sequence: &str) -> Ve
 fn calculate_modifications(index_list: &[(usize, String)], stripped_sequence: &str) -> Vec<f64> {
     let mut mods = vec![0.0; stripped_sequence.len()];
     for (index, mod_str) in index_list {
-        if let Some(mass) = unimod_modifications_mz().get(mod_str.as_str()) {
+        if let Some(mass) = unimod_modifications_mass().get(mod_str.as_str()) {
             mods[*index] += mass;
         }
     }

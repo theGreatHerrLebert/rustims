@@ -8,6 +8,8 @@ mod py_simulation;
 mod py_chemistry;
 mod py_quadrupole;
 mod py_sequence;
+mod py_constants;
+mod py_elements;
 
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
@@ -19,7 +21,7 @@ use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
 use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
 use crate::py_simulation::{PyTimsTofSyntheticsPrecursorFrameBuilder, PyTimsTofSyntheticsFrameBuilderDIA, PyTimsTofSyntheticsDataHandle};
 pub use py_chemistry::{generate_precursor_spectrum, generate_precursor_spectra, calculate_monoisotopic_mass, calculate_b_y_ion_series, simulate_charge_state_for_sequence, simulate_charge_states_for_sequences};
-use crate::py_sequence::PyAminoAcidSequence;
+use crate::py_sequence::PyPeptideSequence;
 use crate::py_dia::PyTimsDatasetDIA;
 use crate::py_quadrupole::{PyTimsTransmissionDIA, apply_transmission, PyTimsTofCollisionEnergyDIA};
 
@@ -46,7 +48,7 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
     m.add_class::<PyTimsTofCollisionEnergyDIA>()?;
     m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
-    m.add_class::<PyAminoAcidSequence>()?;
+    m.add_class::<PyPeptideSequence>()?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;
@@ -60,12 +62,18 @@ fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_chemistry::reshape_prosit_array, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::sequence_to_all_ions_par, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_tokens, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_atomic_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_mass_from_atomic_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::mono_isotopic_b_y_fragment_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::atomic_composition_to_monoisotopic_mass, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::b_fragments_to_composition, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::y_fragments_to_composition, m)?)?;
     m.add_function(wrap_pyfunction!(py_chemistry::generate_isotope_distribution, m)?)?;
+    m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_weight_map, m)?)?;
+    m.add_function(wrap_pyfunction!(py_elements::get_elemental_mono_isotopic_weight_map, m)?)?;
+    m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_abundance_map, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::elementary_charge, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::k_boltzmann, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::standard_pressure, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::standard_temperature, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_electron, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_proton, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_neutron, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::mass_water, m)?)?;
+    m.add_function(wrap_pyfunction!(py_constants::avogadro, m)?)?;
     Ok(())
 }

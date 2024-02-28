@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
