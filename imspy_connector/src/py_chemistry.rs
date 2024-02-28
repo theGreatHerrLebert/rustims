@@ -24,7 +24,7 @@ pub fn generate_precursor_spectra(
 
 #[pyfunction]
 pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
-    mscore::chemistry::aa_sequence::calculate_monoisotopic_mass(sequence)
+    mscore::chemistry::aa_sequence::calculate_peptide_mono_isotopic_mass(sequence)
 }
 
 #[pyfunction]

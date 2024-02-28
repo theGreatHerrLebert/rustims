@@ -5,3 +5,4 @@ pub mod aa_sequence;
 pub mod constants;
 pub mod formulas;
 mod isotopes;
+mod utility;

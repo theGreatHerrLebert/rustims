@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-pub fn modification_composition() -> HashMap<String, HashMap<&'static str, i32>> {
+pub fn modification_atomic_composition() -> HashMap<String, HashMap<&'static str, i32>> {
     let mut composition: HashMap<String, HashMap<&'static str, i32>> = HashMap::new();
     composition.insert("[UNIMOD:1]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Acetyl
     composition.insert("[UNIMOD:3]".to_string(), HashMap::from([("N", 2), ("C", 10), ("H", 14), ("O", 2), ("S", 1)])); //  	Biotinylation
@@ -24,7 +24,7 @@ pub fn modification_composition() -> HashMap<String, HashMap<&'static str, i32>>
 }
 
 // MODIFICATIONS_MZ with string keys and float values
-pub fn unimod_modifications_mz() -> HashMap<&'static str, f64> {
+pub fn unimod_modifications_mass() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("[UNIMOD:58]", 56.026215);
     map.insert("[UNIMOD:408]", 148.037173);
@@ -52,7 +52,7 @@ pub fn unimod_modifications_mz() -> HashMap<&'static str, f64> {
 }
 
 // MODIFICATIONS_MZ_NUMERICAL with integer keys and float values
-pub fn unimod_modifications_mz_numerical() -> HashMap<u32, f64> {
+pub fn unimod_modifications_mass_numerical() -> HashMap<u32, f64> {
     let mut map = HashMap::new();
     map.insert(58, 56.026215);
     map.insert(408, 148.037173);
