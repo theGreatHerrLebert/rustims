@@ -7,9 +7,30 @@ use crate::algorithm::aa_sequence::generate_isotope_distribution;
 use crate::algorithm::isotope_distributions::generate_averagine_spectrum;
 use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
-use crate::chemistry::atoms::atomic_weights_mono_isotopic;
+use crate::chemistry::elements::atomic_weights_mono_isotopic;
 use crate::chemistry::unimod::{modification_composition, unimod_modifications_mz_numerical};
 use crate::data::mz_spectrum::MzSpectrum;
+
+// helper types for easier reading
+type Mass = f64;
+type Abundance = f64;
+type IsotopeDistribution = Vec<(Mass, Abundance)>;
+
+pub enum FragmentType { A, B, C, X, Y, Z, }
+
+pub struct ProductIon {
+    pub kind: FragmentType,
+    pub sequence: String,
+    pub mono_isotopic_mass: f64,
+    pub charge: i32,
+    pub intensity: f64,
+}
+
+impl ProductIon {
+    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64) -> Self {
+        todo!("ProductIon::new")
+    }
+}
 
 pub struct AminoAcidSequence {
     pub sequence: String,
