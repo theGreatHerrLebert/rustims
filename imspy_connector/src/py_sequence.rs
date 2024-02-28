@@ -98,8 +98,13 @@ impl PyProductIon {
     pub fn mono_isotopic_mass(&self) -> f64 {
         self.inner.mono_isotopic_mass()
     }
+
     pub fn atomic_composition(&self) -> HashMap<&str, i32> {
         self.inner.atomic_composition()
+    }
+
+    pub fn isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> Vec<(f64, f64)> {
+        self.inner.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
     }
 }
 

@@ -8,6 +8,11 @@ use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
 use crate::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
 use crate::chemistry::utility::find_unimod_patterns;
 
+// helper types for easier reading
+type Mass = f64;
+type Abundance = f64;
+type IsotopeDistribution = Vec<(Mass, Abundance)>;
+
 #[derive(Debug, Clone, Copy)]
 pub enum FragmentType { A, B, C, X, Y, Z, }
 
@@ -71,12 +76,19 @@ impl ProductIon {
     pub fn mz(&self) -> f64 {
         calculate_mz(self.mono_isotopic_mass(), self.charge)
     }
-}
 
-// helper types for easier reading
-type _Mass = f64;
-type _Abundance = f64;
-type _IsotopeDistribution = Vec<(_Mass, _Abundance)>;
+    pub fn isotope_distribution(&self,
+                                mass_tolerance: f64,
+                                abundance_threshold: f64,
+                                max_result: i32,
+                                intensity_min: f64,
+    ) -> IsotopeDistribution {
+        let atomic_composition: HashMap<String, i32> = self.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        let distribution = crate::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
+            .into_iter().filter(|&(_, abundance)| abundance > intensity_min).collect();
+        distribution
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PeptideSequence {

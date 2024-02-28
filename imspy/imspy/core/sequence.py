@@ -40,6 +40,10 @@ class ProductIon:
     def atomic_composition(self):
         return self.__ptr.atomic_composition()
 
+    def isotope_distribution(self, mass_tolerance: float = 1e-3, abundance_threshold: float = 1e-8,
+                             max_result: int = 200, intensity_min: float = 1e-4) -> List[Tuple[float, float]]:
+        return self.__ptr.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
+
     def get_ptr(self):
         return self.__ptr
 
