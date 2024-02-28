@@ -29,12 +29,19 @@ impl PyPeptideSequence {
         self.inner.atomic_composition()
     }
 
-    pub fn to_tokens(&self) -> Vec<String> {
-        self.inner.to_tokens()
+    pub fn to_tokens(&self, group_modifications: bool) -> Vec<String> {
+        self.inner.to_tokens(group_modifications)
     }
 
     pub fn to_sage_representation(&self) -> (String, Vec<f64>) {
         self.inner.to_sage_representation()
+    }
+
+    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<PyProductIon>, Vec<PyProductIon>) {
+        let (b, y) = self.inner.calculate_b_y_product_ion_series(charge);
+        let b_ions: Vec<PyProductIon> = b.iter().map(|ion| PyProductIon { inner: ion.clone() }).collect();
+        let y_ions: Vec<PyProductIon> = y.iter().map(|ion| PyProductIon { inner: ion.clone() }).collect();
+        (b_ions, y_ions)
     }
 }
 

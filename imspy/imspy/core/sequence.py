@@ -3,7 +3,7 @@ import imspy_connector as ims
 
 
 class ProductIon:
-    def __init__(self, kind: str, sequence: str, charge: int, intensity: float):
+    def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0):
         assert kind in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid kind: {kind}, "
                                                         f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
         self.__ptr = ims.PyProductIon(
@@ -35,7 +35,10 @@ class ProductIon:
 
     @property
     def mz(self) -> float:
-        return self.__ptr.mz()
+        return self.__ptr.mz
+
+    def atomic_composition(self):
+        return self.__ptr.atomic_composition()
 
     def get_ptr(self):
         return self.__ptr
@@ -67,14 +70,18 @@ class PeptideSequence:
     def atomic_composition(self):
         return self.__ptr.atomic_composition()
 
-    def to_tokens(self) -> List[str]:
-        return self.__ptr.to_tokens()
+    def to_tokens(self, group_modifications: bool = True) -> List[str]:
+        return self.__ptr.to_tokens(group_modifications)
 
     def to_sage_representation(self) -> Tuple[str, List[float]]:
         return self.__ptr.to_sage_representation()
 
     def get_ptr(self):
         return self.__ptr
+
+    def calculate_b_y_product_ion_series(self, charge: int = 1) -> Tuple[List[ProductIon], List[ProductIon]]:
+        b_ions, y_ions = self.__ptr.calculate_b_y_product_ion_series(charge)
+        return [ProductIon.from_py_ptr(ion) for ion in b_ions], [ProductIon.from_py_ptr(ion) for ion in y_ions][::-1]
 
     @classmethod
     def fom_py_ptr(cls, seq: ims.PyPeptideSequence):

@@ -3,7 +3,7 @@ use rayon::ThreadPoolBuilder;
 
 use std::collections::HashMap;
 use regex::Regex;
-use crate::chemistry::constants::{MASS_WATER, MASS_PROTON, MASS_CO, MASS_NH};
+use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
 use crate::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
 use crate::chemistry::utility::find_unimod_patterns;
@@ -11,6 +11,7 @@ use crate::chemistry::utility::find_unimod_patterns;
 #[derive(Debug, Clone, Copy)]
 pub enum FragmentType { A, B, C, X, Y, Z, }
 
+#[derive(Debug, Clone)]
 pub struct ProductIon {
     pub kind: FragmentType,
     pub sequence: PeptideSequence,
@@ -31,12 +32,13 @@ impl ProductIon {
     pub fn mono_isotopic_mass(&self) -> f64 {
         let peptide_mass = self.sequence.mono_isotopic_mass();
         match self.kind {
-            FragmentType::A => peptide_mass - MASS_CO,
+            // FragmentType::A => peptide_mass - MASS_CO,
             FragmentType::B => peptide_mass - MASS_WATER,
-            FragmentType::C => peptide_mass + MASS_PROTON, // Adding the mass of a proton (H) for the c-ion
-            FragmentType::X => peptide_mass + MASS_CO + 2.0 * MASS_PROTON, // Adjusting for x-ion specific mass change; adding CO and 2*H
+            // FragmentType::C => peptide_mass + MASS_PROTON, // Adding the mass of a proton (H) for the c-ion
+            // FragmentType::X => peptide_mass + MASS_CO + 2.0 * MASS_PROTON, // Adjusting for x-ion specific mass change; adding CO and 2*H
             FragmentType::Y => peptide_mass,
-            FragmentType::Z => peptide_mass - MASS_NH - MASS_PROTON, // Subtracting NH (or its relevant mass) and a proton (H)
+            // FragmentType::Z => peptide_mass - MASS_NH - MASS_PROTON, // Subtracting NH (or its relevant mass) and a proton (H)
+            _ => panic!("Invalid fragment type"),
         }
     }
 
@@ -44,27 +46,23 @@ impl ProductIon {
         let mut peptide_comp = peptide_sequence_to_atomic_composition(&self.sequence);
         match self.kind {
             FragmentType::A => {
-                *peptide_comp.entry("C").or_insert(0) -= 1;
-                *peptide_comp.entry("O").or_insert(0) -= 1;
+                ()
             },
             FragmentType::B => {
                 *peptide_comp.entry("H").or_insert(0) -= 2;
                 *peptide_comp.entry("O").or_insert(0) -= 1;
             },
             FragmentType::C => {
-                *peptide_comp.entry("H").or_insert(0) += 1;
+                ()
             },
             FragmentType::X => {
-                *peptide_comp.entry("C").or_insert(0) += 1;
-                *peptide_comp.entry("O").or_insert(0) += 1;
-                *peptide_comp.entry("H").or_insert(0) += 2;
+                ()
             },
             FragmentType::Y => {
                 ()
             },
             FragmentType::Z => {
-                *peptide_comp.entry("H").or_insert(0) += 1;
-                *peptide_comp.entry("N").or_insert(0) += 1;
+                ()
             },
         }
         peptide_comp
@@ -76,10 +74,11 @@ impl ProductIon {
 }
 
 // helper types for easier reading
-type Mass = f64;
-type Abundance = f64;
-type IsotopeDistribution = Vec<(Mass, Abundance)>;
+type _Mass = f64;
+type _Abundance = f64;
+type _IsotopeDistribution = Vec<(_Mass, _Abundance)>;
 
+#[derive(Debug, Clone)]
 pub struct PeptideSequence {
     pub sequence: String,
 }
@@ -109,12 +108,48 @@ impl PeptideSequence {
         peptide_sequence_to_atomic_composition(self)
     }
 
-    pub fn to_tokens(&self) -> Vec<String> {
-        unimod_sequence_to_tokens(&*self.sequence)
+    pub fn to_tokens(&self, group_modifications: bool) -> Vec<String> {
+        unimod_sequence_to_tokens(&*self.sequence, group_modifications)
     }
 
     pub fn to_sage_representation(&self) -> (String, Vec<f64>) {
         find_unimod_patterns(&*self.sequence)
+    }
+
+    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<ProductIon>, Vec<ProductIon>){
+
+        // TODO: check for n-terminal modifications
+        let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
+        let mut b_ions = Vec::new();
+        let mut y_ions = Vec::new();
+
+        // Generate b ions
+        for i in 1..tokens.len() {
+            let b_ion_seq = tokens[..i].join("");
+            b_ions.push(ProductIon {
+                kind: FragmentType::B,
+                sequence: PeptideSequence {
+                    sequence: b_ion_seq,
+                },
+                charge, // Assuming charge 1 for simplicity
+                intensity: 1.0, // Placeholder intensity
+            });
+        }
+
+        // Generate y ions
+        for i in 1..tokens.len() {
+            let y_ion_seq = tokens[tokens.len() - i..].join("");
+            y_ions.push(ProductIon {
+                kind: FragmentType::Y,
+                sequence: PeptideSequence {
+                    sequence: y_ion_seq,
+                },
+                charge, // Assuming charge 1 for simplicity
+                intensity: 1.0, // Placeholder intensity
+            });
+        }
+
+        (b_ions, y_ions)
     }
 }
 
@@ -265,34 +300,51 @@ pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> 
     composition
 }
 
-pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
+pub fn unimod_sequence_to_tokens(sequence: &str, group_modifications: bool) -> Vec<String> {
     let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
     let mut tokens = Vec::new();
     let mut last_index = 0;
 
     for mat in pattern.find_iter(sequence) {
-        // Extract the amino acids before the current UNIMOD and add them as individual tokens
-        let aa_sequence = &sequence[last_index..mat.start()];
-        tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
+        if group_modifications {
+            // When grouping, include the amino acid before the UNIMOD in the token
+            let pre_mod_sequence = &sequence[last_index..mat.start()];
+            let aa_sequence = if pre_mod_sequence.is_empty() {
+                ""
+            } else {
+                &pre_mod_sequence[..pre_mod_sequence.len() - 1]
+            };
+            tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
 
-        // Add the UNIMOD as its own token
-        let unimod = &sequence[mat.start()..mat.end()];
-        tokens.push(unimod.to_string());
+            // Group the last amino acid with the UNIMOD as one token
+            let grouped_mod = format!("{}{}", pre_mod_sequence.chars().last().unwrap_or_default().to_string(), &sequence[mat.start()..mat.end()]);
+            tokens.push(grouped_mod);
+        } else {
+            // Extract the amino acids before the current UNIMOD and add them as individual tokens
+            let aa_sequence = &sequence[last_index..mat.start()];
+            tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
+
+            // Add the UNIMOD as its own token
+            let unimod = &sequence[mat.start()..mat.end()];
+            tokens.push(unimod.to_string());
+        }
 
         // Update last_index to the end of the current UNIMOD
         last_index = mat.end();
     }
 
-    // Add the remaining amino acids after the last UNIMOD as individual tokens
-    let remaining_aa_sequence = &sequence[last_index..];
-    tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
+    if !group_modifications || last_index < sequence.len() {
+        // Add the remaining amino acids after the last UNIMOD as individual tokens
+        let remaining_aa_sequence = &sequence[last_index..];
+        tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
+    }
 
     tokens
 }
 
 pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
 
-    let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str());
+    let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), false);
     let mut collection: HashMap<&'static str, i32> = HashMap::new();
 
     // Assuming amino_acid_composition and modification_composition return appropriate mappings...
