@@ -1,6 +1,28 @@
 use regex::Regex;
 use crate::chemistry::unimod::unimod_modifications_mass;
 
+/// Convert a peptide sequence with UNIMOD annotations to a list of tokens
+///
+/// # Arguments
+///
+/// * `sequence` - a string slice of the peptide sequence
+/// * `group_modifications` - a boolean indicating whether to group the amino acid before the UNIMOD with the UNIMOD
+///
+/// # Returns
+///
+/// * `Vec<String>` - a vector of strings representing the tokens
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::utility::unimod_sequence_to_tokens;
+///
+/// let sequence = "PEPTIDE[UNIMOD:1]H";
+/// let tokens = unimod_sequence_to_tokens(sequence, false);
+/// assert_eq!(tokens, vec!["P", "E", "P", "T", "I", "D", "E", "[UNIMOD:1]", "H"]);
+/// let tokens = unimod_sequence_to_tokens(sequence, true);
+/// assert_eq!(tokens, vec!["P", "E", "P", "T", "I", "D", "E[UNIMOD:1]", "H"]);
+/// ```
 pub fn unimod_sequence_to_tokens(sequence: &str, group_modifications: bool) -> Vec<String> {
     let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
     let mut tokens = Vec::new();

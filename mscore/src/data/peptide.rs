@@ -42,7 +42,7 @@ impl PeptideIon {
 
         let atomic_composition: HashMap<String, i32> = self.sequence.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
 
-        let distribution: IsotopeDistribution = crate::algorithm::peptide::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
+        let distribution: IsotopeDistribution = crate::algorithm::isotope::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
             .into_iter().filter(|&(_, abundance)| abundance > intensity_min).collect();
 
         let mz_distribution = distribution.iter().map(|(mass, _)| calculate_mz(*mass, self.charge))
@@ -133,7 +133,7 @@ impl PeptideProductIon {
 
         let atomic_composition: HashMap<String, i32> = self.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
 
-        let distribution: IsotopeDistribution = crate::algorithm::peptide::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
+        let distribution: IsotopeDistribution = crate::algorithm::isotope::generate_isotope_distribution(&atomic_composition, mass_tolerance, abundance_threshold, max_result)
             .into_iter().filter(|&(_, abundance)| abundance > intensity_min).collect();
 
         let mz_distribution = distribution.iter().map(|(mass, _)| calculate_mz(*mass, self.ion.charge)).zip(distribution.iter().map(|&(_, abundance)| abundance)).collect();
@@ -248,7 +248,7 @@ impl PeptideSequence {
 /// # Examples
 ///
 /// ```
-/// use mscore::chemistry::peptide::calculate_peptide_mono_isotopic_mass;
+/// use mscore::data::peptide::calculate_peptide_mono_isotopic_mass;
 ///
 /// let mass = calculate_peptide_mono_isotopic_mass("PEPTIDEC[UNIMOD:4]R");
 /// // assert_eq!(mass, 1115.4917246863);
@@ -365,7 +365,7 @@ pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge:
 /// # Examples
 ///
 /// ```
-/// use mscore::chemistry::peptide::calculate_mz;
+/// use mscore::data::peptide::calculate_mz;
 ///
 /// let mz = calculate_mz(1000.0, 2);
 /// assert_eq!(mz, 501.007276466621);

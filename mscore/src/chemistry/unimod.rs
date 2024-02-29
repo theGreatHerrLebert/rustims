@@ -1,5 +1,24 @@
 use std::collections::HashMap;
 
+/// Unimod Modifications
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<String, HashMap<&'static str, i32>>` - a map of unimod modification names to their atomic compositions
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::unimod::modification_atomic_composition;
+/// use std::collections::HashMap;
+///
+/// let composition = modification_atomic_composition();
+/// assert_eq!(composition.get("[UNIMOD:1]"), Some(&HashMap::from([("C", 2), ("H", 2), ("O", 1)])));
+/// ```
 pub fn modification_atomic_composition() -> HashMap<String, HashMap<&'static str, i32>> {
     let mut composition: HashMap<String, HashMap<&'static str, i32>> = HashMap::new();
     composition.insert("[UNIMOD:1]".to_string(), HashMap::from([("C", 2), ("H", 2), ("O", 1)])); // Acetyl
@@ -23,7 +42,24 @@ pub fn modification_atomic_composition() -> HashMap<String, HashMap<&'static str
     composition
 }
 
-// MODIFICATIONS_MZ with string keys and float values
+/// Unimod Modifications Mass
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<&'static str, f64>` - a map of unimod modification names to their mass
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::unimod::unimod_modifications_mass;
+///
+/// let mass = unimod_modifications_mass();
+/// assert_eq!(mass.get("[UNIMOD:1]"), Some(&42.010565));
+/// ```
 pub fn unimod_modifications_mass() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("[UNIMOD:58]", 56.026215);
@@ -51,7 +87,24 @@ pub fn unimod_modifications_mass() -> HashMap<&'static str, f64> {
     map
 }
 
-// MODIFICATIONS_MZ_NUMERICAL with integer keys and float values
+/// Unimod Modifications Mass Numerical
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<u32, f64>` - a map of unimod modification numerical ids to their mass
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::unimod::unimod_modifications_mass_numerical;
+///
+/// let mass = unimod_modifications_mass_numerical();
+/// assert_eq!(mass.get(&58), Some(&56.026215));
+/// ```
 pub fn unimod_modifications_mass_numerical() -> HashMap<u32, f64> {
     let mut map = HashMap::new();
     map.insert(58, 56.026215);
