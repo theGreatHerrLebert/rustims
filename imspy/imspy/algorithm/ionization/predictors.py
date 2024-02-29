@@ -1,6 +1,7 @@
 import json
 
-import imspy_connector as ims
+import imspy_connector
+ims = imspy_connector.py_chemistry
 
 import pandas as pd
 import tensorflow as tf
@@ -8,7 +9,7 @@ import numpy as np
 
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
-from scipy.stats import binom
+
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path

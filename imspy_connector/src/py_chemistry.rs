@@ -78,6 +78,11 @@ pub fn ccs_to_reduced_mobility(ccs: f64, mz: f64, charge: u32, mass_gas: f64, te
     mscore::chemistry::formulas::ccs_to_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
 }
 
+#[pyfunction]
+pub fn calculate_mz(mono_isotopic_mass: f64, charge: i32) -> f64 {
+    mscore::chemistry::formulas::calculate_mz(mono_isotopic_mass, charge)
+}
+
 #[pymodule]
 pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
@@ -93,6 +98,7 @@ pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_isotope_distribution, m)?)?;
     m.add_function(wrap_pyfunction!(one_over_reduced_mobility_to_ccs, m)?)?;
     m.add_function(wrap_pyfunction!(ccs_to_reduced_mobility, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_mz, m)?)?;
     Ok(())
 }
 

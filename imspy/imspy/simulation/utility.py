@@ -8,7 +8,9 @@ from scipy.stats import norm
 import math
 import importlib.resources as resources
 
-from imspy.chemistry.mass import AMINO_ACID_MASSES, MASS_WATER, calculate_mz
+from imspy.core.chemistry.amino_acids import AMINO_ACID_MASSES
+from imspy.core.chemistry.constants import MASS_WATER
+from imspy.core.algorithm.utility import calculate_mz
 
 import imspy_connector as ims
 
