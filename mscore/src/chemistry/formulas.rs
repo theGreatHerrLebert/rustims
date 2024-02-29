@@ -1,3 +1,5 @@
+use crate::chemistry::constants::MASS_PROTON;
+
 /// convert 1 over reduced ion mobility (1/k0) to CCS
 ///
 /// Arguments:
@@ -69,4 +71,27 @@ pub fn ccs_to_reduced_mobility(
     let summary_constant = 18509.8632163405;
     let reduced_mass = (mz * charge as f64 * mass_gas) / (mz * charge as f64 + mass_gas);
     ((reduced_mass * (temp + t_diff)).sqrt() * ccs) / (summary_constant * charge as f64)
+}
+
+/// calculate the m/z of an ion
+///
+/// Arguments:
+///
+/// * `mono_mass` - monoisotopic mass of the ion
+/// * `charge` - charge state of the ion
+///
+/// Returns:
+///
+/// * `mz` - mass-over-charge of the ion
+///
+/// # Examples
+///
+/// ```
+/// use mscore::chemistry::formulas::calculate_mz;
+///
+/// let mz = calculate_mz(1000.0, 2);
+/// assert_eq!(mz, 501.007276466621);
+/// ```
+pub fn calculate_mz(monoisotopic_mass: f64, charge: i32) -> f64 {
+    (monoisotopic_mass + charge as f64 * MASS_PROTON) / charge as f64
 }

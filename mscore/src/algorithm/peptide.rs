@@ -1,6 +1,196 @@
+use std::collections::HashMap;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use regex::Regex;
 use statrs::distribution::{Binomial, Discrete};
+use crate::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
+use crate::chemistry::constants::{MASS_CO, MASS_NH3, MASS_PROTON, MASS_WATER};
+use crate::chemistry::formulas::calculate_mz;
+use crate::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
+use crate::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
+use crate::data::peptide::{FragmentType, PeptideProductIon, PeptideSequence};
+
+/// calculate the monoisotopic mass of a peptide sequence
+///
+/// Arguments:
+///
+/// * `sequence` - peptide sequence
+///
+/// Returns:
+///
+/// * `mass` - monoisotopic mass of the peptide
+///
+/// # Examples
+///
+/// ```
+/// use mscore::algorithm::peptide::calculate_peptide_mono_isotopic_mass;
+/// use mscore::data::peptide::PeptideSequence;
+///
+/// let peptide_sequence = PeptideSequence::new("PEPTIDEH".to_string());
+/// let mass = calculate_peptide_mono_isotopic_mass(&peptide_sequence);
+/// let mass_quantized = (mass * 1e6).round() as i32;
+/// assert_eq!(mass_quantized, 936418877);
+/// ```
+pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) -> f64 {
+    let amino_acid_masses = amino_acid_masses();
+    let modifications_mz_numerical = unimod_modifications_mass_numerical();
+    let pattern = Regex::new(r"\[UNIMOD:(\d+)]").unwrap();
+
+    let sequence = peptide_sequence.sequence.as_str();
+
+    // Find all occurrences of the pattern
+    let modifications: Vec<u32> = pattern
+        .find_iter(sequence)
+        .filter_map(|mat| mat.as_str()[8..mat.as_str().len() - 1].parse().ok())
+        .collect();
+
+    // Remove the modifications from the sequence
+    let sequence = pattern.replace_all(sequence, "");
+
+    // Count occurrences of each amino acid
+    let mut aa_counts = HashMap::new();
+    for char in sequence.chars() {
+        *aa_counts.entry(char).or_insert(0) += 1;
+    }
+
+    // Mass of amino acids and modifications
+    let mass_sequence: f64 = aa_counts.iter().map(|(aa, &count)| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64).sum();
+    let mass_modifications: f64 = modifications.iter().map(|&mod_id| modifications_mz_numerical.get(&mod_id).unwrap_or(&0.0)).sum();
+
+    mass_sequence + mass_modifications + MASS_WATER
+}
+
+pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: FragmentType) -> f64 {
+
+    let (sequence, modifications) = find_unimod_patterns(sequence);
+
+    // Return mz of empty sequence
+    if sequence.is_empty() {
+        return 0.0;
+    }
+
+    let amino_acid_masses = amino_acid_masses();
+
+    // Add up raw amino acid masses and potential modifications
+    let mass_sequence: f64 = sequence.chars()
+        .map(|aa| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0))
+        .sum();
+
+    let mass_modifications: f64 = modifications.iter().sum();
+
+    // Calculate total mass
+    let mass = mass_sequence + mass_modifications + MASS_WATER;
+
+    let mass = match kind {
+        FragmentType::A => mass - MASS_CO - MASS_WATER,
+        FragmentType::B => mass - MASS_WATER,
+        FragmentType::C => mass + MASS_NH3 - MASS_WATER,
+        FragmentType::X => mass + MASS_CO - 2.0 * MASS_PROTON,
+        FragmentType::Y => mass,
+        FragmentType::Z => mass - MASS_NH3,
+    };
+
+    mass
+}
+
+pub fn calculate_product_ion_mz(sequence: &str, kind: FragmentType, charge: Option<i32>) -> f64 {
+    let mass = calculate_peptide_product_ion_mono_isotopic_mass(sequence, kind);
+    calculate_mz(mass, charge.unwrap_or(1))
+}
+
+pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> {
+    let mut composition = HashMap::new();
+    for char in sequence.chars() {
+        *composition.entry(char.to_string()).or_insert(0) += 1;
+    }
+    composition
+}
+
+pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
+
+    let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), false);
+    let mut collection: HashMap<&'static str, i32> = HashMap::new();
+
+    // Assuming amino_acid_composition and modification_composition return appropriate mappings...
+    let aa_compositions = amino_acid_composition();
+    let mod_compositions = modification_atomic_composition();
+
+    // No need for conversion to HashMap<String, ...> as long as you're directly accessing
+    // the HashMap provided by modification_composition() if it uses String keys.
+    for token in token_sequence {
+        if token.len() == 1 {
+            let char = token.chars().next().unwrap();
+            if let Some(composition) = aa_compositions.get(&char) {
+                for (key, value) in composition.iter() {
+                    *collection.entry(key).or_insert(0) += *value;
+                }
+            }
+        } else {
+            // Directly use &token without .as_str() conversion
+            if let Some(composition) = mod_compositions.get(&token) {
+                for (key, value) in composition.iter() {
+                    *collection.entry(key).or_insert(0) += *value;
+                }
+            }
+        }
+    }
+
+    // Add water
+    *collection.entry("H").or_insert(0) += 2; //
+    *collection.entry("O").or_insert(0) += 1; //
+
+    collection
+}
+
+pub fn mono_isotopic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&str, i32)> {
+
+    let mut composition = peptide_sequence_to_atomic_composition(&product_ion.ion.sequence);
+
+    match product_ion.kind {
+        FragmentType::A => {
+            // A: peptide_mass - CO - Water
+            *composition.entry("H").or_insert(0) -= 2;
+            *composition.entry("O").or_insert(0) -= 2;
+            *composition.entry("C").or_insert(0) -= 1;
+        },
+        FragmentType::B => {
+            // B: peptide_mass - Water
+            *composition.entry("H").or_insert(0) -= 2;
+            *composition.entry("O").or_insert(0) -= 1;
+        },
+        FragmentType::C => {
+            // C: peptide_mass + NH3 - Water
+            *composition.entry("H").or_insert(0) += 1;
+            *composition.entry("N").or_insert(0) += 1;
+            *composition.entry("O").or_insert(0) -= 1;
+        },
+        FragmentType::X => {
+            // X: peptide_mass + CO
+            *composition.entry("C").or_insert(0) += 1; // Add 1 for CO
+            *composition.entry("O").or_insert(0) += 1; // Add 1 for CO
+            *composition.entry("H").or_insert(0) -= 2; // Subtract 2 for 2 protons
+        },
+        FragmentType::Y => {
+            ()
+        },
+        FragmentType::Z => {
+            *composition.entry("H").or_insert(0) -= 3;
+            *composition.entry("N").or_insert(0) -= 1;
+        },
+    }
+
+    composition.iter().map(|(k, v)| (*k, *v)).collect()
+}
+
+pub fn fragments_to_composition(product_ions: Vec<PeptideProductIon>, num_threads: usize) -> Vec<Vec<(String, i32)>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        product_ions.par_iter().map(|ion| mono_isotopic_product_ion_composition(ion)).map(|composition| {
+            composition.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+        }).collect()
+    });
+    result
+}
 
 /// count the number of protonizable sites in a peptide sequence
 ///
