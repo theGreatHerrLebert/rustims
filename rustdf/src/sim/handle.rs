@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
-use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
-use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
-use mscore::data::mz_spectrum::{MsType, MzSpectrum};
+use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
+use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::data::spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
 use rayon::prelude::*;

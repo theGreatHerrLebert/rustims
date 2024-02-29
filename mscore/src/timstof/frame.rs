@@ -4,15 +4,8 @@ use std::fmt::{Formatter};
 use itertools;
 use itertools::izip;
 
-use crate::data::mz_spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, TimsSpectrum};
-
-pub trait ToResolution {
-    fn to_resolution(&self, resolution: i32) -> Self;
-}
-
-pub trait Vectorized<T> {
-    fn vectorized(&self, resolution: i32) -> T;
-}
+use crate::timstof::spectrum::TimsSpectrum;
+use crate::data::spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, Vectorized, ToResolution};
 
 #[derive(Clone)]
 pub struct RawTimsFrame {
@@ -45,7 +38,7 @@ impl ImsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::data::tims_frame::ImsFrame;
+    /// use mscore::timstof::frame::ImsFrame;
     ///
     /// let frame = ImsFrame::new(100.0, vec![0.1, 0.2], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
@@ -95,9 +88,9 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::data::mz_spectrum::MsType;
-    /// use mscore::data::tims_frame::TimsFrame;
-    /// use mscore::data::tims_frame::ImsFrame;
+    /// use mscore::data::spectrum::MsType;
+    /// use mscore::timstof::frame::TimsFrame;
+    /// use mscore::timstof::frame::ImsFrame;
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
@@ -111,8 +104,8 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::data::mz_spectrum::MsType;
-    /// use mscore::data::tims_frame::TimsFrame;
+    /// use mscore::data::spectrum::MsType;
+    /// use mscore::timstof::frame::TimsFrame;
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// let ims_spectrum = frame.get_ims_frame();
@@ -125,8 +118,8 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::data::mz_spectrum::MsType;
-    /// use mscore::data::tims_frame::TimsFrame;
+    /// use mscore::data::spectrum::MsType;
+    /// use mscore::timstof::frame::TimsFrame;
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// let tims_spectra = frame.to_tims_spectra();
@@ -175,8 +168,8 @@ impl TimsFrame {
     /// # Examples
     ///
     /// ```
-    /// use mscore::data::mz_spectrum::MsType;
-    /// use mscore::data::tims_frame::TimsFrame;
+    /// use mscore::data::spectrum::MsType;
+    /// use mscore::timstof::frame::TimsFrame;
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// let filtered_frame = frame.filter_ranged(100.0, 200.0, 1, 2, 0.0, 1.6, 50.0, 60.0);
@@ -468,11 +461,11 @@ impl Vectorized<TimsFrameVectorized> for TimsFrame {
 /// # Examples
 ///
 /// ```
-/// use mscore::data::mz_spectrum::MsType;
-/// use mscore::data::tims_frame::TimsFrame;
-/// use mscore::data::mz_spectrum::TimsSpectrum;
-/// use mscore::data::mz_spectrum::IndexedMzSpectrum;
-/// use mscore::data::tims_frame::ToResolution;
+/// use mscore::data::spectrum::MsType;
+/// use mscore::timstof::frame::TimsFrame;
+/// use mscore::timstof::spectrum::TimsSpectrum;
+/// use mscore::data::spectrum::IndexedMzSpectrum;
+/// use mscore::data::spectrum::ToResolution;
 ///
 /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
 /// let low_res_frame = frame.to_resolution(1);

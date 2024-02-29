@@ -1,70 +1,10 @@
-use mscore::chemistry::aa_sequence::calculate_b_y_ion_series;
-use regex::Regex;
-use mscore::chemistry::unimod::unimod_modifications_mass;
+use mscore::chemistry::utility::find_unimod_patterns;
+use mscore::data::peptide::{FragmentType, PeptideSequence};
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::sim::containers::{FragmentIon, FragmentIonSeries};
 use serde_json::to_string;
-
-pub fn find_unimod_patterns(input_string: &str) -> (String, Vec<f64>) {
-    let results = extract_unimod_patterns(input_string);
-    let stripped_sequence = remove_unimod_annotation(input_string);
-    let index_list = generate_index_list(&results, input_string);
-    let mods = calculate_modifications(&index_list, &stripped_sequence);
-    (stripped_sequence, mods)
-}
-
-fn remove_unimod_annotation(sequence: &str) -> String {
-    let pattern = Regex::new(r"\[UNIMOD:\d+]").unwrap();
-    pattern.replace_all(sequence, "").to_string()
-}
-
-fn extract_unimod_patterns(input_string: &str) -> Vec<(usize, usize, String)> {
-    let pattern = Regex::new(r"\[UNIMOD:\d+]").unwrap();
-    pattern.find_iter(input_string)
-        .map(|mat| (mat.start(), mat.end(), mat.as_str().to_string()))
-        .collect()
-}
-
-fn generate_index_list(results: &[(usize, usize, String)], sequence: &str) -> Vec<(usize, String)> {
-    let mut index_list = Vec::new();
-    let mut chars_removed_counter = 0;
-
-    for (start, end, _) in results {
-        let num_chars_removed = end - start;
-        let mod_str = &sequence[*start..*end];
-
-        let later_aa_index = if *start != 0 {
-            start - 1 - chars_removed_counter
-        } else {
-            0
-        };
-
-        index_list.push((later_aa_index, mod_str.to_string()));
-        chars_removed_counter += num_chars_removed;
-    }
-
-    index_list
-}
-
-fn calculate_modifications(index_list: &[(usize, String)], stripped_sequence: &str) -> Vec<f64> {
-    let mut mods = vec![0.0; stripped_sequence.len()];
-    for (index, mod_str) in index_list {
-        if let Some(mass) = unimod_modifications_mass().get(mod_str.as_str()) {
-            mods[*index] += mass;
-        }
-    }
-    mods
-}
-
-pub fn find_unimod_patterns_par(sequences: Vec<&str>, num_threads: usize) -> Vec<(String, Vec<f64>)> {
-    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
-    let result = thread_pool.install(|| {
-        sequences.par_iter().map(|seq| find_unimod_patterns(seq)).collect()
-    });
-    result
-}
 
 pub fn generate_fragments(
     charge: i32,
@@ -142,7 +82,9 @@ pub fn sequence_to_all_ions(
     normalize: bool,
     half_charge_one: bool,
 ) -> String {
-    let (stripped_sequence, mods) = find_unimod_patterns(sequence);
+
+    let peptide_sequence = PeptideSequence::new(sequence.to_string());
+    let (stripped_sequence, _) = find_unimod_patterns(sequence);
     let seq_len = stripped_sequence.len() - 1; // Adjust for indexing
 
     let max_charge = std::cmp::min(charge, 3).max(2); // Ensure at least 2 for loop range
@@ -162,7 +104,42 @@ pub fn sequence_to_all_ions(
 
     for z in 1..=max_charge {
 
-        let (b, y) = calculate_b_y_ion_series(&stripped_sequence, mods.clone(), Some(z));
+        let (b, y) = peptide_sequence.calculate_product_ion_series(charge, FragmentType::B);
+
+        let b_mz_values = b.iter().map(|prod_ion| prod_ion.mz()).collect::<Vec<f64>>();
+        let mut b_ion_types: Vec<String> = Vec::with_capacity(b.len());
+
+        for (i, prod_ion) in b.iter().enumerate() {
+            let ion_type = match prod_ion.kind {
+                FragmentType::A => "a".to_string(),
+                FragmentType::B => "b".to_string(),
+                FragmentType::C => "c".to_string(),
+                FragmentType::X => "x".to_string(),
+                FragmentType::Y => "y".to_string(),
+                FragmentType::Z => "z".to_string(),
+            };
+            b_ion_types.push(format!("{}{}", ion_type, i + 1));
+        }
+
+        let b_sequences: Vec<String> = b.iter().map(|prod_ion| prod_ion.ion.sequence.sequence.clone()).collect();
+
+        let y_mz_values = y.iter().map(|prod_ion| prod_ion.mz()).collect::<Vec<f64>>();
+        let mut y_ion_types: Vec<String> = Vec::with_capacity(y.len());
+
+        for (i, prod_ion) in y.iter().enumerate() {
+            let ion_type = match prod_ion.kind {
+                FragmentType::A => "a".to_string(),
+                FragmentType::B => "b".to_string(),
+                FragmentType::C => "c".to_string(),
+                FragmentType::X => "x".to_string(),
+                FragmentType::Y => "y".to_string(),
+                FragmentType::Z => "z".to_string(),
+            };
+            y_ion_types.push(format!("{}{}", ion_type, i + 1));
+        }
+
+        let y_sequences: Vec<String> = y.iter().map(|prod_ion| prod_ion.ion.sequence.sequence.clone()).collect();
+
 
         let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
         let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
@@ -171,8 +148,8 @@ pub fn sequence_to_all_ions(
 
         let fragments = generate_fragments(
             z,
-            b.iter().map(|t| (t.0, t.1.clone(), t.2.clone())).collect::<Vec<(f64, String, String)>>(),
-            y.iter().map(|t| (t.0, t.1.clone(), t.2.clone())).collect::<Vec<(f64, String, String)>>(),
+               b_mz_values.iter().zip(b_ion_types.iter()).zip(b_sequences.iter()).map(|((mz, ion_type), sequence)| (*mz, ion_type.clone(), sequence.clone())).collect::<Vec<(f64, String, String)>>(),
+                y_mz_values.iter().zip(y_ion_types.iter()).zip(y_sequences.iter()).map(|((mz, ion_type), sequence)| (*mz, ion_type.clone(), sequence.clone())).collect::<Vec<(f64, String, String)>>(),
             intensity_b.iter().map(|&i| i / adjusted_sum_intensity).collect::<Vec<f64>>(),
             intensity_y.iter().map(|&i| i / adjusted_sum_intensity).collect::<Vec<f64>>(),
             4,

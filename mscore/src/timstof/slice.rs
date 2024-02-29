@@ -5,8 +5,9 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use itertools::multizip;
 
-use crate::data::mz_spectrum::{MsType, TimsSpectrum};
-use crate::data::tims_frame::{ImsFrame, TimsFrame, TimsFrameVectorized, Vectorized, ToResolution};
+use crate::data::spectrum::{MsType, Vectorized, ToResolution};
+use crate::timstof::spectrum::{TimsSpectrum};
+use crate::timstof::frame::{ImsFrame, TimsFrame, TimsFrameVectorized};
 
 #[derive(Clone)]
 pub struct TimsSlice {
@@ -28,7 +29,7 @@ impl TimsSlice {
     /// # Example
     ///
     /// ```
-    /// use mscore::data::tims_slice::TimsSlice;
+    /// use mscore::timstof::slice::TimsSlice;
     ///
     /// let slice = TimsSlice::new(vec![]);
     /// ```
@@ -55,7 +56,7 @@ impl TimsSlice {
     /// # Example
     ///
     /// ```
-    /// use mscore::data::tims_slice::TimsSlice;
+    /// use mscore::timstof::slice::TimsSlice;
     ///
     /// let slice = TimsSlice::new(vec![]);
     /// let filtered_slice = slice.filter_ranged(400.0, 2000.0, 0, 1000, 0.0, 100000.0, 0.0, 1.6, 4);
@@ -394,12 +395,12 @@ fn collapse_entry(_key: &(i32, i32), values: &(Vec<i32>, Vec<f64>, Vec<i32>, Vec
     let mut intensity = vec![];
 
     for ((f, s), (i, m, r)) in grouped_data {
-            frame_id.push(f);
-            retention_time.push(r);
-            scan.push(s);
-            mobility.push(m);
-            intensity.push(i);
-        }
+        frame_id.push(f);
+        retention_time.push(r);
+        scan.push(s);
+        mobility.push(m);
+        intensity.push(i);
+    }
 
     TimsPlane {
         tof_mean,

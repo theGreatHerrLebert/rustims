@@ -2,13 +2,14 @@ import sqlite3
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 
-import imspy_connector as pims
+import imspy_connector
+ims = imspy_connector.py_dia
 
 
 class TimsDatasetDIA(TimsDataset):
     def __init__(self, data_path: str):
         super().__init__(data_path=data_path)
-        self.__dataset = pims.PyTimsDatasetDIA(self.data_path, self.binary_path)
+        self.__dataset = ims.PyTimsDatasetDIA(self.data_path, self.binary_path)
 
     @property
     def dia_ms_ms_windows(self):

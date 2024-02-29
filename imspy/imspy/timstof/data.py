@@ -5,13 +5,14 @@ import pandas as pd
 import sqlite3
 from numpy.typing import NDArray
 
-import imspy_connector as pims
+import imspy_connector
+ims = imspy_connector.py_dataset
 import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.core.frame import TimsFrame
-from imspy.core.slice import TimsSlice
+from imspy.core.timstof.frame import TimsFrame
+from imspy.core.timstof.slice import TimsSlice
 
 
 class AcquisitionMode:
@@ -23,7 +24,7 @@ class AcquisitionMode:
         """
         allowed_modes = ["DDA", "DIA", "MIDIA", "UNKNOWN", "PRECURSOR"]
         assert mode in allowed_modes, f"Unknown acquisition mode, use one of {allowed_modes}"
-        self.__mode_ptr = pims.PyAcquisitionMode.from_string(mode)
+        self.__mode_ptr = ims.PyAcquisitionMode.from_string(mode)
 
     @property
     def mode(self) -> str:
@@ -35,7 +36,7 @@ class AcquisitionMode:
         return self.__mode_ptr.acquisition_mode
 
     @classmethod
-    def from_ptr(cls, ptr: pims.PyAcquisitionMode):
+    def from_ptr(cls, ptr: ims.PyAcquisitionMode):
         """Get an AcquisitionMode from a pointer.
 
         Args:
@@ -73,7 +74,7 @@ class TimsDataset(ABC):
         appropriate_found = False
         for so_path in obb.get_so_paths():
             try:
-                self.__dataset = pims.PyTimsDataset(self.data_path, so_path)
+                self.__dataset = ims.PyTimsDataset(self.data_path, so_path)
                 self.binary_path = so_path
                 appropriate_found = True
                 break
@@ -123,7 +124,7 @@ class TimsDataset(ABC):
         Returns:
             pd.DataFrame: Global meta data.
         """
-        d = pd.read_sql_query("SELECT * from GlobalMetaData", sqlite3.connect(self.data_path + "/analysis.tdf"))
+        d = pd.read_sql_query("SELECT * from GlobalMetadata", sqlite3.connect(self.data_path + "/analysis.tdf"))
         return dict(zip(d.Key, d.Value))
 
     @property

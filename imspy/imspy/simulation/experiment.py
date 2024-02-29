@@ -1,205 +1,159 @@
+import sqlite3
 import os
-from multiprocessing import Pool
-import functools
-from abc import ABC, abstractmethod
-import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
-from tqdm import tqdm
-from imspy.core import MzSpectrum
-from imspy.simulation.proteome import PeptideDigest, ProteomicsExperimentDatabaseHandle
-import imspy.simulation.hardware_models as hardware
+from abc import ABC
+from typing import List
+
+import pandas as pd
+import imspy_connector as pims
+
+from imspy.core import TimsFrame
 
 
-class ProteomicsExperiment(ABC):
-    def __init__(self, path: str):
+class TimsTofSyntheticFrameBuilderDIA:
+    def __init__(self, db_path: str):
+        self.handle = pims.PyTimsTofSyntheticsFrameBuilderDIA(db_path)
 
-        # path strings to experiment folder, database and output subfolder
-        self.path = path
-        self.output_path = f"{os.path.dirname(path)}/output"
-        self.database_path = f"{self.path}/experiment_database.db"
+    def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
+        frame = self.handle.build_frame(frame_id, fragment)
+        return TimsFrame.from_py_tims_frame(frame)
 
-        if not os.path.exists(self.path):
-            os.makedirs(self.path)
+    def build_frames(self, frame_ids: List[int], fragment: bool = True, num_threads: int = 4) -> List[TimsFrame]:
+        frames = self.handle.build_frames(frame_ids, fragment, num_threads)
+        return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
-        if os.path.exists(self.database_path):
-            raise FileExistsError("Experiment found in the given path.")
+    def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
+        return self.handle.get_collision_energy(frame_id, scan_id)
 
-        if not os.path.exists(self.output_path):
-            os.mkdir(self.output_path)
-
-        # output folder must be empty, otherwise it is
-        # assumend that it contains old experiments
-        if len(os.listdir(self.output_path)) > 0:
-            raise FileExistsError("Experiment found in the given path.")
-
-        # init database and loaded sample
-        self.database = ProteomicsExperimentDatabaseHandle(self.database_path)
-        self.loaded_sample = None
-
-        # hardware methods
-        self._lc_method = None
-        self._ionization_method = None
-        self._ion_mobility_separation_method = None
-        self._mz_separation_method = None
-
-    @property
-    def lc_method(self):
-        return self._lc_method
-
-    @lc_method.setter
-    def lc_method(self, method: hardware.LiquidChromatography):
-        self._lc_method = method
-
-    @property
-    def ionization_method(self):
-        return self._ionization_method
-
-    @ionization_method.setter
-    def ionization_method(self, method: hardware.IonSource):
-        self._ionization_method = method
-
-    @property
-    def ion_mobility_separation_method(self):
-        return self._ion_mobility_separation_method
-
-    @ion_mobility_separation_method.setter
-    def ion_mobility_separation_method(self, method: hardware.IonMobilitySeparation):
-        self._ion_mobility_separation_method = method
-
-    @property
-    def mz_separation_method(self):
-        return self._mz_separation_method
-
-    @mz_separation_method.setter
-    def mz_separation_method(self, method: hardware.MzSeparation):
-        self._mz_separation_method = method
-
-    @abstractmethod
-    def load_sample(self, sample: PeptideDigest):
-        self.database.push("PeptideDigest",sample)
-
-    @abstractmethod
-    def run(self):
-        pass
+    def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
+        return self.handle.get_collision_energies(frame_ids, scan_ids)
 
 
-class LcImsMsMs(ProteomicsExperiment):
-    def __init__(self, path: str):
-        super().__init__(path)
+class TimsTofSyntheticPrecursorFrameBuilder:
+    def __init__(self, db_path: str):
+        self.handle = pims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
-    def load_sample(self, sample: PeptideDigest):
-        return super().load_sample(sample)
+    def build_precursor_frame(self, frame_id: int):
+        frame = self.handle.build_precursor_frame(frame_id)
+        return TimsFrame.from_py_tims_frame(frame)
 
-    def run(self, chunk_size: int = 1000, assemble_processes: int = 8, frames_per_assemble_process: int = 20):
-        self._simulate_features(chunk_size)
-        self._assemble(frames_per_assemble_process, assemble_processes)
+    def build_precursor_frames(self, frame_ids: List[int], num_threads: int = 4):
+        frames = self.handle.build_precursor_frames(frame_ids, num_threads)
+        return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
-    def _simulate_features(self, chunk_size):
-        # load bulks of data here as dataframe if necessary
-        for data_chunk in self.database.load_chunks(chunk_size):
-            self.lc_method.run(data_chunk)
-            self.ionization_method.run(data_chunk)
-            self.ion_mobility_separation_method.run(data_chunk)
-            self.mz_separation_method.run(data_chunk)
-            self.database.update(data_chunk)
-    
-    @staticmethod
-    def _assemble_frame_range(frame_range, scan_id_min, scan_id_max, default_abundance,
-                              resolution, output_path, database_path):
 
-        frame_range_start = frame_range[0]
-        frame_range_end = frame_range[1]
-        # generate file_name
-        file_name = f"frames_{frame_range_start}_{frame_range_end}.parquet"
-        output_file_path = f"{output_path}/{file_name}"
+class SyntheticExperimentDataHandle:
+    def __init__(self,
+                 database_path: str,
+                 database_name: str = 'synthetic_data.db',
+                 verbose: bool = True,
+                 ):
+        self.verbose = verbose
+        self.base_path = database_path
+        self.database_path = os.path.join(self.base_path, database_name)
+        self.conn = None
 
-        frame_range = range(frame_range_start, frame_range_end)
-        scan_range = range(scan_id_min, scan_id_max + 1)
+        self._setup()
 
-        thread_db_handle = ProteomicsExperimentDatabaseHandle(database_path)
-        ions_in_split = thread_db_handle.load_frames((frame_range_start,
-                                                      frame_range_end), spectra_as_jsons=True)
+    def _setup(self):
+        if not os.path.exists(self.base_path):
+            if self.verbose:
+                print(f"Creating data directory: {self.base_path}")
+            os.makedirs(self.base_path)
+        if self.verbose:
+            print(f"Connecting to database: {self.database_path}")
+        self.conn = sqlite3.connect(self.database_path)
 
-        # skip if no peptides in split
-        if ions_in_split.shape[0] == 0:
-            return {}
+    def create_table(self, table_name: str, table: pd.DataFrame):
+        # Create a table from a pandas DataFrame
+        table.to_sql(table_name, self.conn, if_exists='replace', index=False)
 
-        # spectra are currently stored in json format (from SQL db)
-        ions_in_split.loc[:, "simulated_mz_spectrum"] = ions_in_split["simulated_mz_spectrum"].transform(lambda s: MzSpectrum.from_jsons(jsons=s))
+    def append_table(self, table_name: str, table: pd.DataFrame):
+        # Append a table to an existing table in the database
+        table.to_sql(table_name, self.conn, if_exists='append', index=False)
 
-        # construct signal data set
-        signal = {f_id: {s_id: [] for s_id in scan_range} for f_id in frame_range}
+    def create_table_sql(self, sql):
+        # Create a table as per the provided SQL statement
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(sql)
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
 
-        for _,row in ions_in_split.iterrows():
+    def close(self):
+        # Close the database connection
+        if self.conn:
+            self.conn.close()
 
-            ion_frame_start = max(frame_range_start, row["frame_min"])
-            ion_frame_end = min(frame_range_end-1, row["frame_max"]) # -1 here because frame_range_end is covered by next frame range
+    def get_table(self, table_name: str) -> pd.DataFrame:
+        # Get a table as a pandas DataFrame
+        return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
-            ion_scan_start = max(scan_id_min, row["scan_min"])
-            ion_scan_end = min(scan_id_max, row["scan_max"])
+    def list_tables(self):
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            return [table[0] for table in tables]
 
-            ion_frame_profile = row["simulated_frame_profile"]
-            ion_scan_profile = row["simulated_scan_profile"]
+    def list_columns(self, table_name):
+        if table_name not in self.list_tables():
+            raise ValueError(f"Table '{table_name}' does not exist in the database.")
 
-            ion_charge_abundance = row["abundancy"] * row["relative_abundancy"]
+        with self.conn:
+            cursor = self.conn.cursor()
+            cursor.execute(f"PRAGMA table_info({table_name});")
+            columns = cursor.fetchall()
+            return [column[1] for column in columns]
 
-            ion_spectrum = row["simulated_mz_spectrum"]
+    def __repr__(self):
+        return f"SyntheticExperimentDataHandle(database_path={self.database_path})"
 
-            # frame start and end inclusive
-            for f_id in range(ion_frame_start, ion_frame_end + 1):
-                # scan start and end inclusive
-                for s_id in range(ion_scan_start, ion_scan_end + 1):
 
-                    abundance = ion_charge_abundance * ion_frame_profile[f_id] * ion_scan_profile[s_id]
-                    rel_to_default_abundance = abundance/default_abundance
+class SyntheticExperimentDataHandleDIA(SyntheticExperimentDataHandle, ABC):
+    def __init__(self,
+                 database_path: str,
+                 database_name: str = 'synthetic_data.db',
+                 verbose: bool = True,):
+        super().__init__(database_path, database_name, verbose)
+        self.dia_ms_ms_info = None
+        self.dia_ms_ms_windows = None
 
-                    signal[f_id][s_id].append(ion_spectrum*rel_to_default_abundance)
+        self._additional_setup()
 
-        output_dict = {
-            "frame_id": [],
-            "scan_id": [],
-            "mz": [],
-            "intensity": [],
-        }
-        for (f_id, frame_dict) in signal.items():
-            for (s_id, scan_spectra_list) in frame_dict.items():
+    def _additional_setup(self):
+        self.dia_ms_ms_info = self.get_table('dia_ms_ms_info')
+        self.dia_ms_ms_windows = self.get_table('dia_ms_ms_windows')
 
-                if len(scan_spectra_list) > 0:
-                    scan_spectrum = MzSpectrum.from_mz_spectra_list(
-                        scan_spectra_list, resolution=resolution).vectorized(resolution=resolution).to_centroided()
-                    output_dict["mz"].append(scan_spectrum.mz.tolist())
-                    output_dict["intensity"].append(scan_spectrum.intensity.tolist())
-                    output_dict["scan_id"].append(s_id)
-                    output_dict["frame_id"].append(f_id)
-                    signal[f_id][s_id] = None
+    def get_frame_to_window_group(self):
+        return dict(zip(self.dia_ms_ms_info.frame, self.dia_ms_ms_info.window_group))
 
-        for key, value in output_dict.items():
-            output_dict[key] = pa.array(value)
+    def get_window_group_settings(self):
+        window_group_settings = {}
 
-        pa_table = pa.Table.from_pydict(output_dict)
+        for _, row in self.dia_ms_ms_windows.iterrows():
+            key = (row.window_group, row.scan_start)
+            value = (row.mz_mid, row.mz_width)
+            window_group_settings[key] = value
 
-        pq.write_table(pa_table, output_file_path, compression=None)
+        return window_group_settings
 
-    def _assemble(self, frames_per_process: int, num_processes: int):
 
-        scan_id_min = self.ion_mobility_separation_method.scan_id_min
-        scan_id_max = self.ion_mobility_separation_method.scan_id_max
-        default_abundance = self.mz_separation_method.model.default_abundance
-        resolution = self.mz_separation_method.resolution
+if __name__ == '__main__':
 
-        split_positions = np.arange(0, self.lc_method.num_frames, step=frames_per_process).astype(int)
-        split_start = split_positions[:-1]
-        split_end = split_positions[1:]
+    # Example usage
+    path = '/path/to/directory'
+    db_name = 'experiment_data.db'
+    handle = SyntheticExperimentDataHandle(path, db_name)
 
-        assemble_frame_range = functools.partial(self._assemble_frame_range, scan_id_min=scan_id_min,
-                                                 scan_id_max=scan_id_max, default_abundance=default_abundance,
-                                                 resolution=resolution,
-                                                 output_path=self.output_path, database_path=self.database_path)
+    # Create a table, for example
+    sql_create_peptides_table = '''
+    CREATE TABLE IF NOT EXISTS peptides (
+        peptide_id INTEGER PRIMARY KEY,
+        sequence TEXT NOT NULL,
+        monoisotopic_mass REAL)
+    '''
+    handle.create_table(sql_create_peptides_table)
 
-        if num_processes > 1:
-            with Pool(num_processes) as pool:
-                list(tqdm(pool.imap(assemble_frame_range, zip(split_start, split_end)), total=len(split_start)))
-        else:
-            for start, end in tqdm(zip(split_start, split_end), total=len(split_start)):
-                assemble_frame_range((start, end))
+    # Close the connection when done
+    handle.close()

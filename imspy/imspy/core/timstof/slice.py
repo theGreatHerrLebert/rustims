@@ -7,9 +7,10 @@ from tensorflow import sparse as sp
 
 from imspy.utility.utilities import re_index_indices
 
-import imspy_connector as pims
+import imspy_connector
+ims = imspy_connector.py_tims_slice
 
-from imspy.core.frame import TimsFrame, TimsFrameVectorized
+from imspy.core.timstof.frame import TimsFrame, TimsFrameVectorized
 from imspy.core.spectrum import MzSpectrum, TimsSpectrum
 
 
@@ -37,13 +38,13 @@ class TimsSlice:
         assert len(frame_id) == len(scan) == len(tof) == len(retention_time) == len(mobility) == len(mz) == len(
             intensity), "All arrays must have the same length."
 
-        self.__slice_ptr = pims.PyTimsSlice(
+        self.__slice_ptr = ims.PyTimsSlice(
             frame_id, scan, tof, retention_time, mobility, mz, intensity
         )
         self.__current_index = 0
 
     @classmethod
-    def from_py_tims_slice(cls, tims_slice: pims.PyTimsSlice):
+    def from_py_tims_slice(cls, tims_slice: ims.PyTimsSlice):
         """Create a TimsSlice from a PyTimsSlice.
 
         Args:
@@ -67,7 +68,7 @@ class TimsSlice:
         Returns:
             TimsSlice: TimsSlice created from the list of TimsFrames.
         """
-        return cls.from_py_tims_slice(pims.PyTimsSlice.from_frames([frame.get_frame_ptr() for frame in frames]))
+        return cls.from_py_tims_slice(ims.PyTimsSlice.from_frames([frame.get_frame_ptr() for frame in frames]))
 
     @property
     def first_frame_id(self) -> int:
@@ -276,7 +277,7 @@ class TimsSliceVectorized:
         self.__current_index = 0
 
     @classmethod
-    def from_vectorized_py_tims_slice(cls, tims_slice: pims.PyTimsSliceVectorized):
+    def from_vectorized_py_tims_slice(cls, tims_slice: ims.PyTimsSliceVectorized):
         """Create a TimsSlice from a PyTimsSlice.
 
         Args:
@@ -396,7 +397,7 @@ class TimsPlane:
         self.__plane_ptr = None
 
     @classmethod
-    def from_py_tims_plane(cls, plane: pims.PyTimsPlane):
+    def from_py_tims_plane(cls, plane: ims.PyTimsPlane):
         """Create a TimsPlane from a PyTimsPlane.
 
         Args:

@@ -23,4 +23,3 @@ def load_tokenizer_from_resources() -> tf.keras.preprocessing.text.Tokenizer:
         The pretrained tokenizer
     """
     return tokenizer_from_json(resources.files('imspy.algorithm.pretrained').joinpath('tokenizer-ptm.json'))
-

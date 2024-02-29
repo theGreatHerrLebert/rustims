@@ -1,6 +1,5 @@
-import numpy as np
-
-SUMMARY_CONSTANT = 18509.8632163405
+import imspy_connector
+ims = imspy_connector.py_chemistry
 
 
 def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
@@ -13,11 +12,10 @@ def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_d
     :param temp: temperature of the drift gas in C°
     :param t_diff: factor to translate from C° to K
     """
-    reduced_mass = (mz * charge * mass_gas) / (mz * charge + mass_gas)
-    return (SUMMARY_CONSTANT * charge) / (np.sqrt(reduced_mass * (temp + t_diff)) * 1 / one_over_k0)
+    ims.one_over_reduced_mobility_to_ccs(one_over_k0, mz, charge, mass_gas, temp, t_diff)
 
 
-def ccs_to_one_over_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
+def ccs_to_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
     """
     convert CCS to 1 over reduced ion mobility (1/k0)
     :param ccs: collision cross-section
@@ -27,5 +25,4 @@ def ccs_to_one_over_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.
     :param temp: temperature of the drift gas in C°
     :param t_diff: factor to translate from C° to K
     """
-    reduced_mass = (mz * charge * mass_gas) / (mz * charge + mass_gas)
-    return ((np.sqrt(reduced_mass * (temp + t_diff))) * ccs) / (SUMMARY_CONSTANT * charge)
+    ims.ccs_to_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)

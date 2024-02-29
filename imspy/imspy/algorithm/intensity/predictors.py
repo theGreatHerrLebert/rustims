@@ -1,5 +1,4 @@
 import re
-from typing import Tuple
 
 from numpy.typing import NDArray
 import pandas as pd
@@ -11,7 +10,6 @@ from tqdm import tqdm
 from imspy.algorithm.utility import get_model_path
 from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims)
-from imspy.simulation.exp import SyntheticExperimentDataHandle
 
 
 def remove_unimod_annotation(sequence: str) -> str:

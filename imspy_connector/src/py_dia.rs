@@ -43,7 +43,7 @@ impl PyTimsDatasetDIA {
 }
 
 #[pymodule]
-pub fn py_dia(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn dia(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
     Ok(())
 }

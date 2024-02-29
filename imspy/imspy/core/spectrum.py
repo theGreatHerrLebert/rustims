@@ -5,7 +5,8 @@ from typing import List, Tuple, Callable
 import pandas as pd
 from numpy.typing import NDArray
 from scipy.signal import find_peaks
-import imspy_connector as pims
+import imspy_connector
+ims = imspy_connector.py_spectrum
 
 
 def get_peak_integral(peaks: NDArray[np.int32], peak_info: dict) -> NDArray[np.float64]:

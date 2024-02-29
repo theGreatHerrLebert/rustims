@@ -1,5 +1,6 @@
 from typing import Dict, List
-import imspy_connector as ims
+import imspy_connector
+ims = imspy_connector.py_elements
 
 
 def get_elemental_isotopes_abundance_map() -> Dict[str, List[float]]:

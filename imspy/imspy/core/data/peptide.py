@@ -1,5 +1,7 @@
 from typing import List, Tuple
-import imspy_connector as ims
+
+import imspy_connector
+ims = imspy_connector.py_peptide
 
 
 class ProductIon:

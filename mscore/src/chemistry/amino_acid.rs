@@ -1,6 +1,23 @@
 use std::collections::HashMap;
 
-// Amino Acids and Their Codes
+/// Amino Acids
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<&'static str, &'static str>` - a map of amino acid names to their one-letter codes
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::amino_acid::amino_acids;
+///
+/// let amino_acids = amino_acids();
+/// assert_eq!(amino_acids.get("Lysine"), Some(&"K"));
+/// ```
 pub fn amino_acids() -> HashMap<&'static str, &'static str> {
     let mut map = HashMap::new();
     map.insert("Lysine", "K");
@@ -27,7 +44,25 @@ pub fn amino_acids() -> HashMap<&'static str, &'static str> {
     map
 }
 
-// Amino Acid Masses
+
+/// Amino Acid Masses
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<&'static str, f64>` - a map of amino acid one-letter codes to their monoisotopic masses
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::amino_acid::amino_acid_masses;
+///
+/// let amino_acid_masses = amino_acid_masses();
+/// assert_eq!(amino_acid_masses.get("K"), Some(&128.094963));
+/// ```
 pub fn amino_acid_masses() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("A", 71.037114);
@@ -54,6 +89,25 @@ pub fn amino_acid_masses() -> HashMap<&'static str, f64> {
     map
 }
 
+/// Amino Acid Composition
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<char, HashMap<&'static str, i32>>` - a map of amino acid one-letter codes to their atomic compositions
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::amino_acid::amino_acid_composition;
+/// use std::collections::HashMap;
+///
+/// let amino_acid_composition = amino_acid_composition();
+/// assert_eq!(amino_acid_composition.get(&'K'), Some(&HashMap::from([("C", 6), ("H", 12), ("N", 2), ("O", 1)])));
+/// ```
 pub fn amino_acid_composition() -> HashMap<char, HashMap<&'static str, i32>> {
 
     let mut composition: HashMap<char, HashMap<&'static str, i32>> = HashMap::new();

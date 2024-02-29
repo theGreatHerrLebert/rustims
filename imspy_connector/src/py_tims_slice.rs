@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
-use mscore::data::mz_spectrum::{MsType};
-use mscore::data::tims_slice::{TimsPlane, TimsSlice, TimsSliceVectorized};
+use mscore::data::spectrum::{MsType};
+use mscore::timstof::slice::{TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
 use numpy::{IntoPyArray, PyArray1};
 use crate::py_mz_spectrum::{PyTimsSpectrum};
@@ -291,7 +291,7 @@ impl PyTimsPlane {
 }
 
 #[pymodule]
-fn py_tims_slice(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn tims_slice(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsSlice>()?;
     m.add_class::<PyTimsSliceVectorized>()?;
     m.add_class::<PyTimsPlane>()?;

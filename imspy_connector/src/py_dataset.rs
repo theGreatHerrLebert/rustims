@@ -1,4 +1,4 @@
-use mscore::data::tims_frame::TimsFrame;
+use mscore::timstof::frame::TimsFrame;
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
 use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress, parse_decompressed_bruker_binary_data, reconstruct_compressed_data, compress_collection};
@@ -207,7 +207,7 @@ impl PyAcquisitionMode {
 }
 
 #[pymodule]
-pub fn py_dataset(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyAcquisitionMode>()?;
     Ok(())

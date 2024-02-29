@@ -1,5 +1,6 @@
-from abc import ABC, abstractmethod
-import imspy_connector as ims
+from abc import abstractmethod
+import imspy_connector
+ims = imspy_connector.py_quadrupole
 
 
 class TimsTofCollisionEnergy:

@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 
-use mscore::algorithm::isotope_distributions::{generate_averagine_spectra, generate_averagine_spectrum};
+use mscore::algorithm::isotope::{generate_averagine_spectra, generate_averagine_spectrum};
 use crate::py_mz_spectrum::PyMzSpectrum;
+use crate::py_peptide::PyPeptideSequence;
 
 #[pyfunction]
 pub fn generate_precursor_spectrum(mass: f64, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> PyMzSpectrum {
@@ -23,35 +24,24 @@ pub fn generate_precursor_spectra(
 }
 
 #[pyfunction]
-pub fn calculate_monoisotopic_mass(sequence: &str) -> f64 {
-    mscore::chemistry::aa_sequence::calculate_peptide_mono_isotopic_mass(sequence)
-}
-
-#[pyfunction]
-pub fn calculate_b_y_ion_series(sequence: &str, modifications: Vec<f64>, charge: Option<i32>) -> (Vec<(f64, String, String)>, Vec<(f64, String, String)>) {
-    mscore::chemistry::aa_sequence::calculate_b_y_ion_series(sequence, modifications, charge)
+pub fn calculate_monoisotopic_mass(peptide_sequence: PyPeptideSequence) -> f64 {
+    mscore::algorithm::peptide::calculate_peptide_mono_isotopic_mass(&peptide_sequence.inner)
 }
 
 #[pyfunction]
 pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<f64> {
-    mscore::algorithm::aa_sequence::simulate_charge_state_for_sequence(sequence, max_charge, charge_probability)
+    mscore::algorithm::peptide::simulate_charge_state_for_sequence(sequence, max_charge, charge_probability)
 }
 
 #[pyfunction]
 pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
-    mscore::algorithm::aa_sequence::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
+    mscore::algorithm::peptide::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
 }
 
 #[pyfunction]
 pub fn find_unimod_annotations(sequence: &str) -> (String, Vec<f64>) {
-    rustdf::sim::utility::find_unimod_patterns(sequence)
+    mscore::chemistry::utility::find_unimod_patterns(sequence)
 }
-
-#[pyfunction]
-pub fn find_unimod_annotations_par(sequences: Vec<&str>, num_threads: usize) -> Vec<(String, Vec<f64>)> {
-    rustdf::sim::utility::find_unimod_patterns_par(sequences, num_threads)
-}
-
 #[pyfunction]
 pub fn sequence_to_all_ions_ims(sequence: &str, charge: i32, intensities: Vec<f64>, normalize: bool, half_charge_one: bool) -> String {
     rustdf::sim::utility::sequence_to_all_ions(sequence, charge, &intensities, normalize, half_charge_one)
@@ -74,7 +64,35 @@ pub fn unimod_sequence_to_tokens(sequence: &str) -> Vec<String> {
 
 #[pyfunction]
 pub fn generate_isotope_distribution(atomic_composition: Vec<(String, f64)>, mass_tolerance: f64, abundance_threshold: f64, max_result: i32) -> Vec<(f64, f64)> {
-    mscore::algorithm::aa_sequence::generate_isotope_distribution(&atomic_composition.iter().map(|(k, v)| (k.to_string(), *v as i32)).collect(),
+    mscore::algorithm::isotope::generate_isotope_distribution(&atomic_composition.iter().map(|(k, v)| (k.to_string(), *v as i32)).collect(),
         mass_tolerance, abundance_threshold, max_result)
+}
+
+#[pyfunction]
+pub fn one_over_reduced_mobility_to_ccs(one_over_k0: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
+    mscore::chemistry::formulas::one_over_reduced_mobility_to_ccs(one_over_k0, mz, charge, mass_gas, temp, t_diff)
+}
+
+#[pyfunction]
+pub fn ccs_to_reduced_mobility(ccs: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
+    mscore::chemistry::formulas::ccs_to_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
+}
+
+#[pymodule]
+pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;
+    m.add_function(wrap_pyfunction!(simulate_charge_state_for_sequence, m)?)?;
+    m.add_function(wrap_pyfunction!(simulate_charge_states_for_sequences, m)?)?;
+    m.add_function(wrap_pyfunction!(find_unimod_annotations, m)?)?;
+    m.add_function(wrap_pyfunction!(sequence_to_all_ions_ims, m)?)?;
+    m.add_function(wrap_pyfunction!(reshape_prosit_array, m)?)?;
+    m.add_function(wrap_pyfunction!(sequence_to_all_ions_par, m)?)?;
+    m.add_function(wrap_pyfunction!(unimod_sequence_to_tokens, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_isotope_distribution, m)?)?;
+    m.add_function(wrap_pyfunction!(one_over_reduced_mobility_to_ccs, m)?)?;
+    m.add_function(wrap_pyfunction!(ccs_to_reduced_mobility, m)?)?;
+    Ok(())
 }
 

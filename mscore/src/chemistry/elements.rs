@@ -1,5 +1,23 @@
 use std::collections::HashMap;
 
+/// Atomic Weights
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<&'static str, f64>` - a map of atomic symbols to their monoisotopic weights
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::elements::atomic_weights_mono_isotopic;
+///
+/// let atomic_weights = atomic_weights_mono_isotopic();
+/// assert_eq!(atomic_weights.get("H"), Some(&1.00782503223));
+/// ```
 pub fn atomic_weights_mono_isotopic() -> HashMap<&'static str, f64> {
     let mut map = HashMap::new();
     map.insert("H", 1.00782503223);
@@ -124,6 +142,24 @@ pub fn atomic_weights_mono_isotopic() -> HashMap<&'static str, f64> {
     map
 }
 
+/// Isotopic Weights
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<&'static str, Vec<f64>>` - a map of atomic symbols to their isotopic weights
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::elements::atoms_isotopic_weights;
+///
+/// let isotopic_weights = atoms_isotopic_weights();
+/// assert_eq!(isotopic_weights.get("H"), Some(&vec![1.00782503223, 2.01410177812]));
+/// ```
 pub fn atoms_isotopic_weights() -> HashMap<&'static str, Vec<f64>> {
     let mut map = HashMap::new();
     map.insert("H", vec![1.00782503223, 2.01410177812]);
@@ -164,6 +200,24 @@ pub fn atoms_isotopic_weights() -> HashMap<&'static str, Vec<f64>> {
     map
 }
 
+/// Isotopic Abundance
+///
+/// # Arguments
+///
+/// None
+///
+/// # Returns
+///
+/// * `HashMap<&'static str, Vec<f64>>` - a map of atomic symbols to their isotopic abundances
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::elements::isotopic_abundance;
+///
+/// let isotopic_abundance = isotopic_abundance();
+/// assert_eq!(isotopic_abundance.get("H"), Some(&vec![0.999885, 0.000115]));
+/// ```
 pub fn isotopic_abundance() -> HashMap<&'static str, Vec<f64>> {
 
     let mut map = HashMap::new();

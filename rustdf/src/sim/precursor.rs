@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
-use mscore::data::tims_frame::TimsFrame;
-use mscore::data::mz_spectrum::{MzSpectrum, MsType, IndexedMzSpectrum, TimsSpectrum};
+use mscore::timstof::frame::TimsFrame;
+use mscore::timstof::spectrum::TimsSpectrum;
+use mscore::data::spectrum::{MzSpectrum, MsType, IndexedMzSpectrum};
 use rusqlite::{Result};
 use std::path::Path;
 

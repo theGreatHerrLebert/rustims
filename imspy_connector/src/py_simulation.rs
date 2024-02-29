@@ -1,4 +1,4 @@
-use mscore::algorithm::fragmentation::TimsTofCollisionEnergy;
+use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
@@ -83,7 +83,7 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
 }
 
 #[pymodule]
-fn py_tims_synthetic(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn simulation(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
     m.add_class::<PyTimsTofSyntheticsPrecursorFrameBuilder>()?;
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
