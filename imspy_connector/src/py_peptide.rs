@@ -120,7 +120,7 @@ impl PyPeptideProductIon {
 }
 
 #[pymodule]
-pub fn sequence(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn peptides(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
     m.add_class::<PyPeptideProductIon>()?;
     Ok(())
