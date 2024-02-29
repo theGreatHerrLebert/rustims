@@ -1,80 +1,102 @@
-mod py_dataset;
-mod py_mz_spectrum;
-mod py_tims_frame;
-mod py_tims_slice;
-mod py_dda;
-mod py_dia;
-mod py_simulation;
-mod py_chemistry;
-mod py_quadrupole;
-mod py_sequence;
-mod py_constants;
-mod py_elements;
-
 use pyo3::prelude::*;
-use pyo3::wrap_pyfunction;
 
-use crate::py_dataset::{PyTimsDataset, PyAcquisitionMode};
-use crate::py_mz_spectrum::{PyMzSpectrum, PyIndexedMzSpectrum, PyTimsSpectrum, PyMzSpectrumVectorized};
-use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized, PyRawTimsFrame};
-use crate::py_tims_slice::{PyTimsPlane, PyTimsSlice, PyTimsSliceVectorized};
-use crate::py_dda::{PyTimsDatasetDDA, PyTimsFragmentDDA};
-use crate::py_simulation::{PyTimsTofSyntheticsPrecursorFrameBuilder, PyTimsTofSyntheticsFrameBuilderDIA, PyTimsTofSyntheticsDataHandle};
-pub use py_chemistry::{generate_precursor_spectrum, generate_precursor_spectra, calculate_monoisotopic_mass, calculate_b_y_ion_series, simulate_charge_state_for_sequence, simulate_charge_states_for_sequences};
-use crate::py_sequence::{PyPeptideSequence, PyPeptideProductIon};
-use crate::py_dia::PyTimsDatasetDIA;
-use crate::py_quadrupole::{PyTimsTransmissionDIA, apply_transmission, PyTimsTofCollisionEnergyDIA};
+pub mod py_constants;
+use py_constants::constants;
 
+pub mod py_chemistry;
+use py_chemistry::chemistry;
+
+pub mod py_dataset;
+use py_dataset::dataset;
+
+pub mod py_dda;
+use py_dda::dda;
+
+pub mod py_dia;
+use py_dia::dia;
+
+pub mod py_elements;
+use py_elements::elements;
+
+pub mod py_mz_spectrum;
+use py_mz_spectrum::mz_spectrum;
+
+pub mod py_quadrupole;
+use py_quadrupole::quadrupole;
+
+pub mod py_sequence;
+use py_sequence::sequence;
+
+pub mod py_simulation;
+use py_simulation::simulation;
+
+pub mod py_tims_frame;
+use py_tims_frame::tims_frame;
+
+pub mod py_tims_slice;
+use py_tims_slice::tims_slice;
 
 #[pymodule]
-fn imspy_connector(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<PyTimsDataset>()?;
-    m.add_class::<PyTimsDatasetDDA>()?;
-    m.add_class::<PyTimsDatasetDIA>()?;
-    m.add_class::<PyMzSpectrum>()?;
-    m.add_class::<PyMzSpectrumVectorized>()?;
-    m.add_class::<PyIndexedMzSpectrum>()?;
-    m.add_class::<PyTimsSpectrum>()?;
-    m.add_class::<PyTimsFrame>()?;
-    m.add_class::<PyRawTimsFrame>()?;
-    m.add_class::<PyTimsFrameVectorized>()?;
-    m.add_class::<PyTimsSlice>()?;
-    m.add_class::<PyTimsSliceVectorized>()?;
-    m.add_class::<PyTimsPlane>()?;
-    m.add_class::<PyTimsFragmentDDA>()?;
-    m.add_class::<PyAcquisitionMode>()?;
-    m.add_class::<PyTimsTofSyntheticsPrecursorFrameBuilder>()?;
-    m.add_class::<PyTimsTransmissionDIA>()?;
-    m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
-    m.add_class::<PyTimsTofCollisionEnergyDIA>()?;
-    m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
-    m.add_class::<PyPeptideSequence>()?;
-    m.add_class::<PyPeptideProductIon>()?;
-    m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
-    m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_b_y_ion_series, m)?)?;
-    m.add_function(wrap_pyfunction!(simulate_charge_state_for_sequence, m)?)?;
-    m.add_function(wrap_pyfunction!(simulate_charge_states_for_sequences, m)?)?;
-    m.add_function(wrap_pyfunction!(apply_transmission, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::find_unimod_annotations, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::find_unimod_annotations_par, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::sequence_to_all_ions_ims, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::reshape_prosit_array, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::sequence_to_all_ions_par, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::unimod_sequence_to_tokens, m)?)?;
-    m.add_function(wrap_pyfunction!(py_chemistry::generate_isotope_distribution, m)?)?;
-    m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_weight_map, m)?)?;
-    m.add_function(wrap_pyfunction!(py_elements::get_elemental_mono_isotopic_weight_map, m)?)?;
-    m.add_function(wrap_pyfunction!(py_elements::get_elemental_isotope_abundance_map, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::elementary_charge, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::k_boltzmann, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::standard_pressure, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::standard_temperature, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::mass_electron, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::mass_proton, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::mass_neutron, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::mass_water, m)?)?;
-    m.add_function(wrap_pyfunction!(py_constants::avogadro, m)?)?;
+fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
+    // py_constants submodule //
+    let py_constants_submodule = PyModule::new(py, "py_constants")?;
+    constants(py, &py_constants_submodule)?;
+    m.add_submodule(py_constants_submodule)?;
+
+    // py_chemistry submodule //
+    let py_chemistry_submodule = PyModule::new(py, "py_chemistry")?;
+    chemistry(py, &py_chemistry_submodule)?;
+    m.add_submodule(py_chemistry_submodule)?;
+
+    // py_dataset submodule //
+    let py_dataset_submodule = PyModule::new(py, "py_dataset")?;
+    dataset(py, &py_dataset_submodule)?;
+    m.add_submodule(py_dataset_submodule)?;
+
+    // py_dda submodule //
+    let py_dda_submodule = PyModule::new(py, "py_dda")?;
+    dda(py, &py_dda_submodule)?;
+    m.add_submodule(py_dda_submodule)?;
+
+    // py_dia submodule //
+    let py_dia_submodule = PyModule::new(py, "py_dia")?;
+    dia(py, &py_dia_submodule)?;
+    m.add_submodule(py_dia_submodule)?;
+
+    // py_elements submodule //
+    let py_elements_submodule = PyModule::new(py, "py_elements")?;
+    elements(py, &py_elements_submodule)?;
+    m.add_submodule(py_elements_submodule)?;
+
+    // py_mz_spectrum submodule //
+    let py_mz_spectrum_submodule = PyModule::new(py, "py_mz_spectrum")?;
+    mz_spectrum(py, &py_mz_spectrum_submodule)?;
+    m.add_submodule(py_mz_spectrum_submodule)?;
+
+    // py_quadrupole submodule //
+    let py_quadrupole_submodule = PyModule::new(py, "py_quadrupole")?;
+    quadrupole(py, &py_quadrupole_submodule)?;
+    m.add_submodule(py_quadrupole_submodule)?;
+
+    // py_sequence submodule //
+    let py_sequence_submodule = PyModule::new(py, "py_sequence")?;
+    sequence(py, &py_sequence_submodule)?;
+    m.add_submodule(py_sequence_submodule)?;
+
+    // py_simulation submodule //
+    let py_simulation_submodule = PyModule::new(py, "py_simulation")?;
+    simulation(py, &py_simulation_submodule)?;
+    m.add_submodule(py_simulation_submodule)?;
+
+    // py_tims_frame submodule //
+    let py_tims_frame_submodule = PyModule::new(py, "py_tims_frame")?;
+    tims_frame(py, &py_tims_frame_submodule)?;
+    m.add_submodule(py_tims_frame_submodule)?;
+
+    // py_tims_slice submodule //
+    let py_tims_slice_submodule = PyModule::new(py, "py_tims_slice")?;
+    tims_slice(py, &py_tims_slice_submodule)?;
+    m.add_submodule(py_tims_slice_submodule)?;
+
     Ok(())
 }

@@ -297,7 +297,7 @@ impl PyTimsSpectrum {
 }
 
 #[pymodule]
-pub fn py_mz_spectrum(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn mz_spectrum(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyMsType>()?;
     m.add_class::<PyMzSpectrum>()?;
     m.add_class::<PyMzSpectrumVectorized>()?;

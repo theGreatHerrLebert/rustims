@@ -291,7 +291,7 @@ impl PyTimsPlane {
 }
 
 #[pymodule]
-fn py_tims_slice(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn tims_slice(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsSlice>()?;
     m.add_class::<PyTimsSliceVectorized>()?;
     m.add_class::<PyTimsPlane>()?;

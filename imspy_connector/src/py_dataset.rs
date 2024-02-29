@@ -207,7 +207,7 @@ impl PyAcquisitionMode {
 }
 
 #[pymodule]
-pub fn py_dataset(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyAcquisitionMode>()?;
     Ok(())

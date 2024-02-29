@@ -310,7 +310,7 @@ impl  PyTimsFrameVectorized {
 }
 
 #[pymodule]
-pub fn py_tims_frame(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn tims_frame(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsFrame>()?;
     m.add_class::<PyTimsFrameVectorized>()?;
     m.add_class::<PyRawTimsFrame>()?;

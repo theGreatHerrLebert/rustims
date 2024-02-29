@@ -77,7 +77,7 @@ impl PyTimsFragmentDDA {
 }
 
 #[pymodule]
-pub fn py_dda(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn dda(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDDA>()?;
     m.add_class::<PyTimsFragmentDDA>()?;
     Ok(())

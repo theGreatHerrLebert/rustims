@@ -78,3 +78,21 @@ pub fn generate_isotope_distribution(atomic_composition: Vec<(String, f64)>, mas
         mass_tolerance, abundance_threshold, max_result)
 }
 
+#[pymodule]
+pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_b_y_ion_series, m)?)?;
+    m.add_function(wrap_pyfunction!(simulate_charge_state_for_sequence, m)?)?;
+    m.add_function(wrap_pyfunction!(simulate_charge_states_for_sequences, m)?)?;
+    m.add_function(wrap_pyfunction!(find_unimod_annotations, m)?)?;
+    m.add_function(wrap_pyfunction!(find_unimod_annotations_par, m)?)?;
+    m.add_function(wrap_pyfunction!(sequence_to_all_ions_ims, m)?)?;
+    m.add_function(wrap_pyfunction!(reshape_prosit_array, m)?)?;
+    m.add_function(wrap_pyfunction!(sequence_to_all_ions_par, m)?)?;
+    m.add_function(wrap_pyfunction!(unimod_sequence_to_tokens, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_isotope_distribution, m)?)?;
+    Ok(())
+}
+
