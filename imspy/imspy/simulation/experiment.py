@@ -6,7 +6,7 @@ from typing import List
 import pandas as pd
 import imspy_connector as pims
 
-from imspy.core import TimsFrame
+from imspy.core.timstof.frame import TimsFrame
 
 
 class TimsTofSyntheticFrameBuilderDIA:

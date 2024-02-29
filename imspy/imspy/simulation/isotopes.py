@@ -5,7 +5,7 @@ from numpy.typing import NDArray
 from numpy.typing import ArrayLike
 from abc import ABC, abstractmethod
 
-from imspy.core import MzSpectrum
+from imspy.core.spectrum import MzSpectrum
 from imspy.utility.utilities import gaussian, exp_gaussian, normal_pdf
 import numba
 import pyopenms
