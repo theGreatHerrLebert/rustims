@@ -37,11 +37,22 @@ impl PyPeptideSequence {
         self.inner.to_sage_representation()
     }
 
-    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<PyPeptideProductIon>, Vec<PyPeptideProductIon>) {
-        let (b, y) = self.inner.calculate_b_y_product_ion_series(charge);
-        let b_ions: Vec<PyPeptideProductIon> = b.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
-        let y_ions: Vec<PyPeptideProductIon> = y.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
-        (b_ions, y_ions)
+    pub fn calculate_product_ion_series(&self, charge: i32, fragment_type: String) -> (Vec<PyPeptideProductIon>, Vec<PyPeptideProductIon>) {
+
+        let f_type = match fragment_type.as_str() {
+            "a" => FragmentType::A,
+            "b" => FragmentType::B,
+            "c" => FragmentType::C,
+            "x" => FragmentType::X,
+            "y" => FragmentType::Y,
+            "z" => FragmentType::Z,
+            _ => panic!("Invalid fragment type"),
+        };
+
+        let (n, c) = self.inner.calculate_product_ion_series(charge, f_type);
+        let n_ions: Vec<PyPeptideProductIon> = n.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        let c_ions: Vec<PyPeptideProductIon> = c.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        (n_ions, c_ions)
     }
 }
 

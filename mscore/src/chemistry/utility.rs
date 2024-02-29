@@ -1,6 +1,48 @@
 use regex::Regex;
 use crate::chemistry::unimod::unimod_modifications_mass;
 
+pub fn unimod_sequence_to_tokens(sequence: &str, group_modifications: bool) -> Vec<String> {
+    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
+    let mut tokens = Vec::new();
+    let mut last_index = 0;
+
+    for mat in pattern.find_iter(sequence) {
+        if group_modifications {
+            // When grouping, include the amino acid before the UNIMOD in the token
+            let pre_mod_sequence = &sequence[last_index..mat.start()];
+            let aa_sequence = if pre_mod_sequence.is_empty() {
+                ""
+            } else {
+                &pre_mod_sequence[..pre_mod_sequence.len() - 1]
+            };
+            tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
+
+            // Group the last amino acid with the UNIMOD as one token
+            let grouped_mod = format!("{}{}", pre_mod_sequence.chars().last().unwrap_or_default().to_string(), &sequence[mat.start()..mat.end()]);
+            tokens.push(grouped_mod);
+        } else {
+            // Extract the amino acids before the current UNIMOD and add them as individual tokens
+            let aa_sequence = &sequence[last_index..mat.start()];
+            tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
+
+            // Add the UNIMOD as its own token
+            let unimod = &sequence[mat.start()..mat.end()];
+            tokens.push(unimod.to_string());
+        }
+
+        // Update last_index to the end of the current UNIMOD
+        last_index = mat.end();
+    }
+
+    if !group_modifications || last_index < sequence.len() {
+        // Add the remaining amino acids after the last UNIMOD as individual tokens
+        let remaining_aa_sequence = &sequence[last_index..];
+        tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
+    }
+
+    tokens
+}
+
 pub fn find_unimod_patterns(input_string: &str) -> (String, Vec<f64>) {
     let results = extract_unimod_patterns(input_string);
     let stripped_sequence = remove_unimod_annotation(input_string);
