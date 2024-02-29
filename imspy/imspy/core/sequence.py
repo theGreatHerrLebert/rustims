@@ -107,17 +107,22 @@ class PeptideSequence:
     def get_ptr(self):
         return self.__ptr
 
-    def calculate_b_y_product_ion_series(self, charge: int = 1) -> Tuple[List[ProductIon], List[ProductIon]]:
+    def calculate_product_ion_series(self, charge: int = 1, fragment_type: str = 'b') -> Tuple[List[ProductIon], List[ProductIon]]:
         """Calculate the b and y product ion series of the peptide sequence.
 
         Args:
             charge: The charge of the product ions.
+            fragment_type: The type of the product ions, must be one of 'a', 'b', 'c', 'x', 'y', 'z'.
 
         Returns:
             The b and y product ion series of the peptide sequence.
         """
-        b_ions, y_ions = self.__ptr.calculate_b_y_product_ion_series(charge)
-        return [ProductIon.from_py_ptr(ion) for ion in b_ions], [ProductIon.from_py_ptr(ion) for ion in y_ions][::-1]
+        fragment_type = fragment_type.lower()
+        assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
+                                                                 f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
+
+        n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
+        return [ProductIon.from_py_ptr(ion) for ion in n_ions], [ProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
 
     @classmethod
     def fom_py_ptr(cls, seq: ims.PyPeptideSequence):

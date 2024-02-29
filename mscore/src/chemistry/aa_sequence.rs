@@ -3,10 +3,10 @@ use rayon::ThreadPoolBuilder;
 
 use std::collections::HashMap;
 use regex::Regex;
-use crate::chemistry::constants::{MASS_WATER, MASS_PROTON};
+use crate::chemistry::constants::{MASS_WATER, MASS_PROTON, MASS_CO, MASS_NH3};
 use crate::chemistry::amino_acids::{amino_acid_composition, amino_acid_masses};
 use crate::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
-use crate::chemistry::utility::find_unimod_patterns;
+use crate::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
 
 // helper types for easier reading
 type Mass = f64;
@@ -74,42 +74,50 @@ impl PeptideProductIon {
     }
 
     pub fn mono_isotopic_mass(&self) -> f64 {
-        let peptide_mass = self.ion.sequence.mono_isotopic_mass();
-        match self.kind {
-            // FragmentType::A => peptide_mass - MASS_CO,
-            FragmentType::B => peptide_mass - MASS_WATER,
-            // FragmentType::C => peptide_mass + MASS_PROTON, // Adding the mass of a proton (H) for the c-ion
-            // FragmentType::X => peptide_mass + MASS_CO + 2.0 * MASS_PROTON, // Adjusting for x-ion specific mass change; adding CO and 2*H
-            FragmentType::Y => peptide_mass,
-            // FragmentType::Z => peptide_mass - MASS_NH - MASS_PROTON, // Subtracting NH (or its relevant mass) and a proton (H)
-            _ => panic!("Invalid fragment type"),
-        }
+        let (sequence, modifications) = self.ion.sequence.to_sage_representation();
+        calculate_product_ion_mono_isotopic_mass(&sequence, modifications, self.kind)
     }
 
     pub fn atomic_composition(&self) -> HashMap<&str, i32> {
-        let mut peptide_comp = peptide_sequence_to_atomic_composition(&self.ion.sequence);
+
+        let mut composition = peptide_sequence_to_atomic_composition(&self.ion.sequence);
+
         match self.kind {
             FragmentType::A => {
-                ()
+                *composition.entry("H").or_insert(0) -= 2;
+                *composition.entry("O").or_insert(0) -= 2;
+                *composition.entry("C").or_insert(0) -= 1;
             },
+
             FragmentType::B => {
-                *peptide_comp.entry("H").or_insert(0) -= 2;
-                *peptide_comp.entry("O").or_insert(0) -= 1;
+                // B: peptide_mass - Water
+                *composition.entry("H").or_insert(0) -= 2;
+                *composition.entry("O").or_insert(0) -= 1;
             },
+
             FragmentType::C => {
-                ()
+                // C: peptide_mass + NH3 - Water
+                *composition.entry("H").or_insert(0) += 1;
+                *composition.entry("N").or_insert(0) += 1;
+                *composition.entry("O").or_insert(0) -= 1;
             },
+
             FragmentType::X => {
-                ()
+                // X: peptide_mass + CO + 2*H - Water
+                *composition.entry("C").or_insert(0) += 1;
+                *composition.entry("O").or_insert(0) += 1;
             },
+
             FragmentType::Y => {
                 ()
             },
+
             FragmentType::Z => {
-                ()
+                *composition.entry("H").or_insert(0) -= 1;
+                *composition.entry("N").or_insert(0) -= 3;
             },
         }
-        peptide_comp
+        composition
     }
 
     pub fn mz(&self) -> f64 {
@@ -172,21 +180,28 @@ impl PeptideSequence {
         find_unimod_patterns(&*self.sequence)
     }
 
-    pub fn calculate_b_y_product_ion_series(&self, charge: i32) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>){
+    pub fn calculate_product_ion_series(&self, charge: i32, fragment_type: FragmentType) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>){
 
         // TODO: check for n-terminal modifications
         let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
-        let mut b_ions = Vec::new();
-        let mut y_ions = Vec::new();
+        let mut n_terminal_ions = Vec::new();
+        let mut c_terminal_ions = Vec::new();
 
         // Generate b ions
         for i in 1..tokens.len() {
-            let b_ion_seq = tokens[..i].join("");
-            b_ions.push(PeptideProductIon {
-                kind: FragmentType::B,
+            let n_ion_seq = tokens[..i].join("");
+            n_terminal_ions.push(PeptideProductIon {
+                kind: match fragment_type {
+                    FragmentType::A => FragmentType::A,
+                    FragmentType::B => FragmentType::B,
+                    FragmentType::C => FragmentType::C,
+                    FragmentType::X => FragmentType::A,
+                    FragmentType::Y => FragmentType::B,
+                    FragmentType::Z => FragmentType::C,
+                },
                 ion: PeptideIon {
                     sequence: PeptideSequence {
-                        sequence: b_ion_seq,
+                        sequence: n_ion_seq,
                     },
                     charge, // Assuming charge 1 for simplicity
                     intensity: 1.0, // Placeholder intensity
@@ -196,12 +211,19 @@ impl PeptideSequence {
 
         // Generate y ions
         for i in 1..tokens.len() {
-            let y_ion_seq = tokens[tokens.len() - i..].join("");
-            y_ions.push(PeptideProductIon {
-                kind: FragmentType::Y,
+            let c_ion_seq = tokens[tokens.len() - i..].join("");
+            c_terminal_ions.push(PeptideProductIon {
+                kind: match fragment_type {
+                    FragmentType::A => FragmentType::X,
+                    FragmentType::B => FragmentType::Y,
+                    FragmentType::C => FragmentType::Z,
+                    FragmentType::X => FragmentType::X,
+                    FragmentType::Y => FragmentType::Y,
+                    FragmentType::Z => FragmentType::Z,
+                },
                 ion: PeptideIon {
                     sequence: PeptideSequence {
-                        sequence: y_ion_seq,
+                        sequence: c_ion_seq,
                     },
                     charge, // Assuming charge 1 for simplicity
                     intensity: 1.0, // Placeholder intensity
@@ -209,7 +231,7 @@ impl PeptideSequence {
             });
         }
 
-        (b_ions, y_ions)
+        (n_terminal_ions, c_terminal_ions)
     }
 }
 
@@ -275,15 +297,15 @@ pub fn calculate_product_ion_mono_isotopic_mass(sequence: &str, modifications: V
     let mass_modifications: f64 = modifications.iter().sum();
 
     // Calculate total mass
-    let mass = mass_sequence + mass_modifications;
+    let mass = mass_sequence + mass_modifications + MASS_WATER;
 
     let mass = match kind {
-        FragmentType::A => panic!("Fragment type A not yet supported"),
-        FragmentType::B => mass,
-        FragmentType::C => panic!("Fragment type C not yet supported"),
-        FragmentType::X => panic!("Fragment type X not yet supported"),
+        FragmentType::A => mass - MASS_CO - MASS_WATER,
+        FragmentType::B => mass - MASS_WATER,
+        FragmentType::C => mass + MASS_NH3 - MASS_WATER,
+        FragmentType::X => mass + MASS_CO - 2.0 * MASS_PROTON,
         FragmentType::Y => mass,
-        FragmentType::Z => panic!("Fragment type Z not yet supported"),
+        FragmentType::Z => mass - MASS_NH3,
     };
 
     mass
@@ -360,48 +382,6 @@ pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> 
     composition
 }
 
-pub fn unimod_sequence_to_tokens(sequence: &str, group_modifications: bool) -> Vec<String> {
-    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
-    let mut tokens = Vec::new();
-    let mut last_index = 0;
-
-    for mat in pattern.find_iter(sequence) {
-        if group_modifications {
-            // When grouping, include the amino acid before the UNIMOD in the token
-            let pre_mod_sequence = &sequence[last_index..mat.start()];
-            let aa_sequence = if pre_mod_sequence.is_empty() {
-                ""
-            } else {
-                &pre_mod_sequence[..pre_mod_sequence.len() - 1]
-            };
-            tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
-
-            // Group the last amino acid with the UNIMOD as one token
-            let grouped_mod = format!("{}{}", pre_mod_sequence.chars().last().unwrap_or_default().to_string(), &sequence[mat.start()..mat.end()]);
-            tokens.push(grouped_mod);
-        } else {
-            // Extract the amino acids before the current UNIMOD and add them as individual tokens
-            let aa_sequence = &sequence[last_index..mat.start()];
-            tokens.extend(aa_sequence.chars().map(|c| c.to_string()));
-
-            // Add the UNIMOD as its own token
-            let unimod = &sequence[mat.start()..mat.end()];
-            tokens.push(unimod.to_string());
-        }
-
-        // Update last_index to the end of the current UNIMOD
-        last_index = mat.end();
-    }
-
-    if !group_modifications || last_index < sequence.len() {
-        // Add the remaining amino acids after the last UNIMOD as individual tokens
-        let remaining_aa_sequence = &sequence[last_index..];
-        tokens.extend(remaining_aa_sequence.chars().map(|c| c.to_string()));
-    }
-
-    tokens
-}
-
 pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
 
     let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), false);
@@ -444,23 +424,33 @@ pub fn mono_isotopic_product_ion_composition(product_ion: &PeptideProductIon) ->
 
     match product_ion.kind {
         FragmentType::A => {
-            ()
+            // A: peptide_mass - CO - Water
+            *composition.entry("H").or_insert(0) -= 2;
+            *composition.entry("O").or_insert(0) -= 2;
+            *composition.entry("C").or_insert(0) -= 1;
         },
         FragmentType::B => {
+            // B: peptide_mass - Water
             *composition.entry("H").or_insert(0) -= 2;
             *composition.entry("O").or_insert(0) -= 1;
         },
         FragmentType::C => {
-            ()
+            // C: peptide_mass + NH3 - Water
+            *composition.entry("H").or_insert(0) += 1;
+            *composition.entry("N").or_insert(0) += 1;
+            *composition.entry("O").or_insert(0) -= 1;
         },
         FragmentType::X => {
-            ()
+            // X: peptide_mass + CO + 2*H - Water
+            *composition.entry("C").or_insert(0) += 1;
+            *composition.entry("O").or_insert(0) += 1;
         },
         FragmentType::Y => {
             ()
         },
         FragmentType::Z => {
-            ()
+            *composition.entry("H").or_insert(0) -= 1;
+            *composition.entry("N").or_insert(0) -= 3;
         },
     }
 
