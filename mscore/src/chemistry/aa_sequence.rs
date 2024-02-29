@@ -441,16 +441,17 @@ pub fn mono_isotopic_product_ion_composition(product_ion: &PeptideProductIon) ->
             *composition.entry("O").or_insert(0) -= 1;
         },
         FragmentType::X => {
-            // X: peptide_mass + CO + 2*H - Water
-            *composition.entry("C").or_insert(0) += 1;
-            *composition.entry("O").or_insert(0) += 1;
+            // X: peptide_mass + CO
+            *composition.entry("C").or_insert(0) += 1; // Add 1 for CO
+            *composition.entry("O").or_insert(0) += 1; // Add 1 for CO
+            *composition.entry("H").or_insert(0) -= 2; // Subtract 2 for 2 protons
         },
         FragmentType::Y => {
             ()
         },
         FragmentType::Z => {
-            *composition.entry("H").or_insert(0) -= 1;
-            *composition.entry("N").or_insert(0) -= 3;
+            *composition.entry("H").or_insert(0) -= 3;
+            *composition.entry("N").or_insert(0) -= 1;
         },
     }
 
