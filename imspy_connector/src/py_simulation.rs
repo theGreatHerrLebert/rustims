@@ -1,4 +1,4 @@
-use mscore::algorithm::fragmentation::TimsTofCollisionEnergy;
+use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};

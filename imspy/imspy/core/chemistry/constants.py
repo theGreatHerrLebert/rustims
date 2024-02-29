@@ -1,4 +1,5 @@
-import imspy_connector as ims
+import imspy_connector
+ims = imspy_connector.py_constants
 
 MASS_PROTON = ims.mass_proton()
 MASS_NEUTRON = ims.mass_neutron()

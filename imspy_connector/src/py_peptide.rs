@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use pyo3::prelude::*;
 
-use mscore::chemistry::aa_sequence::{FragmentType, PeptideSequence, PeptideProductIon};
+use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon};
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PyPeptideSequence {
     pub inner: PeptideSequence,
 }

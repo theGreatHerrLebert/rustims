@@ -24,8 +24,8 @@ use py_mz_spectrum::mz_spectrum;
 pub mod py_quadrupole;
 use py_quadrupole::quadrupole;
 
-pub mod py_sequence;
-use py_sequence::sequence;
+pub mod py_peptide;
+use py_peptide::peptides;
 
 pub mod py_simulation;
 use py_simulation::simulation;
@@ -79,9 +79,9 @@ fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_submodule(py_quadrupole_submodule)?;
 
     // py_sequence submodule //
-    let py_sequence_submodule = PyModule::new(py, "py_sequence")?;
-    sequence(py, &py_sequence_submodule)?;
-    m.add_submodule(py_sequence_submodule)?;
+    let py_peptide_submodule = PyModule::new(py, "py_peptide")?;
+    peptides(py, &py_peptide_submodule)?;
+    m.add_submodule(py_peptide_submodule)?;
 
     // py_simulation submodule //
     let py_simulation_submodule = PyModule::new(py, "py_simulation")?;

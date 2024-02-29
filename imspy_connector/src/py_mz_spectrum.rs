@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
-use mscore::data::tims_frame::{ToResolution, Vectorized};
-use mscore::data::mz_spectrum::{MzSpectrum, IndexedMzSpectrum, MsType, MzSpectrumVectorized, TimsSpectrum};
+use mscore::data::spectrum::{ToResolution, Vectorized};
+use mscore::data::spectrum::{MzSpectrum, IndexedMzSpectrum, MsType, MzSpectrumVectorized};
+use mscore::timstof::spectrum::{TimsSpectrum};
 use pyo3::types::{PyList, PyTuple};
 
 #[pyclass]
@@ -115,7 +116,7 @@ impl PyMzSpectrum {
     }
 
     pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.to_centroided(baseline_noise_level, sigma, normalize) }
+        PyMzSpectrum { inner: self.inner.to_centroid(baseline_noise_level, sigma, normalize) }
     }
 }
 
