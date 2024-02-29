@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::Path;
-use mscore::algorithm::fragmentation::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
-use mscore::algorithm::quadrupole::{IonTransmission, TimsTransmissionDIA};
-use mscore::data::mz_spectrum::{IndexedMzSpectrum, MsType, TimsSpectrum};
-use mscore::data::tims_frame::TimsFrame;
+use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
+use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
+use mscore::timstof::frame::TimsFrame;
+use mscore::timstof::spectrum::TimsSpectrum;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
