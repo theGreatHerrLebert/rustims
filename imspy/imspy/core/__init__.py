@@ -1,4 +1,2 @@
-from .frame import TimsFrame, TimsFrameVectorized
-from .slice import TimsSlice, TimsSliceVectorized
-from .spectrum import TimsSpectrum, MzSpectrum, MzSpectrumVectorized, IndexedMzSpectrum
-
+# from imspy.core.timstof.frame import TimsFrame, TimsFrameVectorized
+# from .spectrum import TimsSpectrum, MzSpectrum, MzSpectrumVectorized, IndexedMzSpectrum

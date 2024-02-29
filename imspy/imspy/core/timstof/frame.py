@@ -6,11 +6,11 @@ from numpy.typing import NDArray
 from tensorflow import sparse as sp
 
 import numpy as np
-import imspy_connector as pims
-
 from imspy.core.spectrum import MzSpectrum, TimsSpectrum, IndexedMzSpectrum
-
 from imspy.utility.utilities import re_index_indices
+
+import imspy_connector
+ims = imspy_connector.py_tims_frame
 
 
 class TimsFrame:
@@ -36,7 +36,7 @@ class TimsFrame:
         assert len(scan) == len(mobility) == len(tof) == len(mz) == len(intensity), \
             "The length of the scan, mobility, tof, mz and intensity arrays must be equal."
 
-        self.__frame_ptr = pims.PyTimsFrame(frame_id, ms_type, retention_time, scan, mobility, tof, mz, intensity)
+        self.__frame_ptr = ims.PyTimsFrame(frame_id, ms_type, retention_time, scan, mobility, tof, mz, intensity)
 
     def __add__(self, other: 'TimsFrame') -> 'TimsFrame':
         """Add two TimsFrames together.
@@ -50,7 +50,7 @@ class TimsFrame:
         return TimsFrame.from_py_tims_frame(self.__frame_ptr + other.__frame_ptr)
 
     @classmethod
-    def from_py_tims_frame(cls, frame: pims.PyTimsFrame):
+    def from_py_tims_frame(cls, frame: ims.PyTimsFrame):
         """Create a TimsFrame from a PyTimsFrame.
 
         Args:
@@ -258,7 +258,7 @@ class TimsFrame:
         Returns:
             TimsFrame: TimsFrame created from the windows.
         """
-        return TimsFrame.from_py_tims_frame(pims.PyTimsFrame.from_windows(
+        return TimsFrame.from_py_tims_frame(ims.PyTimsFrame.from_windows(
             [spec.get_spec_ptr() for spec in windows]
         ))
 
@@ -272,7 +272,7 @@ class TimsFrame:
         Returns:
             TimsFrame: TimsFrame created from the TimsSpectrum.
         """
-        return TimsFrame.from_py_tims_frame(pims.PyTimsFrame.from_tims_spectra(
+        return TimsFrame.from_py_tims_frame(ims.PyTimsFrame.from_tims_spectra(
             [spec.get_spec_ptr() for spec in spectra]
         ))
 
@@ -316,11 +316,11 @@ class TimsFrameVectorized:
         assert len(scan) == len(mobility) == len(tof) == len(indices) == len(intensity), \
             "The length of the scan, mobility, tof, indices and intensity arrays must be equal."
 
-        self.__frame_ptr = pims.PyTimsFrameVectorized(frame_id, ms_type, retention_time, scan, mobility, tof, indices,
+        self.__frame_ptr = ims.PyTimsFrameVectorized(frame_id, ms_type, retention_time, scan, mobility, tof, indices,
                                                       intensity)
 
     @classmethod
-    def from_py_tims_frame_vectorized(cls, frame: pims.PyTimsFrameVectorized):
+    def from_py_tims_frame_vectorized(cls, frame: ims.PyTimsFrameVectorized):
         """Create a TimsFrameVectorized from a PyTimsFrameVectorized.
 
         Args:

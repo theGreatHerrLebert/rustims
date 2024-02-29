@@ -69,7 +69,7 @@ fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_submodule(py_elements_submodule)?;
 
     // py_mz_spectrum submodule //
-    let py_mz_spectrum_submodule = PyModule::new(py, "py_mz_spectrum")?;
+    let py_mz_spectrum_submodule = PyModule::new(py, "py_spectrum")?;
     mz_spectrum(py, &py_mz_spectrum_submodule)?;
     m.add_submodule(py_mz_spectrum_submodule)?;
 

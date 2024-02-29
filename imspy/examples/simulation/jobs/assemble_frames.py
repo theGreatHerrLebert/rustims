@@ -4,7 +4,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
-from imspy.simulation.exp import TimsTofSyntheticFrameBuilderDIA
+from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA
 
 
 def assemble_frames(

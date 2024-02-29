@@ -12,7 +12,6 @@ from scipy.stats import binom
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
-from imspy.chemistry.mass import get_num_protonizable_sites
 from imspy.utility import tokenize_unimod_sequence
 
 
@@ -50,37 +49,6 @@ class PeptideChargeStateDistribution(ABC):
     @abstractmethod
     def simulate_charge_state_distribution_pandas(self, data: pd.DataFrame) -> pd.DataFrame:
         pass
-
-
-class BinomialIonSource:
-
-    def __init__(self, charged_probability: float = .5,
-                 allowed_charges: NDArray = np.array([1, 2, 3, 4], dtype=np.int8),
-                 verbose: bool = True,
-                 name='binom_source'):
-        self.charged_probability = charged_probability
-        self.allowed_charges = allowed_charges
-        self.verbose = verbose
-        self.name = name
-
-    def simulate_charge_state_distribution_pandas(self,
-                                                  data: pd.DataFrame, min_charge_contrib: float = .005) -> pd.DataFrame:
-        vec_get_num_protonizable_sites = np.vectorize(get_num_protonizable_sites)
-        basic_aa_nums = vec_get_num_protonizable_sites(data.sequence)
-
-        r_table = []
-
-        # TODO: make slow method go brrrrrrrr
-        for baa_num, (_, row) in tqdm(zip(basic_aa_nums, data.iterrows()), total=len(basic_aa_nums), ncols=80,
-                                      desc='Simulating charge'):
-
-            rel_intensities = binom(baa_num, self.charged_probability).pmf(self.allowed_charges)
-
-            for i, charge in enumerate(rel_intensities, start=1):
-                if charge >= min_charge_contrib:
-                    r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})
-
-        return pd.DataFrame(r_table)
 
 
 class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution, ABC):

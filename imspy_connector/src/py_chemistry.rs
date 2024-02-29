@@ -68,6 +68,16 @@ pub fn generate_isotope_distribution(atomic_composition: Vec<(String, f64)>, mas
         mass_tolerance, abundance_threshold, max_result)
 }
 
+#[pyfunction]
+pub fn one_over_reduced_mobility_to_ccs(one_over_k0: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
+    mscore::chemistry::formulas::one_over_reduced_mobility_to_ccs(one_over_k0, mz, charge, mass_gas, temp, t_diff)
+}
+
+#[pyfunction]
+pub fn ccs_to_reduced_mobility(ccs: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
+    mscore::chemistry::formulas::ccs_to_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
+}
+
 #[pymodule]
 pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
@@ -81,6 +91,8 @@ pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sequence_to_all_ions_par, m)?)?;
     m.add_function(wrap_pyfunction!(unimod_sequence_to_tokens, m)?)?;
     m.add_function(wrap_pyfunction!(generate_isotope_distribution, m)?)?;
+    m.add_function(wrap_pyfunction!(one_over_reduced_mobility_to_ccs, m)?)?;
+    m.add_function(wrap_pyfunction!(ccs_to_reduced_mobility, m)?)?;
     Ok(())
 }
 

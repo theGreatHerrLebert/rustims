@@ -2,15 +2,16 @@ import sqlite3
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 
-import imspy_connector as pims
-from imspy.core.frame import TimsFrame
+import imspy_connector
+ims = imspy_connector.py_dda
+from imspy.core.timstof.frame import TimsFrame
 
 
 class TimsDatasetDDA(TimsDataset):
 
     def __init__(self, data_path: str):
         super().__init__(data_path=data_path)
-        self.__dataset = pims.PyTimsDatasetDDA(self.data_path, self.binary_path)
+        self.__dataset = ims.PyTimsDatasetDDA(self.data_path, self.binary_path)
         self.meta_data = self.meta_data.rename(columns={"Id": "frame_id"})
         self.fragmented_precursors = self._load_selected_precursors().rename(
             columns={
@@ -97,10 +98,10 @@ class TimsDatasetDDA(TimsDataset):
 
 class FragmentDDA:
     def __init__(self, frame_id: int, precursor_id: int, selected_fragment: TimsFrame):
-        self._fragment_ptr = pims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_frame_ptr())
+        self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_frame_ptr())
 
     @classmethod
-    def from_py_tims_fragment_dda(cls, fragment: pims.PyTimsFragmentDDA):
+    def from_py_tims_fragment_dda(cls, fragment: ims.PyTimsFragmentDDA):
         instance = cls.__new__(cls)
         instance._fragment_ptr = fragment
         return instance

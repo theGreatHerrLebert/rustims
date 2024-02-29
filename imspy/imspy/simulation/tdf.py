@@ -4,7 +4,7 @@ import numpy as np
 from typing import List
 from pathlib import Path
 from imspy.simulation.utility import get_native_dataset_path
-from imspy.core.frame import TimsFrame
+from imspy.core.timstof.frame import TimsFrame
 from imspy.timstof import TimsDataset
 import shutil
 
