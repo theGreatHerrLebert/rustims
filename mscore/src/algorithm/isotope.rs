@@ -7,8 +7,8 @@ use rayon::ThreadPoolBuilder;
 use statrs::distribution::{Continuous, Normal};
 use crate::chemistry::constants::{MASS_NEUTRON, MASS_PROTON};
 use crate::chemistry::elements::{atoms_isotopic_weights, isotopic_abundance};
-use crate::data::mz_spectrum::MzSpectrum;
-use crate::data::tims_frame::ToResolution;
+use crate::data::spectrum::MzSpectrum;
+use crate::data::spectrum::ToResolution;
 
 /// convolve two distributions of masses and abundances
 ///
@@ -363,7 +363,7 @@ pub fn generate_averagine_spectrum(
     let spectrum = MzSpectrum::new(mz, intensities).to_resolution(resolution).filter_ranged(lb, ub, min_intensity as f64, 1e9);
 
     if centroid {
-        spectrum.to_centroided(std::cmp::max(min_intensity, 1), 1.0 / 10f64.powi(resolution - 1), true)
+        spectrum.to_centroid(std::cmp::max(min_intensity, 1), 1.0 / 10f64.powi(resolution - 1), true)
     } else {
         spectrum
     }

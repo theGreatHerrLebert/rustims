@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::f64;
 use std::f64::consts::E;
-use crate::data::mz_spectrum::MzSpectrum;
-use crate::data::tims_frame::TimsFrame;
+use crate::data::spectrum::MzSpectrum;
+use crate::timstof::frame::TimsFrame;
 
 // step function for quadrupole selection simulation
 fn smooth_step(x: &Vec<f64>, up_start: f64, up_end: f64, k: f64) -> Vec<f64> {
