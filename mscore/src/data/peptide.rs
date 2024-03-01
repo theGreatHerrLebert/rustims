@@ -246,7 +246,7 @@ impl PeptideSequence {
         let reshaped_intensities = reshape_prosit_array(flat_intensities);
         let max_charge = std::cmp::min(charge, 3).max(1); // Ensure at least 2 for loop range
         let mut sum_intensity = if normalize { 0.0 } else { 1.0 };
-        let num_tokens = self.amino_acid_count();
+        let num_tokens = self.amino_acid_count() - 1; // Full sequence length is not counted as fragment, since nothing is cleaved off, therefore -1
 
         if normalize {
             for z in 1..=max_charge {
