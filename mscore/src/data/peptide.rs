@@ -250,8 +250,8 @@ impl PeptideSequence {
 
         if normalize {
             for z in 1..=max_charge {
-                let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).collect();
-                let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
+                let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).map(|x| (x * 1e6).round() / 1e6).collect();
+                let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).map(|x| (x * 1e6).round() / 1e6).collect();
 
                 sum_intensity += intensity_n.iter().sum::<f64>() + intensity_c.iter().sum::<f64>();
             }
