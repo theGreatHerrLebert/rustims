@@ -1,7 +1,8 @@
 import pandas as pd
 import numpy as np
 
-import imspy_connector as ims
+import imspy_connector
+ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticsDataHandleRust:
