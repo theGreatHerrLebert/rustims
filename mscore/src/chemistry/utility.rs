@@ -115,3 +115,23 @@ fn calculate_modifications(index_list: &[(usize, String)], stripped_sequence: &s
     }
     mods
 }
+
+pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
+    let mut array_return: Vec<Vec<Vec<f64>>> = vec![vec![vec![0.0; 3]; 2]; 29];
+    let mut ptr = 0;
+
+    for c in 0..3 {
+        for row in 0..29 {
+            // Fill in the Y ion values
+            array_return[row][0][c] = flat_array[ptr];
+            ptr += 1;
+        }
+        for row in 0..29 {
+            // Fill in the B ion values
+            array_return[row][1][c] = flat_array[ptr];
+            ptr += 1;
+        }
+    }
+
+    array_return
+}

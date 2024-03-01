@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use regex::Regex;
 use crate::algorithm::peptide::{calculate_peptide_mono_isotopic_mass, calculate_peptide_product_ion_mono_isotopic_mass, peptide_sequence_to_atomic_composition};
 use crate::chemistry::amino_acid::{amino_acid_masses};
 use crate::chemistry::formulas::calculate_mz;
-use crate::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
+use crate::chemistry::utility::{find_unimod_patterns, reshape_prosit_array, unimod_sequence_to_tokens};
 
 // helper types for easier reading
 type Mass = f64;
@@ -176,7 +176,11 @@ impl PeptideSequence {
         find_unimod_patterns(&*self.sequence)
     }
 
-    pub fn calculate_product_ion_series(&self, charge: i32, fragment_type: FragmentType) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>){
+    pub fn num_tokens(&self) -> usize {
+        self.to_tokens(true).len()
+    }
+
+    pub fn calculate_product_ion_series(&self, charge: i32, fragment_type: FragmentType) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>) {
 
         // TODO: check for n-terminal modifications
         let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
@@ -228,5 +232,51 @@ impl PeptideSequence {
         }
 
         (n_terminal_ions, c_terminal_ions)
+    }
+
+    pub fn associate_with_predicted_intensities(
+        &self,
+        charge: i32,
+        fragment_type: FragmentType,
+        flat_intensities: Vec<f64>,
+        normalize: bool,
+        half_charge_one: bool,
+    ) -> BTreeMap<i32, (Vec<PeptideProductIon>, Vec<PeptideProductIon>)> {
+
+        let reshaped_intensities = reshape_prosit_array(flat_intensities);
+        let max_charge = std::cmp::min(charge, 3).max(2); // Ensure at least 2 for loop range
+        let mut sum_intensity = if normalize { 0.0 } else { 1.0 };
+        let num_tokens = self.num_tokens();
+
+        if normalize {
+            for z in 1..=max_charge {
+                let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).collect();
+                let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
+
+                sum_intensity += intensity_n.iter().sum::<f64>() + intensity_c.iter().sum::<f64>();
+            }
+        }
+
+        let mut result_map: BTreeMap<i32, (Vec<PeptideProductIon>, Vec<PeptideProductIon>)> = BTreeMap::new();
+
+        for z in 1..=max_charge {
+
+            let (mut n_ions, mut c_ions) = self.calculate_product_ion_series(z, fragment_type);
+            let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
+            let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
+
+            let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
+
+            for (i, ion) in n_ions.iter_mut().enumerate() {
+                ion.ion.intensity = intensity_n[i] / adjusted_sum_intensity;
+            }
+            for (i, ion) in c_ions.iter_mut().enumerate() {
+                ion.ion.intensity = intensity_c[i] / adjusted_sum_intensity;
+            }
+
+            result_map.insert(z, (n_ions, c_ions));
+        }
+
+        result_map
     }
 }
