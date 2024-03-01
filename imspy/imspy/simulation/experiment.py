@@ -4,14 +4,15 @@ from abc import ABC
 from typing import List
 
 import pandas as pd
-import imspy_connector as pims
+import imspy_connector
+ims = imspy_connector.py_simulation
 
 from imspy.core.timstof.frame import TimsFrame
 
 
 class TimsTofSyntheticFrameBuilderDIA:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSyntheticsFrameBuilderDIA(db_path)
+        self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path)
 
     def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
         frame = self.handle.build_frame(frame_id, fragment)
@@ -30,7 +31,7 @@ class TimsTofSyntheticFrameBuilderDIA:
 
 class TimsTofSyntheticPrecursorFrameBuilder:
     def __init__(self, db_path: str):
-        self.handle = pims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
+        self.handle = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
     def build_precursor_frame(self, frame_id: int):
         frame = self.handle.build_precursor_frame(frame_id)
