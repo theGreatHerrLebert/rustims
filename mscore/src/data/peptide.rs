@@ -176,7 +176,7 @@ impl PeptideSequence {
         find_unimod_patterns(&*self.sequence)
     }
 
-    pub fn num_tokens(&self) -> usize {
+    pub fn amino_acid_count(&self) -> usize {
         self.to_tokens(true).len()
     }
 
@@ -246,7 +246,7 @@ impl PeptideSequence {
         let reshaped_intensities = reshape_prosit_array(flat_intensities);
         let max_charge = std::cmp::min(charge, 3).max(1); // Ensure at least 2 for loop range
         let mut sum_intensity = if normalize { 0.0 } else { 1.0 };
-        let num_tokens = self.num_tokens();
+        let num_tokens = self.amino_acid_count();
 
         if normalize {
             for z in 1..=max_charge {
@@ -269,10 +269,10 @@ impl PeptideSequence {
             let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
             for (i, ion) in n_ions.iter_mut().enumerate() {
-                ion.ion.intensity = ((intensity_n[i] / adjusted_sum_intensity) * 1e6).round() / 1e6;
+                ion.ion.intensity = ((intensity_n[i] / adjusted_sum_intensity) * 1e9).round() / 1e9;
             }
             for (i, ion) in c_ions.iter_mut().enumerate() {
-                ion.ion.intensity = ((intensity_c[i] / adjusted_sum_intensity) * 1e6).round() / 1e6;
+                ion.ion.intensity = ((intensity_c[i] / adjusted_sum_intensity) * 1e9).round() / 1e9;
             }
 
             result_map.insert(z, (n_ions, c_ions));

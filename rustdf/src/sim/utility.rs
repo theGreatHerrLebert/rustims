@@ -93,8 +93,8 @@ pub fn sequence_to_all_ions(
 
     if normalize {
         for z in 1..=max_charge {
-            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).collect();
-            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
+            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).filter(|&x| x > 0.0).collect();
+            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).filter(|&x| x > 0.0).collect();
 
             sum_intensity += intensity_b.iter().sum::<f64>() + intensity_y.iter().sum::<f64>();
         }
