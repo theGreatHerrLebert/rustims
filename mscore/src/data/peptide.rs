@@ -266,7 +266,7 @@ impl PeptideSequence {
             let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
             let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
 
-            let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
+            let adjusted_sum_intensity = if z == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
             for (i, ion) in n_ions.iter_mut().enumerate() {
                 ion.ion.intensity = ((intensity_n[i] / adjusted_sum_intensity) * 1e9).round() / 1e9;
