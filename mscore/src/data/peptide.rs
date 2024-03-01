@@ -250,8 +250,9 @@ impl PeptideSequence {
 
         if normalize {
             for z in 1..=max_charge {
-                let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).map(|x| (x * 1e6).round() / 1e6).collect();
-                let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).map(|x| (x * 1e6).round() / 1e6).collect();
+
+                let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).collect();
+                let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
 
                 sum_intensity += intensity_n.iter().sum::<f64>() + intensity_c.iter().sum::<f64>();
             }
@@ -268,10 +269,10 @@ impl PeptideSequence {
             let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
             for (i, ion) in n_ions.iter_mut().enumerate() {
-                ion.ion.intensity = intensity_n[i] / adjusted_sum_intensity;
+                ion.ion.intensity = ((intensity_n[i] / adjusted_sum_intensity) * 1e6).round() / 1e6;
             }
             for (i, ion) in c_ions.iter_mut().enumerate() {
-                ion.ion.intensity = intensity_c[i] / adjusted_sum_intensity;
+                ion.ion.intensity = ((intensity_c[i] / adjusted_sum_intensity) * 1e6).round() / 1e6;
             }
 
             result_map.insert(z, (n_ions, c_ions));
