@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use pyo3::prelude::*;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon};
@@ -54,6 +54,35 @@ impl PyPeptideSequence {
         let n_ions: Vec<PyPeptideProductIon> = n.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
         let c_ions: Vec<PyPeptideProductIon> = c.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
         (n_ions, c_ions)
+    }
+
+    pub fn associate_with_predicted_intensities(
+        &self,
+        flat_intensities: Vec<f64>,
+        charge: i32,
+        fragment_type: &str,
+        normalize: bool,
+        half_charge_one: bool,
+    ) -> BTreeMap<i32, (Vec<PyPeptideProductIon>, Vec<PyPeptideProductIon>)> {
+
+        let fragment_type = match fragment_type {
+            "a" => FragmentType::A,
+            "b" => FragmentType::B,
+            "c" => FragmentType::C,
+            "x" => FragmentType::X,
+            "y" => FragmentType::Y,
+            "z" => FragmentType::Z,
+            _ => panic!("Invalid fragment type"),
+        };
+
+        let result = self.inner.associate_with_predicted_intensities(charge, fragment_type, flat_intensities, normalize, half_charge_one);
+        let mut map: BTreeMap<i32, (Vec<PyPeptideProductIon>, Vec<PyPeptideProductIon>)> = BTreeMap::new();
+        for (k, (n, c)) in result {
+            let n_ions: Vec<PyPeptideProductIon> = n.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+            let c_ions: Vec<PyPeptideProductIon> = c.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+            map.insert(k, (n_ions, c_ions));
+        }
+        map
     }
 }
 
