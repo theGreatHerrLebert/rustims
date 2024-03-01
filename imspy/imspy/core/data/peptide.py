@@ -100,6 +100,10 @@ class PeptideSequence:
     def atomic_composition(self):
         return self.__ptr.atomic_composition()
 
+    @property
+    def num_tokens(self) -> int:
+        return self.__ptr.num_tokens()
+
     def to_tokens(self, group_modifications: bool = True) -> List[str]:
         return self.__ptr.to_tokens(group_modifications)
 
