@@ -126,7 +126,7 @@ class PeptideSequence:
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
         return [ProductIon.from_py_ptr(ion) for ion in n_ions], [ProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
 
-    def fragment_ion_series_with_intensities(
+    def associate_fragment_ion_series_with_intensities(
             self, flat_intensities: List[float],
             charge: int = 2,
             fragment_type: str = "b",
