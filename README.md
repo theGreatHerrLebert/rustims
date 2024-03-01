@@ -5,7 +5,7 @@ Hello, there!
 
 # Repository Structure
 
-This repository contains a Python (pyims) and a Julia (IMSJL) library that share a rust backend (mscore and rustdf).
+This repository contains a Python (imspy) and a Julia (IMSJL) library that share a rust backend (mscore and rustdf).
 The backend is accesible for Python and Julia code by the respective connectors pyims_connector and imsjl_connector, using [PyO3](https://docs.rs/pyo3/latest/pyo3/) or directly via the [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
 
 # Build pyims from source
