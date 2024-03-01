@@ -41,6 +41,7 @@ mod py_amino_acids;
 use py_amino_acids::amino_acids;
 
 mod py_unimod;
+use py_unimod::unimod;
 
 #[pymodule]
 fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
@@ -108,6 +109,11 @@ fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
     let py_amino_acids_submodule = PyModule::new(py, "py_amino_acids")?;
     amino_acids(py, &py_amino_acids_submodule)?;
     m.add_submodule(py_amino_acids_submodule)?;
+
+    // py_unimod submodule //
+    let py_unimod_submodule = PyModule::new(py, "py_unimod")?;
+    unimod(py, &py_unimod_submodule)?;
+    m.add_submodule(py_unimod_submodule)?;
 
     Ok(())
 }
