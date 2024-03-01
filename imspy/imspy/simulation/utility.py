@@ -12,7 +12,8 @@ from imspy.core.chemistry.amino_acids import AMINO_ACID_MASSES
 from imspy.core.chemistry.constants import MASS_WATER
 from imspy.core.algorithm.utility import calculate_mz
 
-import imspy_connector as ims
+import imspy_connector
+ims = imspy_connector.py_chemistry
 
 from typing import List, Tuple
 from numpy.typing import NDArray
