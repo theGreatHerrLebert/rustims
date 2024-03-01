@@ -38,8 +38,8 @@ impl PyPeptideSequence {
         self.inner.to_sage_representation()
     }
 
-    pub fn num_tokens(&self) -> usize {
-        self.inner.num_tokens()
+    pub fn amino_acid_count(&self) -> usize {
+        self.inner.amino_acid_count()
     }
 
     pub fn calculate_product_ion_series(&self, charge: i32, fragment_type: String) -> (Vec<PyPeptideProductIon>, Vec<PyPeptideProductIon>) {
