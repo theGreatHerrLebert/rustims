@@ -93,8 +93,8 @@ pub fn sequence_to_all_ions(
 
     if normalize {
         for z in 1..=max_charge {
-            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).collect();
-            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
+            let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).filter(|&x| x > 0.0).collect();
+            let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).filter(|&x| x > 0.0).collect();
 
             sum_intensity += intensity_b.iter().sum::<f64>() + intensity_y.iter().sum::<f64>();
         }
@@ -142,6 +142,7 @@ pub fn sequence_to_all_ions(
 
 
         let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();
+        // TODO: check if this still needs to be reversed
         let intensity_y: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
 
         let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };

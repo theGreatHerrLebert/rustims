@@ -11,7 +11,7 @@ import imspy_connector
 ims = imspy_connector.py_tims_slice
 
 from imspy.core.timstof.frame import TimsFrame, TimsFrameVectorized
-from imspy.core.spectrum import MzSpectrum, TimsSpectrum
+from imspy.core.data.spectrum import MzSpectrum, TimsSpectrum
 
 
 class TimsSlice:

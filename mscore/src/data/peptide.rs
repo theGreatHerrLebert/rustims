@@ -3,7 +3,7 @@ use regex::Regex;
 use crate::algorithm::peptide::{calculate_peptide_mono_isotopic_mass, calculate_peptide_product_ion_mono_isotopic_mass, peptide_sequence_to_atomic_composition};
 use crate::chemistry::amino_acid::{amino_acid_masses};
 use crate::chemistry::formulas::calculate_mz;
-use crate::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
+use crate::chemistry::utility::{find_unimod_patterns, reshape_prosit_array, unimod_sequence_to_tokens};
 
 // helper types for easier reading
 type Mass = f64;
@@ -176,14 +176,18 @@ impl PeptideSequence {
         find_unimod_patterns(&*self.sequence)
     }
 
-    pub fn calculate_product_ion_series(&self, charge: i32, fragment_type: FragmentType) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>){
+    pub fn amino_acid_count(&self) -> usize {
+        self.to_tokens(true).len()
+    }
+
+    pub fn calculate_product_ion_series(&self, target_charge: i32, fragment_type: FragmentType) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>) {
 
         // TODO: check for n-terminal modifications
         let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
         let mut n_terminal_ions = Vec::new();
         let mut c_terminal_ions = Vec::new();
 
-        // Generate b ions
+        // Generate n ions
         for i in 1..tokens.len() {
             let n_ion_seq = tokens[..i].join("");
             n_terminal_ions.push(PeptideProductIon {
@@ -199,13 +203,13 @@ impl PeptideSequence {
                     sequence: PeptideSequence {
                         sequence: n_ion_seq,
                     },
-                    charge, // Assuming charge 1 for simplicity
+                    charge: target_charge,
                     intensity: 1.0, // Placeholder intensity
                 },
             });
         }
 
-        // Generate y ions
+        // Generate c ions
         for i in 1..tokens.len() {
             let c_ion_seq = tokens[tokens.len() - i..].join("");
             c_terminal_ions.push(PeptideProductIon {
@@ -221,12 +225,93 @@ impl PeptideSequence {
                     sequence: PeptideSequence {
                         sequence: c_ion_seq,
                     },
-                    charge, // Assuming charge 1 for simplicity
+                    charge: target_charge,
                     intensity: 1.0, // Placeholder intensity
                 },
             });
         }
 
         (n_terminal_ions, c_terminal_ions)
+    }
+
+    pub fn associate_with_predicted_intensities(
+        &self,
+        // TODO: check docs of prosit if charge is meant as precursor charge or max charge of fragments to generate
+        charge: i32,
+        fragment_type: FragmentType,
+        flat_intensities: Vec<f64>,
+        normalize: bool,
+        half_charge_one: bool,
+    ) -> PeptideProductIonSeriesCollection {
+
+        let reshaped_intensities = reshape_prosit_array(flat_intensities);
+        let max_charge = std::cmp::min(charge, 3).max(1); // Ensure at least 1 for loop range
+        let mut sum_intensity = if normalize { 0.0 } else { 1.0 };
+        let num_tokens = self.amino_acid_count() - 1; // Full sequence length is not counted as fragment, since nothing is cleaved off, therefore -1
+
+        let mut peptide_ion_collection = Vec::new();
+
+        if normalize {
+            for z in 1..=max_charge {
+
+                let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).filter(|&x| x > 0.0).collect();
+                let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).filter(|&x| x > 0.0).collect();
+
+                sum_intensity += intensity_n.iter().sum::<f64>() + intensity_c.iter().sum::<f64>();
+            }
+        }
+
+        for z in 1..=max_charge {
+
+            let (mut n_ions, mut c_ions) = self.calculate_product_ion_series(z, fragment_type);
+            let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
+            let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
+
+            let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
+
+            for (i, ion) in n_ions.iter_mut().enumerate() {
+                ion.ion.intensity = intensity_n[i] / adjusted_sum_intensity;
+            }
+            for (i, ion) in c_ions.iter_mut().enumerate() {
+                ion.ion.intensity = intensity_c[i] / adjusted_sum_intensity;
+            }
+
+            peptide_ion_collection.push(PeptideProductIonSeries::new(z, n_ions, c_ions));
+        }
+
+        PeptideProductIonSeriesCollection::new(peptide_ion_collection)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeptideProductIonSeries {
+    pub charge: i32,
+    pub n_ions: Vec<PeptideProductIon>,
+    pub c_ions: Vec<PeptideProductIon>,
+}
+
+impl PeptideProductIonSeries {
+    pub fn new(charge: i32, n_ions: Vec<PeptideProductIon>, c_ions: Vec<PeptideProductIon>) -> Self {
+        PeptideProductIonSeries {
+            charge,
+            n_ions,
+            c_ions,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeptideProductIonSeriesCollection {
+    pub peptide_ions: Vec<PeptideProductIonSeries>,
+}
+impl PeptideProductIonSeriesCollection {
+    pub fn new(peptide_ions: Vec<PeptideProductIonSeries>) -> Self {
+        PeptideProductIonSeriesCollection {
+            peptide_ions,
+        }
+    }
+
+    pub fn find_ion_series(&self, charge: i32) -> Option<&PeptideProductIonSeries> {
+        self.peptide_ions.iter().find(|ion_series| ion_series.charge == charge)
     }
 }

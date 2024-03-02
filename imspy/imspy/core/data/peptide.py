@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import imspy_connector
 ims = imspy_connector.py_peptide
@@ -100,6 +100,10 @@ class PeptideSequence:
     def atomic_composition(self):
         return self.__ptr.atomic_composition()
 
+    @property
+    def amino_acid_count(self) -> int:
+        return self.__ptr.amino_acid_count()
+
     def to_tokens(self, group_modifications: bool = True) -> List[str]:
         return self.__ptr.to_tokens(group_modifications)
 
@@ -125,6 +129,35 @@ class PeptideSequence:
 
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
         return [ProductIon.from_py_ptr(ion) for ion in n_ions], [ProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
+
+    def associate_fragment_ion_series_with_intensities(
+            self, flat_intensities: List[float],
+            charge: int = 2,
+            fragment_type: str = "b",
+            normalize: bool = True,
+            half_charge_one: bool = True) \
+            -> Dict[int, Tuple[List[ProductIon], List[ProductIon]]]:
+        """Associate the peptide sequence with predicted intensities.
+
+        Args:
+            flat_intensities: The flat intensities.
+            charge: The charge of the product ions.
+            fragment_type: The type of the product ions, must be one of 'a', 'b', 'c', 'x', 'y', 'z'.
+            normalize: Whether to normalize the intensities.
+            half_charge_one: Whether to use half charge one.
+
+        Returns:
+            The b and y product ion series of the peptide sequence.
+        """
+        fragment_type = fragment_type.lower()
+        assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
+                                                                 f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
+
+        result = self.__ptr.associate_with_predicted_intensities(flat_intensities,
+                                                                 charge, fragment_type, normalize, half_charge_one)
+
+        return {k: ([ProductIon.from_py_ptr(ion) for ion in v[0]],
+                    [ProductIon.from_py_ptr(ion) for ion in v[1]]) for k, v in result.items()}
 
     @classmethod
     def fom_py_ptr(cls, seq: ims.PyPeptideSequence):

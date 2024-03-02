@@ -5,7 +5,7 @@ import numpy as np
 import numba
 from typing import Callable, Optional
 from numpy.typing import ArrayLike
-from imspy.core.spectrum import MzSpectrum
+from imspy.core.data.spectrum import MzSpectrum
 from imspy.utility.utilities import normal_pdf
 
 
