@@ -122,11 +122,12 @@ impl PeptideProductIon {
         calculate_mz(self.mono_isotopic_mass(), self.ion.charge)
     }
 
-    pub fn isotope_distribution(&self,
-                                mass_tolerance: f64,
-                                abundance_threshold: f64,
-                                max_result: i32,
-                                intensity_min: f64,
+    pub fn isotope_distribution(
+        &self,
+        mass_tolerance: f64,
+        abundance_threshold: f64,
+        max_result: i32,
+        intensity_min: f64,
     ) -> IsotopeDistribution {
 
         let atomic_composition: HashMap<String, i32> = self.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
@@ -318,6 +319,7 @@ impl PeptideProductIonSeries {
         let c_spectrum = MzSpectrum::new(mz_i_c.iter().map(|(mz, _)| *mz).collect(), mz_i_c.iter().map(|(_, abundance)| *abundance).collect());
         MzSpectrum::from_collection(vec![n_spectrum, c_spectrum]).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
     }
+
     pub fn generate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
         let mut spectra: Vec<MzSpectrum> = Vec::new();
 
