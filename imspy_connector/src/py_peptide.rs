@@ -47,6 +47,11 @@ impl PyPeptideProductIonSeriesCollection {
         PyPeptideProductIonSeriesCollection { inner: PeptideProductIonSeriesCollection::new(inner) }
     }
 
+    #[getter]
+    pub fn series(&self) -> Vec<PyPeptideProductIonSeries> {
+        self.inner.peptide_ions.iter().map(|series| PyPeptideProductIonSeries { inner: series.clone() }).collect()
+    }
+
     pub fn find_ion_series(&self, charge: i32) -> Option<PyPeptideProductIonSeries> {
         let maybe_ion_series = self.inner.find_ion_series(charge);
         match maybe_ion_series {
