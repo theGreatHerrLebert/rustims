@@ -266,7 +266,7 @@ impl PeptideSequence {
 
             let (mut n_ions, mut c_ions) = self.calculate_product_ion_series(z, fragment_type);
             let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
-            let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
+            let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).collect(); // Reverse for y
 
             let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
