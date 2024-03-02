@@ -1,6 +1,9 @@
 from typing import List, Tuple, Dict, Union
 
 import imspy_connector
+
+from imspy.data.spectrum import MzSpectrum
+
 ims = imspy_connector.py_peptide
 
 
@@ -40,6 +43,28 @@ class PeptideProductIonSeriesCollection:
 
     def __repr__(self):
         return f"PeptideProductIonSeriesCollection(series={self.series})"
+
+    # mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64
+    def generate_isotope_distribution(
+            self,
+            mass_tolerance: float = 1e-3,
+            abundance_threshold: float = 1e-6,
+            max_result: int = 2000,
+            intensity_min: float = 1e-6
+    ) -> MzSpectrum:
+        """Calculate the isotope distribution of the product ion series collection.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotope distribution calculation.
+            abundance_threshold: The abundance threshold for the isotope distribution calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotope distribution.
+
+        Returns:
+            The isotope distribution of the product ion series collection.
+        """
+        py_spec = self.__ptr.generate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
+        return MzSpectrum.from_py_mz_spectrum(py_spec)
 
 
 class PeptideProductIonSeries:
