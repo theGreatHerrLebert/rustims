@@ -40,10 +40,10 @@ class IndexedMzSpectrum:
         """
         assert len(index) == len(mz) == len(intensity), ("The length of the index, mz and intensity arrays must be "
                                                          "equal.")
-        self.__spec_ptr = pims.PyIndexedMzSpectrum(index, mz, intensity)
+        self.__spec_ptr = ims.PyIndexedMzSpectrum(index, mz, intensity)
 
     @classmethod
-    def from_py_indexed_mz_spectrum(cls, spec: pims.PyIndexedMzSpectrum):
+    def from_py_indexed_mz_spectrum(cls, spec: ims.PyIndexedMzSpectrum):
         """Create a IndexedMzSpectrum from a PyIndexedMzSpectrum.
 
         Args:
@@ -109,7 +109,7 @@ class IndexedMzSpectrum:
 
         return pd.DataFrame({'index': self.index, 'mz': self.mz, 'intensity': self.intensity})
 
-    def get_spec_ptr(self) -> pims.PyIndexedMzSpectrum:
+    def get_spec_ptr(self) -> ims.PyIndexedMzSpectrum:
         """Get the spec_ptr.
 
         Returns:
@@ -131,7 +131,7 @@ class MzSpectrum:
         return cls(np.array(mz, dtype=np.float64), np.array(intensity, dtype=np.float64))
     
     @classmethod
-    def from_mz_spectra_list(cls, spectra_list:List[MzSpectrum], resolution: int)->MzSpectrum:
+    def from_mz_spectra_list(cls, spectra_list:List[MzSpectrum], resolution: int) -> MzSpectrum:
         """Generates a convoluted mass spectrum by adding all spectra in the given list.
 
         Args:
@@ -141,7 +141,7 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Convoluted spectrum.
         """
-        return cls.from_py_mz_spectrum(pims.PyMzSpectrum.from_mzspectra_list([spectrum.__spec_ptr for spectrum in spectra_list], resolution))
+        return cls.from_py_mz_spectrum(ims.PyMzSpectrum.from_mzspectra_list([spectrum.__spec_ptr for spectrum in spectra_list], resolution))
     
     def __init__(self, mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """MzSpectrum class.
@@ -154,7 +154,7 @@ class MzSpectrum:
             AssertionError: If the length of the mz and intensity arrays are not equal.
         """
         assert len(mz) == len(intensity), "The length of the mz and intensity arrays must be equal."
-        self.__spec_ptr = pims.PyMzSpectrum(mz, intensity)
+        self.__spec_ptr = ims.PyMzSpectrum(mz, intensity)
 
     @property
     def mz(self) -> NDArray[np.float64]:
@@ -185,7 +185,7 @@ class MzSpectrum:
         return pd.DataFrame({'mz': self.mz, 'intensity': self.intensity})
 
     @classmethod
-    def from_py_mz_spectrum(cls, spec: pims.PyMzSpectrum):
+    def from_py_mz_spectrum(cls, spec: ims.PyMzSpectrum):
         """Create a MzSpectrum from a PyMzSpectrum.
 
         Args:
@@ -298,7 +298,7 @@ class MzSpectrum:
         # first generate dense spectrum
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma, normalize))
 
-    def get_spec_ptr(self) -> pims.PyMzSpectrum:
+    def get_spec_ptr(self) -> ims.PyMzSpectrum:
         """Get the spec_ptr.
 
         Returns:
@@ -319,10 +319,10 @@ class MzSpectrumVectorized:
             AssertionError: If the length of the mz and intensity arrays are not equal.
         """
         assert len(indices) == len(values), "The length of the mz and intensity arrays must be equal."
-        self.__spec_ptr = pims.PyMzSpectrumVectorized(indices, values, resolution)
+        self.__spec_ptr = ims.PyMzSpectrumVectorized(indices, values, resolution)
 
     @classmethod
-    def from_py_mz_spectrum_vectorized(cls, spec: pims.PyMzSpectrumVectorized):
+    def from_py_mz_spectrum_vectorized(cls, spec: ims.PyMzSpectrumVectorized):
         """Create a MzSpectrum from a PyMzSpectrum.
 
         Args:
@@ -375,7 +375,7 @@ class MzSpectrumVectorized:
         # then get the peak integrals
         integrals = integrate_method(peaks, peak_info)
         # then create a new spectrum with the peak indices and the integrals
-        return MzSpectrum.from_py_mz_spectrum(pims.PyMzSpectrum(dense_spectrum.indices[peaks]/np.power(10, dense_spectrum.resolution), integrals))
+        return MzSpectrum.from_py_mz_spectrum(ims.PyMzSpectrum(dense_spectrum.indices[peaks]/np.power(10, dense_spectrum.resolution), integrals))
 
     def __repr__(self):
         return f"MzSpectrumVectorized(num_values={len(self.values)})"
@@ -396,10 +396,10 @@ class TimsSpectrum:
         """
         assert len(index) == len(mz) == len(intensity), ("The length of the index, mz and intensity arrays must be "
                                                          "equal.")
-        self.__spec_ptr = pims.PyTimsSpectrum(frame_id, scan, retention_time, mobility, ms_type, index, mz, intensity)
+        self.__spec_ptr = ims.PyTimsSpectrum(frame_id, scan, retention_time, mobility, ms_type, index, mz, intensity)
 
     @classmethod
-    def from_py_tims_spectrum(cls, spec: pims.PyTimsSpectrum):
+    def from_py_tims_spectrum(cls, spec: ims.PyTimsSpectrum):
         """Create a TimsSpectrum from a PyTimsSpectrum.
 
         Args:
@@ -532,7 +532,7 @@ class TimsSpectrum:
         return TimsSpectrum.from_py_tims_spectrum(
             self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
 
-    def get_spec_ptr(self) -> pims.PyTimsSpectrum:
+    def get_spec_ptr(self) -> ims.PyTimsSpectrum:
         """Get the spec_ptr.
 
         Returns:

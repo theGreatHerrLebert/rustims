@@ -1,18 +1,19 @@
-from typing import Dict, List
-
 import numpy as np
 import pandas as pd
 import sqlite3
-from numpy.typing import NDArray
 
-import imspy_connector
-ims = imspy_connector.py_dataset
+from typing import Dict, List
+
+from numpy.typing import NDArray
 import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.core.timstof.frame import TimsFrame
-from imspy.core.timstof.slice import TimsSlice
+from imspy.timstof.frame import TimsFrame
+from imspy.timstof.slice import TimsSlice
+
+import imspy_connector
+ims = imspy_connector.py_dataset
 
 
 class AcquisitionMode:

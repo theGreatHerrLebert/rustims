@@ -1,4 +1,5 @@
-from imspy.core import TimsFrame, MzSpectrum
+from imspy.data.spectrum import MzSpectrum
+from imspy.timstof.frame import TimsFrame
 from numpy.typing import NDArray
 
 import imspy_connector

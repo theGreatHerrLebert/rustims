@@ -1,10 +1,85 @@
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 
 import imspy_connector
 ims = imspy_connector.py_peptide
 
 
-class ProductIon:
+class PeptideProductIonSeriesCollection:
+    def __init__(self, series: List['PeptideProductIonSeries']):
+        """Create a new product ion series collection.
+
+        Args:
+            series: The product ion series.
+        """
+        self.__ptr = ims.PyPeptideProductIonSeriesCollection([s.get_ptr() for s in series])
+
+    def find_series(self, charge: int) -> Union[None, 'PeptideProductIonSeries']:
+        """Find the product ion series with the given charge.
+
+        Args:
+            charge: The charge of the product ion series.
+
+        Returns:
+            The product ion series with the given charge, or None if not found.
+        """
+        series = self.__ptr.find_ion_series(charge)
+        return PeptideProductIonSeries.from_py_ptr(series) if series else None
+
+    def get_ptr(self):
+        return self.__ptr
+
+    @classmethod
+    def from_py_ptr(cls, collection: ims.PyPeptideProductIonSeriesCollection):
+        instance = cls.__new__(cls)
+        instance.__ptr = collection
+        return instance
+
+    def __repr__(self):
+        return f"PeptideProductIonSeriesCollection(series={self.series})"
+
+
+class PeptideProductIonSeries:
+    def __init__(self, charge: int, n_ions: List['PeptideProductIon'], c_ions: List['PeptideProductIon']):
+        """Create a new product ion series.
+
+        Args:
+            charge: The charge of the product ions.
+            n_ions: The N-terminal product ions.
+            c_ions: The C-terminal product ions.
+        """
+        self.__ptr = ims.PyPeptideProductIonSeries(
+            charge=charge,
+            n_ions=[ion.get_ptr() for ion in n_ions],
+            c_ions=[ion.get_ptr() for ion in c_ions]
+        )
+
+    @property
+    def n_ions(self) -> List['PeptideProductIon']:
+        return [PeptideProductIon.from_py_ptr(ion) for ion in self.__ptr.n_ions]
+
+    @property
+    def c_ions(self) -> List['PeptideProductIon']:
+        return [PeptideProductIon.from_py_ptr(ion) for ion in self.__ptr.c_ions]
+
+    @property
+    def charge(self) -> int:
+        return self.__ptr.charge
+
+    def get_ptr(self):
+        return self.__ptr
+
+    @classmethod
+    def from_py_ptr(cls, series: ims.PyPeptideProductIonSeries):
+        instance = cls.__new__(cls)
+        instance.__ptr = series
+        return instance
+
+    def __repr__(self):
+        return (f"PeptideProductIonSeries(charge={self.charge}, n_ions={self.n_ions}, "
+                f"c_ions={self.c_ions})")
+
+
+class PeptideProductIon:
     def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0):
         """Create a new product ion.
 
@@ -113,7 +188,7 @@ class PeptideSequence:
     def get_ptr(self):
         return self.__ptr
 
-    def calculate_product_ion_series(self, charge: int = 1, fragment_type: str = 'b') -> Tuple[List[ProductIon], List[ProductIon]]:
+    def calculate_product_ion_series(self, charge: int = 1, fragment_type: str = 'b') -> Tuple[List[PeptideProductIon], List[PeptideProductIon]]:
         """Calculate the b and y product ion series of the peptide sequence.
 
         Args:
@@ -128,7 +203,7 @@ class PeptideSequence:
                                                                  f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
-        return [ProductIon.from_py_ptr(ion) for ion in n_ions], [ProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
+        return [PeptideProductIon.from_py_ptr(ion) for ion in n_ions], [PeptideProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
 
     def associate_fragment_ion_series_with_intensities(
             self, flat_intensities: List[float],
@@ -136,7 +211,7 @@ class PeptideSequence:
             fragment_type: str = "b",
             normalize: bool = True,
             half_charge_one: bool = True) \
-            -> Dict[int, Tuple[List[ProductIon], List[ProductIon]]]:
+            -> Dict[int, Tuple[List[PeptideProductIon], List[PeptideProductIon]]]:
         """Associate the peptide sequence with predicted intensities.
 
         Args:
@@ -156,8 +231,8 @@ class PeptideSequence:
         result = self.__ptr.associate_with_predicted_intensities(flat_intensities,
                                                                  charge, fragment_type, normalize, half_charge_one)
 
-        return {k: ([ProductIon.from_py_ptr(ion) for ion in v[0]],
-                    [ProductIon.from_py_ptr(ion) for ion in v[1]]) for k, v in result.items()}
+        return {k: ([PeptideProductIon.from_py_ptr(ion) for ion in v[0]],
+                    [PeptideProductIon.from_py_ptr(ion) for ion in v[1]]) for k, v in result.items()}
 
     @classmethod
     def fom_py_ptr(cls, seq: ims.PyPeptideSequence):

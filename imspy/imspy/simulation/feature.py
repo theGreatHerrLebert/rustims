@@ -4,7 +4,8 @@ from numpy.typing import ArrayLike
 
 import json
 
-from imspy.core import TimsSlice, TimsFrame
+from imspy.timstof.frame import TimsFrame
+from imspy.timstof.slice import TimsSlice
 from imspy.utility.utilities import gaussian, exp_gaussian
 from imspy.simulation.isotopes import IsotopePatternGenerator, create_initial_feature_distribution
 from abc import ABC, abstractmethod
