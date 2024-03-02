@@ -13,6 +13,10 @@ class PeptideProductIonSeriesCollection:
         """
         self.__ptr = ims.PyPeptideProductIonSeriesCollection([s.get_ptr() for s in series])
 
+    @property
+    def series(self) -> List['PeptideProductIonSeries']:
+        return [PeptideProductIonSeries.from_py_ptr(series) for series in self.__ptr.series]
+
     def find_series(self, charge: int) -> Union[None, 'PeptideProductIonSeries']:
         """Find the product ion series with the given charge.
 
