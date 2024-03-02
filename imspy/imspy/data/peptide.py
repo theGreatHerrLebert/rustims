@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Union
 
 import imspy_connector
 
