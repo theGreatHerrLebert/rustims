@@ -45,7 +45,7 @@ class PeptideProductIonSeriesCollection:
         return f"PeptideProductIonSeriesCollection(series={self.series})"
 
     # mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64
-    def generate_isotope_distribution(
+    def generate_isotopic_spectrum(
             self,
             mass_tolerance: float = 1e-3,
             abundance_threshold: float = 1e-6,
@@ -63,7 +63,7 @@ class PeptideProductIonSeriesCollection:
         Returns:
             The isotope distribution of the product ion series collection.
         """
-        py_spec = self.__ptr.generate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
+        py_spec = self.__ptr.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrum.from_py_mz_spectrum(py_spec)
 
 
@@ -233,7 +233,7 @@ class PeptideSequence:
 
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
         return [PeptideProductIon.from_py_ptr(ion) for ion in n_ions], [PeptideProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
-    
+
     def calculate_mono_isotopic_product_ion_spectrum(self, charge: int = 1, fragment_type: str = 'b') -> MzSpectrum:
         fragment_type = fragment_type.lower()
         assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "

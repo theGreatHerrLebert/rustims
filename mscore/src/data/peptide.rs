@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+use itertools::Itertools;
 use regex::Regex;
 use crate::algorithm::peptide::{calculate_peptide_mono_isotopic_mass, calculate_peptide_product_ion_mono_isotopic_mass, peptide_sequence_to_atomic_composition};
 use crate::chemistry::amino_acid::{amino_acid_masses};
@@ -121,11 +122,12 @@ impl PeptideProductIon {
         calculate_mz(self.mono_isotopic_mass(), self.ion.charge)
     }
 
-    pub fn isotope_distribution(&self,
-                                mass_tolerance: f64,
-                                abundance_threshold: f64,
-                                max_result: i32,
-                                intensity_min: f64,
+    pub fn isotope_distribution(
+        &self,
+        mass_tolerance: f64,
+        abundance_threshold: f64,
+        max_result: i32,
+        intensity_min: f64,
     ) -> IsotopeDistribution {
 
         let atomic_composition: HashMap<String, i32> = self.atomic_composition().iter().map(|(k, v)| (k.to_string(), *v)).collect();
@@ -182,30 +184,13 @@ impl PeptideSequence {
     }
 
     pub fn calculate_mono_isotopic_product_ion_spectrum(&self, charge: i32, fragment_type: FragmentType) -> MzSpectrum {
-
-        let quantize = |mz: f64| -> i64 {
-            (mz * 1_000_000.0).round() as i64
-        };
-
-        let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
-
         let product_ions = self.calculate_product_ion_series(charge, fragment_type);
-        let mz_values_n: Vec<f64> = product_ions.n_ions.iter().map(|ion| ion.ion.mz()).collect();
-        let intensities_n: Vec<f64> = product_ions.n_ions.iter().map(|ion| ion.ion.intensity).collect();
-        let mz_values_c: Vec<f64> = product_ions.c_ions.iter().map(|ion| ion.ion.mz()).collect();
-        let intensities_c: Vec<f64> = product_ions.c_ions.iter().map(|ion| ion.ion.intensity).collect();
+        product_ions.generate_mono_isotopic_spectrum()
+    }
 
-        for (mz, intensity) in mz_values_n.iter().zip(intensities_n.iter()) {
-            let key = quantize(*mz);
-            *combined_map.entry(key).or_insert(0.0) += *intensity;
-        }
-
-        for (mz, intensity) in mz_values_c.iter().zip(intensities_c.iter()) {
-            let key = quantize(*mz);
-            *combined_map.entry(key).or_insert(0.0) += *intensity;
-        }
-
-        MzSpectrum::new(combined_map.keys().map(|&x| x as f64 / 1_000_000.0).collect(), combined_map.values().map(|&x| x).collect())
+    pub fn calculate_isotopic_product_ion_spectrum(&self, charge: i32, fragment_type: FragmentType, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
+        let product_ions = self.calculate_product_ion_series(charge, fragment_type);
+        product_ions.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
     }
 
     pub fn calculate_product_ion_series(&self, target_charge: i32, fragment_type: FragmentType) -> PeptideProductIonSeries {
@@ -326,6 +311,32 @@ impl PeptideProductIonSeries {
             c_ions,
         }
     }
+
+    pub fn generate_mono_isotopic_spectrum(&self) -> MzSpectrum {
+        let mz_i_n = self.n_ions.iter().map(|ion| (ion.mz(), ion.ion.intensity)).collect_vec();
+        let mz_i_c = self.c_ions.iter().map(|ion| (ion.mz(), ion.ion.intensity)).collect_vec();
+        let n_spectrum = MzSpectrum::new(mz_i_n.iter().map(|(mz, _)| *mz).collect(), mz_i_n.iter().map(|(_, abundance)| *abundance).collect());
+        let c_spectrum = MzSpectrum::new(mz_i_c.iter().map(|(mz, _)| *mz).collect(), mz_i_c.iter().map(|(_, abundance)| *abundance).collect());
+        MzSpectrum::from_collection(vec![n_spectrum, c_spectrum]).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
+    }
+
+    pub fn generate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
+        let mut spectra: Vec<MzSpectrum> = Vec::new();
+
+        for ion in &self.n_ions {
+            let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+            let spectrum = MzSpectrum::new(n_isotopes.iter().map(|(mz, _)| *mz).collect(), n_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+            spectra.push(spectrum);
+        }
+
+        for ion in &self.c_ions {
+            let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+            let spectrum = MzSpectrum::new(c_isotopes.iter().map(|(mz, _)| *mz).collect(), c_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+            spectra.push(spectrum);
+        }
+
+        MzSpectrum::from_collection(spectra).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -343,21 +354,12 @@ impl PeptideProductIonSeriesCollection {
         self.peptide_ions.iter().find(|ion_series| ion_series.charge == charge)
     }
 
-    pub fn generate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
+    pub fn generate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
         let mut spectra: Vec<MzSpectrum> = Vec::new();
+
         for ion_series in &self.peptide_ions {
-
-            for ion in &ion_series.n_ions {
-                let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
-                let spectrum = MzSpectrum::new(n_isotopes.iter().map(|(mz, _)| *mz).collect(), n_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
-                spectra.push(spectrum);
-            }
-
-            for ion in &ion_series.c_ions {
-                let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
-                let spectrum = MzSpectrum::new(c_isotopes.iter().map(|(mz, _)| *mz).collect(), c_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
-                spectra.push(spectrum);
-            }
+            let isotopic_spectrum = ion_series.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min);
+            spectra.push(isotopic_spectrum);
         }
 
         MzSpectrum::from_collection(spectra).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
