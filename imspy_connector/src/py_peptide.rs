@@ -118,9 +118,9 @@ impl PyPeptideSequence {
             _ => panic!("Invalid fragment type"),
         };
 
-        let (n, c) = self.inner.calculate_product_ion_series(charge, f_type);
-        let n_ions: Vec<PyPeptideProductIon> = n.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
-        let c_ions: Vec<PyPeptideProductIon> = c.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        let series = self.inner.calculate_product_ion_series(charge, f_type);
+        let n_ions: Vec<PyPeptideProductIon> = series.n_ions.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        let c_ions: Vec<PyPeptideProductIon> = series.c_ions.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
         (n_ions, c_ions)
     }
 
