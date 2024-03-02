@@ -233,6 +233,14 @@ class PeptideSequence:
 
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
         return [PeptideProductIon.from_py_ptr(ion) for ion in n_ions], [PeptideProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
+    
+    def calculate_mono_isotopic_product_ion_spectrum(self, charge: int = 1, fragment_type: str = 'b') -> MzSpectrum:
+        fragment_type = fragment_type.lower()
+        assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
+                                                                 f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
+
+        py_spec = self.__ptr.calculate_mono_isotopic_product_ion_spectrum(charge, fragment_type)
+        return MzSpectrum.from_py_mz_spectrum(py_spec)
 
     def associate_fragment_ion_series_with_prosit_intensities(
             self, flat_intensities: List[float],
