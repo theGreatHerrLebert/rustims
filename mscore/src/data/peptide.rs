@@ -242,7 +242,7 @@ impl PeptideSequence {
         flat_intensities: Vec<f64>,
         normalize: bool,
         half_charge_one: bool,
-    ) -> PeptideIonSeriesCollection {
+    ) -> PeptideProductIonSeriesCollection {
 
         let reshaped_intensities = reshape_prosit_array(flat_intensities);
         let max_charge = std::cmp::min(charge, 3).max(1); // Ensure at least 1 for loop range
@@ -276,22 +276,23 @@ impl PeptideSequence {
                 ion.ion.intensity = intensity_c[i] / adjusted_sum_intensity;
             }
 
-            peptide_ion_collection.push(PeptideIonSeries::new(z, n_ions, c_ions));
+            peptide_ion_collection.push(PeptideProductIonSeries::new(z, n_ions, c_ions));
         }
 
-        PeptideIonSeriesCollection::new(peptide_ion_collection)
+        PeptideProductIonSeriesCollection::new(peptide_ion_collection)
     }
 }
 
-pub struct PeptideIonSeries {
+#[derive(Debug, Clone)]
+pub struct PeptideProductIonSeries {
     pub charge: i32,
     pub n_ions: Vec<PeptideProductIon>,
     pub c_ions: Vec<PeptideProductIon>,
 }
 
-impl PeptideIonSeries {
+impl PeptideProductIonSeries {
     pub fn new(charge: i32, n_ions: Vec<PeptideProductIon>, c_ions: Vec<PeptideProductIon>) -> Self {
-        PeptideIonSeries {
+        PeptideProductIonSeries {
             charge,
             n_ions,
             c_ions,
@@ -299,13 +300,18 @@ impl PeptideIonSeries {
     }
 }
 
-pub struct PeptideIonSeriesCollection {
-    pub peptide_ions: Vec<PeptideIonSeries>,
+#[derive(Debug, Clone)]
+pub struct PeptideProductIonSeriesCollection {
+    pub peptide_ions: Vec<PeptideProductIonSeries>,
 }
-impl PeptideIonSeriesCollection {
-    pub fn new(peptide_ions: Vec<PeptideIonSeries>) -> Self {
-        PeptideIonSeriesCollection {
+impl PeptideProductIonSeriesCollection {
+    pub fn new(peptide_ions: Vec<PeptideProductIonSeries>) -> Self {
+        PeptideProductIonSeriesCollection {
             peptide_ions,
         }
+    }
+
+    pub fn find_ion_series(&self, charge: i32) -> Option<&PeptideProductIonSeries> {
+        self.peptide_ions.iter().find(|ion_series| ion_series.charge == charge)
     }
 }
