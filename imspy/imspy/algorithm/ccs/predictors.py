@@ -3,7 +3,7 @@ import pandas as pd
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
-from imspy.core.chemistry.mobility import ccs_to_k0, one_over_k0_to_ccs
+from imspy.chemistry.mobility import ccs_to_k0
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
 from imspy.algorithm.utility import get_model_path

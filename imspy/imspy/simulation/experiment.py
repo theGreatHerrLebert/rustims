@@ -4,10 +4,10 @@ from abc import ABC
 from typing import List
 
 import pandas as pd
+from imspy.timstof.frame import TimsFrame
+
 import imspy_connector
 ims = imspy_connector.py_simulation
-
-from imspy.core.timstof.frame import TimsFrame
 
 
 class TimsTofSyntheticFrameBuilderDIA:

@@ -1,8 +1,3 @@
-import json
-
-import imspy_connector
-ims = imspy_connector.py_chemistry
-
 import pandas as pd
 import tensorflow as tf
 import numpy as np
@@ -14,6 +9,9 @@ from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
 from imspy.utility import tokenize_unimod_sequence
+
+import imspy_connector
+ims = imspy_connector.py_chemistry
 
 
 def load_deep_charge_state_predictor() -> tf.keras.models.Model:

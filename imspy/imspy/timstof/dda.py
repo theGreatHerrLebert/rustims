@@ -1,10 +1,12 @@
 import sqlite3
-from imspy.timstof.data import TimsDataset
 import pandas as pd
+
+from imspy.timstof.data import TimsDataset
+from imspy.timstof.frame import TimsFrame
 
 import imspy_connector
 ims = imspy_connector.py_dda
-from imspy.core.timstof.frame import TimsFrame
+
 
 
 class TimsDatasetDDA(TimsDataset):

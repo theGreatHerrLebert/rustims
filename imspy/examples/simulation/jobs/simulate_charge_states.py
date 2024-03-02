@@ -1,7 +1,7 @@
 import pandas as pd
 
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
-from imspy.core.algorithm.utility import calculate_mz
+from imspy.chemistry.utility import calculate_mz
 
 
 def simulate_charge_states(

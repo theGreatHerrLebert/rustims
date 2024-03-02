@@ -6,12 +6,11 @@ from numpy.typing import NDArray
 from tensorflow import sparse as sp
 
 from imspy.utility.utilities import re_index_indices
+from imspy.timstof.frame import TimsFrame, TimsFrameVectorized
+from imspy.timstof.frame import TimsSpectrum
 
 import imspy_connector
 ims = imspy_connector.py_tims_slice
-
-from imspy.core.timstof.frame import TimsFrame, TimsFrameVectorized
-from imspy.core.data.spectrum import MzSpectrum, TimsSpectrum
 
 
 class TimsSlice:
