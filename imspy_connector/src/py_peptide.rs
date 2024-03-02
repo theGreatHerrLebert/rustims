@@ -2,6 +2,7 @@ use std::collections::{HashMap};
 use pyo3::prelude::*;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon, PeptideProductIonSeries, PeptideProductIonSeriesCollection};
+use crate::py_mz_spectrum::PyMzSpectrum;
 
 #[pyclass]
 #[derive(Clone)]
@@ -58,6 +59,11 @@ impl PyPeptideProductIonSeriesCollection {
             Some(ion_series) => Some(PyPeptideProductIonSeries { inner: ion_series.clone() }),
             None => None,
         }
+    }
+
+    pub fn generate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
+        let spectrum = self.inner.generate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+        PyMzSpectrum { inner: spectrum }
     }
 }
 
