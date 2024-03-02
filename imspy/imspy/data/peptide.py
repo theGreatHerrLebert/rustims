@@ -205,13 +205,13 @@ class PeptideSequence:
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
         return [PeptideProductIon.from_py_ptr(ion) for ion in n_ions], [PeptideProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
 
-    def associate_fragment_ion_series_with_intensities(
+    def associate_fragment_ion_series_with_prosit_intensities(
             self, flat_intensities: List[float],
             charge: int = 2,
             fragment_type: str = "b",
             normalize: bool = True,
             half_charge_one: bool = True) \
-            -> Dict[int, Tuple[List[PeptideProductIon], List[PeptideProductIon]]]:
+            -> PeptideProductIonSeriesCollection:
         """Associate the peptide sequence with predicted intensities.
 
         Args:
@@ -231,8 +231,7 @@ class PeptideSequence:
         result = self.__ptr.associate_with_predicted_intensities(flat_intensities,
                                                                  charge, fragment_type, normalize, half_charge_one)
 
-        return {k: ([PeptideProductIon.from_py_ptr(ion) for ion in v[0]],
-                    [PeptideProductIon.from_py_ptr(ion) for ion in v[1]]) for k, v in result.items()}
+        return PeptideProductIonSeriesCollection.from_py_ptr(result)
 
     @classmethod
     def fom_py_ptr(cls, seq: ims.PyPeptideSequence):
