@@ -4,6 +4,7 @@ use crate::algorithm::peptide::{calculate_peptide_mono_isotopic_mass, calculate_
 use crate::chemistry::amino_acid::{amino_acid_masses};
 use crate::chemistry::formulas::calculate_mz;
 use crate::chemistry::utility::{find_unimod_patterns, reshape_prosit_array, unimod_sequence_to_tokens};
+use crate::data::spectrum::MzSpectrum;
 
 // helper types for easier reading
 type Mass = f64;
@@ -313,5 +314,25 @@ impl PeptideProductIonSeriesCollection {
 
     pub fn find_ion_series(&self, charge: i32) -> Option<&PeptideProductIonSeries> {
         self.peptide_ions.iter().find(|ion_series| ion_series.charge == charge)
+    }
+
+    pub fn generate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
+        let mut spectra: Vec<MzSpectrum> = Vec::new();
+        for ion_series in &self.peptide_ions {
+
+            for ion in &ion_series.n_ions {
+                let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+                let spectrum = MzSpectrum::new(n_isotopes.iter().map(|(mass, _)| calculate_mz(*mass, ion_series.charge)).collect(), n_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+                spectra.push(spectrum);
+            }
+
+            for ion in &ion_series.c_ions {
+                let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+                let spectrum = MzSpectrum::new(c_isotopes.iter().map(|(mass, _)| calculate_mz(*mass, ion_series.charge)).collect(), c_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+                spectra.push(spectrum);
+            }
+        }
+
+        MzSpectrum::from_collection(spectra).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
     }
 }
