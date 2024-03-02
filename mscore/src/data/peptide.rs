@@ -349,13 +349,13 @@ impl PeptideProductIonSeriesCollection {
 
             for ion in &ion_series.n_ions {
                 let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
-                let spectrum = MzSpectrum::new(n_isotopes.iter().map(|(mass, _)| calculate_mz(*mass, ion_series.charge)).collect(), n_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+                let spectrum = MzSpectrum::new(n_isotopes.iter().map(|(mz, _)| *mz).collect(), n_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
                 spectra.push(spectrum);
             }
 
             for ion in &ion_series.c_ions {
                 let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
-                let spectrum = MzSpectrum::new(c_isotopes.iter().map(|(mass, _)| calculate_mz(*mass, ion_series.charge)).collect(), c_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+                let spectrum = MzSpectrum::new(c_isotopes.iter().map(|(mz, _)| *mz).collect(), c_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
                 spectra.push(spectrum);
             }
         }
