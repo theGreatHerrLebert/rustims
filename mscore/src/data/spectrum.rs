@@ -220,8 +220,29 @@ impl MzSpectrum {
             let sum_i: f64 = cent_i.iter().sum();
             cent_i = cent_i.iter().map(|&i| i / sum_i).collect();
         }
-
         MzSpectrum::new(cent_mz, cent_i)
+    }
+
+    pub fn from_collection(collection: Vec<MzSpectrum>) -> MzSpectrum {
+
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
+
+        for spectrum in collection {
+            for (mz, intensity) in spectrum.mz.iter().zip(spectrum.intensity.iter()) {
+                let key = quantize(*mz);
+                let entry = combined_map.entry(key).or_insert(0.0);
+                *entry += *intensity;
+            }
+        }
+
+        let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
+        let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
+
+        MzSpectrum { mz: mz_combined, intensity: intensity_combined }
     }
 }
 

@@ -1,6 +1,9 @@
 from typing import List, Tuple, Dict, Union
 
 import imspy_connector
+
+from imspy.data.spectrum import MzSpectrum
+
 ims = imspy_connector.py_peptide
 
 
@@ -12,6 +15,10 @@ class PeptideProductIonSeriesCollection:
             series: The product ion series.
         """
         self.__ptr = ims.PyPeptideProductIonSeriesCollection([s.get_ptr() for s in series])
+
+    @property
+    def series(self) -> List['PeptideProductIonSeries']:
+        return [PeptideProductIonSeries.from_py_ptr(series) for series in self.__ptr.series]
 
     def find_series(self, charge: int) -> Union[None, 'PeptideProductIonSeries']:
         """Find the product ion series with the given charge.
@@ -36,6 +43,28 @@ class PeptideProductIonSeriesCollection:
 
     def __repr__(self):
         return f"PeptideProductIonSeriesCollection(series={self.series})"
+
+    # mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64
+    def generate_isotope_distribution(
+            self,
+            mass_tolerance: float = 1e-3,
+            abundance_threshold: float = 1e-6,
+            max_result: int = 2000,
+            intensity_min: float = 1e-6
+    ) -> MzSpectrum:
+        """Calculate the isotope distribution of the product ion series collection.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotope distribution calculation.
+            abundance_threshold: The abundance threshold for the isotope distribution calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotope distribution.
+
+        Returns:
+            The isotope distribution of the product ion series collection.
+        """
+        py_spec = self.__ptr.generate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
+        return MzSpectrum.from_py_mz_spectrum(py_spec)
 
 
 class PeptideProductIonSeries:
@@ -204,14 +233,22 @@ class PeptideSequence:
 
         n_ions, c_ions = self.__ptr.calculate_product_ion_series(charge, fragment_type)
         return [PeptideProductIon.from_py_ptr(ion) for ion in n_ions], [PeptideProductIon.from_py_ptr(ion) for ion in c_ions][::-1]
+    
+    def calculate_mono_isotopic_product_ion_spectrum(self, charge: int = 1, fragment_type: str = 'b') -> MzSpectrum:
+        fragment_type = fragment_type.lower()
+        assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
+                                                                 f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
-    def associate_fragment_ion_series_with_intensities(
+        py_spec = self.__ptr.calculate_mono_isotopic_product_ion_spectrum(charge, fragment_type)
+        return MzSpectrum.from_py_mz_spectrum(py_spec)
+
+    def associate_fragment_ion_series_with_prosit_intensities(
             self, flat_intensities: List[float],
             charge: int = 2,
             fragment_type: str = "b",
             normalize: bool = True,
             half_charge_one: bool = True) \
-            -> Dict[int, Tuple[List[PeptideProductIon], List[PeptideProductIon]]]:
+            -> PeptideProductIonSeriesCollection:
         """Associate the peptide sequence with predicted intensities.
 
         Args:
@@ -231,8 +268,7 @@ class PeptideSequence:
         result = self.__ptr.associate_with_predicted_intensities(flat_intensities,
                                                                  charge, fragment_type, normalize, half_charge_one)
 
-        return {k: ([PeptideProductIon.from_py_ptr(ion) for ion in v[0]],
-                    [PeptideProductIon.from_py_ptr(ion) for ion in v[1]]) for k, v in result.items()}
+        return PeptideProductIonSeriesCollection.from_py_ptr(result)
 
     @classmethod
     def fom_py_ptr(cls, seq: ims.PyPeptideSequence):

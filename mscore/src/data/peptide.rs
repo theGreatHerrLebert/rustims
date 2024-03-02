@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use regex::Regex;
 use crate::algorithm::peptide::{calculate_peptide_mono_isotopic_mass, calculate_peptide_product_ion_mono_isotopic_mass, peptide_sequence_to_atomic_composition};
 use crate::chemistry::amino_acid::{amino_acid_masses};
 use crate::chemistry::formulas::calculate_mz;
 use crate::chemistry::utility::{find_unimod_patterns, reshape_prosit_array, unimod_sequence_to_tokens};
+use crate::data::spectrum::MzSpectrum;
 
 // helper types for easier reading
 type Mass = f64;
@@ -180,7 +181,34 @@ impl PeptideSequence {
         self.to_tokens(true).len()
     }
 
-    pub fn calculate_product_ion_series(&self, target_charge: i32, fragment_type: FragmentType) -> (Vec<PeptideProductIon>, Vec<PeptideProductIon>) {
+    pub fn calculate_mono_isotopic_product_ion_spectrum(&self, charge: i32, fragment_type: FragmentType) -> MzSpectrum {
+
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
+
+        let product_ions = self.calculate_product_ion_series(charge, fragment_type);
+        let mz_values_n: Vec<f64> = product_ions.n_ions.iter().map(|ion| ion.ion.mz()).collect();
+        let intensities_n: Vec<f64> = product_ions.n_ions.iter().map(|ion| ion.ion.intensity).collect();
+        let mz_values_c: Vec<f64> = product_ions.c_ions.iter().map(|ion| ion.ion.mz()).collect();
+        let intensities_c: Vec<f64> = product_ions.c_ions.iter().map(|ion| ion.ion.intensity).collect();
+
+        for (mz, intensity) in mz_values_n.iter().zip(intensities_n.iter()) {
+            let key = quantize(*mz);
+            *combined_map.entry(key).or_insert(0.0) += *intensity;
+        }
+
+        for (mz, intensity) in mz_values_c.iter().zip(intensities_c.iter()) {
+            let key = quantize(*mz);
+            *combined_map.entry(key).or_insert(0.0) += *intensity;
+        }
+
+        MzSpectrum::new(combined_map.keys().map(|&x| x as f64 / 1_000_000.0).collect(), combined_map.values().map(|&x| x).collect())
+    }
+
+    pub fn calculate_product_ion_series(&self, target_charge: i32, fragment_type: FragmentType) -> PeptideProductIonSeries {
 
         // TODO: check for n-terminal modifications
         let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
@@ -231,7 +259,7 @@ impl PeptideSequence {
             });
         }
 
-        (n_terminal_ions, c_terminal_ions)
+        PeptideProductIonSeries::new(target_charge, n_terminal_ions, c_terminal_ions)
     }
 
     pub fn associate_with_predicted_intensities(
@@ -263,20 +291,20 @@ impl PeptideSequence {
 
         for z in 1..=max_charge {
 
-            let (mut n_ions, mut c_ions) = self.calculate_product_ion_series(z, fragment_type);
+            let mut product_ions = self.calculate_product_ion_series(z, fragment_type);
             let intensity_n: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[1][z as usize - 1]).collect();
-            let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).rev().collect(); // Reverse for y
+            let intensity_c: Vec<f64> = reshaped_intensities[..num_tokens].iter().map(|x| x[0][z as usize - 1]).collect(); // Reverse for y
 
             let adjusted_sum_intensity = if max_charge == 1 && half_charge_one { sum_intensity * 2.0 } else { sum_intensity };
 
-            for (i, ion) in n_ions.iter_mut().enumerate() {
+            for (i, ion) in product_ions.n_ions.iter_mut().enumerate() {
                 ion.ion.intensity = intensity_n[i] / adjusted_sum_intensity;
             }
-            for (i, ion) in c_ions.iter_mut().enumerate() {
+            for (i, ion) in product_ions.c_ions.iter_mut().enumerate() {
                 ion.ion.intensity = intensity_c[i] / adjusted_sum_intensity;
             }
 
-            peptide_ion_collection.push(PeptideProductIonSeries::new(z, n_ions, c_ions));
+            peptide_ion_collection.push(PeptideProductIonSeries::new(z, product_ions.n_ions, product_ions.c_ions));
         }
 
         PeptideProductIonSeriesCollection::new(peptide_ion_collection)
@@ -313,5 +341,25 @@ impl PeptideProductIonSeriesCollection {
 
     pub fn find_ion_series(&self, charge: i32) -> Option<&PeptideProductIonSeries> {
         self.peptide_ions.iter().find(|ion_series| ion_series.charge == charge)
+    }
+
+    pub fn generate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrum {
+        let mut spectra: Vec<MzSpectrum> = Vec::new();
+        for ion_series in &self.peptide_ions {
+
+            for ion in &ion_series.n_ions {
+                let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+                let spectrum = MzSpectrum::new(n_isotopes.iter().map(|(mz, _)| *mz).collect(), n_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+                spectra.push(spectrum);
+            }
+
+            for ion in &ion_series.c_ions {
+                let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+                let spectrum = MzSpectrum::new(c_isotopes.iter().map(|(mz, _)| *mz).collect(), c_isotopes.iter().map(|(_, abundance)| *abundance * ion.ion.intensity).collect());
+                spectra.push(spectrum);
+            }
+        }
+
+        MzSpectrum::from_collection(spectra).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
     }
 }

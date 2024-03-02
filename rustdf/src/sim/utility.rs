@@ -104,12 +104,15 @@ pub fn sequence_to_all_ions(
 
     for z in 1..=max_charge {
 
-        let (b, y) = peptide_sequence.calculate_product_ion_series(charge, FragmentType::B);
+        let ion_series = peptide_sequence.calculate_product_ion_series(charge, FragmentType::B);
+        let n = ion_series.n_ions;
+        let c = ion_series.c_ions;
 
-        let b_mz_values = b.iter().map(|prod_ion| prod_ion.mz()).collect::<Vec<f64>>();
-        let mut b_ion_types: Vec<String> = Vec::with_capacity(b.len());
 
-        for (i, prod_ion) in b.iter().enumerate() {
+        let b_mz_values = n.iter().map(|prod_ion| prod_ion.mz()).collect::<Vec<f64>>();
+        let mut b_ion_types: Vec<String> = Vec::with_capacity(n.len());
+
+        for (i, prod_ion) in n.iter().enumerate() {
             let ion_type = match prod_ion.kind {
                 FragmentType::A => "a".to_string(),
                 FragmentType::B => "b".to_string(),
@@ -121,12 +124,12 @@ pub fn sequence_to_all_ions(
             b_ion_types.push(format!("{}{}", ion_type, i + 1));
         }
 
-        let b_sequences: Vec<String> = b.iter().map(|prod_ion| prod_ion.ion.sequence.sequence.clone()).collect();
+        let b_sequences: Vec<String> = n.iter().map(|prod_ion| prod_ion.ion.sequence.sequence.clone()).collect();
 
-        let y_mz_values = y.iter().map(|prod_ion| prod_ion.mz()).collect::<Vec<f64>>();
-        let mut y_ion_types: Vec<String> = Vec::with_capacity(y.len());
+        let y_mz_values = c.iter().map(|prod_ion| prod_ion.mz()).collect::<Vec<f64>>();
+        let mut y_ion_types: Vec<String> = Vec::with_capacity(c.len());
 
-        for (i, prod_ion) in y.iter().enumerate() {
+        for (i, prod_ion) in c.iter().enumerate() {
             let ion_type = match prod_ion.kind {
                 FragmentType::A => "a".to_string(),
                 FragmentType::B => "b".to_string(),
@@ -138,7 +141,7 @@ pub fn sequence_to_all_ions(
             y_ion_types.push(format!("{}{}", ion_type, i + 1));
         }
 
-        let y_sequences: Vec<String> = y.iter().map(|prod_ion| prod_ion.ion.sequence.sequence.clone()).collect();
+        let y_sequences: Vec<String> = c.iter().map(|prod_ion| prod_ion.ion.sequence.sequence.clone()).collect();
 
 
         let intensity_b: Vec<f64> = intensity_pred[..seq_len].iter().map(|x| x[1][z as usize - 1]).collect();

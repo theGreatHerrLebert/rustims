@@ -2,6 +2,7 @@ use std::collections::{HashMap};
 use pyo3::prelude::*;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon, PeptideProductIonSeries, PeptideProductIonSeriesCollection};
+use crate::py_mz_spectrum::PyMzSpectrum;
 
 #[pyclass]
 #[derive(Clone)]
@@ -47,12 +48,22 @@ impl PyPeptideProductIonSeriesCollection {
         PyPeptideProductIonSeriesCollection { inner: PeptideProductIonSeriesCollection::new(inner) }
     }
 
+    #[getter]
+    pub fn series(&self) -> Vec<PyPeptideProductIonSeries> {
+        self.inner.peptide_ions.iter().map(|series| PyPeptideProductIonSeries { inner: series.clone() }).collect()
+    }
+
     pub fn find_ion_series(&self, charge: i32) -> Option<PyPeptideProductIonSeries> {
         let maybe_ion_series = self.inner.find_ion_series(charge);
         match maybe_ion_series {
             Some(ion_series) => Some(PyPeptideProductIonSeries { inner: ion_series.clone() }),
             None => None,
         }
+    }
+
+    pub fn generate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
+        let spectrum = self.inner.generate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+        PyMzSpectrum { inner: spectrum }
     }
 }
 
@@ -107,10 +118,25 @@ impl PyPeptideSequence {
             _ => panic!("Invalid fragment type"),
         };
 
-        let (n, c) = self.inner.calculate_product_ion_series(charge, f_type);
-        let n_ions: Vec<PyPeptideProductIon> = n.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
-        let c_ions: Vec<PyPeptideProductIon> = c.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        let series = self.inner.calculate_product_ion_series(charge, f_type);
+        let n_ions: Vec<PyPeptideProductIon> = series.n_ions.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
+        let c_ions: Vec<PyPeptideProductIon> = series.c_ions.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect();
         (n_ions, c_ions)
+    }
+
+    pub fn calculate_mono_isotopic_product_ion_spectrum(&self, charge: i32, fragment_type: String) -> PyMzSpectrum {
+        let f_type = match fragment_type.as_str() {
+            "a" => FragmentType::A,
+            "b" => FragmentType::B,
+            "c" => FragmentType::C,
+            "x" => FragmentType::X,
+            "y" => FragmentType::Y,
+            "z" => FragmentType::Z,
+            _ => panic!("Invalid fragment type"),
+        };
+
+        let spectrum = self.inner.calculate_mono_isotopic_product_ion_spectrum(charge, f_type);
+        PyMzSpectrum { inner: spectrum }
     }
 
     pub fn associate_with_predicted_intensities(
