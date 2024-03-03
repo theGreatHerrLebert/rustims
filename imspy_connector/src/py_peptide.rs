@@ -269,6 +269,7 @@ impl PyPeptideProductIon {
 #[pymodule]
 pub fn peptides(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
+    m.add_class::<PyPeptideIon>()?;
     m.add_class::<PyPeptideProductIon>()?;
     m.add_class::<PyPeptideProductIonSeries>()?;
     m.add_class::<PyPeptideProductIonSeriesCollection>()?;
