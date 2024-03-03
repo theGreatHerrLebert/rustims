@@ -31,6 +31,11 @@ impl PyPeptideIon {
         self.inner.intensity
     }
 
+    #[getter]
+    pub fn mz(&self) -> f64 {
+        self.inner.mz()
+    }
+
     pub fn calculate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min) }
     }
