@@ -352,3 +352,15 @@ class PeptideIon:
     ) -> MzSpectrum:
         py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrum.from_py_mz_spectrum(py_spec)
+
+    def get_ptr(self):
+        return self.__ptr
+
+    @classmethod
+    def from_py_ptr(cls, ion: ims.PyPeptideIon):
+        instance = cls.__new__(cls)
+        instance.__ptr = ion
+        return instance
+
+    def __repr__(self):
+        return f"PeptideIon(sequence={self.sequence}, charge={self.charge}, mz={self.mz}, intensity={self.intensity})"
