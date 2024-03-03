@@ -141,7 +141,7 @@ class TDFWriter:
                        'OneOverK0AcqRangeUpper': f'{im_upper}'}
 
         # TODO: CHECK WHAT IS GOING ON HERE
-        return "GlobalMetaData", pd.DataFrame(global_meta.items(), columns=['Key', 'Value'])
+        return "GlobalMetadata", pd.DataFrame(global_meta.items(), columns=['Key', 'Value'])
 
     def mz_to_tof(self, mzs):
         return self.__helper_handle.mz_to_tof(1, mzs)
