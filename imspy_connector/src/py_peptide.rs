@@ -1,8 +1,40 @@
 use std::collections::{HashMap};
 use pyo3::prelude::*;
 
-use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon, PeptideProductIonSeries, PeptideProductIonSeriesCollection};
+use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon, PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
 use crate::py_mz_spectrum::PyMzSpectrum;
+
+#[pyclass]
+pub struct PyPeptideIon {
+    pub inner: PeptideIon,
+}
+
+#[pymethods]
+impl PyPeptideIon {
+    #[new]
+    pub fn new(sequence: String, charge: i32, intensity: f64) -> Self {
+        PyPeptideIon { inner: PeptideIon::new(sequence, charge, intensity) }
+    }
+
+    #[getter]
+    pub fn sequence(&self) -> PyPeptideSequence {
+        PyPeptideSequence { inner: self.inner.sequence.clone() }
+    }
+
+    #[getter]
+    pub fn charge(&self) -> i32 {
+        self.inner.charge
+    }
+
+    #[getter]
+    pub fn intensity(&self) -> f64 {
+        self.inner.intensity
+    }
+
+    pub fn calculate_isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min) }
+    }
+}
 
 #[pyclass]
 #[derive(Clone)]

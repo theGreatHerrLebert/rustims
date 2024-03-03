@@ -31,7 +31,7 @@ impl PeptideIon {
         calculate_mz(self.sequence.mono_isotopic_mass(), self.charge)
     }
 
-    pub fn isotope_distribution(
+    pub fn calculate_isotope_distribution(
         &self,
         mass_tolerance: f64,
         abundance_threshold: f64,
@@ -48,6 +48,17 @@ impl PeptideIon {
             .zip(distribution.iter().map(|&(_, abundance)| abundance)).collect();
 
         mz_distribution
+    }
+
+    pub fn calculate_isotopic_spectrum(
+        &self,
+        mass_tolerance: f64,
+        abundance_threshold: f64,
+        max_result: i32,
+        intensity_min: f64,
+    ) -> MzSpectrum {
+        let isotopic_distribution = self.calculate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+        MzSpectrum::new(isotopic_distribution.iter().map(|(mz, _)| *mz).collect(), isotopic_distribution.iter().map(|(_, abundance)| *abundance).collect()) * self.intensity
     }
 }
 
