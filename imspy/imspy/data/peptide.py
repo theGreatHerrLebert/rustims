@@ -275,7 +275,7 @@ class PeptideSequence:
 
     def associate_fragment_ion_series_with_prosit_intensities(
             self, flat_intensities: List[float],
-            charge: int = 2,
+            charge: int,
             fragment_type: str = "b",
             normalize: bool = True,
             half_charge_one: bool = True
