@@ -160,5 +160,4 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             'intensity_raw': I_pred,
         }))))
 
-        return I_pred
-        # return flatten_prosit_array(I_pred)
+        return np.vstack([flatten_prosit_array(r) for r in I_pred])
