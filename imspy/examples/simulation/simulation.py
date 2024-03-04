@@ -9,7 +9,7 @@ from examples.simulation.jobs.simulate_charge_states import simulate_charge_stat
 from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
 from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
 from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
-from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra
+from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_averagine
 from examples.simulation.jobs.simulate_retention_time import simulate_retention_times
 from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
 from examples.simulation.utility import check_path
@@ -170,7 +170,7 @@ def main():
     )
 
     # JOB 6: Simulate precursor isotopic distributions
-    ions = simulate_precursor_spectra(
+    ions = simulate_precursor_spectra_averagine(
         ions=ions,
         isotope_min_intensity=args.isotope_min_intensity,
         isotope_k=args.isotope_k,
