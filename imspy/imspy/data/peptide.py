@@ -224,6 +224,9 @@ class PeptideSequence:
     def to_sage_representation(self) -> Tuple[str, List[float]]:
         return self.__ptr.to_sage_representation()
 
+    def to_json(self) -> str:
+        return self.__ptr.to_json()
+
     def get_ptr(self):
         return self.__ptr
 

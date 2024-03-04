@@ -135,7 +135,7 @@ impl PyPeptideSequence {
         self.inner.to_tokens(group_modifications)
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_json(&self) -> String {
         serde_json::to_string(&self.inner).unwrap()
     }
 

@@ -118,7 +118,7 @@ impl PyMzSpectrum {
     pub fn to_centroided(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.to_centroid(baseline_noise_level, sigma, normalize) }
     }
-    pub fn to_string(&self) -> String {
+    pub fn to_json(&self) -> String {
         serde_json::to_string(&self.inner).unwrap()
     }
 }
