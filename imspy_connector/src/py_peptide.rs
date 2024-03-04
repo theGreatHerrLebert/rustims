@@ -1,7 +1,9 @@
 use std::collections::{HashMap};
 use pyo3::prelude::*;
 
-use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon, PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
+use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon,
+                            PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
+
 use crate::py_mz_spectrum::PyMzSpectrum;
 
 #[pyclass]
@@ -70,6 +72,10 @@ impl PyPeptideProductIonSeries {
     pub fn c_ions(&self) -> Vec<PyPeptideProductIon> {
         self.inner.c_ions.iter().map(|ion| PyPeptideProductIon { inner: ion.clone() }).collect()
     }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(&self.inner).unwrap()
+    }
 }
 
 #[pyclass]
@@ -88,6 +94,10 @@ impl PyPeptideProductIonSeriesCollection {
     #[getter]
     pub fn series(&self) -> Vec<PyPeptideProductIonSeries> {
         self.inner.peptide_ions.iter().map(|series| PyPeptideProductIonSeries { inner: series.clone() }).collect()
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(&self.inner).unwrap()
     }
 
     pub fn find_ion_series(&self, charge: i32) -> Option<PyPeptideProductIonSeries> {
@@ -268,6 +278,10 @@ impl PyPeptideProductIon {
 
     pub fn atomic_composition(&self) -> HashMap<&str, i32> {
         self.inner.atomic_composition()
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(&self.inner).unwrap()
     }
 
     pub fn isotope_distribution(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> Vec<(f64, f64)> {

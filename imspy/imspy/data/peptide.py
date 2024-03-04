@@ -35,6 +35,9 @@ class PeptideProductIonSeriesCollection:
     def get_ptr(self):
         return self.__ptr
 
+    def to_json(self) -> str:
+        return self.__ptr.to_json()
+
     @classmethod
     def from_py_ptr(cls, collection: ims.PyPeptideProductIonSeriesCollection):
         instance = cls.__new__(cls)
@@ -102,6 +105,9 @@ class PeptideProductIonSeries:
     def get_ptr(self):
         return self.__ptr
 
+    def to_json(self) -> str:
+        return self.__ptr.to_json()
+
     @classmethod
     def from_py_ptr(cls, series: ims.PyPeptideProductIonSeries):
         instance = cls.__new__(cls)
@@ -158,6 +164,9 @@ class PeptideProductIon:
 
     def atomic_composition(self):
         return self.__ptr.atomic_composition()
+
+    def to_json(self) -> str:
+        return self.__ptr.to_json()
 
     def get_ptr(self):
         return self.__ptr
@@ -358,6 +367,9 @@ class PeptideIon:
 
     def get_ptr(self):
         return self.__ptr
+
+    def to_json(self) -> str:
+        return self.__ptr.to_json()
 
     @classmethod
     def from_py_ptr(cls, ion: ims.PyPeptideIon):
