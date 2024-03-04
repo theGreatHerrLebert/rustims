@@ -4,12 +4,27 @@ from imspy.simulation.isotopes import generate_isotope_patterns_rust
 
 
 def simulate_precursor_spectra(
+        peptides: pd.DataFrame,
+        ions: pd.DataFrame,
+        num_threads: int = 16,
+        verbose: bool = False
+) -> pd.DataFrame:
+
+        if verbose:
+            print("Simulating precursor isotopic distributions...")
+
+        both = pd.merge(peptides, ions, on='peptide_id')
+        spec = generate_isotope_patterns_rust(
+            
+        )
+
+
+def simulate_precursor_spectra_averagine(
         ions: pd.DataFrame,
         isotope_min_intensity: float,
         isotope_k: int,
         num_threads: int,
         verbose: bool = False) -> pd.DataFrame:
-
 
     if verbose:
         print("Simulating precursor isotopic distributions...")

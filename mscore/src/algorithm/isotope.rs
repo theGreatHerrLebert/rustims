@@ -7,6 +7,7 @@ use rayon::ThreadPoolBuilder;
 use statrs::distribution::{Continuous, Normal};
 use crate::chemistry::constants::{MASS_NEUTRON, MASS_PROTON};
 use crate::chemistry::elements::{atoms_isotopic_weights, isotopic_abundance};
+use crate::data::peptide::PeptideIon;
 use crate::data::spectrum::MzSpectrum;
 use crate::data::spectrum::ToResolution;
 
@@ -417,4 +418,19 @@ pub fn generate_averagine_spectra(
     });
 
     spectra
+}
+
+pub fn generate_precursor_spectrum(sequence: &str, charge: i32) -> MzSpectrum {
+    let peptide_ion = PeptideIon::new(sequence.to_string(), charge, 1.0);
+    peptide_ion.calculate_isotopic_spectrum(1e-3, 1e-9, 200, 1e-6)
+}
+
+pub fn generate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_threads: usize) -> Vec<MzSpectrum> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        sequences.par_iter().zip(charges.par_iter()).map(|(&sequence, &charge)| {
+            generate_precursor_spectrum(sequence, charge)
+        }).collect()
+    });
+    result
 }
