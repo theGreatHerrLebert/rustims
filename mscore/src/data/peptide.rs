@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use itertools::Itertools;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use crate::algorithm::peptide::{calculate_peptide_mono_isotopic_mass, calculate_peptide_product_ion_mono_isotopic_mass, peptide_sequence_to_atomic_composition};
 use crate::chemistry::amino_acid::{amino_acid_masses};
 use crate::chemistry::formulas::calculate_mz;
@@ -12,7 +13,7 @@ type Mass = f64;
 type Abundance = f64;
 type IsotopeDistribution = Vec<(Mass, Abundance)>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeptideIon {
     pub sequence: PeptideSequence,
     pub charge: i32,
@@ -62,10 +63,10 @@ impl PeptideIon {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum FragmentType { A, B, C, X, Y, Z, }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeptideProductIon {
     pub kind: FragmentType,
     pub ion: PeptideIon,
@@ -152,7 +153,7 @@ impl PeptideProductIon {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeptideSequence {
     pub sequence: String,
 }
@@ -307,7 +308,7 @@ impl PeptideSequence {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeptideProductIonSeries {
     pub charge: i32,
     pub n_ions: Vec<PeptideProductIon>,
@@ -350,7 +351,7 @@ impl PeptideProductIonSeries {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeptideProductIonSeriesCollection {
     pub peptide_ions: Vec<PeptideProductIonSeries>,
 }
