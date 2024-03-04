@@ -1,4 +1,5 @@
 import re
+from typing import List
 
 from numpy.typing import NDArray
 import pandas as pd
@@ -10,6 +11,7 @@ from tqdm import tqdm
 from imspy.algorithm.utility import get_model_path
 from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims)
+from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
 
 from imspy.simulation.utility import flatten_prosit_array
 
@@ -126,12 +128,12 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
     def simulate_ion_intensities(
             self,
-            sequences: list[str],
-            charges: list[int],
-            collision_energies: list[float],
+            sequences: List[str],
+            charges: List[int],
+            collision_energies: List[float],
             divide_collision_energy_by: float = 1e2,
             batch_size: int = 512,
-    ) -> NDArray:
+    ) -> List[PeptideProductIonSeriesCollection]:
         sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]
         collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
@@ -160,4 +162,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             'intensity_raw': I_pred,
         }))))
 
-        return np.vstack([flatten_prosit_array(r) for r in I_pred])
+        intensities = np.vstack([flatten_prosit_array(r) for r in I_pred])
+        peptide_sequences = [PeptideSequence(s) for s in sequences]
+        ion_collections = []
+
+        for peptide, charge, intensity in zip(peptide_sequences, charges, intensities):
+            series = peptide.associate_fragment_ion_series_with_prosit_intensities(
+                intensity,
+                charge
+            )
+            ion_collections.append(series)
+
+        return ion_collections
