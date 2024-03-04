@@ -135,6 +135,10 @@ impl PyPeptideSequence {
         self.inner.to_tokens(group_modifications)
     }
 
+    pub fn to_string(&self) -> String {
+        serde_json::to_string(&self.inner).unwrap()
+    }
+
     pub fn to_sage_representation(&self) -> (String, Vec<f64>) {
         self.inner.to_sage_representation()
     }
