@@ -309,7 +309,7 @@ class PeptideSequence:
         return instance
 
     def __repr__(self):
-        return f"AminoAcidSequence(sequence={self.sequence}, mono_isotopic_mass={self.mono_isotopic_mass})"
+        return f"PeptideSequence(sequence={self.sequence}, mono_isotopic_mass={self.mono_isotopic_mass})"
 
 
 class PeptideIon:
