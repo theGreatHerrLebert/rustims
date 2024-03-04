@@ -11,6 +11,8 @@ from imspy.algorithm.utility import get_model_path
 from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims)
 
+from imspy.simulation.utility import flatten_prosit_array
+
 
 def remove_unimod_annotation(sequence: str) -> str:
     """Remove [UNIMOD:N] annotations from the sequence."""
@@ -157,5 +159,5 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             'sequence_length': sequence_length,
             'intensity_raw': I_pred,
         }))))
-        
-        return I_pred
+
+        return flatten_prosit_array(I_pred)
