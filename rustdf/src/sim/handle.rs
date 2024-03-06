@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
+use mscore::data::peptide::PeptideSequence;
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
-use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, WindowGroupSettingsSim};
+use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -73,9 +74,12 @@ impl TimsTofSyntheticsDataHandle {
                 )),
             };
 
+            let frame_distribution = SignalDistribution::new(
+                0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
+
             Ok(PeptidesSim {
                 peptide_id: row.get(0)?,
-                sequence: row.get(1)?,
+                sequence: PeptideSequence::new(row.get(1)?),
                 proteins: row.get(2)?,
                 decoy: row.get(3)?,
                 missed_cleavages: row.get(4)?,
@@ -84,8 +88,7 @@ impl TimsTofSyntheticsDataHandle {
                 mono_isotopic_mass: row.get(7)?,
                 retention_time: row.get(8)?,
                 events: row.get(9)?,
-                frame_occurrence,
-                frame_abundance,
+                frame_distribution,
             })
         })?;
         let mut peptides = Vec::new();
@@ -259,13 +262,13 @@ impl TimsTofSyntheticsDataHandle {
         let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
 
         // go over all frames the ion occurs in
-        for frame in peptide.frame_occurrence.iter() {
+        for frame in peptide.frame_distribution.occurrence.iter() {
 
             // only consider fragment frames
             if !precursor_frames.contains(frame) {
 
                 // go over all scans the ion occurs in
-                for scan in &ion.scan_occurrence {
+                for scan in &ion.scan_distribution.occurrence {
                     // check transmission for all precursor ion peaks of the isotopic envelope
 
                     let precursor_spec = &ion.simulated_spectrum;
@@ -275,7 +278,7 @@ impl TimsTofSyntheticsDataHandle {
                         let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                         let quantized_energy = (collision_energy * 100.0).round() as i32;
 
-                        ret_tree.insert((ion.peptide_id, peptide.sequence.clone(), ion.charge, quantized_energy));
+                        ret_tree.insert((ion.peptide_id, peptide.sequence.sequence.clone(), ion.charge, quantized_energy));
                     }
                 }
             }
@@ -377,8 +380,8 @@ impl TimsTofSyntheticsDataHandle {
 
         for peptide in peptides.iter() {
             let peptide_id = peptide.peptide_id;
-            let frame_occurrence = peptide.frame_occurrence.clone();
-            let frame_abundance = peptide.frame_abundance.clone();
+            let frame_occurrence = peptide.frame_distribution.occurrence.clone();
+            let frame_abundance = peptide.frame_distribution.abundance.clone();
 
             for (frame_id, abundance) in frame_occurrence.iter().zip(frame_abundance.iter()) {
                 let (occurrences, abundances) = frame_to_abundances.entry(*frame_id).or_insert((vec![], vec![]));
@@ -395,8 +398,8 @@ impl TimsTofSyntheticsDataHandle {
         for ion in ions.iter() {
             let peptide_id = ion.peptide_id;
             let abundance = ion.relative_abundance;
-            let scan_occurrence = ion.scan_occurrence.clone();
-            let scan_abundance = ion.scan_abundance.clone();
+            let scan_occurrence = ion.scan_distribution.occurrence.clone();
+            let scan_abundance = ion.scan_distribution.abundance.clone();
             let charge = ion.charge;
             let spectrum = ion.simulated_spectrum.clone();
 
