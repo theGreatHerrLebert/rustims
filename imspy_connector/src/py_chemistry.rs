@@ -74,8 +74,8 @@ pub fn one_over_reduced_mobility_to_ccs(one_over_k0: f64, mz: f64, charge: u32, 
 }
 
 #[pyfunction]
-pub fn ccs_to_reduced_mobility(ccs: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
-    mscore::chemistry::formulas::ccs_to_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
+pub fn ccs_to_one_over_reduced_mobility(ccs: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
+    mscore::chemistry::formulas::ccs_to_one_over_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
 }
 
 #[pyfunction]
@@ -111,7 +111,7 @@ pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unimod_sequence_to_tokens, m)?)?;
     m.add_function(wrap_pyfunction!(generate_isotope_distribution, m)?)?;
     m.add_function(wrap_pyfunction!(one_over_reduced_mobility_to_ccs, m)?)?;
-    m.add_function(wrap_pyfunction!(ccs_to_reduced_mobility, m)?)?;
+    m.add_function(wrap_pyfunction!(ccs_to_one_over_reduced_mobility, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_mz, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_precursor_spectra, m)?)?;
