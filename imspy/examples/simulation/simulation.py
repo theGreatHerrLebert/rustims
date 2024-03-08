@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
 
     # Distribution parameters
-    parser.add_argument("--gradient_length", type=float, default=60 * 60, help="Length of the gradient (default: 900)")
+    parser.add_argument("--gradient_length", type=float, default=60 * 60, help="Length of the gradient (default: 3600)")
     parser.add_argument("--z_score", type=float, default=.99,
                         help="Z-score for frame and scan distributions (default: .99)")
     parser.add_argument("--std_rt", type=float, default=3.3,
