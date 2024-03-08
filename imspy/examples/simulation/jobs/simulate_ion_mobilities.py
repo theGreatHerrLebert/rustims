@@ -26,7 +26,9 @@ def simulate_ion_mobilities(
     )
 
     # filter by mobility range
-    ions = dp[(dp.mobility_gru_predictor >= im_lower) & (
-            ions.mobility_gru_predictor <= im_upper)]
+    ions = dp[
+        (dp.mobility_gru_predictor >= im_lower) &
+        (ions.mobility_gru_predictor <= im_upper)
+        ]
 
     return ions
