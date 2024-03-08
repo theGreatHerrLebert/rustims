@@ -425,7 +425,7 @@ pub fn generate_precursor_spectrum(sequence: &str, charge: i32) -> MzSpectrum {
     peptide_ion.calculate_isotopic_spectrum(1e-3, 1e-9, 200, 1e-6)
 }
 
-pub fn generate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_threads: usize) -> Vec<MzSpectrum> {
+pub fn generate_precursor_spectra(sequences: &Vec<&str>, charges: &Vec<i32>, num_threads: usize) -> Vec<MzSpectrum> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
     let result = thread_pool.install(|| {
         sequences.par_iter().zip(charges.par_iter()).map(|(&sequence, &charge)| {

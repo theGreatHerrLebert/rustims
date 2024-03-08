@@ -3,7 +3,7 @@ import pandas as pd
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
-from imspy.chemistry.mobility import ccs_to_k0
+from imspy.chemistry.mobility import ccs_to_one_over_k0
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
 from imspy.algorithm.utility import get_model_path
@@ -175,7 +175,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(mz))).batch(batch_size)
         ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
-        return np.array([1 / ccs_to_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
+        return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
 
     def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024) -> pd.DataFrame:
         tokenized_sequences = self._preprocess_sequences(data.sequence.values)
@@ -187,7 +187,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(m))).batch(batch_size)
         ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
-        data[f'mobility_{self.name}'] = np.array([1 / ccs_to_k0(c, m, z) for c, m, z in zip(ccs, m, data.charge.values)])
+        data[f'mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, m, data.charge.values)])
         data = data[['peptide_id', 'monoisotopic-mass', 'mz', 'charge', 'relative_abundance', f'mobility_{self.name}']]
         return data
 

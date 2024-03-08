@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import numpy as np
 from numpy.typing import NDArray
 from numpy.typing import ArrayLike
@@ -16,6 +16,15 @@ ims = imspy_connector.py_chemistry
 
 MASS_PROTON = 1.007276466621
 MASS_NEUTRON = 1.00866491595
+
+
+def simulate_precursor_spectrum(sequence: str, charge: int) -> MzSpectrum:
+    return MzSpectrum.from_py_mz_spectrum(ims.simulate_precursor_spectrum(sequence, charge))
+
+
+def simulate_precursor_spectra(sequences: NDArray, charges: NDArray, num_threads: int) -> List[MzSpectrum]:
+    spectra = ims.simulate_precursor_spectra(sequences, charges, num_threads)
+    return [MzSpectrum.from_py_mz_spectrum(x) for x in spectra]
 
 
 @numba.jit(nopython=True)

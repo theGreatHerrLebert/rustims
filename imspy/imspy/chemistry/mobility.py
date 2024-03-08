@@ -15,7 +15,7 @@ def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_d
     return ims.one_over_reduced_mobility_to_ccs(one_over_k0, mz, charge, mass_gas, temp, t_diff)
 
 
-def ccs_to_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
+def ccs_to_one_over_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
     """
     convert CCS to 1 over reduced ion mobility (1/k0)
     :param ccs: collision cross-section
@@ -25,4 +25,4 @@ def ccs_to_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
     :param temp: temperature of the drift gas in C°
     :param t_diff: factor to translate from C° to K
     """
-    return ims.ccs_to_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
+    return ims.one_over_reduced_mobility_to_ccs(ccs, mz, charge, mass_gas, temp, t_diff)

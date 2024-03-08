@@ -14,9 +14,6 @@ def simulate_precursor_spectra(
             print("Simulating precursor isotopic distributions...")
 
         both = pd.merge(peptides, ions, on='peptide_id')
-        spec = generate_isotope_patterns_rust(
-            
-        )
 
 
 def simulate_precursor_spectra_averagine(
