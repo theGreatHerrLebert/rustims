@@ -161,11 +161,13 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
 
-    def simulate_ion_mobilities(self,
-                                sequences: list[str],
-                                charges: list[int],
-                                mz: list[float],
-                                batch_size: int = 1024) -> NDArray:
+    def simulate_ion_mobilities(
+            self,
+            sequences: list[str],
+            charges: list[int],
+            mz: list[float],
+            batch_size: int = 1024
+    ) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences
