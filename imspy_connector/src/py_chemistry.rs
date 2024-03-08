@@ -94,9 +94,6 @@ pub fn simulate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_t
     spectra.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
 }
 
-
-
-
 #[pymodule]
 pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
