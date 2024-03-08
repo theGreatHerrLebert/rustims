@@ -35,8 +35,12 @@ class PeptideIonMobilityApex(ABC):
         pass
 
 
-def get_sqrt_slopes_and_intercepts(mz: np.ndarray, charge: np.ndarray,
-                                   ccs: np.ndarray, fit_charge_state_one: bool = False) -> (np.ndarray, np.ndarray):
+def get_sqrt_slopes_and_intercepts(
+        mz: np.ndarray,
+        charge: np.ndarray,
+        ccs: np.ndarray,
+        fit_charge_state_one: bool = False
+) -> (np.ndarray, np.ndarray):
     """
 
     Args:
