@@ -190,11 +190,16 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         m = np.expand_dims(data.mz.values, 1)
         charges_one_hot = tf.one_hot(np.array(data.charge.values) - 1, 4)
 
-        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences), np.zeros_like(m))).batch(batch_size)
+        ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences),
+                                                 np.zeros_like(m))).batch(batch_size)
+
         ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
-        data[f'mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, m, data.charge.values)])
+        data[f'mobility_{self.name}'] = 1 / np.array([ccs_to_one_over_k0(c, m, z)
+                                                      for c, m, z in zip(ccs, m, data.charge.values)])
+
         data = data[['peptide_id', 'monoisotopic-mass', 'mz', 'charge', 'relative_abundance', f'mobility_{self.name}']]
+
         return data
 
     def __repr__(self):
