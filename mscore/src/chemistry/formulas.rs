@@ -58,7 +58,7 @@ pub fn one_over_reduced_mobility_to_ccs(
 /// use mscore::chemistry::formulas::ccs_to_one_over_reduced_mobility;
 ///
 /// let k0 = ccs_to_one_over_reduced_mobility(806.5918693771381, 1000.0, 2, 28.013, 31.85, 273.15);
-/// assert_eq!(1.0 / k0, 0.5);
+/// assert_eq!(k0, 2.0);
 /// ```
 pub fn ccs_to_one_over_reduced_mobility(
     ccs: f64,
