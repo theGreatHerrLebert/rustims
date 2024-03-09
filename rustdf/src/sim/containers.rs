@@ -87,6 +87,8 @@ pub struct PeptidesSim {
     pub mono_isotopic_mass: f32,
     pub retention_time: f32,
     pub events: f32,
+    pub frame_start: u32,
+    pub frame_end: u32,
     pub frame_distribution: SignalDistribution,
 }
 
@@ -102,6 +104,8 @@ impl PeptidesSim {
         mono_isotopic_mass: f32,
         retention_time: f32,
         events: f32,
+        frame_start: u32,
+        frame_end: u32,
         frame_occurrence: Vec<u32>,
         frame_abundance: Vec<f32>,
     ) -> Self {
@@ -116,6 +120,8 @@ impl PeptidesSim {
             mono_isotopic_mass,
             retention_time,
             events,
+            frame_start,
+            frame_end,
             frame_distribution: SignalDistribution::new(
                 0.0, 0.0, 0.0, frame_occurrence, frame_abundance),
         }

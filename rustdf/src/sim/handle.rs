@@ -53,8 +53,8 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_peptides(&self) -> rusqlite::Result<Vec<PeptidesSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
         let peptides_iter = stmt.query_map([], |row| {
-            let frame_occurrence_str: String = row.get(10)?;
-            let frame_abundance_str: String = row.get(11)?;
+            let frame_occurrence_str: String = row.get(12)?;
+            let frame_abundance_str: String = row.get(13)?;
 
             let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
                 Ok(value) => value,
@@ -88,6 +88,8 @@ impl TimsTofSyntheticsDataHandle {
                 mono_isotopic_mass: row.get(7)?,
                 retention_time: row.get(8)?,
                 events: row.get(9)?,
+                frame_start: row.get(10)?,
+                frame_end: row.get(11)?,
                 frame_distribution,
             })
         })?;
