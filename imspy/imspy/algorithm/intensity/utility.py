@@ -9,7 +9,7 @@ import tensorflow as tf
 from imspy.simulation.utility import sequence_to_numpy
 from dlomix.constants import ALPHABET_UNMOD
 
-from tensorflow.keras.layers.experimental import preprocessing
+from tensorflow.keras.layers import StringLookup
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
@@ -42,7 +42,7 @@ def generate_prosit_intensity_prediction_dataset(
         collision_energies = np.expand_dims(collision_energies, 1)
 
     # Create a string lookup layer to convert sequences to indices, and one-hot encode charges
-    string_lookup = preprocessing.StringLookup(
+    string_lookup = StringLookup(
         vocabulary=list(ALPHABET_UNMOD.keys())
     )
 
