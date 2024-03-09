@@ -11,7 +11,7 @@ pandas = ">=2.1"
 numpy = ">=1.21"
 numba = ">=0.53"
 
-tensorflow = ">=2.14"
+tensorflow = "^2.15"
 tensorflow-probability = ">=0.22.1"
 wandb = ">=0.12.1"
 
