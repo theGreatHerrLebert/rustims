@@ -54,7 +54,7 @@ def simulate_frame_distributions(
         total_list_frame_contributions.append(frame_abundance)
 
     if verbose:
-        print("Saving frame distributions...")
+        print("Serializing frame distributions to json...")
 
     peptide_rt['frame_occurrence_start'] = first_occurrence
     peptide_rt['frame_occurrence_end'] = last_occurrence

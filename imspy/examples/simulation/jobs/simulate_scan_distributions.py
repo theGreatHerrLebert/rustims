@@ -44,7 +44,7 @@ def simulate_scan_distributions(
         im_contributions.append(scan_abundance)
 
     if verbose:
-        print("Saving scan distributions...")
+        print("Serializing scan distributions to json...")
 
     ions['scan_occurrence'] = [list(x) for x in im_scans]
     ions['scan_abundance'] = [list(x) for x in im_contributions]
