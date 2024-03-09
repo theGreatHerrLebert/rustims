@@ -122,6 +122,12 @@ def main():
         verbose=verbose,
     ).peptides
 
+    if args.sample_fraction < 1.0:
+        peptides = peptides.sample(frac=args.sample_fraction).reset_index(drop=True, inplace=True)
+
+    if verbose:
+        print(f"Simulating {peptides.shape[0]} peptides...")
+
     # JOB 2: Simulate retention times
     peptides = simulate_retention_times(
         peptides=peptides,
