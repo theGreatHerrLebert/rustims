@@ -14,7 +14,7 @@ def simulate_charge_states(
 
     IonSource = DeepChargeStateDistribution(
         model=load_deep_charge_state_predictor(),
-        tokenizer=load_tokenizer_from_resources(),
+        tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
     )
 
     # IonSource = BinomialChargeStateDistributionModel(charged_probability=p_charge)
