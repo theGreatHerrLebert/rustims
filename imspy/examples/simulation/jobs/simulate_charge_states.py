@@ -1,6 +1,8 @@
 import pandas as pd
 
-from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel
+from imspy.algorithm import load_tokenizer_from_resources
+from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel, DeepChargeStateDistribution, \
+    load_deep_charge_state_predictor
 from imspy.chemistry.utility import calculate_mz
 
 
@@ -10,7 +12,12 @@ def simulate_charge_states(
         mz_upper: float,
         p_charge: float = 0.5) -> pd.DataFrame:
 
-    IonSource = BinomialChargeStateDistributionModel(charged_probability=p_charge)
+    IonSource = DeepChargeStateDistribution(
+        model=load_deep_charge_state_predictor(),
+        tokenizer=load_tokenizer_from_resources(),
+    )
+
+    # IonSource = BinomialChargeStateDistributionModel(charged_probability=p_charge)
     peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptides)
 
     # merge tables to have sequences with ions, remove mz values outside scope

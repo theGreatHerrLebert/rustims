@@ -82,7 +82,9 @@ class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution, ABC):
 
 class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
 
-    def __init__(self, model: 'GRUChargeStatePredictor', tokenizer: tf.keras.preprocessing.text.Tokenizer,
+    def __init__(self,
+                 model: 'GRUChargeStatePredictor',
+                 tokenizer: tf.keras.preprocessing.text.Tokenizer,
                  allowed_charges: NDArray = np.array([1, 2, 3, 4]),
                  name: str = 'gru_predictor',
                  verbose: bool = True
