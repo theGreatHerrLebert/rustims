@@ -101,6 +101,9 @@ def main():
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
+    if verbose:
+        print(f"Simulating experiment {name} at {path}...")
+
     # create acquisition
     acquisition_builder = build_acquisition(
         path=path,
