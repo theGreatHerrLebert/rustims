@@ -27,7 +27,7 @@ def simulate_scan_distributions(
     for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
         scan_occurrence, scan_abundance = [], []
 
-        im_value = row.mobility_gru_predictor
+        im_value = row.inv_mobility_gru_predictor
         contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im, z_score)
 
         for scan in contributing_scans:
