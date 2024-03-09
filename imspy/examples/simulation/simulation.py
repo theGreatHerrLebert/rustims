@@ -14,7 +14,7 @@ from examples.simulation.jobs.simulate_retention_time import simulate_retention_
 from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
 from examples.simulation.utility import check_path
 
-from imspy.simulation.utility import (generate_events)
+from imspy.simulation.utility import generate_events
 
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"
@@ -111,7 +111,7 @@ def main():
     )
 
     # JOB 1: Digest the fasta file
-    digest = digest_fasta(
+    peptides = digest_fasta(
         fasta_file_path=fasta,
         missed_cleavages=args.missed_cleavages,
         min_len=args.min_len,
@@ -120,16 +120,11 @@ def main():
         restrict=args.restrict,
         decoys=args.decoys,
         verbose=verbose,
-    )
-
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=digest.peptides.sample(frac=args.sample_fraction),
-    )
+    ).peptides
 
     # JOB 2: Simulate retention times
-    peptide_rt = simulate_retention_times(
-        peptides=acquisition_builder.synthetics_handle.get_table('peptides'),
+    peptides = simulate_retention_times(
+        peptides=peptides,
         verbose=verbose,
         gradient_length=acquisition_builder.gradient_length
     )
@@ -138,30 +133,38 @@ def main():
         print("Sampling peptide intensities...")
 
     # JOB 3: Simulate peptide intensities
-    events = generate_events(
-        n=peptide_rt.shape[0],
+    peptides['events'] = generate_events(
+        n=peptides.shape[0],
         mean=args.intensity_mean,
         min_val=args.intensity_min,
         max_val=args.intensity_max
     )
 
-    peptide_rt['events'] = events
-
-    # update peptides table in database
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=peptide_rt,
+    # JOB 4: Simulate frame distributions
+    peptides = simulate_frame_distributions(
+        peptides=peptides,
+        frames=acquisition_builder.frame_table,
+        z_score=args.z_score,
+        std_rt=args.std_rt,
+        rt_cycle_length=acquisition_builder.rt_cycle_length,
+        verbose=verbose
     )
 
-    # JOB 4: Simulate charge states
+    # save peptides to database
+    acquisition_builder.synthetics_handle.create_table(
+        table_name='peptides',
+        table=peptides,
+    )
+
+    # JOB 5: Simulate charge states
     ions = simulate_charge_states(
-        peptide_rt=peptide_rt,
+        peptides=peptides,
         mz_lower=acquisition_builder.mz_lower,
         mz_upper=acquisition_builder.mz_upper,
         p_charge=p_charge
     )
 
-    # JOB 5: Simulate ion mobilities
+    # JOB 6: Simulate ion mobilities
     ions = simulate_ion_mobilities(
         ions=ions,
         im_lower=acquisition_builder.im_lower,
@@ -181,16 +184,6 @@ def main():
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
         table=ions,
-    )
-
-    # JOB 7: Simulate frame
-    peptide_rt = simulate_frame_distributions(
-        peptides=acquisition_builder.synthetics_handle.get_table('peptides'),
-        frames=acquisition_builder.frame_table,
-        z_score=args.z_score,
-        std_rt=args.std_rt,
-        rt_cycle_length=acquisition_builder.rt_cycle_length,
-        verbose=verbose
     )
 
     # save peptide_rt to database
