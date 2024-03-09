@@ -9,7 +9,7 @@ from examples.simulation.jobs.simulate_charge_states import simulate_charge_stat
 from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
 from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
 from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
-from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_averagine
+from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from examples.simulation.jobs.simulate_retention_time import simulate_retention_times
 from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
 from examples.simulation.utility import check_path
@@ -172,29 +172,16 @@ def main():
         verbose=verbose
     )
 
-    # JOB 6: Simulate precursor isotopic distributions
-    ions = simulate_precursor_spectra_averagine(
+    # JOB 7: Simulate precursor isotopic distributions
+    ions = simulate_precursor_spectra_sequence(
         ions=ions,
-        isotope_min_intensity=args.isotope_min_intensity,
-        isotope_k=args.isotope_k,
         num_threads=args.num_threads,
         verbose=verbose
     )
 
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='ions',
-        table=ions,
-    )
-
-    # save peptide_rt to database
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=peptide_rt
-    )
-
     # JOB 8: Simulate scan distributions
     ions = simulate_scan_distributions(
-        ions=acquisition_builder.synthetics_handle.get_table('ions'),
+        ions=ions,
         scans=acquisition_builder.scan_table,
         z_score=args.z_score,
         std_im=args.std_im,
