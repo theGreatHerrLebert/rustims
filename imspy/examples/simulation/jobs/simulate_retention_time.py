@@ -15,7 +15,7 @@ def simulate_retention_times(
     # create RTColumn instance
     RTColumn = DeepChromatographyApex(
         model=load_deep_retention_time(),
-        tokenizer=load_tokenizer_from_resources(),
+        tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
         verbose=verbose
     )
 

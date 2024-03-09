@@ -9,12 +9,12 @@ from examples.simulation.jobs.simulate_charge_states import simulate_charge_stat
 from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
 from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
 from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
-from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_averagine
+from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from examples.simulation.jobs.simulate_retention_time import simulate_retention_times
 from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
 from examples.simulation.utility import check_path
 
-from imspy.simulation.utility import (generate_events)
+from imspy.simulation.utility import generate_events
 
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"
@@ -101,6 +101,9 @@ def main():
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
+    if verbose:
+        print(f"Simulating experiment {name} at {path}...")
+
     # create acquisition
     acquisition_builder = build_acquisition(
         path=path,
@@ -111,7 +114,7 @@ def main():
     )
 
     # JOB 1: Digest the fasta file
-    digest = digest_fasta(
+    peptides = digest_fasta(
         fasta_file_path=fasta,
         missed_cleavages=args.missed_cleavages,
         min_len=args.min_len,
@@ -120,16 +123,18 @@ def main():
         restrict=args.restrict,
         decoys=args.decoys,
         verbose=verbose,
-    )
+    ).peptides
 
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=digest.peptides.sample(frac=args.sample_fraction),
-    )
+    if args.sample_fraction < 1.0:
+        peptides = peptides.sample(frac=args.sample_fraction)
+        peptides.reset_index(drop=True, inplace=True)
+
+    if verbose:
+        print(f"Simulating {peptides.shape[0]} peptides...")
 
     # JOB 2: Simulate retention times
-    peptide_rt = simulate_retention_times(
-        peptides=acquisition_builder.synthetics_handle.get_table('peptides'),
+    peptides = simulate_retention_times(
+        peptides=peptides,
         verbose=verbose,
         gradient_length=acquisition_builder.gradient_length
     )
@@ -138,54 +143,16 @@ def main():
         print("Sampling peptide intensities...")
 
     # JOB 3: Simulate peptide intensities
-    events = generate_events(
-        n=peptide_rt.shape[0],
+    peptides['events'] = generate_events(
+        n=peptides.shape[0],
         mean=args.intensity_mean,
         min_val=args.intensity_min,
         max_val=args.intensity_max
     )
 
-    peptide_rt['events'] = events
-
-    # update peptides table in database
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='peptides',
-        table=peptide_rt,
-    )
-
-    # JOB 4: Simulate charge states
-    ions = simulate_charge_states(
-        peptide_rt=peptide_rt,
-        mz_lower=acquisition_builder.mz_lower,
-        mz_upper=acquisition_builder.mz_upper,
-        p_charge=p_charge
-    )
-
-    # JOB 5: Simulate ion mobilities
-    ions = simulate_ion_mobilities(
-        ions=ions,
-        im_lower=acquisition_builder.im_lower,
-        im_upper=acquisition_builder.im_upper,
-        verbose=verbose
-    )
-
-    # JOB 6: Simulate precursor isotopic distributions
-    ions = simulate_precursor_spectra_averagine(
-        ions=ions,
-        isotope_min_intensity=args.isotope_min_intensity,
-        isotope_k=args.isotope_k,
-        num_threads=args.num_threads,
-        verbose=verbose
-    )
-
-    acquisition_builder.synthetics_handle.create_table(
-        table_name='ions',
-        table=ions,
-    )
-
-    # JOB 7: Simulate frame
-    peptide_rt = simulate_frame_distributions(
-        peptides=acquisition_builder.synthetics_handle.get_table('peptides'),
+    # JOB 4: Simulate frame distributions
+    peptides = simulate_frame_distributions(
+        peptides=peptides,
         frames=acquisition_builder.frame_table,
         z_score=args.z_score,
         std_rt=args.std_rt,
@@ -193,15 +160,38 @@ def main():
         verbose=verbose
     )
 
-    # save peptide_rt to database
+    # save peptides to database
     acquisition_builder.synthetics_handle.create_table(
         table_name='peptides',
-        table=peptide_rt
+        table=peptides,
+    )
+
+    # JOB 5: Simulate charge states
+    ions = simulate_charge_states(
+        peptides=peptides,
+        mz_lower=acquisition_builder.mz_lower,
+        mz_upper=acquisition_builder.mz_upper,
+        p_charge=p_charge
+    )
+
+    # JOB 6: Simulate ion mobilities
+    ions = simulate_ion_mobilities(
+        ions=ions,
+        im_lower=acquisition_builder.im_lower,
+        im_upper=acquisition_builder.im_upper,
+        verbose=verbose
+    )
+
+    # JOB 7: Simulate precursor isotopic distributions
+    ions = simulate_precursor_spectra_sequence(
+        ions=ions,
+        num_threads=args.num_threads,
+        verbose=verbose
     )
 
     # JOB 8: Simulate scan distributions
     ions = simulate_scan_distributions(
-        ions=acquisition_builder.synthetics_handle.get_table('ions'),
+        ions=ions,
         scans=acquisition_builder.scan_table,
         z_score=args.z_score,
         std_im=args.std_im,

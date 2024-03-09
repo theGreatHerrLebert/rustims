@@ -15,7 +15,7 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('DeepCCSPredictor'))
+    return tf.keras.models.load_model(get_model_path('IonmobPredictor'))
 
 
 class PeptideIonMobilityApex(ABC):
@@ -195,10 +195,10 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
-        data[f'mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
-                                                  for c, m, z in zip(ccs, m, data.charge.values)])
+        data[f'inv_mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
+                                                      for c, m, z in zip(ccs, m, data.charge.values)])
 
-        data = data[['peptide_id', 'monoisotopic-mass', 'mz', 'charge', 'relative_abundance', f'mobility_{self.name}']]
+        data = data[['peptide_id', 'sequence', 'charge', 'relative_abundance', f'inv_mobility_{self.name}']]
 
         return data
 

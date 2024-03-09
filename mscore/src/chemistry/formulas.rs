@@ -32,8 +32,9 @@ pub fn one_over_reduced_mobility_to_ccs(
     t_diff: f64,
 ) -> f64 {
     let summary_constant = 18509.8632163405;
+    let reduced_mobility = 1.0 / one_over_k0;
     let reduced_mass = (mz * charge as f64 * mass_gas) / (mz * charge as f64 + mass_gas);
-    summary_constant * charge as f64 / (reduced_mass * (temp + t_diff)).sqrt() / one_over_k0
+    summary_constant * charge as f64 / (reduced_mass * (temp + t_diff)).sqrt() / reduced_mobility
 }
 
 

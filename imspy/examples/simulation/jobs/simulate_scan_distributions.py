@@ -27,7 +27,7 @@ def simulate_scan_distributions(
     for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
         scan_occurrence, scan_abundance = [], []
 
-        im_value = row.mobility_gru_predictor
+        im_value = row.inv_mobility_gru_predictor
         contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im, z_score)
 
         for scan in contributing_scans:
@@ -44,7 +44,7 @@ def simulate_scan_distributions(
         im_contributions.append(scan_abundance)
 
     if verbose:
-        print("Saving scan distributions...")
+        print("Serializing scan distributions to json...")
 
     ions['scan_occurrence'] = [list(x) for x in im_scans]
     ions['scan_abundance'] = [list(x) for x in im_contributions]

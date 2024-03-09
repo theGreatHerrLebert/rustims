@@ -7,11 +7,11 @@ use std::path::Path;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use crate::sim::containers::{FramesSim, IonsSim, PeptidesSim, ScansSim};
+use crate::sim::containers::{FramesSim, IonSim, PeptidesSim, ScansSim};
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 
 pub struct TimsTofSyntheticsPrecursorFrameBuilder {
-    pub ions: BTreeMap<u32, Vec<IonsSim>>,
+    pub ions: BTreeMap<u32, Vec<IonSim>>,
     pub peptides: BTreeMap<u32, PeptidesSim>,
     pub scans: Vec<ScansSim>,
     pub frames: Vec<FramesSim>,

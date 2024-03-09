@@ -11,8 +11,9 @@ pandas = ">=2.1"
 numpy = ">=1.21"
 numba = ">=0.53"
 
-tensorflow = ">=2.14"
+tensorflow = "2.15"
 tensorflow-probability = ">=0.22.1"
+wandb = ">=0.12.1"
 
 pyopenms = ">=2.6.0"
 
@@ -26,7 +27,6 @@ tqdm = ">=4.66"
 pyarrow =">=13.0"
 mendeleev = ">=0.7.0"
 dlomix = ">=0.0.6"
-wandb = ">=0.12.1"
 toml = ">=0.10.2"
 
 [build-system]

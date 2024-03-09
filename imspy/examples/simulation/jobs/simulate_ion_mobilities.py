@@ -16,7 +16,7 @@ def simulate_ion_mobilities(
         # load IM predictor
     IMS = DeepPeptideIonMobilityApex(
         model=load_deep_ccs_predictor(),
-        tokenizer=load_tokenizer_from_resources(),
+        tokenizer=load_tokenizer_from_resources('tokenizer_ionmob'),
         verbose=verbose
     )
 
@@ -27,8 +27,8 @@ def simulate_ion_mobilities(
 
     # filter by mobility range
     ions = dp[
-        (dp.mobility_gru_predictor >= im_lower) &
-        (ions.mobility_gru_predictor <= im_upper)
+        (dp.inv_mobility_gru_predictor >= im_lower) &
+        (dp.inv_mobility_gru_predictor <= im_upper)
         ]
 
     return ions
