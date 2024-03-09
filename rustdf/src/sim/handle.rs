@@ -5,7 +5,7 @@ use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyD
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
-use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonsSim, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim};
+use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonSim, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -100,7 +100,7 @@ impl TimsTofSyntheticsDataHandle {
         Ok(peptides)
     }
 
-    pub fn read_ions(&self) -> rusqlite::Result<Vec<IonsSim>> {
+    pub fn read_ions(&self) -> rusqlite::Result<Vec<IonSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
         let ions_iter = stmt.query_map([], |row| {
             let simulated_spectrum_str: String = row.get(6)?;
@@ -110,7 +110,7 @@ impl TimsTofSyntheticsDataHandle {
             let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    6,
+                    5,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -119,7 +119,7 @@ impl TimsTofSyntheticsDataHandle {
             let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    7,
+                    6,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -128,19 +128,18 @@ impl TimsTofSyntheticsDataHandle {
             let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    8,
+                    7,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
             };
 
-            Ok(IonsSim::new(
+            Ok(IonSim::new(
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
-                row.get(5)?,
                 simulated_spectrum,
                 scan_occurrence,
                 scan_abundance,
@@ -254,7 +253,7 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     fn ion_map_fn(
-        ion: IonsSim,
+        ion: IonSim,
         peptide_map: &BTreeMap<u32, PeptidesSim>,
         precursor_frames: &HashSet<u32>,
         transmission: &TimsTransmissionDIA,
@@ -326,7 +325,7 @@ impl TimsTofSyntheticsDataHandle {
         (ret_frame, ret_sequence, ret_charge, ret_energy)
     }
 
-    pub fn build_peptide_to_ion_map(ions: &Vec<IonsSim>) -> BTreeMap<u32, Vec<IonsSim>> {
+    pub fn build_peptide_to_ion_map(ions: &Vec<IonSim>) -> BTreeMap<u32, Vec<IonSim>> {
         let mut ion_map = BTreeMap::new();
         for ion in ions.iter() {
             let ions = ion_map.entry(ion.peptide_id).or_insert_with(Vec::new);
@@ -394,7 +393,7 @@ impl TimsTofSyntheticsDataHandle {
 
         frame_to_abundances
     }
-    pub fn build_peptide_to_ions(ions: &Vec<IonsSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)> {
+    pub fn build_peptide_to_ions(ions: &Vec<IonSim>) -> BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)> {
         let mut peptide_to_ions = BTreeMap::new();
 
         for ion in ions.iter() {
