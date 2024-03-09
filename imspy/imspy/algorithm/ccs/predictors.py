@@ -198,8 +198,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         data[f'inv_mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
                                                       for c, m, z in zip(ccs, m, data.charge.values)])
 
-        data = data[['peptide_id', 'sequence', 'frame_occurrence_start',
-                     'frame_occurrence_end', 'charge', 'relative_abundance', f'inv_mobility_{self.name}']]
+        data = data[['peptide_id', 'sequence', 'charge', 'relative_abundance', f'inv_mobility_{self.name}']]
 
         return data
 
