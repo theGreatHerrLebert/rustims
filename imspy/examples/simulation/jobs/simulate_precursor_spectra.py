@@ -1,19 +1,26 @@
 import pandas as pd
 
-from imspy.simulation.isotopes import generate_isotope_patterns_rust
+from imspy.simulation.isotopes import generate_isotope_patterns_rust, simulate_precursor_spectra
 
 
-def simulate_precursor_spectra(
-        peptides: pd.DataFrame,
+def simulate_precursor_spectra_sequence(
         ions: pd.DataFrame,
         num_threads: int = 16,
         verbose: bool = False
 ) -> pd.DataFrame:
+    if verbose:
+        print("Simulating sequence specific precursor isotopic distributions ...")
 
-        if verbose:
-            print("Simulating precursor isotopic distributions...")
+    specs = simulate_precursor_spectra(
+        ions['sequence'].values,
+        ions['charge'].values,
+        num_threads=num_threads,
+    )
 
-        both = pd.merge(peptides, ions, on='peptide_id')
+    specs = [spec.to_jsons() for spec in specs]
+    ions.insert(5, 'simulated_spectrum', specs)
+
+    return ions
 
 
 def simulate_precursor_spectra_averagine(
@@ -35,6 +42,6 @@ def simulate_precursor_spectra_averagine(
     )
 
     specs = [spec.to_jsons() for spec in specs]
-    ions.insert(6, 'simulated_spectrum', specs)
+    ions.insert(5, 'simulated_spectrum', specs)
 
     return ions
