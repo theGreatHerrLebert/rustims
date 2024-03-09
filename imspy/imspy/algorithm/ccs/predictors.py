@@ -15,7 +15,7 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('IonMobPredictor'))
+    return tf.keras.models.load_model(get_model_path('IonmobPredictor'))
 
 
 class PeptideIonMobilityApex(ABC):
