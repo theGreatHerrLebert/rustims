@@ -123,7 +123,8 @@ def main():
     ).peptides
 
     if args.sample_fraction < 1.0:
-        peptides = peptides.sample(frac=args.sample_fraction).reset_index(drop=True, inplace=True)
+        peptides = peptides.sample(frac=args.sample_fraction)
+        peptides.reset_index(drop=True, inplace=True)
 
     if verbose:
         print(f"Simulating {peptides.shape[0]} peptides...")
