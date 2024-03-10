@@ -186,9 +186,9 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
                         let scaled_spec = match isotope_fragments.unwrap_or(true) {
                             true => fragment_ion_series.generate_isotopic_spectrum(
-                                1e-1,
+                                1e-2,
                                 1e-3,
-                                70,
+                                100,
                                 1e-5,
                             ) * fraction_events as f64,
                             false => fragment_ion_series.generate_mono_isotopic_spectrum() * fraction_events as f64,
