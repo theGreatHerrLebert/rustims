@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
-use mscore::data::peptide::PeptideProductIonSeriesCollection;
+use mscore::data::peptide::{PeptideProductIonSeriesCollection};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
@@ -184,9 +184,9 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     for fragment_ion_series in fragment_ions.unwrap().peptide_ions.iter() {
                         // scale the spectrum by the fraction of events
                         let scaled_spec = fragment_ion_series.generate_isotopic_spectrum(
-                            1e-1,
+                            1e-2,
                             1e-3,
-                            50,
+                            100,
                             1e-6,
                         ) * fraction_events as f64;
 
