@@ -89,7 +89,7 @@ def main():
 
     # Noise settings
     parser.add_argument(
-        "--add_distribution_noise",
+        "--add_noise_to_signals",
         type=bool,
         default=False,
         help="Add noise to ion distributions in retention time and ion mobility (default: False)")
@@ -165,7 +165,7 @@ def main():
         std_rt=args.std_rt,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
         verbose=verbose,
-        add_noise=args.add_distribution_noise
+        add_noise=args.add_noise_to_signals
     )
 
     # save peptides to database
@@ -205,7 +205,7 @@ def main():
         std_im=args.std_im,
         im_cycle_length=acquisition_builder.im_cycle_length,
         verbose=verbose,
-        add_noise=args.add_distribution_noise
+        add_noise=args.add_noise_to_signals
     )
 
     acquisition_builder.synthetics_handle.create_table(
