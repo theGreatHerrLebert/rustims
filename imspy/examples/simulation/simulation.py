@@ -87,6 +87,13 @@ def main():
     # charge state probabilities
     parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
 
+    # Noise settings
+    parser.add_argument(
+        "--add_distribution_noise",
+        type=bool,
+        default=False,
+        help="Add noise to ion distributions in retention time and ion mobility (default: False)")
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -157,7 +164,8 @@ def main():
         z_score=args.z_score,
         std_rt=args.std_rt,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
-        verbose=verbose
+        verbose=verbose,
+        add_noise=args.add_distribution_noise
     )
 
     # save peptides to database
@@ -196,7 +204,8 @@ def main():
         z_score=args.z_score,
         std_im=args.std_im,
         im_cycle_length=acquisition_builder.im_cycle_length,
-        verbose=verbose
+        verbose=verbose,
+        add_noise=args.add_distribution_noise
     )
 
     acquisition_builder.synthetics_handle.create_table(

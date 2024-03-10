@@ -1,8 +1,9 @@
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 from imspy.simulation.utility import get_z_score_for_percentile, python_list_to_json_string, get_scans_numba, \
-    accumulated_intensity_cdf_numba
+    accumulated_intensity_cdf_numba, add_uniform_noise
 
 
 def simulate_scan_distributions(
@@ -11,7 +12,8 @@ def simulate_scan_distributions(
         z_score: float,
         std_im: float,
         im_cycle_length: float,
-        verbose: bool = False
+        verbose: bool = False,
+        add_noise: bool = False
 ) -> pd.DataFrame:
 
     # distribution parameters
@@ -34,11 +36,12 @@ def simulate_scan_distributions(
             im = im_dict[scan]
             start = im - im_cycle_length
             i = accumulated_intensity_cdf_numba(start, im, im_value, std_im)
-
-            # TODO: ADD NOISE HERE AS WELL?
-
             scan_occurrence.append(scan)
             scan_abundance.append(i)
+
+        if add_noise:
+            noise_level = np.random.uniform(0.0, 2.0)
+            scan_abundance = add_uniform_noise(np.array(scan_abundance), noise_level)
 
         im_scans.append(scan_occurrence)
         im_contributions.append(scan_abundance)

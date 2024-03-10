@@ -21,6 +21,14 @@ ims = imspy_connector.py_chemistry
 
 
 @jit(nopython=True)
+def add_uniform_noise(rt_abu: np.ndarray, noise_level: float = 1.0):
+    noise = np.random.uniform(0, noise_level, len(rt_abu))
+    noise_relative = (noise * rt_abu)
+    noised_signal = rt_abu + noise_relative
+    return (noised_signal / np.sum(noised_signal)) * np.sum(rt_abu)
+
+
+@jit(nopython=True)
 def flatten_prosit_array(array):
     array_return = np.zeros(174)
 

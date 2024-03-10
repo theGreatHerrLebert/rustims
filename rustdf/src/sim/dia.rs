@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use mscore::data::peptide::PeptideProductIonSeriesCollection;
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
@@ -9,7 +10,6 @@ use mscore::timstof::spectrum::TimsSpectrum;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
-use crate::sim::containers::{FragmentIonSeries};
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 
@@ -17,7 +17,7 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
-    pub fragment_ions: BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>>,
+    pub fragment_ions: BTreeMap<(u32, i8, i8), PeptideProductIonSeriesCollection>,
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
@@ -181,9 +181,14 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     }
 
                     // for each fragment ion series, create a spectrum and add it to the tims_spectra
-                    for fragment_ion_series in fragment_ions.unwrap() {
+                    for fragment_ion_series in fragment_ions.unwrap().peptide_ions.iter() {
                         // scale the spectrum by the fraction of events
-                        let scaled_spec = fragment_ion_series.to_mz_spectrum() * fraction_events as f64;
+                        let scaled_spec = fragment_ion_series.generate_isotopic_spectrum(
+                            1e-3,
+                            1e-6,
+                            200,
+                            1e-6,
+                        ) * fraction_events as f64;
 
                         tims_spectra.push(
                             TimsSpectrum::new(

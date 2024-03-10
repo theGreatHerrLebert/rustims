@@ -1,4 +1,4 @@
-use mscore::data::peptide::PeptideSequence;
+use mscore::data::peptide::{PeptideProductIonSeriesCollection, PeptideSequence};
 use mscore::data::spectrum::{MzSpectrum, MsType};
 use serde::{Serialize, Deserialize};
 use rand::distributions::{Distribution, Uniform};
@@ -9,40 +9,6 @@ pub struct FragmentIon {
     pub kind: String,
     pub sequence: String,
     pub intensity: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FragmentIonSeries {
-    pub charge: i32,
-    pub b_ions: Vec<FragmentIon>,
-    pub y_ions: Vec<FragmentIon>,
-}
-
-impl FragmentIonSeries {
-    pub fn to_mz_spectrum(&self) -> MzSpectrum {
-
-        // create a tuple vector from the fragment spectra
-        let mut tuples = Vec::new();
-
-        for ion in &self.b_ions {
-            tuples.push((ion.mz, ion.intensity));
-        }
-        for ion in &self.y_ions {
-            tuples.push((ion.mz, ion.intensity));
-        }
-
-        // sort the tuples by mz
-        tuples.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-        // create the mz and intensity vectors
-        let mz = tuples.iter().map(|(m, _)| *m).collect();
-        let intensity = tuples.iter().map(|(_, i)| *i).collect();
-
-        MzSpectrum {
-            mz,
-            intensity,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -251,7 +217,7 @@ pub struct FragmentIonSim {
     pub peptide_id: u32,
     pub collision_energy: f64,
     pub charge: i8,
-    pub fragment_intensities: Vec<FragmentIonSeries>,
+    pub fragment_intensities: PeptideProductIonSeriesCollection,
 }
 
 impl FragmentIonSim {
@@ -259,7 +225,7 @@ impl FragmentIonSim {
         peptide_id: u32,
         collision_energy: f64,
         charge: i8,
-        fragment_intensities: Vec<FragmentIonSeries>,
+        fragment_intensities: PeptideProductIonSeriesCollection,
     ) -> Self {
         FragmentIonSim {
             peptide_id,
