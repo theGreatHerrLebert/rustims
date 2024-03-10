@@ -52,7 +52,7 @@ pub trait IonTransmission {
         for (i, (mz, intensity)) in spectrum.mz.iter().zip(spectrum.intensity.iter()).enumerate() {
             if transmission_probability[i] > probability_cutoff {
                 filtered_mz.push(*mz);
-                filtered_intensity.push(*intensity);
+                filtered_intensity.push(*intensity* transmission_probability[i]);
             }
         }
 
@@ -60,6 +60,23 @@ pub trait IonTransmission {
             mz: filtered_mz,
             intensity: filtered_intensity,
         }
+    }
+
+    fn transmit_ion(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>, spec: MzSpectrum, min_proba: Option<f64>) -> Vec<Vec<MzSpectrum>> {
+
+        let mut result: Vec<Vec<MzSpectrum>> = Vec::new();
+
+        for frame_id in frame_ids.iter() {
+            let mut frame_result: Vec<MzSpectrum> = Vec::new();
+            for scan_id in scan_ids.iter() {
+                let transmitted_spectrum = self.transmit_spectrum(*frame_id, *scan_id, spec.clone(), min_proba);
+                frame_result.push(transmitted_spectrum);
+            }
+            result.push(frame_result);
+        }
+
+
+        result
     }
 
     fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64, min_proba: Option<f64>) -> bool {
