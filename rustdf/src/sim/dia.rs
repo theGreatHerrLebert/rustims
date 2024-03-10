@@ -184,7 +184,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     for fragment_ion_series in fragment_ions.unwrap().peptide_ions.iter() {
                         // scale the spectrum by the fraction of events
                         let scaled_spec = fragment_ion_series.generate_isotopic_spectrum(
-                            1e-3,
+                            1e-1,
                             1e-3,
                             50,
                             1e-6,
