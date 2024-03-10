@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use mscore::data::peptide::{PeptideProductIonSeriesCollection};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
@@ -9,7 +10,6 @@ use mscore::timstof::spectrum::TimsSpectrum;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
-use crate::sim::containers::{FragmentIonSeries};
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 
@@ -17,7 +17,7 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
-    pub fragment_ions: BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>>,
+    pub fragment_ions: BTreeMap<(u32, i8, i8), PeptideProductIonSeriesCollection>,
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
@@ -53,20 +53,20 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     ///
     /// A TimsFrame
     ///
-    pub fn build_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+    pub fn build_frame(&self, frame_id: u32, fragmentation: bool, isotope_fragments: Option<bool>) -> TimsFrame {
         // determine if the frame is a precursor frame
         match self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
             true => self.build_ms1_frame(frame_id),
-            false => self.build_ms2_frame(frame_id, fragmentation),
+            false => self.build_ms2_frame(frame_id, fragmentation, isotope_fragments),
         }
     }
 
-    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize, isotope_fragments: Option<bool>) -> Vec<TimsFrame> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
         thread_pool.install(|| {
-            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, fragmentation)).collect();
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, fragmentation, isotope_fragments)).collect();
         });
 
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
@@ -78,14 +78,14 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id);
         tims_frame
     }
-    fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+    fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool, isotope_fragments: Option<bool>) -> TimsFrame {
         match fragmentation {
             false => {
                 let mut frame = self.transmission_settings.transmit_tims_frame(&self.build_ms1_frame(frame_id), None);
                 frame.ms_type = MsType::FragmentDia;
                 frame
             },
-            true => self.build_fragment_frame(frame_id, None, None, None),
+            true => self.build_fragment_frame(frame_id, None, None, None, isotope_fragments),
         }
     }
 
@@ -107,7 +107,8 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         frame_id: u32,
         mz_min: Option<f64>,
         mz_max: Option<f64>,
-        intensity_min: Option<f64>
+        intensity_min: Option<f64>,
+        isotope_fragments: Option<bool>,
     ) -> TimsFrame {
 
         // check frame id
@@ -181,9 +182,17 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     }
 
                     // for each fragment ion series, create a spectrum and add it to the tims_spectra
-                    for fragment_ion_series in fragment_ions.unwrap() {
-                        // scale the spectrum by the fraction of events
-                        let scaled_spec = fragment_ion_series.to_mz_spectrum() * fraction_events as f64;
+                    for fragment_ion_series in fragment_ions.unwrap().peptide_ions.iter() {
+
+                        let scaled_spec = match isotope_fragments.unwrap_or(true) {
+                            true => fragment_ion_series.generate_isotopic_spectrum(
+                                1e-2,
+                                1e-3,
+                                100,
+                                1e-5,
+                            ) * fraction_events as f64,
+                            false => fragment_ion_series.generate_mono_isotopic_spectrum() * fraction_events as f64,
+                        };
 
                         tims_spectra.push(
                             TimsSpectrum::new(
@@ -192,7 +201,12 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                                 *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
                                 *self.precursor_frame_builder.scan_to_mobility.get(&scan).unwrap() as f64,
                                 ms_type.clone(),
-                                IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity),
+                                IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity).filter_ranged(
+                                    100.0,
+                                    1700.0,
+                                    1.0,
+                                    1e9,
+                                ),
                             )
                         );
                     }

@@ -79,6 +79,7 @@ def main():
                         help="Standard deviation for retention time distribution (default: 1.6)")
     parser.add_argument("--std_im", type=float, default=0.008,
                         help="Standard deviation for mobility distribution (default: 0.008)")
+    parser.add_argument("--isotope_fragments", type=bool, default=True, help="Simulate isotope fragments (default: True)")
 
     # Number of cores to use
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
@@ -86,6 +87,13 @@ def main():
 
     # charge state probabilities
     parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
+
+    # Noise settings
+    parser.add_argument(
+        "--add_noise_to_signals",
+        type=bool,
+        default=False,
+        help="Add noise to ion distributions in retention time and ion mobility (default: False)")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -157,7 +165,8 @@ def main():
         z_score=args.z_score,
         std_rt=args.std_rt,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
-        verbose=verbose
+        verbose=verbose,
+        add_noise=args.add_noise_to_signals
     )
 
     # save peptides to database
@@ -196,7 +205,8 @@ def main():
         z_score=args.z_score,
         std_im=args.std_im,
         im_cycle_length=acquisition_builder.im_cycle_length,
-        verbose=verbose
+        verbose=verbose,
+        add_noise=args.add_noise_to_signals
     )
 
     acquisition_builder.synthetics_handle.create_table(
@@ -221,6 +231,7 @@ def main():
         batch_size=args.batch_size,
         verbose=verbose,
         num_threads=args.num_threads,
+        isotope_fragments=args.isotope_fragments,
     )
 
 

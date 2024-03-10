@@ -1,8 +1,9 @@
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 from imspy.simulation.utility import get_frames_numba, accumulated_intensity_cdf_numba, get_z_score_for_percentile, \
-    python_list_to_json_string
+    python_list_to_json_string, add_uniform_noise
 
 
 def simulate_frame_distributions(
@@ -11,7 +12,8 @@ def simulate_frame_distributions(
         z_score: float,
         std_rt: float,
         rt_cycle_length: float,
-        verbose: bool = False
+        verbose: bool = False,
+        add_noise: bool = False
 ) -> pd.DataFrame:
     # distribution parameters
     z_score = get_z_score_for_percentile(target_score=z_score)
@@ -28,7 +30,7 @@ def simulate_frame_distributions(
     total_list_frame_contributions = []
 
     if verbose:
-        print("Calculating frame and scan distributions...")
+        print("Calculating frame distributions...")
 
     # generate frame_occurrence and frame_abundance columns
     for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0], desc='frame distribution', ncols=100, disable=not verbose):
@@ -41,14 +43,15 @@ def simulate_frame_distributions(
             time = time_dict[frame]
             start = time - rt_cycle_length
             i = accumulated_intensity_cdf_numba(start, time, rt_value, std_rt)
-
-            # TODO: ADD NOISE HERE?
-
             frame_occurrence.append(frame)
             frame_abundance.append(i)
 
         first_occurrence.append(frame_occurrence[0])
         last_occurrence.append(frame_occurrence[-1])
+
+        if add_noise:
+            noise_level = np.random.uniform(0.0, 2.0)
+            frame_abundance = add_uniform_noise(np.array(frame_abundance), noise_level)
 
         total_list_frames.append(frame_occurrence)
         total_list_frame_contributions.append(frame_abundance)

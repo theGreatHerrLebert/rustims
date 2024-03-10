@@ -1,3 +1,5 @@
+from typing import Union, List
+
 from imspy.data.spectrum import MzSpectrum
 from imspy.timstof.frame import TimsFrame
 from numpy.typing import NDArray
@@ -32,6 +34,17 @@ class TimsTofQuadrupoleDIA:
 
     def any_transmitted(self, frame_id: int, scan_id: int, mz: NDArray, min_proba: float | None = None) -> bool:
         return self.handle.any_transmitted(frame_id, scan_id, mz, min_proba)
+
+    def transmit_ion(self, frame_ids: NDArray, scan_ids: NDArray, spectrum: MzSpectrum, min_probability: Union[float, None]) -> List[List[MzSpectrum]]:
+        transmission_profile = self.handle.transmit_ion(frame_ids, scan_ids, spectrum.get_spec_ptr(), min_probability)
+        result = []
+        for i in enumerate(frame_ids):
+            scan_list = []
+            for j in enumerate(scan_ids):
+                scan_list.append(MzSpectrum.from_py_mz_spectrum(transmission_profile[i][j]))
+            result.append(scan_list)
+
+        return result
 
     def is_precursor(self, frame_id: int) -> bool:
         return self.handle.is_precursor(frame_id)

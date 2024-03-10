@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
-use mscore::data::peptide::PeptideSequence;
+use mscore::data::peptide::{PeptideProductIonSeriesCollection, PeptideSequence};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{MsType, MzSpectrum};
 use rusqlite::Connection;
-use crate::sim::containers::{FragmentIonSeries, FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonSim, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim};
+use crate::sim::containers::{FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonSim, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -197,7 +197,7 @@ impl TimsTofSyntheticsDataHandle {
             let fragment_ion_list_str: String = row.get(3)?;
 
             // convert json string to FragmentIonSeries
-            let fragment_ion_sim: Vec<FragmentIonSeries> = match serde_json::from_str(&fragment_ion_list_str) {
+            let fragment_ion_sim: PeptideProductIonSeriesCollection = match serde_json::from_str(&fragment_ion_list_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     3,
@@ -415,12 +415,12 @@ impl TimsTofSyntheticsDataHandle {
         peptide_to_ions
     }
 
-    pub fn build_fragment_ions(fragment_ions: &Vec<FragmentIonSim>) -> BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>> {
-        let mut fragment_ion_map: BTreeMap<(u32, i8, i8), Vec<FragmentIonSeries>> = BTreeMap::new();
+    pub fn build_fragment_ions(fragment_ions: &Vec<FragmentIonSim>) -> BTreeMap<(u32, i8, i8), PeptideProductIonSeriesCollection> {
+        let mut fragment_ion_map: BTreeMap<(u32, i8, i8), PeptideProductIonSeriesCollection> = BTreeMap::new();
         for fragment_ion in fragment_ions.iter() {
             let key = (fragment_ion.peptide_id, fragment_ion.charge, (fragment_ion.collision_energy * 1e3).round() as i8);
             let value = fragment_ion.fragment_intensities.clone();
-            fragment_ion_map.entry(key).or_insert_with(Vec::new).extend(value);
+            fragment_ion_map.entry(key).or_insert(value);
         }
         fragment_ion_map
     }

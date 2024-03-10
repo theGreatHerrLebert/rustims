@@ -46,6 +46,11 @@ impl PyTimsTransmissionDIA {
         PyTimsFrame { inner: self.inner.transmit_tims_frame(&frame.inner, min_probability) }
     }
 
+    pub fn transmit_ion(&self, frames: Vec<i32>, scans: Vec<i32>, spectrum: PyMzSpectrum, min_proba: Option<f64>) -> Vec<Vec<PyMzSpectrum>> {
+        let transmission_profile = self.inner.transmit_ion(frames, scans, spectrum.inner, min_proba);
+        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum { inner: y.clone() }).collect::<Vec<_>>()).collect::<Vec<_>>()
+    }
+
     pub fn get_setting(&self, window_group: i32, scan_id: i32) -> (f64, f64) {
         let result = self.inner.get_setting(window_group, scan_id);
         match result {

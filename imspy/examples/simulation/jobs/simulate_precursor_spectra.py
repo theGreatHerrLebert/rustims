@@ -17,6 +17,9 @@ def simulate_precursor_spectra_sequence(
         num_threads=num_threads,
     )
 
+    if verbose:
+        print("Serializing simulated spectra to json...")
+
     specs = [spec.to_jsons() for spec in specs]
     ions.insert(5, 'simulated_spectrum', specs)
 
