@@ -30,7 +30,7 @@ def simulate_frame_distributions(
     total_list_frame_contributions = []
 
     if verbose:
-        print("Calculating frame and scan distributions...")
+        print("Calculating frame distributions...")
 
     # generate frame_occurrence and frame_abundance columns
     for _, row in tqdm(peptide_rt.iterrows(), total=peptide_rt.shape[0], desc='frame distribution', ncols=100, disable=not verbose):

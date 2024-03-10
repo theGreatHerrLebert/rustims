@@ -26,6 +26,9 @@ def simulate_scan_distributions(
     im_scans = []
     im_contributions = []
 
+    if verbose:
+        print("Calculating scan distributions...")
+
     for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
         scan_occurrence, scan_abundance = [], []
 
