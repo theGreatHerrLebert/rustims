@@ -218,7 +218,7 @@ class TDFWriter:
 
     def write_dia_ms_ms_info(self, dia_ms_ms_info: pd.DataFrame) -> None:
         out = dia_ms_ms_info.rename(columns={
-            'frame_id': 'Frame',
+            'frame': 'Frame',
             'window_group': 'WindowGroup',
         })
 
