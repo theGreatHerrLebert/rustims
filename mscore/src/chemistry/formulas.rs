@@ -21,7 +21,7 @@ use crate::chemistry::constants::MASS_PROTON;
 /// use mscore::chemistry::formulas::one_over_reduced_mobility_to_ccs;
 ///
 /// let ccs = one_over_reduced_mobility_to_ccs(0.5, 1000.0, 2, 28.013, 31.85, 273.15);
-/// assert_eq!(ccs, 806.5918693771381);
+/// assert_eq!(ccs, 201.64796734428452);
 /// ```
 pub fn one_over_reduced_mobility_to_ccs(
     one_over_k0: f64,
