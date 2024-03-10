@@ -85,7 +85,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                 frame.ms_type = MsType::FragmentDia;
                 frame
             },
-            true => self.build_fragment_frame(frame_id, None, None, None),
+            true => self.build_fragment_frame(frame_id, None, None, None, None),
         }
     }
 
@@ -107,7 +107,8 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         frame_id: u32,
         mz_min: Option<f64>,
         mz_max: Option<f64>,
-        intensity_min: Option<f64>
+        intensity_min: Option<f64>,
+        isotope_fragments: Option<bool>,
     ) -> TimsFrame {
 
         // check frame id
@@ -182,13 +183,16 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
                     // for each fragment ion series, create a spectrum and add it to the tims_spectra
                     for fragment_ion_series in fragment_ions.unwrap().peptide_ions.iter() {
-                        // scale the spectrum by the fraction of events
-                        let scaled_spec = fragment_ion_series.generate_isotopic_spectrum(
-                            1e-1,
-                            1e-3,
-                            70,
-                            1e-5,
-                        ) * fraction_events as f64;
+
+                        let scaled_spec = match isotope_fragments.unwrap_or(true) {
+                            true => fragment_ion_series.generate_isotopic_spectrum(
+                                1e-1,
+                                1e-3,
+                                70,
+                                1e-5,
+                            ) * fraction_events as f64,
+                            false => fragment_ion_series.generate_mono_isotopic_spectrum() * fraction_events as f64,
+                        };
 
                         tims_spectra.push(
                             TimsSpectrum::new(
