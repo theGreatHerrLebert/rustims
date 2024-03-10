@@ -197,7 +197,12 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                                 *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
                                 *self.precursor_frame_builder.scan_to_mobility.get(&scan).unwrap() as f64,
                                 ms_type.clone(),
-                                IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity),
+                                IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity).filter_ranged(
+                                    100.0,
+                                    1700.0,
+                                    1.0,
+                                    1e9,
+                                ),
                             )
                         );
                     }
