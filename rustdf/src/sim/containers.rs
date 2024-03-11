@@ -4,14 +4,6 @@ use serde::{Serialize, Deserialize};
 use rand::distributions::{Distribution, Uniform};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FragmentIon {
-    pub mz: f64,
-    pub kind: String,
-    pub sequence: String,
-    pub intensity: f64,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalDistribution {
     pub mean: f32,
     pub variance: f32,
@@ -141,6 +133,7 @@ impl FrameToWindowGroupSim {
 
 #[derive(Debug, Clone)]
 pub struct IonSim {
+    pub ion_id: u32,
     pub peptide_id: u32,
     pub sequence: String,
     pub charge: i8,
@@ -152,6 +145,7 @@ pub struct IonSim {
 
 impl IonSim {
     pub fn new(
+        ion_id: u32,
         peptide_id: u32,
         sequence: String,
         charge: i8,
@@ -162,6 +156,7 @@ impl IonSim {
         scan_abundance: Vec<f32>,
     ) -> Self {
         IonSim {
+            ion_id,
             peptide_id,
             sequence,
             charge,
