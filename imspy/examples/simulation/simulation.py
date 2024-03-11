@@ -209,6 +209,9 @@ def main():
         add_noise=args.add_noise_to_signals
     )
 
+    ion_id = ions.index
+    ions.insert(0, 'ion_id', ion_id)
+
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
         table=ions
