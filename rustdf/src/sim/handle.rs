@@ -280,7 +280,7 @@ impl TimsTofSyntheticsDataHandle {
                         let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                         let quantized_energy = (collision_energy * 100.0).round() as i32;
 
-                        ret_tree.insert((ion.peptide_id, peptide.sequence.sequence.clone(), ion.charge, quantized_energy));
+                        ret_tree.insert((ion.ion_id, peptide.sequence.sequence.clone(), ion.charge, quantized_energy));
                     }
                 }
             }
@@ -310,19 +310,19 @@ impl TimsTofSyntheticsDataHandle {
             ret_tree.extend(tree);
         }
 
-        let mut ret_frame = Vec::new();
+        let mut ret_ion_id = Vec::new();
         let mut ret_sequence = Vec::new();
         let mut ret_charge = Vec::new();
         let mut ret_energy = Vec::new();
 
-        for (frame, sequence, charge, energy) in ret_tree {
-            ret_frame.push(frame as i32);
+        for (ion_id, sequence, charge, energy) in ret_tree {
+            ret_ion_id.push(ion_id as i32);
             ret_sequence.push(sequence);
             ret_charge.push(charge);
             ret_energy.push(energy as f32 / 100.0);
         }
 
-        (ret_frame, ret_sequence, ret_charge, ret_energy)
+        (ret_ion_id, ret_sequence, ret_charge, ret_energy)
     }
 
     pub fn build_peptide_to_ion_map(ions: &Vec<IonSim>) -> BTreeMap<u32, Vec<IonSim>> {
