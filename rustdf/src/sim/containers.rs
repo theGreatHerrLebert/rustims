@@ -210,6 +210,7 @@ impl FramesSim {
 
 pub struct FragmentIonSim {
     pub peptide_id: u32,
+    pub ion_id: u32,
     pub collision_energy: f64,
     pub charge: i8,
     pub fragment_intensities: PeptideProductIonSeriesCollection,
@@ -218,12 +219,14 @@ pub struct FragmentIonSim {
 impl FragmentIonSim {
     pub fn new(
         peptide_id: u32,
+        ion_id: u32,
         collision_energy: f64,
         charge: i8,
         fragment_intensities: PeptideProductIonSeriesCollection,
     ) -> Self {
         FragmentIonSim {
             peptide_id,
+            ion_id,
             charge,
             collision_energy,
             fragment_intensities,
