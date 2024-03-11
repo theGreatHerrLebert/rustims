@@ -27,7 +27,4 @@ def simulate_charge_states(
     ions['mz'] = ions.apply(lambda r: calculate_mz(r['monoisotopic-mass'], r['charge']), axis=1)
     ions = ions[(ions.mz >= mz_lower) & (ions.mz <= mz_upper)]
 
-    ion_id = ions.index
-    ions.insert(0, 'ion_id', ion_id)
-
     return ions

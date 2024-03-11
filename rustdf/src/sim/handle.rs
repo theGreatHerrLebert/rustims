@@ -295,7 +295,6 @@ impl TimsTofSyntheticsDataHandle {
         let peptides = self.read_peptides().unwrap();
         let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
         let precursor_frames = TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&self.read_frames().unwrap());
-
         let transmission = self.get_transmission_dia();
         let collision_energy = self.get_collision_energy_dia();
 
