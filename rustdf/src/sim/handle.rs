@@ -195,13 +195,13 @@ impl TimsTofSyntheticsDataHandle {
 
         let fragment_ion_sim_iter = stmt.query_map([], |row| {
             // get json string from database
-            let fragment_ion_list_str: String = row.get(3)?;
+            let fragment_ion_list_str: String = row.get(4)?;
 
             // convert json string to FragmentIonSeries
             let fragment_ion_sim: PeptideProductIonSeriesCollection = match serde_json::from_str(&fragment_ion_list_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    3,
+                    4,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -211,6 +211,7 @@ impl TimsTofSyntheticsDataHandle {
                 row.get(0)?,
                 row.get(1)?,
                 row.get(2)?,
+                row.get(3)?,
                 fragment_ion_sim,
             ))
         })?;
@@ -258,10 +259,10 @@ impl TimsTofSyntheticsDataHandle {
         peptide_map: &BTreeMap<u32, PeptidesSim>,
         precursor_frames: &HashSet<u32>,
         transmission: &TimsTransmissionDIA,
-        collision_energy: &TimsTofCollisionEnergyDIA) -> BTreeSet<(u32, String, i8, i32)> {
+        collision_energy: &TimsTofCollisionEnergyDIA) -> BTreeSet<(u32, u32, String, i8, i32)> {
 
         let peptide = peptide_map.get(&ion.peptide_id).unwrap();
-        let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
+        let mut ret_tree: BTreeSet<(u32, u32, String, i8, i32)> = BTreeSet::new();
 
         // go over all frames the ion occurs in
         for frame in peptide.frame_distribution.occurrence.iter() {
@@ -280,7 +281,7 @@ impl TimsTofSyntheticsDataHandle {
                         let collision_energy = collision_energy.get_collision_energy(*frame as i32, *scan as i32);
                         let quantized_energy = (collision_energy * 100.0).round() as i32;
 
-                        ret_tree.insert((ion.peptide_id, peptide.sequence.sequence.clone(), ion.charge, quantized_energy));
+                        ret_tree.insert((ion.peptide_id, ion.ion_id, peptide.sequence.sequence.clone(), ion.charge, quantized_energy));
                     }
                 }
             }
@@ -289,7 +290,7 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     // TODO: take isotopic envelope into account
-    pub fn get_transmitted_ions(&self, num_threads: usize) -> (Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+    pub fn get_transmitted_ions(&self, num_threads: usize) -> (Vec<i32>, Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // create a thread pool
         let peptides = self.read_peptides().unwrap();
@@ -305,24 +306,26 @@ impl TimsTofSyntheticsDataHandle {
         }).collect::<Vec<_>>()
         });
 
-        let mut ret_tree: BTreeSet<(u32, String, i8, i32)> = BTreeSet::new();
+        let mut ret_tree: BTreeSet<(u32, u32, String, i8, i32)> = BTreeSet::new();
         for tree in trees {
             ret_tree.extend(tree);
         }
 
-        let mut ret_frame = Vec::new();
+        let mut ret_peptide_id = Vec::new();
+        let mut ret_ion_id = Vec::new();
         let mut ret_sequence = Vec::new();
         let mut ret_charge = Vec::new();
         let mut ret_energy = Vec::new();
 
-        for (frame, sequence, charge, energy) in ret_tree {
-            ret_frame.push(frame as i32);
+        for (peptide_id, ion_id, sequence, charge, energy) in ret_tree {
+            ret_peptide_id.push(peptide_id as i32);
+            ret_ion_id.push(ion_id as i32);
             ret_sequence.push(sequence);
             ret_charge.push(charge);
             ret_energy.push(energy as f32 / 100.0);
         }
 
-        (ret_frame, ret_sequence, ret_charge, ret_energy)
+        (ret_peptide_id, ret_ion_id, ret_sequence, ret_charge, ret_energy)
     }
 
     pub fn build_peptide_to_ion_map(ions: &Vec<IonSim>) -> BTreeMap<u32, Vec<IonSim>> {

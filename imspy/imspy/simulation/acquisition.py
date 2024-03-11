@@ -186,7 +186,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
     def calculate_frame_types(self, verbose: bool = True) -> NDArray:
         if verbose:
-            print(f'Calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
+            print(f'Calculating frame types, precursor frame will be taken every {self.precursor_every + 1} rt cycles.')
         return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in self.frame_table.frame_id])
 
     def generate_frame_to_window_group_table(self, precursors_every: int = 16, verbose: bool = True) -> pd.DataFrame:
