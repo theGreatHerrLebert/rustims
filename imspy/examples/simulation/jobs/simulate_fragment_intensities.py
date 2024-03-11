@@ -57,7 +57,7 @@ def simulate_fragment_intensities(
         )
 
         batch['fragment_intensities'] = all_ions
-        batch = batch[['ion_id', 'collision_energy', 'charge', 'fragment_intensities']]
+        batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'fragment_intensities']]
 
         if batch_counter == 0:
             acquisition_builder.synthetics_handle.create_table(
