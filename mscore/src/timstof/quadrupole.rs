@@ -29,7 +29,7 @@ use crate::timstof::frame::TimsFrame;
 /// ```
 pub fn smooth_step(x: &Vec<f64>, up_start: f64, up_end: f64, k: f64) -> Vec<f64> {
     let m = (up_start + up_end) / 2.0;
-    x.iter().map(|&xi| 1.0 / (1.0 + E.powf(k * (xi - m)))).collect()
+    x.iter().map(|&xi| 1.0 / (1.0 + E.powf(-k * (xi - m)))).collect()
 }
 
 /// Sigmoide step function for quadrupole selection simulation
