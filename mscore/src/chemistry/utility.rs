@@ -65,6 +65,29 @@ pub fn unimod_sequence_to_tokens(sequence: &str, group_modifications: bool) -> V
     tokens
 }
 
+/// Convert a peptide sequence with UNIMOD annotations to a tuple of plain sequence and for each
+/// position in the sequence, the mass of the modification at that position (0 if no modification),
+/// which is the representation of sequence nad modifications used by SAGE
+///
+/// # Arguments
+///
+/// * `input_string` - a string slice of the peptide sequence
+///
+/// # Returns
+///
+/// * `(String, Vec<f64>)` - a tuple of the plain sequence and a vector of f64 representing the mass
+/// of the modification at each position in the sequence
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::utility::find_unimod_patterns;
+///
+/// let sequence = "PEPTIDE[UNIMOD:1]H";
+/// let (stripped_sequence, mods) = find_unimod_patterns(sequence);
+/// assert_eq!(stripped_sequence, "PEPTIDEH");
+/// assert_eq!(mods, vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 42.010565, 0.0]);
+/// ```
 pub fn find_unimod_patterns(input_string: &str) -> (String, Vec<f64>) {
     let results = extract_unimod_patterns(input_string);
     let stripped_sequence = remove_unimod_annotation(input_string);
@@ -116,6 +139,27 @@ fn calculate_modifications(index_list: &[(usize, String)], stripped_sequence: &s
     mods
 }
 
+/// Reshape the flat prosit array into a 3D array of shape (29, 2, 3)
+///
+/// # Arguments
+///
+/// * `flat_array` - a vector of f64 representing the flat prosit array
+///
+/// # Returns
+///
+/// * `Vec<Vec<Vec<f64>>>` - a 3D array of shape (29, 2, 3)
+///
+/// # Example
+///
+/// ```
+/// use mscore::chemistry::utility::reshape_prosit_array;
+///
+/// let flat_array = vec![0.0; 174];
+/// let reshaped_array = reshape_prosit_array(flat_array);
+/// assert_eq!(reshaped_array.len(), 29);
+/// assert_eq!(reshaped_array[0].len(), 2);
+/// assert_eq!(reshaped_array[0][0].len(), 3);
+/// ```
 pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
     let mut array_return: Vec<Vec<Vec<f64>>> = vec![vec![vec![0.0; 3]; 2]; 29];
     let mut ptr = 0;
