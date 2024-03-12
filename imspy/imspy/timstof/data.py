@@ -23,7 +23,7 @@ class AcquisitionMode:
         Args:
             mode (str): Acquisition mode.
         """
-        allowed_modes = ["DDA", "DIA", "MIDIA", "UNKNOWN", "PRECURSOR"]
+        allowed_modes = ["DDA", "DIA", "UNKNOWN", "PRECURSOR"]
         assert mode in allowed_modes, f"Unknown acquisition mode, use one of {allowed_modes}"
         self.__mode_ptr = ims.PyAcquisitionMode.from_string(mode)
 

@@ -8,7 +8,6 @@ import imspy_connector
 ims = imspy_connector.py_dda
 
 
-
 class TimsDatasetDDA(TimsDataset):
 
     def __init__(self, data_path: str):
