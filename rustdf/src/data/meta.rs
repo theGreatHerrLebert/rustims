@@ -36,13 +36,9 @@ pub struct DDAFragmentInfo {
     pub precursor_id: i64,
 }
 
-pub struct DIAFragmentFrameInfo {
+pub struct DIAFragmentFrameInfo {}
 
-}
-
-pub struct DIAWindowGroupInfo {
-
-}
+pub struct DIAWindowGroupInfo {}
 
 #[derive(Debug)]
 pub struct GlobalMetaData {

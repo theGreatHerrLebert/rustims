@@ -15,6 +15,7 @@ use mscore::timstof::slice::TimsSlice;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
+/// Interface to be shared by all acquisitions of timsTOF
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
     fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
@@ -206,7 +207,6 @@ pub enum AcquisitionMode {
     PRECURSOR,
     DDA,
     DIA,
-    MIDIA,
     Unknown,
 }
 
@@ -216,7 +216,6 @@ impl AcquisitionMode {
             AcquisitionMode::PRECURSOR => 0,
             AcquisitionMode::DDA => 8,
             AcquisitionMode::DIA => 9,
-            AcquisitionMode::MIDIA => 10,
             AcquisitionMode::Unknown => -1,
         }
     }
@@ -226,7 +225,6 @@ impl AcquisitionMode {
             AcquisitionMode::PRECURSOR => "PRECURSOR",
             AcquisitionMode::DDA => "DDA",
             AcquisitionMode::DIA => "DIA",
-            AcquisitionMode::MIDIA => "MIDIA",
             AcquisitionMode::Unknown => "UNKNOWN",
         }
     }
@@ -238,7 +236,6 @@ impl Display for AcquisitionMode {
             AcquisitionMode::PRECURSOR => write!(f, "PRECURSOR"),
             AcquisitionMode::DDA => write!(f, "DDA"),
             AcquisitionMode::DIA => write!(f, "DIA"),
-            AcquisitionMode::MIDIA => write!(f, "MIDIA"),
             AcquisitionMode::Unknown => write!(f, "UNKNOWN"),
         }
     }
@@ -250,7 +247,6 @@ impl From<i32> for AcquisitionMode {
             0 => AcquisitionMode::PRECURSOR,
             8 => AcquisitionMode::DDA,
             9 => AcquisitionMode::DIA,
-            10 => AcquisitionMode::MIDIA,
             _ => AcquisitionMode::Unknown,
         }
     }
@@ -262,7 +258,6 @@ impl From<&str> for AcquisitionMode {
             "PRECURSOR" => AcquisitionMode::PRECURSOR,
             "DDA" => AcquisitionMode::DDA,
             "DIA" => AcquisitionMode::DIA,
-            "MIDIA" => AcquisitionMode::MIDIA,
             _ => AcquisitionMode::Unknown,
         }
     }
@@ -317,7 +312,6 @@ impl TimsDataHandle {
         let acquisition_mode = match frame_meta_data[0].scan_mode {
             8 => AcquisitionMode::DDA,
             9 => AcquisitionMode::DIA,
-            10 => AcquisitionMode::MIDIA,
             _ => AcquisitionMode::Unknown,
         };
 

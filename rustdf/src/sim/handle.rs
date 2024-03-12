@@ -328,6 +328,7 @@ impl TimsTofSyntheticsDataHandle {
         (ret_peptide_id, ret_ion_id, ret_sequence, ret_charge, ret_energy)
     }
 
+    /// Method to build a map from peptide id to ions
     pub fn build_peptide_to_ion_map(ions: &Vec<IonSim>) -> BTreeMap<u32, Vec<IonSim>> {
         let mut ion_map = BTreeMap::new();
         for ion in ions.iter() {
@@ -337,6 +338,7 @@ impl TimsTofSyntheticsDataHandle {
         ion_map
     }
 
+    /// Method to build a map from peptide id to events (absolute number of events in the simulation)
     pub fn build_peptide_map(peptides: &Vec<PeptidesSim>) -> BTreeMap<u32, PeptidesSim> {
         let mut peptide_map = BTreeMap::new();
         for peptide in peptides.iter() {
@@ -345,8 +347,7 @@ impl TimsTofSyntheticsDataHandle {
         peptide_map
     }
 
-
-    // Method to build a set of precursor frame ids, can be used to check if a frame is a precursor frame
+    /// Method to build a set of precursor frame ids, can be used to check if a frame is a precursor frame
     pub fn build_precursor_frame_id_set(frames: &Vec<FramesSim>) -> HashSet<u32> {
         frames.iter().filter(|frame| frame.parse_ms_type() == MsType::Precursor)
             .map(|frame| frame.frame_id)

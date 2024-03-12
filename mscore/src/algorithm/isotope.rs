@@ -266,9 +266,26 @@ pub fn lam(mass: f64, slope: f64, intercept: f64) -> f64 {
     slope * mass + intercept
 }
 
-pub fn iso(x: &Vec<f64>, mass: f64, charge: f64, sigma: f64, amp: f64, k: usize, step_size: f64, mass_neutron: f64) -> Vec<f64> {
+/// calculate the isotope pattern for a given mass and charge based on the averagine model
+/// using the normal distribution for peak shapes
+///
+/// Arguments:
+///
+/// * `x` - list of m/z values to probe
+/// * `mass` - mass of the peptide
+/// * `charge` - charge of the peptide
+/// * `sigma` - standard deviation of the normal distribution
+/// * `amp` - amplitude of the isotope pattern
+/// * `k` - number of isotopes to consider
+/// * `step_size` - step size for the m/z values to probe
+///
+/// Returns:
+///
+/// * `Vec<f64>` - isotope pattern
+///
+pub fn iso(x: &Vec<f64>, mass: f64, charge: f64, sigma: f64, amp: f64, k: usize, step_size: f64) -> Vec<f64> {
     let k_range: Vec<usize> = (0..k).collect();
-    let means: Vec<f64> = k_range.iter().map(|&k_val| (mass + mass_neutron * k_val as f64) / charge).collect();
+    let means: Vec<f64> = k_range.iter().map(|&k_val| (mass + MASS_NEUTRON * k_val as f64) / charge).collect();
     let weights = weight(mass, k_range.iter().map(|&k_val| k_val as i32).collect::<Vec<i32>>(), true);
 
     let mut intensities = vec![0.0; x.len()];
@@ -309,7 +326,7 @@ pub fn generate_isotope_pattern(lower_bound: f64, upper_bound: f64, mass: f64, c
     let step_size = f64::min(sigma / 10.0, 1.0 / 10f64.powi(resolution));
     let size = ((upper_bound - lower_bound) / step_size).ceil() as usize;
     let mzs: Vec<f64> = (0..size).map(|i| lower_bound + step_size * i as f64).collect();
-    let intensities = iso(&mzs, mass, charge, sigma, amp, k, step_size, MASS_NEUTRON);
+    let intensities = iso(&mzs, mass, charge, sigma, amp, k, step_size);
 
     (mzs.iter().map(|&mz| mz + MASS_PROTON).collect(), intensities)
 }
@@ -420,11 +437,35 @@ pub fn generate_averagine_spectra(
     spectra
 }
 
+/// generate the precursor spectrum for a given peptide sequence and charge
+/// using isotope convolutions
+///
+/// Arguments:
+///
+/// * `sequence` - peptide sequence
+/// * `charge` - charge of the peptide
+///
+/// Returns:
+///
+/// * `MzSpectrum` - precursor spectrum
+///
 pub fn generate_precursor_spectrum(sequence: &str, charge: i32) -> MzSpectrum {
     let peptide_ion = PeptideIon::new(sequence.to_string(), charge, 1.0);
     peptide_ion.calculate_isotopic_spectrum(1e-3, 1e-9, 200, 1e-6)
 }
 
+/// parallel version of `generate_precursor_spectrum`
+///
+/// Arguments:
+///
+/// * `sequences` - list of peptide sequences
+/// * `charges` - list of charges of the peptides
+/// * `num_threads` - number of threads to use
+///
+/// Returns:
+///
+/// * `Vec<MzSpectrum>` - list of precursor spectra
+///
 pub fn generate_precursor_spectra(sequences: &Vec<&str>, charges: &Vec<i32>, num_threads: usize) -> Vec<MzSpectrum> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
     let result = thread_pool.install(|| {

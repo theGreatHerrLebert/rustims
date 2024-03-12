@@ -60,6 +60,25 @@ pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) 
     mass_sequence + mass_modifications + MASS_WATER
 }
 
+/// calculate the monoisotopic mass of a peptide product ion for a given fragment type
+///
+/// Arguments:
+///
+/// * `sequence` - peptide sequence
+/// * `kind` - fragment type
+///
+/// Returns:
+///
+/// * `mass` - monoisotopic mass of the peptide
+///
+/// # Examples
+/// ```
+/// use mscore::algorithm::peptide::calculate_peptide_product_ion_mono_isotopic_mass;
+/// use mscore::data::peptide::FragmentType;
+/// let sequence = "PEPTIDEH";
+/// let mass = calculate_peptide_product_ion_mono_isotopic_mass(sequence, FragmentType::Y);
+/// assert_eq!(mass, 936.4188766862999);
+/// ```
 pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: FragmentType) -> f64 {
 
     let (sequence, modifications) = find_unimod_patterns(sequence);
@@ -93,11 +112,56 @@ pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: Fr
     mass
 }
 
+/// calculate the monoisotopic m/z of a peptide product ion for a given fragment type and charge
+///
+/// Arguments:
+///
+/// * `sequence` - peptide sequence
+/// * `kind` - fragment type
+/// * `charge` - charge
+///
+/// Returns:
+///
+/// * `mz` - monoisotopic mass of the peptide
+///
+/// # Examples
+/// ```
+/// use mscore::algorithm::peptide::calculate_product_ion_mz;
+/// use mscore::chemistry::constants::MASS_PROTON;
+/// use mscore::data::peptide::FragmentType;
+/// let sequence = "PEPTIDEH";
+/// let mz = calculate_product_ion_mz(sequence, FragmentType::Y, Some(1));
+/// assert_eq!(mz, 936.4188766862999 + MASS_PROTON);
+/// ```
 pub fn calculate_product_ion_mz(sequence: &str, kind: FragmentType, charge: Option<i32>) -> f64 {
     let mass = calculate_peptide_product_ion_mono_isotopic_mass(sequence, kind);
     calculate_mz(mass, charge.unwrap_or(1))
 }
 
+/// get a count dictionary of the amino acid composition of a peptide sequence
+///
+/// Arguments:
+///
+/// * `sequence` - peptide sequence
+///
+/// Returns:
+///
+/// * `composition` - a dictionary of amino acid composition
+///
+/// # Examples
+///
+/// ```
+/// use mscore::algorithm::peptide::calculate_amino_acid_composition;
+///
+/// let sequence = "PEPTIDEH";
+/// let composition = calculate_amino_acid_composition(sequence);
+/// assert_eq!(composition.get("P"), Some(&2));
+/// assert_eq!(composition.get("E"), Some(&2));
+/// assert_eq!(composition.get("T"), Some(&1));
+/// assert_eq!(composition.get("I"), Some(&1));
+/// assert_eq!(composition.get("D"), Some(&1));
+/// assert_eq!(composition.get("H"), Some(&1));
+/// ```
 pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> {
     let mut composition = HashMap::new();
     for char in sequence.chars() {
@@ -106,6 +170,7 @@ pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> 
     composition
 }
 
+/// calculate the atomic composition of a peptide sequence
 pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
 
     let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), false);
@@ -142,7 +207,16 @@ pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence
     collection
 }
 
-pub fn mono_isotopic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&str, i32)> {
+/// calculate the atomic composition of a product ion
+///
+/// Arguments:
+///
+/// * `product_ion` - a PeptideProductIon instance
+///
+/// Returns:
+///
+/// * `Vec<(&str, i32)>` - a vector of tuples representing the atomic composition of the product ion
+pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&str, i32)> {
 
     let mut composition = peptide_sequence_to_atomic_composition(&product_ion.ion.sequence);
 
@@ -182,10 +256,19 @@ pub fn mono_isotopic_product_ion_composition(product_ion: &PeptideProductIon) ->
     composition.iter().map(|(k, v)| (*k, *v)).collect()
 }
 
+/// calculate the atomic composition of a peptide product ion series
+/// Arguments:
+///
+/// * `product_ions` - a vector of PeptideProductIon instances
+/// * `num_threads` - an usize representing the number of threads to use
+/// Returns:
+///
+/// * `Vec<Vec<(String, i32)>>` - a vector of vectors of tuples representing the atomic composition of each product ion
+///
 pub fn fragments_to_composition(product_ions: Vec<PeptideProductIon>, num_threads: usize) -> Vec<Vec<(String, i32)>> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
     let result = thread_pool.install(|| {
-        product_ions.par_iter().map(|ion| mono_isotopic_product_ion_composition(ion)).map(|composition| {
+        product_ions.par_iter().map(|ion| atomic_product_ion_composition(ion)).map(|composition| {
             composition.iter().map(|(k, v)| (k.to_string(), *v)).collect()
         }).collect()
     });
