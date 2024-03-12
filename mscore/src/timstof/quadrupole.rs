@@ -4,27 +4,95 @@ use std::f64::consts::E;
 use crate::data::spectrum::MzSpectrum;
 use crate::timstof::frame::TimsFrame;
 
-// step function for quadrupole selection simulation
-fn smooth_step(x: &Vec<f64>, up_start: f64, up_end: f64, k: f64) -> Vec<f64> {
+/// Sigmoide step function for quadrupole selection simulation
+///
+/// Arguments:
+///
+/// * `x` - mz values
+/// * `up_start` - start of the step
+/// * `up_end` - end of the step
+/// * `k` - steepness of the step
+///
+/// Returns:
+///
+/// * `Vec<f64>` - transmission probability for each mz value
+///
+/// # Examples
+///
+/// ```
+/// use mscore::timstof::quadrupole::smooth_step;
+///
+/// let mz = vec![100.0, 200.0, 300.0];
+/// let transmission = smooth_step(&mz, 150.0, 250.0, 0.5).iter().map(
+/// |&x| (x * 100.0).round() / 100.0).collect::<Vec<f64>>();
+/// assert_eq!(transmission, vec![0.0, 0.5, 1.0]);
+/// ```
+pub fn smooth_step(x: &Vec<f64>, up_start: f64, up_end: f64, k: f64) -> Vec<f64> {
     let m = (up_start + up_end) / 2.0;
     x.iter().map(|&xi| 1.0 / (1.0 + E.powf(-k * (xi - m)))).collect()
 }
 
-// step function for quadrupole selection simulation, going up and down
-fn smooth_step_up_down(x: &Vec<f64>, up_start: f64, up_end: f64, down_start: f64, down_end: f64, k: f64) -> Vec<f64> {
+/// Sigmoide step function for quadrupole selection simulation
+///
+/// Arguments:
+///
+/// * `x` - mz values
+/// * `up_start` - start of the step up
+/// * `up_end` - end of the step up
+/// * `down_start` - start of the step down
+/// * `down_end` - end of the step down
+/// * `k` - steepness of the step
+///
+/// Returns:
+///
+/// * `Vec<f64>` - transmission probability for each mz value
+///
+/// # Examples
+///
+/// ```
+/// use mscore::timstof::quadrupole::smooth_step_up_down;
+///
+/// let mz = vec![100.0, 200.0, 300.0];
+/// let transmission = smooth_step_up_down(&mz, 150.0, 200.0, 250.0, 300.0, 0.5).iter().map(
+/// |&x| (x * 100.0).round() / 100.0).collect::<Vec<f64>>();
+/// assert_eq!(transmission, vec![0.0, 1.0, 0.0]);
+/// ```
+pub fn smooth_step_up_down(x: &Vec<f64>, up_start: f64, up_end: f64, down_start: f64, down_end: f64, k: f64) -> Vec<f64> {
     let step_up = smooth_step(x, up_start, up_end, k);
     let step_down = smooth_step(x, down_start, down_end, k);
     step_up.iter().zip(step_down.iter()).map(|(&u, &d)| u - d).collect()
 }
 
-// parameterize a step function for quadrupole selection simulation and return a function
+/// Ion transmission function for quadrupole selection simulation
+///
+/// Arguments:
+///
+/// * `midpoint` - center of the step
+/// * `window_length` - length of the step
+/// * `k` - steepness of the step
+///
+/// Returns:
+///
+/// * `impl Fn(Vec<f64>) -> Vec<f64>` - ion transmission function
+///
+/// # Examples
+///
+/// ```
+/// use mscore::timstof::quadrupole::ion_transition_function_midpoint;
+///
+/// let ion_transmission = ion_transition_function_midpoint(150.0, 50.0, 1.0);
+/// let mz = vec![100.0, 150.0, 170.0];
+/// let transmission = ion_transmission(mz).iter().map(
+/// |&x| (x * 100.0).round() / 100.0).collect::<Vec<f64>>();
+/// assert_eq!(transmission, vec![0.0, 1.0, 1.0]);
+/// ```
 pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f64) -> impl Fn(Vec<f64>) -> Vec<f64> {
     let half_window = window_length / 2.0;
-    let quarter_window = window_length / 4.0;
+    let end_window = window_length / 16.0;
 
     let up_start = midpoint - half_window;
-    let up_end = midpoint - quarter_window;
-    let down_start = midpoint + quarter_window;
+    let up_end = midpoint - end_window;
+    let down_start = midpoint + end_window;
     let down_end = midpoint + half_window;
 
     // take a vector of mz values to their transmission probability
@@ -175,7 +243,7 @@ impl TimsTransmissionDIA {
         Self {
             frame_to_window_group,
             window_group_settings,
-            k: k.unwrap_or(15.0),
+            k: k.unwrap_or(1.0),
         }
     }
 
