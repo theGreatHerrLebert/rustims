@@ -15,6 +15,19 @@ impl RoundDecimals for f64 {
     }
 }
 
+/// helper function to reshape the flat prosit predicted intensity array into a 3D array where:
+/// 1st dimension: 29 rows for every potential ion since prosit allows precursor sequences up to 30 amino acids
+/// 2nd dimension: 2 columns for B and Y ions
+/// 3rd dimension: 3 channels for charge 1, 2, and 3
+///
+/// # Arguments
+///
+/// * `array` - A vector of f64 representing the flat prosit array
+///
+/// # Returns
+///
+/// * A 3D vector of f64 representing the reshaped prosit array
+///
 pub fn reshape_prosit_array(array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
     let mut array_return: Vec<Vec<Vec<f64>>> = vec![vec![vec![0.0; 3]; 2]; 29];
     let mut ptr = 0;
@@ -35,6 +48,20 @@ pub fn reshape_prosit_array(array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
     array_return
 }
 
+/// helper function to convert a peptide ion to all possible ions and serialize the result to a json string
+///
+/// # Arguments
+///
+/// * `sequence` - A string representing the peptide sequence
+/// * `charge` - An i32 representing the charge
+/// * `intensity_pred_flat` - A vector of f64 representing the flat prosit predicted intensity array
+/// * `normalize` - A bool indicating whether to normalize the intensity values
+/// * `half_charge_one` - A bool indicating whether to use half charge one
+///
+/// # Returns
+///
+/// * A json string representing the peptide ions ready to pe put into a database
+///
 pub fn sequence_to_all_ions(
     sequence: &str,
     charge: i32,

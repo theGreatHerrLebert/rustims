@@ -133,7 +133,17 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         )
     }
 
-    // Method to build multiple frames in parallel
+    /// Build a collection of precursor frames in parallel
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_ids` - A vector of u32 representing the frame ids
+    /// * `num_threads` - A usize representing the number of threads
+    ///
+    /// # Returns
+    ///
+    /// * A vector of TimsFrame instances
+    ///
     pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();

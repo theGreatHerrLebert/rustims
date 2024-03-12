@@ -15,6 +15,7 @@ use mscore::timstof::slice::TimsSlice;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
+/// Interface to be shared by all acquisitions of timsTOF
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
     fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
