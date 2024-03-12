@@ -60,7 +60,7 @@ pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) 
     mass_sequence + mass_modifications + MASS_WATER
 }
 
-/// calculate the monoisotopic mass of a peptide sequence for a given fragment type
+/// calculate the monoisotopic mass of a peptide product ion for a given fragment type
 ///
 /// Arguments:
 ///
@@ -112,7 +112,7 @@ pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: Fr
     mass
 }
 
-/// calculate the monoisotopic mass of a peptide sequence for a given fragment type and charge
+/// calculate the monoisotopic m/z of a peptide product ion for a given fragment type and charge
 ///
 /// Arguments:
 ///
@@ -170,6 +170,7 @@ pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> 
     composition
 }
 
+/// calculate the atomic composition of a peptide sequence
 pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
 
     let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), false);
@@ -255,7 +256,7 @@ pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&
     composition.iter().map(|(k, v)| (*k, *v)).collect()
 }
 
-/// calculate the atomic composition of a peptide sequence
+/// calculate the atomic composition of a peptide product ion series
 /// Arguments:
 ///
 /// * `product_ions` - a vector of PeptideProductIon instances
