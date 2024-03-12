@@ -4,7 +4,7 @@ use std::f64::consts::E;
 use crate::data::spectrum::MzSpectrum;
 use crate::timstof::frame::TimsFrame;
 
-/// Sigmoide step function for quadrupole selection simulation
+/// Sigmoid step function for quadrupole selection simulation
 ///
 /// Arguments:
 ///
@@ -88,12 +88,11 @@ pub fn smooth_step_up_down(x: &Vec<f64>, up_start: f64, up_end: f64, down_start:
 /// ```
 pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f64) -> impl Fn(Vec<f64>) -> Vec<f64> {
     let half_window = window_length / 2.0;
-    let quarter_window = window_length / 4.0;
 
-    let up_start = midpoint - half_window - quarter_window;
+    let up_start = midpoint - half_window - 5.0;
     let up_end = midpoint - half_window;
     let down_start = midpoint + half_window;
-    let down_end = midpoint + half_window + quarter_window;
+    let down_end = midpoint + half_window + 5.0;
 
     // take a vector of mz values to their transmission probability
     move |mz: Vec<f64>| -> Vec<f64> {
