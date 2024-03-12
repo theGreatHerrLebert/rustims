@@ -90,10 +90,10 @@ pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f6
     let half_window = window_length / 2.0;
     let quarter_window = window_length / 4.0;
 
-    let up_start = midpoint - half_window;
-    let up_end = midpoint - quarter_window;
-    let down_start = midpoint + quarter_window;
-    let down_end = midpoint + half_window;
+    let up_start = midpoint - half_window - quarter_window;
+    let up_end = midpoint - half_window;
+    let down_start = midpoint + half_window;
+    let down_end = midpoint + half_window + quarter_window;
 
     // take a vector of mz values to their transmission probability
     move |mz: Vec<f64>| -> Vec<f64> {
@@ -243,7 +243,7 @@ impl TimsTransmissionDIA {
         Self {
             frame_to_window_group,
             window_group_settings,
-            k: k.unwrap_or(1.0),
+            k: k.unwrap_or(3.0),
         }
     }
 
