@@ -100,6 +100,29 @@ pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f6
     }
 }
 
+/// Apply ion transmission function to mz values
+///
+/// Arguments:
+///
+/// * `midpoint` - center of the step
+/// * `window_length` - length of the step
+/// * `k` - steepness of the step
+/// * `mz` - mz values
+///
+/// Returns:
+///
+/// * `Vec<f64>` - transmission probability for each mz value
+///
+/// # Examples
+///
+/// ```
+/// use mscore::timstof::quadrupole::apply_transmission;
+///
+/// let mz = vec![100.0, 150.0, 170.0];
+/// let transmission = apply_transmission(150.0, 50.0, 1.0, mz).iter().map(
+/// |&x| (x * 100.0).round() / 100.0).collect::<Vec<f64>>();
+/// assert_eq!(transmission, vec![0.0, 1.0, 1.0]);
+/// ```
 pub fn apply_transmission(midpoint: f64, window_length: f64, k: f64, mz: Vec<f64>) -> Vec<f64> {
     ion_transition_function_midpoint(midpoint, window_length, k)(mz)
 }
@@ -141,23 +164,48 @@ pub trait IonTransmission {
             }
             result.push(frame_result);
         }
-
-
         result
     }
 
+    /// Check if a single mz value is transmitted
+    ///
+    /// Arguments:
+    ///
+    /// * `frame_id` - frame id
+    /// * `scan_id` - scan id
+    /// * `mz` - mz value
+    /// * `min_proba` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `bool` - true if mz value is transmitted
+    ///
     fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64, min_proba: Option<f64>) -> bool {
         let probability_cutoff = min_proba.unwrap_or(0.5);
         let transmission_probability = self.apply_transmission(frame_id, scan_id, &vec![mz]);
         transmission_probability[0] > probability_cutoff
     }
 
+    /// Check if any mz value is transmitted, can be used to check if one peak of isotopic envelope is transmitted
+    ///
+    /// Arguments:
+    ///
+    /// * `frame_id` - frame id
+    /// * `scan_id` - scan id
+    /// * `mz` - mz values
+    /// * `min_proba` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `bool` - true if any mz value is transmitted
+    ///
     fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>, min_proba: Option<f64>) -> bool {
         let probability_cutoff = min_proba.unwrap_or(0.5);
         let transmission_probability = self.apply_transmission(frame_id, scan_id, mz);
         transmission_probability.iter().any(|&p| p > probability_cutoff)
     }
 
+    /// Transmit a frame given a diaPASEF transmission layout
     fn transmit_tims_frame(&self, frame: &TimsFrame, min_probability: Option<f64>) -> TimsFrame {
         let spectra = frame.to_tims_spectra();
         let mut filtered_spectra = Vec::new();
