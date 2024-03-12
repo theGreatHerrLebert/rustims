@@ -29,7 +29,7 @@ use crate::timstof::frame::TimsFrame;
 /// ```
 pub fn smooth_step(x: &Vec<f64>, up_start: f64, up_end: f64, k: f64) -> Vec<f64> {
     let m = (up_start + up_end) / 2.0;
-    x.iter().map(|&xi| 1.0 / (1.0 + E.powf(-k * (xi - m)))).collect()
+    x.iter().map(|&xi| 1.0 / (1.0 + E.powf(k * (xi - m)))).collect()
 }
 
 /// Sigmoide step function for quadrupole selection simulation
@@ -88,11 +88,11 @@ pub fn smooth_step_up_down(x: &Vec<f64>, up_start: f64, up_end: f64, down_start:
 /// ```
 pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f64) -> impl Fn(Vec<f64>) -> Vec<f64> {
     let half_window = window_length / 2.0;
-    let end_window = window_length / 16.0;
+    let quarter_window = window_length / 4.0;
 
     let up_start = midpoint - half_window;
-    let up_end = midpoint - end_window;
-    let down_start = midpoint + end_window;
+    let up_end = midpoint - quarter_window;
+    let down_start = midpoint + quarter_window;
     let down_end = midpoint + half_window;
 
     // take a vector of mz values to their transmission probability
