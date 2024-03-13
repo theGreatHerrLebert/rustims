@@ -79,7 +79,6 @@ def main():
                         help="Standard deviation for retention time distribution (default: 1.6)")
     parser.add_argument("--std_im", type=float, default=0.008,
                         help="Standard deviation for mobility distribution (default: 0.008)")
-    parser.add_argument("--isotope_fragments", type=bool, default=True, help="Simulate isotope fragments (default: True)")
 
     # Number of cores to use
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
@@ -234,7 +233,6 @@ def main():
         batch_size=args.batch_size,
         verbose=verbose,
         num_threads=args.num_threads,
-        isotope_fragments=args.isotope_fragments,
     )
 
 
