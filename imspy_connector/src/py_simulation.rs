@@ -60,12 +60,12 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path).unwrap() }
     }
 
-    pub fn build_frame(&self, frame_id: u32, fragment: bool, isotope_fragments: Option<bool>) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.build_frame(frame_id, fragment, isotope_fragments) }
+    pub fn build_frame(&self, frame_id: u32, fragment: bool) -> PyTimsFrame {
+        PyTimsFrame { inner: self.inner.build_frame(frame_id, fragment) }
     }
 
-    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize, isotope_fragments: Option<bool>) -> Vec<PyTimsFrame> {
-        let frames = self.inner.build_frames(frame_ids, fragment, num_threads, isotope_fragments);
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames(frame_ids, fragment, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
     }
 
