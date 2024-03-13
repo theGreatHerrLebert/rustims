@@ -21,13 +21,13 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
-    pub fn new(path: &Path) -> rusqlite::Result<Self> {
+    pub fn new(path: &Path, num_threads: usize) -> rusqlite::Result<Self> {
 
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path)?;
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let fragment_ions = handle.read_fragment_ions()?;
-        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions);
+        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions, num_threads);
 
         // get collision energy settings per window group
         let fragmentation_settings = handle.get_collision_energy_dia();
