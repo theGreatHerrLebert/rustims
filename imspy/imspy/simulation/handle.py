@@ -5,9 +5,9 @@ ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticsDataHandleRust:
-    def __init__(self, path: str, num_threads: int = 4):
+    def __init__(self, path: str):
         self.path = path
-        self.__handle = ims.PyTimsTofSyntheticsDataHandle(path, num_threads)
+        self.__handle = ims.PyTimsTofSyntheticsDataHandle(path)
 
     def get_py_ptr(self):
         return self.__handle
