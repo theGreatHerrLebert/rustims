@@ -12,7 +12,6 @@ def assemble_frames(
         frames: pd.DataFrame,
         batch_size: int,
         verbose: bool = False,
-        num_threads: int = 4,
 ) -> None:
 
     if verbose:
@@ -24,7 +23,6 @@ def assemble_frames(
 
     frame_builder = TimsTofSyntheticFrameBuilderDIA(
         db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-        num_threads=num_threads,
     )
 
     # go over all frames in batches
