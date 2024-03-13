@@ -11,8 +11,8 @@ ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticFrameBuilderDIA:
-    def __init__(self, db_path: str):
-        self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path)
+    def __init__(self, db_path: str, num_threads: int = 4):
+        self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
 
     def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
         frame = self.handle.build_frame(frame_id, fragment)
