@@ -18,17 +18,17 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
-    // pub fragment_ions: BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
+    pub fragment_ions: BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
-    pub fn new(path: &Path) -> rusqlite::Result<Self> {
+    pub fn new(path: &Path, num_threads: usize) -> rusqlite::Result<Self> {
 
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path)?;
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
-        // let fragment_ions = handle.read_fragment_ions()?;
-        // let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions, num_threads);
+        let fragment_ions = handle.read_fragment_ions()?;
+        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions, num_threads);
 
         // get collision energy settings per window group
         let fragmentation_settings = handle.get_collision_energy_dia();
@@ -40,7 +40,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             precursor_frame_builder: synthetics,
             transmission_settings,
             fragmentation_settings,
-            // fragment_ions,
+            fragment_ions,
         })
     }
 
@@ -55,11 +55,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     ///
     /// A TimsFrame
     ///
-    pub fn build_frame(&self, frame_id: u32, fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>, fragmentation: bool) -> TimsFrame {
+    pub fn build_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
         // determine if the frame is a precursor frame
         match self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
             true => self.build_ms1_frame(frame_id),
-            false => self.build_ms2_frame(frame_id, fragment_ions, fragmentation),
+            false => self.build_ms2_frame(frame_id, fragmentation),
         }
     }
 
@@ -91,12 +91,12 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     }
 
     pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {
-        let fragment_ions = self.get_fragment_ions_by_ids(self.get_fragment_ion_ids(frame_ids.clone()), num_threads);
+
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
         thread_pool.install(|| {
-            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, &fragment_ions, fragmentation)).collect();
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, fragmentation)).collect();
         });
 
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
@@ -108,14 +108,14 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id);
         tims_frame
     }
-    fn build_ms2_frame(&self, frame_id: u32, fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>, fragmentation: bool) -> TimsFrame {
+    fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
         match fragmentation {
             false => {
                 let mut frame = self.transmission_settings.transmit_tims_frame(&self.build_ms1_frame(frame_id), None);
                 frame.ms_type = MsType::FragmentDia;
                 frame
             },
-            true => self.build_fragment_frame(frame_id, fragment_ions, None, None, None),
+            true => self.build_fragment_frame(frame_id, None, None, None),
         }
     }
 
@@ -135,7 +135,6 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     fn build_fragment_frame(
         &self,
         frame_id: u32,
-        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
         mz_min: Option<f64>,
         mz_max: Option<f64>,
         intensity_min: Option<f64>,
@@ -204,7 +203,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     // get charge state for the ion
                     let charge_state = charges.get(index).unwrap();
                     // extract fragment ions for the peptide, charge state and collision energy
-                    let maybe_value = fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
+                    let maybe_value = self.fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
 
                     // jump to next peptide if the fragment_ions is None (can this happen?)
                     if maybe_value.is_none() {
