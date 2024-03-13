@@ -12,6 +12,7 @@ def assemble_frames(
         frames: pd.DataFrame,
         batch_size: int,
         verbose: bool = False,
+        num_threads: int = 4
 ) -> None:
 
     if verbose:

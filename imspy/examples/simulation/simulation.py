@@ -232,6 +232,7 @@ def main():
         frames=acquisition_builder.frame_table,
         batch_size=args.batch_size,
         verbose=verbose,
+        num_threads=args.num_threads,
     )
 
 
