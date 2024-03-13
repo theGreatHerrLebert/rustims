@@ -84,6 +84,10 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
     pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> usize {
         self.inner.get_fragment_ions_by_ids(ion_ids, num_threads)
     }
+
+    pub fn get_fragment_ion_ids(&self, frame_ids: Vec<u32>) -> Vec<u32> {
+        self.inner.get_fragment_ion_ids(frame_ids)
+    }
 }
 
 #[pymodule]

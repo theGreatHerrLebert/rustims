@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use mscore::data::peptide::{PeptideProductIonSeriesCollection};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
@@ -69,6 +69,29 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let data = TimsTofSyntheticsDataHandle::build_fragment_ions(&result, num_threads);
         // return length of collectin
         data.len()
+    }
+
+    pub fn get_fragment_ion_ids(&self, precursor_frames: Vec<u32>) -> Vec<u32> {
+
+        // get all peptide ids that we need ions for
+        let mut peptide_ids: HashSet<u32> = HashSet::new();
+
+        for frame_id in precursor_frames {
+            for (peptide_id, peptide) in self.precursor_frame_builder.peptides.iter() {
+                if peptide.frame_start <= frame_id && peptide.frame_end >= frame_id {
+                    peptide_ids.insert(*peptide_id);
+                }
+            }
+        }
+
+        let mut result: Vec<u32> = Vec::new();
+        for item in peptide_ids {
+            let ions = self.precursor_frame_builder.ions.get(&item).unwrap();
+            for ion in ions.iter() {
+                result.push(ion.ion_id);
+            }
+        }
+        result
     }
 
     pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {
