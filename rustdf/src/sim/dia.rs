@@ -14,6 +14,7 @@ use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 
 pub struct TimsTofSyntheticsFrameBuilderDIA {
+    pub path: String,
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
@@ -35,6 +36,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let transmission_settings = handle.get_transmission_dia();
 
         Ok(Self {
+            path: path.to_str().unwrap().to_string(),
             precursor_frame_builder: synthetics,
             transmission_settings,
             fragmentation_settings,
@@ -59,6 +61,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             true => self.build_ms1_frame(frame_id),
             false => self.build_ms2_frame(frame_id, fragmentation),
         }
+    }
+
+    pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> Vec<PeptideProductIonSeriesCollection> {
+        let synthetic_db_handle = TimsTofSyntheticsDataHandle::new(&Path::new(&self.path)).unwrap();
+        let result = synthetic_db_handle.read_fragment_ions_by_ids(ion_ids).unwrap();
+        let data = TimsTofSyntheticsDataHandle::build_fragment_ions(&result, num_threads);
+        data.into_iter().map(|(_, (collection, _))| collection).collect()
     }
 
     pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {

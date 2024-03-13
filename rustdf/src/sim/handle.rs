@@ -224,6 +224,40 @@ impl TimsTofSyntheticsDataHandle {
         Ok(fragment_ion_sim)
     }
 
+    pub fn read_fragment_ions_by_ids(&self, ion_ids: Vec<u32>) -> rusqlite::Result<Vec<FragmentIonSim>> {
+        let mut stmt = self.connection.prepare("SELECT * FROM fragment_ions WHERE ion_id = ?")?;
+        let mut fragment_ion_sim = Vec::new();
+        for ion_id in ion_ids {
+            let fragment_ion_sim_iter = stmt.query_map([ion_id], |row| {
+                // get json string from database
+                let fragment_ion_list_str: String = row.get(4)?;
+
+                // convert json string to FragmentIonSeries
+                let fragment_ion_sim: PeptideProductIonSeriesCollection = match serde_json::from_str(&fragment_ion_list_str) {
+                    Ok(value) => value,
+                    Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )),
+                };
+
+                Ok(FragmentIonSim::new(
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    fragment_ion_sim,
+                ))
+            })?;
+
+            for fragment_ion in fragment_ion_sim_iter {
+                fragment_ion_sim.push(fragment_ion?);
+            }
+        }
+        Ok(fragment_ion_sim)
+    }
+
     pub fn get_transmission_dia(&self) -> TimsTransmissionDIA {
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
         let window_group_settings = self.read_window_group_settings().unwrap();

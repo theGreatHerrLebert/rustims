@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::py_peptide::PyPeptideProductIonSeriesCollection;
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
@@ -79,6 +80,11 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
             result.push(self.inner.get_collision_energy(*frame_id, *scan_id));
         }
         result
+    }
+
+    pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> Vec<PyPeptideProductIonSeriesCollection> {
+        let result = self.inner.get_fragment_ions_by_ids(ion_ids, num_threads);
+        result.iter().map(|x| PyPeptideProductIonSeriesCollection { inner: x.clone() }).collect::<Vec<_>>()
     }
 }
 
