@@ -55,13 +55,14 @@ pub struct PyTimsTofSyntheticsFrameBuilderDIA {
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDIA {
     #[new]
-    pub fn new(db_path: &str, num_threads: usize) -> Self {
+    pub fn new(db_path: &str) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, num_threads).unwrap() }
+        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path).unwrap() }
     }
 
     pub fn build_frame(&self, frame_id: u32, fragment: bool) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.build_frame(frame_id, fragment) }
+        let frames = self.inner.build_frames(vec![frame_id], fragment, 1);
+        PyTimsFrame { inner: frames[0].clone() }
     }
 
     pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize) -> Vec<PyTimsFrame> {
@@ -79,14 +80,6 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
             result.push(self.inner.get_collision_energy(*frame_id, *scan_id));
         }
         result
-    }
-
-    pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> usize {
-        self.inner.get_fragment_ions_by_ids(ion_ids, num_threads)
-    }
-
-    pub fn get_fragment_ion_ids(&self, frame_ids: Vec<u32>) -> Vec<u32> {
-        self.inner.get_fragment_ion_ids(frame_ids)
     }
 }
 
