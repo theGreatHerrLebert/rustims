@@ -63,11 +63,12 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         }
     }
 
-    pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> Vec<PeptideProductIonSeriesCollection> {
+    pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> usize {
         let synthetic_db_handle = TimsTofSyntheticsDataHandle::new(&Path::new(&self.path)).unwrap();
         let result = synthetic_db_handle.read_fragment_ions_by_ids(ion_ids).unwrap();
         let data = TimsTofSyntheticsDataHandle::build_fragment_ions(&result, num_threads);
-        data.into_iter().map(|(_, (collection, _))| collection).collect()
+        // return length of collectin
+        data.len()
     }
 
     pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {

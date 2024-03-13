@@ -12,6 +12,7 @@ ims = imspy_connector.py_simulation
 
 class TimsTofSyntheticFrameBuilderDIA:
     def __init__(self, db_path: str, num_threads: int = 4):
+        self.path = db_path
         self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
 
     def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
@@ -27,6 +28,9 @@ class TimsTofSyntheticFrameBuilderDIA:
 
     def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
         return self.handle.get_collision_energies(frame_ids, scan_ids)
+    
+    def __repr__(self):
+        return f"TimsTofSyntheticFrameBuilderDIA(path={self.path})"
 
 
 class TimsTofSyntheticPrecursorFrameBuilder:
