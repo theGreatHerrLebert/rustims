@@ -419,12 +419,20 @@ impl TimsTofSyntheticsDataHandle {
         peptide_to_ions
     }
 
-    pub fn build_fragment_ions(fragment_ions: &Vec<FragmentIonSim>) -> BTreeMap<(u32, i8, i8), PeptideProductIonSeriesCollection> {
-        let mut fragment_ion_map: BTreeMap<(u32, i8, i8), PeptideProductIonSeriesCollection> = BTreeMap::new();
+    pub fn build_fragment_ions(fragment_ions: &Vec<FragmentIonSim>) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
+        let mut fragment_ion_map: BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> = BTreeMap::new();
         for fragment_ion in fragment_ions.iter() {
             let key = (fragment_ion.peptide_id, fragment_ion.charge, (fragment_ion.collision_energy * 1e3).round() as i8);
             let value = fragment_ion.fragment_intensities.clone();
-            fragment_ion_map.entry(key).or_insert(value);
+            let fragment_ions: Vec<MzSpectrum> = value.peptide_ions.iter().map(|ion_series| {
+                ion_series.generate_isotopic_spectrum(
+                    1e-2,
+                    1e-3,
+                    100,
+                    1e-5,
+                )
+            }).collect();
+            fragment_ion_map.entry(key).or_insert((value, fragment_ions));
         }
         fragment_ion_map
     }
