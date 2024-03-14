@@ -11,15 +11,16 @@ ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticFrameBuilderDIA:
-    def __init__(self, db_path: str):
-        self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path)
+    def __init__(self, db_path: str, num_threads: int = 4):
+        self.path = db_path
+        self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
 
-    def build_frame(self, frame_id: int, fragment: bool = True, isotope_fragments: bool = True) -> TimsFrame:
-        frame = self.handle.build_frame(frame_id, fragment, isotope_fragments)
+    def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
+        frame = self.handle.build_frame(frame_id, fragment)
         return TimsFrame.from_py_tims_frame(frame)
 
-    def build_frames(self, frame_ids: List[int], fragment: bool = True, num_threads: int = 4, isotope_fragments: bool = True) -> List[TimsFrame]:
-        frames = self.handle.build_frames(frame_ids, fragment, num_threads, isotope_fragments)
+    def build_frames(self, frame_ids: List[int], fragment: bool = True, num_threads: int = 4) -> List[TimsFrame]:
+        frames = self.handle.build_frames(frame_ids, fragment, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
     def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
@@ -27,6 +28,9 @@ class TimsTofSyntheticFrameBuilderDIA:
 
     def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
         return self.handle.get_collision_energies(frame_ids, scan_ids)
+
+    def __repr__(self):
+        return f"TimsTofSyntheticFrameBuilderDIA(path={self.path})"
 
 
 class TimsTofSyntheticPrecursorFrameBuilder:

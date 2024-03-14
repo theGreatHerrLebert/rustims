@@ -37,12 +37,12 @@ fn main() {
     let num_threads = args.num_threads;
     let fragment = args.fragment;
 
-    let experiment = TimsTofSyntheticsFrameBuilderDIA::new(path).unwrap();
+    let experiment = TimsTofSyntheticsFrameBuilderDIA::new(path, 4).unwrap();
     let first_frames = experiment.precursor_frame_builder.frames.iter().map(|x| x.frame_id.clone()).skip(100).take(args.num_frames).collect::<Vec<_>>();
 
     // go over the frames in batches of 256
     for frame_batch in first_frames.chunks(args.batch_size) {
-        let frames = experiment.build_frames(frame_batch.to_vec(), fragment, num_threads, Some(true));
+        let frames = experiment.build_frames(frame_batch.to_vec(), fragment, num_threads);
 
         for frame in frames {
             println!("frame_id: {}", frame.frame_id);

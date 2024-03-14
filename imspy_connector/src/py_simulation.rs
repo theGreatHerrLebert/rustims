@@ -55,17 +55,18 @@ pub struct PyTimsTofSyntheticsFrameBuilderDIA {
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDIA {
     #[new]
-    pub fn new(db_path: &str) -> Self {
+    pub fn new(db_path: &str, num_threads: usize) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path).unwrap() }
+        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, num_threads).unwrap() }
     }
 
-    pub fn build_frame(&self, frame_id: u32, fragment: bool, isotope_fragments: Option<bool>) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.build_frame(frame_id, fragment, isotope_fragments) }
+    pub fn build_frame(&self, frame_id: u32, fragment: bool) -> PyTimsFrame {
+        let frames = self.inner.build_frames(vec![frame_id], fragment, 1);
+        PyTimsFrame { inner: frames[0].clone() }
     }
 
-    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize, isotope_fragments: Option<bool>) -> Vec<PyTimsFrame> {
-        let frames = self.inner.build_frames(frame_ids, fragment, num_threads, isotope_fragments);
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames(frame_ids, fragment, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
     }
 
