@@ -115,7 +115,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                 frame.ms_type = MsType::FragmentDia;
                 frame
             },
-            true => self.build_fragment_frame(frame_id, None, None, None),
+            true => self.build_fragment_frame(frame_id, &self.fragment_ions, None, None, None),
         }
     }
 
@@ -135,6 +135,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     fn build_fragment_frame(
         &self,
         frame_id: u32,
+        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
         mz_min: Option<f64>,
         mz_max: Option<f64>,
         intensity_min: Option<f64>,
@@ -203,7 +204,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     // get charge state for the ion
                     let charge_state = charges.get(index).unwrap();
                     // extract fragment ions for the peptide, charge state and collision energy
-                    let maybe_value = self.fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
+                    let maybe_value = fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
 
                     // jump to next peptide if the fragment_ions is None (can this happen?)
                     if maybe_value.is_none() {
