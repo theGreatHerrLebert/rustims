@@ -1,7 +1,9 @@
 # rustims
 A lightning fast hackable API for timsTOF data written in RUST
 
-Hello, there!
+<p align="center">
+  <img src="rustims_logo.png" alt="logo" width="250"/>
+</p>
 
 # Repository Structure
 
