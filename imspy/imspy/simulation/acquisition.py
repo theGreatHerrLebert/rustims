@@ -154,7 +154,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  acquisition_name: str = "dia",
                  exp_name: str = "RAW",
                  verbose: bool = True,
-                 precursor_every: int = 16,
+                 precursor_every: int = 17,
                  gradient_length=50 * 60,
                  rt_cycle_length=0.1054,
                  im_lower=0.6,
@@ -186,18 +186,19 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
     def calculate_frame_types(self, verbose: bool = True) -> NDArray:
         if verbose:
-            print(f'Calculating frame types, precursor frame will be taken every {self.precursor_every + 1} rt cycles.')
-        return np.array([0 if (x - 1) % (self.precursor_every + 1) == 0 else 9 for x in self.frame_table.frame_id])
+            print(f'Calculating frame types, precursor frame will be taken every {self.precursor_every} rt cycles.')
+        return np.array([0 if (x - 1) % self.precursor_every == 0 else 9 for x in self.frame_table.frame_id])
 
-    def generate_frame_to_window_group_table(self, precursors_every: int = 16, verbose: bool = True) -> pd.DataFrame:
+    def generate_frame_to_window_group_table(self, verbose: bool = True) -> pd.DataFrame:
         if verbose:
-            print(f'generating frame to window group table.')
+            print(f'generating frame to window group table, precursors every {self.precursor_every} frames.')
 
         table_list = []
-        frame_ids = self.frame_table[self.frame_table.ms_type > 0].frame_id.values
-        for i, frame_id in enumerate(frame_ids):
-            wg = i % precursors_every + 1
-            table_list.append({'frame': frame_id, 'window_group': wg})
+        for index, row in self.frame_table.iterrows():
+            frame_id, ms_type = row.frame_id, row.ms_type
+            wg = index % self.precursor_every
+            if ms_type > 0:
+                table_list.append({'frame': int(frame_id), 'window_group': wg})
 
         return pd.DataFrame(table_list)
 
@@ -205,7 +206,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
         self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
-        self.frames_to_window_groups = self.generate_frame_to_window_group_table(precursors_every=self.precursor_every)
+        self.frames_to_window_groups = self.generate_frame_to_window_group_table(verbose=verbose)
 
         self.synthetics_handle.create_table(
             table_name='frames',

@@ -132,7 +132,7 @@ class TDFWriter:
                        'OperatorName': 'Admin',
                        'Description': 'HeLa 200ng/uL',
                        'SampleName': 'M210115_001',
-                       'MethodName': '20210113_DDA PASEF-standard_1.1sec_cycletime_1600V.m',
+                       'MethodName': '20240115_diaPASEF_25Da_1_7s_100ms_06_16_1600V.m',
                        'DenoisingEnabled': '0',
                        'PeakWidthEstimateValue': '0.000025',
                        'PeakWidthEstimateType': '1',

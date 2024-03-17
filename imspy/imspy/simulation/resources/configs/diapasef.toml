@@ -1,6 +1,6 @@
 [acquisition]
 name = "DiaPASEF"
-precursor_every = 15
+precursor_every = 17
 gradient_length = 3600.0 # 60 minutes
 rt_cycle_length = 0.1054
 im_lower = 0.6
