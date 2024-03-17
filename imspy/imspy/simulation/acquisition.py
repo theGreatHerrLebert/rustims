@@ -194,10 +194,11 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             print(f'generating frame to window group table, precursors every {self.precursor_every} frames.')
 
         table_list = []
-        frame_ids = self.frame_table[self.frame_table.ms_type > 0].frame_id.values
-        for i, frame_id in enumerate(frame_ids):
-            wg = (i - 1) % self.precursor_every
-            table_list.append({'frame': frame_id, 'window_group': wg})
+        for index, row in self.frame_table.iterrows():
+            frame_id, ms_ms_type = row.frame_id, row.ms_type
+            wg = index % self.precursor_every
+            if ms_ms_type > 0:
+                table_list.append({'frame': frame_id, 'window_group': wg})
 
         return pd.DataFrame(table_list)
 
