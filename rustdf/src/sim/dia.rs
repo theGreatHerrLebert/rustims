@@ -105,17 +105,26 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     }
 
     fn build_ms1_frame(&self, frame_id: u32) -> TimsFrame {
-        let tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id);
+        let mut tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id);
+        let intensities_rounded = tims_frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
+        tims_frame.ims_frame.intensity = intensities_rounded;
         tims_frame
     }
     fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
         match fragmentation {
             false => {
                 let mut frame = self.transmission_settings.transmit_tims_frame(&self.build_ms1_frame(frame_id), None);
+                let intensities_rounded = frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
+                frame.ims_frame.intensity = intensities_rounded;
                 frame.ms_type = MsType::FragmentDia;
                 frame
             },
-            true => self.build_fragment_frame(frame_id, &self.fragment_ions, None, None, None),
+            true => {
+                let mut frame = self.build_fragment_frame(frame_id, &self.fragment_ions, None, None, None);
+                let intensities_rounded = frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
+                frame.ims_frame.intensity = intensities_rounded;
+                frame
+            },
         }
     }
 
