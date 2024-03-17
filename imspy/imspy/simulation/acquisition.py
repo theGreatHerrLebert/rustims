@@ -195,10 +195,10 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         table_list = []
         for index, row in self.frame_table.iterrows():
-            frame_id, ms_ms_type = row.frame_id, row.ms_type
+            frame_id, ms_type = row.frame_id, row.ms_type
             wg = index % self.precursor_every
-            if ms_ms_type > 0:
-                table_list.append({'frame': frame_id, 'window_group': wg})
+            if ms_type > 0:
+                table_list.append({'frame': int(frame_id), 'window_group': wg})
 
         return pd.DataFrame(table_list)
 
