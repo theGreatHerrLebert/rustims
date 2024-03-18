@@ -14,7 +14,7 @@ class TDFWriter:
             self,
             path: str = "./",
             exp_name: str = "RAW.d",
-            num_scans: int = 917,
+            num_scans: int = 918,
             im_lower: float = 0.6,
             im_upper: float = 1.6,
             mz_lower: float = 100.0,
@@ -95,7 +95,7 @@ class TDFWriter:
         return "MzCalibration", pd.DataFrame([values], columns=col_names)
 
     @staticmethod
-    def _create_tims_calibration_table(num_scans: int = 917) -> (str, pd.DataFrame):
+    def _create_tims_calibration_table(num_scans) -> (str, pd.DataFrame):
         col_names = ['Id', 'ModelType', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9']
 
         values = [1, 2, 1, num_scans, 218.720487393, 73.404989154, 33.027522936, 1.0, 0.042931657,
