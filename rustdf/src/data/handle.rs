@@ -79,7 +79,7 @@ pub fn reconstruct_compressed_data(
     modify_tofs(&mut tofs, &scans);
 
     // Get peak counts from total scans and scans
-    let peak_cnts = get_peak_cnts(total_scans, &scans);
+    let peak_cnts = get_peak_cnts(total_scans + 1, &scans);
 
     // Interleave TOFs and intensities
     let mut interleaved = Vec::new();
@@ -295,7 +295,7 @@ impl TimsDataHandle {
         let global_meta_data = read_global_meta_sql(data_path)?;
         let frame_meta_data = read_meta_data_sql(data_path)?;
         // get the max scan count
-        let max_scan_count = frame_meta_data.iter().map(|x| x.num_scans).max().unwrap() + 1;
+        let max_scan_count = frame_meta_data.iter().map(|x| x.num_scans).max().unwrap();
 
         let mut frame_idptr: Vec<i64> = Vec::new();
         frame_idptr.resize(frame_meta_data.len() + 1, 0);
