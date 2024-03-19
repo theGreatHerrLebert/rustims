@@ -117,6 +117,7 @@ def main():
     acquisition_builder = build_acquisition(
         path=path,
         reference_path=reference_path,
+        exp_name=name,
         acquisition_type=args.acquisition_type,
         verbose=verbose,
         gradient_length=args.gradient_length,

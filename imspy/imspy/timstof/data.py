@@ -66,6 +66,7 @@ class TimsDataset(ABC):
 
         self.data_path = data_path
         self.meta_data = self.__load_meta_data()
+        self.global_meta_data_pandas = self.__load_global_meta_data_pandas()
         self.global_meta_data = self.__load_global_meta_data()
         self.tims_calibration = self.__load_tims_calibration()
         self.mz_calibration = self.__load_mz_calibration()
@@ -154,6 +155,14 @@ class TimsDataset(ABC):
         """
         d = pd.read_sql_query("SELECT * from GlobalMetadata", sqlite3.connect(self.data_path + "/analysis.tdf"))
         return dict(zip(d.Key, d.Value))
+
+    def __load_global_meta_data_pandas(self) -> pd.DataFrame:
+        """Get the global meta data.
+
+        Returns:
+            pd.DataFrame: Global meta data.
+        """
+        return pd.read_sql_query("SELECT * from GlobalMetadata", sqlite3.connect(self.data_path + "/analysis.tdf"))
 
     @property
     def im_lower(self):

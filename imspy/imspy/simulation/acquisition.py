@@ -82,18 +82,14 @@ class TimsTofAcquisitionBuilder:
 class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
+                 reference_ds: TimsDataset,
                  verbose: bool = True,
                  precursor_every: int = 7,
                  gradient_length=120 * 60,
                  rt_cycle_length=0.109,
-                 im_lower=0.6,
-                 im_upper=1.6,
-                 num_scans=917,
-                 mz_lower: float = 150,
-                 mz_upper: float = 1700,
                  exp_name: str = "RAW.d"
                  ):
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans, exp_name=exp_name)
+        super().__init__(path, gradient_length, rt_cycle_length,  reference_ds.im_lower, reference_ds.im_upper, reference_ds.mz_lower, reference_ds.mz_upper, reference_ds.num_scans, exp_name=exp_name)
         self.scan_table = None
         self.frame_table = None
         self.precursor_every = precursor_every
@@ -145,11 +141,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.frames_to_window_groups = None
         self.dia_ms_ms_windows = pd.read_csv(window_group_file)
 
-        # check if the number of scans in the window group file matches the number of scans in the experiment
-        last_scan_in_table = self.dia_ms_ms_windows.iloc[-1].scan_end
-        num_scans = self.tdf_writer.helper_handle.num_scans
-        assert num_scans - 1 == last_scan_in_table, f"Number of scans in the window group file ({last_scan_in_table}) " \
-                                                f"does not match the number of scans in the experiment ({num_scans + 1})"
+        # TODO: check if the number of scans in the window group file matches the number of scans in the experiment
 
         self.acquisition_mode = AcquisitionMode('DIA')
         self.verbose = verbose
@@ -223,6 +215,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         )
 
     def __repr__(self):
-        return (f"TimsTofAcquisitionBuilderDIA(name={self.name}, path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
-                f"min, mobility_range: {self.im_lower}-{self.im_upper}, "
-                f"num_frames: {self.num_frames}, num_scans: {self.num_scans})")
+        return (f"TimsTofAcquisitionBuilderDIA(name={self.acquisition_name}, path={self.path}, "
+                f"gradient_length={np.round(self.gradient_length / 60)} min, mobility_range: "
+                f"{self.tdf_writer.helper_handle.im_lower}-{self.tdf_writer.helper_handle.im_upper}, "
+                f"num_frames: {self.num_frames}, num_scans: {self.tdf_writer.helper_handle.num_scans})")

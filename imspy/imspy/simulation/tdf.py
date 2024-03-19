@@ -35,7 +35,7 @@ class TDFWriter:
         # Save table to analysis.tdf
         self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
         self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
-        self._create_table(self.conn, self.helper_handle.global_meta_data, "GlobalMetadata")
+        self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
 
     @staticmethod
     def _get_table(conn, table_name: str) -> pd.DataFrame:
