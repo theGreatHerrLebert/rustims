@@ -1,16 +1,15 @@
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.utility import read_acquisition_config
+from imspy.timstof import TimsDataset
 
 
 def build_acquisition(
         path: str,
+        reference_path: str,
         exp_name: str,
         acquisition_type: str,
         verbose: bool = False,
-        gradient_length: float = None,
-        job_name: str = "build_acquisition"
-
-) -> TimsTofAcquisitionBuilderDIA:
+        gradient_length: float = None) -> TimsTofAcquisitionBuilderDIA:
 
     acquisition_type = acquisition_type.lower()
 
@@ -26,8 +25,11 @@ def build_acquisition(
     if gradient_length is not None:
         config['gradient_length'] = gradient_length
 
+    ref_ds = TimsDataset(reference_path)
+
     return TimsTofAcquisitionBuilderDIA.from_config(
         path=path,
+        reference_ds=ref_ds,
         exp_name=exp_name,
         config=config,
     )

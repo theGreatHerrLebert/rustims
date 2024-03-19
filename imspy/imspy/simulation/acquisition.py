@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from abc import abstractmethod, ABC
 
 from imspy.simulation.experiment import SyntheticExperimentDataHandle
-from imspy.timstof.data import AcquisitionMode
+from imspy.timstof.data import AcquisitionMode, TimsDataset
 from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing, \
     get_ms_ms_window_layout_resource_path
 from imspy.simulation.tdf import TDFWriter
@@ -17,13 +17,9 @@ class TimsTofAcquisitionBuilder:
     def __init__(
             self,
             path: str,
+            reference_ds: TimsDataset,
             gradient_length: float,
             rt_cycle_length: float,
-            im_lower: float,
-            im_upper: float,
-            mz_lower: float,
-            mz_upper: float,
-            num_scans: int,
             exp_name: str = "RAW.d",
     ):
         """ Base class for building TimsTOF experiments
@@ -35,38 +31,18 @@ class TimsTofAcquisitionBuilder:
             Length of the gradient in seconds
         rt_cycle_length : float
             Length of the RT cycle in seconds
-        im_lower : float
-            Lower bound of the ion mobility range (IM first scan)
-        im_upper : float
-            Upper bound of the ion mobility range (IM last scan)
-        mz_lower : float
-            Lower bound of the m/z range (m/z first scan)
-        mz_upper : float
-            Upper bound of the m/z range (m/z last scan)
-        num_scans : int
-            Number of scans that will be taken during the acquisition
         """
 
         self.path = path
         self.gradient_length = gradient_length
         self.rt_cycle_length = rt_cycle_length
-        self.im_lower = im_lower
-        self.im_upper = im_upper
-        self.mz_lower = mz_lower
-        self.mz_upper = mz_upper
-        self.num_scans = num_scans
-        self.im_cycle_length = calculate_mobility_spacing(im_lower, im_upper, num_scans)
+        self.im_cycle_length = calculate_mobility_spacing(reference_ds.im_lower, reference_ds.mz_upper, reference_ds.num_scans)
         self.num_frames = calculate_number_frames(gradient_length, rt_cycle_length)
-        self.num_scans = num_scans
         # Create the TDFWriter, used to deal with bruker binary format writing and metadata for libtimsdata.so
         self.tdf_writer = TDFWriter(
             path=self.path,
+            helper_handle=reference_ds,
             exp_name=exp_name,
-            num_scans=self.num_scans,
-            im_lower=self.im_lower,
-            im_upper=self.im_upper,
-            mz_lower=self.mz_lower,
-            mz_upper=self.mz_upper
         )
         # Create the SyntheticExperimentDataHandle, which is used to deal with the sqlite database of synthetic data
         self.synthetics_handle = SyntheticExperimentDataHandle(database_path=self.path)
@@ -88,15 +64,15 @@ class TimsTofAcquisitionBuilder:
         if verbose:
             print('Generating scan layout.')
 
-        scans = np.arange(self.num_scans)[::-1]
+        scans = np.arange(self.tdf_writer.helper_handle.num_scans)[::-1]
         mobilities = self.tdf_writer.scan_to_inv_mobility(scans)
 
         return pd.DataFrame({'scan': scans, 'mobility': mobilities})
 
     def __repr__(self):
         return (f"TimsTofAcquisitionBuilder(path={self.path}, gradient_length={np.round(self.gradient_length / 60)} "
-                f"min, mobility_range: {self.im_lower}-{self.im_upper}, "
-                f"num_frames: {self.num_frames}, num_scans: {self.num_scans})")
+                f"min, mobility_range: {self.tdf_writer.helper_handle.im_lower}-{self.tdf_writer.helper_handle.im_upper}, "
+                f"num_frames: {self.num_frames}, num_scans: {self.tdf_writer.helper_handle.num_scans})")
 
     @abstractmethod
     def calculate_frame_types(self, *args) -> NDArray:
@@ -150,6 +126,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
+                 reference_ds: TimsDataset,
                  window_group_file: str,
                  acquisition_name: str = "dia",
                  exp_name: str = "RAW",
@@ -157,14 +134,9 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  precursor_every: int = 17,
                  gradient_length=50 * 60,
                  rt_cycle_length=0.1054,
-                 im_lower=0.6,
-                 im_upper=1.6,
-                 num_scans=928,
-                 mz_lower: float = 100,
-                 mz_upper: float = 1700,
                  ):
 
-        super().__init__(path, gradient_length, rt_cycle_length, im_lower, im_upper, mz_lower, mz_upper, num_scans,
+        super().__init__(path, reference_ds, gradient_length, rt_cycle_length,
                          exp_name=exp_name)
 
         self.acquisition_name = acquisition_name
@@ -175,6 +147,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         # check if the number of scans in the window group file matches the number of scans in the experiment
         last_scan_in_table = self.dia_ms_ms_windows.iloc[-1].scan_end
+        num_scans = self.tdf_writer.helper_handle.num_scans
         assert num_scans - 1 == last_scan_in_table, f"Number of scans in the window group file ({last_scan_in_table}) " \
                                                 f"does not match the number of scans in the experiment ({num_scans + 1})"
 
@@ -228,6 +201,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     @staticmethod
     def from_config(
             path: str,
+            reference_ds: TimsDataset,
             exp_name: str,
             config: Dict[str, any],
             verbose: bool = True
@@ -238,6 +212,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         return TimsTofAcquisitionBuilderDIA(
             path=Path(path) / exp_name,
+            reference_ds=reference_ds,
             window_group_file=window_group_file,
             exp_name=exp_name + ".d",
             verbose=verbose,
@@ -245,11 +220,6 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             precursor_every=config['precursor_every'],
             gradient_length=config['gradient_length'],
             rt_cycle_length=config['rt_cycle_length'],
-            im_lower=config['im_lower'],
-            im_upper=config['im_upper'],
-            num_scans=config['num_scans'],
-            mz_lower=config['mz_lower'],
-            mz_upper=config['mz_upper'],
         )
 
     def __repr__(self):

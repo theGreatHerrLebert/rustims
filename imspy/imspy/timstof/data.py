@@ -96,6 +96,15 @@ class TimsDataset(ABC):
         return self.__dataset.get_acquisition_mode()
 
     @property
+    def num_scans(self) -> int:
+        """Get the number of scans.
+
+        Returns:
+            int: Number of scans.
+        """
+        return self.tims_calibration.C1.values[0] + 1
+
+    @property
     def acquisition_mode_numeric(self) -> int:
         """Get the acquisition mode as a numerical value.
 
@@ -263,8 +272,11 @@ class TimsDataset(ABC):
         """
         return self.__dataset.decompress_bytes_zstd(values[ignore_first_n:])
 
-    def indexed_values_to_compressed_bytes(self, scan_values: NDArray[np.int32], tof_values: NDArray[np.int32],
-                                intensity_values: NDArray[np.float64], total_scans: int) -> NDArray[np.uint8]:
+    def indexed_values_to_compressed_bytes(self,
+                                           scan_values: NDArray[np.int32],
+                                           tof_values: NDArray[np.int32],
+                                           intensity_values: NDArray[np.float64],
+                                           total_scans: int) -> NDArray[np.uint8]:
         """Convert scan and intensity values to bytes.
 
         Args:
@@ -283,19 +295,17 @@ class TimsDataset(ABC):
             total_scans
         )
 
-    def compress_frames(self, frames: List[TimsFrame],
-                                  total_scans: int, num_threads: int = 4) -> List[NDArray[np.uint8]]:
+    def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[NDArray[np.uint8]]:
         """Compress a collection of frames.
 
         Args:
             frames (List[TimsFrame]): List of frames.
-            total_scans (int): Total number of scans.
             num_threads (int): Number of threads to use.
 
         Returns:
             List[NDArray[np.uint8]]: List of compressed bytes.
         """
-        return self.__dataset.compress_frames([f.get_frame_ptr() for f in frames], total_scans, num_threads)
+        return self.__dataset.compress_frames([f.get_frame_ptr() for f in frames], self.num_scans, num_threads)
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
