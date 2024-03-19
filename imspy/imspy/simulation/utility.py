@@ -272,7 +272,7 @@ def irt_to_rts_numba(irt: NDArray, new_min=0, new_max=120):
 
 
 @jit(nopython=True)
-def calculate_number_frames(gradient_length: float = 90 * 60, rt_cycle_length: float = .108) -> int:
+def calculate_number_frames(gradient_length: float, rt_cycle_length: float) -> int:
     """ Calculate the number of frames that will be taken during the acquisition
 
     Parameters
@@ -291,7 +291,7 @@ def calculate_number_frames(gradient_length: float = 90 * 60, rt_cycle_length: f
 
 
 @jit(nopython=True)
-def calculate_mobility_spacing(mobility_min: float, mobility_max: float, num_scans=500) -> float:
+def calculate_mobility_spacing(mobility_min: float, mobility_max: float, num_scans: int) -> float:
     """ Calculate the amount of mobility that will be occupied by a single scan
 
     Parameters

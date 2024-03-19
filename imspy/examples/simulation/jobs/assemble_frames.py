@@ -24,6 +24,7 @@ def assemble_frames(
 
     frame_builder = TimsTofSyntheticFrameBuilderDIA(
         db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+        num_threads=num_threads,
     )
 
     # go over all frames in batches

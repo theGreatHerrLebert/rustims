@@ -66,7 +66,10 @@ class TimsDataset(ABC):
 
         self.data_path = data_path
         self.meta_data = self.__load_meta_data()
+        self.global_meta_data_pandas = self.__load_global_meta_data_pandas()
         self.global_meta_data = self.__load_global_meta_data()
+        self.tims_calibration = self.__load_tims_calibration()
+        self.mz_calibration = self.__load_mz_calibration()
         self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
         self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
         self.__current_index = 1
@@ -94,6 +97,15 @@ class TimsDataset(ABC):
         return self.__dataset.get_acquisition_mode()
 
     @property
+    def num_scans(self) -> int:
+        """Get the number of scans.
+
+        Returns:
+            int: Number of scans.
+        """
+        return self.tims_calibration.C1.values[0] + 1
+
+    @property
     def acquisition_mode_numeric(self) -> int:
         """Get the acquisition mode as a numerical value.
 
@@ -111,6 +123,22 @@ class TimsDataset(ABC):
         """
         return self.__dataset.frame_count()
 
+    def __load_tims_calibration(self) -> pd.DataFrame:
+        """Get the calibration.
+
+        Returns:
+            pd.DataFrame: Calibration.
+        """
+        return pd.read_sql_query("SELECT * from TimsCalibration", sqlite3.connect(self.data_path + "/analysis.tdf"))
+
+    def __load_mz_calibration(self) -> pd.DataFrame:
+        """Get the m/z calibration.
+
+        Returns:
+            pd.DataFrame: m/z calibration.
+        """
+        return pd.read_sql_query("SELECT * from MzCalibration", sqlite3.connect(self.data_path + "/analysis.tdf"))
+
     def __load_meta_data(self) -> pd.DataFrame:
         """Get the meta data.
 
@@ -127,6 +155,14 @@ class TimsDataset(ABC):
         """
         d = pd.read_sql_query("SELECT * from GlobalMetadata", sqlite3.connect(self.data_path + "/analysis.tdf"))
         return dict(zip(d.Key, d.Value))
+
+    def __load_global_meta_data_pandas(self) -> pd.DataFrame:
+        """Get the global meta data.
+
+        Returns:
+            pd.DataFrame: Global meta data.
+        """
+        return pd.read_sql_query("SELECT * from GlobalMetadata", sqlite3.connect(self.data_path + "/analysis.tdf"))
 
     @property
     def im_lower(self):
@@ -245,8 +281,11 @@ class TimsDataset(ABC):
         """
         return self.__dataset.decompress_bytes_zstd(values[ignore_first_n:])
 
-    def indexed_values_to_compressed_bytes(self, scan_values: NDArray[np.int32], tof_values: NDArray[np.int32],
-                                intensity_values: NDArray[np.float64], total_scans: int) -> NDArray[np.uint8]:
+    def indexed_values_to_compressed_bytes(self,
+                                           scan_values: NDArray[np.int32],
+                                           tof_values: NDArray[np.int32],
+                                           intensity_values: NDArray[np.float64],
+                                           total_scans: int) -> NDArray[np.uint8]:
         """Convert scan and intensity values to bytes.
 
         Args:
@@ -265,19 +304,17 @@ class TimsDataset(ABC):
             total_scans
         )
 
-    def compress_frames(self, frames: List[TimsFrame],
-                                  total_scans: int, num_threads: int = 4) -> List[NDArray[np.uint8]]:
+    def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[NDArray[np.uint8]]:
         """Compress a collection of frames.
 
         Args:
             frames (List[TimsFrame]): List of frames.
-            total_scans (int): Total number of scans.
             num_threads (int): Number of threads to use.
 
         Returns:
             List[NDArray[np.uint8]]: List of compressed bytes.
         """
-        return self.__dataset.compress_frames([f.get_frame_ptr() for f in frames], total_scans, num_threads)
+        return self.__dataset.compress_frames([f.get_frame_ptr() for f in frames], self.num_scans, num_threads)
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):

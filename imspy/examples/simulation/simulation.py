@@ -45,6 +45,7 @@ def main():
 
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
+    parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file")
 
     # Optional verbosity flag
@@ -99,6 +100,7 @@ def main():
 
     # Use the arguments
     path = check_path(args.path)
+    reference_path = check_path(args.reference_path)
     name = args.name.replace('PLACEHOLDER', f'{args.acquisition_type}')
     fasta = check_path(args.fasta)
     verbose = args.verbose
@@ -114,6 +116,7 @@ def main():
     # create acquisition
     acquisition_builder = build_acquisition(
         path=path,
+        reference_path=reference_path,
         exp_name=name,
         acquisition_type=args.acquisition_type,
         verbose=verbose,
@@ -177,16 +180,16 @@ def main():
     # JOB 5: Simulate charge states
     ions = simulate_charge_states(
         peptides=peptides,
-        mz_lower=acquisition_builder.mz_lower,
-        mz_upper=acquisition_builder.mz_upper,
+        mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
+        mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
         p_charge=p_charge
     )
 
     # JOB 6: Simulate ion mobilities
     ions = simulate_ion_mobilities(
         ions=ions,
-        im_lower=acquisition_builder.im_lower,
-        im_upper=acquisition_builder.im_upper,
+        im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
+        im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
         verbose=verbose
     )
 

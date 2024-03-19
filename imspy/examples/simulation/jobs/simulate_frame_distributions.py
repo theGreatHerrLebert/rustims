@@ -13,7 +13,8 @@ def simulate_frame_distributions(
         std_rt: float,
         rt_cycle_length: float,
         verbose: bool = False,
-        add_noise: bool = False
+        add_noise: bool = False,
+        normalize: bool = False
 ) -> pd.DataFrame:
     # distribution parameters
     z_score = get_z_score_for_percentile(target_score=z_score)
@@ -54,6 +55,10 @@ def simulate_frame_distributions(
             frame_abundance = add_uniform_noise(np.array(frame_abundance), noise_level)
 
         total_list_frames.append(frame_occurrence)
+
+        if normalize:
+            frame_abundance = frame_abundance / np.sum(frame_abundance)
+
         total_list_frame_contributions.append(frame_abundance)
 
     if verbose:
