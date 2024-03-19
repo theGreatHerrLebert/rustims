@@ -13,7 +13,8 @@ def simulate_scan_distributions(
         std_im: float,
         im_cycle_length: float,
         verbose: bool = False,
-        add_noise: bool = False
+        add_noise: bool = False,
+        normalize: bool = False
 ) -> pd.DataFrame:
 
     # distribution parameters
@@ -47,6 +48,10 @@ def simulate_scan_distributions(
             scan_abundance = add_uniform_noise(np.array(scan_abundance), noise_level)
 
         im_scans.append(scan_occurrence)
+
+        if normalize:
+            scan_abundance = scan_abundance / np.sum(scan_abundance)
+
         im_contributions.append(scan_abundance)
 
     if verbose:
