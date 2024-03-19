@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 import numpy as np
-from typing import List
+from typing import List, Union
 from pathlib import Path
 from imspy.simulation.utility import get_native_dataset_path
 from imspy.timstof.frame import TimsFrame
@@ -12,6 +12,7 @@ import shutil
 class TDFWriter:
     def __init__(
             self,
+            helper_handle: Union[TimsDataset, None] = None,
             path: str = "./",
             exp_name: str = "RAW.d",
             num_scans: int = 918,
@@ -98,7 +99,7 @@ class TDFWriter:
     def _create_tims_calibration_table(num_scans) -> (str, pd.DataFrame):
         col_names = ['Id', 'ModelType', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9']
 
-        values = [1, 2, 1, num_scans, 218.720487393, 73.404989154, 33.027522936, 1.0, 0.042931657,
+        values = [1, 2, 1, num_scans - 1, 218.720487393, 73.404989154, 33.027522936, 1.0, 0.042931657,
                   127.310271708, 12.676243115, 4414.816879989]
 
         return "TimsCalibration", pd.DataFrame([values], columns=col_names)

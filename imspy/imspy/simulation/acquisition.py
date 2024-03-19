@@ -158,8 +158,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  gradient_length=50 * 60,
                  rt_cycle_length=0.1054,
                  im_lower=0.6,
-                 im_upper=1.5,
-                 num_scans=927,
+                 im_upper=1.6,
+                 num_scans=928,
                  mz_lower: float = 100,
                  mz_upper: float = 1700,
                  ):
@@ -175,8 +175,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         # check if the number of scans in the window group file matches the number of scans in the experiment
         last_scan_in_table = self.dia_ms_ms_windows.iloc[-1].scan_end
-        assert num_scans == last_scan_in_table, f"Number of scans in the window group file ({last_scan_in_table}) " \
-                                                f"does not match the number of scans in the experiment ({num_scans})"
+        assert num_scans - 1 == last_scan_in_table, f"Number of scans in the window group file ({last_scan_in_table}) " \
+                                                f"does not match the number of scans in the experiment ({num_scans + 1})"
 
         self.acquisition_mode = AcquisitionMode('DIA')
         self.verbose = verbose

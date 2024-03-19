@@ -67,6 +67,8 @@ class TimsDataset(ABC):
         self.data_path = data_path
         self.meta_data = self.__load_meta_data()
         self.global_meta_data = self.__load_global_meta_data()
+        self.tims_calibration = self.__load_tims_calibration()
+        self.mz_calibration = self.__load_mz_calibration()
         self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
         self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
         self.__current_index = 1
@@ -110,6 +112,22 @@ class TimsDataset(ABC):
             int: Number of frames.
         """
         return self.__dataset.frame_count()
+
+    def __load_tims_calibration(self) -> pd.DataFrame:
+        """Get the calibration.
+
+        Returns:
+            pd.DataFrame: Calibration.
+        """
+        return pd.read_sql_query("SELECT * from TimsCalibration", sqlite3.connect(self.data_path + "/analysis.tdf"))
+
+    def __load_mz_calibration(self) -> pd.DataFrame:
+        """Get the m/z calibration.
+
+        Returns:
+            pd.DataFrame: m/z calibration.
+        """
+        return pd.read_sql_query("SELECT * from MzCalibration", sqlite3.connect(self.data_path + "/analysis.tdf"))
 
     def __load_meta_data(self) -> pd.DataFrame:
         """Get the meta data.
