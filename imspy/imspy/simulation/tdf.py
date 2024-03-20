@@ -124,6 +124,10 @@ class TDFWriter:
         compressed_data = compressed_data = zstd.ZSTD_compress(bytes(real_data), 1)
 
         with open(self.binary_file, "ab") as bin_file:
+            bin_file.write(
+                (len(compressed_data) + 8).to_bytes(4, "little", signed=False)
+            )
+            bin_file.write(self.helper_handle.to_bytes(4, "little", signed=False))
             bin_file.write(compressed_data)
             self.position = bin_file.tell()
 
