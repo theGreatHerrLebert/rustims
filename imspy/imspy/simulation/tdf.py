@@ -34,10 +34,17 @@ class TDFWriter:
         self.full_path.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(f'{self.full_path}/analysis.tdf')
 
+        frame_ms_ms_info = self.helper_handle.get_table("FrameMsmsInfo")
+        segments = self.helper_handle.get_table("Segments")
+        last_frame = self.helper_handle.meta_data.Id.max()
+        segments.iloc[0, segments.columns.get_loc("LastFrame")] = last_frame
+
         # Save table to analysis.tdf
         self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
         self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
         self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
+        self._create_table(self.conn, frame_ms_ms_info, "FrameMsmsInfo")
+        self._create_table(self.conn, segments, "Segments")
 
         with open(self.binary_file, "wb") as bin_file:
             bin_file.write(b'\x00' * self.offset_bytes)
