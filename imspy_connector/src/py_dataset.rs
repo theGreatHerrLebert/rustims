@@ -215,6 +215,19 @@ pub fn get_peak_cnts(total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
     rustdf::data::handle::get_peak_cnts(total_scans, &scans)
 }
 
+// pub fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
+#[pyfunction]
+pub fn modify_tofs(tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
+    // Create a mutable copy of `tofs` that can be modified.
+    let mut mutable_tofs = tofs.clone();
+
+    // Directly pass the mutable reference of the cloned `tofs`.
+    rustdf::data::handle::modify_tofs(&mut mutable_tofs, &scans);
+
+    // Return the modified `mutable_tofs`.
+    mutable_tofs
+}
+
 #[pymodule]
 pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
