@@ -232,6 +232,11 @@ pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {
     rustdf::data::handle::get_realdata(&peak_cnts, &interleaved)
 }
 
+#[pyfunction]
+pub fn get_data_for_compression(frame: PyTimsFrame, max_scans: u32) -> Vec<u8> {
+    rustdf::data::handle::get_data_for_compression(&frame.inner, max_scans)
+}
+
 #[pymodule]
 pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
@@ -239,5 +244,6 @@ pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_peak_cnts, m)?)?;
     m.add_function(wrap_pyfunction!(modify_tofs, m)?)?;
     m.add_function(wrap_pyfunction!(get_realdata, m)?)?;
+    m.add_function(wrap_pyfunction!(get_data_for_compression, m)?)?;
     Ok(())
 }
