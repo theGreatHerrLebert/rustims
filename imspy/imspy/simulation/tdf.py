@@ -93,12 +93,12 @@ class TDFWriter:
 
         # TODO: move translation of mz -> tof and inv_mob -> scan to the helper handle
         if not use_frame_id_one:
-            tof = self.mz_to_tof(frame.mz, frame.frame_id)
-            scan = self.inv_mobility_to_scan(frame.mobility, frame.frame_id)
-            
+            tof = self.helper_handle.mz_to_tof(frame.frame_id, frame.mz)
+            scan = self.helper_handle.inverse_mobility_to_scan(frame.frame_id, frame.mobility)
+
         else:
-            tof = self.mz_to_tof(frame.mz, 1)
-            scan = self.inv_mobility_to_scan(frame.mobility, 1)
+            tof = self.helper_handle.mz_to_tof(1, frame.mz)
+            scan = self.helper_handle.inverse_mobility_to_scan(1, frame.mobility)
 
         return self.helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
                                                                      total_scans=self.helper_handle.num_scans)
