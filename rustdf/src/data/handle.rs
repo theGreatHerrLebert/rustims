@@ -692,13 +692,9 @@ pub fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
     real_data
 }
 
-pub fn get_data_for_compression(frame: &TimsFrame, max_scans: u32) -> Vec<u8> {
-
-    let scans:Vec<u32> = frame.scan.iter().map(|&x| x as u32).collect();
-    let mut tofs: Vec<u32> = frame.tof.iter().map(|&x| x as u32).collect();
-    let intensities: Vec<u32> = frame.ims_frame.intensity.iter().map(|&x| x as u32).collect();
-
-    modify_tofs(&mut tofs, &scans);
+pub fn get_data_for_compression(tofs: Vec<u32>, scans: Vec<u32>, intensities: Vec<u32>, max_scans: u32) -> Vec<u8> {
+    let mut tof_copy = tofs.clone();
+    modify_tofs(&mut tof_copy, &scans);
     let peak_cnts = get_peak_cnts(max_scans, &scans);
     let interleaved: Vec<u32> = tofs.iter().zip(intensities.iter()).flat_map(|(tof, intensity)| vec![*tof, *intensity]).collect();
 

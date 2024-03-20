@@ -5,7 +5,10 @@ from typing import List
 from pathlib import Path
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof import TimsDataset
+import zstd
 
+import imspy_connector
+ims = imspy_connector.py_dataset
 
 class TDFWriter:
     def __init__(
@@ -101,7 +104,8 @@ class TDFWriter:
 
         tof = self.mz_to_tof(i, frame.mz)
         scan = self.inv_mobility_to_scan(i, frame.mobility)
-        return self.helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
+        return self.helper_handle.indexed_values_to_compressed_bytes(scan, tof,
+                                                                     frame.intensity,
                                                                      total_scans=self.helper_handle.num_scans)
 
     def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[bytes]:
@@ -109,7 +113,15 @@ class TDFWriter:
 
     def write_frame(self, frame: TimsFrame, scan_mode: int, only_frame_one: bool = False) -> None:
         self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position, only_frame_one))
-        compressed_data = self.compress_frame(frame, only_frame_one)
+        # compressed_data = self.compress_frame(frame, only_frame_one)
+
+        i = 1 if only_frame_one else frame.frame_id
+        tof = self.mz_to_tof(i, frame.mz).astype(np.uint32)
+        scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
+        intensity = frame.intensity.astype(np.uint32)
+
+        real_data = imspy_connector.get_data_for_compression(tof, scan, intensity, self.helper_handle.num_scans)
+        compressed_data = compressed_data = zstd.ZSTD_compress(bytes(real_data), 1)
 
         with open(self.binary_file, "ab") as bin_file:
             bin_file.write(compressed_data)

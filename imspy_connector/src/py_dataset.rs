@@ -233,8 +233,8 @@ pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {
 }
 
 #[pyfunction]
-pub fn get_data_for_compression(frame: PyTimsFrame, max_scans: u32) -> Vec<u8> {
-    rustdf::data::handle::get_data_for_compression(&frame.inner, max_scans)
+pub fn get_data_for_compression(tofs: Vec<u32>, scans: Vec<u32>, intensities: Vec<u32>, max_scans: u32) -> Vec<u8> {
+    rustdf::data::handle::get_data_for_compression(tofs, scans, intensities, max_scans)
 }
 
 #[pymodule]

@@ -10,6 +10,7 @@ python = ">=3.11,<3.12"
 pandas = ">=2.1"
 numpy = ">=1.21"
 numba = ">=0.53"
+zstd = ">=1.5.0"
 
 tensorflow = "2.15"
 tensorflow-probability = ">=0.22.1"
