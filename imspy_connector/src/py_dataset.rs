@@ -227,6 +227,10 @@ pub fn modify_tofs(tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
     // Return the modified `mutable_tofs`.
     mutable_tofs
 }
+#[pyfunction]
+pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {
+    rustdf::data::handle::get_realdata(&peak_cnts, &interleaved)
+}
 
 #[pymodule]
 pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -234,5 +238,6 @@ pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyAcquisitionMode>()?;
     m.add_function(wrap_pyfunction!(get_peak_cnts, m)?)?;
     m.add_function(wrap_pyfunction!(modify_tofs, m)?)?;
+    m.add_function(wrap_pyfunction!(get_realdata, m)?)?;
     Ok(())
 }
