@@ -206,9 +206,19 @@ impl PyAcquisitionMode {
     }
 }
 
+// pub fn get_peak_cnts(&self, total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
+//         self.inner.get_peak_cnts(total_scans, &scans)
+//     }
+
+#[pyfunction]
+pub fn get_peak_cnts(total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
+    rustdf::data::handle::get_peak_cnts(total_scans, &scans)
+}
+
 #[pymodule]
 pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyAcquisitionMode>()?;
+    m.add_function(wrap_pyfunction!(get_peak_cnts, m)?)?;
     Ok(())
 }

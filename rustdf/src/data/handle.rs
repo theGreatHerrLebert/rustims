@@ -632,7 +632,7 @@ impl TimsDataHandle {
     }
 }
 
-fn get_peak_cnts(total_scans: u32, scans: &[u32]) -> Vec<u32> {
+pub fn get_peak_cnts(total_scans: u32, scans: &[u32]) -> Vec<u32> {
     let mut peak_cnts = vec![total_scans];
     let mut ii = 0;
     for scan_id in 1..total_scans {
@@ -646,7 +646,7 @@ fn get_peak_cnts(total_scans: u32, scans: &[u32]) -> Vec<u32> {
     peak_cnts
 }
 
-fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
+pub fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
     let mut last_tof = -1i32; // Using i32 to allow -1
     let mut last_scan = 0;
     for ii in 0..tofs.len() {
@@ -660,7 +660,7 @@ fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
     }
 }
 
-fn get_realdata(peak_cnts: &[u32], interleaved: &[u32]) -> Vec<u8> {
+pub fn get_realdata(peak_cnts: &[u32], interleaved: &[u32]) -> Vec<u8> {
     let mut back_data = Vec::new();
 
     // Convert peak counts to bytes and add to back_data
@@ -677,7 +677,7 @@ fn get_realdata(peak_cnts: &[u32], interleaved: &[u32]) -> Vec<u8> {
     get_realdata_loop(&back_data)
 }
 
-fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
+pub fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
     let mut real_data = vec![0u8; back_data.len()];
     let mut reminder = 0;
     let mut bd_idx = 0;
