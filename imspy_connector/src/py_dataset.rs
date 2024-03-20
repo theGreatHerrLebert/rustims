@@ -233,5 +233,6 @@ pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyAcquisitionMode>()?;
     m.add_function(wrap_pyfunction!(get_peak_cnts, m)?)?;
+    m.add_function(wrap_pyfunction!(modify_tofs, m)?)?;
     Ok(())
 }
