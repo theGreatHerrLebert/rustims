@@ -64,16 +64,16 @@ class TDFWriter:
         table.to_sql(table_name, conn, if_exists='replace', index=False)
 
     def mz_to_tof(self, frame_id, mzs):
-        return self.helper_handle.mz_to_tof(frame_id, mzs)
+        return np.array(self.helper_handle.mz_to_tof(frame_id, mzs))
 
     def tof_to_mz(self, frame_id, tofs):
-        return self.helper_handle.tof_to_mz(frame_id, tofs)
+        return np.array(self.helper_handle.tof_to_mz(frame_id, tofs))
 
     def inv_mobility_to_scan(self, frame_id, inv_mobs):
-        return self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs)
+        return np.array(self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs))
 
     def scan_to_inv_mobility(self, frame_id, scans):
-        return self.helper_handle.scan_to_inverse_mobility(frame_id, scans)
+        return np.array(self.helper_handle.scan_to_inverse_mobility(frame_id, scans))
 
     def __repr__(self) -> str:
         return f"TDFWriter(path={self.path}, db_name={self.exp_name}, num_scans={self.helper_handle.num_scans}, " \
