@@ -127,7 +127,7 @@ class TDFWriter:
             bin_file.write(
                 (len(compressed_data) + 8).to_bytes(4, "little", signed=False)
             )
-            bin_file.write(self.helper_handle.to_bytes(4, "little", signed=False))
+            bin_file.write(self.helper_handle.num_scans.to_bytes(4, "little", signed=False))
             bin_file.write(compressed_data)
             self.position = bin_file.tell()
 
