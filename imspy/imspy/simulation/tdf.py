@@ -38,7 +38,6 @@ class TDFWriter:
         self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
         self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
         self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
-        self._create_table(self.conn, self.helper_handle.get_table("FrameMsmsInfo"), "FrameMsmsInfo")
 
         with open(self.binary_file, "wb") as bin_file:
             bin_file.write(b'\x00' * self.offset_bytes)
@@ -54,16 +53,16 @@ class TDFWriter:
         # Create a table from a pandas DataFrame
         table.to_sql(table_name, conn, if_exists='replace', index=False)
 
-    def mz_to_tof(self, mzs, frame_id: int = 1):
+    def mz_to_tof(self, frame_id, mzs):
         return self.helper_handle.mz_to_tof(frame_id, mzs)
 
-    def tof_to_mz(self, tofs, frame_id: int = 1):
+    def tof_to_mz(self, frame_id, tofs):
         return self.helper_handle.tof_to_mz(frame_id, tofs)
 
-    def inv_mobility_to_scan(self, inv_mobs, frame_id: int = 1):
+    def inv_mobility_to_scan(self, frame_id, inv_mobs):
         return self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs)
 
-    def scan_to_inv_mobility(self, scans, frame_id: int = 1):
+    def scan_to_inv_mobility(self, frame_id, scans):
         return self.helper_handle.scan_to_inverse_mobility(frame_id, scans)
 
     def __repr__(self) -> str:
@@ -71,9 +70,9 @@ class TDFWriter:
                f"im_lower={self.helper_handle.im_lower}, im_upper={self.helper_handle.im_upper}, mz_lower={self.helper_handle.mz_lower}, " \
                f"mz_upper={self.helper_handle.mz_upper})"
 
-    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int, use_frame_id_one: bool = False):
+    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int, only_frame_one: bool = False):
         r = self.helper_handle.meta_data.iloc[0, :].copy()
-        if not use_frame_id_one:
+        if not only_frame_one:
             r = self.helper_handle.meta_data.iloc[frame.frame_id - 1, :].copy()
 
         r.Id = frame.frame_id
@@ -88,27 +87,22 @@ class TDFWriter:
 
         return r
 
-    def compress_frame(self, frame: TimsFrame, use_frame_id_one: bool = False) -> bytes:
+    def compress_frame(self, frame: TimsFrame, only_frame_one: bool = False) -> bytes:
         # calculate TOF using the DH of the other frame
-
         # TODO: move translation of mz -> tof and inv_mob -> scan to the helper handle
-        if not use_frame_id_one:
-            tof = self.helper_handle.mz_to_tof(frame.frame_id, frame.mz)
-            scan = self.helper_handle.inverse_mobility_to_scan(frame.frame_id, frame.mobility)
+        i = 1 if only_frame_one else frame.frame_id
 
-        else:
-            tof = self.helper_handle.mz_to_tof(1, frame.mz)
-            scan = self.helper_handle.inverse_mobility_to_scan(1, frame.mobility)
-
+        tof = self.mz_to_tof(i, frame.mz)
+        scan = self.inv_mobility_to_scan(i, frame.mobility)
         return self.helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
                                                                      total_scans=self.helper_handle.num_scans)
 
     def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[bytes]:
         return self.helper_handle.compress_frames(frames, num_threads=num_threads)
 
-    def write_frame(self, frame: TimsFrame, scan_mode: int) -> None:
-        self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
-        compressed_data = self.compress_frame(frame)
+    def write_frame(self, frame: TimsFrame, scan_mode: int, only_frame_one: bool = False) -> None:
+        self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position, only_frame_one))
+        compressed_data = self.compress_frame(frame, only_frame_one)
 
         with open(self.binary_file, "ab") as bin_file:
             bin_file.write(compressed_data)
@@ -134,13 +128,7 @@ class TDFWriter:
         return pd.DataFrame(self.frame_meta_data)
 
     def write_frame_meta_data(self) -> None:
-        meta_data = self.get_frame_meta_data()
-        segments = self.helper_handle.get_table("Segments")
-        # segments only has one row, we need to alter the column: LastFrame
-        segments['LastFrame'] = meta_data.Id.max()
-
-        self._create_table(self.conn, meta_data, "Frames")
-        self._create_table(self.conn, segments, "Segments")
+        self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
 
     def write_dia_ms_ms_info(self, dia_ms_ms_info: pd.DataFrame) -> None:
         out = dia_ms_ms_info.rename(columns={
