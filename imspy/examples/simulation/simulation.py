@@ -123,6 +123,9 @@ def main():
         gradient_length=args.gradient_length,
     )
 
+    if verbose:
+        print(acquisition_builder)
+
     # JOB 1: Digest the fasta file
     peptides = digest_fasta(
         fasta_file_path=fasta,

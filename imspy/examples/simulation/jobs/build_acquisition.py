@@ -18,12 +18,12 @@ def build_acquisition(
 
     config = read_acquisition_config(acquisition_name=acquisition_type)['acquisition']
 
+    if gradient_length is not None:
+        config['gradient_length'] = gradient_length
+
     if verbose:
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
-
-    if gradient_length is not None:
-        config['gradient_length'] = gradient_length
 
     ref_ds = TimsDataset(reference_path)
 
