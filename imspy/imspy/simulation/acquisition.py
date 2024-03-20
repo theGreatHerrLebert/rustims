@@ -63,7 +63,7 @@ class TimsTofAcquisitionBuilder:
             print('Generating scan layout.')
 
         scans = np.arange(self.tdf_writer.helper_handle.num_scans)[::-1]
-        mobilities = self.tdf_writer.scan_to_inv_mobility(scans)
+        mobilities = self.tdf_writer.scan_to_inv_mobility(1, scans)
 
         return pd.DataFrame({'scan': scans, 'mobility': mobilities})
 

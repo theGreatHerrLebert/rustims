@@ -121,7 +121,7 @@ class TDFWriter:
         intensity = frame.intensity.astype(np.uint32)
 
         real_data = ims.get_data_for_compression(tof, scan, intensity, self.helper_handle.num_scans)
-        compressed_data = compressed_data = zstd.ZSTD_compress(bytes(real_data), 1)
+        compressed_data = zstd.ZSTD_compress(bytes(real_data), 1)
 
         with open(self.binary_file, "ab") as bin_file:
             bin_file.write(
