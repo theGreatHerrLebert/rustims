@@ -54,25 +54,28 @@ class TDFWriter:
         # Create a table from a pandas DataFrame
         table.to_sql(table_name, conn, if_exists='replace', index=False)
 
-    def mz_to_tof(self, mzs):
-        return self.helper_handle.mz_to_tof(1, mzs)
+    def mz_to_tof(self, mzs, frame_id: int = 1):
+        return self.helper_handle.mz_to_tof(frame_id, mzs)
 
-    def tof_to_mz(self, tofs):
-        return self.helper_handle.tof_to_mz(1, tofs)
+    def tof_to_mz(self, tofs, frame_id: int = 1):
+        return self.helper_handle.tof_to_mz(frame_id, tofs)
 
-    def inv_mobility_to_scan(self, inv_mobs):
-        return self.helper_handle.inverse_mobility_to_scan(1, inv_mobs)
+    def inv_mobility_to_scan(self, inv_mobs, frame_id: int = 1):
+        return self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs)
 
-    def scan_to_inv_mobility(self, scans):
-        return self.helper_handle.scan_to_inverse_mobility(1, scans)
+    def scan_to_inv_mobility(self, scans, frame_id: int = 1):
+        return self.helper_handle.scan_to_inverse_mobility(frame_id, scans)
 
     def __repr__(self) -> str:
         return f"TDFWriter(path={self.path}, db_name={self.exp_name}, num_scans={self.helper_handle.num_scans}, " \
                f"im_lower={self.helper_handle.im_lower}, im_upper={self.helper_handle.im_upper}, mz_lower={self.helper_handle.mz_lower}, " \
                f"mz_upper={self.helper_handle.mz_upper})"
 
-    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int):
+    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int, use_frame_id_one: bool = False):
         r = self.helper_handle.meta_data.iloc[0, :].copy()
+        if not use_frame_id_one:
+            r = self.helper_handle.meta_data.iloc[frame.frame_id - 1, :].copy()
+
         r.Id = frame.frame_id
         r.Time = frame.retention_time
         r.ScanMode = scan_mode
@@ -85,11 +88,18 @@ class TDFWriter:
 
         return r
 
-    def compress_frame(self, frame: TimsFrame) -> bytes:
+    def compress_frame(self, frame: TimsFrame, use_frame_id_one: bool = False) -> bytes:
         # calculate TOF using the DH of the other frame
+
         # TODO: move translation of mz -> tof and inv_mob -> scan to the helper handle
-        tof = self.mz_to_tof(frame.mz)
-        scan = self.inv_mobility_to_scan(frame.mobility)
+        if not use_frame_id_one:
+            tof = self.mz_to_tof(frame.mz, frame.frame_id)
+            scan = self.inv_mobility_to_scan(frame.mobility, frame.frame_id)
+            
+        else:
+            tof = self.mz_to_tof(frame.mz, 1)
+            scan = self.inv_mobility_to_scan(frame.mobility, 1)
+
         return self.helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
                                                                      total_scans=self.helper_handle.num_scans)
 

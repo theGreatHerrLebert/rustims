@@ -344,7 +344,7 @@ impl TimsDataHandle {
         dbl_tofs.resize(tof.len(), 0.0);
 
         for (i, &val) in tof.iter().enumerate() {
-        dbl_tofs[i] = val as f64;
+            dbl_tofs[i] = val as f64;
         }
 
         let mut mz_values: Vec<f64> = Vec::new();
@@ -445,61 +445,61 @@ impl TimsDataHandle {
 
     pub fn get_raw_frame(&self, frame_id: u32) -> Result<RawTimsFrame, Box<dyn std::error::Error>> {
 
-            let frame_index = (frame_id - 1) as usize;
-            let offset = self.tims_offset_values[frame_index] as u64;
+        let frame_index = (frame_id - 1) as usize;
+        let offset = self.tims_offset_values[frame_index] as u64;
 
-            let mut file_path = PathBuf::from(&self.data_path);
-            file_path.push("analysis.tdf_bin");
-            let mut infile = File::open(&file_path)?;
+        let mut file_path = PathBuf::from(&self.data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(&file_path)?;
 
-            infile.seek(SeekFrom::Start(offset))?;
+        infile.seek(SeekFrom::Start(offset))?;
 
-            let mut bin_buffer = [0u8; 4];
-            infile.read_exact(&mut bin_buffer)?;
-            let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;
+        let mut bin_buffer = [0u8; 4];
+        infile.read_exact(&mut bin_buffer)?;
+        let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;
 
-            infile.read_exact(&mut bin_buffer)?;
+        infile.read_exact(&mut bin_buffer)?;
 
-            match self.global_meta_data.tims_compression_type {
-                // TODO: implement
-                _ if self.global_meta_data.tims_compression_type == 1 => {
-                    return Err("Decompression Type1 not implemented.".into());
-                },
+        match self.global_meta_data.tims_compression_type {
+            // TODO: implement
+            _ if self.global_meta_data.tims_compression_type == 1 => {
+                return Err("Decompression Type1 not implemented.".into());
+            },
 
-                // Extract from ZSTD compressed binary
-                _ if self.global_meta_data.tims_compression_type == 2 => {
+            // Extract from ZSTD compressed binary
+            _ if self.global_meta_data.tims_compression_type == 2 => {
 
-                    let mut compressed_data = vec![0u8; bin_size as usize - 8];
-                    infile.read_exact(&mut compressed_data)?;
+                let mut compressed_data = vec![0u8; bin_size as usize - 8];
+                infile.read_exact(&mut compressed_data)?;
 
-                    let decompressed_bytes = zstd_decompress(&compressed_data)?;
+                let decompressed_bytes = zstd_decompress(&compressed_data)?;
 
-                    let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
+                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
 
-                    let ms_type_raw = self.frame_meta_data[frame_index].ms_ms_type;
+                let ms_type_raw = self.frame_meta_data[frame_index].ms_ms_type;
 
-                    let ms_type = match ms_type_raw {
-                        0 => MsType::Precursor,
-                        8 => MsType::FragmentDda,
-                        9 => MsType::FragmentDia,
-                        _ => MsType::Unknown,
-                    };
+                let ms_type = match ms_type_raw {
+                    0 => MsType::Precursor,
+                    8 => MsType::FragmentDda,
+                    9 => MsType::FragmentDia,
+                    _ => MsType::Unknown,
+                };
 
-                    Ok(RawTimsFrame {
-                        frame_id: frame_id as i32,
-                        retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
-                        ms_type,
-                        scan: scan.iter().map(|&x| x as i32).collect(),
-                        tof: tof.iter().map(|&x| x as i32).collect(),
-                        intensity: intensity.iter().map(|&x| x as f64).collect(),
-                    })
-                },
+                Ok(RawTimsFrame {
+                    frame_id: frame_id as i32,
+                    retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
+                    ms_type,
+                    scan: scan.iter().map(|&x| x as i32).collect(),
+                    tof: tof.iter().map(|&x| x as i32).collect(),
+                    intensity: intensity.iter().map(|&x| x as f64).collect(),
+                })
+            },
 
-                // Error on unknown compression algorithm
-                _ => {
-                    return Err("TimsCompressionType is not 1 or 2.".into());
-                }
+            // Error on unknown compression algorithm
+            _ => {
+                return Err("TimsCompressionType is not 1 or 2.".into());
             }
+        }
     }
 
     /// get a frame from the tims dataset
@@ -691,4 +691,3 @@ fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
     }
     real_data
 }
-
