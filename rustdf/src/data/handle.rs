@@ -79,7 +79,7 @@ pub fn reconstruct_compressed_data(
     modify_tofs(&mut tofs, &scans);
 
     // Get peak counts from total scans and scans
-    let peak_cnts = get_peak_cnts(total_scans + 1, &scans);
+    let peak_cnts = get_peak_cnts(total_scans, &scans);
 
     // Interleave TOFs and intensities
     let mut interleaved = Vec::new();
