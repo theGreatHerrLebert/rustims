@@ -8,8 +8,7 @@ from abc import abstractmethod, ABC
 
 from imspy.simulation.experiment import SyntheticExperimentDataHandle
 from imspy.timstof.data import AcquisitionMode, TimsDataset
-from imspy.simulation.utility import calculate_number_frames, calculate_mobility_spacing, \
-    get_ms_ms_window_layout_resource_path
+from imspy.simulation.utility import calculate_number_frames, get_ms_ms_window_layout_resource_path
 from imspy.simulation.tdf import TDFWriter
 
 
@@ -36,7 +35,6 @@ class TimsTofAcquisitionBuilder:
         self.path = path
         self.gradient_length = gradient_length
         self.rt_cycle_length = rt_cycle_length
-        self.im_cycle_length = calculate_mobility_spacing(reference_ds.im_lower, reference_ds.mz_upper, reference_ds.num_scans)
         self.num_frames = calculate_number_frames(gradient_length, rt_cycle_length)
         # Create the TDFWriter, used to deal with bruker binary format writing and metadata for libtimsdata.so
         self.tdf_writer = TDFWriter(

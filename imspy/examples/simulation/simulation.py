@@ -209,7 +209,6 @@ def main():
         scans=acquisition_builder.scan_table,
         z_score=args.z_score,
         std_im=args.std_im,
-        im_cycle_length=acquisition_builder.im_cycle_length,
         verbose=verbose,
         add_noise=args.add_noise_to_signals
     )
