@@ -59,7 +59,7 @@ pub fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `compressed_data` - A vector of u8 that holds the compressed data
 ///
 pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut encoder = zstd::Encoder::new(Vec::new(), 0)?;
+    let mut encoder = zstd::Encoder::new(Vec::new(), 1)?;
     encoder.write_all(decompressed_data)?;
     let compressed_data = encoder.finish()?;
     Ok(compressed_data)
