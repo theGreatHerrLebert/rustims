@@ -13,6 +13,7 @@ class TDFWriter:
             helper_handle: TimsDataset,
             path: str = "./",
             exp_name: str = "RAW.d",
+            offset_bytes: int = 64,
             ) -> None:
 
         self.path = Path(path)
@@ -23,6 +24,7 @@ class TDFWriter:
         self.frame_meta_data = []
         self.conn = None
         self.helper_handle = helper_handle
+        self.offset_bytes = offset_bytes
 
         self.__conn_native = None
         self._setup_connections()
@@ -36,6 +38,10 @@ class TDFWriter:
         self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
         self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
         self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
+
+        with open(self.binary_file, "wb") as bin_file:
+            bin_file.write(b'\x00' * self.offset_bytes)
+            self.position = bin_file.tell()
 
     @staticmethod
     def _get_table(conn, table_name: str) -> pd.DataFrame:

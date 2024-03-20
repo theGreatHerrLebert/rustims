@@ -11,11 +11,12 @@ def simulate_scan_distributions(
         scans: pd.DataFrame,
         z_score: float,
         std_im: float,
-        im_cycle_length: float,
         verbose: bool = False,
         add_noise: bool = False,
         normalize: bool = False
 ) -> pd.DataFrame:
+
+    im_cycle_length = np.mean(np.diff(scans.mobility))
 
     # distribution parameters
     z_score = get_z_score_for_percentile(target_score=z_score)
