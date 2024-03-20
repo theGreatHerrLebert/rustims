@@ -38,6 +38,7 @@ class TDFWriter:
         self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
         self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
         self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
+        self._create_table(self.conn, self.helper_handle.get_table("FrameMsmsInfo"), "FrameMsmsInfo")
 
         with open(self.binary_file, "wb") as bin_file:
             bin_file.write(b'\x00' * self.offset_bytes)
@@ -123,7 +124,13 @@ class TDFWriter:
         return pd.DataFrame(self.frame_meta_data)
 
     def write_frame_meta_data(self) -> None:
-        self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
+        meta_data = self.get_frame_meta_data()
+        segments = self.helper_handle.get_table("Segments")
+        # segments only has one row, we need to alter the column: LastFrame
+        segments['LastFrame'] = meta_data.Id.max()
+
+        self._create_table(self.conn, meta_data, "Frames")
+        self._create_table(self.conn, segments, "Segments")
 
     def write_dia_ms_ms_info(self, dia_ms_ms_info: pd.DataFrame) -> None:
         out = dia_ms_ms_info.rename(columns={
