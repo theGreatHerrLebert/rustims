@@ -164,6 +164,17 @@ class TimsDataset(ABC):
         """
         return pd.read_sql_query("SELECT * from GlobalMetadata", sqlite3.connect(self.data_path + "/analysis.tdf"))
 
+    def get_table(self, table_name: str) -> pd.DataFrame:
+        """Get a table.
+
+        Args:
+            table_name (str): Table name.
+
+        Returns:
+            pd.DataFrame: Table.
+        """
+        return pd.read_sql_query(f"SELECT * from {table_name}", sqlite3.connect(self.data_path + "/analysis.tdf"))
+
     @property
     def im_lower(self):
         return float(self.global_meta_data["OneOverK0AcqRangeLower"])

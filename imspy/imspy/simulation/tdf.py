@@ -5,15 +5,14 @@ from typing import List
 from pathlib import Path
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof import TimsDataset
+import zstd
+
+import imspy_connector
+ims = imspy_connector.py_dataset
 
 
 class TDFWriter:
-    def __init__(
-            self,
-            helper_handle: TimsDataset,
-            path: str = "./",
-            exp_name: str = "RAW.d",
-            ) -> None:
+    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64) -> None:
 
         self.path = Path(path)
         self.exp_name = exp_name
@@ -23,6 +22,7 @@ class TDFWriter:
         self.frame_meta_data = []
         self.conn = None
         self.helper_handle = helper_handle
+        self.offset_bytes = offset_bytes
 
         self.__conn_native = None
         self._setup_connections()
@@ -32,10 +32,24 @@ class TDFWriter:
         self.full_path.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(f'{self.full_path}/analysis.tdf')
 
+        # Create the tables for the analysis.tdf
+        frame_ms_ms_info = self.helper_handle.get_table("FrameMsmsInfo")
+        segments = self.helper_handle.get_table("Segments")
+        last_frame = self.helper_handle.meta_data.Id.max()
+        segments.iloc[0, segments.columns.get_loc("LastFrame")] = last_frame
+
         # Save table to analysis.tdf
         self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
         self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
         self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
+        self._create_table(self.conn, frame_ms_ms_info, "FrameMsmsInfo")
+        self._create_table(self.conn, segments, "Segments")
+
+        # Create the binary file and add the offset bytes
+        # TODO: check if this is necessary
+        with open(self.binary_file, "wb") as bin_file:
+            bin_file.write(b'\x00' * self.offset_bytes)
+            self.position = bin_file.tell()
 
     @staticmethod
     def _get_table(conn, table_name: str) -> pd.DataFrame:
@@ -47,25 +61,65 @@ class TDFWriter:
         # Create a table from a pandas DataFrame
         table.to_sql(table_name, conn, if_exists='replace', index=False)
 
-    def mz_to_tof(self, mzs):
-        return self.helper_handle.mz_to_tof(1, mzs)
+    def mz_to_tof(self, frame_id, mzs):
+        """Convert m/z values to TOF values for a given frame using the helper handle.
+        # CAUTION: This will use the calibration data from the reference handle.
+        """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
+        return np.array(self.helper_handle.mz_to_tof(frame_id, mzs))
 
-    def tof_to_mz(self, tofs):
-        return self.helper_handle.tof_to_mz(1, tofs)
+    def tof_to_mz(self, frame_id, tofs):
+        """Convert TOF values to m/z values for a given frame using the helper handle.
+        # CAUTION: This will use the calibration data from the reference handle.
+        """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
+        return np.array(self.helper_handle.tof_to_mz(frame_id, tofs))
 
-    def inv_mobility_to_scan(self, inv_mobs):
-        return self.helper_handle.inverse_mobility_to_scan(1, inv_mobs)
+    def inv_mobility_to_scan(self, frame_id, inv_mobs):
+        """Convert inverse mobility values to scan values for a given frame using the helper handle.
+        # CAUTION: This will use the calibration data from the reference handle.
+        """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
+        return np.array(self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs))
 
-    def scan_to_inv_mobility(self, scans):
-        return self.helper_handle.scan_to_inverse_mobility(1, scans)
+    def scan_to_inv_mobility(self, frame_id, scans):
+        """Convert scan values to inverse mobility values for a given frame using the helper handle.
+        # CAUTION: This will use the calibration data from the reference handle.
+        """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
+        return np.array(self.helper_handle.scan_to_inverse_mobility(frame_id, scans))
 
     def __repr__(self) -> str:
-        return f"TDFWriter(path={self.path}, db_name={self.exp_name}, num_scans={self.helper_handle.num_scans}, " \
-               f"im_lower={self.helper_handle.im_lower}, im_upper={self.helper_handle.im_upper}, mz_lower={self.helper_handle.mz_lower}, " \
-               f"mz_upper={self.helper_handle.mz_upper})"
+        return f'TDFWriter(path={self.path}, db_name={self.exp_name}, num_scans={self.helper_handle.num_scans}, ' \
+               f'im_lower={self.helper_handle.im_lower}, im_upper={self.helper_handle.im_upper}, mz_lower={self.helper_handle.mz_lower}, ' \
+               f'mz_upper={self.helper_handle.mz_upper})'
 
-    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int):
+    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int, only_frame_one: bool = False):
+        """Build a row for the frame meta data table from a TimsFrame object.
+            Arguments:
+                frame: TimsFrame object
+                scan_mode: int
+                frame_start_pos: int
+                only_frame_one: bool
+        """
+        max_index = self.helper_handle.meta_data.Id.max()
+
         r = self.helper_handle.meta_data.iloc[0, :].copy()
+        if not only_frame_one:
+            # check for index out of bounds since ref data handle might not hold same number of frames
+            if frame.frame_id > max_index:
+                r = self.helper_handle.meta_data.iloc[max_index - 1, :].copy()
+            else:
+                r = self.helper_handle.meta_data.iloc[frame.frame_id - 1, :].copy()
+
         r.Id = frame.frame_id
         r.Time = frame.retention_time
         r.ScanMode = scan_mode
@@ -78,38 +132,56 @@ class TDFWriter:
 
         return r
 
-    def compress_frame(self, frame: TimsFrame) -> bytes:
-        # calculate TOF using the DH of the other frame
-        # TODO: move translation of mz -> tof and inv_mob -> scan to the helper handle
-        tof = self.mz_to_tof(frame.mz)
-        scan = self.inv_mobility_to_scan(frame.mobility)
-        return self.helper_handle.indexed_values_to_compressed_bytes(scan, tof, frame.intensity,
-                                                                     total_scans=self.helper_handle.num_scans)
+    def compress_frame(self, frame: TimsFrame, only_frame_one: bool = False) -> bytes:
+        # either use frame 1 or the ref handle frame for writing of calibration data and call to conversion function
+        i = 1 if only_frame_one else frame.frame_id
 
-    def compress_frames(self, frames: List[TimsFrame], num_threads: int = 4) -> List[bytes]:
-        return self.helper_handle.compress_frames(frames, num_threads=num_threads)
+        # transform mz and mobility to tof and scan
+        tof = self.mz_to_tof(i, frame.mz).astype(np.uint32)
+        scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
+        intensity = frame.intensity.astype(np.uint32)
+        # get the real data as interleaved bytes
+        real_data = ims.get_data_for_compression(tof, scan, intensity, self.helper_handle.num_scans)
+        # compress the data
+        return zstd.ZSTD_compress(bytes(real_data), 1)
 
-    def write_frame(self, frame: TimsFrame, scan_mode: int) -> None:
-        self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
-        compressed_data = self.compress_frame(frame)
+    def compress_frames(self, frames: List[TimsFrame], only_frame_one: bool = False, num_threads: int = 4) -> List[bytes]:
+        # same as compress_frame but for multiple frames
+        tofs, scans, intensities = [], [], []
+        for frame in frames:
+            i = 1 if only_frame_one else frame.frame_id
+            tofs.append(self.mz_to_tof(i, frame.mz).astype(np.uint32))
+            scans.append(self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32))
+            intensities.append(frame.intensity.astype(np.uint32))
+
+        real_data = ims.get_data_for_compression_par(tofs, scans, intensities, self.helper_handle.num_scans, num_threads)
+        return [zstd.ZSTD_compress(bytes(data), 1) for data in real_data]
+
+    def write_frame(self, frame: TimsFrame, scan_mode: int, only_frame_one: bool = False) -> None:
+        self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position, only_frame_one))
+        compressed_data = self.compress_frame(frame, only_frame_one)
 
         with open(self.binary_file, "ab") as bin_file:
+            bin_file.write(
+                (len(compressed_data) + 8).to_bytes(4, "little", signed=False)
+            )
+            bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
             bin_file.write(compressed_data)
             self.position = bin_file.tell()
 
-    def write_frames(self, frames: List[TimsFrame], scan_mode: int, num_threads: int = 4) -> None:
+    def write_frames(self, frames: List[TimsFrame], scan_mode: int, only_frame_one: bool = False, num_threads: int = 4) -> None:
 
-        # compress frames
-        compressed_data = self.helper_handle.compress_frames(
-            frames,
-            num_threads=num_threads
-        )
+        compressed_data = self.compress_frames(frames, only_frame_one, num_threads=num_threads)
 
-        # write to binary file
-        with open(self.binary_file, "ab") as bin_file:
-            # write compressed data to binary file, and add frame meta data to list
-            for frame, data in zip(frames, compressed_data):
-                self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position))
+        for i, data in enumerate(compressed_data):
+
+            self.frame_meta_data.append(self.build_frame_meta_row(frames[i], scan_mode, self.position, only_frame_one))
+
+            with open(self.binary_file, "ab") as bin_file:
+                bin_file.write(
+                    (len(data) + 8).to_bytes(4, "little", signed=False)
+                )
+                bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
                 bin_file.write(data)
                 self.position = bin_file.tell()
 
