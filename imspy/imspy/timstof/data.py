@@ -65,6 +65,11 @@ class TimsDataset(ABC):
         self.binary_path = None
 
         self.data_path = data_path
+        if data_path[-1] == "/":
+            data_path = data_path[:-1]
+
+        self.experiment_name = data_path.split("/")[-1]
+
         self.meta_data = self.__load_meta_data()
         self.global_meta_data_pandas = self.__load_global_meta_data_pandas()
         self.global_meta_data = self.__load_global_meta_data()
