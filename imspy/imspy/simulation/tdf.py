@@ -98,9 +98,15 @@ class TDFWriter:
                 frame_start_pos: int
                 only_frame_one: bool
         """
+        max_index = self.helper_handle.meta_data.Id.max()
+
         r = self.helper_handle.meta_data.iloc[0, :].copy()
         if not only_frame_one:
-            r = self.helper_handle.meta_data.iloc[frame.frame_id - 1, :].copy()
+            # check for index out of bounds since ref data handle might not hold same number of frames
+            if frame.frame_id > max_index:
+                r = self.helper_handle.meta_data.iloc[max_index - 1, :].copy()
+            else:
+                r = self.helper_handle.meta_data.iloc[frame.frame_id - 1, :].copy()
 
         r.Id = frame.frame_id
         r.Time = frame.retention_time
