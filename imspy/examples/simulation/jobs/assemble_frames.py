@@ -38,8 +38,7 @@ def assemble_frames(
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
-        # try non-parallelized version for debugging
-        # acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=num_threads)
+        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=num_threads)
 
     if verbose:
         print("Writing frame meta data to database...")
