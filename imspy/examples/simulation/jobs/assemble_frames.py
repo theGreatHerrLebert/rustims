@@ -34,7 +34,8 @@ def assemble_frames(
         ids = frame_ids[start_index:stop_index]
 
         built_frames = frame_builder.build_frames(ids, num_threads=num_threads)
-        acquisition_builder.tdf_writer.write_frames(built_frames, scan_mode=9, num_threads=num_threads)
+        for frame in built_frames:
+            acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
     if verbose:
         print("Writing frame meta data to database...")
