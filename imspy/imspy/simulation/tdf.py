@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from typing import List
 from pathlib import Path
+
+from imspy.simulation.utility import get_compressible_data
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof import TimsDataset
 import zstd
@@ -68,6 +70,7 @@ class TDFWriter:
         max_ref_frame_id = self.helper_handle.meta_data.Id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
+
         return np.array(self.helper_handle.mz_to_tof(frame_id, mzs))
 
     def tof_to_mz(self, frame_id, tofs):
@@ -135,27 +138,18 @@ class TDFWriter:
     def compress_frame(self, frame: TimsFrame, only_frame_one: bool = False) -> bytes:
         # either use frame 1 or the ref handle frame for writing of calibration data and call to conversion function
         i = 1 if only_frame_one else frame.frame_id
+        max_index = self.helper_handle.meta_data.Id.max()
+        if frame.frame_id > max_index:
+            i = max_index
 
         # transform mz and mobility to tof and scan
         tof = self.mz_to_tof(i, frame.mz).astype(np.uint32)
         scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
         intensity = frame.intensity.astype(np.uint32)
         # get the real data as interleaved bytes
-        real_data = ims.get_data_for_compression(tof, scan, intensity, self.helper_handle.num_scans)
+        real_data = get_compressible_data(tof, scan, intensity, self.helper_handle.num_scans)
         # compress the data
-        return zstd.ZSTD_compress(bytes(real_data), 1)
-
-    def compress_frames(self, frames: List[TimsFrame], only_frame_one: bool = False, num_threads: int = 4) -> List[bytes]:
-        # same as compress_frame but for multiple frames
-        tofs, scans, intensities = [], [], []
-        for frame in frames:
-            i = 1 if only_frame_one else frame.frame_id
-            tofs.append(self.mz_to_tof(i, frame.mz).astype(np.uint32))
-            scans.append(self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32))
-            intensities.append(frame.intensity.astype(np.uint32))
-
-        real_data = ims.get_data_for_compression_par(tofs, scans, intensities, self.helper_handle.num_scans, num_threads)
-        return [zstd.ZSTD_compress(bytes(data), 1) for data in real_data]
+        return zstd.ZSTD_compress(bytes(real_data), 0)
 
     def write_frame(self, frame: TimsFrame, scan_mode: int, only_frame_one: bool = False) -> None:
         self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position, only_frame_one))
@@ -168,22 +162,6 @@ class TDFWriter:
             bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
             bin_file.write(compressed_data)
             self.position = bin_file.tell()
-
-    def write_frames(self, frames: List[TimsFrame], scan_mode: int, only_frame_one: bool = False, num_threads: int = 4) -> None:
-
-        compressed_data = self.compress_frames(frames, only_frame_one, num_threads=num_threads)
-
-        for i, data in enumerate(compressed_data):
-
-            self.frame_meta_data.append(self.build_frame_meta_row(frames[i], scan_mode, self.position, only_frame_one))
-
-            with open(self.binary_file, "ab") as bin_file:
-                bin_file.write(
-                    (len(data) + 8).to_bytes(4, "little", signed=False)
-                )
-                bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
-                bin_file.write(data)
-                self.position = bin_file.tell()
 
     def get_frame_meta_data(self) -> pd.DataFrame:
         return pd.DataFrame(self.frame_meta_data)
@@ -210,3 +188,34 @@ class TDFWriter:
         })
 
         self._create_table(self.conn, out, "DiaFrameMsMsWindows")
+
+        # TODO: these methods needs to be debugged
+        """
+        def compress_frames(self, frames: List[TimsFrame], only_frame_one: bool = False, num_threads: int = 4) -> List[bytes]:
+            # same as compress_frame but for multiple frames
+            tofs, scans, intensities = [], [], []
+            for frame in frames:
+                i = 1 if only_frame_one else frame.frame_id
+                tofs.append(self.mz_to_tof(i, frame.mz).astype(np.uint32))
+                scans.append(self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32))
+                intensities.append(frame.intensity.astype(np.uint32))
+
+            real_data = ims.get_data_for_compression_par(tofs, scans, intensities, self.helper_handle.num_scans, num_threads)
+            return [zstd.ZSTD_compress(bytes(data), 1) for data in real_data]
+
+        def write_frames(self, frames: List[TimsFrame], scan_mode: int, only_frame_one: bool = False, num_threads: int = 4) -> None:
+
+            compressed_data = self.compress_frames(frames, only_frame_one, num_threads=num_threads)
+
+            for i, data in enumerate(compressed_data):
+
+                self.frame_meta_data.append(self.build_frame_meta_row(frames[i], scan_mode, self.position, only_frame_one))
+
+                with open(self.binary_file, "ab") as bin_file:
+                    bin_file.write(
+                        (len(data) + 8).to_bytes(4, "little", signed=False)
+                    )
+                    bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
+                    bin_file.write(data)
+                    self.position = bin_file.tell()
+        """
