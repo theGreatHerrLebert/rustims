@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 
 from importlib.abc import Traversable
 
+import numba
 from numba import jit
 from scipy.stats import norm
 
@@ -382,3 +383,69 @@ def get_scans_numba(im_value, ims_array, scans_array, std_im, z_score):
     # Generate scan indices in the correct order given the inverse relationship
     im_scans = np.arange(scan_start, scan_end + 1)
     return im_scans
+
+
+@numba.jit(cache=True, nopython=True)
+def get_peak_cnts(total_scans, scans):
+    peak_cnts = [total_scans]
+    ii = 0
+    for scan_id in range(1, total_scans):
+        counter = 0
+        while ii < len(scans) and scans[ii] < scan_id:
+            ii += 1
+            counter += 1
+        peak_cnts.append(counter * 2)
+    peak_cnts = np.array(peak_cnts, np.uint32)
+    return peak_cnts
+
+
+@numba.jit(cache=True, nopython=True)
+def modify_tofs(tofs, scans):
+    last_tof = -1
+    last_scan = 0
+    for ii in range(len(tofs)):
+        if last_scan != scans[ii]:
+            last_tof = -1
+            last_scan = scans[ii]
+        val = tofs[ii]
+        tofs[ii] = val - last_tof
+        last_tof = val
+
+
+@numba.jit(nopython=True)
+def np_zip(xx, yy):
+    res = np.empty(2 * len(xx), dtype=xx.dtype)
+    i = 0
+    for x, y in zip(xx, yy):
+        res[i] = x
+        i += 1
+        res[i] = y
+        i += 1
+    return res
+
+
+@numba.njit
+def get_realdata_loop(peak_cnts, interleaved, back_data, real_data):
+    reminder = 0
+    bd_idx = 0
+    for rd_idx in range(len(back_data)):
+        if bd_idx >= len(back_data):
+            reminder += 1
+            bd_idx = reminder
+        real_data[rd_idx] = back_data[bd_idx]
+        bd_idx += 4
+
+
+def get_realdata(peak_cnts, interleaved):
+    back_data = peak_cnts.tobytes() + interleaved.tobytes()
+    real_data = bytearray(len(back_data))
+    get_realdata_loop(peak_cnts, interleaved, back_data, real_data)
+    return real_data
+
+
+def get_compressible_data(tofs, scans, intensities, num_scans):
+    peak_counts = get_peak_cnts(num_scans, scans)
+    tofs = np.copy(tofs)
+    modify_tofs(tofs, scans)
+    interleaved = np_zip(tofs, intensities)
+    return np.array(get_realdata(peak_counts, interleaved))
