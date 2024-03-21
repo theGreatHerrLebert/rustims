@@ -59,7 +59,7 @@ pub fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `compressed_data` - A vector of u8 that holds the compressed data
 ///
 pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut encoder = zstd::Encoder::new(Vec::new(), 1)?;
+    let mut encoder = zstd::Encoder::new(Vec::new(), 0)?;
     encoder.write_all(decompressed_data)?;
     let compressed_data = encoder.finish()?;
     Ok(compressed_data)
@@ -692,11 +692,24 @@ pub fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
     real_data
 }
 
-pub fn get_data_for_compression(tofs: Vec<u32>, scans: Vec<u32>, intensities: Vec<u32>, max_scans: u32) -> Vec<u8> {
+pub fn get_data_for_compression(tofs: &Vec<u32>, scans: &Vec<u32>, intensities: &Vec<u32>, max_scans: u32) -> Vec<u8> {
     let mut tof_copy = tofs.clone();
     modify_tofs(&mut tof_copy, &scans);
     let peak_cnts = get_peak_cnts(max_scans, &scans);
     let interleaved: Vec<u32> = tofs.iter().zip(intensities.iter()).flat_map(|(tof, intensity)| vec![*tof, *intensity]).collect();
 
     get_realdata(&peak_cnts, &interleaved)
+}
+
+
+pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, intensities: Vec<Vec<u32>>, max_scans: u32, num_threads: usize) -> Vec<Vec<u8>> {
+    let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+
+    let result = pool.install(|| {
+        tofs.par_iter().zip(scans.par_iter()).zip(intensities.par_iter()).map(|((tof, scan), intensity)| {
+            get_data_for_compression(tof, scan, intensity, max_scans)
+        }).collect()
+    });
+
+    result
 }

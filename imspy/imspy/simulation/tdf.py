@@ -65,24 +65,36 @@ class TDFWriter:
         """Convert m/z values to TOF values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
         return np.array(self.helper_handle.mz_to_tof(frame_id, mzs))
 
     def tof_to_mz(self, frame_id, tofs):
         """Convert TOF values to m/z values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
         return np.array(self.helper_handle.tof_to_mz(frame_id, tofs))
 
     def inv_mobility_to_scan(self, frame_id, inv_mobs):
         """Convert inverse mobility values to scan values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
         return np.array(self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs))
 
     def scan_to_inv_mobility(self, frame_id, scans):
         """Convert scan values to inverse mobility values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
+        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        if frame_id > max_ref_frame_id:
+            frame_id = max_ref_frame_id
         return np.array(self.helper_handle.scan_to_inverse_mobility(frame_id, scans))
 
     def __repr__(self) -> str:
