@@ -198,8 +198,6 @@ def calculate_b_y_ion_series_ims(sequence: str, modifications: NDArray, charge: 
     return ims.calculate_b_y_ion_series(sequence, modifications, charge)
 
 
-
-
 def get_native_dataset_path(ds_name: str = 'NATIVE.d') -> str:
     """ Get the path to a pretrained model
 
