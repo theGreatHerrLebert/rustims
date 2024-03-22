@@ -7,7 +7,7 @@ def build_acquisition(
         path: str,
         reference_path: str,
         exp_name: str,
-        acquisition_type: str,
+        acquisition_type: str = 'dia',
         verbose: bool = False,
         gradient_length: float = None) -> TimsTofAcquisitionBuilderDIA:
 
