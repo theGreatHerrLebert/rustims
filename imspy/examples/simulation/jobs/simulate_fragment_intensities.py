@@ -55,12 +55,12 @@ def simulate_fragment_intensities(
 
         batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'intensity_flat']]
 
-        R = i_pred.apply(lambda r: flat_intensity_to_sparse(r.intensity_flat), axis=1)
+        R = batch.apply(lambda r: flat_intensity_to_sparse(r.intensity_flat), axis=1)
         R = R.apply(lambda r: (python_list_to_json_string(r[0], as_float=False), python_list_to_json_string(r[1])))
 
-        i_pred['indices'] = R.apply(lambda r: r[0])
-        i_pred['values'] = R.apply(lambda r: r[1])
-        i_pred = i_pred[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'indices', 'values']]
+        batch['indices'] = R.apply(lambda r: r[0])
+        batch['values'] = R.apply(lambda r: r[1])
+        batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'indices', 'values']]
 
         if batch_counter == 0:
             acquisition_builder.synthetics_handle.create_table(
