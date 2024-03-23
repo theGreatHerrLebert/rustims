@@ -447,3 +447,28 @@ def get_compressible_data(tofs, scans, intensities, num_scans):
     modify_tofs(tofs, scans)
     interleaved = np_zip(tofs, intensities)
     return np.array(get_realdata(peak_counts, interleaved))
+
+
+@jit(nopython=True)
+def flat_intensity_to_sparse(intensity_flat: NDArray, num_elements: int = 174):
+    flat_intensity = np.round(intensity_flat, 6)
+
+    for i in range(num_elements):
+        if flat_intensity[i] < 0:
+            flat_intensity[i] = 0
+
+    nonzero = np.count_nonzero(flat_intensity)
+    indices = np.zeros(nonzero)
+    values = np.zeros(nonzero)
+
+    counter = 0
+
+    for i in range(num_elements):
+        value = intensity_flat[i]
+        if value > 0:
+            indices[counter] = i
+            values[counter] = value
+            counter += 1
+
+    return indices.astype(np.int32), values
+
