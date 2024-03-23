@@ -45,7 +45,7 @@ def simulate_fragment_intensities(
     for batch_indices in tqdm(
             np.array_split(i_pred.index, np.ceil(len(i_pred) / n)),
             total=int(np.ceil(len(i_pred) / n)),
-            desc='matching b/y ions with intensities',
+            desc='flattening prosit predicted intensities',
             ncols=100,
             disable=(not verbose)
     ):
