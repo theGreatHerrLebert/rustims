@@ -55,7 +55,7 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
         emg_cdf_range(search_space[low], search_space[high], mu, sigma, lambda)
     };
 
-    // Binary search for the upper cutoff value, starting from mu to upper_initial
+    // Binary search for the upper cutoff value
     let (mut low, mut high) = (0, steps);
     while low < high {
         let mid = low + (high - low) / 2;
@@ -65,25 +65,27 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
             high = mid;
         }
     }
-    let upper_cutoff = search_space[low.min(steps)];
+    let upper_cutoff_index = low.min(steps);
 
-    // Reset for binary search for the lower cutoff value
+    // Binary search for the lower cutoff value, corrected to ensure it finds the appropriate start of the target range
     low = 0;
-    high = steps;
-    while low < high {
+    high = upper_cutoff_index; // Search only up to the upper cutoff index
+    let mut best_lower_index = high; // Initialize with the highest possible value
+    while low <= high {
         let mid = low + (high - low) / 2;
-        // This time, we're interested in the interval from this midpoint to the upper cutoff.
-        let prob_mid_to_upper = emg_cdf_range(search_space[mid], upper_cutoff, mu, sigma, lambda);
+        let prob_mid_to_upper = calc_cdf(mid, upper_cutoff_index);
 
-        // Check if the cumulative probability from mid to the upper cutoff is sufficient.
-        if prob_mid_to_upper > target {
-            high = mid; // We need to move towards the start of the array, as we've exceeded the target.
+        if prob_mid_to_upper >= target {
+            best_lower_index = mid;
+            if mid == 0 { break; } // Prevent underflow
+            high = mid - 1;
         } else {
-            if mid == steps { break; } // Prevents going out of bounds
-            low = mid + 1; // Not enough cumulative probability, move towards the end.
+            low = mid + 1;
         }
     }
-    let lower_cutoff = if low == 0 { search_space[low] } else { search_space[low-1] };
+
+    let lower_cutoff = search_space[best_lower_index];
+    let upper_cutoff = search_space[upper_cutoff_index];
 
     (lower_cutoff, upper_cutoff)
 }
