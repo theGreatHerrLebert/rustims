@@ -1,5 +1,6 @@
 extern crate rgsl;
 
+use std::collections::HashMap;
 use rgsl::{IntegrationWorkspace, error::erfc, error::erf};
 use std::f64::consts::SQRT_2;
 
@@ -82,7 +83,7 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     (search_space[lower_cutoff_index], search_space[upper_cutoff_index])
 }
 
-pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64) -> Vec<usize> {
+pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64) -> Vec<i32> {
     let step_size = 0.001;
     let target = 0.99;
     let (rt_min, rt_max) = calculate_bounds_emg(rt, sigma, lambda_, step_size, target, 20.0, 60.0);
@@ -102,5 +103,19 @@ pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f
         .unwrap_or(0); // Fallback
 
     // Generating the range of frames
-    (first_frame..=last_frame).collect()
+    (first_frame..=last_frame).map(|x| x as i32).collect()
+}
+
+pub fn calculate_frame_abundance_emg(time_map: &HashMap<i32, f64>, occurrences: &[i32], rt: f64, sigma: f64, lambda_: f64, rt_cycle_length: f64) -> Vec<f64> {
+    let mut frame_abundance = Vec::new();
+
+    for &occurrence in occurrences {
+        if let Some(&time) = time_map.get(&occurrence) {
+            let start = time - rt_cycle_length;
+            let i = emg_cdf_range(start, time, rt, sigma, lambda_);
+            frame_abundance.push(i);
+        }
+    }
+
+    frame_abundance
 }
