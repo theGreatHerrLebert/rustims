@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
-use mscore::data::peptide::{PeptideProductIonSeriesCollection, PeptideSequence};
+use mscore::data::peptide::{FragmentType, PeptideProductIonSeriesCollection, PeptideSequence};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{MsType, MzSpectrum};
@@ -194,14 +194,22 @@ impl TimsTofSyntheticsDataHandle {
         let mut stmt = self.connection.prepare("SELECT * FROM fragment_ions")?;
 
         let fragment_ion_sim_iter = stmt.query_map([], |row| {
-            // get json string from database
-            let fragment_ion_list_str: String = row.get(4)?;
+            let indices_string: String = row.get(4)?;
+            let values_string: String = row.get(5)?;
 
-            // convert json string to FragmentIonSeries
-            let fragment_ion_sim: PeptideProductIonSeriesCollection = match serde_json::from_str(&fragment_ion_list_str) {
+            let indices: Vec<u32> = match serde_json::from_str(&indices_string) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
                     4,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )),
+            };
+
+            let values: Vec<f64> = match serde_json::from_str(&values_string) {
+                Ok(value) => value,
+                Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
+                    5,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -212,7 +220,8 @@ impl TimsTofSyntheticsDataHandle {
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
-                fragment_ion_sim,
+                indices,
+                values,
             ))
         })?;
 
@@ -221,40 +230,6 @@ impl TimsTofSyntheticsDataHandle {
             fragment_ion_sim.push(fragment_ion?);
         }
 
-        Ok(fragment_ion_sim)
-    }
-
-    pub fn read_fragment_ions_by_ids(&self, ion_ids: Vec<u32>) -> rusqlite::Result<Vec<FragmentIonSim>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM fragment_ions WHERE ion_id = ?")?;
-        let mut fragment_ion_sim = Vec::new();
-        for ion_id in ion_ids {
-            let fragment_ion_sim_iter = stmt.query_map([ion_id], |row| {
-                // get json string from database
-                let fragment_ion_list_str: String = row.get(4)?;
-
-                // convert json string to FragmentIonSeries
-                let fragment_ion_sim: PeptideProductIonSeriesCollection = match serde_json::from_str(&fragment_ion_list_str) {
-                    Ok(value) => value,
-                    Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                        4,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )),
-                };
-
-                Ok(FragmentIonSim::new(
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    fragment_ion_sim,
-                ))
-            })?;
-
-            for fragment_ion in fragment_ion_sim_iter {
-                fragment_ion_sim.push(fragment_ion?);
-            }
-        }
         Ok(fragment_ion_sim)
     }
 
@@ -452,8 +427,10 @@ impl TimsTofSyntheticsDataHandle {
 
         peptide_to_ions
     }
+    pub fn build_fragment_ions(peptides_sim: &BTreeMap<u32, PeptidesSim>, fragment_ions: &Vec<FragmentIonSim>, num_threads: usize) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
 
-    pub fn build_fragment_ions(fragment_ions: &Vec<FragmentIonSim>, num_threads: usize) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
+
+
         // Create a custom thread pool with the specified number of threads
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let fragment_ion_map = thread_pool.install(|| {
@@ -461,7 +438,15 @@ impl TimsTofSyntheticsDataHandle {
             fragment_ions.par_iter()
                 .map(|fragment_ion| {
                     let key = (fragment_ion.peptide_id, fragment_ion.charge, (fragment_ion.collision_energy * 1e3).round() as i8);
-                    let value = fragment_ion.fragment_intensities.clone();
+
+                    let value = peptides_sim.get(&fragment_ion.peptide_id).unwrap().sequence.associate_with_predicted_intensities(
+                        fragment_ion.charge as i32,
+                        FragmentType::B,
+                        fragment_ion.to_dense(174),
+                        true,
+                        true,
+                    );
+
                     let fragment_ions: Vec<MzSpectrum> = value.peptide_ions.par_iter().map(|ion_series| {
                         ion_series.generate_isotopic_spectrum(
                             1e-2,

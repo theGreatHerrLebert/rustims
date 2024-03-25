@@ -6,7 +6,8 @@ from tqdm import tqdm
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
-from imspy.simulation.utility import flatten_prosit_array, sequences_to_all_ions
+from imspy.simulation.utility import flatten_prosit_array, flat_intensity_to_sparse, \
+    python_list_to_json_string
 
 
 def simulate_fragment_intensities(
@@ -44,7 +45,7 @@ def simulate_fragment_intensities(
     for batch_indices in tqdm(
             np.array_split(i_pred.index, np.ceil(len(i_pred) / n)),
             total=int(np.ceil(len(i_pred) / n)),
-            desc='matching b/y ions with intensities',
+            desc='flattening prosit predicted intensities',
             ncols=100,
             disable=(not verbose)
     ):
@@ -52,12 +53,14 @@ def simulate_fragment_intensities(
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
         batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
 
-        all_ions = sequences_to_all_ions(
-            batch.sequence, batch.charge, batch.intensity_flat, True, True, num_threads
-        )
+        batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'intensity_flat']]
 
-        batch['fragment_intensities'] = all_ions
-        batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'fragment_intensities']]
+        R = batch.apply(lambda r: flat_intensity_to_sparse(r.intensity_flat), axis=1)
+        R = R.apply(lambda r: (python_list_to_json_string(r[0], as_float=False), python_list_to_json_string(r[1])))
+
+        batch['indices'] = R.apply(lambda r: r[0])
+        batch['values'] = R.apply(lambda r: r[1])
+        batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'indices', 'values']]
 
         if batch_counter == 0:
             acquisition_builder.synthetics_handle.create_table(

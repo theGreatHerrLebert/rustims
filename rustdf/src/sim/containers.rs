@@ -1,4 +1,4 @@
-use mscore::data::peptide::{PeptideProductIonSeriesCollection, PeptideSequence};
+use mscore::data::peptide::{PeptideSequence};
 use mscore::data::spectrum::{MzSpectrum, MsType};
 use serde::{Serialize, Deserialize};
 use rand::distributions::{Distribution, Uniform};
@@ -213,7 +213,8 @@ pub struct FragmentIonSim {
     pub ion_id: u32,
     pub collision_energy: f64,
     pub charge: i8,
-    pub fragment_intensities: PeptideProductIonSeriesCollection,
+    pub indices: Vec<u32>,
+    pub values: Vec<f64>,
 }
 
 impl FragmentIonSim {
@@ -222,14 +223,24 @@ impl FragmentIonSim {
         ion_id: u32,
         collision_energy: f64,
         charge: i8,
-        fragment_intensities: PeptideProductIonSeriesCollection,
+        indices: Vec<u32>,
+        values: Vec<f64>,
     ) -> Self {
         FragmentIonSim {
             peptide_id,
             ion_id,
             charge,
             collision_energy,
-            fragment_intensities,
+            indices,
+            values,
         }
+    }
+
+    pub fn to_dense(&self, length: usize) -> Vec<f64> {
+        let mut dense = vec![0.0; length];
+        for (i, &idx) in self.indices.iter().enumerate() {
+            dense[idx as usize] = self.values[i];
+        }
+        dense
     }
 }

@@ -1,5 +1,5 @@
 [acquisition]
 name = "MidiaPASEF"
-precursor_every = 20
+precursor_every = 21
 gradient_length = 3600.0 # 60 minutes
 rt_cycle_length = 0.1054

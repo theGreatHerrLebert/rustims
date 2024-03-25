@@ -34,13 +34,13 @@ pub mod py_tims_frame;
 use py_tims_frame::tims_frame;
 
 pub mod py_tims_slice;
-
 use py_tims_slice::tims_slice;
 
 mod py_amino_acids;
 use py_amino_acids::amino_acids;
 
 mod py_unimod;
+mod py_utility;
 use py_unimod::unimod;
 
 #[pymodule]
@@ -114,6 +114,11 @@ fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
     let py_unimod_submodule = PyModule::new(py, "py_unimod")?;
     unimod(py, &py_unimod_submodule)?;
     m.add_submodule(py_unimod_submodule)?;
+
+    // py_utility submodule //
+    let py_utility_submodule = PyModule::new(py, "py_utility")?;
+    py_utility::utility(py, &py_utility_submodule)?;
+    m.add_submodule(py_utility_submodule)?;
 
     Ok(())
 }

@@ -28,7 +28,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let fragment_ions = handle.read_fragment_ions()?;
-        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&fragment_ions, num_threads);
+        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&synthetics.peptides, &fragment_ions, num_threads);
 
         // get collision energy settings per window group
         let fragmentation_settings = handle.get_collision_energy_dia();
@@ -61,12 +61,6 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             true => self.build_ms1_frame(frame_id),
             false => self.build_ms2_frame(frame_id, fragmentation),
         }
-    }
-
-    pub fn get_fragment_ions_by_ids(&self, ion_ids: Vec<u32>, num_threads: usize) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
-        let synthetic_db_handle = TimsTofSyntheticsDataHandle::new(&Path::new(&self.path)).unwrap();
-        let result = synthetic_db_handle.read_fragment_ions_by_ids(ion_ids).unwrap();
-        TimsTofSyntheticsDataHandle::build_fragment_ions(&result, num_threads)
     }
 
     pub fn get_fragment_ion_ids(&self, precursor_frame_ids: Vec<u32>) -> Vec<u32> {

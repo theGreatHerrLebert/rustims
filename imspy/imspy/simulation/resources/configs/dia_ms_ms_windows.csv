@@ -1,4 +1,4 @@
-WindowGroup,ScanNumBegin,ScanNumEnd,IsolationMz,IsolationWidth,CollisionEnergy
+window_group,scan_start,scan_end,isolation_mz,isolation_width,collision_energy
 1,289,538,1032.5,25.0,50.02158273381295
 1,545,792,672.5,25.0,26.172661870503596
 1,799,962,312.5,25.0,20.0

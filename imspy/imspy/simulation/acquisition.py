@@ -201,9 +201,9 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         window_group_file = get_ms_ms_window_layout_resource_path(acquisition_name)
 
         return TimsTofAcquisitionBuilderDIA(
-            path=Path(path) / exp_name,
+            path=str(Path(path) / exp_name),
             reference_ds=reference_ds,
-            window_group_file=window_group_file,
+            window_group_file=str(window_group_file),
             exp_name=exp_name + ".d",
             verbose=verbose,
             acquisition_name=acquisition_name,
