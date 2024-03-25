@@ -43,46 +43,42 @@ pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, la
 pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, lower_start: f64, upper_start: f64) -> (f64, f64) {
     assert!(0.0 <= target && target <= 1.0, "target must be in [0, 1]");
 
-    let lower = mu - lower_start * sigma;
-    let upper = mu + upper_start * sigma;
+    let lower_initial = mu - lower_start * sigma;
+    let upper_initial = mu + upper_start * sigma;
 
     // Create the search space
-    let steps = ((upper - lower) / step_size).round() as usize;
-    let search_space: Vec<f64> = (0..=steps).map(|i| lower + i as f64 * step_size).collect();
+    let steps = ((upper_initial - lower_initial) / step_size).round() as usize;
+    let search_space: Vec<f64> = (0..=steps).map(|i| lower_initial + i as f64 * step_size).collect();
 
-    // Initial probability check
-    let prob = emg_cdf_range(search_space[0], search_space[search_space.len() - 1], mu, sigma, lambda);
-    assert!(prob >= target, "target probability not in range");
+    // Define a local closure to calculate the CDF over a given range for convenience
+    let calc_cdf = |low: usize, high: usize| -> f64 {
+        emg_cdf_range(search_space[low], search_space[high], mu, sigma, lambda)
+    };
 
-    // Binary search for the upper cutoff value
-    let mut low = 0usize;
-    let mut high = search_space.len() - 1;
+    // Binary search for the upper cutoff value, starting from mu to upper_initial
+    let (mut low, mut high) = (0, steps);
     while low < high {
         let mid = low + (high - low) / 2;
-        let prob_mid = emg_cdf_range(search_space[0], search_space[mid], mu, sigma, lambda);
-
-        if prob_mid < target {
+        if calc_cdf(0, mid) < target {
             low = mid + 1;
         } else {
             high = mid;
         }
     }
-    let upper_cutoff = search_space[low];
+    let upper_cutoff = search_space[low.min(steps)];
 
-    // Reset for binary search for the lower cutoff value
+    // Reset for binary search for the lower cutoff value, starting from lower_initial to mu
     low = 0;
-    high = search_space.len() - 1;
+    high = steps;
     while low < high {
         let mid = low + (high - low) / 2;
-        let prob_mid = emg_cdf_range(search_space[mid], search_space[search_space.len() - 1], mu, sigma, lambda);
-
-        if target - prob_mid > 0.0 {
+        if calc_cdf(mid, steps) < target {
             low = mid + 1;
         } else {
             high = mid;
         }
     }
-    let lower_cutoff = search_space[low];
+    let lower_cutoff = search_space[low.min(steps)];
 
     (lower_cutoff, upper_cutoff)
 }
