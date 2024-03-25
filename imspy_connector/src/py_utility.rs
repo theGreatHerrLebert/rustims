@@ -15,6 +15,12 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     mscore::algorithm::utility::calculate_bounds_emg(mu, sigma, lambda, step_size, target, lower_start, upper_start)
 }
 
+// pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64) -> Vec<usize> {
+#[pyfunction]
+pub fn calculate_frame_occurrence_emg(retention_times: Vec<f64>, rt: f64, sigma: f64, lambda_: f64) -> Vec<usize> {
+    mscore::algorithm::utility::calculate_frame_occurrence_emg(&retention_times, rt, sigma, lambda_)
+}
+
 #[pyfunction]
 pub fn normal_cdf(x: f64, mean: f64, std_dev: f64) -> f64 {
     mscore::algorithm::utility::custom_cdf_normal(x, mean, std_dev)
@@ -38,5 +44,6 @@ pub fn utility(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(normal_cdf, m)?)?;
     m.add_function(wrap_pyfunction!(accumulated_cdf_normal, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_bounds_normal, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_frame_occurrence_emg, m)?)?;
     Ok(())
 }
