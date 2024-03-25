@@ -79,12 +79,12 @@ def simulate_frame_distributions_emg(
 
     if add_noise:
         noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
-        abundances = [add_uniform_noise(abundance, noise_level) for abundance, noise_level in zip(abundances, noise_levels)]
+        abundances = [add_uniform_noise(np.array(abundance), noise_level) for abundance, noise_level in zip(abundances, noise_levels)]
 
     if normalize:
         abundances = [frame_abundance / np.sum(frame_abundance) for frame_abundance in abundances]
 
-    peptide_rt['frame_abundance'] = abundances
+    peptide_rt['frame_abundance'] = [list(x) for x in abundances]
 
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
         lambda r: python_list_to_json_string(r, as_float=False)
