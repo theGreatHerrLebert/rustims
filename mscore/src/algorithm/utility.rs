@@ -74,7 +74,7 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     high = search_space.len() - 1;
     while low < high {
         let mid = low + (high - low) / 2;
-        let prob_mid = emg_cdf_range(search_space[mid], upper_cutoff, mu, sigma, lambda);
+        let prob_mid = emg_cdf_range(search_space[mid], search_space[search_space.len() - 1], mu, sigma, lambda);
 
         if target - prob_mid > 0.0 {
             low = mid + 1;
