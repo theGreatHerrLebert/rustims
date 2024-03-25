@@ -6,7 +6,7 @@ pub fn emg_cdf(x: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
 }
 
 #[pyfunction]
-pub fn accumulated_intensity_cdf_emg(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
+pub fn accumulated_cdf_emg(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
     mscore::algorithm::utility::emg_cdf_range(lower_limit, upper_limit, mu, sigma, lambda)
 }
 
@@ -21,7 +21,7 @@ pub fn normal_cdf(x: f64, mean: f64, std_dev: f64) -> f64 {
 }
 
 #[pyfunction]
-pub fn accumulated_intensity_cdf_normal(sample_start: f64, sample_end: f64, mean: f64, std_dev: f64) -> f64 {
+pub fn accumulated_cdf_normal(sample_start: f64, sample_end: f64, mean: f64, std_dev: f64) -> f64 {
     mscore::algorithm::utility::accumulated_intensity_cdf_normal(sample_start, sample_end, mean, std_dev)
 }
 
