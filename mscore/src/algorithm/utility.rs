@@ -40,11 +40,11 @@ pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, la
     result
 }
 
-pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, upper_start: f64, lower_start: f64) -> (f64, f64) {
+pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, lower_start: f64, upper_start: f64) -> (f64, f64) {
     assert!(0.0 <= target && target <= 1.0, "target must be in [0, 1]");
 
-    let upper = mu + upper_start * sigma;
     let lower = mu - lower_start * sigma;
+    let upper = mu + upper_start * sigma;
 
     // Create the search space
     let steps = ((upper - lower) / step_size).round() as usize;
