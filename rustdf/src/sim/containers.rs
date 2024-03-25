@@ -1,4 +1,4 @@
-use mscore::data::peptide::{PeptideProductIonSeriesCollection, PeptideSequence};
+use mscore::data::peptide::{PeptideSequence};
 use mscore::data::spectrum::{MzSpectrum, MsType};
 use serde::{Serialize, Deserialize};
 use rand::distributions::{Distribution, Uniform};
