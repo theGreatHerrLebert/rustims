@@ -36,7 +36,7 @@ def simulate_frame_distributions_emg(
         num_threads: int = 4,
 ) -> pd.DataFrame:
 
-    frames_np = frames.time.values
+    frames_np = frames.frame_id.values
     times_np = frames.time.values
     peptide_rt = peptides
 
