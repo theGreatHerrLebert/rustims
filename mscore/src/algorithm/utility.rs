@@ -40,44 +40,49 @@ pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, la
     result
 }
 
-pub fn find_bounds_for_target_probability_emg(mu: f64, sigma: f64, lambda: f64, target_prob: f64, step_size: f64) -> (f64, f64) {
-    let range_start = mu - 10.0 * sigma;
-    let range_end = mu + 10.0 * sigma;
-    let steps = ((range_end - range_start) / step_size).round() as usize;
-    let search_space: Vec<f64> = (0..=steps).map(|i| range_start + i as f64 * step_size).collect();
+pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, upper_start: f64, lower_start: f64) -> (f64, f64) {
+    assert!(0.0 <= target && target <= 1.0, "target must be in [0, 1]");
 
-    // Helper function to find the cumulative probability up to a certain index in the search space
-    let cumulative_prob_at_index = |index: usize| -> f64 {
-        emg_cdf_range(mu, search_space[index], mu, sigma, lambda)
-    };
+    let upper = mu + upper_start * sigma;
+    let lower = mu - lower_start * sigma;
 
-    // Binary search for the left boundary
-    let mut low = 0;
-    let mut high = steps / 2; // Assuming the distribution is centered around mu, adjust if not
+    // Create the search space
+    let steps = ((upper - lower) / step_size).round() as usize;
+    let search_space: Vec<f64> = (0..=steps).map(|i| lower + i as f64 * step_size).collect();
+
+    // Initial probability check
+    let prob = emg_cdf_range(search_space[0], search_space[search_space.len() - 1], mu, sigma, lambda);
+    assert!(prob >= target, "target probability not in range");
+
+    // Binary search for the upper cutoff value
+    let mut low = 0usize;
+    let mut high = search_space.len() - 1;
     while low < high {
-        let mid = (low + high) / 2;
-        if cumulative_prob_at_index(mid) < (1.0 - target_prob) / 2.0 {
+        let mid = low + (high - low) / 2;
+        let prob_mid = emg_cdf_range(search_space[0], search_space[mid], mu, sigma, lambda);
+
+        if prob_mid < target {
             low = mid + 1;
         } else {
             high = mid;
         }
     }
-    let left_boundary = search_space[low];
+    let upper_cutoff = search_space[low];
 
-    // Reset for right boundary search
-    low = steps / 2;
-    high = steps;
-
-    // Binary search for the right boundary
+    // Reset for binary search for the lower cutoff value
+    low = 0;
+    high = search_space.len() - 1;
     while low < high {
-        let mid = (low + high) / 2;
-        if cumulative_prob_at_index(mid) - cumulative_prob_at_index(steps / 2) < target_prob / 2.0 {
+        let mid = low + (high - low) / 2;
+        let prob_mid = emg_cdf_range(search_space[mid], upper_cutoff, mu, sigma, lambda);
+
+        if target - prob_mid > 0.0 {
             low = mid + 1;
         } else {
             high = mid;
         }
     }
-    let right_boundary = search_space[low];
+    let lower_cutoff = search_space[low];
 
-    (left_boundary, right_boundary)
+    (lower_cutoff, upper_cutoff)
 }
