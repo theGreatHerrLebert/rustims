@@ -33,10 +33,10 @@ pub fn calculate_bounds_normal(mean: f64, std: f64, z_score: f64) -> (f64, f64) 
 #[pymodule]
 pub fn utility(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(emg_cdf, m)?)?;
-    m.add_function(wrap_pyfunction!(accumulated_intensity_cdf_emg, m)?)?;
+    m.add_function(wrap_pyfunction!(accumulated_cdf_emg, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_bounds_emg, m)?)?;
     m.add_function(wrap_pyfunction!(normal_cdf, m)?)?;
-    m.add_function(wrap_pyfunction!(accumulated_intensity_cdf_normal, m)?)?;
+    m.add_function(wrap_pyfunction!(accumulated_cdf_normal, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_bounds_normal, m)?)?;
     Ok(())
 }
