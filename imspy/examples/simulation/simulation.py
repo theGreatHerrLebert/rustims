@@ -77,18 +77,21 @@ def main():
     parser.add_argument("--gradient_length", type=float, default=60 * 60, help="Length of the gradient (default: 3600)")
     parser.add_argument("--z_score", type=float, default=.99,
                         help="Z-score for frame and scan distributions (default: .99)")
-
-    parser.add_argument("--mean_std_rt", type=float, default=1.5, help="Mean standard deviation for retention time distribution (default: 1.5)")
-    parser.add_argument("--variance_std_rt", type=float, default=0.5, help="Variance standard deviation for retention time distribution (default: 0.5)")
-    parser.add_argument("--mean_scewness", type=float, default=0.2, help="Mean scewness for retention time distribution (default: 0.2)")
-    parser.add_argument("--variance_scewness", type=float, default=0.1, help="Variance scewness for retention time distribution (default: 0.1)")
+    parser.add_argument("--mean_std_rt", type=float, default=1.5,
+                        help="Mean standard deviation for retention time distribution (default: 1.5)")
+    parser.add_argument("--variance_std_rt", type=float, default=0.5,
+                        help="Variance standard deviation for retention time distribution (default: 0.5)")
+    parser.add_argument("--mean_scewness", type=float, default=0.2,
+                        help="Mean scewness for retention time distribution (default: 0.2)")
+    parser.add_argument("--variance_scewness", type=float, default=0.1,
+                        help="Variance scewness for retention time distribution (default: 0.1)")
+    parser.add_argument("--std_im", type=float, default=0.008,
+                        help="Standard deviation for mobility distribution (default: 0.008)")
 
     # parser.add_argument("--std_rt", type=float, default=3.3,
     #                     help="Standard deviation for retention time distribution (default: 1.6)")
-    # parser.add_argument("--std_im", type=float, default=0.008,
-    #                     help="Standard deviation for mobility distribution (default: 0.008)")
-    # Number of cores to use
 
+    # Number of cores to use
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size (default: 256)")
 
