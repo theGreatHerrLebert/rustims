@@ -53,7 +53,7 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
         emg_cdf_range(search_space[low], search_space[high], mu, sigma, lambda)
     };
 
-    // Binary search for the upper cutoff value
+    // Binary search for cutoff values
     let (mut low, mut high) = (0, steps);
     while low < high {
         let mid = low + (high - low) / 2;
@@ -65,12 +65,10 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     }
     let upper_cutoff_index = low;
 
-    // Binary search for the lower cutoff value, adjusting logic
     low = 0;
-    high = upper_cutoff_index; // Ensure we search up to the upper cutoff
+    high = upper_cutoff_index;
     while low < high {
         let mid = high - (high - low) / 2;
-        // Adjust to check if the interval from this mid to the upper cutoff is less than the target
         let prob_mid_to_upper = calc_cdf(mid, upper_cutoff_index);
 
         if prob_mid_to_upper < target {
