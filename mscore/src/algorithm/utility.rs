@@ -67,18 +67,23 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     }
     let upper_cutoff = search_space[low.min(steps)];
 
-    // Reset for binary search for the lower cutoff value, starting from lower_initial to mu
+    // Reset for binary search for the lower cutoff value
     low = 0;
     high = steps;
     while low < high {
         let mid = low + (high - low) / 2;
-        if calc_cdf(mid, steps) < target {
-            low = mid + 1;
+        // This time, we're interested in the interval from this midpoint to the upper cutoff.
+        let prob_mid_to_upper = emg_cdf_range(search_space[mid], upper_cutoff, mu, sigma, lambda);
+
+        // Check if the cumulative probability from mid to the upper cutoff is sufficient.
+        if prob_mid_to_upper > target {
+            high = mid; // We need to move towards the start of the array, as we've exceeded the target.
         } else {
-            high = mid;
+            if mid == steps { break; } // Prevents going out of bounds
+            low = mid + 1; // Not enough cumulative probability, move towards the end.
         }
     }
-    let lower_cutoff = search_space[low.min(steps)];
+    let lower_cutoff = if low == 0 { search_space[low] } else { search_space[low-1] };
 
     (lower_cutoff, upper_cutoff)
 }
