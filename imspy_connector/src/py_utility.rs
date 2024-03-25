@@ -42,6 +42,17 @@ pub fn calculate_frame_abundance_emg(frame_ids: Vec<i32>, retention_times: Vec<f
     mscore::algorithm::utility::calculate_frame_abundance_emg(&time_map, &frame_occurrences, rt, sigma, lambda_, rt_cycle_length)
 }
 
+#[pyfunction]
+pub fn calculate_frame_occurrences_emg_par(retention_times: Vec<f64>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, num_threads: usize) -> Vec<Vec<i32>> {
+    mscore::algorithm::utility::calculate_frame_occurrences_emg_par(&retention_times, rts, sigmas, lambdas, num_threads)
+}
+
+#[pyfunction]
+pub fn calculate_frame_abundances_emg_par(frame_ids: Vec<i32>, retention_times: Vec<f64>, frame_occurrences: Vec<Vec<i32>>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, rt_cycle_length: f64, num_threads: usize) -> Vec<Vec<f64>> {
+    let time_map: HashMap<i32, f64> = frame_ids.iter().zip(retention_times.iter()).map(|(id, rt)| (*id, *rt)).collect();
+    mscore::algorithm::utility::calculate_frame_abundances_emg_par(&time_map, frame_occurrences, rts, sigmas, lambdas, rt_cycle_length, num_threads)
+}
+
 
 #[pymodule]
 pub fn utility(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -53,5 +64,7 @@ pub fn utility(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(calculate_bounds_normal, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_frame_occurrence_emg, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_frame_abundance_emg, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_frame_occurrences_emg_par, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_frame_abundances_emg_par, m)?)?;
     Ok(())
 }

@@ -3,6 +3,8 @@ extern crate rgsl;
 use std::collections::HashMap;
 use rgsl::{IntegrationWorkspace, error::erfc, error::erf};
 use std::f64::consts::SQRT_2;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 pub fn custom_cdf_normal(x: f64, mean: f64, std_dev: f64) -> f64 {
     let z = (x - mean) / std_dev;
@@ -118,4 +120,29 @@ pub fn calculate_frame_abundance_emg(time_map: &HashMap<i32, f64>, occurrences: 
     }
 
     frame_abundance
+}
+
+// retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64
+pub fn calculate_frame_occurrences_emg_par(retention_times: &[f64], rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, num_threads: usize) -> Vec<Vec<i32>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        rts.into_par_iter().zip(sigmas.into_par_iter()).zip(lambdas.into_par_iter())
+            .map(|((rt, sigma), lambda)| {
+                calculate_frame_occurrence_emg(retention_times, rt, sigma, lambda)
+            })
+            .collect()
+    });
+    result
+}
+
+pub fn calculate_frame_abundances_emg_par(time_map: &HashMap<i32, f64>, occurrences: Vec<Vec<i32>>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, rt_cycle_length: f64, num_threads: usize) -> Vec<Vec<f64>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        occurrences.into_par_iter().zip(rts.into_par_iter()).zip(sigmas.into_par_iter()).zip(lambdas.into_par_iter())
+            .map(|(((occurrences, rt), sigma), lambda)| {
+                calculate_frame_abundance_emg(time_map, &occurrences, rt, sigma, lambda, rt_cycle_length)
+            })
+            .collect()
+    });
+    result
 }
