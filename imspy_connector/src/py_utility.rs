@@ -11,8 +11,8 @@ pub fn accumulated_cdf_emg(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f
 }
 
 #[pyfunction]
-pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, target_prob: f64) -> (f64, f64) {
-    mscore::algorithm::utility::find_bounds_for_target_probability_emg(mu, sigma, lambda, target_prob)
+pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, target_prob: f64, step_size: f64) -> (f64, f64) {
+    mscore::algorithm::utility::find_bounds_for_target_probability_emg(mu, sigma, lambda, target_prob, step_size)
 }
 
 #[pyfunction]
