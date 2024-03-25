@@ -46,11 +46,9 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     let lower_initial = mu - lower_start * sigma;
     let upper_initial = mu + upper_start * sigma;
 
-    // Create the search space
     let steps = ((upper_initial - lower_initial) / step_size).round() as usize;
     let search_space: Vec<f64> = (0..=steps).map(|i| lower_initial + i as f64 * step_size).collect();
 
-    // Define a local closure to calculate the CDF over a given range for convenience
     let calc_cdf = |low: usize, high: usize| -> f64 {
         emg_cdf_range(search_space[low], search_space[high], mu, sigma, lambda)
     };
@@ -65,27 +63,23 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
             high = mid;
         }
     }
-    let upper_cutoff_index = low.min(steps);
+    let upper_cutoff_index = low;
 
-    // Binary search for the lower cutoff value, corrected to ensure it finds the appropriate start of the target range
+    // Binary search for the lower cutoff value, adjusting logic
     low = 0;
-    high = upper_cutoff_index; // Search only up to the upper cutoff index
-    let mut best_lower_index = high; // Initialize with the highest possible value
-    while low <= high {
-        let mid = low + (high - low) / 2;
+    high = upper_cutoff_index; // Ensure we search up to the upper cutoff
+    while low < high {
+        let mid = high - (high - low) / 2;
+        // Adjust to check if the interval from this mid to the upper cutoff is less than the target
         let prob_mid_to_upper = calc_cdf(mid, upper_cutoff_index);
 
-        if prob_mid_to_upper >= target {
-            best_lower_index = mid;
-            if mid == 0 { break; } // Prevent underflow
+        if prob_mid_to_upper < target {
             high = mid - 1;
         } else {
-            low = mid + 1;
+            low = mid;
         }
     }
+    let lower_cutoff_index = high;
 
-    let lower_cutoff = search_space[best_lower_index];
-    let upper_cutoff = search_space[upper_cutoff_index];
-
-    (lower_cutoff, upper_cutoff)
+    (search_space[lower_cutoff_index], search_space[upper_cutoff_index])
 }
