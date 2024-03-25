@@ -81,3 +81,26 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
 
     (search_space[lower_cutoff_index], search_space[upper_cutoff_index])
 }
+
+pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64) -> Vec<usize> {
+    let step_size = 0.001;
+    let target = 0.99;
+    let (rt_min, rt_max) = calculate_bounds_emg(rt, sigma, lambda_, step_size, target, 20.0, 60.0);
+
+    // Finding the frame closest to rt_min
+    let first_frame = retention_times.iter()
+        .enumerate()
+        .min_by(|(_, &a), (_, &b)| (a - rt_min).abs().partial_cmp(&(b - rt_min).abs()).unwrap())
+        .map(|(idx, _)| idx + 1) // Rust is zero-indexed, so +1 to match Python's 1-indexing
+        .unwrap_or(0); // Fallback in case of an empty slice
+
+    // Finding the frame closest to rt_max
+    let last_frame = retention_times.iter()
+        .enumerate()
+        .min_by(|(_, &a), (_, &b)| (a - rt_max).abs().partial_cmp(&(b - rt_max).abs()).unwrap())
+        .map(|(idx, _)| idx + 1) // Same adjustment for 1-indexing
+        .unwrap_or(0); // Fallback
+
+    // Generating the range of frames
+    (first_frame..=last_frame).collect()
+}
