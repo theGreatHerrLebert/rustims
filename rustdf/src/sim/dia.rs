@@ -55,11 +55,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     ///
     /// A TimsFrame
     ///
-    pub fn build_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+    pub fn build_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64) -> TimsFrame {
         // determine if the frame is a precursor frame
         match self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
-            true => self.build_ms1_frame(frame_id),
-            false => self.build_ms2_frame(frame_id, fragmentation),
+            true => self.build_ms1_frame(frame_id, mz_noise_precursor, precursor_noise_ppm),
+            false => self.build_ms2_frame(frame_id, fragmentation, mz_noise_fragment, fragment_noise_ppm),
         }
     }
 
@@ -84,13 +84,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         result
     }
 
-    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, num_threads: usize) -> Vec<TimsFrame> {
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, num_threads: usize) -> Vec<TimsFrame> {
 
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
         thread_pool.install(|| {
-            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, fragmentation)).collect();
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame(*frame_id, fragmentation, mz_noise_precursor, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm)).collect();
         });
 
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
@@ -98,23 +98,23 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         tims_frames
     }
 
-    fn build_ms1_frame(&self, frame_id: u32) -> TimsFrame {
-        let mut tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id);
+    fn build_ms1_frame(&self, frame_id: u32, mz_noise_precursor: bool, precursor_ppm: f64) -> TimsFrame {
+        let mut tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id, mz_noise_precursor, precursor_ppm);
         let intensities_rounded = tims_frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
         tims_frame.ims_frame.intensity = intensities_rounded;
         tims_frame
     }
-    fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool) -> TimsFrame {
+    fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_fragment: bool, fragment_ppm: f64) -> TimsFrame {
         match fragmentation {
             false => {
-                let mut frame = self.transmission_settings.transmit_tims_frame(&self.build_ms1_frame(frame_id), None);
+                let mut frame = self.transmission_settings.transmit_tims_frame(&self.build_ms1_frame(frame_id, mz_noise_fragment, fragment_ppm), None);
                 let intensities_rounded = frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
                 frame.ims_frame.intensity = intensities_rounded;
                 frame.ms_type = MsType::FragmentDia;
                 frame
             },
             true => {
-                let mut frame = self.build_fragment_frame(frame_id, &self.fragment_ions, None, None, None);
+                let mut frame = self.build_fragment_frame(frame_id, &self.fragment_ions, mz_noise_fragment, fragment_ppm, None, None, None);
                 let intensities_rounded = frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
                 frame.ims_frame.intensity = intensities_rounded;
                 frame
@@ -139,6 +139,8 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         &self,
         frame_id: u32,
         fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
+        mz_noise_fragment: bool,
+        fragment_ppm: f64,
         mz_min: Option<f64>,
         mz_max: Option<f64>,
         intensity_min: Option<f64>,
@@ -217,6 +219,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     // for each fragment ion series, create a spectrum and add it to the tims_spectra
                     for fragment_ion_series in maybe_value.unwrap().1.iter() {
                         let scaled_spec = fragment_ion_series.clone() * fraction_events as f64;
+
+                        let mz_spectrum = if mz_noise_fragment {
+                            scaled_spec.add_mz_noise_uniform(fragment_ppm)
+                        } else {
+                            scaled_spec
+                        };
+
                         tims_spectra.push(
                             TimsSpectrum::new(
                                 frame_id as i32,
@@ -224,7 +233,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                                 *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
                                 *self.precursor_frame_builder.scan_to_mobility.get(&scan).unwrap() as f64,
                                 ms_type.clone(),
-                                IndexedMzSpectrum::new(vec![0; scaled_spec.mz.len()], scaled_spec.mz, scaled_spec.intensity).filter_ranged(
+                                IndexedMzSpectrum::new(vec![0; mz_spectrum.mz.len()], mz_spectrum.mz, mz_spectrum.intensity).filter_ranged(
                                     100.0,
                                     1700.0,
                                     1.0,

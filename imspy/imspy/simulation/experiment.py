@@ -15,12 +15,20 @@ class TimsTofSyntheticFrameBuilderDIA:
         self.path = db_path
         self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
 
-    def build_frame(self, frame_id: int, fragment: bool = True) -> TimsFrame:
-        frame = self.handle.build_frame(frame_id, fragment)
+    def build_frame(self, frame_id: int, fragment: bool = True, mz_noise_precursor: bool = False,
+                    precursor_noise_ppm: float = 5., mz_noise_fragment: bool = False,
+                    fragment_noise_ppm: float = 5.) -> TimsFrame:
+        frame = self.handle.build_frame(frame_id, fragment, mz_noise_precursor, precursor_noise_ppm,
+                                        mz_noise_fragment, fragment_noise_ppm)
         return TimsFrame.from_py_tims_frame(frame)
 
-    def build_frames(self, frame_ids: List[int], fragment: bool = True, num_threads: int = 4) -> List[TimsFrame]:
-        frames = self.handle.build_frames(frame_ids, fragment, num_threads)
+    def build_frames(self, frame_ids: List[int], fragment: bool = True,
+                     mz_noise_precursor: bool = False,
+                     precursor_noise_ppm: float = 5., mz_noise_fragment: bool = False,
+                     fragment_noise_ppm: float = 5., num_threads: int = 4) -> List[TimsFrame]:
+        frames = self.handle.build_frames(frame_ids, fragment, mz_noise_precursor, precursor_noise_ppm,
+                                          mz_noise_fragment, fragment_noise_ppm,
+                                          num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
     def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
@@ -37,12 +45,14 @@ class TimsTofSyntheticPrecursorFrameBuilder:
     def __init__(self, db_path: str):
         self.handle = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
-    def build_precursor_frame(self, frame_id: int):
-        frame = self.handle.build_precursor_frame(frame_id)
+    def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5.) -> TimsFrame:
+        frame = self.handle.build_precursor_frame(frame_id, mz_noise_precursor, precursor_noise_ppm)
         return TimsFrame.from_py_tims_frame(frame)
 
-    def build_precursor_frames(self, frame_ids: List[int], num_threads: int = 4):
-        frames = self.handle.build_precursor_frames(frame_ids, num_threads)
+    def build_precursor_frames(self, frame_ids: List[int], mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5.,
+                               num_threads: int = 4):
+        frames = self.handle.build_precursor_frames(frame_ids, mz_noise_precursor, precursor_noise_ppm,
+                                                    num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
 

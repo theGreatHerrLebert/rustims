@@ -108,6 +108,10 @@ def main():
         type=bool,
         default=False,
         help="Add noise to ion distributions in retention time and ion mobility (default: False)")
+    parser.add_argument("mz_noise_precursor", type=bool, default=False, help="Add noise to precursor m/z (default: False)")
+    parser.add_argument("mz_noise_fragment", type=bool, default=False, help="Add noise to fragment m/z (default: False)")
+    parser.add_argument("precursor_noise_ppm", type=float, default=5.0, help="Precursor noise in ppm (default: 5.0)")
+    parser.add_argument("fragment_noise_ppm", type=float, default=5.0, help="Fragment noise in ppm (default: 5.0)")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -269,6 +273,10 @@ def main():
         frames=acquisition_builder.frame_table,
         batch_size=args.batch_size,
         verbose=verbose,
+        mz_noise_precursor=args.mz_noise_precursor,
+        precursor_noise_ppm=args.precursor_noise_ppm,
+        mz_noise_fragment=args.mz_noise_fragment,
+        fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
     )
 

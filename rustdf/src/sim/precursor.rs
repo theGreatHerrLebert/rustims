@@ -63,7 +63,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
     /// # Returns
     ///
     /// * A TimsFrame instance
-    pub fn build_precursor_frame(&self, frame_id: u32) -> TimsFrame {
+    pub fn build_precursor_frame(&self, frame_id: u32, mz_noise_precursor: bool, precursor_noise_ppm: f64) -> TimsFrame {
 
         let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
             true => MsType::Precursor,
@@ -106,13 +106,20 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
                     let scan_id = *scan;
                     let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
                     let index = vec![0; scaled_spec.mz.len()];
+
+                    let mz_spectrum = if mz_noise_precursor {
+                        scaled_spec.add_mz_noise_uniform(precursor_noise_ppm)
+                    } else {
+                        scaled_spec
+                    };
+
                     let tims_spec = TimsSpectrum::new(
                         frame_id as i32,
                         *scan as i32,
                         *self.frame_to_rt.get(&frame_id).unwrap() as f64,
                         *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
                         ms_type.clone(),
-                        IndexedMzSpectrum::new(index, scaled_spec.mz, scaled_spec.intensity),
+                        IndexedMzSpectrum::new(index, mz_spectrum.mz, mz_spectrum.intensity),
                     );
                     tims_spectra.push(tims_spec);
                 }
@@ -144,12 +151,12 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
     ///
     /// * A vector of TimsFrame instances
     ///
-    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, num_threads: usize) -> Vec<TimsFrame> {
+    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, precursor_noise_ppm: f64, num_threads: usize) -> Vec<TimsFrame> {
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
         thread_pool.install(|| {
-            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_precursor_frame(*frame_id)).collect();
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_precursor_frame(*frame_id, mz_noise_precursor, precursor_noise_ppm)).collect();
         });
 
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));

@@ -309,7 +309,7 @@ class MzSpectrum:
         """
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.add_mz_noise_uniform(noise_ppm))
 
-    def add_noise_normal(self, noise_ppm: float) -> MzSpectrum:
+    def add_mz_noise_normal(self, noise_ppm: float) -> MzSpectrum:
         """Add normal noise to the intensity values of the spectrum.
 
         Args:
@@ -318,7 +318,7 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Spectrum with added noise.
         """
-        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.add_noise_normal(noise_ppm))
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.add_mz_noise_normal(noise_ppm))
 
     def get_spec_ptr(self) -> ims.PyMzSpectrum:
         """Get the spec_ptr.

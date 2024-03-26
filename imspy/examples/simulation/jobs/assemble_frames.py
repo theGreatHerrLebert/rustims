@@ -12,6 +12,10 @@ def assemble_frames(
         frames: pd.DataFrame,
         batch_size: int,
         verbose: bool = False,
+        mz_noise_precursor: bool = False,
+        precursor_noise_ppm: float = 5.,
+        mz_noise_fragment: bool = False,
+        fragment_noise_ppm: float = 5.,
         num_threads: int = 4
 ) -> None:
 
@@ -33,7 +37,15 @@ def assemble_frames(
         stop_index = (b + 1) * batch_size
         ids = frame_ids[start_index:stop_index]
 
-        built_frames = frame_builder.build_frames(ids, num_threads=num_threads)
+        built_frames = frame_builder.build_frames(
+            ids,
+            mz_noise_precursor=mz_noise_precursor,
+            precursor_noise_ppm=precursor_noise_ppm,
+            mz_noise_fragment=mz_noise_fragment,
+            fragment_noise_ppm=fragment_noise_ppm,
+            num_threads=num_threads
+        )
+
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
