@@ -4,6 +4,12 @@ use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
 use serde::{Serialize, Deserialize};
 
+extern crate rand;
+
+use rand::distributions::{Uniform, Distribution};
+use rand::rngs::ThreadRng;
+use statrs::distribution::Normal;
+
 /// Represents a vectorized mass spectrum.
 pub trait ToResolution {
     fn to_resolution(&self, resolution: i32) -> Self;
@@ -243,6 +249,33 @@ impl MzSpectrum {
         let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
 
         MzSpectrum { mz: mz_combined, intensity: intensity_combined }
+    }
+
+    pub fn add_mz_noise_uniform(&self, ppm: f64) -> Self {
+        let mut rng = rand::thread_rng();
+        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+            let dist = Uniform::from(mz - ppm..=mz + ppm);
+            dist.sample(rng)
+        })
+    }
+
+    pub fn add_mz_noise_normal(&self, ppm: f64) -> Self {
+        let mut rng = rand::thread_rng();
+        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+            let dist = Normal::new(mz, ppm / 3.0).unwrap(); // Assuming 3 SD covers the ppm range
+            dist.sample(rng)
+        })
+    }
+
+    fn add_mz_noise<F>(&self, ppm: f64, rng: &mut ThreadRng, noise_fn: F) -> Self
+        where
+            F: Fn(&mut ThreadRng, f64, f64) -> f64,
+    {
+        let mz: Vec<f64> = self.mz.iter().map(|&mz_value| noise_fn(rng, mz_value, ppm)).collect();
+        MzSpectrum {
+            mz,
+            intensity: self.intensity.clone(),
+        }
     }
 }
 
