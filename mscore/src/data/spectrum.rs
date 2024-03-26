@@ -254,7 +254,8 @@ impl MzSpectrum {
     pub fn add_mz_noise_uniform(&self, ppm: f64) -> Self {
         let mut rng = rand::thread_rng();
         self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
-            let dist = Uniform::from(mz - ppm..=mz + ppm);
+            let ppm_mz = mz * ppm / 1e6;
+            let dist = Uniform::from(mz - ppm_mz..=mz + ppm_mz);
             dist.sample(rng)
         })
     }
@@ -262,7 +263,8 @@ impl MzSpectrum {
     pub fn add_mz_noise_normal(&self, ppm: f64) -> Self {
         let mut rng = rand::thread_rng();
         self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
-            let dist = Normal::new(mz, ppm / 3.0).unwrap(); // Assuming 3 SD covers the ppm range
+            let ppm_mz = mz * ppm / 1e6;
+            let dist = Normal::new(mz, ppm_mz / 3.0).unwrap(); // Assuming 3 SD covers the ppm range
             dist.sample(rng)
         })
     }
@@ -272,10 +274,9 @@ impl MzSpectrum {
             F: Fn(&mut ThreadRng, f64, f64) -> f64,
     {
         let mz: Vec<f64> = self.mz.iter().map(|&mz_value| noise_fn(rng, mz_value, ppm)).collect();
-        MzSpectrum {
-            mz,
-            intensity: self.intensity.clone(),
-        }
+        let spectrum = MzSpectrum { mz, intensity: self.intensity.clone()};
+        // Sort the spectrum by m/z values and potentially sum up intensities at the same m/z value
+        spectrum.to_resolution(6)
     }
 }
 
