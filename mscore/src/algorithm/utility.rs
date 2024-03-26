@@ -1,7 +1,10 @@
 extern crate rgsl;
 
+use std::collections::HashMap;
 use rgsl::{IntegrationWorkspace, error::erfc, error::erf};
 use std::f64::consts::SQRT_2;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 
 pub fn custom_cdf_normal(x: f64, mean: f64, std_dev: f64) -> f64 {
     let z = (x - mean) / std_dev;
@@ -53,7 +56,7 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
         emg_cdf_range(search_space[low], search_space[high], mu, sigma, lambda)
     };
 
-    // Binary search for the upper cutoff value
+    // Binary search for cutoff values
     let (mut low, mut high) = (0, steps);
     while low < high {
         let mid = low + (high - low) / 2;
@@ -65,12 +68,10 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     }
     let upper_cutoff_index = low;
 
-    // Binary search for the lower cutoff value, adjusting logic
     low = 0;
-    high = upper_cutoff_index; // Ensure we search up to the upper cutoff
+    high = upper_cutoff_index;
     while low < high {
         let mid = high - (high - low) / 2;
-        // Adjust to check if the interval from this mid to the upper cutoff is less than the target
         let prob_mid_to_upper = calc_cdf(mid, upper_cutoff_index);
 
         if prob_mid_to_upper < target {
@@ -82,4 +83,64 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     let lower_cutoff_index = high;
 
     (search_space[lower_cutoff_index], search_space[upper_cutoff_index])
+}
+
+pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64, target_p: f64, step_size: f64) -> Vec<i32> {
+    let (rt_min, rt_max) = calculate_bounds_emg(rt, sigma, lambda_, step_size, target_p, 20.0, 60.0);
+
+    // Finding the frame closest to rt_min
+    let first_frame = retention_times.iter()
+        .enumerate()
+        .min_by(|(_, &a), (_, &b)| (a - rt_min).abs().partial_cmp(&(b - rt_min).abs()).unwrap())
+        .map(|(idx, _)| idx + 1) // Rust is zero-indexed, so +1 to match Python's 1-indexing
+        .unwrap_or(0); // Fallback in case of an empty slice
+
+    // Finding the frame closest to rt_max
+    let last_frame = retention_times.iter()
+        .enumerate()
+        .min_by(|(_, &a), (_, &b)| (a - rt_max).abs().partial_cmp(&(b - rt_max).abs()).unwrap())
+        .map(|(idx, _)| idx + 1) // Same adjustment for 1-indexing
+        .unwrap_or(0); // Fallback
+
+    // Generating the range of frames
+    (first_frame..=last_frame).map(|x| x as i32).collect()
+}
+
+pub fn calculate_frame_abundance_emg(time_map: &HashMap<i32, f64>, occurrences: &[i32], rt: f64, sigma: f64, lambda_: f64, rt_cycle_length: f64) -> Vec<f64> {
+    let mut frame_abundance = Vec::new();
+
+    for &occurrence in occurrences {
+        if let Some(&time) = time_map.get(&occurrence) {
+            let start = time - rt_cycle_length;
+            let i = emg_cdf_range(start, time, rt, sigma, lambda_);
+            frame_abundance.push(i);
+        }
+    }
+
+    frame_abundance
+}
+
+// retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64
+pub fn calculate_frame_occurrences_emg_par(retention_times: &[f64], rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, target_p: f64, step_size: f64, num_threads: usize) -> Vec<Vec<i32>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        rts.into_par_iter().zip(sigmas.into_par_iter()).zip(lambdas.into_par_iter())
+            .map(|((rt, sigma), lambda)| {
+                calculate_frame_occurrence_emg(retention_times, rt, sigma, lambda, target_p, step_size)
+            })
+            .collect()
+    });
+    result
+}
+
+pub fn calculate_frame_abundances_emg_par(time_map: &HashMap<i32, f64>, occurrences: Vec<Vec<i32>>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, rt_cycle_length: f64, num_threads: usize) -> Vec<Vec<f64>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let result = thread_pool.install(|| {
+        occurrences.into_par_iter().zip(rts.into_par_iter()).zip(sigmas.into_par_iter()).zip(lambdas.into_par_iter())
+            .map(|(((occurrences, rt), sigma), lambda)| {
+                calculate_frame_abundance_emg(time_map, &occurrences, rt, sigma, lambda, rt_cycle_length)
+            })
+            .collect()
+    });
+    result
 }
