@@ -7,7 +7,7 @@ from examples.simulation.jobs.build_acquisition import build_acquisition
 from examples.simulation.jobs.digest_fasta import digest_fasta
 from examples.simulation.jobs.simulate_charge_states import simulate_charge_states
 from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
-from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
+# from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
 from examples.simulation.jobs.simulate_frame_distributions_emg import simulate_frame_distributions_emg
 from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
 from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
@@ -79,14 +79,18 @@ def main():
                         help="Z-score for frame and scan distributions (default: .99)")
     parser.add_argument("--mean_std_rt", type=float, default=1.5,
                         help="Mean standard deviation for retention time distribution (default: 1.5)")
-    parser.add_argument("--variance_std_rt", type=float, default=0.5,
-                        help="Variance standard deviation for retention time distribution (default: 0.5)")
-    parser.add_argument("--mean_scewness", type=float, default=0.2,
-                        help="Mean scewness for retention time distribution (default: 0.2)")
+    parser.add_argument("--variance_std_rt", type=float, default=0.3,
+                        help="Variance standard deviation for retention time distribution (default: 0.3)")
+    parser.add_argument("--mean_scewness", type=float, default=0.3,
+                        help="Mean scewness for retention time distribution (default: 0.3)")
     parser.add_argument("--variance_scewness", type=float, default=0.1,
                         help="Variance scewness for retention time distribution (default: 0.1)")
     parser.add_argument("--std_im", type=float, default=0.008,
                         help="Standard deviation for mobility distribution (default: 0.008)")
+    parser.add_argument("--target_p", type=float, default=0.999,
+                        help="Target percentile for frame distributions (default: 0.999)")
+    parser.add_argument("--sampling_step_size", type=float, default=0.001,
+                        help="Sampling step size for frame distributions (default: 0.001)")
 
     # parser.add_argument("--std_rt", type=float, default=3.3,
     #                     help="Standard deviation for retention time distribution (default: 1.6)")
@@ -195,6 +199,8 @@ def main():
         mean_scewness=args.mean_scewness,
         variance_scewness=args.variance_scewness,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
+        target_p=args.target_p,
+        step_size=args.sampling_step_size,
         verbose=verbose,
         add_noise=args.add_noise_to_signals,
         num_threads=args.num_threads

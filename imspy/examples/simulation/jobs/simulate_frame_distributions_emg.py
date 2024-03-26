@@ -1,11 +1,8 @@
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-
+from imspy.simulation.utility import python_list_to_json_string, add_uniform_noise
 import imspy_connector
 ims = imspy_connector.py_utility
-
-from imspy.simulation.utility import python_list_to_json_string, add_uniform_noise
 
 
 def sample_parameters_rejection(sigma_mean, sigma_variance, lambda_mean, lambda_variance, n):
@@ -15,9 +12,9 @@ def sample_parameters_rejection(sigma_mean, sigma_variance, lambda_mean, lambda_
     # Re-sample any negative values
     while any(sigmas < 0):
         sigmas[sigmas < 0] = np.random.normal(loc=sigma_mean, scale=np.sqrt(sigma_variance), size=np.sum(sigmas < 0))
-    while any(lambdas < 0):
-        lambdas[lambdas < 0] = np.random.normal(loc=lambda_mean, scale=np.sqrt(lambda_variance),
-                                                size=np.sum(lambdas < 0))
+    while any(lambdas <= 0.05):
+        lambdas[lambdas <= 0.05] = np.random.normal(loc=lambda_mean, scale=np.sqrt(lambda_variance),
+                                                    size=np.sum(lambdas < 0.05))
 
     return sigmas, lambdas
 
@@ -29,6 +26,8 @@ def simulate_frame_distributions_emg(
         variance_std_rt: float,
         mean_scewness: float,
         variance_scewness: float,
+        target_p: float,
+        step_size: float,
         rt_cycle_length: float,
         verbose: bool = False,
         add_noise: bool = False,
@@ -52,6 +51,8 @@ def simulate_frame_distributions_emg(
         peptides.retention_time_gru_predictor,
         sigmas,
         lambdas,
+        target_p,
+        step_size,
         num_threads=num_threads
     )
 
