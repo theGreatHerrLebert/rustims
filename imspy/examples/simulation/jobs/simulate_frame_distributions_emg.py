@@ -42,7 +42,7 @@ def simulate_frame_distributions_emg(
     if verbose:
         print("Calculating frame distributions...")
 
-    n = frames.shape[0]
+    n = peptides.shape[0]
 
     sigmas, lambdas = sample_parameters_rejection(mean_std_rt, variance_std_rt, mean_scewness, variance_scewness, n)
 
