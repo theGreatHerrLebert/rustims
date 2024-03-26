@@ -126,8 +126,8 @@ impl PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.add_mz_noise_uniform(noise_ppm) }
     }
 
-    pub fn add_mz_noise_normal(&self, noise_std_dev: f64) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.add_mz_noise_normal(noise_std_dev) }
+    pub fn add_mz_noise_normal(&self, noise_ppm: f64) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.add_mz_noise_normal(noise_ppm) }
     }
 }
 
