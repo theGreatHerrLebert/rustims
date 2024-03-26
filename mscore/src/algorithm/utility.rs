@@ -85,10 +85,8 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
     (search_space[lower_cutoff_index], search_space[upper_cutoff_index])
 }
 
-pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64) -> Vec<i32> {
-    let step_size = 0.001;
-    let target = 0.99;
-    let (rt_min, rt_max) = calculate_bounds_emg(rt, sigma, lambda_, step_size, target, 20.0, 60.0);
+pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64, target_p: f64, step_size: f64) -> Vec<i32> {
+    let (rt_min, rt_max) = calculate_bounds_emg(rt, sigma, lambda_, step_size, target_p, 20.0, 60.0);
 
     // Finding the frame closest to rt_min
     let first_frame = retention_times.iter()
@@ -123,12 +121,12 @@ pub fn calculate_frame_abundance_emg(time_map: &HashMap<i32, f64>, occurrences: 
 }
 
 // retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64
-pub fn calculate_frame_occurrences_emg_par(retention_times: &[f64], rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, num_threads: usize) -> Vec<Vec<i32>> {
+pub fn calculate_frame_occurrences_emg_par(retention_times: &[f64], rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, target_p: f64, step_size: f64, num_threads: usize) -> Vec<Vec<i32>> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
     let result = thread_pool.install(|| {
         rts.into_par_iter().zip(sigmas.into_par_iter()).zip(lambdas.into_par_iter())
             .map(|((rt, sigma), lambda)| {
-                calculate_frame_occurrence_emg(retention_times, rt, sigma, lambda)
+                calculate_frame_occurrence_emg(retention_times, rt, sigma, lambda, target_p, step_size)
             })
             .collect()
     });

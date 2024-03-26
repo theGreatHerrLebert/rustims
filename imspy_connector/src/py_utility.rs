@@ -32,8 +32,8 @@ pub fn calculate_bounds_normal(mean: f64, std: f64, z_score: f64) -> (f64, f64) 
 }
 
 #[pyfunction]
-pub fn calculate_frame_occurrence_emg(retention_times: Vec<f64>, rt: f64, sigma: f64, lambda_: f64) -> Vec<i32> {
-    mscore::algorithm::utility::calculate_frame_occurrence_emg(&retention_times, rt, sigma, lambda_)
+pub fn calculate_frame_occurrence_emg(retention_times: Vec<f64>, rt: f64, sigma: f64, lambda_: f64, target_p: f64, step_size: f64) -> Vec<i32> {
+    mscore::algorithm::utility::calculate_frame_occurrence_emg(&retention_times, rt, sigma, lambda_, target_p, step_size)
 }
 
 #[pyfunction]
@@ -43,8 +43,8 @@ pub fn calculate_frame_abundance_emg(frame_ids: Vec<i32>, retention_times: Vec<f
 }
 
 #[pyfunction]
-pub fn calculate_frame_occurrences_emg_par(retention_times: Vec<f64>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, num_threads: usize) -> Vec<Vec<i32>> {
-    mscore::algorithm::utility::calculate_frame_occurrences_emg_par(&retention_times, rts, sigmas, lambdas, num_threads)
+pub fn calculate_frame_occurrences_emg_par(retention_times: Vec<f64>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, target_p: f64, step_size: f64, num_threads: usize) -> Vec<Vec<i32>> {
+    mscore::algorithm::utility::calculate_frame_occurrences_emg_par(&retention_times, rts, sigmas, lambdas, target_p, step_size, num_threads)
 }
 
 #[pyfunction]
