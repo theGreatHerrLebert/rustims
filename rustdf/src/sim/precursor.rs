@@ -106,13 +106,20 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
                     let scan_id = *scan;
                     let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
                     let index = vec![0; scaled_spec.mz.len()];
+
+                    let mz_spectrum = if mz_noise_precursor {
+                        scaled_spec.add_mz_noise_uniform(precursor_noise_ppm)
+                    } else {
+                        scaled_spec
+                    };
+
                     let tims_spec = TimsSpectrum::new(
                         frame_id as i32,
                         *scan as i32,
                         *self.frame_to_rt.get(&frame_id).unwrap() as f64,
                         *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
                         ms_type.clone(),
-                        IndexedMzSpectrum::new(index, scaled_spec.mz, scaled_spec.intensity),
+                        IndexedMzSpectrum::new(index, mz_spectrum.mz, mz_spectrum.intensity),
                     );
                     tims_spectra.push(tims_spec);
                 }
