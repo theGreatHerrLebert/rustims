@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use pyo3::prelude::*;
 use mscore::chemistry::sum_formula::SumFormula;
+use crate::py_mz_spectrum::PyMzSpectrum;
 
 #[pyclass]
 pub struct PySumFormula {
@@ -22,6 +23,15 @@ impl PySumFormula {
     #[getter]
     pub fn elements(&self) -> HashMap<String, i32> {
         self.inner.elements.clone()
+    }
+
+    #[getter]
+    pub fn monoisotopic_mass(&self) -> f64 {
+        self.inner.monoisotopic_weight()
+    }
+
+    pub fn generate_isotope_distribution(&self, charge: i32) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.isotope_distribution(charge) }
     }
 }
 
