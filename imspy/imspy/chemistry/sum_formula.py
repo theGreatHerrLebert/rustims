@@ -1,4 +1,7 @@
 import imspy_connector
+
+from imspy.data.spectrum import MzSpectrum
+
 ims = imspy_connector.py_sumformula
 
 
@@ -25,3 +28,9 @@ class SumFormula:
 
     def get_py_ptr(self):
         return self.__ptr
+
+    def monoisotopic_mass(self) -> float:
+        return self.__ptr.monoisotopic_mass()
+
+    def generate_isotope_distribution(self, charge: int) -> 'MzSpectrum':
+        return MzSpectrum.from_py_ptr(self.__ptr.generate_isotope_distribution(charge))
