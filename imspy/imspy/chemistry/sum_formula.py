@@ -34,4 +34,4 @@ class SumFormula:
         return self.__ptr
 
     def generate_isotope_distribution(self, charge: int) -> 'MzSpectrum':
-        return MzSpectrum.from_py_ptr(self.__ptr.generate_isotope_distribution(charge))
+        return MzSpectrum.from_py_mz_spectrum(self.__ptr.generate_isotope_distribution(charge))
