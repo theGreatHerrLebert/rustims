@@ -41,6 +41,8 @@ use py_amino_acids::amino_acids;
 
 mod py_unimod;
 mod py_utility;
+mod py_sumformula;
+use py_sumformula::sum_formula;
 use py_unimod::unimod;
 
 #[pymodule]
@@ -119,6 +121,11 @@ fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
     let py_utility_submodule = PyModule::new(py, "py_utility")?;
     py_utility::utility(py, &py_utility_submodule)?;
     m.add_submodule(py_utility_submodule)?;
+
+    // py_sumformula submodule //
+    let py_sumformula_submodule = PyModule::new(py, "py_sumformula")?;
+    sum_formula(py, &py_sumformula_submodule)?;
+    m.add_submodule(py_sumformula_submodule)?;
 
     Ok(())
 }

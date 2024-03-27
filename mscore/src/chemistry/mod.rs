@@ -4,3 +4,4 @@ pub mod unimod;
 pub mod constants;
 pub mod formulas;
 pub mod utility;
+pub mod sum_formula;
