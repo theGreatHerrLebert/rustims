@@ -17,6 +17,10 @@ class SumFormula:
     def formula_dict(self) -> dict:
         return self.__ptr.elements
 
+    @property
+    def monoisotopic_mass(self) -> float:
+        return self.__ptr.monoisotopic_mass
+
     def __repr__(self):
         return f"SumFormula('{self.formula}')"
 
@@ -28,9 +32,6 @@ class SumFormula:
 
     def get_py_ptr(self):
         return self.__ptr
-
-    def monoisotopic_mass(self) -> float:
-        return self.__ptr.monoisotopic_mass()
 
     def generate_isotope_distribution(self, charge: int) -> 'MzSpectrum':
         return MzSpectrum.from_py_ptr(self.__ptr.generate_isotope_distribution(charge))
