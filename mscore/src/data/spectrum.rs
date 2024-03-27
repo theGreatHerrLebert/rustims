@@ -414,6 +414,38 @@ impl std::ops::Mul<f64> for MzSpectrum {
 
     }
 }
+
+impl std::ops::Sub for MzSpectrum {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self::Output {
+        let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
+
+        // Helper to quantize mz to an integer key
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        // Add the m/z and intensities from the first spectrum to the map
+        for (mz, intensity) in self.mz.iter().zip(self.intensity.iter()) {
+            let key = quantize(*mz);
+            combined_map.insert(key, *intensity);
+        }
+
+        // Combine the second spectrum into the map
+        for (mz, intensity) in other.mz.iter().zip(other.intensity.iter()) {
+            let key = quantize(*mz);
+            let entry = combined_map.entry(key).or_insert(0.0);
+            *entry -= *intensity;
+        }
+
+        // Convert the combined map back into two Vec<f64>
+        let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
+        let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
+
+        MzSpectrum { mz: mz_combined, intensity: intensity_combined }
+    }
+}
+
 /// Represents a mass spectrum with associated m/z indices, m/z values, and intensities
 #[derive(Clone, Debug)]
 pub struct IndexedMzSpectrum {
