@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use crate::algorithm::isotope::generate_isotope_distribution;
+use crate::chemistry::constants::MASS_PROTON;
 use crate::chemistry::elements::atomic_weights_mono_isotopic;
+use crate::data::spectrum::MzSpectrum;
 
 pub struct SumFormula {
     pub formula: String,
@@ -13,6 +16,19 @@ impl SumFormula {
             formula: formula.to_string(),
             elements,
         }
+    }
+    pub fn monoisotopic_weight(&self) -> f64 {
+        let atomic_weights = atomic_weights_mono_isotopic();
+        self.elements.iter().fold(0.0, |acc, (element, count)| {
+            acc + atomic_weights[element.as_str()] * *count as f64
+        })
+    }
+
+    pub fn isotope_distribution(&self, charge: i32) -> MzSpectrum {
+        let distribution = generate_isotope_distribution(&self.elements, 1e-3, 1e-9, 200);
+        let intensity = distribution.iter().map(|(_, i)| *i).collect();
+        let mz = distribution.iter().map(|(m, _)| (*m + charge as f64 * MASS_PROTON) / charge as f64).collect();
+        MzSpectrum::new(mz, intensity)
     }
 }
 
