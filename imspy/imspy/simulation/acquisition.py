@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 from abc import abstractmethod, ABC
 
 from imspy.simulation.experiment import SyntheticExperimentDataHandle
+from imspy.timstof import TimsDatasetDIA
 from imspy.timstof.data import AcquisitionMode, TimsDataset
 from imspy.simulation.utility import calculate_number_frames, get_ms_ms_window_layout_resource_path
 from imspy.simulation.tdf import TDFWriter
@@ -85,7 +86,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  precursor_every: int = 7,
                  gradient_length=120 * 60,
                  rt_cycle_length=0.109,
-                 exp_name: str = "RAW.d"
+                 exp_name: str = "RAW.d",
                  ):
         super().__init__(path, gradient_length, rt_cycle_length,  reference_ds.im_lower, reference_ds.im_upper, reference_ds.mz_lower, reference_ds.mz_upper, reference_ds.num_scans, exp_name=exp_name)
         self.scan_table = None
@@ -104,8 +105,12 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
-        self.frame_table['ms_type'] = self.calculate_frame_types(table=self.frame_table,
-                                                                 precursor_every=self.precursor_every, verbose=verbose)
+
+        self.frame_table['ms_type'] = self.calculate_frame_types(
+            table=self.frame_table,
+            precursor_every=self.precursor_every,
+            verbose=verbose
+        )
 
         self.synthetics_handle.create_table(
             table_name='frames',
@@ -120,7 +125,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
-                 reference_ds: TimsDataset,
+                 reference_ds: TimsDatasetDIA,
                  window_group_file: str,
                  acquisition_name: str = "dia",
                  exp_name: str = "RAW",
@@ -128,6 +133,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  precursor_every: int = 17,
                  gradient_length=50 * 60,
                  rt_cycle_length=0.1054,
+                 use_reference_ds_layout: bool = True,
                  ):
 
         super().__init__(path, reference_ds, gradient_length, rt_cycle_length,
@@ -138,6 +144,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.frame_table = None
         self.frames_to_window_groups = None
         self.dia_ms_ms_windows = pd.read_csv(window_group_file)
+        self.use_reference_ds_layout = use_reference_ds_layout
+        self.reference = reference_ds
 
         # TODO: check if the number of scans in the window group file matches the number of scans in the experiment
 
@@ -168,6 +176,20 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
+
+        if self.use_reference_ds_layout:
+            self.precursor_every = int(np.diff(self.reference.precursor_frames)[0])
+            self.dia_ms_ms_windows = self.reference.dia_ms_ms_windows.rename(
+                columns={
+                    'WindowGroup': 'window_group',
+                    'ScanNumBegin': 'scan_start',
+                    'ScanNumEnd': 'scan_end',
+                    'IsolationMz': 'isolation_mz',
+                    'IsolationWidth': 'isolation_width',
+                    'CollisionEnergy': 'collision_energy',
+                }
+            )
+
         self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
         self.frames_to_window_groups = self.generate_frame_to_window_group_table(verbose=verbose)
 
@@ -191,7 +213,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     @staticmethod
     def from_config(
             path: str,
-            reference_ds: TimsDataset,
+            reference_ds: TimsDatasetDIA,
             exp_name: str,
             config: Dict[str, any],
             verbose: bool = True
