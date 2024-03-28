@@ -43,20 +43,28 @@ if gpus:
 def main():
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='💻 TimSim 🔬 - Run a proteomics experiment simulation '
-                                                 'with DIA acquisition on a BRUKER TimsTOF.')
+                                                 'with diaPASEF-like acquisition on a BRUKER TimsTOF.')
 
     # Required string argument for path
     parser.add_argument("path", type=str, help="Path to save the experiment to")
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
-    parser.add_argument("fasta", type=str, help="Path to the fasta file")
+    parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
-    parser.add_argument("--acquisition_type", type=str, help="Type of acquisition to simulate", default='dia')
-    parser.add_argument("--name", type=str, help="Name of the experiment", default=f'imsym-PLACEHOLDER-{int(time.time())}')
+    parser.add_argument("--acquisition_type",
+                        type=str,
+                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA]",
+                        default='DIA')
+    parser.add_argument("--name", type=str, help="Name of the experiment",
+                        default=f'TimSim-[acquisition-type]-{int(time.time())}')
 
     # Peptide digestion arguments
-    parser.add_argument("--sample_fraction", type=float, default=0.005, help="Sample fraction (default: 0.005)")
+    parser.add_argument(
+        "--sample_fraction",
+        type=float,
+        default=0.005,
+        help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
@@ -75,11 +83,20 @@ def main():
     parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
 
     # Sample occurrences parameters
-    parser.add_argument("--sample_occurrences", type=bool, default=True, help="Sample occurrences (default: True)")
-    parser.add_argument("--intensity_value", type=float, default=1e6, help="Intensity value (default: 1e6)")
+    parser.add_argument("--sample_occurrences",
+                        type=bool, default=True,
+                        help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
+    parser.add_argument(
+        "--intensity_value",
+        type=float, default=1e6,
+        help="Intensity value of all peptides if sample occurrence sampling is deactivated (default: 1e6)")
 
     # Distribution parameters
-    parser.add_argument("--gradient_length", type=float, default=60 * 60, help="Length of the gradient (default: 3600)")
+    parser.add_argument(
+        "--gradient_length",
+        type=float,
+        default=60 * 60,
+        help="Length of the gradient in seconds (default: 3600)")
     parser.add_argument("--z_score", type=float, default=.99,
                         help="Z-score for frame and scan distributions (default: .99)")
     parser.add_argument("--mean_std_rt", type=float, default=1.5,
@@ -96,9 +113,6 @@ def main():
                         help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, default=0.001,
                         help="Sampling step size for frame distributions (default: 0.001)")
-
-    # parser.add_argument("--std_rt", type=float, default=3.3,
-    #                     help="Standard deviation for retention time distribution (default: 1.6)")
 
     # Number of cores to use
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
