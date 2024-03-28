@@ -7,7 +7,6 @@ from examples.simulation.jobs.build_acquisition import build_acquisition
 from examples.simulation.jobs.digest_fasta import digest_fasta
 from examples.simulation.jobs.simulate_charge_states import simulate_charge_states
 from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
-# from examples.simulation.jobs.simulate_frame_distributions import simulate_frame_distributions
 from examples.simulation.jobs.simulate_frame_distributions_emg import simulate_frame_distributions_emg
 from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
 from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
@@ -15,8 +14,6 @@ from examples.simulation.jobs.simulate_retention_time import simulate_retention_
 from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
 from examples.simulation.jobs.simulate_occurrences import simulate_peptide_occurrences
 from examples.simulation.utility import check_path
-
-from imspy.simulation.utility import generate_events
 
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"
