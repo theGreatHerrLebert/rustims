@@ -153,6 +153,12 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.verbose = verbose
         self.precursor_every = precursor_every
 
+        if self.use_reference_ds_layout:
+            rt_cycle_length = np.mean(np.diff(self.reference.meta_data.Time))
+            if verbose:
+                print('Using reference dataset cycle length:', rt_cycle_length)
+            self.rt_cycle_length = rt_cycle_length
+
         self._setup(verbose=verbose)
 
     def calculate_frame_types(self, verbose: bool = True) -> NDArray:
