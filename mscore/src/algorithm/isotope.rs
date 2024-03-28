@@ -492,7 +492,7 @@ pub fn calc_fragment_isotope_dist(fragment_isotope_dist: &Vec<(f64, f64)>, comp_
     let mut result = (0..r_max).map(|i| (fragment_isotope_dist[0].0 + i as f64, 0.0)).collect::<Vec<(f64, f64)>>();
 
     // Calculation of dependent isotope distribution
-    for (i, &(mz, intensity)) in fragment_isotope_dist.iter().enumerate().take(r_max) {
+    for (i, &(_mz, intensity)) in fragment_isotope_dist.iter().enumerate().take(r_max) {
         for &precursor in precursor_isotopes {
             if precursor >= i && (precursor - i) < comp_fragment_isotope_dist.len() {
                 let comp_intensity = comp_fragment_isotope_dist[precursor - i].1;
