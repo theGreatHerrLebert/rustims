@@ -216,7 +216,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             reference_ds: TimsDatasetDIA,
             exp_name: str,
             config: Dict[str, any],
-            verbose: bool = True
+            verbose: bool = True,
+            use_reference_layout: bool = True,
     ) -> 'TimsTofAcquisitionBuilderDIA':
 
         acquisition_name = config['name'].lower().replace('pasef', '')
@@ -232,6 +233,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             precursor_every=config['precursor_every'],
             gradient_length=config['gradient_length'],
             rt_cycle_length=config['rt_cycle_length'],
+            use_reference_ds_layout=use_reference_layout
         )
 
     def __repr__(self):
