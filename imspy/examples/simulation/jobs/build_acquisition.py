@@ -1,6 +1,6 @@
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.utility import read_acquisition_config
-from imspy.timstof import TimsDataset
+from imspy.timstof import TimsDataset, TimsDatasetDIA
 
 
 def build_acquisition(
@@ -9,7 +9,9 @@ def build_acquisition(
         exp_name: str,
         acquisition_type: str = 'dia',
         verbose: bool = False,
-        gradient_length: float = None) -> TimsTofAcquisitionBuilderDIA:
+        gradient_length: float = None,
+        use_reference_ds_layout: bool = True,
+) -> TimsTofAcquisitionBuilderDIA:
 
     acquisition_type = acquisition_type.lower()
 
@@ -25,11 +27,13 @@ def build_acquisition(
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
 
-    ref_ds = TimsDataset(reference_path)
+    ref_ds = TimsDatasetDIA(reference_path)
 
     return TimsTofAcquisitionBuilderDIA.from_config(
         path=path,
         reference_ds=ref_ds,
         exp_name=exp_name,
         config=config,
+        verbose=verbose,
+        use_reference_layout=use_reference_ds_layout
     )

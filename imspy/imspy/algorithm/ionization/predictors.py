@@ -117,6 +117,7 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
 
     def simulate_charge_state_distribution_pandas(self,
                                                   data: pd.DataFrame,
+                                                  charge_state_one_probability: float = 0.1,
                                                   batch_size: int = 1024,
                                                   min_charge_contrib: float = .005) -> pd.DataFrame:
         """
@@ -124,12 +125,15 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
 
         Args:
             data: pandas DataFrame containing peptide sequences
+            charge_state_one_probability: probability of charge state 1
             batch_size: batch size for prediction
             min_charge_contrib: minimum relative abundance of a charge state to be included in the output
 
         Returns:
             pandas DataFrame containing simulated charge state distributions
         """
+        assert 0 <= charge_state_one_probability <= 1, f'charge_state_one_probability must be in [0, 1], was: {charge_state_one_probability}'
+
         tokens = self._preprocess_sequences(data.sequence.values)
         tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
 
@@ -137,8 +141,14 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
 
         r_table = []
 
+        # add charge state 1 probability
+        probabilities[:, 0] = probabilities[:, 0] + charge_state_one_probability
+        # normalize
+        probabilities = probabilities / np.expand_dims(np.sum(probabilities, axis=1), axis=1)
+
         for charges, (_, row) in tqdm(zip(probabilities, data.iterrows()), desc='flatmap charges', ncols=80,
                                       total=len(probabilities)):
+
             for i, charge in enumerate(charges, start=1):
                 if charge >= min_charge_contrib:
                     r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})

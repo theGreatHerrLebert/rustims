@@ -183,7 +183,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
 
-    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024) -> pd.DataFrame:
+    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024, return_ccs: bool = False) -> pd.DataFrame:
         tokenized_sequences = self._preprocess_sequences(data.sequence.values)
 
         # prepare masses, charges, sequences
@@ -195,10 +195,17 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         ccs, _ = self.model.predict(ds, verbose=self.verbose)
 
-        data[f'inv_mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
-                                                      for c, m, z in zip(ccs, m, data.charge.values)])
+        if not return_ccs:
+            data[f'inv_mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
+                                                          for c, m, z in zip(ccs, m, data.charge.values)])
+        else:
+            data[f'ccs_{self.name}'] = ccs
 
-        data = data[['peptide_id', 'sequence', 'charge', 'relative_abundance', f'inv_mobility_{self.name}']]
+        if 'inv_mobility_gru_predictor' in data.columns:
+            data = data[['peptide_id', 'sequence', 'charge', 'relative_abundance', f'inv_mobility_{self.name}']]
+
+        else:
+            data = data[['peptide_id', 'sequence', 'charge', 'relative_abundance', f'ccs_{self.name}']]
 
         return data
 
