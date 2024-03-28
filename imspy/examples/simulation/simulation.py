@@ -52,12 +52,17 @@ def main():
 
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
+
     parser.add_argument("--acquisition_type",
                         type=str,
                         help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA]",
                         default='DIA')
+
     parser.add_argument("--name", type=str, help="Name of the experiment",
                         default=f'TimSim-[acquisition-type]-{int(time.time())}')
+
+    parser.add_argument("--use_reference_layout", type=bool, default=True,
+                        help="Use the layout of the reference dataset for the acquisition (default: True)")
 
     # Peptide digestion arguments
     parser.add_argument(
@@ -183,6 +188,7 @@ def main():
         acquisition_type=args.acquisition_type,
         verbose=verbose,
         gradient_length=args.gradient_length,
+        use_reference_ds_layout=args.use_reference_layout,
     )
 
     if verbose:
