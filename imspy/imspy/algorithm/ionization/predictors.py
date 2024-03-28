@@ -141,14 +141,13 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
 
         r_table = []
 
+        # add charge state 1 probability
+        probabilities[:, 0] = probabilities[:, 0] + charge_state_one_probability
+        # normalize
+        probabilities = probabilities / np.expand_dims(np.sum(probabilities, axis=1), axis=1)
+
         for charges, (_, row) in tqdm(zip(probabilities, data.iterrows()), desc='flatmap charges', ncols=80,
                                       total=len(probabilities)):
-
-            # add charge state 1 probability
-            charges[:, 0] = charges[:, 0] + charge_state_one_probability
-
-            # normalize
-            charges = charges / np.expand_dims(np.sum(charges, axis=1), axis=1)
 
             for i, charge in enumerate(charges, start=1):
                 if charge >= min_charge_contrib:
