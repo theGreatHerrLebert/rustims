@@ -13,6 +13,7 @@ from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobili
 from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from examples.simulation.jobs.simulate_retention_time import simulate_retention_times
 from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
+from examples.simulation.jobs.simulate_occurrences import simulate_peptide_occurrences
 from examples.simulation.utility import check_path
 
 from imspy.simulation.utility import generate_events
@@ -41,7 +42,7 @@ if gpus:
 
 def main():
     # use argparse to parse command line arguments
-    parser = argparse.ArgumentParser(description='Run a proteomics experiment simulation '
+    parser = argparse.ArgumentParser(description='💻 TimSim 🔬 - Run a proteomics experiment simulation '
                                                  'with DIA acquisition on a BRUKER TimsTOF.')
 
     # Required string argument for path
@@ -72,6 +73,10 @@ def main():
     parser.add_argument("--isotope_k", type=int, default=8, help="Number of isotopes to simulate (default: 8)")
     parser.add_argument("--isotope_min_intensity", type=int, default=1, help="Min intensity for isotopes (default: 1)")
     parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
+
+    # Sample occurrences parameters
+    parser.add_argument("--sample_occurrences", type=bool, default=True, help="Sample occurrences (default: True)")
+    parser.add_argument("--intensity_value", type=float, default=1e6, help="Intensity value (default: 1e6)")
 
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, default=60 * 60, help="Length of the gradient (default: 3600)")
@@ -195,29 +200,16 @@ def main():
         gradient_length=acquisition_builder.gradient_length
     )
 
-    if verbose:
-        print("Sampling peptide intensities...")
-
-    # JOB 3: Simulate peptide intensities
-    peptides['events'] = generate_events(
-        n=peptides.shape[0],
-        mean=args.intensity_mean,
-        min_val=args.intensity_min,
-        max_val=args.intensity_max
-    )
-
-    # JOB 4: Simulate frame distributions
-    """
-    peptides = simulate_frame_distributions(
+    # JOB 3: Simulate peptide occurrences
+    peptides = simulate_peptide_occurrences(
         peptides=peptides,
-        frames=acquisition_builder.frame_table,
-        z_score=args.z_score,
-        std_rt=args.std_rt,
-        rt_cycle_length=acquisition_builder.rt_cycle_length,
+        intensity_mean=args.intensity_mean,
+        intensity_min=args.intensity_min,
+        intensity_max=args.intensity_max,
         verbose=verbose,
-        add_noise=args.add_noise_to_signals
+        sample_occurrences=args.sample_occurrences,
+        intensity_value=args.intensity_value,
     )
-    """
 
     # JOB 4: Simulate frame distributions emg
     peptides = simulate_frame_distributions_emg(
@@ -265,6 +257,7 @@ def main():
     )
 
     # JOB 8: Simulate scan distributions
+    # TODO: sample standard deviation of ion mobility from a distribution (e.g., normal?)
     ions = simulate_scan_distributions(
         ions=ions,
         scans=acquisition_builder.scan_table,
