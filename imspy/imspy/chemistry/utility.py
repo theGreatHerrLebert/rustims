@@ -1,4 +1,7 @@
 import imspy_connector
+
+from imspy.data.spectrum import MzSpectrum
+
 ims = imspy_connector.py_chemistry
 
 
@@ -14,3 +17,27 @@ def calculate_mz(mass: float, charge: int) -> float:
     """
     return ims.calculate_mz(mass, charge)
 
+
+def calculate_transmission_dependent_fragment_ion_isotope_distribution(
+        target_spec: MzSpectrum,
+        complement_spec: MzSpectrum,
+        transmitted_isotopes: MzSpectrum,
+        max_isotope: int) -> MzSpectrum:
+    """Calculate transmission dependent fragment ion isotope distribution.
+
+    Args:
+        target_spec (MzSpectrum): Target spectrum.
+        complement_spec (MzSpectrum): Complement spectrum.
+        transmitted_isotopes (MzSpectrum): Transmitted isotopes.
+        max_isotope (int): Maximum isotope.
+
+    Returns:
+        MzSpectrum: Transmission dependent fragment ion isotope distribution.
+    """
+    return MzSpectrum.from_py_mz_spectrum(
+        ims.calculate_transmission_dependent_fragment_ion_isotope_distribution(
+            target_spec.get_spec_ptr(),
+            complement_spec.get_spec_ptr(),
+            transmitted_isotopes.get_spec_ptr(), max_isotope
+        )
+    )
