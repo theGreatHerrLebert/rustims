@@ -139,6 +139,12 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         super().__init__(path, reference_ds, gradient_length, rt_cycle_length,
                          exp_name=exp_name)
 
+        if use_reference_ds_layout:
+            rt_cycle_length = np.mean(np.diff(reference_ds.meta_data.Time))
+            if verbose:
+                print('Using reference dataset cycle length:', rt_cycle_length)
+            self.rt_cycle_length = rt_cycle_length
+
         self.acquisition_name = acquisition_name
         self.scan_table = None
         self.frame_table = None
@@ -152,12 +158,6 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.acquisition_mode = AcquisitionMode('DIA')
         self.verbose = verbose
         self.precursor_every = precursor_every
-
-        if self.use_reference_ds_layout:
-            rt_cycle_length = np.mean(np.diff(self.reference.meta_data.Time))
-            if verbose:
-                print('Using reference dataset cycle length:', rt_cycle_length)
-            self.rt_cycle_length = rt_cycle_length
 
         self._setup(verbose=verbose)
 
