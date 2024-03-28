@@ -478,7 +478,7 @@ pub fn generate_precursor_spectra(sequences: &Vec<&str>, charges: &Vec<i32>, num
 
 // Calculates the isotope distribution for a fragment given the isotope distribution of the fragment, the isotope distribution of the complementary fragment, and the transmitted precursor isotopes
 // implemented based on OpenMS: "https://github.com/OpenMS/OpenMS/blob/079143800f7ed036a7c68ea6e124fe4f5cfc9569/src/openms/source/CHEMISTRY/ISOTOPEDISTRIBUTION/CoarseIsotopePatternGenerator.cpp#L66"
-pub fn calc_fragment_isotope_dist(fragment_isotope_dist: &Vec<(f64, f64)>, comp_fragment_isotope_dist: &Vec<(f64, f64)>, precursor_isotopes: &HashSet<usize>, max_isotope: usize) -> Vec<(f64, f64)> {
+pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(fragment_isotope_dist: &Vec<(f64, f64)>, comp_fragment_isotope_dist: &Vec<(f64, f64)>, precursor_isotopes: &HashSet<usize>, max_isotope: usize) -> Vec<(f64, f64)> {
 
     if fragment_isotope_dist.is_empty() || comp_fragment_isotope_dist.is_empty() {
         return Vec::new();
