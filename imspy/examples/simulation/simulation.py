@@ -42,7 +42,7 @@ if gpus:
 
 def main():
     # use argparse to parse command line arguments
-    parser = argparse.ArgumentParser(description='💻 TimSim 🔬 - Run a proteomics experiment simulation '
+    parser = argparse.ArgumentParser(description='🦀💻 TimSim 🔬🐍 - Run a proteomics experiment simulation '
                                                  'with diaPASEF-like acquisition on a BRUKER TimsTOF.')
 
     # Required string argument for path
