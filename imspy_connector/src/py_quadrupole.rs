@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use pyo3::prelude::*;
 
@@ -69,6 +70,14 @@ impl PyTimsTransmissionDIA {
 
     pub fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
         self.inner.any_transmitted(frame_id, scan_id, &mz, min_proba)
+    }
+
+    pub fn all_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
+        self.inner.all_transmitted(frame_id, scan_id, &mz, min_proba)
+    }
+
+    pub fn get_transmission_set(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> HashSet<usize> {
+        self.inner.get_transmission_set(frame_id, scan_id, &mz, min_proba)
     }
 
     pub fn is_precursor(&self, frame_id: i32) -> bool {
