@@ -31,7 +31,7 @@ There are two rust projects: `mscore` and `rustdf`. The former is a library that
 ## Julia bindings
 
 The repository contains a Python (imspy) and a Julia (IMSJL) library that share a rust backend (mscore and rustdf).
-The backend is accesible for Python and Julia code by the respective connectors pyims_connector and imsjl_connector, using [PyO3](https://docs.rs/pyo3/latest/pyo3/) or directly via the [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
+The backend is accesible for Python and Julia code by the respective connectors imspy_connector and imsjl_connector, using [PyO3](https://docs.rs/pyo3/latest/pyo3/) or directly via the [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
 
 # Installation
 
@@ -49,7 +49,7 @@ pip install imspy
 Assuming a [rust](https://www.rust-lang.org/learn/get-started) and Python (>=3.10) version is installed on your system, the
 build process currently looks like this:
 
-1.  The Python connector `pyims_connector` needs to be built by [Maturin](https://github.com/PyO3/maturin).
+1.  The Python connector `imspy_connector` needs to be built by [Maturin](https://github.com/PyO3/maturin).
     Maturin can be installed via pip:
     ```shell
     pip install maturin[patchelf]
@@ -59,7 +59,7 @@ build process currently looks like this:
     ```shell
     pip install poetry
     ```
-2.  Once Maturin is installed navigate to the `pyims_connector` folder and run:
+2.  Once Maturin is installed navigate to the `imspy_connector` folder and run:
     ```shell
     maturin build --release
     ```
@@ -70,7 +70,7 @@ build process currently looks like this:
     ```
     The `--force-reinstall` flag ensures that pip is overwriting old installations of the bindings. This
     is relevant when you make changes in the rust backend code (i.e. the bindings themselves, `mscore` or `rustdf`). 
-4.  Navigate to the `pyims` folder and install it with Poetry.
+4.  Navigate to the `imspy` folder and install it with Poetry.
     ```shell
     poetry install
     ```
