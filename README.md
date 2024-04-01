@@ -23,10 +23,9 @@ rustims is about exploring and improving the way we process ion-mobility spectro
 
 # Repository Structure
 
-
 <div align="center">
   <img src="rustims_layout.png" alt="RustIMS Project Layout" width="750"/>
-  <p>The rustims project structure. mscore and rustdf are Rust crates that contain in-memory data structures, algorithms and I/O for TDF files. They can be exposed to python via pyO3, exposing their main functionality by compiling them into one installable wheel: imspy_connector. imspy is then a native python package calling into rust but also comming with its own logic, e.g., tensorflow models for ion-mobility prediction.</p>
+  <p>The rustims project structure. mscore and rustdf are Rust crates that contain in-memory data structures, algorithms and I/O for TDF files. They are exposed to python via pyO3, allowing to call their main functionalities by compiling them into one installable wheel: imspy_connector. imspy is then a native python package calling into rust but also comming with its own logic, e.g., tensorflow models for ion-mobility prediction.</p>
 </div>
 
 ## Backend (Rust)
