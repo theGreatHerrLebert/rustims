@@ -40,13 +40,13 @@ rustims is about exploring and improving the way we process ion-mobility spectro
 </figure>
 
 ## Rust backend: mscore and rustdf
-There are two rust projects: `mscore` and `rustdf`. The former is a library that contains implementations of in-memory data structures and algorithms for raw-data processing. The latter contains a Rust-native reader and writer of TDF, the serialization format written by [bruker timsTOF](https://www.bruker.com/en/products-and-solutions/mass-spectrometry/timstof.html) devices. It also contains the implementation of the I/O logic needed for synthetic timsTOF PASEF-like in-silico dataset generation.
+There are two Rrust projects: `mscore` and `rustdf`. The former is a library that contains implementations of in-memory data structures and algorithms for raw-data processing. The latter contains a Rust-native reader and writer of TDF, the serialization format written by [Bruker timsTOF](https://www.bruker.com/en/products-and-solutions/mass-spectrometry/timstof.html) devices. It also contains the implementation of the I/O logic needed for synthetic timsTOF PASEF-like in-silico dataset generation.
 
 ## Python bindings: imspy_connector
 The `imspy_connector` module bridges Rust code with Python, allowing Rust components to be used in Python with minimal dependencies. This setup keeps the system lightweight for Python users but introduces complexity, especially in development and debugging. Changes in Rust need to be reflected in Python, often requiring updates in multiple places. Despite the added complexity, this architecture is chosen for its benefits. It allows for parts of the code in Rust or Python that don't interact with the other language to be developed independently and asynchronously. However, this flexibility is limited to components that do not require cross-language access.
 
 ## Python package: imspy
-`imspy` is a Python package designed for end-users. It utilizes `imspy_connector` for accessing Rust functionalities exposed via `pyO3`, incorporating additional libraries like `tensorflow`, `scikit-learn`, and `sagepy`. This setup enables users to perform detailed tasks such as calculating peptide fragment ions, analyzing isotope patterns, studying quadrupole transmission, and applying deep learning to ion mobility and retention time predictions. imspy serves those who need advanced analytical capabilities within the Python environment for proteomics research.
+`imspy` is a Python package designed for end-users. It utilizes `imspy_connector` for accessing Rust functionalities exposed via `pyO3`, incorporating additional libraries like `tensorflow`, `scikit-learn`, and `sagepy`. This setup enables users to perform detailed tasks such as calculating peptide fragment ions, analyzing isotope patterns, studying quadrupole transmission, and applying deep learning to ion mobility and retention time predictions. `imspy` serves those who require advanced analytical capabilities within the Python environment for proteomics research.
 
 ## Julia bindings
 Julia support is currently experimental. Julia interfaces via `imsjl_connector`, [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
@@ -54,14 +54,14 @@ Julia support is currently experimental. Julia interfaces via `imsjl_connector`,
 # Installation
 
 ## Install via pip
-We are now providing stable versions of the python-bound components via Python wheels on PyPi. We recommend that you use a [Python virtual environment](https://docs.python.org/3/library/venv.html) with `python3.11`, since imspy has some heavy weight dependencies like `tensorflow`, `numpy`, and `numba`, where version missmatches can cause you a lot of head scrathing.
+We are now providing stable versions of the python-bound components via Python wheels on PyPi. We recommend that you use a [Python virtual environment](https://docs.python.org/3/library/venv.html) with `python3.11`, since imspy has some heavy weight dependencies like `tensorflow`, `numpy`, and `numba`, where version mismatches can lead to potential issues.
 ```shell
 pip install imspy
 ```
 
 ## Build from source
 ## Rust backend
-Assuming a [rust](https://www.rust-lang.org/learn/get-started) is installed on your system and you cloned this repository, thebuild process currently looks like this (example for mscore):
+Assuming a [rust](https://www.rust-lang.org/learn/get-started) is installed on your system and you cloned this repository, the build process currently looks like this (example for mscore):
 ```shell
 cd rustims/mscore && cargo build --release
 ```
