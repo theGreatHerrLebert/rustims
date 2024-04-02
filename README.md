@@ -22,48 +22,58 @@ Conversely, rustims might *not* meet your expectations if you:
 rustims is about exploring and improving the way we process ion-mobility spectrometry data. It's a work in progress, reflecting the open-source ethos of collaboration, engagement, and sharing of knowledge. Whether you're here to contribute or learn, we welcome your interest!
 
 # Repository Structure
+<figure align="center">
+  <img src="rustims_layout.png" alt="RustIMS Project Structure" width="700"/>
+  <figcaption>
+    The <em>rustims</em> project architecture is designed around two core Rust crates: 
+    <code>mscore</code> and <code>rustdf</code>. These crates are the foundation of the project, 
+    housing the in-memory data structures, algorithms, and input/output functionalities 
+    specifically for TDF files. These Rust components are seamlessly integrated with Python 
+    through <code>pyO3</code>, which allows the main functionalities of <code>mscore</code> 
+    and <code>rustdf</code> to be accessible in Python by compiling them into a single, 
+    installable Python wheel named <code>imspy_connector</code>. On top of this, 
+    <code>imspy</code> is a native Python package that not only interfaces with the Rust 
+    crates for enhanced performance but also introduces additional logic, such as TensorFlow 
+    models for ion-mobility prediction, thereby combining the strengths of Rust and Python in 
+    one cohesive framework.
+  </figcaption>
+</figure>
 
-<div align="center">
-  <img src="rustims_layout.png" alt="RustIMS Project Layout" width="750"/>
-  <p>The rustims project structure. mscore and rustdf are Rust crates that contain in-memory data structures, algorithms and I/O for TDF files. They are exposed to python via pyO3, allowing to call their main functionalities by compiling them into one installable wheel: imspy_connector. imspy is then a native python package calling into rust but also comming with its own logic, e.g., tensorflow models for ion-mobility prediction.</p>
-</div>
-
-## Backend (Rust)
+## Rust backend: mscore and rustdf
 There are two rust projects: `mscore` and `rustdf`. The former is a library that contains implementations of in-memory data structures and algorithms for raw-data processing. The latter contains a Rust-native reader and writer of TDF, the serialization format written by [bruker timsTOF](https://www.bruker.com/en/products-and-solutions/mass-spectrometry/timstof.html) devices. It also contains the implementation of the I/O logic needed for synthetic timsTOF PASEF-like in-silico dataset generation.
 
-## Python bindings & Python library
+## Python bindings: imspy_connector
+The `imspy_connector` module bridges Rust code with Python, allowing Rust components to be used in Python with minimal dependencies. This setup keeps the system lightweight for Python users but introduces complexity, especially in development and debugging. Changes in Rust need to be reflected in Python, often requiring updates in multiple places. Despite the added complexity, this architecture is chosen for its benefits. It allows for parts of the code in Rust or Python that don't interact with the other language to be developed independently and asynchronously. However, this flexibility is limited to components that do not require cross-language access.
 
+## Python package: imspy
+`imspy` is a Python package designed for end-users. It utilizes `imspy_connector` for accessing Rust functionalities exposed via `pyO3`, incorporating additional libraries like `tensorflow`, `scikit-learn`, and `sagepy`. This setup enables users to perform detailed tasks such as calculating peptide fragment ions, analyzing isotope patterns, studying quadrupole transmission, and applying deep learning to ion mobility and retention time predictions. imspy serves those who need advanced analytical capabilities within the Python environment for proteomics research.
 
 ## Julia bindings
-
-The repository contains a Python (imspy) and a Julia (IMSJL) library that share a rust backend (mscore and rustdf).
-The backend is accesible for Python and Julia code by the respective connectors imspy_connector and imsjl_connector, using [PyO3](https://docs.rs/pyo3/latest/pyo3/) or directly via the [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
+Julia support is currently experimental. Julia interfaces via `imsjl_connector`, [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
 
 # Installation
 
 ## Install via pip
-For ease of use, we now providing up-to-date versions of the python-bound components via Python wheels on PyPi. We recommend that you use a [Python virtual environment](https://docs.python.org/3/library/venv.html) with `python3.11`, since imspy has some heavy weight dependencies like `tensorflow`, `numpy`, and `numba`, where version missmatches can cause you a lot of head scrathing.
+We are now providing stable versions of the python-bound components via Python wheels on PyPi. We recommend that you use a [Python virtual environment](https://docs.python.org/3/library/venv.html) with `python3.11`, since imspy has some heavy weight dependencies like `tensorflow`, `numpy`, and `numba`, where version missmatches can cause you a lot of head scrathing.
 ```shell
 pip install imspy
 ```
 
 ## Build from source
-
-## Backend
+## Rust backend
+Assuming a [rust](https://www.rust-lang.org/learn/get-started) is installed on your system and you cloned this repository, thebuild process currently looks like this (example for mscore):
+```shell
+cd rustims/mscore && cargo build --release
+```
 
 ## Python bindings
-Assuming a [rust](https://www.rust-lang.org/learn/get-started) and Python (>=3.10) version is installed on your system, the
+Assuming a [rust](https://www.rust-lang.org/learn/get-started) and Python (==3.11) version is installed on your system, the
 build process currently looks like this:
 
 1.  The Python connector `imspy_connector` needs to be built by [Maturin](https://github.com/PyO3/maturin).
     Maturin can be installed via pip:
     ```shell
     pip install maturin[patchelf]
-    ```
-    The Python library is installed via [Poetry](https://github.com/python-poetry/poetry).
-    Poetry can be installed via pip, as well:
-    ```shell
-    pip install poetry
     ```
 2.  Once Maturin is installed navigate to the `imspy_connector` folder and run:
     ```shell
@@ -75,10 +85,18 @@ build process currently looks like this:
     pip install --force-reinstall ./target/wheels/[FILE_NAME].whl
     ```
     The `--force-reinstall` flag ensures that pip is overwriting old installations of the bindings. This
-    is relevant when you make changes in the rust backend code (i.e. the bindings themselves, `mscore` or `rustdf`). 
-4.  Navigate to the `imspy` folder and install it with Poetry.
+    is relevant when you make changes in the rust backend code (i.e. the bindings themselves, `mscore` or `rustdf`).
+    
+## Julia bindings
+Julia support is currently experimental.
+
+## Python package
+The Python library is installed via [Poetry](https://github.com/python-poetry/poetry).
+1.  Poetry can be installed via pip:
+    ```shell
+    pip install poetry
+    ```
+2.  Navigate to the `imspy` folder and install it with Poetry.
     ```shell
     poetry install
     ```
-    
-## Julia bindings
