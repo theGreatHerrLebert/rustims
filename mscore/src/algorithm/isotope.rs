@@ -1,6 +1,6 @@
 extern crate statrs;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -473,5 +473,34 @@ pub fn generate_precursor_spectra(sequences: &Vec<&str>, charges: &Vec<i32>, num
             generate_precursor_spectrum(sequence, charge)
         }).collect()
     });
+    result
+}
+
+// Calculates the isotope distribution for a fragment given the isotope distribution of the fragment, the isotope distribution of the complementary fragment, and the transmitted precursor isotopes
+// implemented based on OpenMS: "https://github.com/OpenMS/OpenMS/blob/079143800f7ed036a7c68ea6e124fe4f5cfc9569/src/openms/source/CHEMISTRY/ISOTOPEDISTRIBUTION/CoarseIsotopePatternGenerator.cpp#L66"
+pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(fragment_isotope_dist: &Vec<(f64, f64)>, comp_fragment_isotope_dist: &Vec<(f64, f64)>, precursor_isotopes: &HashSet<usize>, max_isotope: usize) -> Vec<(f64, f64)> {
+
+    if fragment_isotope_dist.is_empty() || comp_fragment_isotope_dist.is_empty() {
+        return Vec::new();
+    }
+
+    let mut r_max = fragment_isotope_dist.len();
+    if max_isotope != 0 && r_max > max_isotope {
+        r_max = max_isotope;
+    }
+
+    let mut result = (0..r_max).map(|i| (fragment_isotope_dist[0].0 + i as f64, 0.0)).collect::<Vec<(f64, f64)>>();
+
+    // Calculation of dependent isotope distribution
+    for (i, &(_mz, intensity)) in fragment_isotope_dist.iter().enumerate().take(r_max) {
+        for &precursor in precursor_isotopes {
+            if precursor >= i && (precursor - i) < comp_fragment_isotope_dist.len() {
+                let comp_intensity = comp_fragment_isotope_dist[precursor - i].1;
+                result[i].1 += comp_intensity;
+            }
+        }
+        result[i].1 *= intensity;
+    }
+
     result
 }

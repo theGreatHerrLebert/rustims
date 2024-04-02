@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use pyo3::prelude::*;
 
 use mscore::algorithm::isotope::{generate_averagine_spectra, generate_averagine_spectrum};
+use mscore::data::spectrum::MzSpectrum;
 use crate::py_mz_spectrum::PyMzSpectrum;
 use crate::py_peptide::PyPeptideSequence;
 
@@ -94,6 +96,21 @@ pub fn simulate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_t
     spectra.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
 }
 
+#[pyfunction]
+pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(target_spec: PyMzSpectrum, complement_spec: PyMzSpectrum, transmitted_isotopes: PyMzSpectrum, max_isotope: usize) -> PyMzSpectrum {
+
+    let transmitted_map: HashSet<usize> = transmitted_isotopes.inner.mz.iter().enumerate().map(|(i, _)| i).collect();
+
+    let target: Vec<(f64, f64)> = target_spec.inner.mz.iter().zip(target_spec.inner.intensity.iter()).map(|(mz, intensity)| (*mz, *intensity)).collect();
+    let complement: Vec<(f64, f64)> = complement_spec.inner.mz.iter().zip(complement_spec.inner.intensity.iter()).map(|(mz, intensity)| (*mz, *intensity)).collect();
+
+    let result = mscore::algorithm::isotope::calculate_transmission_dependent_fragment_ion_isotope_distribution(
+        &target, &complement, &transmitted_map, max_isotope
+    );
+
+    PyMzSpectrum { inner: MzSpectrum { mz: result.iter().map(|(mz, _)| *mz).collect(), intensity: result.iter().map(|(_, intensity)| *intensity).collect() } }
+}
+
 #[pymodule]
 pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
@@ -112,6 +129,7 @@ pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(calculate_mz, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_precursor_spectra, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_transmission_dependent_fragment_ion_isotope_distribution, m)?)?;
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f64;
 use std::f64::consts::E;
 use crate::data::spectrum::MzSpectrum;
@@ -165,6 +165,18 @@ pub trait IonTransmission {
             result.push(frame_result);
         }
         result
+    }
+    fn get_transmission_set(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>, min_proba: Option<f64>) -> HashSet<usize> {
+        // go over enumerated mz and push all indices with transmission probability > min_proba to a set
+        let probability_cutoff = min_proba.unwrap_or(0.5);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, mz);
+        mz.iter().enumerate().filter(|&(i, _)| transmission_probability[i] > probability_cutoff).map(|(i, _)| i).collect()
+    }
+
+    fn all_transmitted(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>, min_proba: Option<f64>) -> bool {
+        let probability_cutoff = min_proba.unwrap_or(0.5);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, mz);
+        transmission_probability.iter().all(|&p| p > probability_cutoff)
     }
 
     /// Check if a single mz value is transmitted
