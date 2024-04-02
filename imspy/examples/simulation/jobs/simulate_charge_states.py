@@ -11,7 +11,7 @@ def simulate_charge_states(
         mz_lower: float,
         mz_upper: float,
         p_charge: float = 0.5,
-        charge_state_one_probability: float = 0.1,
+        charge_state_one_probability: float = 0.0,
 ) -> pd.DataFrame:
 
     IonSource = DeepChargeStateDistribution(
