@@ -308,6 +308,10 @@ impl  PyTimsFrameVectorized {
          self.inner.ims_frame.retention_time
     }
 
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsFrameVectorized {
+        return PyTimsFrameVectorized { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
+    }
+
 }
 
 #[pymodule]
