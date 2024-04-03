@@ -324,7 +324,7 @@ class TimsSliceVectorized:
             List[TimsFrame]: Frames.
         """
         return [TimsFrameVectorized.from_py_tims_frame_vectorized(frame) for frame in
-                self.__slice_ptr.get_vectorized_frames()]
+                self.__slice_ptr.get_vectorized_frames]
 
     @property
     def df(self) -> pd.DataFrame:
