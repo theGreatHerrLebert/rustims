@@ -530,6 +530,40 @@ pub struct TimsFrameVectorized {
     pub ims_frame: ImsFrameVectorized,
 }
 
+impl TimsFrameVectorized {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> TimsFrameVectorized {
+        let mut scan_vec = Vec::new();
+        let mut mobility_vec = Vec::new();
+        let mut tof_vec = Vec::new();
+        let mut mz_vec = Vec::new();
+        let mut intensity_vec = Vec::new();
+
+        for (mz, intensity, scan, mobility, tof) in itertools::multizip((&self.ims_frame.values, &self.ims_frame.values, &self.scan, &self.ims_frame.mobility, &self.tof)) {
+            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && mobility >= &inv_mob_min && mobility <= &inv_mob_max && intensity >= &intensity_min && intensity <= &intensity_max {
+                scan_vec.push(*scan);
+                mobility_vec.push(*mobility);
+                tof_vec.push(*tof);
+                mz_vec.push(*mz);
+                intensity_vec.push(*intensity);
+            }
+        }
+
+        TimsFrameVectorized {
+            frame_id: self.frame_id,
+            ms_type: self.ms_type.clone(),
+            scan: scan_vec,
+            tof: tof_vec,
+            ims_frame: ImsFrameVectorized {
+                retention_time: self.ims_frame.retention_time,
+                mobility: mobility_vec,
+                indices: self.ims_frame.indices.clone(),
+                values: mz_vec,
+                resolution: self.ims_frame.resolution,
+            },
+        }
+    }
+}
+
 impl fmt::Display for TimsFrameVectorized {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
 
