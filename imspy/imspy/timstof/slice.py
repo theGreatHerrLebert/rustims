@@ -414,6 +414,9 @@ class TimsSliceVectorized:
             self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
                                            intensity_min, intensity_max, num_threads))
 
+    def get_py_ptr(self):
+        return self.__slice_ptr
+
 
 class TimsPlane:
     def __init__(self):
