@@ -537,14 +537,16 @@ impl TimsFrameVectorized {
         let mut tof_vec = Vec::new();
         let mut mz_vec = Vec::new();
         let mut intensity_vec = Vec::new();
+        let mut indices_vec = Vec::new();
 
-        for (mz, intensity, scan, mobility, tof) in itertools::multizip((&self.ims_frame.values, &self.ims_frame.values, &self.scan, &self.ims_frame.mobility, &self.tof)) {
+        for (mz, intensity, scan, mobility, tof, index) in itertools::multizip((&self.ims_frame.values, &self.ims_frame.values, &self.scan, &self.ims_frame.mobility, &self.tof, &self.ims_frame.indices)) {
             if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && mobility >= &inv_mob_min && mobility <= &inv_mob_max && intensity >= &intensity_min && intensity <= &intensity_max {
                 scan_vec.push(*scan);
                 mobility_vec.push(*mobility);
                 tof_vec.push(*tof);
                 mz_vec.push(*mz);
                 intensity_vec.push(*intensity);
+                indices_vec.push(*index);
             }
         }
 
@@ -556,7 +558,7 @@ impl TimsFrameVectorized {
             ims_frame: ImsFrameVectorized {
                 retention_time: self.ims_frame.retention_time,
                 mobility: mobility_vec,
-                indices: self.ims_frame.indices.clone(),
+                indices: indices_vec,
                 values: mz_vec,
                 resolution: self.ims_frame.resolution,
             },
