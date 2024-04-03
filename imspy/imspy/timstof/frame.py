@@ -454,3 +454,32 @@ class TimsFrameVectorized:
             return sp.to_dense(sv)
         else:
             return sv
+
+    def filter(self,
+               mz_min: float = 0.0,
+               mz_max: float = 2000.0,
+               scan_min: int = 0,
+               scan_max: int = 1000,
+               mobility_min: float = 0.0,
+               mobility_max: float = 2.0,
+               intensity_min: float = 0.0,
+               intensity_max: float = 1e9,
+               ) -> 'TimsFrameVectorized':
+        """Filter the frame for a given m/z range, scan range and intensity range.
+
+        Args:
+            mz_min (float): Minimum m/z value.
+            mz_max (float): Maximum m/z value.
+            scan_min (int, optional): Minimum scan value. Defaults to 0.
+            scan_max (int, optional): Maximum scan value. Defaults to 1000.
+            mobility_min (float, optional): Minimum inverse mobility value. Defaults to 0.0.
+            mobility_max (float, optional): Maximum inverse mobility value. Defaults to 2.0.
+            intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
+            intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
+
+        Returns:
+            TimsFrameVectorized: Filtered frame.
+        """
+
+        return TimsFrameVectorized.from_py_tims_frame_vectorized(self.__frame_ptr.filter_ranged(
+            mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max, intensity_min, intensity_max))

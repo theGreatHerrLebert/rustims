@@ -390,6 +390,30 @@ class TimsSliceVectorized:
         else:
             return sv
 
+    def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, scan_min: int = 0, scan_max: int = 1000,
+               mobility_min: float = 0.0,
+               mobility_max: float = 2.0,
+               intensity_min: float = 0.0, intensity_max: float = 1e9, num_threads: int = 4) -> 'TimsSliceVectorized':
+        """Filter the slice by m/z, scan and intensity.
+
+        Args:
+            mz_min (float): Minimum m/z value.
+            mz_max (float): Maximum m/z value.
+            scan_min (int, optional): Minimum scan value. Defaults to 0.
+            scan_max (int, optional): Maximum scan value. Defaults to 1000.
+            mobility_min (float, optional): Minimum inverse mobility value. Defaults to 0.0.
+            mobility_max (float, optional): Maximum inverse mobility value. Defaults to 2.0.
+            intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
+            intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
+            num_threads (int, optional): Number of threads to use. Defaults to 4.
+
+        Returns:
+            TimsSlice: Filtered slice.
+        """
+        return TimsSliceVectorized.from_vectorized_py_tims_slice(
+            self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
+                                           intensity_min, intensity_max, num_threads))
+
 
 class TimsPlane:
     def __init__(self):
