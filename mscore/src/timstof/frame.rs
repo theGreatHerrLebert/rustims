@@ -388,14 +388,14 @@ struct AggregateData {
 impl std::ops::Add for TimsFrame {
     type Output = Self;
     fn add(self, other: Self) -> TimsFrame {
-        let mut combined_map: BTreeMap<(i64, i32), AggregateData> = BTreeMap::new();
+        let mut combined_map: BTreeMap<(i32, i64), AggregateData> = BTreeMap::new();
 
         let quantize = |mz: f64| -> i64 {
             (mz * 1_000_000.0).round() as i64
         };
 
-        let add_to_map = |map: &mut BTreeMap<(i64, i32), AggregateData>, mz, ion_mobility, tof, scan, intensity| {
-            let key = (quantize(mz), scan);
+        let add_to_map = |map: &mut BTreeMap<(i32, i64), AggregateData>, mz, ion_mobility, tof, scan, intensity| {
+            let key = (scan, quantize(mz));
             let entry = map.entry(key).or_insert(AggregateData { intensity_sum: 0.0, ion_mobility_sum: 0.0, tof_sum: 0, count: 0 });
             entry.intensity_sum += intensity;
             entry.ion_mobility_sum += ion_mobility;
@@ -417,7 +417,7 @@ impl std::ops::Add for TimsFrame {
         let mut scan_combined = Vec::new();
         let mut intensity_combined = Vec::new();
 
-        for ((quantized_mz, scan), data) in combined_map {
+        for ((scan, quantized_mz), data) in combined_map {
             mz_combined.push(quantized_mz as f64 / 1_000_000.0);
             tof_combined.push(data.tof_sum / data.count as i64);
             ion_mobility_combined.push(data.ion_mobility_sum / data.count as f64);
@@ -436,19 +436,9 @@ impl std::ops::Add for TimsFrame {
                 mz: mz_combined,
                 intensity: intensity_combined,
             },
-        }.to_resolution(7);
+        };
 
-        // need to sort by scan, then by mz
-        let mut scan_mz = izip!(&frame.scan, &frame.ims_frame.mz, &frame.tof, &frame.ims_frame.intensity, &frame.ims_frame.mobility).collect::<Vec<_>>();
-        scan_mz.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap()));
-
-        let scan = scan_mz.iter().map(|(s, _, _, _, _)| **s).collect();
-        let tof = scan_mz.iter().map(|(_, _, t, _, _)| **t).collect();
-        let mz = scan_mz.iter().map(|(_, m, _, _, _)| **m).collect();
-        let intensity = scan_mz.iter().map(|(_, _, _, i, _)| **i).collect();
-        let mobility = scan_mz.iter().map(|(_, _, _, _, m)| **m).collect();
-
-        TimsFrame::new(frame.frame_id, frame.ms_type.clone(), frame.ims_frame.retention_time, scan, mobility, tof, mz, intensity)
+        return frame;
     }
 }
 
