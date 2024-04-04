@@ -436,9 +436,19 @@ impl std::ops::Add for TimsFrame {
                 mz: mz_combined,
                 intensity: intensity_combined,
             },
-        };
+        }.to_resolution(7);
 
-        frame.to_resolution(7)
+        // need to sort by scan, then by mz
+        let mut scan_mz = izip!(&frame.scan, &frame.ims_frame.mz, &frame.tof, &frame.ims_frame.intensity, &frame.ims_frame.mobility).collect::<Vec<_>>();
+        scan_mz.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.partial_cmp(&b.1).unwrap()));
+
+        let scan = scan_mz.iter().map(|(s, _, _, _, _)| **s).collect();
+        let tof = scan_mz.iter().map(|(_, _, t, _, _)| **t).collect();
+        let mz = scan_mz.iter().map(|(_, m, _, _, _)| **m).collect();
+        let intensity = scan_mz.iter().map(|(_, _, _, i, _)| **i).collect();
+        let mobility = scan_mz.iter().map(|(_, _, _, _, m)| **m).collect();
+
+        TimsFrame::new(frame.frame_id, frame.ms_type.clone(), frame.ims_frame.retention_time, scan, mobility, tof, mz, intensity)
     }
 }
 
