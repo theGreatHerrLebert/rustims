@@ -293,6 +293,16 @@ class TimsFrame:
                 f"num_peaks={len(self.__frame_ptr.mz)})")
 
     def random_subsample_frame(self, take_probability: float) -> 'TimsFrame':
+        """Randomly subsample the frame.
+
+            Args:
+            take_probability (float): Take probability.
+
+            Returns:
+            TimsFrame: Subsampled frame.
+        """
+
+        assert 0.0 <= take_probability <= 1.0, "The take probability must be between 0 and 1."
         return TimsFrame.from_py_tims_frame(self.__frame_ptr.random_subsample_frame(take_probability))
 
 
