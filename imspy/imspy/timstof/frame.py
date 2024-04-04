@@ -292,6 +292,9 @@ class TimsFrame:
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
                 f"num_peaks={len(self.__frame_ptr.mz)})")
 
+    def random_subsample_frame(self, take_probability: float) -> 'TimsFrame':
+        return TimsFrame.from_py_tims_frame(self.__frame_ptr.random_subsample_frame(take_probability))
+
 
 class TimsFrameVectorized:
     def __init__(self, frame_id: int, ms_type: int, retention_time: float, scan: NDArray[np.int32],

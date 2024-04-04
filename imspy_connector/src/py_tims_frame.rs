@@ -217,8 +217,13 @@ impl PyTimsFrame {
         Ok(tuple.into())
     }
 
-    fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
+    pub fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
         let result = self.inner.clone() + other.inner.clone();
+        return PyTimsFrame { inner: result }
+    }
+
+    pub fn random_subsample_frame(&self, take_probability: f64) -> PyTimsFrame {
+        let result = self.inner.generate_random_sample(take_probability);
         return PyTimsFrame { inner: result }
     }
 }
