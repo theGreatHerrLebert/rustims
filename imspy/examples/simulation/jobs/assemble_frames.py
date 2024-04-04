@@ -36,6 +36,9 @@ def assemble_frames(
         num_threads=num_threads,
     )
 
+    wg = acquisition_builder.tdf_writer.helper_handle.dia_ms_ms_info
+    frame_to_window_group = dict(zip(wg.Frame, wg.WindowGroup))
+
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
         start_index = b * batch_size
@@ -52,7 +55,7 @@ def assemble_frames(
         )
 
         if add_real_data_noise:
-            built_frames = add_real_data_noise_to_frames(acquisition_builder, built_frames)
+            built_frames = add_real_data_noise_to_frames(acquisition_builder, built_frames, frame_to_window_group)
 
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)

@@ -60,6 +60,7 @@ def get_fragment_noise(handle, target_wg, frame_to_window_group, sample_fraction
 def add_real_data_noise_to_frames(
         acquisition_builder: TimsTofAcquisitionBuilderDIA,
         frames: List[TimsFrame],
+        frame_to_window_group: dict,
         intensity_max: float = 30,
         sample_fraction: float = 0.5,
 ) -> List[TimsFrame]:
@@ -68,6 +69,7 @@ def add_real_data_noise_to_frames(
     Args:
         acquisition_builder: Acquisition builder.
         frames (List[TimsFrame]): Frames.
+        frame_to_window_group (dict): Frame to window group.
         intensity_max (float): Maximum intensity.
         sample_fraction (float): Sample fraction.
 
@@ -79,9 +81,6 @@ def add_real_data_noise_to_frames(
     d = acquisition_builder.frames_to_window_groups
     window_group_dict = dict(zip(d['frame'], d['window_group']))
     fragment_frames = set(window_group_dict.keys())
-
-    wg = acquisition_builder.tdf_writer.helper_handle.dia_ms_ms_info
-    frame_to_window_group = dict(zip(wg.Frame, wg.WindowGroup))
 
     for frame in frames:
         if frame.frame_id in fragment_frames:
