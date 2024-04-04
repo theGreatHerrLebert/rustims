@@ -426,7 +426,7 @@ impl std::ops::Add for TimsFrame {
         }
 
         TimsFrame {
-            frame_id: self.frame_id + other.frame_id,
+            frame_id: self.frame_id,
             ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
             scan: scan_combined,
             tof: tof_combined,
