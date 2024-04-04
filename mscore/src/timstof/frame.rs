@@ -381,7 +381,7 @@ impl TimsFrame {
 struct AggregateData {
     intensity_sum: f64,
     ion_mobility_sum: f64,
-    tof_sum: i32,
+    tof_sum: i64,
     count: i32,
 }
 
@@ -399,7 +399,7 @@ impl std::ops::Add for TimsFrame {
             let entry = map.entry(key).or_insert(AggregateData { intensity_sum: 0.0, ion_mobility_sum: 0.0, tof_sum: 0, count: 0 });
             entry.intensity_sum += intensity;
             entry.ion_mobility_sum += ion_mobility;
-            entry.tof_sum += tof;
+            entry.tof_sum += tof as i64;
             entry.count += 1;
         };
 
@@ -419,7 +419,7 @@ impl std::ops::Add for TimsFrame {
 
         for ((quantized_mz, scan), data) in combined_map {
             mz_combined.push(quantized_mz as f64 / 1_000_000.0);
-            tof_combined.push(data.tof_sum / data.count);
+            tof_combined.push(data.tof_sum / data.count as i64);
             ion_mobility_combined.push(data.ion_mobility_sum / data.count as f64);
             scan_combined.push(scan);
             intensity_combined.push(data.intensity_sum);
@@ -429,7 +429,7 @@ impl std::ops::Add for TimsFrame {
             frame_id: self.frame_id,
             ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
             scan: scan_combined,
-            tof: tof_combined,
+            tof: tof_combined.iter().map(|&x| x as i32).collect(),
             ims_frame: ImsFrame {
                 retention_time: self.ims_frame.retention_time,
                 mobility: ion_mobility_combined,
