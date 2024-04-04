@@ -425,7 +425,7 @@ impl std::ops::Add for TimsFrame {
             intensity_combined.push(data.intensity_sum);
         }
 
-        TimsFrame {
+        let frame = TimsFrame {
             frame_id: self.frame_id,
             ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
             scan: scan_combined,
@@ -436,7 +436,9 @@ impl std::ops::Add for TimsFrame {
                 mz: mz_combined,
                 intensity: intensity_combined,
             },
-        }
+        };
+
+        frame.to_resolution(7)
     }
 }
 
