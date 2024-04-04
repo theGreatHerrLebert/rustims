@@ -431,7 +431,7 @@ impl std::ops::Add for TimsFrame {
             scan: scan_combined,
             tof: tof_combined,
             ims_frame: ImsFrame {
-                retention_time: (self.ims_frame.retention_time + other.ims_frame.retention_time) / 2.0,
+                retention_time: self.ims_frame.retention_time,
                 mobility: ion_mobility_combined,
                 mz: mz_combined,
                 intensity: intensity_combined,
