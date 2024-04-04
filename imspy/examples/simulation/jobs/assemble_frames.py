@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
+from examples.simulation.jobs.add_noise_from_real_data import add_real_data_noise_to_frames
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA
 
@@ -16,11 +17,15 @@ def assemble_frames(
         precursor_noise_ppm: float = 5.,
         mz_noise_fragment: bool = False,
         fragment_noise_ppm: float = 5.,
-        num_threads: int = 4
+        num_threads: int = 4,
+        add_real_data_noise: bool = False
 ) -> None:
 
     if verbose:
         print("Starting frame assembly...")
+
+        if add_real_data_noise:
+            print("Real data noise will be added to the frames.")
 
     batch_size = batch_size
     num_batches = len(frames) // batch_size + 1
@@ -45,6 +50,9 @@ def assemble_frames(
             fragment_noise_ppm=fragment_noise_ppm,
             num_threads=num_threads
         )
+
+        if add_real_data_noise:
+            built_frames = add_real_data_noise_to_frames(acquisition_builder, built_frames)
 
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
