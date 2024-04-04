@@ -41,7 +41,9 @@ def get_fragment_noise(handle, target_wg, sample_fraction: float = 0.5, max_inte
     Returns:
         TimsFrame: Frame.
     """
-    frame_to_window_group = dict(zip(handle.dia_ms_ms_info.Frame, handle.dia_ms_ms_info.WindowGroup))
+    print(handle)
+    wg = handle.dia_ms_ms_info
+    frame_to_window_group = dict(zip(wg.Frame, wg.WindowGroup))
     filtered_dict = dict(filter(lambda item: item[1] == target_wg, frame_to_window_group.items()))
     frame_ids = [item[0] for item in filtered_dict.items()]
 
