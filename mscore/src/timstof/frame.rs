@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::{Formatter};
 use itertools;
 use itertools::izip;
+use rand::Rng;
 
 use crate::timstof::spectrum::TimsSpectrum;
 use crate::data::spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, Vectorized, ToResolution};
@@ -352,6 +353,29 @@ impl TimsFrame {
             mz_spectrum: MzSpectrum { mz, intensity },
         }
     }
+
+    pub fn generate_random_sample(&self, take_probability: f64) -> TimsFrame {
+        assert!(take_probability >= 0.0 && take_probability <= 1.0);
+
+        let mut rng = rand::thread_rng();
+        let mut scan = Vec::new();
+        let mut mobility = Vec::new();
+        let mut tof = Vec::new();
+        let mut mz = Vec::new();
+        let mut intensity = Vec::new();
+
+        for (s, m, t, mz_val, i) in itertools::multizip((&self.scan, &self.ims_frame.mobility, &self.tof, &self.ims_frame.mz, &self.ims_frame.intensity)) {
+            if rng.gen::<f64>() <= take_probability {
+                scan.push(*s);
+                mobility.push(*m);
+                tof.push(*t);
+                mz.push(*mz_val);
+                intensity.push(*i);
+            }
+        }
+
+        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan, mobility, tof, mz, intensity)
+    }
 }
 
 struct AggregateData {
@@ -528,6 +552,42 @@ pub struct TimsFrameVectorized {
     pub scan: Vec<i32>,
     pub tof: Vec<i32>,
     pub ims_frame: ImsFrameVectorized,
+}
+
+impl TimsFrameVectorized {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> TimsFrameVectorized {
+        let mut scan_vec = Vec::new();
+        let mut mobility_vec = Vec::new();
+        let mut tof_vec = Vec::new();
+        let mut mz_vec = Vec::new();
+        let mut intensity_vec = Vec::new();
+        let mut indices_vec = Vec::new();
+
+        for (mz, intensity, scan, mobility, tof, index) in itertools::multizip((&self.ims_frame.values, &self.ims_frame.values, &self.scan, &self.ims_frame.mobility, &self.tof, &self.ims_frame.indices)) {
+            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && mobility >= &inv_mob_min && mobility <= &inv_mob_max && intensity >= &intensity_min && intensity <= &intensity_max {
+                scan_vec.push(*scan);
+                mobility_vec.push(*mobility);
+                tof_vec.push(*tof);
+                mz_vec.push(*mz);
+                intensity_vec.push(*intensity);
+                indices_vec.push(*index);
+            }
+        }
+
+        TimsFrameVectorized {
+            frame_id: self.frame_id,
+            ms_type: self.ms_type.clone(),
+            scan: scan_vec,
+            tof: tof_vec,
+            ims_frame: ImsFrameVectorized {
+                retention_time: self.ims_frame.retention_time,
+                mobility: mobility_vec,
+                indices: indices_vec,
+                values: mz_vec,
+                resolution: self.ims_frame.resolution,
+            },
+        }
+    }
 }
 
 impl fmt::Display for TimsFrameVectorized {

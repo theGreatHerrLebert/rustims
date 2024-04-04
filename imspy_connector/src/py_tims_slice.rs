@@ -235,6 +235,10 @@ impl PyTimsSliceVectorized {
             retention_times_np.to_object(py), mobilities_np.to_object(py), indices_np.to_object(py),
             intensities_np.to_object(py)))
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSliceVectorized {
+        PyTimsSliceVectorized { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, num_threads) }
+    }
 }
 
 #[pyclass]

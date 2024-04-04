@@ -159,6 +159,13 @@ def main():
         help="Fragment noise in ppm (default: 5.0)"
     )
 
+    parser.add_argument(
+        "--add_real_data_noise",
+        type=bool,
+        default=False,
+        help="Use given reference data to add noise to the simulated data (default: False)"
+    )
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -313,6 +320,7 @@ def main():
         mz_noise_fragment=args.mz_noise_fragment,
         fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
+        add_real_data_noise=args.add_real_data_noise
     )
 
 
