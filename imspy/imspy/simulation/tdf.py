@@ -1,12 +1,12 @@
 import sqlite3
 import pandas as pd
 import numpy as np
-from typing import List
+
 from pathlib import Path
 
 from imspy.simulation.utility import get_compressible_data
 from imspy.timstof.frame import TimsFrame
-from imspy.timstof import TimsDataset
+from imspy.timstof.dia import TimsDatasetDIA
 import zstd
 
 import imspy_connector
@@ -14,7 +14,7 @@ ims = imspy_connector.py_dataset
 
 
 class TDFWriter:
-    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64) -> None:
+    def __init__(self, helper_handle: TimsDatasetDIA, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64) -> None:
 
         self.path = Path(path)
         self.exp_name = exp_name
