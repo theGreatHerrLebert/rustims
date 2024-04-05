@@ -166,6 +166,13 @@ def main():
         help="Use given reference data to add noise to the simulated data (default: False)"
     )
 
+    parser.add_argument(
+        "--reference_noise_intensity_max",
+        type=float,
+        default=30,
+        help="Maximum intensity for noise reference data (default: 30)"
+    )
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -320,7 +327,8 @@ def main():
         mz_noise_fragment=args.mz_noise_fragment,
         fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
-        add_real_data_noise=args.add_real_data_noise
+        add_real_data_noise=args.add_real_data_noise,
+        reference_noise_intensity_max=args.reference_noise_intensity_max
     )
 
 

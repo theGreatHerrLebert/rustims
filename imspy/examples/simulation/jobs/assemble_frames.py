@@ -18,7 +18,8 @@ def assemble_frames(
         mz_noise_fragment: bool = False,
         fragment_noise_ppm: float = 5.,
         num_threads: int = 4,
-        add_real_data_noise: bool = False
+        add_real_data_noise: bool = False,
+        reference_noise_intensity_max: float = 30,
 ) -> None:
 
     if verbose:
@@ -55,7 +56,8 @@ def assemble_frames(
         )
 
         if add_real_data_noise:
-            built_frames = add_real_data_noise_to_frames(acquisition_builder, built_frames, frame_to_window_group)
+            built_frames = add_real_data_noise_to_frames(acquisition_builder, built_frames, frame_to_window_group,
+                                                         intensity_max=reference_noise_intensity_max)
 
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
