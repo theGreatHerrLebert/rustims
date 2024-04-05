@@ -12,20 +12,64 @@ ims = imspy_connector.py_simulation
 
 class TimsTofSyntheticFrameBuilderDIA:
     def __init__(self, db_path: str, num_threads: int = 4):
+        """Initializes the TimsTofSyntheticFrameBuilderDIA.
+
+        Args:
+            db_path (str): Path to the raw data file.
+            num_threads (int): Number of threads.
+        """
         self.path = db_path
         self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
 
-    def build_frame(self, frame_id: int, fragment: bool = True, mz_noise_precursor: bool = False,
-                    precursor_noise_ppm: float = 5., mz_noise_fragment: bool = False,
+    def build_frame(self,
+                    frame_id: int,
+                    fragment: bool = True,
+                    mz_noise_precursor: bool = False,
+                    precursor_noise_ppm: float = 5.,
+                    mz_noise_fragment: bool = False,
                     fragment_noise_ppm: float = 5.) -> TimsFrame:
+        """Build a frame.
+
+        Args:
+            frame_id (int): Frame ID.
+            fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
+            otherwise quadrupole isolation will still be applied but no fragmentation.
+            mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            precursor_noise_ppm (float): PPM of the precursor noise.
+            mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
+            fragment_noise_ppm (float): PPM of the fragment noise.
+
+        Returns:
+            TimsFrame: Frame.
+        """
         frame = self.handle.build_frame(frame_id, fragment, mz_noise_precursor, precursor_noise_ppm,
                                         mz_noise_fragment, fragment_noise_ppm)
+
         return TimsFrame.from_py_tims_frame(frame)
 
-    def build_frames(self, frame_ids: List[int], fragment: bool = True,
+    def build_frames(self,
+                     frame_ids: List[int],
+                     fragment: bool = True,
                      mz_noise_precursor: bool = False,
-                     precursor_noise_ppm: float = 5., mz_noise_fragment: bool = False,
-                     fragment_noise_ppm: float = 5., num_threads: int = 4) -> List[TimsFrame]:
+                     precursor_noise_ppm: float = 5.,
+                     mz_noise_fragment: bool = False,
+                     fragment_noise_ppm: float = 5.,
+                     num_threads: int = 4) -> List[TimsFrame]:
+        """Build frames.
+
+        Args:
+            frame_ids (List[int]): Frame IDs.
+            fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
+            otherwise quadrupole isolation will still be applied but no fragmentation.
+            mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            precursor_noise_ppm (float): PPM of the precursor noise.
+            mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
+            fragment_noise_ppm (float): PPM of the fragment noise.
+            num_threads (int): Number of threads.
+
+        Returns:
+            List[TimsFrame]: Frames.
+        """
         frames = self.handle.build_frames(frame_ids, fragment, mz_noise_precursor, precursor_noise_ppm,
                                           mz_noise_fragment, fragment_noise_ppm,
                                           num_threads)

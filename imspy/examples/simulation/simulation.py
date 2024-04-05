@@ -75,7 +75,7 @@ def main():
     parser.add_argument("--decoys", type=bool, default=False, help="Generate decoys (default: False)")
 
     # Peptide intensities
-    parser.add_argument("--intensity_mean", type=float, default=1e6, help="Mean peptide intensity (default: 1e6)")
+    parser.add_argument("--intensity_mean", type=float, default=1e7, help="Mean peptide intensity (default: 1e6)")
     parser.add_argument("--intensity_min", type=float, default=1e5, help="Std peptide intensity (default: 1e5)")
     parser.add_argument("--intensity_max", type=float, default=1e9, help="Min peptide intensity (default: 1e9)")
 
