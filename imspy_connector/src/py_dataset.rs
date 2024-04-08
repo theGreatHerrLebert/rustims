@@ -1,7 +1,8 @@
 use mscore::timstof::frame::TimsFrame;
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{TimsData, AcquisitionMode, zstd_compress, zstd_decompress, parse_decompressed_bruker_binary_data, reconstruct_compressed_data, compress_collection};
+use rustdf::data::handle::{TimsData, AcquisitionMode};
+use rustdf::data::utility::{zstd_compress, zstd_decompress, reconstruct_compressed_data, compress_collection, parse_decompressed_bruker_binary_data};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
@@ -212,7 +213,7 @@ impl PyAcquisitionMode {
 
 #[pyfunction]
 pub fn get_peak_cnts(total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
-    rustdf::data::handle::get_peak_cnts(total_scans, &scans)
+    rustdf::data::utility::get_peak_cnts(total_scans, &scans)
 }
 
 // pub fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
@@ -222,24 +223,24 @@ pub fn modify_tofs(tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
     let mut mutable_tofs = tofs.clone();
 
     // Directly pass the mutable reference of the cloned `tofs`.
-    rustdf::data::handle::modify_tofs(&mut mutable_tofs, &scans);
+    rustdf::data::utility::modify_tofs(&mut mutable_tofs, &scans);
 
     // Return the modified `mutable_tofs`.
     mutable_tofs
 }
 #[pyfunction]
 pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {
-    rustdf::data::handle::get_realdata(&peak_cnts, &interleaved)
+    rustdf::data::utility::get_realdata(&peak_cnts, &interleaved)
 }
 
 #[pyfunction]
 pub fn get_data_for_compression(tofs: Vec<u32>, scans: Vec<u32>, intensities: Vec<u32>, max_scans: u32) -> Vec<u8> {
-    rustdf::data::handle::get_data_for_compression(&tofs, &scans, &intensities, max_scans)
+    rustdf::data::utility::get_data_for_compression(&tofs, &scans, &intensities, max_scans)
 }
 
 #[pyfunction]
 pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, intensities: Vec<Vec<u32>>, max_scans: u32, num_threads: usize) -> Vec<Vec<u8>> {
-    rustdf::data::handle::get_data_for_compression_par(tofs, scans, intensities, max_scans, num_threads)
+    rustdf::data::utility::get_data_for_compression_par(tofs, scans, intensities, max_scans, num_threads)
 }
 
 #[pymodule]
