@@ -33,8 +33,8 @@ pub fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 ///
 /// * `compressed_data` - A vector of u8 that holds the compressed data
 ///
-pub fn zstd_compress(decompressed_data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut encoder = zstd::Encoder::new(Vec::new(), 0)?;
+pub fn zstd_compress(decompressed_data: &[u8], compression_level: i32) -> io::Result<Vec<u8>> {
+    let mut encoder = zstd::Encoder::new(Vec::new(), compression_level)?;
     encoder.write_all(decompressed_data)?;
     let compressed_data = encoder.finish()?;
     Ok(compressed_data)
@@ -45,6 +45,7 @@ pub fn reconstruct_compressed_data(
     mut tofs: Vec<u32>,
     intensities: Vec<u32>,
     total_scans: u32,
+    compression_level: i32,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // Ensuring all vectors have the same length
     assert_eq!(scans.len(), tofs.len());
@@ -67,7 +68,7 @@ pub fn reconstruct_compressed_data(
     let real_data = get_realdata(&peak_cnts, &interleaved);
 
     // Compress real_data using zstd_compress
-    let compressed_data = zstd_compress(&real_data)?;
+    let compressed_data = zstd_compress(&real_data, compression_level)?;
 
     // Final data preparation with compressed data
     let mut final_data = Vec::new();
@@ -84,7 +85,7 @@ pub fn reconstruct_compressed_data(
     Ok(final_data)
 }
 
-pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, num_threads: usize) -> Vec<Vec<u8>> {
+pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, compression_level: i32, num_threads: usize) -> Vec<Vec<u8>> {
 
     let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
 
@@ -95,6 +96,7 @@ pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, num_thre
                 frame.tof.iter().map(|&x| x as u32).collect(),
                 frame.ims_frame.intensity.iter().map(|&x| x as u32).collect(),
                 max_scan_count,
+                compression_level,
             ).unwrap();
             compressed_data
         }).collect()
