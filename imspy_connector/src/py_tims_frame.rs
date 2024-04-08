@@ -20,8 +20,8 @@ impl PyRawTimsFrame {
     pub unsafe fn new(frame_id: i32,
                       ms_type: i32,
                       retention_time: f64,
-                      scan: &PyArray1<i32>,
-                      tof: &PyArray1<i32>,
+                      scan: &PyArray1<u32>,
+                      tof: &PyArray1<u32>,
                       intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyRawTimsFrame {
             inner: RawTimsFrame {
@@ -40,12 +40,12 @@ impl PyRawTimsFrame {
         self.inner.intensity.clone().into_pyarray(py).to_owned()
     }
     #[getter]
-    pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
+    pub fn scan(&self, py: Python) -> Py<PyArray1<u32>> {
         self.inner.scan.clone().into_pyarray(py).to_owned()
     }
 
     #[getter]
-    pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
+    pub fn tof(&self, py: Python) -> Py<PyArray1<u32>> {
         self.inner.tof.clone().into_pyarray(py).to_owned()
     }
 

@@ -1,10 +1,16 @@
-use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
+use std::fs::File;
+use std::io::{Read, Cursor};
+use std::path::PathBuf;
+use byteorder::{LittleEndian, ReadBytesExt};
+use mscore::data::spectrum::MsType;
+use mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
-use crate::data::handle::{AcquisitionMode, TimsDataHandle};
+use crate::data::handle::{AcquisitionMode};
 use crate::data::meta::{FrameMeta, GlobalMetaData, read_global_meta_sql, read_meta_data_sql};
 use crate::data::raw::BrukerTimsDataLibrary;
+use crate::data::utility::{parse_decompressed_bruker_binary_data, zstd_decompress};
 
-trait TimsData {
+pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
     fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame;
     fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
@@ -20,35 +26,46 @@ trait IndexConverter {
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<u32>;
 }
 
-pub struct BrukerLibTimsDataConverter {
-    pub data_path: String,
-    pub bruker_lib_path: String,
-    pub bruker_lib: BrukerTimsDataLibrary,
-    pub global_meta_data: GlobalMetaData,
+pub struct SimpleIndexConverter {
+
 }
 
-struct SimpleIndexConverter {
-
+impl SimpleIndexConverter {
+    pub fn new() -> Self {
+        SimpleIndexConverter {}
+    }
 }
 
 impl IndexConverter for SimpleIndexConverter {
     fn tof_to_mz(&self, _frame_id: u32, _tof_values: &Vec<u32>) -> Vec<f64> {
-        todo!("Implement this method")
+        todo!()
     }
 
     fn mz_to_tof(&self, _frame_id: u32, _mz_values: &Vec<f64>) -> Vec<u32> {
-        todo!("Implement this method")
+        todo!()
     }
 
     fn scan_to_inverse_mobility(&self, _frame_id: u32, _scan_values: &Vec<u32>) -> Vec<f64> {
-        todo!("Implement this method")
+        todo!()
     }
 
     fn inverse_mobility_to_scan(&self, _frame_id: u32, _inverse_mobility_values: &Vec<f64>) -> Vec<u32> {
-        todo!("Implement this method")
+        todo!()
     }
 }
 
+pub struct BrukerLibTimsDataConverter {
+    pub bruker_lib: BrukerTimsDataLibrary,
+}
+
+impl BrukerLibTimsDataConverter {
+    pub fn new(bruker_lib_path: &str, data_path: &str) -> Self {
+        let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path).unwrap();
+        BrukerLibTimsDataConverter {
+            bruker_lib,
+        }
+    }
+}
 impl IndexConverter for BrukerLibTimsDataConverter {
     /// translate tof to mz values calling the bruker library
     ///
@@ -185,67 +202,161 @@ impl IndexConverter for TimsIndexConverter {
 
 
 pub struct TimsLazyLoder {
-    handle: TimsDataHandle,
-    global_meta_data: GlobalMetaData,
-    frame_meta_data: Vec<FrameMeta>,
+    pub raw_data_layout: TimsRawDataLayout,
+    pub index_converter: TimsIndexConverter,
 }
 
 impl TimsData for TimsLazyLoder {
-    fn get_frame(&self, frame_id: u32) -> TimsFrame {
-        self.handle.get_frame(frame_id).unwrap()
+    fn get_frame(&self, _frame_id: u32) -> TimsFrame {
+        todo!()
     }
 
-    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
-        self.handle.get_raw_frame(frame_id).unwrap()
+    fn get_raw_frame(&self, _frame_id: u32) -> RawTimsFrame {
+        todo!()
     }
 
-    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
-        self.handle.get_tims_slice(frame_ids)
+    fn get_slice(&self, _frame_ids: Vec<u32>) -> TimsSlice {
+        todo!()
     }
 
     fn get_acquisition_mode(&self) -> AcquisitionMode {
-        self.handle.acquisition_mode.clone()
+        todo!()
     }
 
     fn get_frame_count(&self) -> i32 {
-        self.handle.get_frame_count()
+        todo!()
     }
 
     fn get_data_path(&self) -> &str {
-        &self.handle.data_path
+        todo!()
+    }
+}
+
+
+pub struct TimsRawDataLayout {
+    pub global_meta_data: GlobalMetaData,
+    pub frame_meta_data: Vec<FrameMeta>,
+    pub max_scan_count: i64,
+    pub frame_id_ptr: Vec<i64>,
+    pub tims_offset_values: Vec<i64>,
+    pub acquisition_mode: AcquisitionMode,
+}
+
+impl TimsRawDataLayout {
+    pub fn new(data_path: &str) -> Self {
+        // get the global and frame meta data
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+        let frame_meta_data = read_meta_data_sql(data_path).unwrap();
+
+        // get the max scan count
+        let max_scan_count = frame_meta_data.iter().map(|x| x.num_scans).max().unwrap();
+
+        let mut frame_id_ptr: Vec<i64> = Vec::new();
+        frame_id_ptr.resize(frame_meta_data.len() + 1, 0);
+
+        // get the frame id_ptr values
+        for (i, row) in frame_meta_data.iter().enumerate() {
+            frame_id_ptr[i + 1] = row.num_peaks + frame_id_ptr[i];
+        }
+
+        // get the tims offset values
+        let tims_offset_values = frame_meta_data.iter().map(|x| x.tims_id).collect::<Vec<i64>>();
+
+        // get the acquisition mode
+        let acquisition_mode = match frame_meta_data[0].scan_mode {
+            8 => AcquisitionMode::DDA,
+            9 => AcquisitionMode::DIA,
+            _ => AcquisitionMode::Unknown,
+        };
+
+        TimsRawDataLayout {
+            global_meta_data,
+            frame_meta_data,
+            max_scan_count,
+            frame_id_ptr,
+            tims_offset_values,
+            acquisition_mode
+        }
     }
 }
 
 pub struct TimsInMemoryLoader {
-    handle: TimsDataHandle,
-    global_meta_data: GlobalMetaData,
-    frame_meta_data: Vec<FrameMeta>,
+    raw_data_layout: TimsRawDataLayout,
+    index_converter: TimsIndexConverter,
     compressed_data: Vec<u8>
 }
 
 impl TimsData for TimsInMemoryLoader {
     fn get_frame(&self, frame_id: u32) -> TimsFrame {
-        self.handle.get_frame(frame_id).unwrap()
+        let raw_frame = self.get_raw_frame(frame_id);
+        let mz = self.index_converter.tof_to_mz(frame_id, &raw_frame.tof);
+        let inverse_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &raw_frame.scan);
+
+        let ims_frame = ImsFrame {
+            retention_time: raw_frame.retention_time,
+            mz,
+            intensity: raw_frame.intensity,
+            mobility: inverse_mobility,
+        };
+
+        TimsFrame {
+            frame_id: frame_id as i32,
+            ms_type: raw_frame.ms_type,
+            scan: raw_frame.scan.iter().map(|&x| x as i32).collect(),
+            tof: raw_frame.tof.iter().map(|&x| x as i32).collect(),
+            ims_frame,
+        }
     }
 
     fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
-        self.handle.get_raw_frame(frame_id).unwrap()
+        let frame_index = (frame_id - 1) as usize;
+        let offset = self.raw_data_layout.tims_offset_values[frame_index] as usize;
+
+        let bin_size_offset = offset + 4; // Assuming the size is stored immediately before the frame data
+        let bin_size = Cursor::new(&self.compressed_data[offset..bin_size_offset]).read_i32::<LittleEndian>().unwrap();
+
+        let data_offset = bin_size_offset + 4; // Adjust based on actual structure
+        let frame_data = &self.compressed_data[data_offset..data_offset + bin_size as usize - 8];
+
+        let decompressed_bytes = zstd_decompress(&frame_data).unwrap();
+
+        let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes).unwrap();
+
+        let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+
+        let ms_type = match ms_type_raw {
+            0 => MsType::Precursor,
+            8 => MsType::FragmentDda,
+            9 => MsType::FragmentDia,
+            _ => MsType::Unknown,
+        };
+
+        let raw_frame = RawTimsFrame {
+            frame_id: frame_id as i32,
+            retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time,
+            ms_type,
+            scan: scan,
+            tof: tof,
+            intensity: intensity.iter().map(|&x| x as f64).collect(),
+        };
+
+        raw_frame
     }
 
-    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
-        self.handle.get_tims_slice(frame_ids)
+    fn get_slice(&self, _frame_ids: Vec<u32>) -> TimsSlice {
+        todo!()
     }
 
     fn get_acquisition_mode(&self) -> AcquisitionMode {
-        self.handle.acquisition_mode.clone()
+        todo!()
     }
 
     fn get_frame_count(&self) -> i32 {
-        self.handle.get_frame_count()
+        todo!()
     }
 
     fn get_data_path(&self) -> &str {
-        &self.handle.data_path
+        todo!()
     }
 }
 
@@ -256,26 +367,28 @@ pub enum TimsDataLoader {
 
 impl TimsDataLoader {
     pub fn new_lazy(bruker_lib_path: &str, data_path: &str) -> Self {
-        let handle = TimsDataHandle::new(bruker_lib_path, data_path).unwrap();
-        let global_meta_data = read_global_meta_sql(&handle.data_path).unwrap();
-        let frame_meta_data = read_meta_data_sql(&handle.data_path).unwrap();
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path));
         TimsDataLoader::Lazy(TimsLazyLoder {
-            handle,
-            global_meta_data,
-            frame_meta_data
+            raw_data_layout,
+            index_converter
         })
     }
 
     pub fn new_in_memory(bruker_lib_path: &str, data_path: &str) -> Self {
-        let handle = TimsDataHandle::new(bruker_lib_path, data_path).unwrap();
-        let global_meta_data = read_global_meta_sql(&handle.data_path).unwrap();
-        let frame_meta_data = read_meta_data_sql(&handle.data_path).unwrap();
-        let compressed_data = handle.read_compressed_data_full();
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path));
+
+        let mut file_path = PathBuf::from(data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(file_path).unwrap();
+        let mut data = Vec::new();
+        infile.read_to_end(&mut data).unwrap();
+
         TimsDataLoader::InMemory(TimsInMemoryLoader {
-            handle,
-            global_meta_data,
-            frame_meta_data,
-            compressed_data
+            raw_data_layout,
+            index_converter,
+            compressed_data: data
         })
     }
 }
@@ -287,7 +400,6 @@ impl TimsData for TimsDataLoader {
             TimsDataLoader::Lazy(loader) => loader.get_frame(frame_id)
         }
     }
-
     fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
         match self {
             TimsDataLoader::InMemory(loader) => loader.get_raw_frame(frame_id),

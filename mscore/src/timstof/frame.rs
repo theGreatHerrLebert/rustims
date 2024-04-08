@@ -13,8 +13,8 @@ pub struct RawTimsFrame {
     pub frame_id: i32,
     pub retention_time: f64,
     pub ms_type: MsType,
-    pub scan: Vec<i32>,
-    pub tof: Vec<i32>,
+    pub scan: Vec<u32>,
+    pub tof: Vec<u32>,
     pub intensity: Vec<f64>,
 }
 

@@ -317,8 +317,8 @@ impl TimsDataHandle {
                     frame_id: frame_id as i32,
                     retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
                     ms_type,
-                    scan: scan.iter().map(|&x| x as i32).collect(),
-                    tof: tof.iter().map(|&x| x as i32).collect(),
+                    scan,
+                    tof,
                     intensity: intensity.iter().map(|&x| x as f64).collect(),
                 })
             },
