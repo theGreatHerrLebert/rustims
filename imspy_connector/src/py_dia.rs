@@ -40,6 +40,10 @@ impl PyTimsDatasetDIA {
     pub fn get_bruker_lib_path(&self) -> &str {
         self.inner.get_bruker_lib_path()
     }
+
+    pub fn read_compressed_data_full(&self) -> Vec<u8> {
+        self.inner.read_compressed_data_full()
+    }
 }
 
 #[pymodule]

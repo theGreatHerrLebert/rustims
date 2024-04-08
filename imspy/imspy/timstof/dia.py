@@ -1,4 +1,6 @@
 import sqlite3
+from typing import List
+
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 
@@ -30,3 +32,11 @@ class TimsDatasetDIA(TimsDataset):
         """
         return pd.read_sql_query("SELECT * from DiaFrameMsMsInfo",
                                  sqlite3.connect(self.data_path + "/analysis.tdf"))
+
+    def read_compressed_data_full(self) -> List[bytes]:
+        """Read compressed data.
+
+        Returns:
+            List[bytes]: Compressed data.
+        """
+        return self.__dataset.read_compressed_data_full()

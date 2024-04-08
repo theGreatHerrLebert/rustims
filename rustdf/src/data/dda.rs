@@ -114,4 +114,8 @@ impl TimsData for TimsDatasetDDA {
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32> {
         self.handle.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
     }
+
+    fn read_compressed_data_full(&self) -> Vec<u8> {
+        self.handle.read_compressed_data_full()
+    }
 }

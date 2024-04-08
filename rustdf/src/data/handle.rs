@@ -29,6 +29,7 @@ pub trait TimsData {
 
     fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64>;
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32>;
+    fn read_compressed_data_full(&self) -> Vec<u8>;
 }
 
 /// Decompresses a ZSTD compressed byte array
@@ -629,6 +630,22 @@ impl TimsDataHandle {
     ///
     pub fn get_frame_count(&self) -> i32 {
         self.frame_meta_data.len() as i32
+    }
+
+    /// read all bytes from the compressed data file
+    ///
+    /// # Returns
+    ///
+    /// * `compressed_data` - A vector of u8 that holds the compressed data
+    pub fn read_compressed_data_full(&self) -> Vec<u8> {
+        let mut file_path = PathBuf::from(&self.data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(&file_path).unwrap();
+
+        let mut compressed_data = Vec::new();
+        infile.read_to_end(&mut compressed_data).unwrap();
+
+        compressed_data
     }
 }
 
