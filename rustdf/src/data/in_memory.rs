@@ -8,7 +8,7 @@ use mscore::timstof::slice::TimsSlice;
 use crate::data::handle::{AcquisitionMode};
 use crate::data::meta::{FrameMeta, GlobalMetaData, read_global_meta_sql, read_meta_data_sql};
 use crate::data::raw::BrukerTimsDataLibrary;
-use crate::data::utility::{parse_decompressed_bruker_binary_data, zstd_decompress};
+use crate::data::utility::{flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress};
 
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
@@ -288,9 +288,13 @@ pub struct TimsInMemoryLoader {
 
 impl TimsData for TimsInMemoryLoader {
     fn get_frame(&self, frame_id: u32) -> TimsFrame {
+
         let raw_frame = self.get_raw_frame(frame_id);
+        let tof_i32 = raw_frame.tof.iter().map(|&x| x as i32).collect();
+        let scan = flatten_scan_values(&raw_frame.scan, true);
+
         let mz = self.index_converter.tof_to_mz(frame_id, &raw_frame.tof);
-        let inverse_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &raw_frame.scan);
+        let inverse_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &scan);
 
         let ims_frame = ImsFrame {
             retention_time: raw_frame.retention_time,
@@ -302,8 +306,8 @@ impl TimsData for TimsInMemoryLoader {
         TimsFrame {
             frame_id: frame_id as i32,
             ms_type: raw_frame.ms_type,
-            scan: raw_frame.scan.iter().map(|&x| x as i32).collect(),
-            tof: raw_frame.tof.iter().map(|&x| x as i32).collect(),
+            scan: scan.iter().map(|&x| x as i32).collect(),
+            tof: tof_i32,
             ims_frame,
         }
     }

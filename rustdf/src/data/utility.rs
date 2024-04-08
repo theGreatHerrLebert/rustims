@@ -257,3 +257,10 @@ pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, i
 
     result
 }
+
+pub fn flatten_scan_values(scan: &Vec<u32>, zero_indexed: bool) -> Vec<u32> {
+    let add = if zero_indexed { 0 } else { 1 };
+    scan.iter().enumerate()
+        .flat_map(|(index, &count)| vec![(index + add) as u32; count as usize]
+            .into_iter()).collect()
+}
