@@ -122,8 +122,8 @@ impl PyMzSpectrum {
         serde_json::to_string(&self.inner).unwrap()
     }
 
-    pub fn add_mz_noise_uniform(&self, noise_ppm: f64) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.add_mz_noise_uniform(noise_ppm) }
+    pub fn add_mz_noise_uniform(&self, noise_ppm: f64, right_drag: bool) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.add_mz_noise_uniform(noise_ppm, right_drag) }
     }
 
     pub fn add_mz_noise_normal(&self, noise_ppm: f64) -> PyMzSpectrum {
