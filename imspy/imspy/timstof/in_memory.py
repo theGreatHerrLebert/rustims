@@ -23,7 +23,7 @@ class TimsDatasetInMemory:
         appropriate_found = False
         for so_path in obb.get_so_paths():
             try:
-                self.__dataset = ims.PyTimsDataset(self.data_path, so_path)
+                self.__dataset = ims.PyTimsDatasetInMemory(self.data_path, so_path)
                 self.binary_path = so_path
                 appropriate_found = True
                 break
@@ -31,5 +31,3 @@ class TimsDatasetInMemory:
                 continue
         assert appropriate_found is True, ("No appropriate bruker binary could be found, please check if your "
                                            "operating system is supported by open-tims-bruker-bridge.")
-
-        self.__dataset = ims.PyTimsDatasetInMemory(self.data_path, self.binary_path)
