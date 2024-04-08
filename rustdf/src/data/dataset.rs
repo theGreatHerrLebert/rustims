@@ -23,7 +23,7 @@ impl TimsData for TimsDataset {
         self.handle.get_tims_slice(frame_ids)
     }
     // Get the acquisition mode, DDA or DIA
-    fn get_aquisition_mode(&self) -> AcquisitionMode {
+    fn get_acquisition_mode(&self) -> AcquisitionMode {
         self.handle.acquisition_mode.clone()
     }
     // Get total number of frames in the dataset
@@ -53,9 +53,5 @@ impl TimsData for TimsDataset {
     // convert scan values to inverse mobility values given a valid data handle and frame id
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32> {
         self.handle.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
-    }
-
-    fn read_compressed_data_full(&self) -> Vec<u8> {
-        self.handle.read_compressed_data_full()
     }
 }

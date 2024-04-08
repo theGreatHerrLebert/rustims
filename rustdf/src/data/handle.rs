@@ -19,7 +19,7 @@ use rayon::ThreadPoolBuilder;
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
     fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
-    fn get_aquisition_mode(&self) -> AcquisitionMode;
+    fn get_acquisition_mode(&self) -> AcquisitionMode;
     fn get_frame_count(&self) -> i32;
     fn get_data_path(&self) -> &str;
     fn get_bruker_lib_path(&self) -> &str;
@@ -29,7 +29,6 @@ pub trait TimsData {
 
     fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64>;
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32>;
-    fn read_compressed_data_full(&self) -> Vec<u8>;
 }
 
 /// Decompresses a ZSTD compressed byte array

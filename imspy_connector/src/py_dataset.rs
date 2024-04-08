@@ -31,11 +31,11 @@ impl PyTimsDataset {
     }
 
     pub fn get_acquisition_mode(&self) -> String {
-        self.inner.get_aquisition_mode().to_string()
+        self.inner.get_acquisition_mode().to_string()
     }
 
     pub fn get_acquisition_mode_numeric(&self) -> i32 {
-        self.inner.get_aquisition_mode().to_i32()
+        self.inner.get_acquisition_mode().to_i32()
     }
 
     pub fn get_frame_count(&self) -> i32 {

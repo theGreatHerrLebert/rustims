@@ -26,7 +26,7 @@ impl PyTimsDatasetDDA {
     }
 
     pub fn get_aquisition_mode(&self) -> String {
-        self.inner.get_aquisition_mode().to_string()
+        self.inner.get_acquisition_mode().to_string()
     }
 
     pub fn get_frame_count(&self) -> i32 {

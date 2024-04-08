@@ -26,7 +26,7 @@ impl PyTimsDatasetDIA {
     }
 
     pub fn get_aquisition_mode(&self) -> String {
-        self.inner.get_aquisition_mode().to_string()
+        self.inner.get_acquisition_mode().to_string()
     }
 
     pub fn get_frame_count(&self) -> i32 {
@@ -39,10 +39,6 @@ impl PyTimsDatasetDIA {
 
     pub fn get_bruker_lib_path(&self) -> &str {
         self.inner.get_bruker_lib_path()
-    }
-
-    pub fn read_compressed_data_full(&self) -> Vec<u8> {
-        self.inner.read_compressed_data_full()
     }
 }
 
