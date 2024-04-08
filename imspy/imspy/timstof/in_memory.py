@@ -1,8 +1,10 @@
 import opentims_bruker_bridge as obb
 
 import imspy_connector
+from numpy.typing import NDArray
 
 from imspy.timstof.frame import TimsFrame
+from imspy.timstof.slice import TimsSlice
 
 ims = imspy_connector.py_tdf_inmem
 
@@ -40,3 +42,10 @@ class TimsDatasetInMemory:
             TimsFrame: Frame.
         """
         return TimsFrame.from_py_tims_frame(self.__dataset.get_frame(frame_id))
+
+    def get_slice(self, frame_ids: NDArray, num_threads: int = 4) -> TimsSlice:
+        """Get a slice.
+        Returns:
+            TimsSlice: Slice.
+        """
+        return TimsSlice.from_py_tims_slice(self.__dataset.get_slice(frame_ids, num_threads))

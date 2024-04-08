@@ -10,10 +10,13 @@ use crate::data::meta::{FrameMeta, GlobalMetaData, read_global_meta_sql, read_me
 use crate::data::raw::BrukerTimsDataLibrary;
 use crate::data::utility::{flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress};
 
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
     fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame;
-    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice;
     fn get_acquisition_mode(&self) -> AcquisitionMode;
     fn get_frame_count(&self) -> i32;
     fn get_data_path(&self) -> &str;
@@ -215,7 +218,7 @@ impl TimsData for TimsLazyLoder {
         todo!()
     }
 
-    fn get_slice(&self, _frame_ids: Vec<u32>) -> TimsSlice {
+    fn get_slice(&self, _frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
         todo!()
     }
 
@@ -347,8 +350,17 @@ impl TimsData for TimsInMemoryLoader {
         raw_frame
     }
 
-    fn get_slice(&self, _frame_ids: Vec<u32>) -> TimsSlice {
-        todo!()
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let frames = pool.install(|| {
+            frame_ids.par_iter().map(|&frame_id| {
+                self.get_frame(frame_id)
+            }).collect()
+        });
+
+        TimsSlice {
+            frames
+        }
     }
 
     fn get_acquisition_mode(&self) -> AcquisitionMode {
@@ -411,10 +423,10 @@ impl TimsData for TimsDataLoader {
         }
     }
 
-    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
         match self {
-            TimsDataLoader::InMemory(loader) => loader.get_slice(frame_ids),
-            TimsDataLoader::Lazy(loader) => loader.get_slice(frame_ids)
+            TimsDataLoader::InMemory(loader) => loader.get_slice(frame_ids, num_threads),
+            TimsDataLoader::Lazy(loader) => loader.get_slice(frame_ids, num_threads)
         }
     }
 

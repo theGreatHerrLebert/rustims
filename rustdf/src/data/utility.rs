@@ -3,8 +3,9 @@ use std::io::{Read, Write};
 use byteorder::{ByteOrder, LittleEndian};
 use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
-use rayon::iter::IntoParallelRefIterator;
 use rayon::ThreadPoolBuilder;
+use rayon::iter::IntoParallelRefIterator;
+
 
 /// Decompresses a ZSTD compressed byte array
 ///
