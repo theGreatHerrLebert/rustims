@@ -65,10 +65,10 @@ impl PyContributionSource {
     pub fn intensity_contribution(&self) -> f64 { self.intensity_contribution }
 
     #[getter]
-    pub fn source_type(&self) -> PySourceType { self.source_type.clone() }
+    pub fn py_source_type(&self) -> PySourceType { self.source_type.clone() }
 
     #[getter]
-    pub fn signal_attributes(&self) -> Option<PySignalAttributes> { self.signal_attributes.clone() }
+    pub fn py_signal_attributes(&self) -> Option<PySignalAttributes> { self.signal_attributes.clone() }
 }
 
 #[pymodule]
