@@ -138,13 +138,13 @@ impl PyTimsSlice {
 
         let flat_frame = self.inner.flatten();
 
-        let frame_ids_np = flat_frame.frame_ids.into_pyarray(py);
-        let scans_np = flat_frame.scans.into_pyarray(py);
-        let tofs_np = flat_frame.tofs.into_pyarray(py);
-        let retention_times_np = flat_frame.retention_times.into_pyarray(py);
-        let mobilities_np = flat_frame.mobilities.into_pyarray(py);
-        let mzs_np = flat_frame.mzs.into_pyarray(py);
-        let intensities_np = flat_frame.intensities.into_pyarray(py);
+        let frame_ids_np = flat_frame.frame_ids.into_pyarray_bound(py).unbind();
+        let scans_np = flat_frame.scans.into_pyarray_bound(py).unbind();
+        let tofs_np = flat_frame.tofs.into_pyarray_bound(py).unbind();
+        let retention_times_np = flat_frame.retention_times.into_pyarray_bound(py).unbind();
+        let mobilities_np = flat_frame.mobilities.into_pyarray_bound(py).unbind();
+        let mzs_np = flat_frame.mzs.into_pyarray_bound(py).unbind();
+        let intensities_np = flat_frame.intensities.into_pyarray_bound(py).unbind();
 
         Ok((frame_ids_np.to_object(py), scans_np.to_object(py), tofs_np.to_object(py),
             retention_times_np.to_object(py), mobilities_np.to_object(py), mzs_np.to_object(py),
@@ -223,13 +223,13 @@ impl PyTimsSliceVectorized {
 
         let flat_frame = self.inner.flatten();
 
-        let frame_ids_np = flat_frame.frame_ids.into_pyarray(py);
-        let scans_np = flat_frame.scans.into_pyarray(py);
-        let tofs_np = flat_frame.tofs.into_pyarray(py);
-        let retention_times_np = flat_frame.retention_times.into_pyarray(py);
-        let mobilities_np = flat_frame.mobilities.into_pyarray(py);
-        let indices_np = flat_frame.indices.into_pyarray(py);
-        let intensities_np = flat_frame.intensities.into_pyarray(py);
+        let frame_ids_np = flat_frame.frame_ids.into_pyarray_bound(py).unbind();
+        let scans_np = flat_frame.scans.into_pyarray_bound(py).unbind();
+        let tofs_np = flat_frame.tofs.into_pyarray_bound(py).unbind();
+        let retention_times_np = flat_frame.retention_times.into_pyarray_bound(py).unbind();
+        let mobilities_np = flat_frame.mobilities.into_pyarray_bound(py).unbind();
+        let indices_np = flat_frame.indices.into_pyarray_bound(py).unbind();
+        let intensities_np = flat_frame.intensities.into_pyarray_bound(py).unbind();
 
         Ok((frame_ids_np.to_object(py), scans_np.to_object(py), tofs_np.to_object(py),
             retention_times_np.to_object(py), mobilities_np.to_object(py), indices_np.to_object(py),
@@ -270,27 +270,27 @@ impl PyTimsPlane {
 
     #[getter]
     pub fn scans(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.scan.clone().into_pyarray(py).to_owned()
+        self.inner.scan.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn mobilities(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mobility.clone().into_pyarray(py).to_owned()
+        self.inner.mobility.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn frame_ids(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.frame_id.clone().into_pyarray(py).to_owned()
+        self.inner.frame_id.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn retention_times(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.retention_time.clone().into_pyarray(py).to_owned()
+        self.inner.retention_time.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.intensity.clone().into_pyarray_bound(py).unbind()
     }
 }
 

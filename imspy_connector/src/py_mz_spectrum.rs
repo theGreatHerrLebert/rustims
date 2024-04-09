@@ -160,12 +160,12 @@ impl PyMzSpectrumVectorized {
 
     #[getter]
     pub fn indices(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.indices.clone().into_pyarray(py).to_owned()
+        self.inner.indices.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn values(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.values.clone().into_pyarray(py).to_owned()
+        self.inner.values.clone().into_pyarray_bound(py).unbind()
     }
 }
 
@@ -188,17 +188,17 @@ impl PyIndexedMzSpectrum {
 
     #[getter]
     pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.index.clone().into_pyarray(py).to_owned()
+        self.inner.index.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz_spectrum.mz.clone().into_pyarray(py).to_owned()
+        self.inner.mz_spectrum.mz.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.mz_spectrum.intensity.clone().into_pyarray_bound(py).unbind()
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyResult<PyIndexedMzSpectrum> {
@@ -261,17 +261,17 @@ impl PyTimsSpectrum {
 
     #[getter]
     pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.spectrum.index.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.index.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz_spectrum.mz.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.mz_spectrum.mz.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.mz_spectrum.intensity.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]

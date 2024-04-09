@@ -96,9 +96,9 @@ impl PyTimsDataset {
         }
 
         Ok((
-            expanded_scans.into_pyarray(py).to_owned(),
-            tof.into_pyarray(py).to_owned(),
-            intensities.into_pyarray(py).to_owned(),
+            expanded_scans.into_pyarray_bound(py).unbind(),
+            tof.into_pyarray_bound(py).unbind(),
+            intensities.into_pyarray_bound(py).unbind(),
         ))
     }
 
@@ -166,7 +166,7 @@ impl PyTimsDataset {
         let py_list = PyList::empty(py);
 
         for frame in compressed_frames {
-            let np_array = frame.into_pyarray(py).to_owned();
+            let np_array = frame.into_pyarray_bound(py).unbind();
             py_list.append(np_array)?;
         }
 
