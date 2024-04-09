@@ -48,7 +48,7 @@ class SignalAttributes:
         return f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, isotope_peak={self.isotope_peak})"
 
     @classmethod
-    def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAnnotation):
+    def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAttributes):
         instance = cls.__new__(cls)
         instance._signal_annotation = signal_attributes
         return instance
