@@ -52,7 +52,7 @@ class SignalAttributes:
     @classmethod
     def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAttributes) -> 'SignalAttributes':
         instance = cls.__new__(cls)
-        instance._signal_annotation = signal_attributes
+        instance.__signal_attributes = signal_attributes
         return instance
 
     def get_py_ptr(self) -> ims.PySignalAttributes:
