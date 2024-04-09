@@ -5,7 +5,7 @@ ims = imspy_connector.py_annotation
 class SourceType:
     def __init__(self, source_type: str):
         source_type = source_type.lower()
-        known_source_types = ['signal', 'chemical_noise', 'random_noise']
+        known_source_types = ['signal', 'chemical_noise', 'random_noise', 'unknown']
         assert source_type in known_source_types, f"Unknown source type: {source_type}. Known source types: {known_source_types}"
         index = known_source_types.index(source_type)
         self.__source_type = ims.PySourceType(index)

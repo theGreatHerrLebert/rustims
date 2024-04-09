@@ -17,6 +17,7 @@ pub enum SourceType {
     Signal,
     ChemicalNoise,
     RandomNoise,
+    Unknown,
 }
 
 impl SourceType {
@@ -25,6 +26,7 @@ impl SourceType {
             0 => SourceType::Signal,
             1 => SourceType::ChemicalNoise,
             2 => SourceType::RandomNoise,
+            3 => SourceType::Unknown,
             _ => panic!("Invalid source type"),
         }
     }
@@ -36,6 +38,7 @@ impl Display for SourceType {
             SourceType::Signal => write!(f, "Signal"),
             SourceType::ChemicalNoise => write!(f, "ChemicalNoise"),
             SourceType::RandomNoise => write!(f, "RandomNoise"),
+            SourceType::Unknown => write!(f, "Unknown"),
         }
     }
 }
