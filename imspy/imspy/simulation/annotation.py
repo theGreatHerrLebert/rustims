@@ -55,3 +55,32 @@ class SignalAttributes:
 
     def get_py_ptr(self):
         return self.__signal_attributes
+
+
+class ContributionSource:
+    def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: SignalAttributes = None):
+        self.__contribution_source = ims.PyContributionSource(intensity_contribution, source_type.get_py_ptr(), signal_attributes.get_py_ptr() if signal_attributes else None)
+
+    @property
+    def intensity_contribution(self):
+        return self.__contribution_source.intensity_contribution
+
+    @property
+    def source_type(self):
+        return SourceType.from_py_source_type(self.__contribution_source.source_type)
+
+    @property
+    def signal_attributes(self):
+        return SignalAttributes.from_py_signal_annotation(self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
+
+    def __repr__(self):
+        return f"ContributionSource(intensity_contribution={self.intensity_contribution}, source_type={self.source_type}, signal_attributes={self.signal_attributes})"
+
+    @classmethod
+    def from_py_contribution_source(cls, contribution_source: ims.PyContributionSource):
+        instance = cls.__new__(cls)
+        instance._contribution_source = contribution_source
+        return instance
+
+    def get_py_ptr(self):
+        return self.__contribution_source
