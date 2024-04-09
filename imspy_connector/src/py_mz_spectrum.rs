@@ -65,12 +65,11 @@ impl PyMzSpectrum {
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz.clone().into_pyarray(py).to_owned()
+        self.inner.mz.clone().into_pyarray_bound(py).unbind()
     }
-
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.intensity.clone().into_pyarray_bound(py).unbind()
     }
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
         let spectra = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);

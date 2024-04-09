@@ -85,7 +85,7 @@ impl PyTimsDataset {
 
     pub fn scan_tof_intensities_to_compressed_u8(&self, py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32, compression_level: i32) -> Py<PyArray1<u8>> {
         let result = reconstruct_compressed_data(scan_values, tof_values, intensity_values, total_scans, compression_level).unwrap();
-        result.into_pyarray(py).to_owned()
+        result.into_pyarray_bound(py).unbind()
     }
 
     #[staticmethod]

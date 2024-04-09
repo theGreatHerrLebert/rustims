@@ -6,3 +6,4 @@ pub mod dda;
 pub mod dia;
 pub mod in_memory;
 pub mod utility;
+mod acquisition;

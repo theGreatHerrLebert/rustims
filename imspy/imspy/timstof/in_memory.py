@@ -43,7 +43,7 @@ class TimsDatasetInMemory:
         """
         return TimsFrame.from_py_tims_frame(self.__dataset.get_frame(frame_id))
 
-    def get_slice(self, frame_ids: NDArray, num_threads: int = 4) -> TimsSlice:
+    def get_slice(self, frame_ids: NDArray, num_threads: int = 8) -> TimsSlice:
         """Get a slice.
         Returns:
             TimsSlice: Slice.

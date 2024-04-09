@@ -1,4 +1,3 @@
-use std::fmt::Display;
 use super::raw::BrukerTimsDataLibrary;
 use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 
@@ -11,6 +10,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use mscore::data::spectrum::MsType;
 use mscore::timstof::frame::{TimsFrame, ImsFrame, RawTimsFrame};
 use mscore::timstof::slice::TimsSlice;
+use crate::data::acquisition::AcquisitionMode;
 
 use crate::data::utility::{parse_decompressed_bruker_binary_data, zstd_decompress};
 
@@ -28,67 +28,6 @@ pub trait TimsData {
 
     fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64>;
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32>;
-}
-
-#[derive(Debug, Clone)]
-pub enum AcquisitionMode {
-    PRECURSOR,
-    DDA,
-    DIA,
-    Unknown,
-}
-
-impl AcquisitionMode {
-    pub fn to_i32(&self) -> i32 {
-        match self {
-            AcquisitionMode::PRECURSOR => 0,
-            AcquisitionMode::DDA => 8,
-            AcquisitionMode::DIA => 9,
-            AcquisitionMode::Unknown => -1,
-        }
-    }
-
-    pub fn to_str(&self) -> &str {
-        match self {
-            AcquisitionMode::PRECURSOR => "PRECURSOR",
-            AcquisitionMode::DDA => "DDA",
-            AcquisitionMode::DIA => "DIA",
-            AcquisitionMode::Unknown => "UNKNOWN",
-        }
-    }
-}
-
-impl Display for AcquisitionMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AcquisitionMode::PRECURSOR => write!(f, "PRECURSOR"),
-            AcquisitionMode::DDA => write!(f, "DDA"),
-            AcquisitionMode::DIA => write!(f, "DIA"),
-            AcquisitionMode::Unknown => write!(f, "UNKNOWN"),
-        }
-    }
-}
-
-impl From<i32> for AcquisitionMode {
-    fn from(item: i32) -> Self {
-        match item {
-            0 => AcquisitionMode::PRECURSOR,
-            8 => AcquisitionMode::DDA,
-            9 => AcquisitionMode::DIA,
-            _ => AcquisitionMode::Unknown,
-        }
-    }
-}
-
-impl From<&str> for AcquisitionMode {
-    fn from(item: &str) -> Self {
-        match item {
-            "PRECURSOR" => AcquisitionMode::PRECURSOR,
-            "DDA" => AcquisitionMode::DDA,
-            "DIA" => AcquisitionMode::DIA,
-            _ => AcquisitionMode::Unknown,
-        }
-    }
 }
 
 pub struct TimsDataHandle {
@@ -457,21 +396,5 @@ impl TimsDataHandle {
     ///
     pub fn get_frame_count(&self) -> i32 {
         self.frame_meta_data.len() as i32
-    }
-
-    /// read all bytes from the compressed data file
-    ///
-    /// # Returns
-    ///
-    /// * `compressed_data` - A vector of u8 that holds the compressed data
-    pub fn read_compressed_data_full(&self) -> Vec<u8> {
-        let mut file_path = PathBuf::from(&self.data_path);
-        file_path.push("analysis.tdf_bin");
-        let mut infile = File::open(&file_path).unwrap();
-
-        let mut compressed_data = Vec::new();
-        infile.read_to_end(&mut compressed_data).unwrap();
-
-        compressed_data
     }
 }

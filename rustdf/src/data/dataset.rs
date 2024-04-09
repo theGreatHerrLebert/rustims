@@ -1,6 +1,7 @@
 use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::slice::TimsSlice;
-use crate::data::handle::{TimsDataHandle, TimsData, AcquisitionMode};
+use crate::data::acquisition::AcquisitionMode;
+use crate::data::handle::{TimsDataHandle, TimsData};
 
 pub struct TimsDataset {
     pub handle: TimsDataHandle,

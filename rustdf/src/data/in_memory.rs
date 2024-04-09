@@ -5,13 +5,13 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use mscore::data::spectrum::MsType;
 use mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
-use crate::data::handle::{AcquisitionMode};
 use crate::data::meta::{FrameMeta, GlobalMetaData, read_global_meta_sql, read_meta_data_sql};
 use crate::data::raw::BrukerTimsDataLibrary;
 use crate::data::utility::{flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress};
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+use crate::data::acquisition::AcquisitionMode;
 
 pub trait TimsData {
     fn get_frame(&self, frame_id: u32) -> TimsFrame;
@@ -22,22 +22,14 @@ pub trait TimsData {
     fn get_data_path(&self) -> &str;
 }
 
-trait IndexConverter {
+pub trait IndexConverter {
     fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
     fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
     fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64>;
     fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<u32>;
 }
 
-pub struct SimpleIndexConverter {
-
-}
-
-impl SimpleIndexConverter {
-    pub fn new() -> Self {
-        SimpleIndexConverter {}
-    }
-}
+pub struct SimpleIndexConverter;
 
 impl IndexConverter for SimpleIndexConverter {
     fn tof_to_mz(&self, _frame_id: u32, _tof_values: &Vec<u32>) -> Vec<f64> {
@@ -206,7 +198,7 @@ impl IndexConverter for TimsIndexConverter {
 
 pub struct TimsLazyLoder {
     pub raw_data_layout: TimsRawDataLayout,
-    pub index_converter: TimsIndexConverter,
+    index_converter: TimsIndexConverter,
 }
 
 impl TimsData for TimsLazyLoder {
@@ -218,7 +210,7 @@ impl TimsData for TimsLazyLoder {
         todo!()
     }
 
-    fn get_slice(&self, _frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
+    fn get_slice(&self, _frame_ids: Vec<u32>, _num_threads: usize) -> TimsSlice {
         todo!()
     }
 

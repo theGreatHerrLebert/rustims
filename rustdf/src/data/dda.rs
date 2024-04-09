@@ -2,7 +2,8 @@ use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::slice::TimsSlice;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use crate::data::handle::{TimsDataHandle, TimsData, AcquisitionMode};
+use crate::data::acquisition::AcquisitionMode;
+use crate::data::handle::{TimsDataHandle, TimsData};
 use crate::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta, read_pasef_frame_ms_ms_info};
 
 #[derive(Clone)]
