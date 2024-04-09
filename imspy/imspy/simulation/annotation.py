@@ -11,23 +11,19 @@ class SourceType:
         self.__source_type = ims.PySourceType(index)
 
     @property
-    def source_type(self):
+    def source_type(self) -> str:
         return self.__source_type.source_type
 
-    @property
-    def source_type_numeric(self):
-        return self.known_source_types.index(self.source_type.lower())
-
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"SourceType(source_type={self.source_type})"
 
     @classmethod
-    def from_py_source_type(cls, source_type: ims.PySourceType):
+    def from_py_source_type(cls, source_type: ims.PySourceType) -> 'SourceType':
         instance = cls.__new__(cls)
         instance._source_type = source_type
         return instance
 
-    def get_py_ptr(self):
+    def get_py_ptr(self) -> ims.PySourceType:
         return self.__source_type
 
 
@@ -52,39 +48,39 @@ class SignalAttributes:
         return f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, isotope_peak={self.isotope_peak})"
 
     @classmethod
-    def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAttributes):
+    def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAttributes) -> 'SignalAttributes':
         instance = cls.__new__(cls)
         instance._signal_annotation = signal_attributes
         return instance
 
-    def get_py_ptr(self):
+    def get_py_ptr(self) -> ims.PySignalAttributes:
         return self.__signal_attributes
 
 
 class ContributionSource:
     def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: SignalAttributes = None):
-        self.__contribution_source = ims.PyContributionSource(intensity_contribution, source_type.source_type_numeric, signal_attributes.get_py_ptr() if signal_attributes else None)
+        self.__contribution_source = ims.PyContributionSource(intensity_contribution, source_type.get_py_ptr(), signal_attributes.get_py_ptr() if signal_attributes else None)
 
     @property
-    def intensity_contribution(self):
+    def intensity_contribution(self) -> float:
         return self.__contribution_source.intensity_contribution
 
     @property
-    def source_type(self):
+    def source_type(self) -> SourceType:
         return SourceType.from_py_source_type(self.__contribution_source.source_type)
 
     @property
-    def signal_attributes(self):
+    def signal_attributes(self) -> SignalAttributes:
         return SignalAttributes.from_py_signal_annotation(self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"ContributionSource(intensity_contribution={self.intensity_contribution}, source_type={self.source_type}, signal_attributes={self.signal_attributes})"
 
     @classmethod
-    def from_py_contribution_source(cls, contribution_source: ims.PyContributionSource):
+    def from_py_contribution_source(cls, contribution_source: ims.PyContributionSource) -> 'ContributionSource':
         instance = cls.__new__(cls)
         instance._contribution_source = contribution_source
         return instance
 
-    def get_py_ptr(self):
+    def get_py_ptr(self) -> ims.PyContributionSource:
         return self.__contribution_source
