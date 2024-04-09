@@ -22,7 +22,7 @@ class SourceType:
     @classmethod
     def from_py_source_type(cls, source_type: ims.PySourceType) -> 'SourceType':
         instance = cls.__new__(cls)
-        instance._source_type = source_type
+        instance.__source_type = source_type
         return instance
 
     def get_py_ptr(self) -> ims.PySourceType:
@@ -60,7 +60,7 @@ class SignalAttributes:
 
 
 class ContributionSource:
-    def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: SignalAttributes = None):
+    def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: Union[None, SignalAttributes] = None):
         self.__contribution_source = ims.PyContributionSource(
             intensity_contribution,
             source_type.get_py_ptr(),
