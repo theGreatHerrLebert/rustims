@@ -161,6 +161,12 @@ def main():
         default=5.0,
         help="Fragment noise in ppm (default: 5.0)"
     )
+    parser.add_argument(
+        "--mz_noise_uniform",
+        type=bool,
+        default=False,
+        help="Use uniform distribution for m/z noise (default: False), otherwise normal distribution"
+    )
 
     parser.add_argument(
         "--add_real_data_noise",
@@ -327,12 +333,13 @@ def main():
         batch_size=args.batch_size,
         verbose=verbose,
         mz_noise_precursor=args.mz_noise_precursor,
+        mz_noise_uniform=args.mz_noise_uniform,
         precursor_noise_ppm=args.precursor_noise_ppm,
         mz_noise_fragment=args.mz_noise_fragment,
         fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
         add_real_data_noise=args.add_real_data_noise,
-        reference_noise_intensity_max=args.reference_noise_intensity_max
+        reference_noise_intensity_max=args.reference_noise_intensity_max,
     )
 
 

@@ -25,6 +25,7 @@ class TimsTofSyntheticFrameBuilderDIA:
                     frame_id: int,
                     fragment: bool = True,
                     mz_noise_precursor: bool = False,
+                    mz_noise_uniform: bool = False,
                     precursor_noise_ppm: float = 5.,
                     mz_noise_fragment: bool = False,
                     fragment_noise_ppm: float = 5.,
@@ -36,6 +37,7 @@ class TimsTofSyntheticFrameBuilderDIA:
             fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
             otherwise quadrupole isolation will still be applied but no fragmentation.
             mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            mz_noise_uniform (bool): if true, noise will be added to the precursor m/z values uniformly.
             precursor_noise_ppm (float): PPM of the precursor noise.
             mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
             fragment_noise_ppm (float): PPM of the fragment noise.
@@ -44,7 +46,7 @@ class TimsTofSyntheticFrameBuilderDIA:
         Returns:
             TimsFrame: Frame.
         """
-        frame = self.handle.build_frame(frame_id, fragment, mz_noise_precursor, precursor_noise_ppm,
+        frame = self.handle.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm,
                                         mz_noise_fragment, fragment_noise_ppm, right_drag)
 
         return TimsFrame.from_py_tims_frame(frame)
@@ -53,6 +55,7 @@ class TimsTofSyntheticFrameBuilderDIA:
                      frame_ids: List[int],
                      fragment: bool = True,
                      mz_noise_precursor: bool = False,
+                     mz_noise_uniform: bool = False,
                      precursor_noise_ppm: float = 5.,
                      mz_noise_fragment: bool = False,
                      fragment_noise_ppm: float = 5.,
@@ -65,6 +68,7 @@ class TimsTofSyntheticFrameBuilderDIA:
             fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
             otherwise quadrupole isolation will still be applied but no fragmentation.
             mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            mz_noise_uniform (bool): if true, noise will be added to the precursor m/z values uniformly.
             precursor_noise_ppm (float): PPM of the precursor noise.
             mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
             fragment_noise_ppm (float): PPM of the fragment noise.
@@ -74,7 +78,8 @@ class TimsTofSyntheticFrameBuilderDIA:
         Returns:
             List[TimsFrame]: Frames.
         """
-        frames = self.handle.build_frames(frame_ids, fragment, mz_noise_precursor, precursor_noise_ppm,
+        frames = self.handle.build_frames(frame_ids, fragment, mz_noise_precursor, mz_noise_uniform,
+                                          precursor_noise_ppm,
                                           mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
@@ -92,14 +97,15 @@ class TimsTofSyntheticPrecursorFrameBuilder:
     def __init__(self, db_path: str):
         self.handle = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
-    def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrame:
-        frame = self.handle.build_precursor_frame(frame_id, mz_noise_precursor, precursor_noise_ppm, right_drag)
+    def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrame:
+        frame = self.handle.build_precursor_frame(frame_id, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag)
         return TimsFrame.from_py_tims_frame(frame)
 
-    def build_precursor_frames(self, frame_ids: List[int], mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5.,
+    def build_precursor_frames(self, frame_ids: List[int], mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
                                right_drag: bool = True,
                                num_threads: int = 4):
-        frames = self.handle.build_precursor_frames(frame_ids, mz_noise_precursor, precursor_noise_ppm,
+        frames = self.handle.build_precursor_frames(frame_ids, mz_noise_precursor, mz_noise_uniform,
+                                                    precursor_noise_ppm,
                                                     right_drag,
                                                     num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
