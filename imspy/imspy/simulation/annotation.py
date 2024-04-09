@@ -63,7 +63,7 @@ class SignalAttributes:
 
 class ContributionSource:
     def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: SignalAttributes = None):
-        self.__contribution_source = ims.PyContributionSource(intensity_contribution, source_type.get_py_ptr(), signal_attributes.get_py_ptr() if signal_attributes else None)
+        self.__contribution_source = ims.PyContributionSource(intensity_contribution, source_type.source_type_numeric, signal_attributes.get_py_ptr() if signal_attributes else None)
 
     @property
     def intensity_contribution(self):
