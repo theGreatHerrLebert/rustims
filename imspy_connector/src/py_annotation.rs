@@ -16,7 +16,7 @@ impl PySourceType {
         })
     }
     #[getter]
-    pub fn source_type_as_str(&self) -> String { self.inner.to_string() }
+    pub fn source_type(&self) -> String { self.inner.to_string() }
 }
 
 #[pyclass]
@@ -65,10 +65,10 @@ impl PyContributionSource {
     pub fn intensity_contribution(&self) -> f64 { self.intensity_contribution }
 
     #[getter]
-    pub fn py_source_type(&self) -> PySourceType { self.source_type.clone() }
+    pub fn source_type(&self) -> PySourceType { self.source_type.clone() }
 
     #[getter]
-    pub fn py_signal_attributes(&self) -> Option<PySignalAttributes> { self.signal_attributes.clone() }
+    pub fn signal_attributes(&self) -> Option<PySignalAttributes> { self.signal_attributes.clone() }
 }
 
 #[pymodule]

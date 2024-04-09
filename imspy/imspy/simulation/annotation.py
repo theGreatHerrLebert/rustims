@@ -14,7 +14,7 @@ class SourceType:
 
     @property
     def source_type(self) -> str:
-        return self.__source_type.source_type_as_str
+        return self.__source_type.source_type
 
     def __repr__(self) -> str:
         return f"SourceType(source_type={self.source_type})"
@@ -73,11 +73,11 @@ class ContributionSource:
 
     @property
     def source_type(self) -> SourceType:
-        return SourceType.from_py_source_type(self.__contribution_source.py_source_type)
+        return SourceType.from_py_source_type(self.__contribution_source.source_type)
 
     @property
     def signal_attributes(self) -> Union[None, SignalAttributes]:
-        return SignalAttributes.from_py_signal_annotation(self.__contribution_source.py_signal_attributes) if self.__contribution_source.py_signal_attributes else None
+        return SignalAttributes.from_py_signal_annotation(self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
 
     def __repr__(self) -> str:
         return f"ContributionSource(intensity_contribution={self.intensity_contribution}, source_type={self.source_type}, signal_attributes={self.signal_attributes})"
