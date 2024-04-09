@@ -45,5 +45,6 @@ impl PySignalAttributes {
 #[pymodule]
 pub fn annotation(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySourceType>()?;
+    m.add_class::<PySignalAttributes>()?;
     Ok(())
 }
