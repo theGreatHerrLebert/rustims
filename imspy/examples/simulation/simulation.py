@@ -47,18 +47,18 @@ def main():
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
-    parser.add_argument("reference_in_memory", type=bool, default=True,
+    parser.add_argument("--reference_in_memory", type=bool, default=True,
                         help="Whether to load the reference dataset into memory (default: True)")
 
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
 
-    parser.add_argument("--acquisition_type",
+    parser.add_argument("-acq", "--acquisition_type",
                         type=str,
                         help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA]",
                         default='DIA')
 
-    parser.add_argument("--name", type=str, help="Name of the experiment",
+    parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
                         default=f'TimSim-[acquisition-type]-{int(time.time())}')
 
     parser.add_argument("--use_reference_layout", type=bool, default=True,
