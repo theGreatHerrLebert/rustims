@@ -54,10 +54,10 @@ pub struct PyContributionSource {
 #[pymethods]
 impl PyContributionSource {
     #[new]
-    pub fn new(intensity_contribution: f64, source_type: i32, signal_attributes: Option<PySignalAttributes>) -> Self {
+    pub fn new(intensity_contribution: f64, source_type: PySourceType, signal_attributes: Option<PySignalAttributes>) -> Self {
         PyContributionSource {
             intensity_contribution,
-            source_type: PySourceType::new(source_type).unwrap(),
+            source_type,
             signal_attributes,
         }
     }
