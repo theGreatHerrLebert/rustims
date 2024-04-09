@@ -215,7 +215,7 @@ class TimsDataset(ABC):
         """
         return TimsFrame.from_py_tims_frame(self.__dataset.get_frame(frame_id))
 
-    def get_tims_slice(self, frame_ids: NDArray[np.int32], num_threads: int) -> TimsSlice:
+    def get_tims_slice(self, frame_ids: NDArray[np.int32], num_threads: int = 8) -> TimsSlice:
         """Get a TimsFrame.
 
         Args:
