@@ -16,7 +16,7 @@ class SourceType:
 
     @property
     def source_type_numeric(self):
-        return self.known_source_types.index(self.source_type)
+        return self.known_source_types.index(self.source_type.lower())
 
     def __repr__(self):
         return f"SourceType(source_type={self.source_type})"
