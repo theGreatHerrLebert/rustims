@@ -42,7 +42,7 @@ fn main() {
 
     // go over the frames in batches of 256
     for frame_batch in first_frames.chunks(args.batch_size) {
-        let frames = experiment.build_frames(frame_batch.to_vec(), fragment, false, 5.0, false, 5.0, false, num_threads);
+        let frames = experiment.build_frames(frame_batch.to_vec(), fragment, false, true,5.0, false, 5.0, false, num_threads);
 
         for frame in frames {
             println!("frame_id: {}", frame.frame_id);
