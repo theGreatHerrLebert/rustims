@@ -11,6 +11,7 @@ def build_acquisition(
         verbose: bool = False,
         gradient_length: float = None,
         use_reference_ds_layout: bool = True,
+        reference_in_memory: bool = True,
 ) -> TimsTofAcquisitionBuilderDIA:
 
     acquisition_type = acquisition_type.lower()
@@ -27,7 +28,7 @@ def build_acquisition(
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
 
-    ref_ds = TimsDatasetDIA(reference_path)
+    ref_ds = TimsDatasetDIA(reference_path, in_memory=reference_in_memory)
 
     return TimsTofAcquisitionBuilderDIA.from_config(
         path=path,

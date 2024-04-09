@@ -47,6 +47,9 @@ def main():
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
+    parser.add_argument("reference_in_memory", type=bool, default=True,
+                        help="Whether to load the reference dataset into memory (default: True)")
+
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
 
@@ -200,6 +203,7 @@ def main():
         verbose=verbose,
         gradient_length=args.gradient_length,
         use_reference_ds_layout=args.use_reference_layout,
+        reference_in_memory=args.reference_in_memory,
     )
 
     if verbose:
