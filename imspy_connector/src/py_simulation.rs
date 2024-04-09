@@ -37,12 +37,12 @@ impl PyTimsTofSyntheticsPrecursorFrameBuilder {
         PyTimsTofSyntheticsPrecursorFrameBuilder { inner: TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap() }
     }
 
-    pub fn build_precursor_frame(&self, frame_id: u32, mz_noise_precursor: bool, precursor_noise_ppm: f64) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.build_precursor_frame(frame_id, mz_noise_precursor, precursor_noise_ppm) }
+    pub fn build_precursor_frame(&self, frame_id: u32, mz_noise_precursor: bool, precursor_noise_ppm: f64, right_drag: bool) -> PyTimsFrame {
+        PyTimsFrame { inner: self.inner.build_precursor_frame(frame_id, mz_noise_precursor, precursor_noise_ppm, right_drag) }
     }
 
-    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, precursor_noise_ppm: f64, num_threads: usize) -> Vec<PyTimsFrame> {
-        let frames = self.inner.build_precursor_frames(frame_ids, mz_noise_precursor, precursor_noise_ppm, num_threads);
+    pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, precursor_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_precursor_frames(frame_ids, mz_noise_precursor, precursor_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
     }
 }
@@ -60,13 +60,13 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, num_threads).unwrap() }
     }
 
-    pub fn build_frame(&self, frame_id: u32, mz_noise_precursor: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, fragment: bool) -> PyTimsFrame {
-        let frames = self.inner.build_frames(vec![frame_id], fragment, mz_noise_precursor, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, 1);
+    pub fn build_frame(&self, frame_id: u32, mz_noise_precursor: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, fragment: bool, right_drag: bool) -> PyTimsFrame {
+        let frames = self.inner.build_frames(vec![frame_id], fragment, mz_noise_precursor, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
         PyTimsFrame { inner: frames[0].clone() }
     }
 
-    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, mz_noise_precursor: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, num_threads: usize) -> Vec<PyTimsFrame> {
-        let frames = self.inner.build_frames(frame_ids, fragment, mz_noise_precursor, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, num_threads);
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, mz_noise_precursor: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames(frame_ids, fragment, mz_noise_precursor, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
     }
 

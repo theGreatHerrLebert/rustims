@@ -6,6 +6,7 @@ use mscore::timstof::spectrum::{TimsSpectrum};
 use mscore::data::spectrum::{MsType, ToResolution, Vectorized, };
 use mscore::timstof::frame::{TimsFrame, ImsFrame, TimsFrameVectorized, ImsFrameVectorized, RawTimsFrame};
 
+
 use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
 
 #[pyclass]
@@ -20,8 +21,8 @@ impl PyRawTimsFrame {
     pub unsafe fn new(frame_id: i32,
                       ms_type: i32,
                       retention_time: f64,
-                      scan: &PyArray1<i32>,
-                      tof: &PyArray1<i32>,
+                      scan: &PyArray1<u32>,
+                      tof: &PyArray1<u32>,
                       intensity: &PyArray1<f64>) -> PyResult<Self> {
         Ok(PyRawTimsFrame {
             inner: RawTimsFrame {
@@ -37,16 +38,16 @@ impl PyRawTimsFrame {
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.intensity.clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
-    pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.scan.clone().into_pyarray(py).to_owned()
+    pub fn scan(&self, py: Python) -> Py<PyArray1<u32>> {
+        self.inner.scan.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
-    pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.tof.clone().into_pyarray(py).to_owned()
+    pub fn tof(&self, py: Python) -> Py<PyArray1<u32>> {
+        self.inner.tof.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
@@ -105,23 +106,23 @@ impl PyTimsFrame {
     }
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.mz.clone().into_pyarray(py).to_owned()
+        self.inner.ims_frame.mz.clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.ims_frame.intensity.clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.scan.clone().into_pyarray(py).to_owned()
+        self.inner.scan.clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.mobility.clone().into_pyarray(py).to_owned()
+        self.inner.ims_frame.mobility.clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.tof.clone().into_pyarray(py).to_owned()
+        self.inner.tof.clone().into_pyarray_bound(py).unbind()
     }
     #[setter]
     pub unsafe fn set_tof(&mut self, tof: &PyArray1<i32>) {
@@ -265,12 +266,12 @@ impl  PyTimsFrameVectorized {
    }
    #[getter]
     pub fn indices(&self, py: Python) -> Py<PyArray1<i32>> {
-         self.inner.ims_frame.indices.clone().into_pyarray(py).to_owned()
+         self.inner.ims_frame.indices.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn values(&self, py: Python) -> Py<PyArray1<f64>> {
-         self.inner.ims_frame.values.clone().into_pyarray(py).to_owned()
+         self.inner.ims_frame.values.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
@@ -280,17 +281,17 @@ impl  PyTimsFrameVectorized {
 
     #[getter]
     pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
-         self.inner.scan.clone().into_pyarray(py).to_owned()
+         self.inner.scan.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-         self.inner.ims_frame.mobility.clone().into_pyarray(py).to_owned()
+         self.inner.ims_frame.mobility.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
-         self.inner.tof.clone().into_pyarray(py).to_owned()
+         self.inner.tof.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]

@@ -55,7 +55,7 @@ class AcquisitionMode:
 
 
 class TimsDataset(ABC):
-    def __init__(self, data_path: str):
+    def __init__(self, data_path: str, in_memory: bool = False):
         """TimsDataHandle class.
 
         Args:
@@ -83,7 +83,7 @@ class TimsDataset(ABC):
         appropriate_found = False
         for so_path in obb.get_so_paths():
             try:
-                self.__dataset = ims.PyTimsDataset(self.data_path, so_path)
+                self.__dataset = ims.PyTimsDataset(self.data_path, so_path, in_memory)
                 self.binary_path = so_path
                 appropriate_found = True
                 break
@@ -215,16 +215,17 @@ class TimsDataset(ABC):
         """
         return TimsFrame.from_py_tims_frame(self.__dataset.get_frame(frame_id))
 
-    def get_tims_slice(self, frame_ids: NDArray[np.int32]) -> TimsSlice:
+    def get_tims_slice(self, frame_ids: NDArray[np.int32], num_threads: int = 8) -> TimsSlice:
         """Get a TimsFrame.
 
         Args:
             frame_ids (int): Frame ID.
+            num_threads (int): Number of threads.
 
         Returns:
             TimsFrame: TimsFrame.
         """
-        return TimsSlice.from_py_tims_slice(self.__dataset.get_slice(frame_ids))
+        return TimsSlice.from_py_tims_slice(self.__dataset.get_slice(frame_ids, num_threads))
 
     def tof_to_mz(self, frame_id: int, tof_values: NDArray[np.int32]) -> NDArray[np.float64]:
         """Convert TOF values to m/z values.

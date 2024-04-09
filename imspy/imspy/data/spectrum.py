@@ -298,16 +298,17 @@ class MzSpectrum:
         # first generate dense spectrum
         return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.to_centroided(baseline_noise_level, sigma, normalize))
 
-    def add_mz_noise_uniform(self, noise_ppm: float) -> MzSpectrum:
+    def add_mz_noise_uniform(self, noise_ppm: float, right_drag: bool = False) -> MzSpectrum:
         """Add uniform noise to the m/z values of the spectrum.
 
         Args:
             noise_ppm (float): Noise ppm, noise will be sampled from a uniform distribution with mean 0 and std noise_ppm.
+            right_drag (bool, optional): If true, the noise will be shifted to the right. Defaults to False.
 
         Returns:
             MzSpectrum: Spectrum with added noise.
         """
-        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.add_mz_noise_uniform(noise_ppm))
+        return MzSpectrum.from_py_mz_spectrum(self.__spec_ptr.add_mz_noise_uniform(noise_ppm, right_drag))
 
     def add_mz_noise_normal(self, noise_ppm: float) -> MzSpectrum:
         """Add normal noise to the intensity values of the spectrum.

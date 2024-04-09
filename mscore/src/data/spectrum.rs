@@ -251,11 +251,20 @@ impl MzSpectrum {
         MzSpectrum { mz: mz_combined, intensity: intensity_combined }
     }
 
-    pub fn add_mz_noise_uniform(&self, ppm: f64) -> Self {
+    pub fn add_mz_noise_uniform(&self, ppm: f64, right_drag: bool) -> Self {
         let mut rng = rand::thread_rng();
         self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
-            let ppm_mz = mz * ppm / 1e6;
-            let dist = Uniform::from(mz - ppm_mz..=mz + ppm_mz);
+
+            let ppm_mz = match right_drag {
+                true => mz * ppm / 1e6 / 2.0,
+                false => mz * ppm / 1e6,
+            };
+
+            let dist = match right_drag {
+                true => Uniform::from(mz - (ppm_mz / 3.0)..=mz + ppm_mz),
+                false => Uniform::from(mz - ppm_mz..=mz + ppm_mz),
+            };
+
             dist.sample(rng)
         })
     }

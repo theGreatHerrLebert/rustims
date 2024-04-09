@@ -27,7 +27,8 @@ class TimsTofSyntheticFrameBuilderDIA:
                     mz_noise_precursor: bool = False,
                     precursor_noise_ppm: float = 5.,
                     mz_noise_fragment: bool = False,
-                    fragment_noise_ppm: float = 5.) -> TimsFrame:
+                    fragment_noise_ppm: float = 5.,
+                    right_drag: bool = True) -> TimsFrame:
         """Build a frame.
 
         Args:
@@ -38,12 +39,13 @@ class TimsTofSyntheticFrameBuilderDIA:
             precursor_noise_ppm (float): PPM of the precursor noise.
             mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
             fragment_noise_ppm (float): PPM of the fragment noise.
+            right_drag (bool): if true, the noise will be shifted to the right.
 
         Returns:
             TimsFrame: Frame.
         """
         frame = self.handle.build_frame(frame_id, fragment, mz_noise_precursor, precursor_noise_ppm,
-                                        mz_noise_fragment, fragment_noise_ppm)
+                                        mz_noise_fragment, fragment_noise_ppm, right_drag)
 
         return TimsFrame.from_py_tims_frame(frame)
 
@@ -54,6 +56,7 @@ class TimsTofSyntheticFrameBuilderDIA:
                      precursor_noise_ppm: float = 5.,
                      mz_noise_fragment: bool = False,
                      fragment_noise_ppm: float = 5.,
+                     right_drag: bool = True,
                      num_threads: int = 4) -> List[TimsFrame]:
         """Build frames.
 
@@ -65,14 +68,14 @@ class TimsTofSyntheticFrameBuilderDIA:
             precursor_noise_ppm (float): PPM of the precursor noise.
             mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
             fragment_noise_ppm (float): PPM of the fragment noise.
+            right_drag (bool): if true, the noise will be shifted to the right.
             num_threads (int): Number of threads.
 
         Returns:
             List[TimsFrame]: Frames.
         """
         frames = self.handle.build_frames(frame_ids, fragment, mz_noise_precursor, precursor_noise_ppm,
-                                          mz_noise_fragment, fragment_noise_ppm,
-                                          num_threads)
+                                          mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
     def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
@@ -89,13 +92,15 @@ class TimsTofSyntheticPrecursorFrameBuilder:
     def __init__(self, db_path: str):
         self.handle = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
-    def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5.) -> TimsFrame:
-        frame = self.handle.build_precursor_frame(frame_id, mz_noise_precursor, precursor_noise_ppm)
+    def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrame:
+        frame = self.handle.build_precursor_frame(frame_id, mz_noise_precursor, precursor_noise_ppm, right_drag)
         return TimsFrame.from_py_tims_frame(frame)
 
     def build_precursor_frames(self, frame_ids: List[int], mz_noise_precursor: bool = False, precursor_noise_ppm: float = 5.,
+                               right_drag: bool = True,
                                num_threads: int = 4):
         frames = self.handle.build_precursor_frames(frame_ids, mz_noise_precursor, precursor_noise_ppm,
+                                                    right_drag,
                                                     num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 

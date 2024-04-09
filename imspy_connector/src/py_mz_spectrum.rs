@@ -65,12 +65,11 @@ impl PyMzSpectrum {
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz.clone().into_pyarray(py).to_owned()
+        self.inner.mz.clone().into_pyarray_bound(py).unbind()
     }
-
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.intensity.clone().into_pyarray_bound(py).unbind()
     }
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
         let spectra = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
@@ -122,8 +121,8 @@ impl PyMzSpectrum {
         serde_json::to_string(&self.inner).unwrap()
     }
 
-    pub fn add_mz_noise_uniform(&self, noise_ppm: f64) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.add_mz_noise_uniform(noise_ppm) }
+    pub fn add_mz_noise_uniform(&self, noise_ppm: f64, right_drag: bool) -> PyMzSpectrum {
+        PyMzSpectrum { inner: self.inner.add_mz_noise_uniform(noise_ppm, right_drag) }
     }
 
     pub fn add_mz_noise_normal(&self, noise_ppm: f64) -> PyMzSpectrum {
@@ -161,12 +160,12 @@ impl PyMzSpectrumVectorized {
 
     #[getter]
     pub fn indices(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.indices.clone().into_pyarray(py).to_owned()
+        self.inner.indices.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn values(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.values.clone().into_pyarray(py).to_owned()
+        self.inner.values.clone().into_pyarray_bound(py).unbind()
     }
 }
 
@@ -189,17 +188,17 @@ impl PyIndexedMzSpectrum {
 
     #[getter]
     pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.index.clone().into_pyarray(py).to_owned()
+        self.inner.index.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz_spectrum.mz.clone().into_pyarray(py).to_owned()
+        self.inner.mz_spectrum.mz.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.mz_spectrum.intensity.clone().into_pyarray_bound(py).unbind()
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyResult<PyIndexedMzSpectrum> {
@@ -262,17 +261,17 @@ impl PyTimsSpectrum {
 
     #[getter]
     pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.spectrum.index.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.index.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz_spectrum.mz.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.mz_spectrum.mz.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz_spectrum.intensity.clone().into_pyarray(py).to_owned()
+        self.inner.spectrum.mz_spectrum.intensity.clone().into_pyarray_bound(py).unbind()
     }
 
     #[getter]
