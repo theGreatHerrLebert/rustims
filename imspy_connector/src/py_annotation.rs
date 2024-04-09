@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use mscore::simulation::annotation::{SourceType, SignalAttributes};
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PySourceType {
     inner: SourceType,
 }
@@ -19,6 +20,7 @@ impl PySourceType {
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PySignalAttributes {
     inner: SignalAttributes,
 }
@@ -42,9 +44,37 @@ impl PySignalAttributes {
     pub fn isotope_peak(&self) -> i32 { self.inner.isotope_peak }
 }
 
+#[pyclass]
+pub struct PyContributionSource {
+    pub intensity_contribution: f64,
+    pub source_type: PySourceType,
+    pub signal_attributes: Option<PySignalAttributes>,
+}
+
+#[pymethods]
+impl PyContributionSource {
+    #[new]
+    pub fn new(intensity_contribution: f64, source_type: i32, signal_attributes: Option<PySignalAttributes>) -> Self {
+        PyContributionSource {
+            intensity_contribution,
+            source_type: PySourceType::new(source_type).unwrap(),
+            signal_attributes,
+        }
+    }
+    #[getter]
+    pub fn intensity_contribution(&self) -> f64 { self.intensity_contribution }
+
+    #[getter]
+    pub fn source_type(&self) -> PySourceType { self.source_type.clone() }
+
+    #[getter]
+    pub fn signal_attributes(&self) -> Option<PySignalAttributes> { self.signal_attributes.clone() }
+}
+
 #[pymodule]
 pub fn annotation(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySourceType>()?;
     m.add_class::<PySignalAttributes>()?;
+    m.add_class::<PyContributionSource>()?;
     Ok(())
 }
