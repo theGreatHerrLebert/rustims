@@ -25,3 +25,33 @@ class SourceType:
 
     def get_py_ptr(self):
         return self.__source_type
+
+
+# charge_state: i32, peptide_id: i32, isotope_peak: i32
+class SignalAnnotation:
+    def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int):
+        self.__signal_annotation = ims.PySignalAnnotation(charge_state, peptide_id, isotope_peak)
+
+    @property
+    def charge_state(self):
+        return self.__signal_annotation.charge_state
+
+    @property
+    def peptide_id(self):
+        return self.__signal_annotation.peptide_id
+
+    @property
+    def isotope_peak(self):
+        return self.__signal_annotation.isotope_peak
+
+    def __repr__(self):
+        return f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, isotope_peak={self.isotope_peak})"
+
+    @classmethod
+    def from_py_signal_annotation(cls, signal_annotation: ims.PySignalAnnotation):
+        instance = cls.__new__(cls)
+        instance._signal_annotation = signal_annotation
+        return instance
+
+    def get_py_ptr(self):
+        return self.__signal_annotation
