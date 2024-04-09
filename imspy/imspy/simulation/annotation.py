@@ -1,3 +1,5 @@
+from typing import Union
+
 import imspy_connector
 ims = imspy_connector.py_annotation
 
@@ -12,7 +14,7 @@ class SourceType:
 
     @property
     def source_type(self) -> str:
-        return self.__source_type.source_type
+        return self.__source_type.source_type_as_str
 
     def __repr__(self) -> str:
         return f"SourceType(source_type={self.source_type})"
@@ -59,7 +61,11 @@ class SignalAttributes:
 
 class ContributionSource:
     def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: SignalAttributes = None):
-        self.__contribution_source = ims.PyContributionSource(intensity_contribution, source_type.get_py_ptr(), signal_attributes.get_py_ptr() if signal_attributes else None)
+        self.__contribution_source = ims.PyContributionSource(
+            intensity_contribution,
+            source_type.get_py_ptr(),
+            signal_attributes.get_py_ptr() if signal_attributes else None
+        )
 
     @property
     def intensity_contribution(self) -> float:
@@ -70,7 +76,7 @@ class ContributionSource:
         return SourceType.from_py_source_type(self.__contribution_source.source_type)
 
     @property
-    def signal_attributes(self) -> SignalAttributes:
+    def signal_attributes(self) -> Union[None, SignalAttributes]:
         return SignalAttributes.from_py_signal_annotation(self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
 
     def __repr__(self) -> str:

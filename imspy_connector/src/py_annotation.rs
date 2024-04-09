@@ -16,7 +16,7 @@ impl PySourceType {
         })
     }
     #[getter]
-    pub fn source_type(&self) -> String { self.inner.to_string() }
+    pub fn source_type_as_str(&self) -> String { self.inner.to_string() }
 }
 
 #[pyclass]
