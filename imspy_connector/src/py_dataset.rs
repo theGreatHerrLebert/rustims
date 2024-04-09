@@ -1,7 +1,6 @@
 use mscore::timstof::frame::TimsFrame;
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{TimsData, AcquisitionMode};
 use rustdf::data::utility::{zstd_compress, zstd_decompress, reconstruct_compressed_data, compress_collection, parse_decompressed_bruker_binary_data};
 
 use crate::py_tims_frame::{PyTimsFrame};
@@ -9,6 +8,8 @@ use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::types::PyList;
 use pyo3::{PyResult, Python, PyObject};
+use rustdf::data::acquisition::AcquisitionMode;
+use rustdf::data::handle::TimsData;
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -18,8 +19,8 @@ pub struct PyTimsDataset {
 #[pymethods]
 impl PyTimsDataset {
     #[new]
-    pub fn new(data_path: &str, bruker_lib_path: &str) -> Self {
-        let dataset = TimsDataset::new(bruker_lib_path, data_path);
+    pub fn new(data_path: &str, bruker_lib_path: &str, in_memory: bool) -> Self {
+        let dataset = TimsDataset::new(bruker_lib_path, data_path, in_memory);
         PyTimsDataset { inner: dataset }
     }
 
@@ -27,8 +28,8 @@ impl PyTimsDataset {
         PyTimsFrame { inner: self.inner.get_frame(frame_id) }
     }
 
-    pub fn get_slice(&self, frame_ids: Vec<u32>) -> PyTimsSlice {
-        PyTimsSlice { inner: self.inner.get_slice(frame_ids) }
+    pub fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.get_slice(frame_ids, num_threads) }
     }
 
     pub fn get_acquisition_mode(&self) -> String {
@@ -47,28 +48,24 @@ impl PyTimsDataset {
         self.inner.get_data_path()
     }
 
-    pub fn get_bruker_lib_path(&self) -> &str {
-        self.inner.get_bruker_lib_path()
-    }
-
     pub fn frame_count(&self) -> i32 {
         self.inner.get_frame_count()
     }
 
     pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
-        self.inner.mz_to_tof(frame_id, &mz_values.clone())
+        self.inner.loader.get_index_converter().mz_to_tof(frame_id, &mz_values.clone())
     }
 
     pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
-        self.inner.tof_to_mz(frame_id, &tof_values.clone())
+        self.inner.loader.get_index_converter().tof_to_mz(frame_id, &tof_values.clone())
     }
 
-    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<i32>) -> Vec<f64> {
-        self.inner.scan_to_inverse_mobility(frame_id, &scan_values.clone())
+    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<u32>) -> Vec<f64> {
+        self.inner.loader.get_index_converter().scan_to_inverse_mobility(frame_id, &scan_values.clone())
     }
 
-    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<i32> {
-        self.inner.inverse_mobility_to_scan(frame_id, &inverse_mobility_values.clone())
+    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<u32> {
+        self.inner.loader.get_index_converter().inverse_mobility_to_scan(frame_id, &inverse_mobility_values.clone())
     }
 
     #[staticmethod]
@@ -116,9 +113,9 @@ impl PyTimsDataset {
         };
 
         let mz = frame.inner.ims_frame.mz.clone();
-        let tof = self.inner.mz_to_tof(frame_id as u32, &mz);
+        let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, &mz);
         let inv_mob = frame.inner.ims_frame.mobility.clone();
-        let scan = self.inner.inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
+        let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
 
         let compressed_frame = reconstruct_compressed_data(
             scan,
@@ -144,9 +141,9 @@ impl PyTimsDataset {
             };
 
             let mz = frame.inner.ims_frame.mz.clone();
-            let tof = self.inner.mz_to_tof(frame_id as u32, &mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
+            let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, &mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
             let inv_mob = frame.inner.ims_frame.mobility.clone();
-            let scan = self.inner.inverse_mobility_to_scan(1, &inv_mob);
+            let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as i32).collect::<Vec<_>>();
 
             let frame = TimsFrame::new(
                 frame.inner.frame_id,

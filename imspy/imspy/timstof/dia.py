@@ -9,8 +9,8 @@ ims = imspy_connector.py_dia
 
 
 class TimsDatasetDIA(TimsDataset):
-    def __init__(self, data_path: str):
-        super().__init__(data_path=data_path)
+    def __init__(self, data_path: str, in_memory: bool = False):
+        super().__init__(data_path=data_path, in_memory=in_memory)
         self.__dataset = ims.PyTimsDatasetDIA(self.data_path, self.binary_path)
 
     @property

@@ -13,19 +13,19 @@ pub struct PyTimsDatasetDDA {
 #[pymethods]
 impl PyTimsDatasetDDA {
     #[new]
-    pub fn new(data_path: &str, bruker_lib_path: &str) -> Self {
-        let dataset = TimsDatasetDDA::new(bruker_lib_path, data_path);
+    pub fn new(data_path: &str, bruker_lib_path: &str, in_memory: bool) -> Self {
+        let dataset = TimsDatasetDDA::new(bruker_lib_path, data_path, in_memory);
         PyTimsDatasetDDA { inner: dataset }
     }
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.get_frame(frame_id) }
     }
 
-    pub fn get_slice(&self, frame_ids: Vec<u32>) -> PyTimsSlice {
-        PyTimsSlice { inner: self.inner.get_slice(frame_ids) }
+    pub fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.get_slice(frame_ids, num_threads) }
     }
 
-    pub fn get_aquisition_mode(&self) -> String {
+    pub fn get_acquisition_mode(&self) -> String {
         self.inner.get_acquisition_mode().to_string()
     }
 
@@ -35,10 +35,6 @@ impl PyTimsDatasetDDA {
 
     pub fn get_data_path(&self) -> &str {
         self.inner.get_data_path()
-    }
-
-    pub fn get_bruker_lib_path(&self) -> &str {
-        self.inner.get_bruker_lib_path()
     }
 
     pub fn get_pasef_fragments(&self, num_threads: usize) -> Vec<PyTimsFragmentDDA> {

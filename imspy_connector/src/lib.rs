@@ -42,11 +42,9 @@ use py_amino_acids::amino_acids;
 mod py_unimod;
 mod py_utility;
 mod py_sumformula;
-mod py_tdf_inmem;
 
 use py_sumformula::sum_formula;
 use py_unimod::unimod;
-use py_tdf_inmem::in_memory;
 
 #[pymodule]
 fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
@@ -129,11 +127,6 @@ fn imspy_connector(py: Python, m: &PyModule) -> PyResult<()> {
     let py_sumformula_submodule = PyModule::new(py, "py_sumformula")?;
     sum_formula(py, &py_sumformula_submodule)?;
     m.add_submodule(py_sumformula_submodule)?;
-
-    // py_tdf_inmem submodule //
-    let py_tdf_inmem_submodule = PyModule::new(py, "py_tdf_inmem")?;
-    in_memory(py, &py_tdf_inmem_submodule)?;
-    m.add_submodule(py_tdf_inmem_submodule)?;
 
     Ok(())
 }

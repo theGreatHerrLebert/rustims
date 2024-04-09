@@ -1,75 +1,43 @@
-use super::raw::BrukerTimsDataLibrary;
-use super::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
-
-use std::io::{Read};
-use std::path::PathBuf;
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Cursor};
+use std::io::{Read, Cursor, SeekFrom, Seek};
+use std::path::PathBuf;
 use byteorder::{LittleEndian, ReadBytesExt};
-
 use mscore::data::spectrum::MsType;
-use mscore::timstof::frame::{TimsFrame, ImsFrame, RawTimsFrame};
+use mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
+use crate::data::meta::{FrameMeta, GlobalMetaData, read_global_meta_sql, read_meta_data_sql};
+use crate::data::raw::BrukerTimsDataLibrary;
+use crate::data::utility::{flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress};
+
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use crate::data::acquisition::AcquisitionMode;
 
-use crate::data::utility::{parse_decompressed_bruker_binary_data, zstd_decompress};
-
-/// Interface to be shared by all acquisitions of timsTOF
-pub trait TimsData {
-    fn get_frame(&self, frame_id: u32) -> TimsFrame;
-    fn get_slice(&self, frame_ids: Vec<u32>) -> TimsSlice;
-    fn get_acquisition_mode(&self) -> AcquisitionMode;
-    fn get_frame_count(&self) -> i32;
-    fn get_data_path(&self) -> &str;
-    fn get_bruker_lib_path(&self) -> &str;
-
-    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
-    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
-
-    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<i32>) -> Vec<f64>;
-    fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<i32>;
-}
-
-pub struct TimsDataHandle {
-    pub data_path: String,
-    pub bruker_lib_path: String,
-    pub bruker_lib: BrukerTimsDataLibrary,
+pub struct TimsRawDataLayout {
+    pub raw_data_path: String,
     pub global_meta_data: GlobalMetaData,
     pub frame_meta_data: Vec<FrameMeta>,
-    pub acquisition_mode: AcquisitionMode,
     pub max_scan_count: i64,
-    pub frame_idptr: Vec<i64>,
+    pub frame_id_ptr: Vec<i64>,
     pub tims_offset_values: Vec<i64>,
+    pub acquisition_mode: AcquisitionMode,
 }
 
-impl TimsDataHandle {
-    /// Creates a new TimsDataHandle
-    ///
-    /// # Arguments
-    ///
-    /// * `bruker_lib_path` - A string slice that holds the path to the bruker library
-    /// * `data_path` - A string slice that holds the path to the data
-    ///
-    /// # Returns
-    ///
-    /// * `tims_dataset` - A TimsDataHandle struct
-    ///
-    pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<TimsDataHandle, Box<dyn std::error::Error>> {
-
-        // Load the library
-        let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path)?;
+impl TimsRawDataLayout {
+    pub fn new(data_path: &str) -> Self {
         // get the global and frame meta data
-        let global_meta_data = read_global_meta_sql(data_path)?;
-        let frame_meta_data = read_meta_data_sql(data_path)?;
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+        let frame_meta_data = read_meta_data_sql(data_path).unwrap();
+
         // get the max scan count
         let max_scan_count = frame_meta_data.iter().map(|x| x.num_scans).max().unwrap();
 
-        let mut frame_idptr: Vec<i64> = Vec::new();
-        frame_idptr.resize(frame_meta_data.len() + 1, 0);
+        let mut frame_id_ptr: Vec<i64> = Vec::new();
+        frame_id_ptr.resize(frame_meta_data.len() + 1, 0);
 
-        // get the frame idptr values
+        // get the frame id_ptr values
         for (i, row) in frame_meta_data.iter().enumerate() {
-            frame_idptr[i + 1] = row.num_peaks + frame_idptr[i];
+            frame_id_ptr[i + 1] = row.num_peaks + frame_id_ptr[i];
         }
 
         // get the tims offset values
@@ -82,19 +50,47 @@ impl TimsDataHandle {
             _ => AcquisitionMode::Unknown,
         };
 
-        Ok(TimsDataHandle {
-            data_path: data_path.to_string(),
-            bruker_lib_path: bruker_lib_path.to_string(),
-            bruker_lib,
+        TimsRawDataLayout {
+            raw_data_path: data_path.to_string(),
             global_meta_data,
             frame_meta_data,
-            acquisition_mode,
             max_scan_count,
-            frame_idptr,
+            frame_id_ptr,
             tims_offset_values,
-        })
+            acquisition_mode
+        }
     }
+}
 
+pub trait TimsData {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame;
+    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame;
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice;
+    fn get_acquisition_mode(&self) -> AcquisitionMode;
+    fn get_frame_count(&self) -> i32;
+    fn get_data_path(&self) -> &str;
+}
+
+pub trait IndexConverter {
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64>;
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32>;
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64>;
+    fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<u32>;
+}
+
+pub struct BrukerLibTimsDataConverter {
+    pub bruker_lib: BrukerTimsDataLibrary,
+}
+
+impl BrukerLibTimsDataConverter {
+    pub fn new(bruker_lib_path: &str, data_path: &str) -> Self {
+        let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path).unwrap();
+        BrukerLibTimsDataConverter {
+            bruker_lib,
+        }
+    }
+}
+impl IndexConverter for BrukerLibTimsDataConverter {
     /// translate tof to mz values calling the bruker library
     ///
     /// # Arguments
@@ -106,7 +102,7 @@ impl TimsDataHandle {
     ///
     /// * `mz_values` - A vector of f64 that holds the mz values
     ///
-    pub fn tof_to_mz(&self, frame_id: u32, tof: &Vec<u32>) -> Vec<f64> {
+    fn tof_to_mz(&self, frame_id: u32, tof: &Vec<u32>) -> Vec<f64> {
         let mut dbl_tofs: Vec<f64> = Vec::new();
         dbl_tofs.resize(tof.len(), 0.0);
 
@@ -122,7 +118,7 @@ impl TimsDataHandle {
         mz_values
     }
 
-    pub fn mz_to_tof(&self, frame_id: u32, mz: &Vec<f64>) -> Vec<u32> {
+    fn mz_to_tof(&self, frame_id: u32, mz: &Vec<f64>) -> Vec<u32> {
         let mut dbl_mz: Vec<f64> = Vec::new();
         dbl_mz.resize(mz.len(), 0.0);
 
@@ -149,7 +145,7 @@ impl TimsDataHandle {
     ///
     /// * `inv_mob` - A vector of f64 that holds the inverse mobility values
     ///
-    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan: &Vec<i32>) -> Vec<f64> {
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan: &Vec<u32>) -> Vec<f64> {
         let mut dbl_scans: Vec<f64> = Vec::new();
         dbl_scans.resize(scan.len(), 0.0);
 
@@ -176,7 +172,7 @@ impl TimsDataHandle {
     ///
     /// * `scan_values` - A vector of i32 that holds the scan values
     ///
-    pub fn inverse_mobility_to_scan(&self, frame_id: u32, inv_mob: &Vec<f64>) -> Vec<i32> {
+    fn inverse_mobility_to_scan(&self, frame_id: u32, inv_mob: &Vec<f64>) -> Vec<u32> {
         let mut dbl_inv_mob: Vec<f64> = Vec::new();
         dbl_inv_mob.resize(inv_mob.len(), 0.0);
 
@@ -189,61 +185,90 @@ impl TimsDataHandle {
 
         self.bruker_lib.inv_mob_to_tims_scan(frame_id, &dbl_inv_mob, &mut scan_values).expect("Bruker binary call failed at: tims_oneoverk0_to_scannum;");
 
-        scan_values.iter().map(|&x| x.round() as i32).collect()
+        scan_values.iter().map(|&x| x.round() as u32).collect()
+    }
+}
+
+pub enum TimsIndexConverter {
+    Simple(SimpleIndexConverter),
+    BrukerLib(BrukerLibTimsDataConverter)
+}
+
+impl IndexConverter for TimsIndexConverter {
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        match self {
+            TimsIndexConverter::Simple(converter) => converter.tof_to_mz(frame_id, tof_values),
+            TimsIndexConverter::BrukerLib(converter) => converter.tof_to_mz(frame_id, tof_values)
+        }
     }
 
-    /// helper function to flatten the scan values
-    ///
-    /// # Arguments
-    ///
-    /// * `scan` - A vector of u32 that holds the scan values
-    /// * `zero_indexed` - A bool that indicates if the scan values are zero indexed
-    ///
-    /// # Returns
-    ///
-    /// * `scan_i32` - A vector of i32 that holds the scan values
-    ///
-    pub fn flatten_scan_values(&self, scan: &Vec<u32>, zero_indexed: bool) -> Vec<i32> {
-        let add = if zero_indexed { 0 } else { 1 };
-        scan.iter().enumerate()
-            .flat_map(|(index, &count)| vec![(index + add) as i32; count as usize]
-                .into_iter()).collect()
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        match self {
+            TimsIndexConverter::Simple(converter) => converter.mz_to_tof(frame_id, mz_values),
+            TimsIndexConverter::BrukerLib(converter) => converter.mz_to_tof(frame_id, mz_values)
+        }
     }
 
-    pub fn get_raw_frame(&self, frame_id: u32) -> Result<RawTimsFrame, Box<dyn std::error::Error>> {
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+        match self {
+            TimsIndexConverter::Simple(converter) => converter.scan_to_inverse_mobility(frame_id, scan_values),
+            TimsIndexConverter::BrukerLib(converter) => converter.scan_to_inverse_mobility(frame_id, scan_values)
+        }
+    }
 
+    fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: &Vec<f64>) -> Vec<u32> {
+        match self {
+            TimsIndexConverter::Simple(converter) => converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values),
+            TimsIndexConverter::BrukerLib(converter) => converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+        }
+    }
+}
+
+
+pub struct TimsLazyLoder {
+    pub raw_data_layout: TimsRawDataLayout,
+    pub index_converter: TimsIndexConverter,
+}
+
+impl TimsData for TimsLazyLoder {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
         let frame_index = (frame_id - 1) as usize;
-        let offset = self.tims_offset_values[frame_index] as u64;
+        let offset = self.raw_data_layout.tims_offset_values[frame_index] as u64;
 
-        let mut file_path = PathBuf::from(&self.data_path);
+        let mut file_path = PathBuf::from(&self.raw_data_layout.raw_data_path);
         file_path.push("analysis.tdf_bin");
-        let mut infile = File::open(&file_path)?;
+        let mut infile = File::open(&file_path).unwrap();
 
-        infile.seek(SeekFrom::Start(offset))?;
+        infile.seek(SeekFrom::Start(offset)).unwrap();
 
         let mut bin_buffer = [0u8; 4];
-        infile.read_exact(&mut bin_buffer)?;
-        let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;
+        infile.read_exact(&mut bin_buffer).unwrap();
+        let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>().unwrap();
 
-        infile.read_exact(&mut bin_buffer)?;
+        infile.read_exact(&mut bin_buffer).unwrap();
 
-        match self.global_meta_data.tims_compression_type {
-            // TODO: implement
-            _ if self.global_meta_data.tims_compression_type == 1 => {
-                return Err("Decompression Type1 not implemented.".into());
+        match self.raw_data_layout.global_meta_data.tims_compression_type {
+            _ if self.raw_data_layout.global_meta_data.tims_compression_type == 1 => {
+                panic!("Decompression Type1 not implemented.");
             },
 
             // Extract from ZSTD compressed binary
-            _ if self.global_meta_data.tims_compression_type == 2 => {
+            _ if self.raw_data_layout.global_meta_data.tims_compression_type == 2 => {
 
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
-                infile.read_exact(&mut compressed_data)?;
+                infile.read_exact(&mut compressed_data).unwrap();
 
-                let decompressed_bytes = zstd_decompress(&compressed_data)?;
+                let decompressed_bytes = zstd_decompress(&compressed_data).unwrap();
 
-                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
+                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes).unwrap();
+                let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
+                let tof_i32 = tof.iter().map(|&x| x as i32).collect();
+                let scan = flatten_scan_values(&scan, true);
 
-                let ms_type_raw = self.frame_meta_data[frame_index].ms_ms_type;
+                let mz = self.index_converter.tof_to_mz(frame_id, &tof);
+                let inv_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &scan);
+
+                let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
 
                 let ms_type = match ms_type_raw {
                     0 => MsType::Precursor,
@@ -252,149 +277,296 @@ impl TimsDataHandle {
                     _ => MsType::Unknown,
                 };
 
-                Ok(RawTimsFrame {
+                let frame = TimsFrame {
                     frame_id: frame_id as i32,
-                    retention_time: self.frame_meta_data[(frame_id - 1) as usize].time,
+                    ms_type,
+                    scan: scan.iter().map(|&x| x as i32).collect(),
+                    tof: tof_i32,
+                    ims_frame: ImsFrame { retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time, mobility: inv_mobility, mz, intensity: intensity_dbl }
+                };
+
+                return frame;
+            },
+
+            // Error on unknown compression algorithm
+            _ => {
+                panic!("TimsCompressionType is not 1 or 2.")
+            }
+        }
+    }
+
+    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
+
+        let frame_index = (frame_id - 1) as usize;
+        let offset = self.raw_data_layout.tims_offset_values[frame_index] as u64;
+
+        let mut file_path = PathBuf::from(&self.raw_data_layout.raw_data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(&file_path).unwrap();
+
+        infile.seek(SeekFrom::Start(offset)).unwrap();
+
+        let mut bin_buffer = [0u8; 4];
+        infile.read_exact(&mut bin_buffer).unwrap();
+        let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>().unwrap();
+
+        infile.read_exact(&mut bin_buffer).unwrap();
+
+        match self.raw_data_layout.global_meta_data.tims_compression_type {
+            _ if self.raw_data_layout.global_meta_data.tims_compression_type == 1 => {
+                panic!("Decompression Type1 not implemented.");
+            },
+
+            // Extract from ZSTD compressed binary
+            _ if self.raw_data_layout.global_meta_data.tims_compression_type == 2 => {
+
+                let mut compressed_data = vec![0u8; bin_size as usize - 8];
+                infile.read_exact(&mut compressed_data).unwrap();
+
+                let decompressed_bytes = zstd_decompress(&compressed_data).unwrap();
+
+                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes).unwrap();
+
+                let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+
+                let ms_type = match ms_type_raw {
+                    0 => MsType::Precursor,
+                    8 => MsType::FragmentDda,
+                    9 => MsType::FragmentDia,
+                    _ => MsType::Unknown,
+                };
+
+                let frame = RawTimsFrame {
+                    frame_id: frame_id as i32,
+                    retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time,
                     ms_type,
                     scan,
                     tof,
                     intensity: intensity.iter().map(|&x| x as f64).collect(),
-                })
-            },
-
-            // Error on unknown compression algorithm
-            _ => {
-                return Err("TimsCompressionType is not 1 or 2.".into());
-            }
-        }
-    }
-
-    /// get a frame from the tims dataset
-    ///
-    /// # Arguments
-    ///
-    /// * `frame_id` - A u32 that holds the frame id
-    ///
-    /// # Returns
-    ///
-    /// * `frame` - A TimsFrame struct
-    ///
-    pub fn get_frame(&self, frame_id: u32) -> Result<TimsFrame, Box<dyn std::error::Error>> {
-
-        let frame_index = (frame_id - 1) as usize;
-        let offset = self.tims_offset_values[frame_index] as u64;
-
-        let mut file_path = PathBuf::from(&self.data_path);
-        file_path.push("analysis.tdf_bin");
-        let mut infile = File::open(&file_path)?;
-
-        infile.seek(SeekFrom::Start(offset))?;
-
-        let mut bin_buffer = [0u8; 4];
-        infile.read_exact(&mut bin_buffer)?;
-        let bin_size = Cursor::new(bin_buffer).read_i32::<LittleEndian>()?;
-
-        infile.read_exact(&mut bin_buffer)?;
-
-        match self.global_meta_data.tims_compression_type {
-            // TODO: implement
-            _ if self.global_meta_data.tims_compression_type == 1 => {
-                return Err("Decompression Type1 not implemented.".into());
-            },
-
-            // Extract from ZSTD compressed binary
-            _ if self.global_meta_data.tims_compression_type == 2 => {
-
-                let mut compressed_data = vec![0u8; bin_size as usize - 8];
-                infile.read_exact(&mut compressed_data)?;
-
-                let decompressed_bytes = zstd_decompress(&compressed_data)?;
-
-                let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes)?;
-                let intensity_dbl = intensity.iter().map(|&x| x as f64).collect();
-                let tof_i32 = tof.iter().map(|&x| x as i32).collect();
-                let scan_i32: Vec<i32> = self.flatten_scan_values(&scan, true);
-
-                let mz = self.tof_to_mz(frame_id, &tof);
-                let inv_mobility = self.scan_to_inverse_mobility(frame_id, &scan_i32);
-
-                let ms_type_raw = self.frame_meta_data[frame_index].ms_ms_type;
-
-                let ms_type = match ms_type_raw {
-                    0 => MsType::Precursor,
-                    8 => MsType::FragmentDda,
-                    9 => MsType::FragmentDia,
-                    _ => MsType::Unknown,
                 };
 
-                Ok(TimsFrame {
-                    frame_id: frame_id as i32,
-                    ms_type,
-                    scan: scan_i32,
-                    tof: tof_i32,
-                    ims_frame: ImsFrame { retention_time: self.frame_meta_data[(frame_id - 1) as usize].time, mobility: inv_mobility, mz, intensity: intensity_dbl }
-                })
+                return frame;
             },
 
             // Error on unknown compression algorithm
             _ => {
-                return Err("TimsCompressionType is not 1 or 2.".into());
+                panic!("TimsCompressionType is not 1 or 2.")
             }
         }
     }
 
-    /// get a frame from the tims dataset as an ImsFrame
-    ///
-    /// # Arguments
-    ///
-    /// * `frame_id` - A u32 that holds the frame id
-    ///
-    /// # Returns
-    ///
-    /// * `frame` - An ImsFrame struct
-    ///
-    pub fn get_ims_frame(&self, frame_id: u32) -> Result<ImsFrame, Box<dyn std::error::Error>> {
-        let frame = self.get_frame(frame_id)?;
-        Ok(frame.get_ims_frame())
-    }
-
-    /// get a slice of frames from the tims dataset
-    ///
-    /// # Arguments
-    ///
-    /// * `frame_ids` - A vector of u32 that holds the frame ids
-    ///
-    /// # Returns
-    ///
-    /// * `tims_slice` - A TimsSlice struct
-    ///
-    pub fn get_tims_slice(&self, frame_ids: Vec<u32>) -> TimsSlice {
-
+    fn get_slice(&self, frame_ids: Vec<u32>, _num_threads: usize) -> TimsSlice {
         let result: Vec<TimsFrame> = frame_ids
             .into_iter()
-            .map(|f| {
-                match self.get_frame(f) {
-                    Ok(frame) => Some(frame),
-                    Err(_e) => {
-                        // TODO implement error handling
-                        None
-                    }
-                }
-            })
-            .filter(Option::is_some)
-            .map(Option::unwrap)
-            .collect();
+            .map(|f| { self.get_frame(f) }).collect();
 
         TimsSlice { frames: result }
     }
 
-    /// get the number of frames in the dataset
-    ///
-    /// # Returns
-    ///
-    /// * the number of frames in the dataset
-    ///
-    pub fn get_frame_count(&self) -> i32 {
-        self.frame_meta_data.len() as i32
+    fn get_acquisition_mode(&self) -> AcquisitionMode {
+        self.raw_data_layout.acquisition_mode.clone()
+    }
+
+    fn get_frame_count(&self) -> i32 {
+        self.raw_data_layout.frame_meta_data.len() as i32
+    }
+
+    fn get_data_path(&self) -> &str {
+        &self.raw_data_layout.raw_data_path
+    }
+}
+
+pub struct TimsInMemoryLoader {
+    pub raw_data_layout: TimsRawDataLayout,
+    pub index_converter: TimsIndexConverter,
+    compressed_data: Vec<u8>
+}
+
+impl TimsData for TimsInMemoryLoader {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+
+        let raw_frame = self.get_raw_frame(frame_id);
+        let tof_i32 = raw_frame.tof.iter().map(|&x| x as i32).collect();
+        let scan = flatten_scan_values(&raw_frame.scan, true);
+
+        let mz = self.index_converter.tof_to_mz(frame_id, &raw_frame.tof);
+        let inverse_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &scan);
+
+        let ims_frame = ImsFrame {
+            retention_time: raw_frame.retention_time,
+            mz,
+            intensity: raw_frame.intensity,
+            mobility: inverse_mobility,
+        };
+
+        TimsFrame {
+            frame_id: frame_id as i32,
+            ms_type: raw_frame.ms_type,
+            scan: scan.iter().map(|&x| x as i32).collect(),
+            tof: tof_i32,
+            ims_frame,
+        }
+    }
+
+    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
+        let frame_index = (frame_id - 1) as usize;
+        let offset = self.raw_data_layout.tims_offset_values[frame_index] as usize;
+
+        let bin_size_offset = offset + 4; // Assuming the size is stored immediately before the frame data
+        let bin_size = Cursor::new(&self.compressed_data[offset..bin_size_offset]).read_i32::<LittleEndian>().unwrap();
+
+        let data_offset = bin_size_offset + 4; // Adjust based on actual structure
+        let frame_data = &self.compressed_data[data_offset..data_offset + bin_size as usize - 8];
+
+        let decompressed_bytes = zstd_decompress(&frame_data).unwrap();
+
+        let (scan, tof, intensity) = parse_decompressed_bruker_binary_data(&decompressed_bytes).unwrap();
+
+        let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+
+        let ms_type = match ms_type_raw {
+            0 => MsType::Precursor,
+            8 => MsType::FragmentDda,
+            9 => MsType::FragmentDia,
+            _ => MsType::Unknown,
+        };
+
+        let raw_frame = RawTimsFrame {
+            frame_id: frame_id as i32,
+            retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time,
+            ms_type,
+            scan,
+            tof,
+            intensity: intensity.iter().map(|&x| x as f64).collect(),
+        };
+
+        raw_frame
+    }
+
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
+        let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let frames = pool.install(|| {
+            frame_ids.par_iter().map(|&frame_id| {
+                self.get_frame(frame_id)
+            }).collect()
+        });
+
+        TimsSlice {
+            frames
+        }
+    }
+
+    fn get_acquisition_mode(&self) -> AcquisitionMode {
+        self.raw_data_layout.acquisition_mode.clone()
+    }
+
+    fn get_frame_count(&self) -> i32 {
+        self.raw_data_layout.frame_meta_data.len() as i32
+    }
+
+    fn get_data_path(&self) -> &str {
+        &self.raw_data_layout.raw_data_path
+    }
+}
+
+pub enum TimsDataLoader {
+    InMemory(TimsInMemoryLoader),
+    Lazy(TimsLazyLoder)
+}
+
+impl TimsDataLoader {
+    pub fn new_lazy(bruker_lib_path: &str, data_path: &str) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path));
+        TimsDataLoader::Lazy(TimsLazyLoder {
+            raw_data_layout,
+            index_converter
+        })
+    }
+
+    pub fn new_in_memory(bruker_lib_path: &str, data_path: &str) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path));
+
+        let mut file_path = PathBuf::from(data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(file_path).unwrap();
+        let mut data = Vec::new();
+        infile.read_to_end(&mut data).unwrap();
+
+        TimsDataLoader::InMemory(TimsInMemoryLoader {
+            raw_data_layout,
+            index_converter,
+            compressed_data: data
+        })
+    }
+    pub fn get_index_converter(&self) -> &dyn IndexConverter {
+        match self {
+            TimsDataLoader::InMemory(loader) => &loader.index_converter,
+            TimsDataLoader::Lazy(loader) => &loader.index_converter
+        }
+    }
+}
+
+impl TimsData for TimsDataLoader {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_frame(frame_id),
+            TimsDataLoader::Lazy(loader) => loader.get_frame(frame_id)
+        }
+    }
+    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_raw_frame(frame_id),
+            TimsDataLoader::Lazy(loader) => loader.get_raw_frame(frame_id)
+        }
+    }
+
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_slice(frame_ids, num_threads),
+            TimsDataLoader::Lazy(loader) => loader.get_slice(frame_ids, num_threads)
+        }
+    }
+
+    fn get_acquisition_mode(&self) -> AcquisitionMode {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_acquisition_mode(),
+            TimsDataLoader::Lazy(loader) => loader.get_acquisition_mode()
+        }
+    }
+
+    fn get_frame_count(&self) -> i32 {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_frame_count(),
+            TimsDataLoader::Lazy(loader) => loader.get_frame_count()
+        }
+    }
+
+    fn get_data_path(&self) -> &str {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_data_path(),
+            TimsDataLoader::Lazy(loader) => loader.get_data_path()
+        }
+    }
+}
+
+pub struct SimpleIndexConverter;
+
+impl IndexConverter for SimpleIndexConverter {
+    fn tof_to_mz(&self, _frame_id: u32, _tof_values: &Vec<u32>) -> Vec<f64> {
+        todo!()
+    }
+
+    fn mz_to_tof(&self, _frame_id: u32, _mz_values: &Vec<f64>) -> Vec<u32> {
+        todo!()
+    }
+
+    fn scan_to_inverse_mobility(&self, _frame_id: u32, _scan_values: &Vec<u32>) -> Vec<f64> {
+        todo!()
+    }
+
+    fn inverse_mobility_to_scan(&self, _frame_id: u32, _inverse_mobility_values: &Vec<f64>) -> Vec<u32> {
+        todo!()
     }
 }
