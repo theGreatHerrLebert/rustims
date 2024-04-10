@@ -198,50 +198,6 @@ class PeptideProductIon:
         """
         return self.__ptr.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min)
 
-    def calculate_isotopic_spectrum(
-            self,
-            mass_tolerance: float = 1e-3,
-            abundance_threshold: float = 1e-8,
-            max_result: int = 200,
-            intensity_min: float = 1e-4
-    ) -> MzSpectrum:
-        """Calculate the isotopic spectrum of the product ion.
-
-        Args:
-            mass_tolerance: The mass tolerance for the isotopic spectrum calculation.
-            abundance_threshold: The abundance threshold for the isotopic spectrum calculation.
-            max_result: The maximum number of results to return.
-            intensity_min: The minimum intensity of the isotopic spectrum.
-
-        Returns:
-            The isotopic spectrum of the product ion.
-        """
-        py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
-        return MzSpectrum.from_py_mz_spectrum(py_spec)
-
-    def calculate_isotopic_spectrum_annotated(
-            self,
-            mass_tolerance: float = 1e-3,
-            abundance_threshold: float = 1e-8,
-            max_result: int = 200,
-            intensity_min: float = 1e-4,
-            peptide_id: int = -1
-    ) -> MzSpectrumAnnotated:
-        """Calculate the annotated isotopic spectrum of the product ion.
-
-        Args:
-            mass_tolerance: The mass tolerance for the annotated isotopic spectrum calculation.
-            abundance_threshold: The abundance threshold for the annotated isotopic spectrum calculation.
-            max_result: The maximum number of results to return.
-            intensity_min: The minimum intensity of the annotated isotopic spectrum.
-            peptide_id: The peptide ID.
-
-        Returns:
-            The annotated isotopic spectrum of the product ion.
-        """
-        py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id)
-        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
-
     def __repr__(self):
         return (f"ProductIon(kind={self.kind}, sequence={self.sequence}, charge={self.charge}, mz={self.mz}, "
                 f" intensity={self.intensity})")
@@ -409,6 +365,17 @@ class PeptideIon:
     ) -> MzSpectrum:
         py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrum.from_py_mz_spectrum(py_spec)
+
+    def calculate_isotopic_spectrum_annotated(
+            self,
+            mass_tolerance: float = 1e-3,
+            abundance_threshold: float = 1e-8,
+            max_result: int = 200,
+            intensity_min: float = 1e-4,
+            peptide_id: int = -1,
+    ) -> MzSpectrumAnnotated:
+        py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id)
+        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
 
     def get_ptr(self):
         return self.__ptr
