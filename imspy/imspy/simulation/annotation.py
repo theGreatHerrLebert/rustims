@@ -90,3 +90,62 @@ class ContributionSource:
 
     def get_py_ptr(self) -> ims.PyContributionSource:
         return self.__contribution_source
+
+
+class PeakAnnotation:
+    def __init__(self, contributions: list[ContributionSource] = None):
+        self.__peak_annotation = ims.PyPeakAnnotation(
+            [c.get_py_ptr() for c in contributions]
+        )
+
+    @property
+    def contributions(self) -> list[ContributionSource]:
+        return [ContributionSource.from_py_contribution_source(c) for c in self.__peak_annotation.inner]
+
+    def __repr__(self) -> str:
+        return f"PeakAnnotation(contributions={self.contributions})"
+
+    @classmethod
+    def from_py_peak_annotation(cls, peak_annotation: ims.PyPeakAnnotation) -> 'PeakAnnotation':
+        instance = cls.__new__(cls)
+        instance.__peak_annotation = peak_annotation
+        return instance
+
+    def get_py_ptr(self) -> ims.PyPeakAnnotation:
+        return self.__peak_annotation
+
+
+class MzSpectrumAnnotated:
+    def __init__(self, mz: list[float], intensity: list[float], annotations: list[PeakAnnotation]):
+        self.__mz_spectrum_annotated = ims.PyMzSpectrumAnnotated(
+            mz,
+            intensity,
+            [a.get_py_ptr() for a in annotations]
+        )
+
+    @property
+    def mz(self) -> list[float]:
+        return self.__mz_spectrum_annotated.mz
+
+    @property
+    def intensity(self) -> list[float]:
+        return self.__mz_spectrum_annotated.intensity
+
+    @property
+    def annotations(self) -> list[PeakAnnotation]:
+        return [PeakAnnotation.from_py_peak_annotation(a) for a in self.__mz_spectrum_annotated.annotations]
+
+    def __add__(self, other: 'MzSpectrumAnnotated') -> 'MzSpectrumAnnotated':
+        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(self.__mz_spectrum_annotated + other.__mz_spectrum_annotated)
+
+    def __repr__(self) -> str:
+        return f"MzSpectrumAnnotated(mz={self.mz}, intensity={self.intensity}, annotations={self.annotations})"
+
+    @classmethod
+    def from_py_mz_spectrum_annotated(cls, mz_spectrum_annotated: ims.PyMzSpectrumAnnotated) -> 'MzSpectrumAnnotated':
+        instance = cls.__new__(cls)
+        instance.__mz_spectrum_annotated = mz_spectrum_annotated
+        return instance
+
+    def get_py_ptr(self) -> ims.PyMzSpectrumAnnotated:
+        return self.__mz_spectrum_annotated
