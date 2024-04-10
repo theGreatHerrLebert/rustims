@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,7 @@ use crate::chemistry::amino_acid::{amino_acid_masses};
 use crate::chemistry::formulas::calculate_mz;
 use crate::chemistry::utility::{find_unimod_patterns, reshape_prosit_array, unimod_sequence_to_tokens};
 use crate::data::spectrum::MzSpectrum;
+use crate::simulation::annotation::{MzSpectrumAnnotated, ContributionSource, SignalAttributes, SourceType, PeakAnnotation};
 
 // helper types for easier reading
 type Mass = f64;
@@ -60,6 +61,47 @@ impl PeptideIon {
     ) -> MzSpectrum {
         let isotopic_distribution = self.calculate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
         MzSpectrum::new(isotopic_distribution.iter().map(|(mz, _)| *mz).collect(), isotopic_distribution.iter().map(|(_, abundance)| *abundance).collect()) * self.intensity
+    }
+
+    pub fn calculate_isotopic_spectrum_annotated(
+        &self,
+        mass_tolerance: f64,
+        abundance_threshold: f64,
+        max_result: i32,
+        intensity_min: f64,
+        peptide_id: i32,
+    ) -> MzSpectrumAnnotated {
+        let isotopic_distribution = self.calculate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+        let mut annotations = Vec::new();
+        let mut isotope_counter = 0;
+        let mut previous_mz = isotopic_distribution[0].0;
+
+        for (mz, abundance) in isotopic_distribution.iter() {
+
+            if (mz - previous_mz).abs() > mass_tolerance {
+                isotope_counter += 1;
+                previous_mz = *mz;
+            }
+
+            let signal_attributes = SignalAttributes {
+                charge_state: self.charge,
+                peptide_id,
+                isotope_peak: isotope_counter,
+                description: None,
+            };
+
+            let contribution_source = ContributionSource {
+                intensity_contribution: *abundance,
+                source_type: SourceType::Signal,
+                signal_attributes: Some(signal_attributes)
+            };
+
+            annotations.push(PeakAnnotation {
+                contributions: vec![contribution_source]
+            });
+        }
+
+        MzSpectrumAnnotated::new(isotopic_distribution.iter().map(|(mz, _)| *mz).collect(), isotopic_distribution.iter().map(|(_, abundance)| *abundance).collect(), annotations)
     }
 }
 
