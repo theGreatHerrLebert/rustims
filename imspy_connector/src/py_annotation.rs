@@ -11,6 +11,7 @@ pub struct PyMzSpectrumAnnotated {
 impl PyMzSpectrumAnnotated {
     #[new]
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>, annotations: Vec<PyPeakAnnotation>) -> Self {
+        assert!(mz.len() == intensity.len() && intensity.len() == annotations.len());
         let annotations = annotations.iter().map(|x| PeakAnnotation {
             contributions: x.inner.clone()
         }).collect();
