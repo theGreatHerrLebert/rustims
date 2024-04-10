@@ -76,9 +76,13 @@ impl PeptideIon {
         let mut isotope_counter = 0;
         let mut previous_mz = isotopic_distribution[0].0;
 
+
+
         for (mz, abundance) in isotopic_distribution.iter() {
 
-            if (mz - previous_mz).abs() > (mass_tolerance * 2.0) {
+            let ppm_tolerance = (mz / 1e6) * 25.0;
+
+            if (mz - previous_mz).abs() > ppm_tolerance {
                 isotope_counter += 1;
                 previous_mz = *mz;
             }
