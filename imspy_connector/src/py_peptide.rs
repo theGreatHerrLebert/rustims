@@ -41,7 +41,7 @@ impl PyPeptideIon {
 
     #[getter]
     pub fn peptide_id(&self) -> Option<i32> {
-        self.inner.peptide_id
+        self.inner.sequence.peptide_id
     }
 
     pub fn calculate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
@@ -141,6 +141,11 @@ impl PyPeptideSequence {
     #[getter]
     pub fn sequence(&self) -> String {
         self.inner.sequence.clone()
+    }
+
+    #[getter]
+    pub fn peptide_id(&self) -> Option<i32> {
+        self.inner.peptide_id
     }
 
     #[getter]
