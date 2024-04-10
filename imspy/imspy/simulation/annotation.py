@@ -93,7 +93,8 @@ class ContributionSource:
 
 
 class PeakAnnotation:
-    def __init__(self, contributions: list[ContributionSource] = None):
+    def __init__(self, contributions: list[ContributionSource]):
+        assert len(contributions) > 0, "At least one contribution is required."
         self.__peak_annotation = ims.PyPeakAnnotation(
             [c.get_py_ptr() for c in contributions]
         )
@@ -121,6 +122,7 @@ class PeakAnnotation:
 
 class MzSpectrumAnnotated:
     def __init__(self, mz: list[float], intensity: list[float], annotations: list[PeakAnnotation]):
+        assert len(mz) == len(intensity) == len(annotations), "Length of mz, intensity and annotations must be equal."
         self.__mz_spectrum_annotated = ims.PyMzSpectrumAnnotated(
             mz,
             intensity,
