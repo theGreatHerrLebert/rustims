@@ -70,6 +70,27 @@ impl MzSpectrumAnnotated {
             annotations,
         }
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> Self {
+        let mut mz_filtered: Vec<f64> = Vec::new();
+        let mut intensity_filtered: Vec<f64> = Vec::new();
+        let mut annotations_filtered: Vec<PeakAnnotation> = Vec::new();
+
+        for (mz, intensity, annotation) in izip!(self.mz.iter(), self.intensity.iter(), self.annotations.iter()) {
+            if *mz >= mz_min && *mz <= mz_max && *intensity >= intensity_min && *intensity <= intensity_max {
+                mz_filtered.push(*mz);
+                intensity_filtered.push(*intensity);
+                annotations_filtered.push(annotation.clone());
+            }
+        }
+
+        MzSpectrumAnnotated {
+            mz: mz_filtered,
+            intensity: intensity_filtered,
+            annotations: annotations_filtered,
+        }
+
+    }
 }
 
 impl std::ops::Add for MzSpectrumAnnotated {

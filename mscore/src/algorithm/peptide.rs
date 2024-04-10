@@ -26,7 +26,7 @@ use crate::data::peptide::{FragmentType, PeptideProductIon, PeptideSequence};
 /// use mscore::algorithm::peptide::calculate_peptide_mono_isotopic_mass;
 /// use mscore::data::peptide::PeptideSequence;
 ///
-/// let peptide_sequence = PeptideSequence::new("PEPTIDEH".to_string());
+/// let peptide_sequence = PeptideSequence::new("PEPTIDEH".to_string(), Some(1));
 /// let mass = calculate_peptide_mono_isotopic_mass(&peptide_sequence);
 /// let mass_quantized = (mass * 1e6).round() as i32;
 /// assert_eq!(mass_quantized, 936418877);
