@@ -399,4 +399,4 @@ class PeptideIon:
         return instance
 
     def __repr__(self):
-        return f"PeptideIon(sequence={self.sequence}, charge={self.charge}, mz={self.mz}, intensity={self.intensity})"
+        return f"PeptideIon(sequence={self.sequence}, charge={self.charge}, mz={self.mz}, intensity={self.intensity}, peptide_id={self.peptide_id})"
