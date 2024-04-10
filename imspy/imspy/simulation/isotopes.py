@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union
 import numpy as np
 from numpy.typing import NDArray
 from numpy.typing import ArrayLike
@@ -18,12 +18,13 @@ MASS_PROTON = 1.007276466621
 MASS_NEUTRON = 1.00866491595
 
 
-def simulate_precursor_spectrum(sequence: str, charge: int) -> MzSpectrum:
-    return MzSpectrum.from_py_mz_spectrum(ims.simulate_precursor_spectrum(sequence, charge))
+def simulate_precursor_spectrum(sequence: str, charge: int, peptide_id: Union[None, int] = None) -> MzSpectrum:
+    return MzSpectrum.from_py_mz_spectrum(ims.simulate_precursor_spectrum(sequence, charge, peptide_id))
 
 
-def simulate_precursor_spectra(sequences: NDArray, charges: NDArray, num_threads: int) -> List[MzSpectrum]:
-    spectra = ims.simulate_precursor_spectra(sequences, charges, num_threads)
+def simulate_precursor_spectra(sequences: NDArray, charges: NDArray, num_threads: int, peptide_ids: List[Union[None, int]] = None) -> List[MzSpectrum]:
+    ids = peptide_ids if peptide_ids is not None else [None] * len(sequences)
+    spectra = ims.simulate_precursor_spectra(sequences, charges, num_threads, ids)
     return [MzSpectrum.from_py_mz_spectrum(x) for x in spectra]
 
 

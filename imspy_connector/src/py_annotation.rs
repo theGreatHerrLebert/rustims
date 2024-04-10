@@ -229,5 +229,6 @@ pub fn annotation(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyContributionSource>()?;
     m.add_class::<PyPeakAnnotation>()?;
     m.add_class::<PyMzSpectrumAnnotated>()?;
+    m.add_class::<PyTimsFrameAnnotated>()?;
     Ok(())
 }

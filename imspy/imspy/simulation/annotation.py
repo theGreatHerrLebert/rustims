@@ -2,6 +2,7 @@ from typing import Union
 
 import imspy_connector
 import pandas as pd
+from numpy.typing import NDArray
 
 ims = imspy_connector.py_annotation
 
@@ -66,7 +67,8 @@ class SignalAttributes:
 
 
 class ContributionSource:
-    def __init__(self, intensity_contribution: float, source_type: SourceType, signal_attributes: Union[None, SignalAttributes] = None):
+    def __init__(self, intensity_contribution: float, source_type: SourceType,
+                 signal_attributes: Union[None, SignalAttributes] = None):
         self.__contribution_source = ims.PyContributionSource(
             intensity_contribution,
             source_type.get_py_ptr(),
@@ -83,7 +85,8 @@ class ContributionSource:
 
     @property
     def signal_attributes(self) -> Union[None, SignalAttributes]:
-        return SignalAttributes.from_py_signal_annotation(self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
+        return SignalAttributes.from_py_signal_annotation(
+            self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
 
     def __repr__(self) -> str:
         return f"ContributionSource(intensity_contribution={self.intensity_contribution}, source_type={self.source_type}, signal_attributes={self.signal_attributes})"
@@ -144,7 +147,8 @@ class MzSpectrumAnnotated:
         return [PeakAnnotation.from_py_peak_annotation(a) for a in self.__mz_spectrum_annotated.annotations]
 
     def __add__(self, other: 'MzSpectrumAnnotated') -> 'MzSpectrumAnnotated':
-        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(self.__mz_spectrum_annotated + other.__mz_spectrum_annotated)
+        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(
+            self.__mz_spectrum_annotated + other.__mz_spectrum_annotated)
 
     def __repr__(self) -> str:
         return f"MzSpectrumAnnotated(mz={self.mz}, intensity={self.intensity}, annotations={self.annotations})"
@@ -157,3 +161,89 @@ class MzSpectrumAnnotated:
 
     def get_py_ptr(self) -> ims.PyMzSpectrumAnnotated:
         return self.__mz_spectrum_annotated
+
+
+class TimsFrameAnnotated:
+    def __init__(self,
+                 frame_id: int,
+                 retention_time: float,
+                 ms_type: int,
+                 tof: NDArray[int],
+                 mz: NDArray[float],
+                 scan: NDArray[int],
+                 inv_mobility: NDArray[float],
+                 intensity: NDArray[float],
+                 annotations: NDArray[PeakAnnotation]):
+        assert len(tof) == len(mz) == len(scan) == len(inv_mobility) == len(intensity) == len(
+            annotations), "Length of tof, mz, scan, inv_mobility, intensity and annotations must be equal."
+
+        self.__tims_frame_annotated = ims.PyTimsFrameAnnotated(
+            frame_id,
+            retention_time,
+            ms_type,
+            tof,
+            mz,
+            scan,
+            inv_mobility,
+            intensity,
+            [a.get_py_ptr() for a in annotations])
+
+    @property
+    def frame_id(self) -> int:
+        return self.__tims_frame_annotated.frame_id
+
+    @property
+    def retention_time(self) -> float:
+        return self.__tims_frame_annotated.retention_time
+
+    @property
+    def ms_type(self) -> int:
+        return self.__tims_frame_annotated.ms_type
+
+    @property
+    def tof(self) -> list[int]:
+        return self.__tims_frame_annotated.tof
+
+    @property
+    def mz(self) -> list[float]:
+        return self.__tims_frame_annotated.mz
+
+    @property
+    def scan(self) -> list[int]:
+        return self.__tims_frame_annotated.scan
+
+    @property
+    def inv_mobility(self) -> list[float]:
+        return self.__tims_frame_annotated.inv_mobility
+
+    @property
+    def intensity(self) -> list[float]:
+        return self.__tims_frame_annotated.intensity
+
+    @property
+    def annotations(self) -> list[PeakAnnotation]:
+        return [PeakAnnotation.from_py_peak_annotation(a) for a in self.__tims_frame_annotated.annotations]
+
+    @property
+    def ms_type_numeric(self) -> int:
+        return self.__tims_frame_annotated.ms_type_numeric
+
+    def __add__(self, other: 'TimsFrameAnnotated') -> 'TimsFrameAnnotated':
+        return TimsFrameAnnotated.from_py_tims_frame_annotated(self.__tims_frame_annotated +
+                                                               other.__tims_frame_annotated)
+
+    def __repr__(self) -> str:
+        return (f"TimsFrameAnnotated("
+                f"frame_id={self.frame_id}, "
+                f"retention_time={self.retention_time}, "
+                f"ms_type={self.ms_type}, num_peaks={len(self.mz)}, "
+                f"sum_intensity={sum(self.intensity)})")
+
+    @classmethod
+    def from_py_tims_frame_annotated(cls, tims_frame_annotated: ims.PyTimsFrameAnnotated) -> 'TimsFrameAnnotated':
+        instance = cls.__new__(cls)
+        instance.__tims_frame_annotated = tims_frame_annotated
+        return instance
+
+    def get_py_ptr(self) -> ims.PyTimsFrameAnnotated:
+        return self.__tims_frame_annotated

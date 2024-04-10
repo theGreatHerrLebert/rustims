@@ -121,7 +121,7 @@ class PeptideProductIonSeries:
 
 
 class PeptideProductIon:
-    def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0):
+    def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0, peptide_id: Union[None, int] = None):
         """Create a new product ion.
 
         Args:
@@ -136,7 +136,8 @@ class PeptideProductIon:
             kind=kind,
             sequence=sequence,
             charge=charge,
-            intensity=intensity
+            intensity=intensity,
+            peptide_id=peptide_id
         )
 
     @property
@@ -204,17 +205,21 @@ class PeptideProductIon:
 
 
 class PeptideSequence:
-    def __init__(self, sequence: str):
+    def __init__(self, sequence: str, peptide_id: Union[None, int] = None):
         """Create a new peptide sequence.
 
         Args:
             sequence: The sequence of the peptide.
         """
-        self.__ptr = ims.PyPeptideSequence(sequence)
+        self.__ptr = ims.PyPeptideSequence(sequence, peptide_id=peptide_id)
 
     @property
     def sequence(self) -> str:
         return self.__ptr.sequence
+
+    @property
+    def peptide_id(self) -> Union[None, int]:
+        return self.__ptr.peptide_id
 
     @property
     def mono_isotopic_mass(self) -> float:
@@ -322,11 +327,12 @@ class PeptideSequence:
         return instance
 
     def __repr__(self):
-        return f"PeptideSequence(sequence={self.sequence}, mono_isotopic_mass={self.mono_isotopic_mass})"
+        return (f"PeptideSequence(sequence={self.sequence}, "
+                f"mono_isotopic_mass={self.mono_isotopic_mass}, peptide_id={self.peptide_id})")
 
 
 class PeptideIon:
-    def __init__(self, sequence: str, charge: int, intensity: float):
+    def __init__(self, sequence: str, charge: int, intensity: float, peptide_id: Union[None, int] = None):
         """Create a new peptide ion.
 
         Args:
@@ -334,11 +340,15 @@ class PeptideIon:
             charge: The charge of the peptide ion.
             intensity: The intensity of the peptide ion.
         """
-        self.__ptr = ims.PyPeptideIon(sequence, charge, intensity)
+        self.__ptr = ims.PyPeptideIon(sequence, charge, intensity, peptide_id)
 
     @property
     def sequence(self) -> PeptideSequence:
         return PeptideSequence.fom_py_ptr(self.__ptr.sequence)
+
+    @property
+    def peptide_id(self) -> Union[None, int]:
+        return self.__ptr.peptide_id
 
     @property
     def charge(self) -> int:
@@ -363,6 +373,18 @@ class PeptideIon:
             max_result: int = 200,
             intensity_min: float = 1e-4
     ) -> MzSpectrum:
+        """Calculate the isotopic spectrum of the peptide ion.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotopic spectrum calculation.
+            abundance_threshold: The abundance threshold for the isotopic spectrum calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotopic spectrum.
+
+        Returns:
+            The isotopic spectrum of the peptide ion.
+        """
+        assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
         py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrum.from_py_mz_spectrum(py_spec)
 
@@ -372,9 +394,20 @@ class PeptideIon:
             abundance_threshold: float = 1e-8,
             max_result: int = 200,
             intensity_min: float = 1e-4,
-            peptide_id: int = -1,
     ) -> MzSpectrumAnnotated:
-        py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id)
+        """Calculate the isotopic spectrum of the peptide ion.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotopic spectrum calculation.
+            abundance_threshold: The abundance threshold for the isotopic spectrum calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotopic spectrum.
+
+        Returns:
+            The isotopic spectrum of the peptide ion.
+        """
+        assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
+        py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
 
     def get_ptr(self):

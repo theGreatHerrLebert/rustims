@@ -79,7 +79,7 @@ impl TimsTofSyntheticsDataHandle {
 
             Ok(PeptidesSim {
                 peptide_id: row.get(0)?,
-                sequence: PeptideSequence::new(row.get(1)?),
+                sequence: PeptideSequence::new(row.get(1)?, row.get(0)?),
                 proteins: row.get(2)?,
                 decoy: row.get(3)?,
                 missed_cleavages: row.get(4)?,

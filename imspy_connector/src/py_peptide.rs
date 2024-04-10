@@ -15,8 +15,8 @@ pub struct PyPeptideIon {
 #[pymethods]
 impl PyPeptideIon {
     #[new]
-    pub fn new(sequence: String, charge: i32, intensity: f64) -> Self {
-        PyPeptideIon { inner: PeptideIon::new(sequence, charge, intensity) }
+    pub fn new(sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
+        PyPeptideIon { inner: PeptideIon::new(sequence, charge, intensity, peptide_id) }
     }
 
     #[getter]
@@ -39,12 +39,17 @@ impl PyPeptideIon {
         self.inner.mz()
     }
 
+    #[getter]
+    pub fn peptide_id(&self) -> Option<i32> {
+        self.inner.sequence.peptide_id
+    }
+
     pub fn calculate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min) }
     }
 
-    pub fn calculate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64, peptide_id: Option<i32>) -> PyMzSpectrumAnnotated {
-        let annotated_spectrum = self.inner.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id.unwrap_or(-1));
+    pub fn calculate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrumAnnotated {
+        let annotated_spectrum = self.inner.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min);
         PyMzSpectrumAnnotated { inner: annotated_spectrum }
     }
 }
@@ -129,13 +134,18 @@ pub struct PyPeptideSequence {
 #[pymethods]
 impl PyPeptideSequence {
     #[new]
-    pub fn new(sequence: String) -> Self {
-        PyPeptideSequence { inner: PeptideSequence::new(sequence) }
+    pub fn new(sequence: String, peptide_id: Option<i32>) -> Self {
+        PyPeptideSequence { inner: PeptideSequence::new(sequence, peptide_id) }
     }
 
     #[getter]
     pub fn sequence(&self) -> String {
         self.inner.sequence.clone()
+    }
+
+    #[getter]
+    pub fn peptide_id(&self) -> Option<i32> {
+        self.inner.peptide_id
     }
 
     #[getter]
@@ -236,7 +246,7 @@ pub struct PyPeptideProductIon {
 #[pymethods]
 impl PyPeptideProductIon {
     #[new]
-    pub fn new(kind: &str, sequence: String, charge: i32, intensity: f64) -> Self {
+    pub fn new(kind: &str, sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
 
         let kind = match kind {
             "a" => FragmentType::A,
@@ -248,7 +258,7 @@ impl PyPeptideProductIon {
             _ => panic!("Invalid product ion kind"),
         };
 
-        PyPeptideProductIon { inner: PeptideProductIon::new(kind, sequence, charge, intensity) }
+        PyPeptideProductIon { inner: PeptideProductIon::new(kind, sequence, charge, intensity, peptide_id) }
     }
     #[getter]
     pub fn kind(&self) -> String {

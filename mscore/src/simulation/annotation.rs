@@ -104,6 +104,22 @@ impl std::ops::Add for MzSpectrumAnnotated {
     }
 }
 
+impl std::ops::Mul<f64> for MzSpectrumAnnotated {
+    type Output = Self;
+    fn mul(self, scale: f64) -> Self::Output{
+
+        let mut scaled_intensities: Vec<f64> = vec![0.0; self.intensity.len()];
+
+        for (idx,intensity) in self.intensity.iter().enumerate(){
+            scaled_intensities[idx] = scale*intensity;
+        }
+
+        MzSpectrumAnnotated { mz: self.mz.clone(), intensity: scaled_intensities, annotations: self.annotations.clone() }
+
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct TimsFrameAnnotated {
     pub frame_id: i32,
     pub retention_time: f64,
