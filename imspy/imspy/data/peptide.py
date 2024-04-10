@@ -332,7 +332,7 @@ class PeptideSequence:
 
 
 class PeptideIon:
-    def __init__(self, sequence: str, charge: int, intensity: float):
+    def __init__(self, sequence: str, charge: int, intensity: float, peptide_id: Union[None, int] = None):
         """Create a new peptide ion.
 
         Args:
@@ -340,11 +340,15 @@ class PeptideIon:
             charge: The charge of the peptide ion.
             intensity: The intensity of the peptide ion.
         """
-        self.__ptr = ims.PyPeptideIon(sequence, charge, intensity)
+        self.__ptr = ims.PyPeptideIon(sequence, charge, intensity, peptide_id)
 
     @property
     def sequence(self) -> PeptideSequence:
         return PeptideSequence.fom_py_ptr(self.__ptr.sequence)
+
+    @property
+    def peptide_id(self) -> Union[None, int]:
+        return self.__ptr.peptide_id
 
     @property
     def charge(self) -> int:
