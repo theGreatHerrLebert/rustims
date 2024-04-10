@@ -101,7 +101,7 @@ class PeakAnnotation:
 
     @property
     def contributions(self) -> list[ContributionSource]:
-        return [ContributionSource.from_py_contribution_source(c) for c in self.__peak_annotation.inner]
+        return [ContributionSource.from_py_contribution_source(c) for c in self.__peak_annotation.contributions]
 
     def __repr__(self) -> str:
         return f"PeakAnnotation(contributions={self.contributions})"
