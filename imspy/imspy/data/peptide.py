@@ -373,6 +373,18 @@ class PeptideIon:
             max_result: int = 200,
             intensity_min: float = 1e-4
     ) -> MzSpectrum:
+        """Calculate the isotopic spectrum of the peptide ion.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotopic spectrum calculation.
+            abundance_threshold: The abundance threshold for the isotopic spectrum calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotopic spectrum.
+
+        Returns:
+            The isotopic spectrum of the peptide ion.
+        """
+        assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
         py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrum.from_py_mz_spectrum(py_spec)
 
@@ -383,6 +395,18 @@ class PeptideIon:
             max_result: int = 200,
             intensity_min: float = 1e-4,
     ) -> MzSpectrumAnnotated:
+        """Calculate the isotopic spectrum of the peptide ion.
+
+        Args:
+            mass_tolerance: The mass tolerance for the isotopic spectrum calculation.
+            abundance_threshold: The abundance threshold for the isotopic spectrum calculation.
+            max_result: The maximum number of results to return.
+            intensity_min: The minimum intensity of the isotopic spectrum.
+
+        Returns:
+            The isotopic spectrum of the peptide ion.
+        """
+        assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
         py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
 
