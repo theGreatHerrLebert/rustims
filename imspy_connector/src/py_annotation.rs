@@ -1,5 +1,88 @@
+use mscore::data::spectrum::MsType;
 use pyo3::prelude::*;
-use mscore::simulation::annotation::{SourceType, SignalAttributes, ContributionSource, MzSpectrumAnnotated, PeakAnnotation};
+use mscore::simulation::annotation::{SourceType, SignalAttributes, ContributionSource, MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated};
+use numpy::{IntoPyArray, PyArray1};
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyTimsFrameAnnotated {
+    pub inner: TimsFrameAnnotated,
+}
+
+#[pymethods]
+impl PyTimsFrameAnnotated {
+    #[new]
+    pub unsafe fn new(frame_id: i32,
+                      retention_time: f64,
+                      ms_type: i32,
+                      tof: &PyArray1<u32>,
+                      mz: &PyArray1<f64>,
+                      scan: &PyArray1<u32>,
+                      inv_mobility: &PyArray1<f64>,
+                      intensity: &PyArray1<f64>,
+                      annotations: Vec<PyPeakAnnotation>) -> PyResult<Self> {
+
+        assert!(tof.len() == mz.len() && mz.len() == scan.len() && scan.len() == inv_mobility.len() && inv_mobility.len() == intensity.len() && intensity.len() == annotations.len());
+
+        let ms_type = MsType::new(ms_type);
+        let annotations = annotations.iter().map(|x| PeakAnnotation {
+            contributions: x.inner.clone()
+        }).collect();
+
+        Ok(PyTimsFrameAnnotated {
+            inner: TimsFrameAnnotated {
+                frame_id,
+                retention_time,
+                ms_type,
+                tof: tof.as_slice()?.to_vec(),
+                mz: mz.as_slice()?.to_vec(),
+                scan: scan.as_slice()?.to_vec(),
+                inv_mobility: inv_mobility.as_slice()?.to_vec(),
+                intensity: intensity.as_slice()?.to_vec(),
+                annotations,
+            },
+        })
+    }
+
+    #[getter]
+    pub fn frame_id(&self) -> i32 { self.inner.frame_id }
+
+    #[getter]
+    pub fn retention_time(&self) -> f64 { self.inner.retention_time }
+    #[getter]
+    pub fn tof(&self, py: Python) -> Py<PyArray1<u32>> { self.inner.tof.clone().into_pyarray_bound(py).unbind() }
+
+    #[getter]
+    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.mz.clone().into_pyarray_bound(py).unbind() }
+
+    #[getter]
+    pub fn scan(&self, py: Python) -> Py<PyArray1<u32>> { self.inner.scan.clone().into_pyarray_bound(py).unbind() }
+
+    #[getter]
+    pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.inv_mobility.clone().into_pyarray_bound(py).unbind() }
+
+    #[getter]
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.intensity.clone().into_pyarray_bound(py).unbind() }
+
+    #[getter]
+    pub fn annotations(&self) -> Vec<PyPeakAnnotation> {
+        self.inner.annotations.iter().map(|x| PyPeakAnnotation { inner: x.contributions.clone() }).collect()
+    }
+
+    #[getter]
+    pub fn ms_type_numeric(&self) -> i32 {
+        self.inner.ms_type.ms_type_numeric()
+    }
+
+    #[setter]
+    pub unsafe fn set_tof(&mut self, tof: &PyArray1<u32>) {
+        self.inner.tof = tof.as_slice().unwrap().to_vec();
+    }
+
+    pub fn __add__(&self, other: PyTimsFrameAnnotated) -> PyResult<PyTimsFrameAnnotated> {
+        Ok(PyTimsFrameAnnotated { inner: self.inner.clone() + other.inner })
+    }
+}
 
 #[pyclass]
 #[derive(Clone)]
@@ -10,24 +93,24 @@ pub struct PyMzSpectrumAnnotated {
 #[pymethods]
 impl PyMzSpectrumAnnotated {
     #[new]
-    pub fn new(mz: Vec<f64>, intensity: Vec<f64>, annotations: Vec<PyPeakAnnotation>) -> Self {
+    pub unsafe fn new(mz: &PyArray1<f64>, intensity: &PyArray1<f64>, annotations: Vec<PyPeakAnnotation>) -> PyResult<Self> {
         assert!(mz.len() == intensity.len() && intensity.len() == annotations.len());
         let annotations = annotations.iter().map(|x| PeakAnnotation {
             contributions: x.inner.clone()
         }).collect();
-        PyMzSpectrumAnnotated {
+        Ok(PyMzSpectrumAnnotated {
             inner: MzSpectrumAnnotated {
-                mz,
-                intensity,
+                mz: mz.as_slice()?.to_vec(),
+                intensity: intensity.as_slice()?.to_vec(),
                 annotations,
             },
-        }
+        })
     }
     #[getter]
-    pub fn mz(&self) -> Vec<f64> { self.inner.mz.clone() }
+    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.mz.clone().into_pyarray_bound(py).unbind() }
 
     #[getter]
-    pub fn intensity(&self) -> Vec<f64> { self.inner.intensity.clone() }
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.intensity.clone().into_pyarray_bound(py).unbind() }
 
     #[getter]
     pub fn annotations(&self) -> Vec<PyPeakAnnotation> {
@@ -36,6 +119,10 @@ impl PyMzSpectrumAnnotated {
 
     pub fn __add__(&self, other: PyMzSpectrumAnnotated) -> PyResult<PyMzSpectrumAnnotated> {
         Ok(PyMzSpectrumAnnotated { inner: self.inner.clone() + other.inner })
+    }
+
+    pub fn __mul__(&self, other: f64) -> PyResult<PyMzSpectrumAnnotated> {
+        Ok(PyMzSpectrumAnnotated { inner: self.inner.clone() * other })
     }
 }
 
