@@ -1,6 +1,8 @@
 from typing import Union
 
 import imspy_connector
+import pandas as pd
+
 ims = imspy_connector.py_annotation
 
 
