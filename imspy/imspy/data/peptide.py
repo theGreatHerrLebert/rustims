@@ -121,7 +121,7 @@ class PeptideProductIonSeries:
 
 
 class PeptideProductIon:
-    def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0):
+    def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0, peptide_id: Union[None, int] = None):
         """Create a new product ion.
 
         Args:
@@ -136,7 +136,8 @@ class PeptideProductIon:
             kind=kind,
             sequence=sequence,
             charge=charge,
-            intensity=intensity
+            intensity=intensity,
+            peptide_id=peptide_id
         )
 
     @property
@@ -204,17 +205,21 @@ class PeptideProductIon:
 
 
 class PeptideSequence:
-    def __init__(self, sequence: str):
+    def __init__(self, sequence: str, peptide_id: Union[None, int] = None):
         """Create a new peptide sequence.
 
         Args:
             sequence: The sequence of the peptide.
         """
-        self.__ptr = ims.PyPeptideSequence(sequence)
+        self.__ptr = ims.PyPeptideSequence(sequence, peptide_id=peptide_id)
 
     @property
     def sequence(self) -> str:
         return self.__ptr.sequence
+
+    @property
+    def peptide_id(self) -> Union[None, int]:
+        return self.__ptr.peptide_id
 
     @property
     def mono_isotopic_mass(self) -> float:
@@ -322,7 +327,8 @@ class PeptideSequence:
         return instance
 
     def __repr__(self):
-        return f"PeptideSequence(sequence={self.sequence}, mono_isotopic_mass={self.mono_isotopic_mass})"
+        return (f"PeptideSequence(sequence={self.sequence}, "
+                f"mono_isotopic_mass={self.mono_isotopic_mass}, peptide_id={self.peptide_id})")
 
 
 class PeptideIon:
