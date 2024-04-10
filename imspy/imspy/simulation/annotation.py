@@ -89,7 +89,7 @@ class ContributionSource:
     @classmethod
     def from_py_contribution_source(cls, contribution_source: ims.PyContributionSource) -> 'ContributionSource':
         instance = cls.__new__(cls)
-        instance._contribution_source = contribution_source
+        instance.__contribution_source = contribution_source
         return instance
 
     def get_py_ptr(self) -> ims.PyContributionSource:
