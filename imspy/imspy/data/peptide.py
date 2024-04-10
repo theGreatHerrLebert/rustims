@@ -374,7 +374,7 @@ class PeptideIon:
             intensity_min: float = 1e-4,
             peptide_id: int = -1,
     ) -> MzSpectrumAnnotated:
-        py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id)
+        py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id)
         return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
 
     def get_ptr(self):
