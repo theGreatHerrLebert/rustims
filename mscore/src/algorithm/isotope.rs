@@ -1,6 +1,6 @@
 extern crate statrs;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -175,7 +175,19 @@ pub fn generate_isotope_distribution(
     let final_distribution = cumulative_distribution.expect("Peptide has no elements");
     // Normalize the distribution
     let total_abundance: f64 = final_distribution.iter().map(|&(_, abundance)| abundance).sum();
-    final_distribution.into_iter().map(|(mass, abundance)| (mass, abundance / total_abundance)).collect()
+    let result: Vec<_> = final_distribution.into_iter().map(|(mass, abundance)| (mass, abundance / total_abundance)).collect();
+
+    let mut sort_map: BTreeMap<i64, f64> = BTreeMap::new();
+    let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
+
+    for (mz, intensity) in result {
+        let key = quantize(mz);
+        sort_map.entry(key).and_modify(|e| *e += intensity).or_insert(intensity);
+    }
+
+    let mz: Vec<f64> = sort_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
+    let intensity: Vec<f64> = sort_map.values().map(|&intensity| intensity).collect();
+    mz.iter().zip(intensity.iter()).map(|(&mz, &intensity)| (mz, intensity)).collect()
 }
 
 

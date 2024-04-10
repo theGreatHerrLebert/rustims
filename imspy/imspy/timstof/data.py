@@ -55,7 +55,7 @@ class AcquisitionMode:
 
 
 class TimsDataset(ABC):
-    def __init__(self, data_path: str, in_memory: bool = False):
+    def __init__(self, data_path: str, in_memory: bool = True):
         """TimsDataHandle class.
 
         Args:

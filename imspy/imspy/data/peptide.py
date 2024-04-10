@@ -3,6 +3,7 @@ from typing import List, Tuple, Union
 import imspy_connector
 
 from imspy.data.spectrum import MzSpectrum
+from imspy.simulation.annotation import MzSpectrumAnnotated
 
 ims = imspy_connector.py_peptide
 
@@ -364,6 +365,17 @@ class PeptideIon:
     ) -> MzSpectrum:
         py_spec = self.__ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrum.from_py_mz_spectrum(py_spec)
+
+    def calculate_isotopic_spectrum_annotated(
+            self,
+            mass_tolerance: float = 1e-3,
+            abundance_threshold: float = 1e-8,
+            max_result: int = 200,
+            intensity_min: float = 1e-4,
+            peptide_id: int = -1,
+    ) -> MzSpectrumAnnotated:
+        py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id)
+        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
 
     def get_ptr(self):
         return self.__ptr

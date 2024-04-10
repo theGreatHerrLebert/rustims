@@ -47,15 +47,18 @@ def main():
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
+    parser.add_argument("--reference_in_memory", type=bool, default=True,
+                        help="Whether to load the reference dataset into memory (default: True)")
+
     # Optional verbosity flag
     parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
 
-    parser.add_argument("--acquisition_type",
+    parser.add_argument("-acq", "--acquisition_type",
                         type=str,
                         help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA]",
                         default='DIA')
 
-    parser.add_argument("--name", type=str, help="Name of the experiment",
+    parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
                         default=f'TimSim-[acquisition-type]-{int(time.time())}')
 
     parser.add_argument("--use_reference_layout", type=bool, default=True,
@@ -158,6 +161,12 @@ def main():
         default=5.0,
         help="Fragment noise in ppm (default: 5.0)"
     )
+    parser.add_argument(
+        "--mz_noise_uniform",
+        type=bool,
+        default=False,
+        help="Use uniform distribution for m/z noise (default: False), otherwise normal distribution"
+    )
 
     parser.add_argument(
         "--add_real_data_noise",
@@ -200,6 +209,7 @@ def main():
         verbose=verbose,
         gradient_length=args.gradient_length,
         use_reference_ds_layout=args.use_reference_layout,
+        reference_in_memory=args.reference_in_memory,
     )
 
     if verbose:
@@ -323,12 +333,13 @@ def main():
         batch_size=args.batch_size,
         verbose=verbose,
         mz_noise_precursor=args.mz_noise_precursor,
+        mz_noise_uniform=args.mz_noise_uniform,
         precursor_noise_ppm=args.precursor_noise_ppm,
         mz_noise_fragment=args.mz_noise_fragment,
         fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
         add_real_data_noise=args.add_real_data_noise,
-        reference_noise_intensity_max=args.reference_noise_intensity_max
+        reference_noise_intensity_max=args.reference_noise_intensity_max,
     )
 
 

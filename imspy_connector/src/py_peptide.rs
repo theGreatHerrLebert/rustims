@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon,
                             PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
+use crate::py_annotation::PyMzSpectrumAnnotated;
 
 use crate::py_mz_spectrum::PyMzSpectrum;
 
@@ -40,6 +41,11 @@ impl PyPeptideIon {
 
     pub fn calculate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min) }
+    }
+
+    pub fn calculate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64, peptide_id: Option<i32>) -> PyMzSpectrumAnnotated {
+        let annotated_spectrum = self.inner.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min, peptide_id.unwrap_or(-1));
+        PyMzSpectrumAnnotated { inner: annotated_spectrum }
     }
 }
 

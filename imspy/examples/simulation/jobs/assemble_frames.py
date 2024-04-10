@@ -14,6 +14,7 @@ def assemble_frames(
         batch_size: int,
         verbose: bool = False,
         mz_noise_precursor: bool = False,
+        mz_noise_uniform: bool = False,
         precursor_noise_ppm: float = 5.,
         mz_noise_fragment: bool = False,
         fragment_noise_ppm: float = 5.,
@@ -49,6 +50,7 @@ def assemble_frames(
         built_frames = frame_builder.build_frames(
             ids,
             mz_noise_precursor=mz_noise_precursor,
+            mz_noise_uniform=mz_noise_uniform,
             precursor_noise_ppm=precursor_noise_ppm,
             mz_noise_fragment=mz_noise_fragment,
             fragment_noise_ppm=fragment_noise_ppm,
