@@ -31,8 +31,8 @@ class SourceType:
 
 # charge_state: i32, peptide_id: i32, isotope_peak: i32
 class SignalAttributes:
-    def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int):
-        self.__signal_attributes = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak)
+    def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int, description: Union[None, str] = None):
+        self.__signal_attributes = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak, description)
 
     @property
     def charge_state(self):
@@ -46,8 +46,12 @@ class SignalAttributes:
     def isotope_peak(self):
         return self.__signal_attributes.isotope_peak
 
+    @property
+    def description(self) -> Union[None, str]:
+        return self.__signal_attributes.description
+
     def __repr__(self):
-        return f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, isotope_peak={self.isotope_peak})"
+        return f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, isotope_peak={self.isotope_peak}, description={self.description})"
 
     @classmethod
     def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAttributes) -> 'SignalAttributes':
@@ -111,10 +115,6 @@ class PeakAnnotation:
         instance = cls.__new__(cls)
         instance.__peak_annotation = peak_annotation
         return instance
-
-    @property
-    def description(self) -> Union[None, str]:
-        return self.__peak_annotation.description
 
     def get_py_ptr(self) -> ims.PyPeakAnnotation:
         return self.__peak_annotation
