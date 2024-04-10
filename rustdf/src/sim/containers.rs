@@ -69,7 +69,7 @@ impl PeptidesSim {
     ) -> Self {
         PeptidesSim {
             peptide_id,
-            sequence: PeptideSequence::new(sequence),
+            sequence: PeptideSequence::new(sequence, Some(peptide_id as i32)),
             proteins,
             decoy,
             missed_cleavages,

@@ -461,8 +461,8 @@ pub fn generate_averagine_spectra(
 ///
 /// * `MzSpectrum` - precursor spectrum
 ///
-pub fn generate_precursor_spectrum(sequence: &str, charge: i32) -> MzSpectrum {
-    let peptide_ion = PeptideIon::new(sequence.to_string(), charge, 1.0);
+pub fn generate_precursor_spectrum(sequence: &str, charge: i32, peptide_id: Option<i32>) -> MzSpectrum {
+    let peptide_ion = PeptideIon::new(sequence.to_string(), charge, 1.0, peptide_id);
     peptide_ion.calculate_isotopic_spectrum(1e-3, 1e-9, 200, 1e-6)
 }
 
@@ -478,11 +478,12 @@ pub fn generate_precursor_spectrum(sequence: &str, charge: i32) -> MzSpectrum {
 ///
 /// * `Vec<MzSpectrum>` - list of precursor spectra
 ///
-pub fn generate_precursor_spectra(sequences: &Vec<&str>, charges: &Vec<i32>, num_threads: usize) -> Vec<MzSpectrum> {
+pub fn generate_precursor_spectra(sequences: &Vec<&str>, charges: &Vec<i32>, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<MzSpectrum> {
     let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    // need to zip sequences and charges and peptide_ids
     let result = thread_pool.install(|| {
-        sequences.par_iter().zip(charges.par_iter()).map(|(&sequence, &charge)| {
-            generate_precursor_spectrum(sequence, charge)
+        sequences.par_iter().zip(charges.par_iter()).zip(peptide_ids.par_iter()).map(|((&sequence, &charge), &peptide_id)| {
+            generate_precursor_spectrum(sequence, charge, peptide_id)
         }).collect()
     });
     result

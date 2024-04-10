@@ -22,9 +22,9 @@ pub struct PeptideIon {
 }
 
 impl PeptideIon {
-    pub fn new(sequence: String, charge: i32, intensity: f64) -> Self {
+    pub fn new(sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
         PeptideIon {
-            sequence: PeptideSequence::new(sequence),
+            sequence: PeptideSequence::new(sequence, peptide_id),
             charge,
             intensity,
         }
@@ -69,7 +69,6 @@ impl PeptideIon {
         abundance_threshold: f64,
         max_result: i32,
         intensity_min: f64,
-        peptide_id: i32,
     ) -> MzSpectrumAnnotated {
         let isotopic_distribution = self.calculate_isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
         let mut annotations = Vec::new();
@@ -89,7 +88,7 @@ impl PeptideIon {
 
             let signal_attributes = SignalAttributes {
                 charge_state: self.charge,
-                peptide_id,
+                peptide_id: self.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: isotope_counter,
                 description: None,
             };
@@ -119,11 +118,11 @@ pub struct PeptideProductIon {
 }
 
 impl PeptideProductIon {
-    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64) -> Self {
+    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
         PeptideProductIon {
             kind,
             ion: PeptideIon {
-                sequence: PeptideSequence::new(sequence),
+                sequence: PeptideSequence::new(sequence, peptide_id),
                 charge,
                 intensity,
             },
@@ -202,10 +201,11 @@ impl PeptideProductIon {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeptideSequence {
     pub sequence: String,
+    pub peptide_id: Option<i32>,
 }
 
 impl PeptideSequence {
-    pub fn new(raw_sequence: String) -> Self {
+    pub fn new(raw_sequence: String, peptide_id: Option<i32>) -> Self {
 
         // constructor will parse the sequence and check if it is valid
         let pattern = Regex::new(r"\[UNIMOD:(\d+)]").unwrap();
@@ -218,7 +218,8 @@ impl PeptideSequence {
         if !valid_amino_acids {
             panic!("Invalid amino acid sequence, use only valid amino acids: ARNDCQEGHILKMFPSTWYVU, and modifications in the format [UNIMOD:ID]");
         }
-        PeptideSequence { sequence: raw_sequence }
+
+        PeptideSequence { sequence: raw_sequence, peptide_id }
     }
 
     pub fn mono_isotopic_mass(&self) -> f64 {
@@ -273,6 +274,7 @@ impl PeptideSequence {
                 ion: PeptideIon {
                     sequence: PeptideSequence {
                         sequence: n_ion_seq,
+                        peptide_id: self.peptide_id,
                     },
                     charge: target_charge,
                     intensity: 1.0, // Placeholder intensity
@@ -295,6 +297,7 @@ impl PeptideSequence {
                 ion: PeptideIon {
                     sequence: PeptideSequence {
                         sequence: c_ion_seq,
+                        peptide_id: self.peptide_id,
                     },
                     charge: target_charge,
                     intensity: 1.0, // Placeholder intensity
