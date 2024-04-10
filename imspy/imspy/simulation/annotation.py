@@ -111,6 +111,10 @@ class PeakAnnotation:
         instance.__peak_annotation = peak_annotation
         return instance
 
+    @property
+    def description(self) -> Union[None, str]:
+        return self.__peak_annotation.description
+
     def get_py_ptr(self) -> ims.PyPeakAnnotation:
         return self.__peak_annotation
 
