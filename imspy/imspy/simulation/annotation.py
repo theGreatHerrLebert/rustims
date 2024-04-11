@@ -2,6 +2,7 @@ from typing import Union
 from abc import ABC, abstractmethod
 import imspy_connector
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 
 ims = imspy_connector.py_annotation
@@ -238,6 +239,33 @@ class TimsFrameAnnotated(RustWrapper):
     @property
     def annotations(self) -> list[PeakAnnotation]:
         return [PeakAnnotation.from_py_ptr(a) for a in self.__py_ptr.annotations]
+
+    @property
+    def peptide_ids_first_only(self) -> NDArray[int]:
+        return self.__py_ptr.peptide_ids_first_only
+
+    @property
+    def charge_states_first_only(self) -> NDArray[int]:
+        return self.__py_ptr.charge_states_first_only
+
+    @property
+    def isotope_peaks_first_only(self) -> NDArray[int]:
+        return self.__py_ptr.isotope_peaks_first_only
+
+    @property
+    def df(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            'tof': self.tof,
+            'mz': self.mz,
+            'scan': self.scan,
+            'inv_mobility': self.inv_mobility,
+            'intensity': self.intensity,
+            'peptide_id': self.peptide_ids_first_only,
+            'charge_state': self.charge_states_first_only,
+            'isotope_peak': self.isotope_peaks_first_only
+        })
+
+
 
     @property
     def ms_type_numeric(self) -> int:

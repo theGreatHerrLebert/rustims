@@ -70,6 +70,24 @@ impl PyTimsFrameAnnotated {
     }
 
     #[getter]
+    pub fn peptide_ids_first_only(&self, py: Python) -> Py<PyArray1<i32>> {
+        let data: Vec<_> = self.inner.annotations.iter().map(|x| x.contributions.first().unwrap().signal_attributes.as_ref().unwrap().peptide_id).collect();
+        data.into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
+    pub fn charge_states_first_only(&self, py: Python) ->  Py<PyArray1<i32>> {
+        let data: Vec<_> =self.inner.annotations.iter().map(|x| x.contributions.first().unwrap().signal_attributes.as_ref().unwrap().charge_state).collect();
+        data.into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
+    pub fn isotope_peaks_first_only(&self, py: Python) ->  Py<PyArray1<i32>> {
+        let data: Vec<_> =self.inner.annotations.iter().map(|x| x.contributions.first().unwrap().signal_attributes.as_ref().unwrap().isotope_peak).collect();
+        data.into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
     pub fn ms_type_numeric(&self) -> i32 {
         self.inner.ms_type.ms_type_numeric()
     }
