@@ -71,7 +71,11 @@ impl PyTimsFrameAnnotated {
 
     #[getter]
     pub fn peptide_ids_first_only(&self, py: Python) -> Py<PyArray1<i32>> {
-        let data: Vec<_> = self.inner.annotations.iter().map(|x| x.contributions.first().unwrap().signal_attributes.as_ref().unwrap().peptide_id).collect();
+        let data: Vec<_> = self.inner.annotations.iter().map(|x| {
+            x.contributions.first().map_or(-1, |contribution| {
+                contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.peptide_id)
+            })
+        }).collect();
         data.into_pyarray_bound(py).unbind()
     }
 
