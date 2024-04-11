@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from typing import List, Tuple, Union
 
 import imspy_connector
@@ -340,9 +341,9 @@ class PeptideSequence(RustWrapper):
         return PeptideProductIonSeriesCollection.from_py_ptr(result)
 
     @classmethod
-    def fom_py_ptr(cls, seq: ims.PyPeptideSequence):
+    def from_py_ptr(cls, obj: ims.PyPeptideSequence):
         instance = cls.__new__(cls)
-        instance.__py_ptr = seq
+        instance.__py_ptr = obj
         return instance
 
     def __repr__(self):
@@ -363,7 +364,7 @@ class PeptideIon(RustWrapper):
 
     @property
     def sequence(self) -> PeptideSequence:
-        return PeptideSequence.fom_py_ptr(self.__py_ptr.sequence)
+        return PeptideSequence.from_py_ptr(self.__py_ptr.sequence)
 
     @property
     def peptide_id(self) -> Union[None, int]:
