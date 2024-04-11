@@ -408,7 +408,7 @@ class PeptideIon:
         """
         assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
         py_spec = self.__ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min)
-        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(py_spec)
+        return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
     def get_ptr(self):
         return self.__ptr

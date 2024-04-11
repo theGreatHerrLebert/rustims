@@ -1,75 +1,88 @@
 from typing import Union
-
+from abc import ABC, abstractmethod
 import imspy_connector
-import pandas as pd
 from numpy.typing import NDArray
 
 ims = imspy_connector.py_annotation
 
 
-class SourceType:
+# TODO: Add docstrings, add interface to all other classes that bind rust code
+class RustWrapper(ABC):
+    @abstractmethod
+    def get_py_ptr(self):
+        pass
+
+    @classmethod
+    @abstractmethod
+    def from_py_ptr(cls, obj):
+        pass
+
+
+class SourceType(RustWrapper):
     def __init__(self, source_type: str):
         self.known_source_types = ['signal', 'chemical_noise', 'random_noise', 'unknown']
         source_type = source_type.lower()
-        assert source_type in self.known_source_types, f"Unknown source type: {source_type}. Known source types: {self.known_source_types}"
+        assert source_type in self.known_source_types, (f"Unknown source type: {source_type}. Known source types: "
+                                                        f"{self.known_source_types}")
         index = self.known_source_types.index(source_type)
-        self.__source_type = ims.PySourceType(index)
+        self.__py_ptr = ims.PySourceType(index)
 
     @property
     def source_type(self) -> str:
-        return self.__source_type.source_type
+        return self.__py_ptr.source_type
 
     def __repr__(self) -> str:
         return f"SourceType(source_type={self.source_type})"
 
     @classmethod
-    def from_py_source_type(cls, source_type: ims.PySourceType) -> 'SourceType':
+    def from_py_ptr(cls, source_type: ims.PySourceType) -> 'SourceType':
         instance = cls.__new__(cls)
-        instance.__source_type = source_type
+        instance.__py_ptr = source_type
         return instance
 
     def get_py_ptr(self) -> ims.PySourceType:
-        return self.__source_type
+        return self.__py_ptr
 
 
 # charge_state: i32, peptide_id: i32, isotope_peak: i32
-class SignalAttributes:
+class SignalAttributes(RustWrapper):
     def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int, description: Union[None, str] = None):
-        self.__signal_attributes = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak, description)
+        self.__py_ptr = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak, description)
 
     @property
     def charge_state(self):
-        return self.__signal_attributes.charge_state
+        return self.__py_ptr.charge_state
 
     @property
     def peptide_id(self):
-        return self.__signal_attributes.peptide_id
+        return self.__py_ptr.peptide_id
 
     @property
     def isotope_peak(self):
-        return self.__signal_attributes.isotope_peak
+        return self.__py_ptr.isotope_peak
 
     @property
     def description(self) -> Union[None, str]:
-        return self.__signal_attributes.description
+        return self.__py_ptr.description
 
     def __repr__(self):
-        return f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, isotope_peak={self.isotope_peak}, description={self.description})"
+        return (f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, "
+                f"isotope_peak={self.isotope_peak}, description={self.description})")
 
     @classmethod
-    def from_py_signal_annotation(cls, signal_attributes: ims.PySignalAttributes) -> 'SignalAttributes':
+    def from_py_ptr(cls, signal_attributes: ims.PySignalAttributes) -> 'SignalAttributes':
         instance = cls.__new__(cls)
-        instance.__signal_attributes = signal_attributes
+        instance.__py_ptr = signal_attributes
         return instance
 
     def get_py_ptr(self) -> ims.PySignalAttributes:
-        return self.__signal_attributes
+        return self.__py_ptr
 
 
-class ContributionSource:
+class ContributionSource(RustWrapper):
     def __init__(self, intensity_contribution: float, source_type: SourceType,
                  signal_attributes: Union[None, SignalAttributes] = None):
-        self.__contribution_source = ims.PyContributionSource(
+        self.__py_ptr = ims.PyContributionSource(
             intensity_contribution,
             source_type.get_py_ptr(),
             signal_attributes.get_py_ptr() if signal_attributes else None
@@ -77,58 +90,59 @@ class ContributionSource:
 
     @property
     def intensity_contribution(self) -> float:
-        return self.__contribution_source.intensity_contribution
+        return self.__py_ptr.intensity_contribution
 
     @property
     def source_type(self) -> SourceType:
-        return SourceType.from_py_source_type(self.__contribution_source.source_type)
+        return SourceType.from_py_ptr(self.__py_ptr.source_type)
 
     @property
     def signal_attributes(self) -> Union[None, SignalAttributes]:
-        return SignalAttributes.from_py_signal_annotation(
-            self.__contribution_source.signal_attributes) if self.__contribution_source.signal_attributes else None
+        return SignalAttributes.from_py_ptr(
+            self.__py_ptr.signal_attributes) if self.__py_ptr.signal_attributes else None
 
     def __repr__(self) -> str:
-        return f"ContributionSource(intensity_contribution={self.intensity_contribution}, source_type={self.source_type}, signal_attributes={self.signal_attributes})"
+        return (f"ContributionSource(intensity_contribution={self.intensity_contribution}, "
+                f"source_type={self.source_type}, signal_attributes={self.signal_attributes})")
 
     @classmethod
-    def from_py_contribution_source(cls, contribution_source: ims.PyContributionSource) -> 'ContributionSource':
+    def from_py_ptr(cls, contribution_source: ims.PyContributionSource) -> 'ContributionSource':
         instance = cls.__new__(cls)
-        instance.__contribution_source = contribution_source
+        instance.__py_ptr = contribution_source
         return instance
 
     def get_py_ptr(self) -> ims.PyContributionSource:
-        return self.__contribution_source
+        return self.__py_ptr
 
 
-class PeakAnnotation:
+class PeakAnnotation(RustWrapper):
     def __init__(self, contributions: list[ContributionSource]):
         assert len(contributions) > 0, "At least one contribution is required."
-        self.__peak_annotation = ims.PyPeakAnnotation(
+        self.__py_ptr = ims.PyPeakAnnotation(
             [c.get_py_ptr() for c in contributions]
         )
 
     @property
     def contributions(self) -> list[ContributionSource]:
-        return [ContributionSource.from_py_contribution_source(c) for c in self.__peak_annotation.contributions]
+        return [ContributionSource.from_py_ptr(c) for c in self.__py_ptr.contributions]
 
     def __repr__(self) -> str:
         return f"PeakAnnotation(contributions={self.contributions})"
 
     @classmethod
-    def from_py_peak_annotation(cls, peak_annotation: ims.PyPeakAnnotation) -> 'PeakAnnotation':
+    def from_py_ptr(cls, peak_annotation: ims.PyPeakAnnotation) -> 'PeakAnnotation':
         instance = cls.__new__(cls)
-        instance.__peak_annotation = peak_annotation
+        instance.__py_ptr = peak_annotation
         return instance
 
     def get_py_ptr(self) -> ims.PyPeakAnnotation:
-        return self.__peak_annotation
+        return self.__py_ptr
 
 
-class MzSpectrumAnnotated:
+class MzSpectrumAnnotated(RustWrapper):
     def __init__(self, mz: list[float], intensity: list[float], annotations: list[PeakAnnotation]):
         assert len(mz) == len(intensity) == len(annotations), "Length of mz, intensity and annotations must be equal."
-        self.__mz_spectrum_annotated = ims.PyMzSpectrumAnnotated(
+        self.__py_ptr = ims.PyMzSpectrumAnnotated(
             mz,
             intensity,
             [a.get_py_ptr() for a in annotations]
@@ -136,34 +150,34 @@ class MzSpectrumAnnotated:
 
     @property
     def mz(self) -> list[float]:
-        return self.__mz_spectrum_annotated.mz
+        return self.__py_ptr.mz
 
     @property
     def intensity(self) -> list[float]:
-        return self.__mz_spectrum_annotated.intensity
+        return self.__py_ptr.intensity
 
     @property
     def annotations(self) -> list[PeakAnnotation]:
-        return [PeakAnnotation.from_py_peak_annotation(a) for a in self.__mz_spectrum_annotated.annotations]
+        return [PeakAnnotation.from_py_ptr(a) for a in self.__py_ptr.annotations]
 
     def __add__(self, other: 'MzSpectrumAnnotated') -> 'MzSpectrumAnnotated':
-        return MzSpectrumAnnotated.from_py_mz_spectrum_annotated(
-            self.__mz_spectrum_annotated + other.__mz_spectrum_annotated)
+        return MzSpectrumAnnotated.from_py_ptr(
+            self.__py_ptr + other.__py_ptr)
 
     def __repr__(self) -> str:
         return f"MzSpectrumAnnotated(mz={self.mz}, intensity={self.intensity}, annotations={self.annotations})"
 
     @classmethod
-    def from_py_mz_spectrum_annotated(cls, mz_spectrum_annotated: ims.PyMzSpectrumAnnotated) -> 'MzSpectrumAnnotated':
+    def from_py_ptr(cls, mz_spectrum_annotated: ims.PyMzSpectrumAnnotated) -> 'MzSpectrumAnnotated':
         instance = cls.__new__(cls)
-        instance.__mz_spectrum_annotated = mz_spectrum_annotated
+        instance.__py_ptr = mz_spectrum_annotated
         return instance
 
     def get_py_ptr(self) -> ims.PyMzSpectrumAnnotated:
-        return self.__mz_spectrum_annotated
+        return self.__py_ptr
 
 
-class TimsFrameAnnotated:
+class TimsFrameAnnotated(RustWrapper):
     def __init__(self,
                  frame_id: int,
                  retention_time: float,
@@ -177,7 +191,7 @@ class TimsFrameAnnotated:
         assert len(tof) == len(mz) == len(scan) == len(inv_mobility) == len(intensity) == len(
             annotations), "Length of tof, mz, scan, inv_mobility, intensity and annotations must be equal."
 
-        self.__tims_frame_annotated = ims.PyTimsFrameAnnotated(
+        self.__py_ptr = ims.PyTimsFrameAnnotated(
             frame_id,
             retention_time,
             ms_type,
@@ -190,47 +204,47 @@ class TimsFrameAnnotated:
 
     @property
     def frame_id(self) -> int:
-        return self.__tims_frame_annotated.frame_id
+        return self.__py_ptr.frame_id
 
     @property
     def retention_time(self) -> float:
-        return self.__tims_frame_annotated.retention_time
+        return self.__py_ptr.retention_time
 
     @property
     def ms_type(self) -> int:
-        return self.__tims_frame_annotated.ms_type
+        return self.__py_ptr.ms_type
 
     @property
     def tof(self) -> list[int]:
-        return self.__tims_frame_annotated.tof
+        return self.__py_ptr.tof
 
     @property
     def mz(self) -> list[float]:
-        return self.__tims_frame_annotated.mz
+        return self.__py_ptr.mz
 
     @property
     def scan(self) -> list[int]:
-        return self.__tims_frame_annotated.scan
+        return self.__py_ptr.scan
 
     @property
     def inv_mobility(self) -> list[float]:
-        return self.__tims_frame_annotated.inv_mobility
+        return self.__py_ptr.inv_mobility
 
     @property
     def intensity(self) -> list[float]:
-        return self.__tims_frame_annotated.intensity
+        return self.__py_ptr.intensity
 
     @property
     def annotations(self) -> list[PeakAnnotation]:
-        return [PeakAnnotation.from_py_peak_annotation(a) for a in self.__tims_frame_annotated.annotations]
+        return [PeakAnnotation.from_py_ptr(a) for a in self.__py_ptr.annotations]
 
     @property
     def ms_type_numeric(self) -> int:
-        return self.__tims_frame_annotated.ms_type_numeric
+        return self.__py_ptr.ms_type_numeric
 
     def __add__(self, other: 'TimsFrameAnnotated') -> 'TimsFrameAnnotated':
-        return TimsFrameAnnotated.from_py_tims_frame_annotated(self.__tims_frame_annotated +
-                                                               other.__tims_frame_annotated)
+        return TimsFrameAnnotated.from_py_ptr(self.__py_ptr +
+                                              other.__py_ptr)
 
     def __repr__(self) -> str:
         return (f"TimsFrameAnnotated("
@@ -240,10 +254,10 @@ class TimsFrameAnnotated:
                 f"sum_intensity={sum(self.intensity)})")
 
     @classmethod
-    def from_py_tims_frame_annotated(cls, tims_frame_annotated: ims.PyTimsFrameAnnotated) -> 'TimsFrameAnnotated':
+    def from_py_ptr(cls, tims_frame_annotated: ims.PyTimsFrameAnnotated) -> 'TimsFrameAnnotated':
         instance = cls.__new__(cls)
-        instance.__tims_frame_annotated = tims_frame_annotated
+        instance.__py_ptr = tims_frame_annotated
         return instance
 
     def get_py_ptr(self) -> ims.PyTimsFrameAnnotated:
-        return self.__tims_frame_annotated
+        return self.__py_ptr

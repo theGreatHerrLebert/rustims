@@ -273,7 +273,7 @@ impl MzSpectrum {
         let mut rng = rand::thread_rng();
         self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
             let ppm_mz = mz * ppm / 1e6;
-            let dist = Normal::new(mz, ppm_mz / 3.0).unwrap(); // Assuming 3 SD covers the ppm range
+            let dist = Normal::new(mz, ppm_mz / 3.0).unwrap();
             dist.sample(rng)
         })
     }

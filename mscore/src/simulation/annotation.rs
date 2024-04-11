@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use itertools::izip;
-use crate::data::spectrum::MsType;
+use rand::distributions::{Uniform, Distribution};
+use rand::rngs::ThreadRng;
+use statrs::distribution::Normal;
+use crate::data::spectrum::{MsType, ToResolution};
 
 #[derive(Clone, Debug)]
 pub struct PeakAnnotation {
@@ -89,7 +92,44 @@ impl MzSpectrumAnnotated {
             intensity: intensity_filtered,
             annotations: annotations_filtered,
         }
+    }
 
+    pub fn add_mz_noise_uniform(&self, ppm: f64, right_drag: bool) -> Self {
+        let mut rng = rand::thread_rng();
+        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+
+            let ppm_mz = match right_drag {
+                true => mz * ppm / 1e6 / 2.0,
+                false => mz * ppm / 1e6,
+            };
+
+            let dist = match right_drag {
+                true => Uniform::from(mz - (ppm_mz / 3.0)..=mz + ppm_mz),
+                false => Uniform::from(mz - ppm_mz..=mz + ppm_mz),
+            };
+
+            dist.sample(rng)
+        })
+    }
+
+    pub fn add_mz_noise_normal(&self, ppm: f64) -> Self {
+        let mut rng = rand::thread_rng();
+        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+            let ppm_mz = mz * ppm / 1e6;
+            let dist = Normal::new(mz, ppm_mz / 3.0).unwrap(); // 3 sigma ? good enough?
+            dist.sample(rng)
+        })
+    }
+
+    fn add_mz_noise<F>(&self, ppm: f64, rng: &mut ThreadRng, noise_fn: F) -> Self
+        where
+            F: Fn(&mut ThreadRng, f64, f64) -> f64,
+    {
+        let mz: Vec<f64> = self.mz.iter().map(|&mz_value| noise_fn(rng, mz_value, ppm)).collect();
+        let spectrum = MzSpectrumAnnotated { mz, intensity: self.intensity.clone(), annotations: self.annotations.clone()};
+
+        // Sort the spectrum by m/z values and potentially sum up intensities and extend annotations at the same m/z value
+        spectrum.to_resolution(6)
     }
 }
 
@@ -125,6 +165,31 @@ impl std::ops::Add for MzSpectrumAnnotated {
     }
 }
 
+impl ToResolution for MzSpectrumAnnotated {
+    fn to_resolution(&self, resolution: i32) -> Self {
+        let mut spec_map: BTreeMap<i64, (f64, PeakAnnotation)> = BTreeMap::new();
+        let quantize = |mz: f64| -> i64 { (mz * 10.0_f64.powi(resolution)).round() as i64 };
+
+        for ((mz, intensity), annotation) in self.mz.iter().zip(self.intensity.iter()).zip(self.annotations.iter()) {
+            let key = quantize(*mz);
+            spec_map.entry(key).and_modify(|e| {
+                e.0 += *intensity;
+                e.1.contributions.extend(annotation.contributions.clone());
+            }).or_insert((*intensity, annotation.clone()));
+        }
+
+        let mz: Vec<f64> = spec_map.keys().map(|&key| key as f64 / 10.0_f64.powi(resolution)).collect();
+        let intensity: Vec<f64> = spec_map.values().map(|(intensity, _)| *intensity).collect();
+        let annotations: Vec<PeakAnnotation> = spec_map.values().map(|(_, annotation)| annotation.clone()).collect();
+
+        MzSpectrumAnnotated {
+            mz,
+            intensity,
+            annotations,
+        }
+    }
+}
+
 impl std::ops::Mul<f64> for MzSpectrumAnnotated {
     type Output = Self;
     fn mul(self, scale: f64) -> Self::Output{
@@ -138,6 +203,17 @@ impl std::ops::Mul<f64> for MzSpectrumAnnotated {
         MzSpectrumAnnotated { mz: self.mz.clone(), intensity: scaled_intensities, annotations: self.annotations.clone() }
 
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct TimsSpectrumAnnotated {
+    pub frame_id: i32,
+    pub scan: i32,
+    pub retention_time: f64,
+    pub mobility: f64,
+    pub ms_type: MsType,
+    pub tof: Vec<u32>,
+    pub spectrum: MzSpectrumAnnotated,
 }
 
 #[derive(Clone, Debug)]

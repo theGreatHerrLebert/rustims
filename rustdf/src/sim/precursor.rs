@@ -4,6 +4,7 @@ use mscore::timstof::spectrum::TimsSpectrum;
 use mscore::data::spectrum::{MzSpectrum, MsType, IndexedMzSpectrum};
 use rusqlite::{Result};
 use std::path::Path;
+use mscore::simulation::annotation::TimsFrameAnnotated;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -165,5 +166,15 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
 
         tims_frames
+    }
+
+    pub fn build_precursor_frame_annotated(&self, frame_id: u32, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, right_drag: bool) -> TimsFrameAnnotated {
+
+        let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
+            true => MsType::Precursor,
+            false => MsType::Unknown,
+        };
+
+        todo!("Implement this function")
     }
 }
