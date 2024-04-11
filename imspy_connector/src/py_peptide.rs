@@ -123,6 +123,11 @@ impl PyPeptideProductIonSeriesCollection {
         let spectrum = self.inner.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min);
         PyMzSpectrum { inner: spectrum }
     }
+
+    pub fn generate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrumAnnotated {
+        let spectrum = self.inner.generate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min);
+        PyMzSpectrumAnnotated { inner: spectrum }
+    }
 }
 
 #[pyclass]

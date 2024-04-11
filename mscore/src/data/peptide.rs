@@ -581,4 +581,21 @@ impl PeptideProductIonSeriesCollection {
 
         MzSpectrum::from_collection(spectra).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
     }
+
+    pub fn generate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrumAnnotated {
+        let mut annotations: Vec<PeakAnnotation> = Vec::new();
+        let mut mz_values = Vec::new();
+        let mut intensity_values = Vec::new();
+
+        for ion_series in &self.peptide_ions {
+            let isotopic_spectrum = ion_series.generate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min);
+            for (mz, intensity) in isotopic_spectrum.mz.iter().zip(isotopic_spectrum.intensity.iter()) {
+                mz_values.push(*mz);
+                intensity_values.push(*intensity);
+            }
+            annotations.extend(isotopic_spectrum.annotations.iter().cloned());
+        }
+
+        MzSpectrumAnnotated::new(mz_values, intensity_values, annotations)
+    }
 }
