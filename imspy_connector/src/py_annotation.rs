@@ -70,6 +70,36 @@ impl PyTimsFrameAnnotated {
     }
 
     #[getter]
+    pub fn peptide_ids_first_only(&self, py: Python) -> Py<PyArray1<i32>> {
+        let data: Vec<_> = self.inner.annotations.iter().map(|x| {
+            x.contributions.first().map_or(-1, |contribution| {
+                contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.peptide_id)
+            })
+        }).collect();
+        data.into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
+    pub fn charge_states_first_only(&self, py: Python) ->  Py<PyArray1<i32>> {
+        let data: Vec<_> =self.inner.annotations.iter().map(|x| {
+            x.contributions.first().map_or(-1, |contribution| {
+                contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.charge_state)
+            })
+        }).collect();
+        data.into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
+    pub fn isotope_peaks_first_only(&self, py: Python) ->  Py<PyArray1<i32>> {
+        let data: Vec<_> =self.inner.annotations.iter().map(|x| {
+            x.contributions.first().map_or(-1, |contribution| {
+                contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.isotope_peak)
+            })
+        }).collect();
+        data.into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
     pub fn ms_type_numeric(&self) -> i32 {
         self.inner.ms_type.ms_type_numeric()
     }

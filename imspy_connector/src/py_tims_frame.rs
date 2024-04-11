@@ -5,6 +5,7 @@ use numpy::{PyArray1, IntoPyArray};
 use mscore::timstof::spectrum::{TimsSpectrum};
 use mscore::data::spectrum::{MsType, ToResolution, Vectorized, };
 use mscore::timstof::frame::{TimsFrame, ImsFrame, TimsFrameVectorized, ImsFrameVectorized, RawTimsFrame};
+use crate::py_annotation::PyTimsFrameAnnotated;
 
 
 use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
@@ -216,6 +217,11 @@ impl PyTimsFrame {
         let tuple = PyTuple::new(py, &[rows.into_py(py), cols.into_py(py), py_array.to_owned().into_py(py), py_scans.to_owned().into_py(py), py_window_indices.to_owned().into_py(py)]);
 
         Ok(tuple.into())
+    }
+
+    pub fn to_noise_annotated_tims_frame(&self) -> PyTimsFrameAnnotated {
+        let result = self.inner.to_noise_annotated_tims_frame();
+        return PyTimsFrameAnnotated { inner: result }
     }
 
     pub fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {

@@ -7,6 +7,7 @@ use rand::Rng;
 
 use crate::timstof::spectrum::TimsSpectrum;
 use crate::data::spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, Vectorized, ToResolution};
+use crate::simulation::annotation::{PeakAnnotation, TimsFrameAnnotated};
 
 #[derive(Clone)]
 pub struct RawTimsFrame {
@@ -375,6 +376,31 @@ impl TimsFrame {
         }
 
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan, mobility, tof, mz, intensity)
+    }
+
+    pub fn to_noise_annotated_tims_frame(&self) -> TimsFrameAnnotated {
+        let mut annotations = Vec::with_capacity(self.ims_frame.mz.len());
+        let tof_values = self.tof.clone();
+        let mz_values = self.ims_frame.mz.clone();
+        let scan_values = self.scan.clone();
+        let inv_mobility_values = self.ims_frame.mobility.clone();
+        let intensity_values = self.ims_frame.intensity.clone();
+
+        for intensity in &intensity_values {
+            annotations.push(PeakAnnotation::new_random_noise(*intensity));
+        }
+
+        TimsFrameAnnotated::new(
+            self.frame_id,
+            self.ims_frame.retention_time,
+            self.ms_type.clone(),
+            tof_values.iter().map(|&x| x as u32).collect(),
+            mz_values,
+            scan_values.iter().map(|&x| x as u32).collect(),
+            inv_mobility_values,
+            intensity_values,
+            annotations,
+        )
     }
 }
 
