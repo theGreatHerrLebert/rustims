@@ -212,7 +212,7 @@ class TimsFrameAnnotated(RustWrapper):
 
     @property
     def ms_type(self) -> int:
-        return self.__py_ptr.ms_type
+        return self.__py_ptr.ms_type_numeric
 
     @property
     def tof(self) -> list[int]:
