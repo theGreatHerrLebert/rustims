@@ -271,6 +271,11 @@ impl PeptideSequence {
         product_ions.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
     }
 
+    pub fn calculate_isotopic_product_ion_spectrum_annotated(&self, charge: i32, fragment_type: FragmentType, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrumAnnotated {
+        let product_ions = self.calculate_product_ion_series(charge, fragment_type);
+        product_ions.generate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min)
+    }
+
     pub fn calculate_product_ion_series(&self, target_charge: i32, fragment_type: FragmentType) -> PeptideProductIonSeries {
         // TODO: check for n-terminal modifications
         let tokens = unimod_sequence_to_tokens(self.sequence.as_str(), true);
@@ -413,7 +418,7 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: n_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: Some(format!("{}_{}", kind, index + 1)),
+                description: Some(format!("{}_{}_{}", kind, index + 1, 0)),
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -437,7 +442,7 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: c_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: Some(format!("{}_{}", kind, index + 1)),
+                description: Some(format!("{}_{}_{}", kind, index + 1, 0)),
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -471,6 +476,82 @@ impl PeptideProductIonSeries {
         }
 
         MzSpectrum::from_collection(spectra).filter_ranged(0.0, 5_000.0, 1e-6, 1e6)
+    }
+
+    pub fn generate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> MzSpectrumAnnotated {
+        let mut annotations: Vec<PeakAnnotation> = Vec::new();
+        let mut mz_values = Vec::new();
+        let mut intensity_values = Vec::new();
+
+        for (index, ion) in self.n_ions.iter().enumerate() {
+            let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+            let mut isotope_counter = 0;
+            let mut previous_mz = n_isotopes[0].0;
+
+            for (mz, abundance) in n_isotopes.iter() {
+                let ppm_tolerance = (mz / 1e6) * 25.0;
+
+                if (mz - previous_mz).abs() > ppm_tolerance {
+                    isotope_counter += 1;
+                    previous_mz = *mz;
+                }
+
+                let signal_attributes = SignalAttributes {
+                    charge_state: ion.ion.charge,
+                    peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
+                    isotope_peak: isotope_counter,
+                    description: Some(format!("{}_{}_{}", ion.kind, index, isotope_counter)),
+                };
+
+                let contribution_source = ContributionSource {
+                    intensity_contribution: *abundance * ion.ion.intensity,
+                    source_type: SourceType::Signal,
+                    signal_attributes: Some(signal_attributes)
+                };
+
+                annotations.push(PeakAnnotation {
+                    contributions: vec![contribution_source]
+                });
+                mz_values.push(*mz);
+                intensity_values.push(*abundance * ion.ion.intensity);
+            }
+        }
+
+        for (index, ion) in self.c_ions.iter().enumerate() {
+            let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
+            let mut isotope_counter = 0;
+            let mut previous_mz = c_isotopes[0].0;
+
+            for (mz, abundance) in c_isotopes.iter() {
+                let ppm_tolerance = (mz / 1e6) * 25.0;
+
+                if (mz - previous_mz).abs() > ppm_tolerance {
+                    isotope_counter += 1;
+                    previous_mz = *mz;
+                }
+
+                let signal_attributes = SignalAttributes {
+                    charge_state: ion.ion.charge,
+                    peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
+                    isotope_peak: isotope_counter,
+                    description: Some(format!("{}_{}_{}", ion.kind, index, isotope_counter)),
+                };
+
+                let contribution_source = ContributionSource {
+                    intensity_contribution: *abundance * ion.ion.intensity,
+                    source_type: SourceType::Signal,
+                    signal_attributes: Some(signal_attributes)
+                };
+
+                annotations.push(PeakAnnotation {
+                    contributions: vec![contribution_source]
+                });
+
+                mz_values.push(*mz);
+                intensity_values.push(*abundance * ion.ion.intensity);
+            }
+        }
+        MzSpectrumAnnotated::new(mz_values, intensity_values, annotations)
     }
 }
 

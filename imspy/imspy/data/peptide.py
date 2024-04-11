@@ -311,6 +311,24 @@ class PeptideSequence(RustWrapper):
         py_spec = self.__py_ptr.calculate_mono_isotopic_product_ion_spectrum_annotated(charge, fragment_type)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
+    def calculate_isotopic_product_ion_spectrum_annotated(self, charge: int = 1,
+                                                            fragment_type: str = 'b') -> MzSpectrumAnnotated:
+        """Calculate the isotopic product ion spectrum of the peptide sequence.
+
+        Args:
+            charge: The charge of the product ions.
+            fragment_type: The type of the product ions, must be one of 'a', 'b', 'c', 'x', 'y', 'z'.
+
+        Returns:
+            The isotopic product ion spectrum of the peptide sequence.
+        """
+        fragment_type = fragment_type.lower()
+        assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
+                                                                    f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
+
+        py_spec = self.__py_ptr.calculate_isotopic_product_ion_spectrum_annotated(charge, fragment_type)
+        return MzSpectrumAnnotated.from_py_ptr(py_spec)
+
     def associate_fragment_ion_series_with_prosit_intensities(
             self, flat_intensities: List[float],
             charge: int,
