@@ -7,6 +7,7 @@ from tensorflow import sparse as sp
 
 import numpy as np
 from imspy.data.spectrum import TimsSpectrum, IndexedMzSpectrum
+from imspy.simulation.annotation import TimsFrameAnnotated
 from imspy.utility.utilities import re_index_indices
 
 import imspy_connector
@@ -284,6 +285,14 @@ class TimsFrame:
                                                                                       min_intensity)
 
         return scans, window_indices, np.reshape(values, (rows, cols))
+
+    def to_noise_annotated_tims_frame(self) -> 'TimsFrameAnnotated':
+        """Convert the frame to a noise annotated frame.
+
+        Returns:
+            TimsFrameAnnotated: Noise annotated frame.
+        """
+        return TimsFrameAnnotated.from_py_ptr(self.__frame_ptr.to_noise_annotated_tims_frame())
 
     def get_frame_ptr(self):
         return self.__frame_ptr
