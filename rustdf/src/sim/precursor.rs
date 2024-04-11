@@ -248,7 +248,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             2.0,
             0,
             1000,
-            0.1,
+            1.0,
             1e9,
         )
     }
