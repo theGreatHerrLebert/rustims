@@ -11,6 +11,21 @@ pub struct PeakAnnotation {
     pub contributions: Vec<ContributionSource>,
 }
 
+impl PeakAnnotation {
+    pub fn new_random_noise(intensity: f64) -> Self {
+        let contribution_source = ContributionSource {
+            intensity_contribution: intensity,
+            source_type: SourceType::RandomNoise,
+            signal_attributes: None,
+        };
+
+        PeakAnnotation {
+            contributions: vec![contribution_source],
+        }
+    }
+}
+
+
 #[derive(Clone, Debug)]
 pub struct ContributionSource {
     pub intensity_contribution: f64,
