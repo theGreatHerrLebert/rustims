@@ -1,6 +1,7 @@
 from typing import Union
 from abc import ABC, abstractmethod
 import imspy_connector
+import numpy as np
 from numpy.typing import NDArray
 
 ims = imspy_connector.py_annotation
@@ -249,9 +250,9 @@ class TimsFrameAnnotated(RustWrapper):
     def __repr__(self) -> str:
         return (f"TimsFrameAnnotated("
                 f"frame_id={self.frame_id}, "
-                f"retention_time={self.retention_time}, "
+                f"retention_time={np.round(self.retention_time / 60, 2)}, "
                 f"ms_type={self.ms_type}, num_peaks={len(self.mz)}, "
-                f"sum_intensity={sum(self.intensity)})")
+                f"sum_intensity={sum(np.round(self.intensity))})")
 
     @classmethod
     def from_py_ptr(cls, tims_frame_annotated: ims.PyTimsFrameAnnotated) -> 'TimsFrameAnnotated':
