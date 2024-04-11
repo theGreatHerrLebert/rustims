@@ -500,7 +500,8 @@ impl PeptideProductIonSeries {
                     charge_state: ion.ion.charge,
                     peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
                     isotope_peak: isotope_counter,
-                    description: Some(format!("{}_{}_{}", ion.kind, index, isotope_counter)),
+                    // use convention of 1-based indexing for fragment ion enumeration
+                    description: Some(format!("{}_{}_{}", ion.kind, index + 1, isotope_counter)),
                 };
 
                 let contribution_source = ContributionSource {
@@ -534,7 +535,7 @@ impl PeptideProductIonSeries {
                     charge_state: ion.ion.charge,
                     peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
                     isotope_peak: isotope_counter,
-                    description: Some(format!("{}_{}_{}", ion.kind, index, isotope_counter)),
+                    description: Some(format!("{}_{}_{}", ion.kind, index + 1, isotope_counter)),
                 };
 
                 let contribution_source = ContributionSource {
