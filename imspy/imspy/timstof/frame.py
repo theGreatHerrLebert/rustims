@@ -290,7 +290,7 @@ class TimsFrame:
 
     def __repr__(self):
         return (f"TimsFrame(frame_id={self.__frame_ptr.frame_id}, ms_type={self.__frame_ptr.ms_type}, "
-                f"num_peaks={len(self.__frame_ptr.mz)}, intensity_sum={np.sum(self.__frame_ptr.intensity)})")
+                f"num_peaks={len(self.__frame_ptr.mz)}, intensity_sum={np.round(np.sum(self.__frame_ptr.intensity))})")
 
     def random_subsample_frame(self, take_probability: float) -> 'TimsFrame':
         """Randomly subsample the frame.
