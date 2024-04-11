@@ -413,7 +413,7 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: n_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: Some(format!("{}-{}", kind, index + 1)),
+                description: Some(format!("{}_{}", kind, index + 1)),
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -437,7 +437,7 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: c_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: Some(format!("{}-{}", kind, index + 1)),
+                description: Some(format!("{}_{}", kind, index + 1)),
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
