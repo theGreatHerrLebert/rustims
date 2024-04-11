@@ -4,13 +4,15 @@ from abc import ABC
 from typing import List
 
 import pandas as pd
+
+from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapper
 from imspy.timstof.frame import TimsFrame
 
 import imspy_connector
 ims = imspy_connector.py_simulation
 
 
-class TimsTofSyntheticFrameBuilderDIA:
+class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
     def __init__(self, db_path: str, num_threads: int = 4):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
 
@@ -19,7 +21,7 @@ class TimsTofSyntheticFrameBuilderDIA:
             num_threads (int): Number of threads.
         """
         self.path = db_path
-        self.handle = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
+        self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
 
     def build_frame(self,
                     frame_id: int,
@@ -46,8 +48,8 @@ class TimsTofSyntheticFrameBuilderDIA:
         Returns:
             TimsFrame: Frame.
         """
-        frame = self.handle.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm,
-                                        mz_noise_fragment, fragment_noise_ppm, right_drag)
+        frame = self.__py_ptr.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm,
+                                          mz_noise_fragment, fragment_noise_ppm, right_drag)
 
         return TimsFrame.from_py_tims_frame(frame)
 
@@ -78,37 +80,75 @@ class TimsTofSyntheticFrameBuilderDIA:
         Returns:
             List[TimsFrame]: Frames.
         """
-        frames = self.handle.build_frames(frame_ids, fragment, mz_noise_precursor, mz_noise_uniform,
-                                          precursor_noise_ppm,
-                                          mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
+        frames = self.__py_ptr.build_frames(frame_ids, fragment, mz_noise_precursor, mz_noise_uniform,
+                                            precursor_noise_ppm,
+                                            mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
     def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
-        return self.handle.get_collision_energy(frame_id, scan_id)
+        return self.__py_ptr.get_collision_energy(frame_id, scan_id)
 
     def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
-        return self.handle.get_collision_energies(frame_ids, scan_ids)
+        return self.__py_ptr.get_collision_energies(frame_ids, scan_ids)
 
     def __repr__(self):
         return f"TimsTofSyntheticFrameBuilderDIA(path={self.path})"
 
+    @classmethod
+    def from_py_ptr(cls, py_ptr: ims.PyTimsTofSyntheticsFrameBuilderDIA) -> 'TimsTofSyntheticFrameBuilderDIA':
+        """Create a TimsTofSyntheticFrameBuilderDIA from a PyTimsTofSyntheticsFrameBuilderDIA.
 
-class TimsTofSyntheticPrecursorFrameBuilder:
+        Args:
+            py_ptr (ims.PyTimsTofSyntheticsFrameBuilderDIA): PyTimsTofSyntheticsFrameBuilderDIA.
+
+        Returns:
+            TimsTofSyntheticFrameBuilderDIA: TimsTofSyntheticFrameBuilderDIA.
+        """
+        builder = cls.__new__(cls)
+        builder.__py_ptr = py_ptr
+        return builder
+
+    def get_py_ptr(self) -> ims.PyTimsTofSyntheticsFrameBuilderDIA:
+        return self.__py_ptr
+
+
+class TimsTofSyntheticPrecursorFrameBuilder(RustWrapper):
     def __init__(self, db_path: str):
-        self.handle = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
+        self.__py_ptr = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 
     def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrame:
-        frame = self.handle.build_precursor_frame(frame_id, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag)
+        frame = self.__py_ptr.build_precursor_frame(frame_id, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag)
         return TimsFrame.from_py_tims_frame(frame)
 
     def build_precursor_frames(self, frame_ids: List[int], mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
                                right_drag: bool = True,
                                num_threads: int = 4):
-        frames = self.handle.build_precursor_frames(frame_ids, mz_noise_precursor, mz_noise_uniform,
-                                                    precursor_noise_ppm,
-                                                    right_drag,
-                                                    num_threads)
+        frames = self.__py_ptr.build_precursor_frames(frame_ids, mz_noise_precursor, mz_noise_uniform,
+                                                      precursor_noise_ppm,
+                                                      right_drag,
+                                                      num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
+
+    def build_precursor_frame_annotated(self, frame_id: int, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrameAnnotated:
+        frame = self.__py_ptr.build_precursor_frame_annotated(frame_id, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag)
+        return TimsFrameAnnotated.from_py_ptr(frame)
+
+    def build_precursor_frames_annotated(self, frame_ids: List[int], mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True, num_threads: int = 4) -> List[TimsFrameAnnotated]:
+        frames = self.__py_ptr.build_precursor_frames_annotated(frame_ids, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag, num_threads)
+        return [TimsFrameAnnotated.from_py_ptr(frame) for frame in frames]
+
+    def __repr__(self):
+        return f"TimsTofSyntheticPrecursorFrameBuilder()"
+
+    @classmethod
+    def from_py_ptr(cls, py_ptr: ims.PyTimsTofSyntheticsPrecursorFrameBuilder) -> 'TimsTofSyntheticPrecursorFrameBuilder':
+        builder = cls.__new__(cls)
+        builder.__py_ptr = py_ptr
+        return builder
+
+    def get_py_ptr(self) -> ims.PyTimsTofSyntheticsPrecursorFrameBuilder:
+        return self.__py_ptr
+
 
 
 class SyntheticExperimentDataHandle:

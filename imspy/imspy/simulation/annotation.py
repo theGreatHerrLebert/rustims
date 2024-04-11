@@ -8,13 +8,13 @@ ims = imspy_connector.py_annotation
 
 # TODO: Add docstrings, add interface to all other classes that bind rust code
 class RustWrapper(ABC):
-    @abstractmethod
-    def get_py_ptr(self):
-        pass
-
     @classmethod
     @abstractmethod
     def from_py_ptr(cls, obj):
+        pass
+
+    @abstractmethod
+    def get_py_ptr(self):
         pass
 
 

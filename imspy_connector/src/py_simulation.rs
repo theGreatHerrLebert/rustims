@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::py_annotation::PyTimsFrameAnnotated;
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
@@ -44,6 +45,15 @@ impl PyTimsTofSyntheticsPrecursorFrameBuilder {
     pub fn build_precursor_frames(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrame> {
         let frames = self.inner.build_precursor_frames(frame_ids, mz_noise_precursor, uniform, precursor_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
+    }
+
+    pub fn build_precursor_frame_annotated(&self, frame_id: u32, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, right_drag: bool) -> PyTimsFrameAnnotated {
+        PyTimsFrameAnnotated { inner: self.inner.build_precursor_frame_annotated(frame_id, mz_noise_precursor, uniform, precursor_noise_ppm, right_drag) }
+    }
+
+    pub fn build_precursor_frames_annotated(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrameAnnotated> {
+        let frames = self.inner.build_precursor_frames_annotated(frame_ids, mz_noise_precursor, uniform, precursor_noise_ppm, right_drag, num_threads);
+        frames.iter().map(|x| PyTimsFrameAnnotated { inner: x.clone() }).collect::<Vec<_>>()
     }
 }
 
