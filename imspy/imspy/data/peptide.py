@@ -311,11 +311,21 @@ class PeptideSequence(RustWrapper):
         py_spec = self.__py_ptr.calculate_mono_isotopic_product_ion_spectrum_annotated(charge, fragment_type)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
+    # mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64
     def calculate_isotopic_product_ion_spectrum_annotated(self, charge: int = 1,
-                                                            fragment_type: str = 'b') -> MzSpectrumAnnotated:
+                                                          fragment_type: str = 'b',
+                                                          mass_tolerance: float = 1e-3,
+                                                          abundance_threshold: float = 1e-8,
+                                                          max_result: int = 200,
+                                                          intensity_min: float = 1e-4
+                                                          ) -> MzSpectrumAnnotated:
         """Calculate the isotopic product ion spectrum of the peptide sequence.
 
         Args:
+            intensity_min:
+            max_result:
+            abundance_threshold:
+            mass_tolerance:
             charge: The charge of the product ions.
             fragment_type: The type of the product ions, must be one of 'a', 'b', 'c', 'x', 'y', 'z'.
 
@@ -326,7 +336,7 @@ class PeptideSequence(RustWrapper):
         assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
                                                                     f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
-        py_spec = self.__py_ptr.calculate_isotopic_product_ion_spectrum_annotated(charge, fragment_type)
+        py_spec = self.__py_ptr.calculate_isotopic_product_ion_spectrum_annotated(charge, fragment_type, mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
     def associate_fragment_ion_series_with_prosit_intensities(
