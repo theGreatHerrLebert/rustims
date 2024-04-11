@@ -5,7 +5,7 @@ use mscore::data::spectrum::{MzSpectrum, MsType, IndexedMzSpectrum};
 use rusqlite::{Result};
 use std::path::Path;
 use mscore::data::peptide::PeptideIon;
-use mscore::simulation::annotation::{MzSpectrumAnnotated, TimsFrameAnnotated, TimsSpectrumAnnotated};
+use mscore::simulation::annotation::{MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated, TimsSpectrumAnnotated};
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -241,7 +241,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
 
         let tims_frame = TimsFrameAnnotated::from_tims_spectra_annotated(tims_spectra);
 
-        tims_frame.filter_ranged(
+        let filtered_frame = tims_frame.filter_ranged(
             0.0,
             2000.0,
             0.0,
@@ -250,7 +250,23 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             1000,
             1.0,
             1e9,
-        )
+        );
+
+        TimsFrameAnnotated {
+            frame_id: filtered_frame.frame_id,
+            retention_time: filtered_frame.retention_time,
+            ms_type: filtered_frame.ms_type,
+            tof: filtered_frame.tof,
+            mz: filtered_frame.mz,
+            scan: filtered_frame.scan,
+            inv_mobility: filtered_frame.inv_mobility,
+            intensity: filtered_frame.intensity,
+            annotations: filtered_frame.annotations.iter().map(|x| {
+                let mut contributions = x.contributions.clone();
+                contributions.sort_by(|a, b| a.intensity_contribution.partial_cmp(&b.intensity_contribution).unwrap());
+                PeakAnnotation { contributions, ..*x }
+            }).collect::<Vec<PeakAnnotation>>(),
+        }
     }
 
     pub fn build_precursor_frames_annotated(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<TimsFrameAnnotated> {
