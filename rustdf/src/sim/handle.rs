@@ -4,6 +4,7 @@ use mscore::data::peptide::{FragmentType, PeptideProductIonSeriesCollection, Pep
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{MsType, MzSpectrum};
+use mscore::simulation::annotation::MzSpectrumAnnotated;
 use rusqlite::Connection;
 use crate::sim::containers::{FragmentIonSim, FramesSim, FrameToWindowGroupSim, IonSim, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim};
 use rayon::prelude::*;
@@ -429,12 +430,8 @@ impl TimsTofSyntheticsDataHandle {
     }
     pub fn build_fragment_ions(peptides_sim: &BTreeMap<u32, PeptidesSim>, fragment_ions: &Vec<FragmentIonSim>, num_threads: usize) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
 
-
-
-        // Create a custom thread pool with the specified number of threads
         let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
         let fragment_ion_map = thread_pool.install(|| {
-            // Execute parallel processing within the context of the custom thread pool
             fragment_ions.par_iter()
                 .map(|fragment_ion| {
                     let key = (fragment_ion.peptide_id, fragment_ion.charge, (fragment_ion.collision_energy * 1e3).round() as i8);
@@ -461,5 +458,37 @@ impl TimsTofSyntheticsDataHandle {
         });
 
         fragment_ion_map
+    }
+
+    pub fn build_fragment_ions_annotated(peptides_sim: &BTreeMap<u32, PeptidesSim>, fragment_ions: &Vec<FragmentIonSim>, num_threads: usize) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)> {
+
+            let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+            let fragment_ion_map = thread_pool.install(|| {
+                fragment_ions.par_iter()
+                    .map(|fragment_ion| {
+                        let key = (fragment_ion.peptide_id, fragment_ion.charge, (fragment_ion.collision_energy * 1e3).round() as i8);
+
+                        let value = peptides_sim.get(&fragment_ion.peptide_id).unwrap().sequence.associate_with_predicted_intensities(
+                            fragment_ion.charge as i32,
+                            FragmentType::B,
+                            fragment_ion.to_dense(174),
+                            true,
+                            true,
+                        );
+
+                        let fragment_ions: Vec<MzSpectrumAnnotated> = value.peptide_ions.par_iter().map(|ion_series| {
+                            ion_series.generate_isotopic_spectrum_annotated(
+                                1e-2,
+                                1e-3,
+                                100,
+                                1e-5,
+                            )
+                        }).collect();
+                        (key, (value, fragment_ions))
+                    })
+                    .collect::<BTreeMap<_, _>>() // Collect the results into a BTreeMap
+            });
+
+            fragment_ion_map
     }
 }

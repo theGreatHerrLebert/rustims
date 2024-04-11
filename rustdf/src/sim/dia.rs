@@ -3,7 +3,8 @@ use std::path::Path;
 use mscore::data::peptide::{PeptideProductIonSeriesCollection};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
-use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
+use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
+use mscore::simulation::annotation::MzSpectrumAnnotated;
 use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::spectrum::TimsSpectrum;
 
@@ -18,7 +19,7 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
-    pub fragment_ions: BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
+    pub fragment_ions: BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
@@ -28,7 +29,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let fragment_ions = handle.read_fragment_ions()?;
-        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions(&synthetics.peptides, &fragment_ions, num_threads);
+        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions_annotated(&synthetics.peptides, &fragment_ions, num_threads);
 
         // get collision energy settings per window group
         let fragmentation_settings = handle.get_collision_energy_dia();
@@ -138,7 +139,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     fn build_fragment_frame(
         &self,
         frame_id: u32,
-        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
+        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
         mz_noise_fragment: bool,
         uniform: bool,
         fragment_ppm: f64,
