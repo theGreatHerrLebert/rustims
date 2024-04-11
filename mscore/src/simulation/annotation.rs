@@ -82,10 +82,14 @@ pub struct MzSpectrumAnnotated {
 impl MzSpectrumAnnotated {
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>, annotations: Vec<PeakAnnotation>) -> Self {
         assert!(mz.len() == intensity.len() && intensity.len() == annotations.len());
+        // zip and sort by mz
+        let mut mz_intensity_annotations: Vec<(f64, f64, PeakAnnotation)> = izip!(mz.iter(), intensity.iter(), annotations.iter()).map(|(mz, intensity, annotation)| (*mz, *intensity, annotation.clone())).collect();
+        mz_intensity_annotations.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
         MzSpectrumAnnotated {
-            mz,
-            intensity,
-            annotations,
+            mz: mz_intensity_annotations.iter().map(|(mz, _, _)| *mz).collect(),
+            intensity: mz_intensity_annotations.iter().map(|(_, intensity, _)| *intensity).collect(),
+            annotations: mz_intensity_annotations.iter().map(|(_, _, annotation)| annotation.clone()).collect(),
         }
     }
 
@@ -239,14 +243,22 @@ pub struct TimsSpectrumAnnotated {
 impl TimsSpectrumAnnotated {
     pub fn new(frame_id: i32, scan: u32, retention_time: f64, mobility: f64, ms_type: MsType, tof: Vec<u32>, spectrum: MzSpectrumAnnotated) -> Self {
         assert!(tof.len() == spectrum.mz.len() && spectrum.mz.len() == spectrum.intensity.len() && spectrum.intensity.len() == spectrum.annotations.len());
+        // zip and sort by mz
+        let mut mz_intensity_annotations: Vec<(u32, f64, f64, PeakAnnotation)> = izip!(tof.iter(), spectrum.mz.iter(), spectrum.intensity.iter(),
+            spectrum.annotations.iter()).map(|(tof, mz, intensity, annotation)| (*tof, *mz, *intensity, annotation.clone())).collect();
+        mz_intensity_annotations.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         TimsSpectrumAnnotated {
             frame_id,
             scan,
             retention_time,
             mobility,
             ms_type,
-            tof,
-            spectrum,
+            tof: mz_intensity_annotations.iter().map(|(tof, _, _, _)| *tof).collect(),
+            spectrum: MzSpectrumAnnotated {
+                mz: mz_intensity_annotations.iter().map(|(_, mz, _, _)| *mz).collect(),
+                intensity: mz_intensity_annotations.iter().map(|(_, _, intensity, _)| *intensity).collect(),
+                annotations: mz_intensity_annotations.iter().map(|(_, _, _, annotation)| annotation.clone()).collect(),
+            },
         }
     }
 

@@ -206,6 +206,21 @@ impl PyPeptideSequence {
         PyMzSpectrum { inner: spectrum }
     }
 
+    pub fn calculate_mono_isotopic_product_ion_spectrum_annotated(&self, charge: i32, fragment_type: String) -> PyMzSpectrumAnnotated {
+        let f_type = match fragment_type.as_str() {
+            "a" => FragmentType::A,
+            "b" => FragmentType::B,
+            "c" => FragmentType::C,
+            "x" => FragmentType::X,
+            "y" => FragmentType::Y,
+            "z" => FragmentType::Z,
+            _ => panic!("Invalid fragment type"),
+        };
+
+        let spectrum = self.inner.calculate_mono_isotopic_product_ion_spectrum_annotated(charge, f_type);
+        PyMzSpectrumAnnotated { inner: spectrum }
+    }
+
     pub fn associate_with_predicted_intensities(
         &self,
         flat_intensities: Vec<f64>,
