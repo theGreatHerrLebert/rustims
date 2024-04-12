@@ -48,8 +48,8 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
         Returns:
             TimsFrame: Frame.
         """
-        frame = self.__py_ptr.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm,
-                                          mz_noise_fragment, fragment_noise_ppm, right_drag)
+        frame = self.__py_ptr.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform,
+                                          precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag)
 
         return TimsFrame.from_py_tims_frame(frame)
 
@@ -85,7 +85,10 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
                                             mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
         return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
 
-    def build_frame_annotated(self, frame_id: int, fragment: bool = True, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., mz_noise_fragment: bool = False, fragment_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrameAnnotated:
+    def build_frame_annotated(self, frame_id: int, fragment: bool = True, mz_noise_precursor: bool = False,
+                              mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
+                              mz_noise_fragment: bool = False,
+                              fragment_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrameAnnotated:
         """Build a frame. The frame will be annotated.
 
         Args:
@@ -105,7 +108,10 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
         frame = self.__py_ptr.build_frame_annotated(frame_id, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag)
         return TimsFrameAnnotated.from_py_ptr(frame)
 
-    def build_frames_annotated(self, frame_ids: List[int], fragment: bool = True, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., mz_noise_fragment: bool = False, fragment_noise_ppm: float = 5., right_drag: bool = True, num_threads: int = 4) -> List[TimsFrameAnnotated]:
+    def build_frames_annotated(self, frame_ids: List[int], fragment: bool = True, mz_noise_precursor: bool = False,
+                               mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
+                               mz_noise_fragment: bool = False, fragment_noise_ppm: float = 5.,
+                               right_drag: bool = True, num_threads: int = 4) -> List[TimsFrameAnnotated]:
         """Build frames. The frames will be annotated.
 
         Args:
