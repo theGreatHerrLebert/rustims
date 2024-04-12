@@ -12,6 +12,8 @@ def build_acquisition(
         gradient_length: float = None,
         use_reference_ds_layout: bool = True,
         reference_in_memory: bool = True,
+        round_collision_energy: bool = True,
+        collision_energy_decimals: int = 0,
 ) -> TimsTofAcquisitionBuilderDIA:
 
     acquisition_type = acquisition_type.lower()
@@ -36,5 +38,7 @@ def build_acquisition(
         exp_name=exp_name,
         config=config,
         verbose=verbose,
-        use_reference_layout=use_reference_ds_layout
+        use_reference_layout=use_reference_ds_layout,
+        round_collision_energy=round_collision_energy,
+        collision_energy_decimals=collision_energy_decimals
     )

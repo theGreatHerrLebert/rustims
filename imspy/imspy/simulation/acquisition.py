@@ -134,6 +134,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  gradient_length=50 * 60,
                  rt_cycle_length=0.1054,
                  use_reference_ds_layout: bool = True,
+                 round_collision_energy: bool = True,
+                 collision_energy_decimals: int = 1
                  ):
 
         super().__init__(path, reference_ds, gradient_length, rt_cycle_length,
@@ -152,6 +154,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.dia_ms_ms_windows = pd.read_csv(window_group_file)
         self.use_reference_ds_layout = use_reference_ds_layout
         self.reference = reference_ds
+        self.round_collision_energy = round_collision_energy
+        self.collision_energy_decimals = collision_energy_decimals
 
         # TODO: check if the number of scans in the window group file matches the number of scans in the experiment
 
@@ -199,6 +203,10 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
         self.frames_to_window_groups = self.generate_frame_to_window_group_table(verbose=verbose)
 
+        if self.round_collision_energy:
+            self.dia_ms_ms_windows['collision_energy'] = np.round(self.dia_ms_ms_windows['collision_energy'].values,
+                                                                  decimals=self.collision_energy_decimals)
+
         self.synthetics_handle.create_table(
             table_name='frames',
             table=self.frame_table
@@ -224,6 +232,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             config: Dict[str, any],
             verbose: bool = True,
             use_reference_layout: bool = True,
+            round_collision_energy: bool = True,
+            collision_energy_decimals: int = 1
     ) -> 'TimsTofAcquisitionBuilderDIA':
 
         acquisition_name = config['name'].lower().replace('pasef', '')
@@ -239,7 +249,9 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             precursor_every=config['precursor_every'],
             gradient_length=config['gradient_length'],
             rt_cycle_length=config['rt_cycle_length'],
-            use_reference_ds_layout=use_reference_layout
+            use_reference_ds_layout=use_reference_layout,
+            round_collision_energy=round_collision_energy,
+            collision_energy_decimals=collision_energy_decimals
         )
 
     def __repr__(self):
