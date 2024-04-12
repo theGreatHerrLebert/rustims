@@ -13,15 +13,16 @@ ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
-    def __init__(self, db_path: str, num_threads: int = 4):
+    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = 4):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
 
         Args:
             db_path (str): Path to the raw data file.
+            with_annotations (bool): If true, frame annotations can be created during frame building, but this will slow down the process and needs a lot of extra memory, use with caution.
             num_threads (int): Number of threads.
         """
         self.path = db_path
-        self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, num_threads)
+        self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, with_annotations, num_threads)
 
     def build_frame(self,
                     frame_id: int,
