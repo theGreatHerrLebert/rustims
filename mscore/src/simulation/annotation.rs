@@ -4,7 +4,7 @@ use itertools::izip;
 use rand::distributions::{Uniform, Distribution};
 use rand::rngs::ThreadRng;
 use statrs::distribution::Normal;
-use crate::data::spectrum::{MsType, ToResolution};
+use crate::data::spectrum::{MsType, ToResolution, Vectorized};
 
 #[derive(Clone, Debug)]
 pub struct PeakAnnotation {
@@ -152,6 +152,49 @@ impl MzSpectrumAnnotated {
         // Sort the spectrum by m/z values and potentially sum up intensities and extend annotations at the same m/z value
         spectrum.to_resolution(6)
     }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, MzSpectrumAnnotated> {
+        let mut splits = BTreeMap::new();
+
+        for (i, &mz) in self.mz.iter().enumerate() {
+            let intensity = self.intensity[i];
+            let annotation = self.annotations[i].clone();
+
+            let tmp_key = (mz / window_length).floor() as i32;
+
+            splits.entry(tmp_key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).mz.push(mz);
+            splits.entry(tmp_key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).intensity.push(intensity);
+            splits.entry(tmp_key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).annotations.push(annotation);
+        }
+
+        if overlapping {
+            let mut splits_offset = BTreeMap::new();
+
+            for (i, &mmz) in self.mz.iter().enumerate() {
+                let intensity = self.intensity[i];
+                let annotation = self.annotations[i].clone();
+
+                let tmp_key = -((mmz + window_length / 2.0) / window_length).floor() as i32;
+
+                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).mz.push(mmz);
+                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).intensity.push(intensity);
+                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).annotations.push(annotation);
+            }
+
+            for (key, val) in splits_offset {
+                splits.entry(key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).mz.extend(val.mz);
+                splits.entry(key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).intensity.extend(val.intensity);
+                splits.entry(key).or_insert_with(|| MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())).annotations.extend(val.annotations);
+            }
+        }
+
+        splits.retain(|_, spectrum| {
+            spectrum.mz.len() >= min_peaks && spectrum.intensity.iter().cloned().max_by(
+                |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
+        });
+
+        splits
+    }
 }
 
 impl std::ops::Add for MzSpectrumAnnotated {
@@ -227,6 +270,37 @@ impl std::ops::Mul<f64> for MzSpectrumAnnotated {
 
         MzSpectrumAnnotated { mz: self.mz.clone(), intensity: scaled_intensities, annotations: self.annotations.clone() }
     }
+}
+
+impl Vectorized<MzSpectrumAnnotatedVectorized> for MzSpectrumAnnotated {
+    fn vectorized(&self, resolution: i32) -> MzSpectrumAnnotatedVectorized {
+
+        let quantize = |mz: f64| -> i64 { (mz * 10.0_f64.powi(resolution)).round() as i64 };
+
+        let binned_spec = self.to_resolution(resolution);
+        let mut indices: Vec<u32> = Vec::with_capacity(binned_spec.mz.len());
+        let mut values: Vec<f64> = Vec::with_capacity(binned_spec.mz.len());
+        let mut annotations: Vec<PeakAnnotation> = Vec::with_capacity(binned_spec.mz.len());
+
+        for (mz, intensity, annotation) in izip!(binned_spec.mz.iter(), binned_spec.intensity.iter(), binned_spec.annotations.iter()) {
+            indices.push(quantize(*mz) as u32);
+            values.push(*intensity);
+            annotations.push(annotation.clone());
+        }
+
+        MzSpectrumAnnotatedVectorized {
+            indices,
+            values,
+            annotations,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MzSpectrumAnnotatedVectorized {
+    pub indices: Vec<u32>,
+    pub values: Vec<f64>,
+    pub annotations: Vec<PeakAnnotation>,
 }
 
 #[derive(Clone, Debug)]
