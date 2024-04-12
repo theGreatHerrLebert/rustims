@@ -65,7 +65,10 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     }
 
     pub fn build_frame_annotated(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> TimsFrameAnnotated {
-        todo!("Implement.")
+        match self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
+            true => self.build_ms1_frame_annotated(frame_id, mz_noise_precursor, uniform, precursor_noise_ppm, right_drag),
+            false => self.build_ms2_frame_annotated(frame_id, fragmentation, mz_noise_fragment, uniform, fragment_noise_ppm, right_drag),
+        }
     }
 
     pub fn get_fragment_ion_ids(&self, precursor_frame_ids: Vec<u32>) -> Vec<u32> {
@@ -103,6 +106,20 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         tims_frames
     }
 
+    pub fn build_frames_annotated(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<TimsFrameAnnotated> {
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let mut tims_frames: Vec<TimsFrameAnnotated> = Vec::new();
+
+        thread_pool.install(|| {
+            tims_frames = frame_ids.par_iter().map(|frame_id| self.build_frame_annotated(*frame_id, fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag)).collect();
+        });
+
+        tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
+
+        tims_frames
+    }
+
     fn build_ms1_frame(&self, frame_id: u32, mz_noise_precursor: bool, uniform: bool, precursor_ppm: f64, right_drag: bool) -> TimsFrame {
         let mut tims_frame = self.precursor_frame_builder.build_precursor_frame(frame_id, mz_noise_precursor, uniform, precursor_ppm, right_drag);
         let intensities_rounded = tims_frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
@@ -130,6 +147,24 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                 let mut frame = self.build_fragment_frame(frame_id, &self.fragment_ions, mz_noise_fragment, uniform, fragment_ppm, None, None, None, Some(right_drag));
                 let intensities_rounded = frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
                 frame.ims_frame.intensity = intensities_rounded;
+                frame
+            },
+        }
+    }
+
+    fn build_ms2_frame_annotated(&self, frame_id: u32, fragmentation: bool, mz_noise_fragment: bool, uniform: bool, fragment_ppm: f64, right_drag: bool) -> TimsFrameAnnotated {
+        match fragmentation {
+            false => {
+                let mut frame = self.transmission_settings.transmit_tims_frame_annotated(&self.build_ms1_frame_annotated(frame_id, mz_noise_fragment, uniform, fragment_ppm, right_drag), None);
+                let intensities_rounded = frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
+                frame.intensity = intensities_rounded;
+                frame.ms_type = MsType::FragmentDia;
+                frame
+            },
+            true => {
+                let mut frame = self.build_fragment_frame_annotated(frame_id, &self.fragment_ions, mz_noise_fragment, uniform, fragment_ppm, None, None, None, Some(right_drag));
+                let intensities_rounded = frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
+                frame.intensity = intensities_rounded;
                 frame
             },
         }
