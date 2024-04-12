@@ -35,6 +35,7 @@ def assemble_frames(
 
     frame_builder = TimsTofSyntheticFrameBuilderDIA(
         db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+        with_annotations=False,
         num_threads=num_threads,
     )
 

@@ -112,8 +112,8 @@ def main():
                         help="Mean scewness for retention time distribution (default: 0.3)")
     parser.add_argument("--variance_scewness", type=float, default=0.1,
                         help="Variance scewness for retention time distribution (default: 0.1)")
-    parser.add_argument("--std_im", type=float, default=0.008,
-                        help="Standard deviation for mobility distribution (default: 0.008)")
+    parser.add_argument("--std_im", type=float, default=0.01,
+                        help="Standard deviation for mobility distribution (default: 0.01)")
     parser.add_argument("--target_p", type=float, default=0.999,
                         help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, default=0.001,

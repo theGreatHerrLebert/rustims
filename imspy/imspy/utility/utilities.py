@@ -10,13 +10,15 @@ from numpy.typing import ArrayLike
 
 
 @numba.jit(nopython=True)
-def normal_pdf(x: ArrayLike, mass: float, s: float = 0.001, inv_sqrt_2pi: float = 0.3989422804014327, normalize: bool = False):
+def normal_pdf(x: ArrayLike, mass: float, s: float = 0.001,
+               inv_sqrt_2pi: float = 0.3989422804014327, normalize: bool = False):
     """
-    :param inv_sqrt_2pi:
-    :param x:
-    :param mass:
-    :param s:
-    :return:
+    Args:
+        x:
+        mass:
+        s:
+        inv_sqrt_2pi:
+        normalize:
     """
     a = (x - mass) / s
     if normalize:
@@ -26,7 +28,7 @@ def normal_pdf(x: ArrayLike, mass: float, s: float = 0.001, inv_sqrt_2pi: float 
 
 
 @numba.jit(nopython=True)
-def gaussian(x, μ=0, σ=1):
+def gaussian(x, μ: float = 0, σ: float = 1):
     """
     Gaussian function
     :param x:
@@ -41,7 +43,7 @@ def gaussian(x, μ=0, σ=1):
 
 
 @numba.jit(nopython=True)
-def exp_distribution(x, λ=1):
+def exp_distribution(x, λ: float = 1):
     """
     Exponential function
     :param x:
@@ -54,7 +56,7 @@ def exp_distribution(x, λ=1):
 
 
 @numba.jit(nopython=True)
-def exp_gaussian(x, μ=-3, σ=1, λ=.25):
+def exp_gaussian(x, μ: float = -3, σ: float = 1, λ: float = .25):
     """
     laplacian distribution with exponential decay
     :param x:
@@ -87,12 +89,15 @@ class ExponentialGaussianDistribution:
         return exp_gaussian(x, self.μ, self.σ, self.λ)
 
 
+def _from_jsons(jsons: str):
+    return json.loads(jsons)
+
 
 class TokenSequence:
 
-    def __init__(self, sequence_tokenized: Optional[List[str]] = None, jsons:Optional[str] = None):
+    def __init__(self, sequence_tokenized: Optional[List[str]] = None, jsons: Optional[str] = None):
         if jsons is not None:
-            self.sequence_tokenized = self._from_jsons(jsons)
+            self.sequence_tokenized = _from_jsons(jsons)
             self._jsons = jsons
         else:
             self.sequence_tokenized = sequence_tokenized
@@ -102,41 +107,38 @@ class TokenSequence:
         json_dict = self.sequence_tokenized
         return json.dumps(json_dict)
 
-    def _from_jsons(self, jsons:str):
-        return json.loads(jsons)
-
     @property
     def jsons(self):
         return self._jsons
 
 
-def is_unimod_start(char:str):
+def is_unimod_start(char: str):
     """
     Tests if char is start of unimod
     bracket
 
     :param char: Character of a proForma formatted aa sequence
     :type char: str
-    :return: Wether char is start of unimod bracket
+    :return: Whether char is start of unimod bracket
     :rtype: bool
     """
-    if char in ["(","[","{"]:
+    if char in ["(", "[", "{"]:
         return True
     else:
         return False
 
 
-def is_unimod_end(char:str):
+def is_unimod_end(char: str):
     """
     Tests if char is end of unimod
     bracket
 
     :param char: Character of a proForma formatted aa sequence
     :type char: str
-    :return: Wether char is end of unimod bracket
+    :return: Whether char is end of unimod bracket
     :rtype: bool
     """
-    if char in [")","]","}"]:
+    if char in [")", "]", "}"]:
         return True
     else:
         return False
@@ -151,7 +153,7 @@ def tokenize_proforma_sequence(sequence: str):
     :return: List of tokens
     :rtype: List
     """
-    sequence = sequence.upper().replace("(","[").replace(")","]")
+    sequence = sequence.upper().replace("(", "[").replace(")", "]")
     token_list = ["<START>"]
     in_unimod_bracket = False
     tmp_token = ""
@@ -181,7 +183,7 @@ def tokenize_proforma_sequence(sequence: str):
     return token_list
 
 
-def get_aa_num_proforma_sequence(sequence:str):
+def get_aa_num_proforma_sequence(sequence: str):
     """
     get number of amino acids in sequence
 
