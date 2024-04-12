@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
-use mscore::data::peptide::{PeptideProductIonSeriesCollection};
+use mscore::data::peptide::{PeptideIon, PeptideProductIonSeriesCollection};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
-use mscore::simulation::annotation::MzSpectrumAnnotated;
+use mscore::simulation::annotation::{MzSpectrumAnnotated, TimsFrameAnnotated, TimsSpectrumAnnotated};
 use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::spectrum::TimsSpectrum;
 
@@ -64,6 +64,10 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         }
     }
 
+    pub fn build_frame_annotated(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> TimsFrameAnnotated {
+        todo!("Implement.")
+    }
+
     pub fn get_fragment_ion_ids(&self, precursor_frame_ids: Vec<u32>) -> Vec<u32> {
         let mut peptide_ids: HashSet<u32> = HashSet::new();
         // get all peptide ids for the precursor frame ids
@@ -105,6 +109,14 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         tims_frame.ims_frame.intensity = intensities_rounded;
         tims_frame
     }
+
+    fn build_ms1_frame_annotated(&self, frame_id: u32, mz_noise_precursor: bool, uniform: bool, precursor_ppm: f64, right_drag: bool) -> TimsFrameAnnotated {
+        let mut tims_frame = self.precursor_frame_builder.build_precursor_frame_annotated(frame_id, mz_noise_precursor, uniform, precursor_ppm, right_drag);
+        let intensities_rounded = tims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
+        tims_frame.intensity = intensities_rounded;
+        tims_frame
+    }
+
     fn build_ms2_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_fragment: bool, uniform: bool, fragment_ppm: f64, right_drag: bool) -> TimsFrame {
         match fragmentation {
             false => {
@@ -274,6 +286,131 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             1000,
             0.0,
             10.0,
+            intensity_min.unwrap_or(1.0),
+            1e9,
+        )
+    }
+
+    pub fn build_fragment_frame_annotated(
+        &self,
+        frame_id: u32,
+        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
+        mz_noise_fragment: bool,
+        uniform: bool,
+        fragment_ppm: f64,
+        mz_min: Option<f64>,
+        mz_max: Option<f64>,
+        intensity_min: Option<f64>,
+        right_drag: Option<bool>,
+    ) -> TimsFrameAnnotated {
+        let ms_type = match self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
+            false => MsType::FragmentDia,
+            true => MsType::Unknown,
+        };
+
+        let mut tims_spectra: Vec<TimsSpectrumAnnotated> = Vec::new();
+
+        if !self.precursor_frame_builder.frame_to_abundances.contains_key(&frame_id) {
+            return TimsFrameAnnotated::new(
+                frame_id as i32,
+                *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
+                ms_type.clone(),
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            );
+        }
+
+        let (peptide_ids, frame_abundances) = self.precursor_frame_builder.frame_to_abundances.get(&frame_id).unwrap();
+
+        for (peptide_id, frame_abundance) in peptide_ids.iter().zip(frame_abundances.iter()) {
+            if !self.precursor_frame_builder.peptide_to_ions.contains_key(&peptide_id) {
+                continue;
+            }
+
+            let (ion_abundances, scan_occurrences, scan_abundances, charges, _) = self.precursor_frame_builder.peptide_to_ions.get(&peptide_id).unwrap();
+
+            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
+                let all_scan_occurrence = scan_occurrences.get(index).unwrap();
+                let all_scan_abundance = scan_abundances.get(index).unwrap();
+
+                let peptide = self.precursor_frame_builder.peptides.get(peptide_id).unwrap();
+                let ion = PeptideIon::new(peptide.sequence.sequence.clone(), charges[index] as i32, *ion_abundance as f64, Some(*peptide_id as i32));
+                // TODO: make this configurable
+                let spectrum = ion.calculate_isotopic_spectrum_annotated(1e-3, 1e-8, 200, 1e-4);
+
+                for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
+                    if !self.transmission_settings.any_transmitted(frame_id as i32, *scan as i32, &spectrum.mz, None) {
+                        continue;
+                    }
+
+                    let total_events = self.precursor_frame_builder.peptide_to_events.get(&peptide_id).unwrap();
+                    let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
+
+                    let collision_energy = self.fragmentation_settings.get_collision_energy(frame_id as i32, *scan as i32);
+                    let collision_energy_quantized = (collision_energy * 1e3).round() as i8;
+
+                    let charge_state = charges.get(index).unwrap();
+                    let maybe_value = fragment_ions.get(&(*peptide_id, *charge_state, collision_energy_quantized));
+
+                    if maybe_value.is_none() {
+                        continue;
+                    }
+
+                    for fragment_ion_series in maybe_value.unwrap().1.iter() {
+                        let scaled_spec = fragment_ion_series.clone() * fraction_events as f64;
+                        let right_drag = right_drag.unwrap_or(false);
+
+                        let mz_spectrum = if mz_noise_fragment {
+                            match uniform {
+                                true => scaled_spec.add_mz_noise_uniform(fragment_ppm, right_drag),
+                                false => scaled_spec.add_mz_noise_normal(fragment_ppm),
+                            }
+                        } else {
+                            scaled_spec
+                        };
+
+                        tims_spectra.push(
+                            TimsSpectrumAnnotated::new(
+                                frame_id as i32,
+                                *scan,
+                                *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
+                                *self.precursor_frame_builder.scan_to_mobility.get(&scan).unwrap() as f64,
+                                ms_type.clone(),
+                                vec![0; mz_spectrum.mz.len()],
+                                mz_spectrum)
+                        );
+                    }
+                }
+            }
+        }
+
+        if tims_spectra.is_empty() {
+            return TimsFrameAnnotated::new(
+                frame_id as i32,
+                *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64,
+                ms_type.clone(),
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+            );
+        }
+
+        let tims_frame = TimsFrameAnnotated::from_tims_spectra_annotated(tims_spectra);
+
+        tims_frame.filter_ranged(
+            mz_min.unwrap_or(100.0),
+            mz_max.unwrap_or(1700.0),
+            0.0,
+            10.0,
+            0,
+            1000,
             intensity_min.unwrap_or(1.0),
             1e9,
         )

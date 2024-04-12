@@ -428,6 +428,29 @@ impl TimsFrameAnnotated {
         }
     }
 
+    pub fn to_tims_spectra_annotated(&self) -> Vec<TimsSpectrumAnnotated> {
+        // use a sorted map where scan is used as key
+        let mut spectra = BTreeMap::<i32, (f64, Vec<u32>, MzSpectrumAnnotated)>::new();
+
+        // all indices and the intensity values are sorted by scan and stored in the map as a tuple (mobility, tof, mz, intensity)
+        for (scan, mobility, tof, mz, intensity, annotations) in izip!(self.scan.iter(), self.inv_mobility.iter(), self.tof.iter(), self.mz.iter(), self.intensity.iter(), self.annotations.iter()) {
+            let entry = spectra.entry(*scan as i32).or_insert_with(|| (*mobility, Vec::new(), MzSpectrumAnnotated::new(Vec::new(), Vec::new(), Vec::new())));
+            entry.1.push(*tof);
+            entry.2.mz.push(*mz);
+            entry.2.intensity.push(*intensity);
+            entry.2.annotations.push(annotations.clone());
+        }
+
+        // convert the map to a vector of TimsSpectrumAnnotated
+        let mut tims_spectra: Vec<TimsSpectrumAnnotated> = Vec::new();
+
+        for (scan, (mobility, tof, spectrum)) in spectra {
+            tims_spectra.push(TimsSpectrumAnnotated::new(self.frame_id, scan as u32, self.retention_time, mobility, self.ms_type.clone(), tof, spectrum));
+        }
+
+        tims_spectra
+    }
+
     pub fn from_tims_spectra_annotated(spectra: Vec<TimsSpectrumAnnotated>) -> TimsFrameAnnotated {
         let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
         let mut spec_map: BTreeMap<(u32, i64), (f64, u32, f64, PeakAnnotation, i64)> = BTreeMap::new();

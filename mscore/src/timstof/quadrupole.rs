@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::f64;
 use std::f64::consts::E;
+use itertools::izip;
 use crate::data::spectrum::MzSpectrum;
+use crate::simulation::annotation::{MzSpectrumAnnotated, TimsFrameAnnotated};
 use crate::timstof::frame::TimsFrame;
 
 /// Sigmoid step function for quadrupole selection simulation
@@ -152,6 +154,30 @@ pub trait IonTransmission {
         }
     }
 
+    fn transmit_annotated_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: MzSpectrumAnnotated, min_probability: Option<f64>) -> MzSpectrumAnnotated {
+        let probability_cutoff = min_probability.unwrap_or(0.5);
+        let transmission_probability = self.apply_transmission(frame_id, scan_id, &spectrum.mz);
+
+        let mut filtered_mz = Vec::new();
+        let mut filtered_intensity = Vec::new();
+        let mut filtered_annotation = Vec::new();
+
+        // zip mz and intensity with transmission probability and filter out all mz values with transmission probability 0.5
+        for (i, (mz, intensity, annotation)) in izip!(spectrum.mz.iter(), spectrum.intensity.iter(), spectrum.annotations.iter()).enumerate() {
+            if transmission_probability[i] > probability_cutoff {
+                filtered_mz.push(*mz);
+                filtered_intensity.push(*intensity* transmission_probability[i]);
+                filtered_annotation.push(annotation.clone());
+            }
+        }
+
+        MzSpectrumAnnotated {
+            mz: filtered_mz,
+            intensity: filtered_intensity,
+            annotations: filtered_annotation,
+        }
+    }
+
     fn transmit_ion(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>, spec: MzSpectrum, min_proba: Option<f64>) -> Vec<Vec<MzSpectrum>> {
 
         let mut result: Vec<Vec<MzSpectrum>> = Vec::new();
@@ -237,6 +263,35 @@ pub trait IonTransmission {
                 frame.frame_id,
                 frame.ms_type.clone(),
                 0.0,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                vec![]
+            )
+        }
+    }
+
+    fn transmit_tims_frame_annotated(&self, frame: &TimsFrameAnnotated, min_probability: Option<f64>) -> TimsFrameAnnotated {
+        let spectra = frame.to_tims_spectra_annotated();
+        let mut filtered_spectra = Vec::new();
+
+        for mut spectrum in spectra {
+            let filtered_spectrum = self.transmit_annotated_spectrum(frame.frame_id, spectrum.scan as i32, spectrum.spectrum.clone(), min_probability);
+            if filtered_spectrum.mz.len() > 0 {
+                spectrum.spectrum = filtered_spectrum;
+                filtered_spectra.push(spectrum);
+            }
+        }
+
+        if  filtered_spectra.len() > 0 {
+            TimsFrameAnnotated::from_tims_spectra_annotated(filtered_spectra)
+        } else {
+            TimsFrameAnnotated::new(
+                frame.frame_id,
+                frame.retention_time,
+                frame.ms_type.clone(),
+                vec![],
                 vec![],
                 vec![],
                 vec![],

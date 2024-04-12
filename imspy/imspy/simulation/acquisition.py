@@ -138,7 +138,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         super().__init__(path, reference_ds, gradient_length, rt_cycle_length,
                          exp_name=exp_name)
-
+        # TODO: check this, could be missing replacement of reference layout of windows
         if use_reference_ds_layout:
             rt_cycle_length = np.mean(np.diff(reference_ds.meta_data.Time))
             if verbose:
