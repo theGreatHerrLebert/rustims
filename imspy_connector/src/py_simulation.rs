@@ -70,23 +70,23 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, num_threads).unwrap() }
     }
 
-    pub fn build_frame(&self, frame_id: u32, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, fragment: bool, right_drag: bool) -> PyTimsFrame {
-        let frames = self.inner.build_frames(vec![frame_id], fragment, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
+    pub fn build_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrame {
+        let frames = self.inner.build_frames(vec![frame_id], fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
         PyTimsFrame { inner: frames[0].clone() }
     }
 
-    pub fn build_frame_annotated(&self, frame_id: u32, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, fragment: bool, right_drag: bool) -> PyTimsFrameAnnotated {
-        let frames = self.inner.build_frames_annotated(vec![frame_id], fragment, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
+    pub fn build_frame_annotated(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrameAnnotated {
+        let frames = self.inner.build_frames_annotated(vec![frame_id], fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
         PyTimsFrameAnnotated { inner: frames[0].clone() }
     }
 
-    pub fn build_frames(&self, frame_ids: Vec<u32>, fragment: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrame> {
-        let frames = self.inner.build_frames(frame_ids, fragment, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames(frame_ids, fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
     }
 
-    pub fn build_frames_annotated(&self, frame_ids: Vec<u32>, fragment: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrameAnnotated> {
-        let frames = self.inner.build_frames_annotated(frame_ids, fragment, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
+    pub fn build_frames_annotated(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrameAnnotated> {
+        let frames = self.inner.build_frames_annotated(frame_ids, fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrameAnnotated { inner: x.clone() }).collect::<Vec<_>>()
     }
 
