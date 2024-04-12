@@ -37,7 +37,7 @@ fn main() {
     let num_threads = args.num_threads;
     let fragment = args.fragment;
 
-    let experiment = TimsTofSyntheticsFrameBuilderDIA::new(path, 4).unwrap();
+    let experiment = TimsTofSyntheticsFrameBuilderDIA::new(path, false,4).unwrap();
     let first_frames = experiment.precursor_frame_builder.frames.iter().map(|x| x.frame_id.clone()).skip(100).take(args.num_frames).collect::<Vec<_>>();
 
     // go over the frames in batches of 256

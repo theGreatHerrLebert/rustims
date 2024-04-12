@@ -132,6 +132,19 @@ pub fn apply_transmission(midpoint: f64, window_length: f64, k: f64, mz: Vec<f64
 pub trait IonTransmission {
     fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64>;
 
+    /// Transmit a spectrum given a frame id and scan id
+    ///
+    /// Arguments:
+    ///
+    /// * `frame_id` - frame id
+    /// * `scan_id` - scan id
+    /// * `spectrum` - MzSpectrum
+    /// * `min_probability` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `MzSpectrum` - transmitted spectrum
+    ///
     fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: MzSpectrum, min_probability: Option<f64>) -> MzSpectrum {
 
         let probability_cutoff = min_probability.unwrap_or(0.5);
@@ -154,6 +167,19 @@ pub trait IonTransmission {
         }
     }
 
+    /// Transmit an annotated spectrum given a frame id and scan id
+    ///
+    /// Arguments:
+    ///
+    /// * `frame_id` - frame id
+    /// * `scan_id` - scan id
+    /// * `spectrum` - MzSpectrumAnnotated
+    /// * `min_probability` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `MzSpectrumAnnotated` - transmitted spectrum
+    ///
     fn transmit_annotated_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: MzSpectrumAnnotated, min_probability: Option<f64>) -> MzSpectrumAnnotated {
         let probability_cutoff = min_probability.unwrap_or(0.5);
         let transmission_probability = self.apply_transmission(frame_id, scan_id, &spectrum.mz);
@@ -192,6 +218,20 @@ pub trait IonTransmission {
         }
         result
     }
+
+    /// Get all ions in a frame that are transmitted
+    ///
+    /// Arguments:
+    ///
+    /// * `frame_id` - frame id
+    /// * `scan_id` - scan id
+    /// * `mz` - mz values
+    /// * `min_proba` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `HashSet<usize>` - indices of transmitted mz values
+    ///
     fn get_transmission_set(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>, min_proba: Option<f64>) -> HashSet<usize> {
         // go over enumerated mz and push all indices with transmission probability > min_proba to a set
         let probability_cutoff = min_proba.unwrap_or(0.5);
@@ -199,6 +239,19 @@ pub trait IonTransmission {
         mz.iter().enumerate().filter(|&(i, _)| transmission_probability[i] > probability_cutoff).map(|(i, _)| i).collect()
     }
 
+    /// Check if all mz values in a given collection are transmitted
+    ///
+    /// Arguments:
+    ///
+    /// * `frame_id` - frame id
+    /// * `scan_id` - scan id
+    /// * `mz` - mz values
+    /// * `min_proba` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `bool` - true if all mz values are transmitted
+    ///
     fn all_transmitted(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>, min_proba: Option<f64>) -> bool {
         let probability_cutoff = min_proba.unwrap_or(0.5);
         let transmission_probability = self.apply_transmission(frame_id, scan_id, mz);
@@ -272,6 +325,17 @@ pub trait IonTransmission {
         }
     }
 
+    /// Transmit a frame given a diaPASEF transmission layout with annotations
+    ///
+    /// Arguments:
+    ///
+    /// * `frame` - TimsFrameAnnotated
+    /// * `min_probability` - minimum probability for transmission
+    ///
+    /// Returns:
+    ///
+    /// * `TimsFrameAnnotated` - transmitted frame
+    ///
     fn transmit_tims_frame_annotated(&self, frame: &TimsFrameAnnotated, min_probability: Option<f64>) -> TimsFrameAnnotated {
         let spectra = frame.to_tims_spectra_annotated();
         let mut filtered_spectra = Vec::new();

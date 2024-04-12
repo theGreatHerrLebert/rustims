@@ -65,9 +65,9 @@ pub struct PyTimsTofSyntheticsFrameBuilderDIA {
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDIA {
     #[new]
-    pub fn new(db_path: &str, num_threads: usize) -> Self {
+    pub fn new(db_path: &str, with_annotations: bool, num_threads: usize) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, num_threads).unwrap() }
+        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, with_annotations, num_threads).unwrap() }
     }
 
     pub fn build_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrame {

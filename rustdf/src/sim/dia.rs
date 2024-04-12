@@ -3,7 +3,7 @@ use std::path::Path;
 use mscore::data::peptide::{PeptideIon, PeptideProductIonSeriesCollection};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
-use mscore::data::spectrum::{IndexedMzSpectrum, MsType};
+use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::simulation::annotation::{MzSpectrumAnnotated, TimsFrameAnnotated, TimsSpectrumAnnotated};
 use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::spectrum::TimsSpectrum;
@@ -19,30 +19,48 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDIA,
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
-    pub fragment_ions: BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
+    pub fragment_ions: Option<BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
+    pub fragment_ions_annotated: Option<BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>>,
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
-    pub fn new(path: &Path, num_threads: usize) -> rusqlite::Result<Self> {
+    pub fn new(path: &Path, with_annotations: bool, num_threads: usize) -> rusqlite::Result<Self> {
 
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path)?;
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let fragment_ions = handle.read_fragment_ions()?;
-        let fragment_ions = TimsTofSyntheticsDataHandle::build_fragment_ions_annotated(&synthetics.peptides, &fragment_ions, num_threads);
 
         // get collision energy settings per window group
         let fragmentation_settings = handle.get_collision_energy_dia();
         // get ion transmission settings per window group
         let transmission_settings = handle.get_transmission_dia();
 
-        Ok(Self {
-            path: path.to_str().unwrap().to_string(),
-            precursor_frame_builder: synthetics,
-            transmission_settings,
-            fragmentation_settings,
-            fragment_ions,
-        })
+        match with_annotations {
+            true => {
+                let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions_annotated(&synthetics.peptides, &fragment_ions, num_threads));
+                Ok(Self {
+                    path: path.to_str().unwrap().to_string(),
+                    precursor_frame_builder: synthetics,
+                    transmission_settings,
+                    fragmentation_settings,
+                    fragment_ions: None,
+                    fragment_ions_annotated: fragment_ions,
+                })
+            }
+
+            false => {
+                let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(&synthetics.peptides, &fragment_ions, num_threads));
+                Ok(Self {
+                    path: path.to_str().unwrap().to_string(),
+                    precursor_frame_builder: synthetics,
+                    transmission_settings,
+                    fragmentation_settings,
+                       fragment_ions,
+                    fragment_ions_annotated: None,
+                })
+            }
+        }
     }
 
     /// Build a frame for DIA synthetic experiment
@@ -144,7 +162,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                 frame
             },
             true => {
-                let mut frame = self.build_fragment_frame(frame_id, &self.fragment_ions, mz_noise_fragment, uniform, fragment_ppm, None, None, None, Some(right_drag));
+                let mut frame = self.build_fragment_frame(frame_id, &self.fragment_ions.as_ref().unwrap(), mz_noise_fragment, uniform, fragment_ppm, None, None, None, Some(right_drag));
                 let intensities_rounded = frame.ims_frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
                 frame.ims_frame.intensity = intensities_rounded;
                 frame
@@ -162,7 +180,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                 frame
             },
             true => {
-                let mut frame = self.build_fragment_frame_annotated(frame_id, &self.fragment_ions, mz_noise_fragment, uniform, fragment_ppm, None, None, None, Some(right_drag));
+                let mut frame = self.build_fragment_frame_annotated(frame_id, &self.fragment_ions_annotated.as_ref().unwrap(), mz_noise_fragment, uniform, fragment_ppm, None, None, None, Some(right_drag));
                 let intensities_rounded = frame.intensity.iter().map(|x| x.round()).collect::<Vec<_>>();
                 frame.intensity = intensities_rounded;
                 frame
@@ -186,7 +204,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     fn build_fragment_frame(
         &self,
         frame_id: u32,
-        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
+        fragment_ions: &BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>,
         mz_noise_fragment: bool,
         uniform: bool,
         fragment_ppm: f64,
