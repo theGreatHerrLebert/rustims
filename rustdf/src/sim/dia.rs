@@ -480,11 +480,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
         for (frame_index, frame) in frame_distribution.occurrence.iter().enumerate() {
             for (scan_index, scan) in scan_distribution.occurrence.iter().enumerate() {
-                if self.transmission_settings.any_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
-                    transmission_matrix[scan_index][frame_index] = 1;
-                }
-                else if self.transmission_settings.all_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
+                if self.transmission_settings.all_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
                     transmission_matrix[scan_index][frame_index] = 2;
+                }
+                else if self.transmission_settings.any_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
+                    transmission_matrix[scan_index][frame_index] = 1;
                 }
             }
         }
