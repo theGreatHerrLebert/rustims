@@ -3,6 +3,9 @@ import os
 from abc import ABC
 from typing import List
 
+import numpy as np
+from numpy.typing import NDArray
+
 import pandas as pd
 
 from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapper
@@ -158,6 +161,9 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
 
     def get_py_ptr(self) -> ims.PyTimsTofSyntheticsFrameBuilderDIA:
         return self.__py_ptr
+
+    def get_ion_transmission_matrix(self, peptide_id: int, charge: int) -> NDArray:
+        return np.array(self.__py_ptr.get_ion_transmission_matrix(peptide_id, charge))
 
 
 class TimsTofSyntheticPrecursorFrameBuilder(RustWrapper):
