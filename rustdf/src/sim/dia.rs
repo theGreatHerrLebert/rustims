@@ -469,22 +469,24 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         )
     }
 
-    pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8) -> Vec<Vec<u32>> {
+    pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8) -> Vec<Vec<f32>> {
 
         let frame_distribution =  &self.precursor_frame_builder.peptides.get(&peptide_id).unwrap().frame_distribution;
         let ion = self.precursor_frame_builder.ions.get(&peptide_id).unwrap().iter().find(|ion| ion.charge == charge).unwrap();
         let spectrum = ion.simulated_spectrum.clone();
         let scan_distribution = &ion.scan_distribution;
 
-        let mut transmission_matrix = vec![vec![0; frame_distribution.occurrence.len()]; scan_distribution.occurrence.len()];
+        let mut transmission_matrix = vec![vec![0.0; frame_distribution.occurrence.len()]; scan_distribution.occurrence.len()];
 
         for (frame_index, frame) in frame_distribution.occurrence.iter().enumerate() {
             for (scan_index, scan) in scan_distribution.occurrence.iter().enumerate() {
                 if self.transmission_settings.all_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
-                    transmission_matrix[scan_index][frame_index] = 2;
+                    transmission_matrix[scan_index][frame_index] = 1.0;
                 }
                 else if self.transmission_settings.any_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
-                    transmission_matrix[scan_index][frame_index] = 1;
+                    let transmitted_spectrum = self.transmission_settings.transmit_spectrum(*frame as i32, *scan as i32, spectrum.clone(), None);
+                    let percentage_transmitted = transmitted_spectrum.intensity.iter().sum::<f64>() / spectrum.intensity.iter().sum::<f64>();
+                    transmission_matrix[scan_index][frame_index] = percentage_transmitted as f32;
                 }
             }
         }
