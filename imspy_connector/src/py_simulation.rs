@@ -102,8 +102,8 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         result
     }
 
-    pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8) -> Vec<Vec<f32>> {
-        self.inner.get_ion_transmission_matrix(peptide_id, charge)
+    pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8, include_precursor_frames: bool) -> Vec<Vec<f32>> {
+        self.inner.get_ion_transmission_matrix(peptide_id, charge, include_precursor_frames)
     }
 }
 
