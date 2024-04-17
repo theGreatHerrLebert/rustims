@@ -498,6 +498,33 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
         transmission_matrix
     }
+
+    pub fn count_number_transmissions(&self, peptide_id: u32, charge: i8) -> (usize, usize, usize) {
+        let frame_ids: Vec<_> = self.precursor_frame_builder.peptides.get(&peptide_id).unwrap().frame_distribution.occurrence.clone().iter().filter(|frame_id| !self.precursor_frame_builder.precursor_frame_id_set.contains(frame_id)).cloned().collect();
+        let ion = self.precursor_frame_builder.ions.get(&peptide_id).unwrap().iter().find(|ion| ion.charge == charge).unwrap();
+        let spectrum = ion.simulated_spectrum.clone();
+        let scan_distribution = &ion.scan_distribution;
+
+        let mut frame_count = 0;
+        let mut scan_count = 0;
+        let mut total_count = 0;
+
+        for frame in frame_ids.iter() {
+            let mut frame_transmitted = false;
+            for scan in scan_distribution.occurrence.iter() {
+               if self.transmission_settings.any_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
+                    frame_transmitted = true;
+                    scan_count += 1;
+                    total_count += 1;
+                }
+            }
+            if frame_transmitted {
+                frame_count += 1;
+            }
+        }
+
+        (frame_count, scan_count, total_count)
+    }
 }
 
 impl TimsTofCollisionEnergy for TimsTofSyntheticsFrameBuilderDIA {

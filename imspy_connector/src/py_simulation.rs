@@ -1,5 +1,6 @@
 use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
@@ -104,6 +105,12 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
 
     pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8, include_precursor_frames: bool) -> Vec<Vec<f32>> {
         self.inner.get_ion_transmission_matrix(peptide_id, charge, include_precursor_frames)
+    }
+
+    pub fn count_number_transmissions(&self, py: Python, peptide_id: u32, charge: i8) -> PyResult<PyObject> {
+        let (frame_count, scan_count, total_count) = self.inner.count_number_transmissions(peptide_id, charge);
+        let tuple = PyTuple::new(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py), total_count.to_owned().into_py(py)]);
+        Ok(tuple.into())
     }
 }
 
