@@ -112,6 +112,10 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         let tuple = PyTuple::new(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py)]);
         Ok(tuple.into())
     }
+
+    pub fn count_number_transmissions_parallel(&self, peptide_ids: Vec<u32>, charge: Vec<i8>, num_threads: usize) -> Vec<(usize, usize)> {
+        self.inner.count_number_transmissions_parallel(peptide_ids, charge, num_threads)
+    }
 }
 
 #[pymodule]

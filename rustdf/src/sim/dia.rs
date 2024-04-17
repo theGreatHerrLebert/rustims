@@ -523,6 +523,16 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
         (frame_count, scan_count)
     }
+
+    pub fn count_number_transmissions_parallel(&self, peptide_ids: Vec<u32>, charge: Vec<i8>, num_threads: usize) -> Vec<(usize, usize)> {
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let result: Vec<(usize, usize)> = thread_pool.install(|| {
+            peptide_ids.par_iter().zip(charge.par_iter()).map(|(peptide_id, charge)| self.count_number_transmissions(*peptide_id, *charge)).collect()
+        });
+
+        result
+    }
 }
 
 impl TimsTofCollisionEnergy for TimsTofSyntheticsFrameBuilderDIA {

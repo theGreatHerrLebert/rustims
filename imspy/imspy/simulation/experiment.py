@@ -1,7 +1,7 @@
 import sqlite3
 import os
 from abc import ABC
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -167,6 +167,9 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
 
     def count_number_transmissions(self, peptide_id: int, charge: int) -> (int, int):
         return self.__py_ptr.count_number_transmissions(peptide_id, charge)
+
+    def count_number_transmissions_parallel(self, peptide_ids: List[int], charges: List[int], num_threads: int = 4) -> List[Tuple[int, int]]:
+        return self.__py_ptr.count_number_transmissions_parallel(peptide_ids, charges, num_threads)
 
 
 class TimsTofSyntheticPrecursorFrameBuilder(RustWrapper):
