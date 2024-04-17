@@ -165,6 +165,9 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
     def get_ion_transmission_matrix(self, peptide_id: int, charge: int, include_precursor_frames: bool = False) -> NDArray:
         return np.array(self.__py_ptr.get_ion_transmission_matrix(peptide_id, charge, include_precursor_frames))
 
+    def count_number_transmissions(self, peptide_id: int, charge: int) -> (int, int):
+        return self.__py_ptr.count_number_transmissions(peptide_id, charge)
+
 
 class TimsTofSyntheticPrecursorFrameBuilder(RustWrapper):
     def __init__(self, db_path: str):

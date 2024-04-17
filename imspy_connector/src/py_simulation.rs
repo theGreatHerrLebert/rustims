@@ -108,8 +108,8 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
     }
 
     pub fn count_number_transmissions(&self, py: Python, peptide_id: u32, charge: i8) -> PyResult<PyObject> {
-        let (frame_count, scan_count, total_count) = self.inner.count_number_transmissions(peptide_id, charge);
-        let tuple = PyTuple::new(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py), total_count.to_owned().into_py(py)]);
+        let (frame_count, scan_count) = self.inner.count_number_transmissions(peptide_id, charge);
+        let tuple = PyTuple::new(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py)]);
         Ok(tuple.into())
     }
 }
