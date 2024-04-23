@@ -214,7 +214,7 @@ impl PyTimsFrame {
         let py_array: &PyArray1<f64> = data.into_pyarray(py);
         let py_scans: &PyArray1<i32> = scans.into_pyarray(py);
         let py_window_indices: &PyArray1<i32> = window_indices.into_pyarray(py);
-        let tuple = PyTuple::new(py, &[rows.into_py(py), cols.into_py(py), py_array.to_owned().into_py(py), py_scans.to_owned().into_py(py), py_window_indices.to_owned().into_py(py)]);
+        let tuple = PyTuple::new(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py), py_array.into_py(py), py_scans.into_py(py), py_window_indices.into_py(py)]);
 
         Ok(tuple.into())
     }

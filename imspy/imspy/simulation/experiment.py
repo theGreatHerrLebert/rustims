@@ -1,7 +1,7 @@
 import sqlite3
 import os
 from abc import ABC
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -162,8 +162,14 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
     def get_py_ptr(self) -> ims.PyTimsTofSyntheticsFrameBuilderDIA:
         return self.__py_ptr
 
-    def get_ion_transmission_matrix(self, peptide_id: int, charge: int) -> NDArray:
-        return np.array(self.__py_ptr.get_ion_transmission_matrix(peptide_id, charge))
+    def get_ion_transmission_matrix(self, peptide_id: int, charge: int, include_precursor_frames: bool = False) -> NDArray:
+        return np.array(self.__py_ptr.get_ion_transmission_matrix(peptide_id, charge, include_precursor_frames))
+
+    def count_number_transmissions(self, peptide_id: int, charge: int) -> (int, int):
+        return self.__py_ptr.count_number_transmissions(peptide_id, charge)
+
+    def count_number_transmissions_parallel(self, peptide_ids: List[int], charges: List[int], num_threads: int = 4) -> List[Tuple[int, int]]:
+        return self.__py_ptr.count_number_transmissions_parallel(peptide_ids, charges, num_threads)
 
 
 class TimsTofSyntheticPrecursorFrameBuilder(RustWrapper):

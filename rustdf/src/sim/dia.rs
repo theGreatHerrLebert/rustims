@@ -469,27 +469,69 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         )
     }
 
-    pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8) -> Vec<Vec<u32>> {
+    pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8, include_precursor_frames: bool) -> Vec<Vec<f32>> {
 
-        let frame_distribution =  &self.precursor_frame_builder.peptides.get(&peptide_id).unwrap().frame_distribution;
+        let mut frame_ids = self.precursor_frame_builder.peptides.get(&peptide_id).unwrap().frame_distribution.occurrence.clone();
+
+        if !include_precursor_frames {
+            frame_ids = frame_ids.iter().filter(|frame_id| !self.precursor_frame_builder.precursor_frame_id_set.contains(frame_id)).cloned().collect();
+        }
+
         let ion = self.precursor_frame_builder.ions.get(&peptide_id).unwrap().iter().find(|ion| ion.charge == charge).unwrap();
         let spectrum = ion.simulated_spectrum.clone();
         let scan_distribution = &ion.scan_distribution;
 
-        let mut transmission_matrix = vec![vec![0; frame_distribution.occurrence.len()]; scan_distribution.occurrence.len()];
+        let mut transmission_matrix = vec![vec![0.0; frame_ids.len()]; scan_distribution.occurrence.len()];
 
-        for (frame_index, frame) in frame_distribution.occurrence.iter().enumerate() {
+        for (frame_index, frame) in frame_ids.iter().enumerate() {
             for (scan_index, scan) in scan_distribution.occurrence.iter().enumerate() {
                 if self.transmission_settings.all_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
-                    transmission_matrix[scan_index][frame_index] = 2;
+                    transmission_matrix[scan_index][frame_index] = 1.0;
                 }
                 else if self.transmission_settings.any_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
-                    transmission_matrix[scan_index][frame_index] = 1;
+                    let transmitted_spectrum = self.transmission_settings.transmit_spectrum(*frame as i32, *scan as i32, spectrum.clone(), None);
+                    let percentage_transmitted = transmitted_spectrum.intensity.iter().sum::<f64>() / spectrum.intensity.iter().sum::<f64>();
+                    transmission_matrix[scan_index][frame_index] = percentage_transmitted as f32;
                 }
             }
         }
 
         transmission_matrix
+    }
+
+    pub fn count_number_transmissions(&self, peptide_id: u32, charge: i8) -> (usize, usize) {
+        let frame_ids: Vec<_> = self.precursor_frame_builder.peptides.get(&peptide_id).unwrap().frame_distribution.occurrence.clone().iter().filter(|frame_id| !self.precursor_frame_builder.precursor_frame_id_set.contains(frame_id)).cloned().collect();
+        let ion = self.precursor_frame_builder.ions.get(&peptide_id).unwrap().iter().find(|ion| ion.charge == charge).unwrap();
+        let spectrum = ion.simulated_spectrum.clone();
+        let scan_distribution = &ion.scan_distribution;
+
+        let mut frame_count = 0;
+        let mut scan_count = 0;
+
+        for frame in frame_ids.iter() {
+            let mut frame_transmitted = false;
+            for scan in scan_distribution.occurrence.iter() {
+               if self.transmission_settings.any_transmitted(*frame as i32, *scan as i32, &spectrum.mz, None) {
+                    frame_transmitted = true;
+                    scan_count += 1;
+                }
+            }
+            if frame_transmitted {
+                frame_count += 1;
+            }
+        }
+
+        (frame_count, scan_count)
+    }
+
+    pub fn count_number_transmissions_parallel(&self, peptide_ids: Vec<u32>, charge: Vec<i8>, num_threads: usize) -> Vec<(usize, usize)> {
+
+        let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let result: Vec<(usize, usize)> = thread_pool.install(|| {
+            peptide_ids.par_iter().zip(charge.par_iter()).map(|(peptide_id, charge)| self.count_number_transmissions(*peptide_id, *charge)).collect()
+        });
+
+        result
     }
 }
 
