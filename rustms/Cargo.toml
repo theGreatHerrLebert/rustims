@@ -1,0 +1,15 @@
+[package]
+name = "rustms"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.198", features = ["derive"] }
+serde_json = "1.0.116"
+regex = "1.10.4"
+rayon = "1.10.0"
+itertools = "0.12.1"
+
+[lib]
+name = "rustms"
+path = "src/lib.rs"
