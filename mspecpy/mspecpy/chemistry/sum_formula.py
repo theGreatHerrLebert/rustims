@@ -1,7 +1,7 @@
-import rustms_connector
 from mspecpy.ms.spectrum import MzSpectrum
 from mspecpy.proteomics.peptide import RustWrapper
 
+import rustms_connector
 rmsc = rustms_connector.py_sumformula
 
 

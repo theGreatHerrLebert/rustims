@@ -1,12 +1,9 @@
-import rustms_connector
-
+from mspecpy.ms.spectrum import MzSpectrum
+from typing import List, Tuple, Union
 from mspecpy.utility import RustWrapper
 
+import rustms_connector
 rmsc = rustms_connector.py_peptide
-
-from mspecpy.ms.spectrum import MzSpectrum
-from abc import ABC, abstractmethod
-from typing import List, Tuple, Union
 
 
 class PeptideProductIonSeriesCollection(RustWrapper):

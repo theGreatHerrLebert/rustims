@@ -17,7 +17,7 @@ use py_elements::elements;
 
 
 #[pymodule]
-fn rustms_connector(py: Python, m: &PyModule) -> PyResult<()> {
+pub fn rustms_connector(py: Python, m: &PyModule) -> PyResult<()> {
     // py_amino_acid submodule //
     let py_amino_acids_submodule = PyModule::new(py, "py_amino_acids")?;
     amino_acids(py, &py_amino_acids_submodule)?;
