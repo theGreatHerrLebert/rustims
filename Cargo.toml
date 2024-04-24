@@ -1,7 +1,9 @@
 [workspace]
 members = [
     "mscore",
-    "rustdf", "rustms",
+    "rustdf", 
+    "rustms",
+    "rustms-connector",
 ]
 
 resolver = "2"
