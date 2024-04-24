@@ -6,10 +6,13 @@ import pandas as pd
 from numpy.typing import NDArray
 
 import rustms_connector
+
+from mspecpy.proteomics.peptide import RustWrapper
+
 rmsc = rustms_connector.py_spectrum
 
 
-class MzSpectrum:
+class MzSpectrum(RustWrapper):
     def __init__(self, mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """MzSpectrum class.
 
@@ -21,7 +24,7 @@ class MzSpectrum:
             AssertionError: If the length of the mz and intensity arrays are not equal.
         """
         assert len(mz) == len(intensity), "The length of the mz and intensity arrays must be equal."
-        self.__spec_ptr = rmsc.PyMzSpectrum(mz, intensity)
+        self.__py_ptr = rmsc.PyMzSpectrum(mz, intensity)
 
     @classmethod
     def from_jsons(cls, jsons: str) -> 'MzSpectrum':
@@ -37,7 +40,7 @@ class MzSpectrum:
         Returns:
             NDArray[np.float64]: m/z.
         """
-        return self.__spec_ptr.mz
+        return self.__py_ptr.mz
 
     @property
     def intensity(self) -> NDArray[np.float64]:
@@ -46,7 +49,7 @@ class MzSpectrum:
         Returns:
             NDArray[np.float64]: Intensity.
         """
-        return self.__spec_ptr.intensity
+        return self.__py_ptr.intensity
 
     @property
     def df(self) -> pd.DataFrame:
@@ -59,7 +62,7 @@ class MzSpectrum:
         return pd.DataFrame({'mz': self.mz, 'intensity': self.intensity})
 
     @classmethod
-    def from_py_mz_spectrum(cls, spec: rmsc.PyMzSpectrum):
+    def from_py_ptr(cls, spec: rmsc.PyMzSpectrum):
         """Create a MzSpectrum from a PyMzSpectrum.
 
         Args:
@@ -69,7 +72,7 @@ class MzSpectrum:
             MzSpectrum: MzSpectrum created from the PyMzSpectrum.
         """
         instance = cls.__new__(cls)
-        instance.__spec_ptr = spec
+        instance.__py_ptr = spec
         return instance
 
     def __repr__(self):
@@ -84,7 +87,7 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Sum of spectra
         """
-        return self.from_py_mz_spectrum(self.__spec_ptr + other.__spec_ptr)
+        return self.from_py_ptr(self.__py_ptr + other.__py_ptr)
 
     def __mul__(self, scale) -> 'MzSpectrum':
         """Overwrite * operator for scaling of spectrum
@@ -95,24 +98,7 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Scaled spectrum
         """
-        return self.from_py_mz_spectrum(self.__spec_ptr * scale)
-
-    def to_windows(self, window_length: float = 10, overlapping: bool = True, min_num_peaks: int = 5,
-                   min_intensity: float = 1) -> Tuple[NDArray, List['MzSpectrum']]:
-        """Convert the spectrum to a list of windows.
-
-        Args:
-            window_length (float, optional): Window length. Defaults to 10.
-            overlapping (bool, optional): Whether the windows should overlap. Defaults to True.
-            min_num_peaks (int, optional): Minimum number of peaks in a window. Defaults to 5.
-            min_intensity (float, optional): Minimum intensity of a peak in a window. Defaults to 1.
-
-        Returns:
-            Tuple[NDArray, List[MzSpectrum]]: List of windows.
-        """
-
-        indices, windows = self.__spec_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)
-        return indices, [MzSpectrum.from_py_mz_spectrum(window) for window in windows]
+        return self.from_py_ptr(self.__py_ptr * scale)
 
     def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, intensity_min: float = 0.0,
                intensity_max: float = 1e9) -> 'MzSpectrum':
@@ -127,8 +113,8 @@ class MzSpectrum:
         Returns:
             MzSpectrum: Filtered spectrum.
         """
-        return MzSpectrum.from_py_mz_spectrum(
-            self.__spec_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
+        return MzSpectrum.from_py_ptr(
+            self.__py_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
 
     def to_jsons(self) -> str:
         """
@@ -139,3 +125,6 @@ class MzSpectrum:
         json_dict["intensity"] = self.intensity.tolist()
 
         return json.dumps(json_dict)
+
+    def get_py_ptr(self):
+        return self.__py_ptr
