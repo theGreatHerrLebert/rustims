@@ -12,10 +12,18 @@ pub struct PyMzSpectrum {
 impl PyMzSpectrum {
     #[new]
     pub unsafe fn new(mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+        // convert mz and intensity to slices
+        let mz = mz.as_slice()?;
+        let intensity = intensity.as_slice()?;
+
+        // sort mz and intensity by mz
+        let mut mz_intensity: Vec<(f64, f64)> = mz.iter().zip(intensity.iter()).map(|(m, i)| (*m, *i)).collect();
+        mz_intensity.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
         Ok(PyMzSpectrum {
             inner: MzSpectrum {
-                mz: mz.as_slice()?.to_vec(),
-                intensity: intensity.as_slice()?.to_vec(),
+                mz: mz_intensity.iter().map(|(m, _)| *m).collect(),
+                intensity: mz_intensity.iter().map(|(_, i)| *i).collect(),
             }
         })
     }
