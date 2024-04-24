@@ -1,14 +1,11 @@
 import json
 import numpy as np
-
-from typing import List, Tuple
 import pandas as pd
 from numpy.typing import NDArray
+from mspecpy.utility import RustWrapper
+
 
 import rustms_connector
-
-from mspecpy.proteomics.peptide import RustWrapper
-
 rmsc = rustms_connector.py_spectrum
 
 

@@ -1,20 +1,12 @@
 import rustms_connector
+
+from mspecpy.utility import RustWrapper
+
 rmsc = rustms_connector.py_peptide
 
 from mspecpy.ms.spectrum import MzSpectrum
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Union
-
-
-class RustWrapper(ABC):
-    @classmethod
-    @abstractmethod
-    def from_py_ptr(cls, obj):
-        pass
-
-    @abstractmethod
-    def get_py_ptr(self):
-        pass
 
 
 class PeptideProductIonSeriesCollection(RustWrapper):
@@ -301,7 +293,7 @@ class PeptideSequence(RustWrapper):
                                                                  f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
         py_spec = self.__py_ptr.calculate_mono_isotopic_product_ion_spectrum(charge, fragment_type)
-        return MzSpectrum.from_py_mz_spectrum(py_spec)
+        return MzSpectrum.from_py_ptr(py_spec)
 
     def associate_fragment_ion_series_with_prosit_intensities(
             self, flat_intensities: List[float],
