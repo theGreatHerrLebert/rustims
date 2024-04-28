@@ -18,14 +18,16 @@ pub struct PeptideIon {
     pub sequence: PeptideSequence,
     pub charge: i32,
     pub intensity: f64,
+    pub ordinal: u32,
 }
 
 impl PeptideIon {
-    pub fn new(sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
+    pub fn new(sequence: String, charge: i32, intensity: f64, ordinal: u32, peptide_id: Option<i32>) -> Self {
         PeptideIon {
             sequence: PeptideSequence::new(sequence, peptide_id),
             charge,
             intensity,
+            ordinal,
         }
     }
     pub fn mz(&self) -> f64 {
@@ -87,13 +89,14 @@ pub struct PeptideProductIon {
 }
 
 impl PeptideProductIon {
-    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
+    pub fn new(kind: FragmentType, sequence: String, charge: i32, intensity: f64, ordinal: u32, peptide_id: Option<i32>) -> Self {
         PeptideProductIon {
             kind,
             ion: PeptideIon {
                 sequence: PeptideSequence::new(sequence, peptide_id),
                 charge,
                 intensity,
+                ordinal,
             },
         }
     }
@@ -246,6 +249,7 @@ impl PeptideSequence {
                     },
                     charge: target_charge,
                     intensity: 1.0, // Placeholder intensity
+                    ordinal: i as u32,
                 },
             });
         }
@@ -269,6 +273,7 @@ impl PeptideSequence {
                     },
                     charge: target_charge,
                     intensity: 1.0, // Placeholder intensity
+                    ordinal: i as u32,
                 },
             });
         }

@@ -4,7 +4,6 @@ import pandas as pd
 from numpy.typing import NDArray
 from mspecpy.utility import RustWrapper
 
-
 import rustms_connector
 rmsc = rustms_connector.py_spectrum
 
