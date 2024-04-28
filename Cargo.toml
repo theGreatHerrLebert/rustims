@@ -4,6 +4,7 @@ members = [
     "rustdf", 
     "rustms",
     "rustms-connector",
+    "imspy_connector"
 ]
 
 resolver = "2"
