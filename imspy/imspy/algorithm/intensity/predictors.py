@@ -91,7 +91,8 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         return pd.concat(tables)
 
     def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512,
-                                        divide_collision_energy_by: float = 1e2, verbose: bool = False) -> pd.DataFrame:
+                                        divide_collision_energy_by: float = 1e2,
+                                        verbose: bool = False, flatten: bool = False) -> pd.DataFrame:
 
         if verbose:
             print("Generating Prosit compatible input data...")
@@ -121,6 +122,9 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         I_pred = list(np.vstack(intensity_predictions))
         data['intensity_raw'] = I_pred
         I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(data)))
+
+        if flatten:
+            I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
 
         data['intensity'] = list(I_pred)
 
