@@ -98,8 +98,8 @@ class TimsDatasetDDA(TimsDataset):
 
 
 class FragmentDDA:
-    def __init__(self, frame_id: int, precursor_id: int, selected_fragment: TimsFrame):
-        self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, selected_fragment.get_frame_ptr())
+    def __init__(self, frame_id: int, precursor_id: int, collision_energy: float, selected_fragment: TimsFrame):
+        self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, collision_energy, selected_fragment.get_frame_ptr())
 
     @classmethod
     def from_py_tims_fragment_dda(cls, fragment: ims.PyTimsFragmentDDA):
@@ -116,11 +116,16 @@ class FragmentDDA:
         return self._fragment_ptr.precursor_id
 
     @property
+    def collision_energy(self) -> float:
+        return self._fragment_ptr.collision_energy
+
+    @property
     def selected_fragment(self) -> TimsFrame:
         return TimsFrame.from_py_tims_frame(self._fragment_ptr.selected_fragment)
 
     def __repr__(self):
         return f"FragmentDDA(frame_id={self.frame_id}, precursor_id={self.precursor_id}, " \
+               f"collision_energy={self.collision_energy}, " \
                f"selected_fragment={self.selected_fragment})"
 
     def get_fragment_ptr(self):
