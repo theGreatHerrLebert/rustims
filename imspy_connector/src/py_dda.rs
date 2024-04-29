@@ -51,11 +51,12 @@ pub struct PyTimsFragmentDDA {
 #[pymethods]
 impl PyTimsFragmentDDA {
     #[new]
-    pub fn new(frame_id: u32, precursor_id: u32, selected_fragment: &PyTimsFrame) -> PyResult<Self> {
+    pub fn new(frame_id: u32, precursor_id: u32, collision_energy: f64, selected_fragment: &PyTimsFrame) -> PyResult<Self> {
 
         let pasef_fragment = PASEFDDAFragment {
             frame_id,
             precursor_id,
+            collision_energy,
             selected_fragment: selected_fragment.inner.clone(),
         };
 
@@ -70,6 +71,9 @@ impl PyTimsFragmentDDA {
 
     #[getter]
     pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame { inner: self.inner.selected_fragment.clone() } }
+
+    #[getter]
+    pub fn collision_energy(&self) -> f64 { self.inner.collision_energy }
 }
 
 #[pymodule]

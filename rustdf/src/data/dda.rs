@@ -10,6 +10,7 @@ use crate::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta
 pub struct PASEFDDAFragment {
     pub frame_id: u32,
     pub precursor_id: u32,
+    pub collision_energy: f64,
     pub selected_fragment: TimsFrame,
 }
 
@@ -64,6 +65,7 @@ impl TimsDatasetDDA {
                 PASEFDDAFragment {
                     frame_id: pasef_info.frame_id as u32,
                     precursor_id: pasef_info.precursor_id as u32,
+                    collision_energy: pasef_info.collision_energy,
                     // flatten the spectrum
                     selected_fragment: filtered_frame,
                 }
