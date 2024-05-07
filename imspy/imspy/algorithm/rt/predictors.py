@@ -106,7 +106,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         assert 'retention_time_observed' in data.columns, 'Data must contain a column named "retention_time_observed"'
         tokens = self._preprocess_sequences(data.sequence.values)
         rts = data.retention_time_observed.values
-        tf_ds = tf.data.Dataset.from_tensor_slices((tokens, rts)).batch(batch_size)
+        tf_ds = tf.data.Dataset.from_tensor_slices((tokens, rts)).shuffle(len(data)).batch(batch_size)
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_squared_error')
         self.model.fit(tf_ds, epochs=epochs, verbose=self.verbose)
