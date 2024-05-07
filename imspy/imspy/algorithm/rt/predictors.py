@@ -105,15 +105,14 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
         assert 'retention_time_observed' in data.columns, 'Data must contain a column named "retention_time_observed"'
         tokens = self._preprocess_sequences(data.sequence.values)
-        rts = data.retention_time.values
+        rts = data.retention_time_observed.values
         tf_ds = tf.data.Dataset.from_tensor_slices((tokens, rts)).batch(batch_size)
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_squared_error')
         self.model.fit(tf_ds, epochs=epochs, verbose=self.verbose)
 
     def simulate_separation_times_pandas(self, data: pd.DataFrame,
-                                         gradient_length: float,
-                                         batch_size: int = 1024) -> pd.DataFrame:
+                                         gradient_length: float, batch_size: int = 1024) -> pd.DataFrame:
         tokens = self._preprocess_sequences(data.sequence.values)
         tf_ds = tf.data.Dataset.from_tensor_slices(tokens).batch(batch_size)
 
