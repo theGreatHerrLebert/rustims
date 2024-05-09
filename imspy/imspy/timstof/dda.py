@@ -59,7 +59,7 @@ class TimsDatasetDDA(TimsDataset):
         """Get PASEF fragments.
 
         Args:
-            num_threads (int, optional): Number of threads. Defaults to 4.
+            num_threads (int, optional): Number of threads. Defaults to 1.
 
         Returns:
             List[FragmentDDA]: List of PASEF fragments.
