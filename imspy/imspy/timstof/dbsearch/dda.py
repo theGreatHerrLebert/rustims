@@ -16,7 +16,7 @@ from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex, 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms
 
 from sagepy.core.scoring import psms_to_json_bin
 
@@ -73,7 +73,7 @@ def main():
                         help="Fragment tolerance upper (default: 25.0)")
 
     # number of psms to report
-    parser.add_argument("--report_psms", type=int, default=10, help="Number of PSMs to report (default: 10)")
+    parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
     # minimum number of matched peaks
     parser.add_argument("--min_matched_peaks", type=int, default=5, help="Minimum number of matched peaks (default: 5)")
     # annotate matches
@@ -95,8 +95,8 @@ def main():
     parser.add_argument("--bucket_size", type=int, default=16384, help="Bucket size (default: 16384)")
 
     # randomize fasta
-    parser.add_argument("--randomize_fasta_split", type=bool, default=True,
-                        help="Randomize fasta split (default: True)")
+    parser.add_argument("--randomize_fasta_split", type=bool, default=False,
+                        help="Randomize fasta split (default: False)")
 
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
@@ -154,7 +154,8 @@ def main():
         mobility = fragments.apply(lambda r: np.mean(r.raw_data.mobility), axis=1)
         fragments['mobility'] = mobility
 
-        spec_id = fragments.apply(lambda r: str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
+        # generate random string for for spec_id
+        spec_id = fragments.apply(lambda r: str(np.random.randint(1000000000)) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
         fragments['spec_id'] = spec_id
 
         if args.verbose:
@@ -226,9 +227,12 @@ def main():
         if args.verbose:
             print("loading deep learning models for intensity, retention time and ion mobility prediction ...")
 
+        # the intensity predictor model
         prosit_model = Prosit2023TimsTofWrapper(verbose=False)
+        # the ion mobility predictor model
         im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                                   load_tokenizer_from_resources("tokenizer_ionmob"))
+        # the retention time predictor model
         rt_predictor = DeepChromatographyApex(load_deep_retention_time(),
                                               load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
@@ -237,7 +241,7 @@ def main():
         if args.verbose:
             print("generating search configuration ...")
 
-        for fasta in fasta_list:
+        for i, fasta in enumerate(fasta_list):
             sage_config = SageSearchConfiguration(
                 fasta=fasta,
                 static_mods=static,
@@ -249,10 +253,13 @@ def main():
             )
 
             if args.verbose:
-                print("generating indexed database ...")
+                print(f"generating indexed database for fasta {i + 1} of {len(fasta_list)} ...")
 
             # generate the database for searching against
             indexed_db = sage_config.generate_indexed_database()
+
+            if args.verbose:
+                print("searching database ...")
 
             psm = scorer.score_collection_psm(
                 db=indexed_db,
@@ -323,7 +330,10 @@ def main():
 
         TDC_filtered = TDC[TDC.q_value <= 0.001]
 
-        rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=5, batch_size=2048)
+        if args.verbose:
+            print("fine tuning retention time predictor ...")
+
+        rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=4, batch_size=2048)
 
         if args.verbose:
             print("predicting retention times ...")
@@ -352,6 +362,16 @@ def main():
             data = f.read()
             f.close()
             psms.extend(json_bin_to_psms(data))
+
+    psms = re_score_psms(psms, verbose=args.verbose)
+
+    R = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True))
+    R_after = R[(R.q_value <= 0.01) & (R.decoy == False)]
+
+    # use good psm hits to fine tune RT predictor for dataset
+    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=True).drop(columns=["score", "q_value"])
+    R_f = pd.merge(R_after, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
+                   right_on=["spec_idx", "match_idx", "decoy"])
 
     end_time = time.time()
 
