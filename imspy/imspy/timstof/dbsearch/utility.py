@@ -254,8 +254,11 @@ def split_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10) -> List[L
     return splits
 
 
-def re_score_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10,
-                  verbose: bool = True) -> List[PeptideSpectrumMatch]:
+def re_score_psms(
+        psms: List[PeptideSpectrumMatch],
+        num_splits: int = 10,
+        verbose: bool = True,
+) -> List[PeptideSpectrumMatch]:
     """ Re-score PSMs using LDA.
     Args:
         psms: List of PeptideSpectrumMatch objects
@@ -270,7 +273,7 @@ def re_score_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10,
 
     predictions = []
 
-    for i in tqdm(range(num_splits), disable=not verbose):
+    for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):
 
         target = splits[i]
         features = []

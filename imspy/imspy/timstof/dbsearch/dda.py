@@ -98,6 +98,12 @@ def main():
     parser.add_argument("--randomize_fasta_split", type=bool, default=False,
                         help="Randomize fasta split (default: False)")
 
+    # re-scoring settings
+    parser.add_argument("--num_splits", type=int, default=10, help="Number of splits (default: 10)")
+
+    # fdr threshold
+    parser.add_argument("--fdr_threshold", type=float, default=0.01, help="FDR threshold (default: 0.01)")
+
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
     args = parser.parse_args()
@@ -363,10 +369,10 @@ def main():
             f.close()
             psms.extend(json_bin_to_psms(data))
 
-    psms = re_score_psms(psms, verbose=args.verbose)
+    psms = re_score_psms(psms, verbose=args.verbose, num_splits=args.num_splits)
 
     R = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True))
-    R_after = R[(R.q_value <= 0.01) & (R.decoy == False)]
+    R_after = R[(R.q_value <= args.fdr_threshold) & (R.decoy == False)]
 
     # use good psm hits to fine tune RT predictor for dataset
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=True).drop(columns=["score", "q_value"])
