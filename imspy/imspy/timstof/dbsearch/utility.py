@@ -205,7 +205,6 @@ def generate_training_data(psms: List[PeptideSpectrumMatch]) -> Tuple[NDArray, N
     Returns:
         Tuple[NDArray, NDArray]: X_train and Y_train
     """
-
     # create pandas table from psms
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
 
@@ -270,7 +269,6 @@ def re_score_psms(
     """
 
     splits = split_psms(psms=psms, num_splits=num_splits)
-
     predictions = []
 
     for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):

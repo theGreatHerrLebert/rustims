@@ -368,16 +368,17 @@ def main():
     psms = []
 
     # read PSMs from binary files
-    for file in os.listdir(write_folder_path):
+    for file in os.listdir(write_folder_path + "/imspy/psm/"):
         if file.endswith(".bin"):
-            f = open(os.path.join(write_folder_path, file), 'rb')
+            f = open(os.path.join(write_folder_path + "/imspy/psm/", file), 'rb')
             data = f.read()
             f.close()
             psms.extend(json_bin_to_psms(data))
 
+    # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
-    psms = re_score_psms(psms, verbose=args.verbose, num_splits=args.num_splits)
+    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.num_splits)
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
@@ -387,7 +388,7 @@ def main():
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
 
-    TDC.to_csv(f"{write_folder_path}/Peptides.csv", index=False)
+    TDC.to_csv(f"{write_folder_path} + /imspy/Peptides.csv", index=False)
 
     end_time = time.time()
 
