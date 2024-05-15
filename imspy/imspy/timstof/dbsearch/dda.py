@@ -161,7 +161,7 @@ def main():
         fragments['mobility'] = mobility
 
         # generate random string for for spec_id
-        spec_id = fragments.apply(lambda r: str(np.random.randint(1000000000)) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
+        spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e9))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
         fragments['spec_id'] = spec_id
 
         if args.verbose:
@@ -370,14 +370,16 @@ def main():
             psms.extend(json_bin_to_psms(data))
 
     psms = re_score_psms(psms, verbose=args.verbose, num_splits=args.num_splits)
+    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
+    PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
-    R = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True))
-    R_after = R[(R.q_value <= args.fdr_threshold) & (R.decoy == False)]
+    psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True))
+    psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
 
-    # use good psm hits to fine tune RT predictor for dataset
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=True).drop(columns=["score", "q_value"])
-    R_f = pd.merge(R_after, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
+    TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
+
+    TDC.to_csv(f"{write_folder_path}/Peptides.csv", index=False)
 
     end_time = time.time()
 
