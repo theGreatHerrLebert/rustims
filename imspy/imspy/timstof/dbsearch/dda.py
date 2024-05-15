@@ -151,9 +151,10 @@ def main():
         print(f"Found {len(paths)} RAW data folders in {args.path} ...")
 
     # go over RAW data one file at a time
-    for path in paths:
+    for p, path in enumerate(paths):
         if args.verbose:
             print(f"Processing {path} ...")
+            print(f"Processing {p + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=False)
