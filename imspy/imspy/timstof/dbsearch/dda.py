@@ -369,6 +369,8 @@ def main():
             f.close()
             psms.extend(json_bin_to_psms(data))
 
+    psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
+
     psms = re_score_psms(psms, verbose=args.verbose, num_splits=args.num_splits)
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
