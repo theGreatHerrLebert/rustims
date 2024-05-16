@@ -9,8 +9,7 @@ import numpy as np
 from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SAGE_KNOWN_MODS, validate_mods, \
     validate_var_mods, SageSearchConfiguration
 
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, \
-    peptide_spectrum_match_list_to_pandas, json_bin_to_psms
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, merge_psm_dicts
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
@@ -25,6 +24,7 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms
 
 from sagepy.core.scoring import psms_to_json_bin
+from sagepy.utility import peptide_spectrum_match_list_to_pandas
 
 
 def main():
@@ -249,10 +249,10 @@ def main():
         rt_predictor = DeepChromatographyApex(load_deep_retention_time(),
                                               load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
-        psm_list = []
-
         if args.verbose:
             print("generating search configuration ...")
+
+        merged_dict = {}
 
         for i, fasta in enumerate(fasta_list):
             sage_config = SageSearchConfiguration(
@@ -266,7 +266,7 @@ def main():
             )
 
             if args.verbose:
-                print(f"generating indexed database for fasta {i + 1} of {len(fasta_list)} ...")
+                print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
 
             # generate the database for searching against
             indexed_db = sage_config.generate_indexed_database()
@@ -280,12 +280,19 @@ def main():
                 num_threads=args.num_threads,
             )
 
-            for p in psm:
-                p.file_name = ds_name
+            for _, values in psm.items():
+                for value in values:
+                    value.file_name = ds_name
 
-            psm_list.extend(psm)
+            if i == 0:
+                merged_dict = psm
+            else:
+                merged_dict = merge_psm_dicts(right_psms=psm, left_psms=merged_dict, max_hits=args.report_psms)
 
-        psm = psm_list
+        psm = []
+
+        for _, values in merged_dict.items():
+            psm.extend(values)
 
         sample = np.random.choice(psm, 4096)
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
@@ -332,7 +339,7 @@ def main():
         for p in psm:
             p.inverse_mobility_predicted += inv_mob_calibration_factor
 
-        PSM_pandas = peptide_spectrum_match_list_to_pandas(psm)
+        PSM_pandas = peptide_spectrum_match_list_to_pandas(psm, use_sequence_as_match_idx=True)
         PSM_q = target_decoy_competition_pandas(PSM_pandas)
 
         PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
@@ -389,7 +396,7 @@ def main():
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
 
-    TDC.to_csv(f"{write_folder_path} + /imspy/Peptides.csv", index=False)
+    TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
 
     end_time = time.time()
 
