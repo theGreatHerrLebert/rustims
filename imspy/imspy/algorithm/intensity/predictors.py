@@ -130,6 +130,49 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
         return data
 
+    def predict_intensities(
+            self,
+            sequences: List[str],
+            charges: List[int],
+            collision_energies: List[float],
+            divide_collision_energy_by: float = 1e2,
+            batch_size: int = 512,
+            flatten: bool = False,
+    ) -> List[NDArray]:
+        sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
+        sequence_length = [len(s) for s in sequences_unmod]
+        collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
+
+        tf_ds = generate_prosit_intensity_prediction_dataset(
+            sequences_unmod,
+            charges,
+            np.expand_dims(collision_energies_norm, 1)).batch(batch_size)
+
+        ds_unpacked = tf_ds.map(unpack_dict)
+
+        intensity_predictions = []
+        for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
+                                                                          total=len(sequences) // batch_size + 1,
+                                                                          ncols=100,
+                                                                          disable=not self.verbose):
+            model_input = [peptides_in, precursor_charge_in, collision_energy_in]
+            model_output = self.model(model_input).numpy()
+            intensity_predictions.append(model_output)
+
+        I_pred = list(np.vstack(intensity_predictions))
+        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
+            'sequence': sequences,
+            'charge': charges,
+            'collision_energy': collision_energies,
+            'sequence_length': sequence_length,
+            'intensity_raw': I_pred,
+        }))))
+
+        if flatten:
+            I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
+
+        return I_pred
+
     def simulate_ion_intensities(
             self,
             sequences: List[str],

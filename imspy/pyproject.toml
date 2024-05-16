@@ -18,8 +18,8 @@ wandb = ">=0.12.1"
 
 pyopenms = ">=2.6.0"
 
-sagepy = ">=0.2.7"
-sagepy-connector = ">=0.2.7"
+sagepy = ">=0.2.9"
+sagepy-connector = ">=0.2.9"
 
 imspy-connector = ">=0.2.17"
 
