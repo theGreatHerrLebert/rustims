@@ -160,7 +160,7 @@ def get_collision_energy_calibration_factor(
     if verbose:
         print(f"Searching for collision energy calibration factor between {lower} and {upper} ...")
 
-    for i in tqdm(range(lower, upper), disable=verbose):
+    for i in tqdm(range(lower, upper), disable=not verbose, desc='calibrating CE', ncols=100):
         I = model.predict_intensities(
             [p.sequence for p in sample],
             np.array([p.charge for p in sample]),
@@ -291,4 +291,4 @@ def re_score_psms(
     for score, match in zip(predictions, psms):
         match.re_score = score
 
-    return psms
+    return list(filter(lambda s: s.re_score <= 100, psms))
