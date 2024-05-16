@@ -21,9 +21,9 @@ jobs:
           - os: windows-latest
             python-version: '3.11'
             publish: true
-          - os: macos-13
-            python-version: '3.11'
-            publish: true
+          #- os: macos-13
+          # python-version: '3.11'
+          # publish: true
 
     steps:
       - uses: actions/checkout@v3
