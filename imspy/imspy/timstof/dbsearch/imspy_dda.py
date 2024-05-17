@@ -124,6 +124,14 @@ def main():
         help="TDC method (default: psm_and_peptide aka double competition)"
     )
 
+    # load dataset in memory
+    parser.add_argument(
+        "--in_memory",
+        type=bool,
+        default=False,
+        help="Load dataset in memory"
+    )
+
     args = parser.parse_args()
 
     paths = []
@@ -164,12 +172,12 @@ def main():
             print(f"Processing {p + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
-        dataset = TimsDatasetDDA(str(path), in_memory=False)
+        dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
 
         if args.verbose:
             print("loading PASEF fragments ...")
 
-        fragments = dataset.get_pasef_fragments()
+        fragments = dataset.get_pasef_fragments(num_threads=1 if not args.in_memory else args.num_threads)
 
         mobility = fragments.apply(lambda r: np.mean(r.raw_data.mobility), axis=1)
         fragments['mobility'] = mobility
