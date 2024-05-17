@@ -80,26 +80,40 @@ def get_sqrt_slopes_and_intercepts(
     return np.array(slopes, np.float32), np.array(intercepts, np.float32)
 
 
-class ProjectToInitialSqrtCCS(tf.keras.layers.Layer):
+class SquareRootProjectionLayer(tf.keras.layers.Layer):
     """
-    Simple sqrt regression layer, calculates ccs value as linear mapping from mz, charge -> ccs
+    Simple sqrt regression layer, calculates ccs value as linear mapping from mz, charge -&gt; ccs
     """
 
     def __init__(self, slopes, intercepts):
-        super(ProjectToInitialSqrtCCS, self).__init__()
-        self.slopes = tf.constant([slopes])
-        self.intercepts = tf.constant([intercepts])
+        super(SquareRootProjectionLayer, self).__init__()
+        self.slopes_init = slopes
+        self.intercepts_init = intercepts
+        self.slopes = None
+        self.intercepts = None
+
+    def build(self, input_shape):
+        num_charges = input_shape[1][-1]
+        self.slopes = self.add_weight(name='slopes',
+                                      shape=(num_charges,),
+                                      initializer=tf.constant_initializer(self.slopes_init),
+                                      trainable=True)
+        self.intercepts = self.add_weight(name='intercepts',
+                                          shape=(num_charges,),
+                                          initializer=tf.constant_initializer(self.intercepts_init),
+                                          trainable=True)
 
     def call(self, inputs):
         mz, charge = inputs[0], inputs[1]
-        # since charge is one-hot encoded, can use it to gate linear prediction by charge state
-        return tf.expand_dims(tf.reduce_sum((self.slopes * tf.sqrt(mz) + self.intercepts) * tf.squeeze(charge), axis=1),
-                              1)
+        projection = (self.slopes * tf.sqrt(mz) + self.intercepts) * charge
+        result = tf.reduce_sum(projection, axis=-1, keepdims=True)
+
+        return result
 
 
 class GRUCCSPredictor(tf.keras.models.Model):
     """
-    Deep Learning model combining initial linear fit with sequence based features, both scalar and complex
+    Deep Learning model combining initial linear fit with sequence-based features, both scalar and complex
     """
 
     def __init__(self, slopes, intercepts, num_tokens,
@@ -112,12 +126,11 @@ class GRUCCSPredictor(tf.keras.models.Model):
         super(GRUCCSPredictor, self).__init__()
         self.__seq_len = seq_len
 
-        self.initial = ProjectToInitialSqrtCCS(slopes, intercepts)
+        self.initial = SquareRootProjectionLayer(slopes, intercepts)
 
-        self.emb = tf.keras.layers.Embedding(input_dim=num_tokens + 1, output_dim=emb_dim, input_length=seq_len)
+        self.emb = tf.keras.layers.Embedding(input_dim=num_tokens + 1, output_dim=emb_dim)
 
-        self.gru1 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_1, return_sequences=True,
-                                                                      name='GRU1'))
+        self.gru1 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_1, return_sequences=True, name='GRU1'))
 
         self.gru2 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_2, return_sequences=False,
                                                                       name='GRU2',
@@ -132,21 +145,50 @@ class GRUCCSPredictor(tf.keras.models.Model):
 
         self.out = tf.keras.layers.Dense(1, activation=None)
 
-    def call(self, inputs, **kwargs):
+    def build(self, input_shape):
+        self.initial.build(input_shape)
+        self.emb.build((input_shape[2][0], self.__seq_len))
+        self.gru1.build((input_shape[2][0], self.__seq_len, self.emb.output_dim))
+        gru1_output_dim = self.gru1.forward_layer.units + self.gru1.backward_layer.units
+        self.gru2.build((input_shape[2][0], self.__seq_len, gru1_output_dim))
+        gru2_output_dim = self.gru2.forward_layer.units + self.gru2.backward_layer.units
+
+        dense1_input_shape = (input_shape[1][0], input_shape[1][1] + gru2_output_dim)
+        self.dense1.build(dense1_input_shape)
+
+        dense2_input_shape = (dense1_input_shape[0], self.dense1.units)
+        self.dense2.build(dense2_input_shape)
+
+        self.dropout.build(dense2_input_shape)
+
+        out_input_shape = (dense2_input_shape[0], self.dense2.units)
+        self.out.build(out_input_shape)
+
+        super(GRUCCSPredictor, self).build(input_shape)
+
+    def call(self, inputs, training=False):
         """
         :param inputs: should contain: (mz, charge_one_hot, seq_as_token_indices)
         """
         # get inputs
         mz, charge, seq = inputs[0], inputs[1], inputs[2]
+
         # sequence learning
         x_recurrent = self.gru2(self.gru1(self.emb(seq)))
+
         # concat to feed to dense layers
         concat = tf.keras.layers.Concatenate()([charge, x_recurrent])
+
         # regularize
-        d1 = self.dropout(self.dense1(concat))
+        d1 = self.dropout(self.dense1(concat), training=training)
         d2 = self.dense2(d1)
+
         # combine simple linear hypotheses with deep part
-        return self.initial([mz, charge]) + self.out(d2), self.out(d2)
+        initial_output = self.initial([mz, charge])
+        out_output = self.out(d2)
+
+        # Only return the primary output during training
+        return initial_output + out_output, out_output
 
 
 class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
