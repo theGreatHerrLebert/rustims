@@ -26,6 +26,25 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import tensorflow as tf
+
+# don't use all the memory for the GPU (if available)
+gpus = tf.config.experimental.list_physical_devices('GPU')
+
+if gpus:
+    try:
+        for i, _ in enumerate(gpus):
+            tf.config.experimental.set_virtual_device_configuration(
+                gpus[i],
+                [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * 4)]
+            )
+            print(f"GPU: {i} memory restricted to 4GB.")
+
+    except RuntimeError as e:
+        print(e)
+
 
 def main():
     # use argparse to parse command line arguments
