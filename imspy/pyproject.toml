@@ -6,7 +6,7 @@ authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.12"
+python = ">=3.11,<=3.12"
 pandas = ">=2.1"
 numpy = ">=1.21"
 numba = ">=0.53"
