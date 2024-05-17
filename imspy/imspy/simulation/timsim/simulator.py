@@ -1,6 +1,7 @@
 import os
 import argparse
 import time
+import pandas as pd
 
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
