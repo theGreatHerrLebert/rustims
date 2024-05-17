@@ -229,6 +229,8 @@ def main():
     if verbose:
         print(acquisition_builder)
 
+    peptide_list = []
+
     for fasta in fastas:
         if verbose:
             print(f"Digesting fasta file: {fasta}...")
@@ -245,6 +247,22 @@ def main():
             verbose=verbose,
         ).peptides
 
+        # JOB 2: Simulate peptide occurrences
+        peptides = simulate_peptide_occurrences(
+            peptides=peptides,
+            intensity_mean=args.intensity_mean,
+            intensity_min=args.intensity_min,
+            intensity_max=args.intensity_max,
+            verbose=verbose,
+            sample_occurrences=args.sample_occurrences,
+            intensity_value=args.intensity_value,
+            mixture_contribution=1.0,
+        )
+
+        peptide_list.append(peptides)
+
+    peptides = pd.concat(peptide_list)
+
     if args.sample_fraction < 1.0:
         peptides = peptides.sample(frac=args.sample_fraction)
         peptides.reset_index(drop=True, inplace=True)
@@ -252,23 +270,11 @@ def main():
     if verbose:
         print(f"Simulating {peptides.shape[0]} peptides...")
 
-    # JOB 2: Simulate retention times
+    # JOB 3: Simulate retention times
     peptides = simulate_retention_times(
         peptides=peptides,
         verbose=verbose,
         gradient_length=acquisition_builder.gradient_length
-    )
-
-    # JOB 3: Simulate peptide occurrences
-    peptides = simulate_peptide_occurrences(
-        peptides=peptides,
-        intensity_mean=args.intensity_mean,
-        intensity_min=args.intensity_min,
-        intensity_max=args.intensity_max,
-        verbose=verbose,
-        sample_occurrences=args.sample_occurrences,
-        intensity_value=args.intensity_value,
-        mixture_contribution=1.0,
     )
 
     # JOB 4: Simulate frame distributions emg
