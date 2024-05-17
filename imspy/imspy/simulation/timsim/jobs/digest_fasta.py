@@ -11,7 +11,8 @@ def digest_fasta(
         restrict: str = None,
         decoys: bool = False,
         verbose: bool = False,
-        job_name: str = "digest_fasta") -> PeptideDigest:
+        job_name: str = "digest_fasta",
+) -> PeptideDigest:
     """Digest a fasta file to a PeptideDigest object."""
     if verbose:
         print("Digesting peptides...")
@@ -24,5 +25,5 @@ def digest_fasta(
         cleave_at=cleave_at,
         restrict=restrict,
         generate_decoys=decoys,
-        verbose=verbose
+        verbose=verbose,
     )

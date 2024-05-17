@@ -189,7 +189,20 @@ def main():
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
     name = args.name.replace('PLACEHOLDER', f'{args.acquisition_type}')
-    fasta = check_path(args.fasta)
+
+    # check if provided fasta path is a folder or file, if its a folder, check if it exists
+    if os.path.isdir(args.fasta):
+        fastas = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith('.fasta')]
+        # check if there are any fasta files in the folder
+        if len(fastas) == 0:
+            raise argparse.ArgumentTypeError(f"No fasta files found in folder: {args.fasta}")
+
+    # if the fasta path is a file, check if it is a fasta file
+    else:
+        if not args.fasta.endswith('.fasta'):
+            raise argparse.ArgumentTypeError(f"Invalid fasta file: {args.fasta}")
+        fastas = [args.fasta]
+
     verbose = args.verbose
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
@@ -215,17 +228,21 @@ def main():
     if verbose:
         print(acquisition_builder)
 
-    # JOB 1: Digest the fasta file
-    peptides = digest_fasta(
-        fasta_file_path=fasta,
-        missed_cleavages=args.missed_cleavages,
-        min_len=args.min_len,
-        max_len=args.max_len,
-        cleave_at=args.cleave_at,
-        restrict=args.restrict,
-        decoys=args.decoys,
-        verbose=verbose,
-    ).peptides
+    for fasta in fastas:
+        if verbose:
+            print(f"Digesting fasta file: {fasta}...")
+
+        # JOB 1: Digest the fasta file(s)
+        peptides = digest_fasta(
+            fasta_file_path=fasta,
+            missed_cleavages=args.missed_cleavages,
+            min_len=args.min_len,
+            max_len=args.max_len,
+            cleave_at=args.cleave_at,
+            restrict=args.restrict,
+            decoys=args.decoys,
+            verbose=verbose,
+        ).peptides
 
     if args.sample_fraction < 1.0:
         peptides = peptides.sample(frac=args.sample_fraction)
@@ -250,6 +267,7 @@ def main():
         verbose=verbose,
         sample_occurrences=args.sample_occurrences,
         intensity_value=args.intensity_value,
+        mixture_contribution=mixture_contribution
     )
 
     # JOB 4: Simulate frame distributions emg

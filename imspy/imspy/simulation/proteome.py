@@ -16,8 +16,7 @@ class PeptideDigest:
                  restrict: str = 'P',
                  generate_decoys: bool = False,
                  c_terminal: bool = True,
-                 verbose: bool = True,
-                 ):
+                 verbose: bool = True):
 
         self.verbose = verbose
         self.peptides = None
@@ -82,6 +81,7 @@ class PeptideDigest:
                                  'missed_cleavages': peptide.missed_cleavages,
                                  'n_term': peptide.n_term,
                                  'c_term': peptide.c_term,
-                                 'monoisotopic-mass': peptide.mono_isotopic})
+                                 'monoisotopic-mass': peptide.mono_isotopic,
+                                 })
 
         self.peptides = pd.DataFrame(peptide_list)
