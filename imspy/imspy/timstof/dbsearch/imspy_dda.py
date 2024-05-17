@@ -120,8 +120,8 @@ def main():
     parser.add_argument(
         "--tdc_method",
         type=str,
-        default="psm_and_peptide",
-        help="TDC method (default: psm_and_peptide aka double competition)"
+        default="peptide_psm_peptide",
+        help="TDC method (default: peptide_psm_peptide aka double competition)"
     )
 
     # load dataset in memory
