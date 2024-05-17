@@ -115,10 +115,6 @@ def main():
 
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
-    args = parser.parse_args()
-
-    if args.verbose:
-        print(f"using target decoy competition method: {args.tdc_method}")
 
     # TDC method
     parser.add_argument(
@@ -127,6 +123,8 @@ def main():
         default="psm_and_peptide",
         help="TDC method (default: psm_and_peptide aka double competition)"
     )
+
+    args = parser.parse_args()
 
     paths = []
 
@@ -408,6 +406,9 @@ def main():
     psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.num_splits)
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
+
+    if args.verbose:
+        print(f"FDR calculation, using target decoy competition: {args.tdc_method} ...")
 
     psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True),
                                                     method=args.tdc_method)
