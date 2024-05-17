@@ -197,10 +197,11 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str):
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch]) -> Tuple[NDArray, NDArray]:
+def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm") -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
         psms: List of PeptideSpectrumMatch objects
+        method: Method to use for training data generation
 
     Returns:
         Tuple[NDArray, NDArray]: X_train and Y_train
@@ -209,7 +210,7 @@ def generate_training_data(psms: List[PeptideSpectrumMatch]) -> Tuple[NDArray, N
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
 
     # calculate q-values to get inital "good" hits
-    PSM_q = target_decoy_competition_pandas(PSM_pandas)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method=method)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
     # merge data with q-values
