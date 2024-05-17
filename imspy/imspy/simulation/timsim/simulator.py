@@ -59,7 +59,7 @@ def main():
                         default='DIA')
 
     parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
-                        default=f'TimSim-[acquisition-type]-{int(time.time())}')
+                        default=f'TIMSIM-[PLACEHOLDER]-{int(time.time())}')
 
     parser.add_argument("--use_reference_layout", type=bool, default=True,
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
@@ -70,6 +70,7 @@ def main():
         type=float,
         default=0.005,
         help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
+
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
