@@ -36,3 +36,4 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
+timsim = "imspy.simulation.timsim.simulator:main"

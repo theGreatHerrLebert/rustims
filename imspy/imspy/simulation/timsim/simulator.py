@@ -13,7 +13,7 @@ from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.simulate_scan_distributions import simulate_scan_distributions
 from .jobs.simulate_occurrences import simulate_peptide_occurrences
-from .utility import check_path
+from imspy.simulation.timsim.jobs.utility import check_path
 
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"

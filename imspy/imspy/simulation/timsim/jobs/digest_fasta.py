@@ -1,4 +1,4 @@
-from examples.simulation.utility import check_path
+from .utility import check_path
 from imspy.simulation.proteome import PeptideDigest
 
 
