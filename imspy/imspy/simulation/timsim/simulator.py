@@ -267,7 +267,7 @@ def main():
         verbose=verbose,
         sample_occurrences=args.sample_occurrences,
         intensity_value=args.intensity_value,
-        mixture_contribution=mixture_contribution
+        mixture_contribution=1.0,
     )
 
     # JOB 4: Simulate frame distributions emg
