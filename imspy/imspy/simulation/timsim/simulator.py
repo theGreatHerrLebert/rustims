@@ -278,6 +278,13 @@ def main():
         gradient_length=acquisition_builder.gradient_length
     )
 
+    # TODO: Need to fix this on the backend,
+    #  the columns need to be in the correct order but generation of occurrences and retention times was swapped
+    #  to account for multiple fasta files and potential mixture factors of the peptides
+    columns = list(peptides.columns)
+    columns[-2], columns[-1] = columns[-1], columns[-2]
+    peptides = peptides[columns]
+
     # JOB 4: Simulate frame distributions emg
     peptides = simulate_frame_distributions_emg(
         peptides=peptides,
