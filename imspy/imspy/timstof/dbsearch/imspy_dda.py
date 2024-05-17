@@ -117,6 +117,9 @@ def main():
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
     args = parser.parse_args()
 
+    if args.verbose:
+        print(f"using target decoy competition method: {args.tdc_method}")
+
     # TDC method
     parser.add_argument(
         "--tdc_method",
