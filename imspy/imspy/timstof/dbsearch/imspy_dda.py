@@ -177,7 +177,7 @@ def main():
         if args.verbose:
             print("loading PASEF fragments ...")
 
-        fragments = dataset.get_pasef_fragments(num_threads=1 if not args.in_memory else args.num_threads)
+        fragments = dataset.get_pasef_fragments()
 
         mobility = fragments.apply(lambda r: np.mean(r.raw_data.mobility), axis=1)
         fragments['mobility'] = mobility
