@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm import tqdm
 
-from examples.simulation.jobs.add_noise_from_real_data import add_real_data_noise_to_frames
+from .add_noise_from_real_data import add_real_data_noise_to_frames
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA
 

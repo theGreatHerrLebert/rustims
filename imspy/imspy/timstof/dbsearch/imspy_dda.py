@@ -26,18 +26,39 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import tensorflow as tf
+
+# don't use all the memory for the GPU (if available)
+gpus = tf.config.experimental.list_physical_devices('GPU')
+
+if gpus:
+    try:
+        for i, _ in enumerate(gpus):
+            tf.config.experimental.set_virtual_device_configuration(
+                gpus[i],
+                [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * 4)]
+            )
+            print(f"GPU: {i} memory restricted to 4GB.")
+
+    except RuntimeError as e:
+        print(e)
+
 
 def main():
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='🦀💻 IMSPY - timsTOF DDA 🔬🐍 - PROTEOMICS IMS DDA data analysis '
                                                  'using imspy and sagepy.')
 
-    # Required string argument for path and fasta file
+    # Required string argument for path of bruker raw data
     parser.add_argument(
         "path",
         type=str,
         help="Path to bruker raw folders (.d) containing RAW files"
     )
+
+    # Required string argument for path of fasta file
     parser.add_argument(
         "fasta",
         type=str,
@@ -52,6 +73,7 @@ def main():
         default=True,
         help="Increase output verbosity"
     )
+
     # Optional flag for fasta batch size, defaults to 1
     parser.add_argument(
         "-fbs",
@@ -112,6 +134,23 @@ def main():
 
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
+
+    # TDC method
+    parser.add_argument(
+        "--tdc_method",
+        type=str,
+        default="peptide_psm_peptide",
+        help="TDC method (default: peptide_psm_peptide aka double competition)"
+    )
+
+    # load dataset in memory
+    parser.add_argument(
+        "--in_memory",
+        type=bool,
+        default=False,
+        help="Load dataset in memory"
+    )
+
     args = parser.parse_args()
 
     paths = []
@@ -129,11 +168,6 @@ def main():
     # check for fasta file
     if not os.path.exists(args.fasta):
         print(f"Path {args.fasta} does not exist. Exiting.")
-        sys.exit(1)
-
-    # check for fasta file
-    if not os.path.isfile(args.fasta):
-        print(f"Path {args.fasta} is not a file. Exiting.")
         sys.exit(1)
 
     for root, dirs, _ in os.walk(args.path):
@@ -157,7 +191,7 @@ def main():
             print(f"Processing {p + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
-        dataset = TimsDatasetDDA(str(path), in_memory=False)
+        dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
 
         if args.verbose:
             print("loading PASEF fragments ...")
@@ -232,8 +266,18 @@ def main():
         static = validate_mods(static_mods)
         variab = validate_var_mods(variable_mods)
 
-        with open(args.fasta, 'r') as infile:
-            fasta = infile.read()
+        # check if fasta is a path or a file, if it is a path, read all files ending with fasta in that path
+        if os.path.isdir(args.fasta):
+            fasta_files = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith(".fasta")]
+            fasta = ""
+            for fasta_file in fasta_files:
+                with open(fasta_file, 'r') as infile:
+                    fasta += infile.read()
+
+        # read fasta file
+        else:
+            with open(args.fasta, 'r') as infile:
+                fasta = infile.read()
 
         fasta_list = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
 
@@ -340,7 +384,7 @@ def main():
             p.inverse_mobility_predicted += inv_mob_calibration_factor
 
         PSM_pandas = peptide_spectrum_match_list_to_pandas(psm, use_sequence_as_match_idx=True)
-        PSM_q = target_decoy_competition_pandas(PSM_pandas)
+        PSM_q = target_decoy_competition_pandas(PSM_pandas, method=args.tdc_method)
 
         PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
@@ -390,7 +434,12 @@ def main():
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
-    psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True))
+    if args.verbose:
+        print(f"FDR calculation, using target decoy competition: {args.tdc_method} ...")
+
+    psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True),
+                                                    method=args.tdc_method)
+
     psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
 
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],

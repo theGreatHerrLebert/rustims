@@ -2,18 +2,18 @@ import os
 import argparse
 import time
 
-from examples.simulation.jobs.assemble_frames import assemble_frames
-from examples.simulation.jobs.build_acquisition import build_acquisition
-from examples.simulation.jobs.digest_fasta import digest_fasta
-from examples.simulation.jobs.simulate_charge_states import simulate_charge_states
-from examples.simulation.jobs.simulate_fragment_intensities import simulate_fragment_intensities
-from examples.simulation.jobs.simulate_frame_distributions_emg import simulate_frame_distributions_emg
-from examples.simulation.jobs.simulate_ion_mobilities import simulate_ion_mobilities
-from examples.simulation.jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
-from examples.simulation.jobs.simulate_retention_time import simulate_retention_times
-from examples.simulation.jobs.simulate_scan_distributions import simulate_scan_distributions
-from examples.simulation.jobs.simulate_occurrences import simulate_peptide_occurrences
-from examples.simulation.utility import check_path
+from .jobs.assemble_frames import assemble_frames
+from .jobs.build_acquisition import build_acquisition
+from .jobs.digest_fasta import digest_fasta
+from .jobs.simulate_charge_states import simulate_charge_states
+from .jobs.simulate_fragment_intensities import simulate_fragment_intensities
+from .jobs.simulate_frame_distributions_emg import simulate_frame_distributions_emg
+from .jobs.simulate_ion_mobilities import simulate_ion_mobilities
+from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
+from .jobs.simulate_retention_time import simulate_retention_times
+from .jobs.simulate_scan_distributions import simulate_scan_distributions
+from .jobs.simulate_occurrences import simulate_peptide_occurrences
+from imspy.simulation.timsim.jobs.utility import check_path
 
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"
