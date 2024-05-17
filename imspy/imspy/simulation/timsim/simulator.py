@@ -189,7 +189,7 @@ def main():
     # Use the arguments
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
-    name = args.name.replace('PLACEHOLDER', f'{args.acquisition_type}')
+    name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
 
     # check if provided fasta path is a folder or file, if its a folder, check if it exists
     if os.path.isdir(args.fasta):
