@@ -127,7 +127,7 @@ def main():
                         help="Randomize fasta split (default: False)")
 
     # re-scoring settings
-    parser.add_argument("--num_splits", type=int, default=10, help="Number of splits (default: 10)")
+    parser.add_argument("--re_score_num_splits", type=int, default=10, help="Number of splits (default: 10)")
 
     # fdr threshold
     parser.add_argument("--fdr_threshold", type=float, default=0.01, help="FDR threshold (default: 0.01)")
@@ -430,7 +430,7 @@ def main():
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
-    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.num_splits)
+    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits)
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
