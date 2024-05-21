@@ -198,6 +198,28 @@ def main():
 
         fragments = dataset.get_pasef_fragments()
 
+        if args.verbose:
+            print("aggretating re-fragmented PASEF fragments ...")
+
+        fragments = fragments.groupby('precursor_id').agg({
+            'frame_id': 'first',
+            'time': 'first',
+            'precursor_id': 'first',
+            'raw_data': 'sum',
+            'scan_begin': 'first',
+            'scan_end': 'first',
+            'isolation_mz': 'first',
+            'isolation_width': 'first',
+            'collision_energy': 'first',
+            'largest_peak_mz': 'first',
+            'average_mz': 'first',
+            'monoisotopic_mz': 'first',
+            'charge': 'first',
+            'average_scan': 'first',
+            'intensity': 'first',
+            'parent_id': 'first',
+        })
+
         mobility = fragments.apply(lambda r: np.mean(r.raw_data.mobility), axis=1)
         fragments['mobility'] = mobility
 
