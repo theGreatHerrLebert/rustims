@@ -260,7 +260,8 @@ def main():
         static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
 
         # generate variable methionine modification TODO: make configurable
-        variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable()]}
+        variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
+                                           SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
 
         # generate SAGE compatible mod representations
         static = validate_mods(static_mods)
