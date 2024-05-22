@@ -89,10 +89,10 @@ def main():
 
     # SAGE Scoring settings
     # precursor tolerance lower and upper
-    parser.add_argument("--precursor_tolerance_lower", type=float, default=-5.0,
-                        help="Precursor tolerance lower (default: -5.0)")
-    parser.add_argument("--precursor_tolerance_upper", type=float, default=5.0,
-                        help="Precursor tolerance upper (default: 5.0)")
+    parser.add_argument("--precursor_tolerance_lower", type=float, default=-15.0,
+                        help="Precursor tolerance lower (default: -15.0)")
+    parser.add_argument("--precursor_tolerance_upper", type=float, default=15.0,
+                        help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
     parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
