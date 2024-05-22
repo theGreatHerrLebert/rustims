@@ -183,12 +183,12 @@ def main():
 
     # load dataset in memory
     parser.add_argument(
-        "--no_in_memory",
+        "--in_memory",
         dest="in_memory",
-        action="store_false",
+        action="store_true",
         help="Load dataset in memory"
     )
-    parser.set_defaults(in_memory=True)
+    parser.set_defaults(in_memory=False)
 
     args = parser.parse_args()
 
@@ -357,7 +357,6 @@ def main():
 
         if args.verbose:
             print("generating search configuration ...")
-            print("decoy generation from sequences is set to: ", args.decoys)
 
         merged_dict = {}
 
