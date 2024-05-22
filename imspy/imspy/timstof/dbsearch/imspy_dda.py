@@ -322,6 +322,7 @@ def main():
 
         if args.verbose:
             print("generating search configuration ...")
+            print("decoy generation from sequences is set to: ", args.decoys)
 
         merged_dict = {}
 
