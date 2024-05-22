@@ -67,12 +67,13 @@ def main():
 
     # Optional verbosity flag
     parser.add_argument(
-        "-v",
-        "--verbose",
-        type=bool,
-        default=True,
+        "-nv",
+        "--no_verbose",
+        dest="verbose",
+        action="store_false",
         help="Increase output verbosity"
     )
+    parser.set_defaults(verbose=True)
 
     # Optional flag for fasta batch size, defaults to 1
     parser.add_argument(
@@ -105,7 +106,14 @@ def main():
     # minimum number of matched peaks
     parser.add_argument("--min_matched_peaks", type=int, default=4, help="Minimum number of matched peaks (default: 4)")
     # annotate matches
-    parser.add_argument("--annotate_matches", type=bool, default=True, help="Annotate matches (default: True)")
+
+    parser.add_argument(
+        "--no_match_annotation",
+        dest="annotate_matches",
+        action="store_false",
+        help="Annotate matches (default: True)")
+    parser.set_defaults(annotate_matches=True)
+
     # SAGE Preprocessing settings
     parser.add_argument("--take_top_n", type=int, default=150, help="Take top n peaks (default: 150)")
 
@@ -115,16 +123,35 @@ def main():
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
-    parser.add_argument("--decoys", type=bool, default=True, help="Generate decoys (default: True)")
-    parser.add_argument("--c_terminal", type=bool, default=True, help="C terminal (default: True)")
+
+    parser.add_argument(
+        "--no_decoys",
+        dest="decoys",
+        action="store_false",
+        help="Generate decoys (default: True)"
+    )
+    parser.set_defaults(decoys=True)
+
+    parser.add_argument(
+        "--not_c_terminal",
+        dest="c_terminal",
+        action="store_false",
+        help="C terminal (default: True)"
+    )
+    parser.set_defaults(c_terminal=True)
 
     # sage search configuration
     parser.add_argument("--fragment_max_mz", type=float, default=4000, help="Fragment max mz (default: 4000)")
     parser.add_argument("--bucket_size", type=int, default=16384, help="Bucket size (default: 16384)")
 
     # randomize fasta
-    parser.add_argument("--randomize_fasta_split", type=bool, default=False,
-                        help="Randomize fasta split (default: False)")
+    parser.add_argument(
+        "--no_randomize_fasta_split",
+        dest="randomize_fasta_split",
+        action="store_false",
+        help="Randomize fasta split (default: False)"
+    )
+    parser.set_defaults(randomize_fasta_split=True)
 
     # re-scoring settings
     parser.add_argument("--re_score_num_splits", type=int, default=10, help="Number of splits (default: 10)")
@@ -136,7 +163,14 @@ def main():
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
 
     # fine tune retention time predictor
-    parser.add_argument("--fine_tune_rt", type=bool, default=True, help="Fine tune retention time predictor (default: True)")
+    parser.add_argument(
+        "--no_fine_tune_rt",
+        dest="fine_tune_rt",
+        action="store_false",
+        help="Fine tune retention time predictor (default: True)"
+    )
+    parser.set_defaults(fine_tune_rt=True)
+
     parser.add_argument("--rt_fine_tune_epochs", type=int, default=10, help="Retention time fine tune epochs (default: 10)")
 
     # TDC method
@@ -149,11 +183,12 @@ def main():
 
     # load dataset in memory
     parser.add_argument(
-        "--in_memory",
-        type=bool,
-        default=False,
+        "--no_in_memory",
+        dest="in_memory",
+        action="store_false",
         help="Load dataset in memory"
     )
+    parser.set_defaults(in_memory=True)
 
     args = parser.parse_args()
 
@@ -200,10 +235,10 @@ def main():
         if args.verbose:
             print("loading PASEF fragments ...")
 
-        fragments = dataset.get_pasef_fragments()
+        fragments = dataset.get_pasef_fragments(num_threads=args.num_threads if args.in_memory else 1)
 
         if args.verbose:
-            print("aggretating re-fragmented PASEF fragments ...")
+            print("aggregating re-fragmented PASEF frames ...")
 
         fragments = fragments.groupby('precursor_id').agg({
             'frame_id': 'first',
