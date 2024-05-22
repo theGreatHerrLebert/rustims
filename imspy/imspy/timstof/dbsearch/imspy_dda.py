@@ -103,11 +103,11 @@ def main():
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
     # minimum number of matched peaks
-    parser.add_argument("--min_matched_peaks", type=int, default=5, help="Minimum number of matched peaks (default: 5)")
+    parser.add_argument("--min_matched_peaks", type=int, default=4, help="Minimum number of matched peaks (default: 4)")
     # annotate matches
     parser.add_argument("--annotate_matches", type=bool, default=True, help="Annotate matches (default: True)")
     # SAGE Preprocessing settings
-    parser.add_argument("--take_top_n", type=int, default=100, help="Take top n peaks (default: 100)")
+    parser.add_argument("--take_top_n", type=int, default=150, help="Take top n peaks (default: 150)")
 
     # SAGE settings for digest of fasta file
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
