@@ -211,7 +211,7 @@ def get_native_dataset_path(ds_name: str = 'NATIVE.d') -> str:
 
 
 @jit(nopython=True)
-def generate_events(n, mean, min_val, max_val):
+def generate_events(n, mean, min_val, max_val, mixture_contribution=1.0):
     generated_values = np.random.exponential(scale=mean, size=n * 10)
     filtered_values = np.empty(n, dtype=np.float32)
     count = 0
@@ -223,7 +223,7 @@ def generate_events(n, mean, min_val, max_val):
             if count == n:
                 break
 
-    return filtered_values[:count]
+    return filtered_values[:count] * mixture_contribution
 
 
 @jit(nopython=True)

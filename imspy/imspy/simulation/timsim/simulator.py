@@ -1,6 +1,7 @@
 import os
 import argparse
 import time
+import pandas as pd
 
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
@@ -59,7 +60,7 @@ def main():
                         default='DIA')
 
     parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
-                        default=f'TimSim-[acquisition-type]-{int(time.time())}')
+                        default=f'TIMSIM-[PLACEHOLDER]-{int(time.time())}')
 
     parser.add_argument("--use_reference_layout", type=bool, default=True,
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
@@ -70,6 +71,7 @@ def main():
         type=float,
         default=0.005,
         help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
+
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
@@ -188,8 +190,21 @@ def main():
     # Use the arguments
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
-    name = args.name.replace('PLACEHOLDER', f'{args.acquisition_type}')
-    fasta = check_path(args.fasta)
+    name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
+
+    # check if provided fasta path is a folder or file, if its a folder, check if it exists
+    if os.path.isdir(args.fasta):
+        fastas = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith('.fasta')]
+        # check if there are any fasta files in the folder
+        if len(fastas) == 0:
+            raise argparse.ArgumentTypeError(f"No fasta files found in folder: {args.fasta}")
+
+    # if the fasta path is a file, check if it is a fasta file
+    else:
+        if not args.fasta.endswith('.fasta'):
+            raise argparse.ArgumentTypeError(f"Invalid fasta file: {args.fasta}")
+        fastas = [args.fasta]
+
     verbose = args.verbose
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
@@ -215,17 +230,39 @@ def main():
     if verbose:
         print(acquisition_builder)
 
-    # JOB 1: Digest the fasta file
-    peptides = digest_fasta(
-        fasta_file_path=fasta,
-        missed_cleavages=args.missed_cleavages,
-        min_len=args.min_len,
-        max_len=args.max_len,
-        cleave_at=args.cleave_at,
-        restrict=args.restrict,
-        decoys=args.decoys,
-        verbose=verbose,
-    ).peptides
+    peptide_list = []
+
+    for fasta in fastas:
+        if verbose:
+            print(f"Digesting fasta file: {fasta}...")
+
+        # JOB 1: Digest the fasta file(s)
+        peptides = digest_fasta(
+            fasta_file_path=fasta,
+            missed_cleavages=args.missed_cleavages,
+            min_len=args.min_len,
+            max_len=args.max_len,
+            cleave_at=args.cleave_at,
+            restrict=args.restrict,
+            decoys=args.decoys,
+            verbose=verbose,
+        ).peptides
+
+        # JOB 2: Simulate peptide occurrences
+        peptides = simulate_peptide_occurrences(
+            peptides=peptides,
+            intensity_mean=args.intensity_mean,
+            intensity_min=args.intensity_min,
+            intensity_max=args.intensity_max,
+            verbose=verbose,
+            sample_occurrences=args.sample_occurrences,
+            intensity_value=args.intensity_value,
+            mixture_contribution=1.0,
+        )
+
+        peptide_list.append(peptides)
+
+    peptides = pd.concat(peptide_list)
 
     if args.sample_fraction < 1.0:
         peptides = peptides.sample(frac=args.sample_fraction)
@@ -234,23 +271,19 @@ def main():
     if verbose:
         print(f"Simulating {peptides.shape[0]} peptides...")
 
-    # JOB 2: Simulate retention times
+    # JOB 3: Simulate retention times
     peptides = simulate_retention_times(
         peptides=peptides,
         verbose=verbose,
         gradient_length=acquisition_builder.gradient_length
     )
 
-    # JOB 3: Simulate peptide occurrences
-    peptides = simulate_peptide_occurrences(
-        peptides=peptides,
-        intensity_mean=args.intensity_mean,
-        intensity_min=args.intensity_min,
-        intensity_max=args.intensity_max,
-        verbose=verbose,
-        sample_occurrences=args.sample_occurrences,
-        intensity_value=args.intensity_value,
-    )
+    # TODO: Need to fix this on the backend,
+    #  the columns need to be in the correct order but generation of occurrences and retention times was swapped
+    #  to account for multiple fasta files and potential mixture factors of the peptides
+    columns = list(peptides.columns)
+    columns[-2], columns[-1] = columns[-1], columns[-2]
+    peptides = peptides[columns]
 
     # JOB 4: Simulate frame distributions emg
     peptides = simulate_frame_distributions_emg(

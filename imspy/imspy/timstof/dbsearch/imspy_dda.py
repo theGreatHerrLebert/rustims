@@ -89,10 +89,10 @@ def main():
 
     # SAGE Scoring settings
     # precursor tolerance lower and upper
-    parser.add_argument("--precursor_tolerance_lower", type=float, default=-5.0,
-                        help="Precursor tolerance lower (default: -5.0)")
-    parser.add_argument("--precursor_tolerance_upper", type=float, default=5.0,
-                        help="Precursor tolerance upper (default: 5.0)")
+    parser.add_argument("--precursor_tolerance_lower", type=float, default=-15.0,
+                        help="Precursor tolerance lower (default: -15.0)")
+    parser.add_argument("--precursor_tolerance_upper", type=float, default=15.0,
+                        help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
     parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
@@ -127,13 +127,17 @@ def main():
                         help="Randomize fasta split (default: False)")
 
     # re-scoring settings
-    parser.add_argument("--num_splits", type=int, default=10, help="Number of splits (default: 10)")
+    parser.add_argument("--re_score_num_splits", type=int, default=10, help="Number of splits (default: 10)")
 
     # fdr threshold
     parser.add_argument("--fdr_threshold", type=float, default=0.01, help="FDR threshold (default: 0.01)")
 
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
+
+    # fine tune retention time predictor
+    parser.add_argument("--fine_tune_rt", type=bool, default=True, help="Fine tune retention time predictor (default: True)")
+    parser.add_argument("--rt_fine_tune_epochs", type=int, default=10, help="Retention time fine tune epochs (default: 10)")
 
     # TDC method
     parser.add_argument(
@@ -198,6 +202,28 @@ def main():
 
         fragments = dataset.get_pasef_fragments()
 
+        if args.verbose:
+            print("aggretating re-fragmented PASEF fragments ...")
+
+        fragments = fragments.groupby('precursor_id').agg({
+            'frame_id': 'first',
+            'time': 'first',
+            'precursor_id': 'first',
+            'raw_data': 'sum',
+            'scan_begin': 'first',
+            'scan_end': 'first',
+            'isolation_mz': 'first',
+            'isolation_width': 'first',
+            'collision_energy': 'first',
+            'largest_peak_mz': 'first',
+            'average_mz': 'first',
+            'monoisotopic_mz': 'first',
+            'charge': 'first',
+            'average_scan': 'first',
+            'intensity': 'first',
+            'parent_id': 'first',
+        })
+
         mobility = fragments.apply(lambda r: np.mean(r.raw_data.mobility), axis=1)
         fragments['mobility'] = mobility
 
@@ -260,7 +286,8 @@ def main():
         static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
 
         # generate variable methionine modification TODO: make configurable
-        variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable()]}
+        variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
+                                           SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
 
         # generate SAGE compatible mod representations
         static = validate_mods(static_mods)
@@ -394,10 +421,9 @@ def main():
 
         TDC_filtered = TDC[TDC.q_value <= 0.001]
 
-        if args.verbose:
-            print("fine tuning retention time predictor ...")
-
-        rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=4, batch_size=2048)
+        if args.verbose and args.fine_tune_rt:
+            print(f"fine tuning retention time predictor for {args.rt_fine_tune_epochs} epochs ...")
+            rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=args.rt_fine_tune_epochs, batch_size=2048)
 
         if args.verbose:
             print("predicting retention times ...")
@@ -413,6 +439,9 @@ def main():
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
+
+        if args.verbose:
+            print("Writing PSMs to temp file ...")
 
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
@@ -430,7 +459,7 @@ def main():
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
-    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.num_splits)
+    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits)
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
