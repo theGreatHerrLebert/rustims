@@ -135,6 +135,10 @@ def main():
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
 
+    # fine tune retention time predictor
+    parser.add_argument("--fine_tune_rt", type=bool, default=True, help="Fine tune retention time predictor (default: True)")
+    parser.add_argument("--rt_fine_tune_epochs", type=int, default=10, help="Retention time fine tune epochs (default: 10)")
+
     # TDC method
     parser.add_argument(
         "--tdc_method",
@@ -417,10 +421,9 @@ def main():
 
         TDC_filtered = TDC[TDC.q_value <= 0.001]
 
-        if args.verbose:
-            print("fine tuning retention time predictor ...")
-
-        rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=4, batch_size=2048)
+        if args.verbose and args.fine_tune_rt:
+            print(f"fine tuning retention time predictor for {args.rt_fine_tune_epochs} epochs ...")
+            rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=args.rt_fine_tune_epochs, batch_size=2048)
 
         if args.verbose:
             print("predicting retention times ...")
