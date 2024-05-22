@@ -440,6 +440,9 @@ def main():
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
 
+        if args.verbose:
+            print("Writing PSMs to temp file ...")
+
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
 
