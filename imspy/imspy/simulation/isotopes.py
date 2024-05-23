@@ -19,13 +19,13 @@ MASS_NEUTRON = 1.00866491595
 
 
 def simulate_precursor_spectrum(sequence: str, charge: int, peptide_id: Union[None, int] = None) -> MzSpectrum:
-    return MzSpectrum.from_py_mz_spectrum(ims.simulate_precursor_spectrum(sequence, charge, peptide_id))
+    return MzSpectrum.from_py_ptr(ims.simulate_precursor_spectrum(sequence, charge, peptide_id))
 
 
 def simulate_precursor_spectra(sequences: NDArray, charges: NDArray, num_threads: int, peptide_ids: List[Union[None, int]] = None) -> List[MzSpectrum]:
     ids = peptide_ids if peptide_ids is not None else [None] * len(sequences)
     spectra = ims.simulate_precursor_spectra(sequences, charges, num_threads, ids)
-    return [MzSpectrum.from_py_mz_spectrum(x) for x in spectra]
+    return [MzSpectrum.from_py_ptr(x) for x in spectra]
 
 
 @numba.jit(nopython=True)
@@ -265,7 +265,7 @@ class AveragineGenerator(IsotopePatternGenerator):
 
 def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float = 150, k: int = 7, resolution: int = 3,
                                   centroid: bool = True):
-    return MzSpectrum.from_py_mz_spectrum(ims.generate_precursor_spectrum(
+    return MzSpectrum.from_py_ptr(ims.generate_precursor_spectrum(
         mass=mass,
         charge=charge,
         min_intensity=min_intensity,
@@ -277,7 +277,7 @@ def generate_isotope_pattern_rust(mass: float, charge: int, min_intensity: float
 
 def generate_isotope_patterns_rust(masses: NDArray, charges: NDArray, min_intensity: float = 0, k: int = 7,
                                    resolution: int = 3, centroid: bool = True, num_threads: int = 4):
-    return [MzSpectrum.from_py_mz_spectrum(x) for x in ims.generate_precursor_spectra(
+    return [MzSpectrum.from_py_ptr(x) for x in ims.generate_precursor_spectra(
         masses=masses,
         charges=charges,
         min_intensity=min_intensity,

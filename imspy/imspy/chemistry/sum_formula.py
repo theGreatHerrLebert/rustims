@@ -1,11 +1,12 @@
 import imspy_connector
 
 from imspy.data.spectrum import MzSpectrum
+from imspy.simulation.annotation import RustWrapperObject
 
 ims = imspy_connector.py_sumformula
 
 
-class SumFormula:
+class SumFormula(RustWrapperObject):
     def __init__(self, sum_formula: str):
         self.__ptr = ims.PySumFormula(sum_formula)
 
@@ -34,4 +35,4 @@ class SumFormula:
         return self.__ptr
 
     def generate_isotope_distribution(self, charge: int) -> 'MzSpectrum':
-        return MzSpectrum.from_py_mz_spectrum(self.__ptr.generate_isotope_distribution(charge))
+        return MzSpectrum.from_py_ptr(self.__ptr.generate_isotope_distribution(charge))

@@ -20,11 +20,11 @@ class TimsTofQuadrupoleDIA:
 
     def transmit_spectrum(self, frame_id: int, scan_id: int, spectrum: MzSpectrum,
                           min_probability: float | None = None) -> MzSpectrum:
-        return MzSpectrum.from_py_mz_spectrum(self.handle.transmit_spectrum(frame_id, scan_id,
-                                                                            spectrum.get_spec_ptr(), min_probability))
+        return MzSpectrum.from_py_ptr(self.handle.transmit_spectrum(frame_id, scan_id,
+                                                                    spectrum.get_py_ptr(), min_probability))
 
     def transmit_frame(self, frame: TimsFrame, min_probability: float | None = None) -> TimsFrame:
-        return TimsFrame.from_py_tims_frame(self.handle.transmit_tims_frame(frame.get_frame_ptr(), min_probability))
+        return TimsFrame.from_py_ptr(self.handle.transmit_tims_frame(frame.get_py_ptr(), min_probability))
 
     def frame_to_window_group(self, frame_id: int) -> int:
         return self.handle.frame_to_window_group(frame_id)
@@ -42,12 +42,12 @@ class TimsTofQuadrupoleDIA:
         return self.handle.get_transmission_set(frame_id, scan_id, mz, min_proba)
 
     def transmit_ion(self, frame_ids: NDArray, scan_ids: NDArray, spectrum: MzSpectrum, min_probability: Union[float, None]) -> List[List[MzSpectrum]]:
-        transmission_profile = self.handle.transmit_ion(frame_ids, scan_ids, spectrum.get_spec_ptr(), min_probability)
+        transmission_profile = self.handle.transmit_ion(frame_ids, scan_ids, spectrum.get_py_ptr(), min_probability)
         result = []
         for i in enumerate(frame_ids):
             scan_list = []
             for j in enumerate(scan_ids):
-                scan_list.append(MzSpectrum.from_py_mz_spectrum(transmission_profile[i][j]))
+                scan_list.append(MzSpectrum.from_py_ptr(transmission_profile[i][j]))
             result.append(scan_list)
 
         return result

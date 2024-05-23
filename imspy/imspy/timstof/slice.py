@@ -67,7 +67,7 @@ class TimsSlice:
         Returns:
             TimsSlice: TimsSlice created from the list of TimsFrames.
         """
-        return cls.from_py_tims_slice(ims.PyTimsSlice.from_frames([frame.get_frame_ptr() for frame in frames]))
+        return cls.from_py_tims_slice(ims.PyTimsSlice.from_frames([frame.get_py_ptr() for frame in frames]))
 
     @property
     def first_frame_id(self) -> int:
@@ -179,7 +179,7 @@ class TimsSlice:
         Returns:
             List[TimsFrame]: Frames.
         """
-        return [TimsFrame.from_py_tims_frame(frame) for frame in self.__slice_ptr.get_frames()]
+        return [TimsFrame.from_py_ptr(frame) for frame in self.__slice_ptr.get_frames()]
 
     def to_resolution(self, resolution: int, num_threads: int = 4) -> 'TimsSlice':
         """Convert the slice to a given resolution.
@@ -245,7 +245,7 @@ class TimsSlice:
             frame_ptr = self.__slice_ptr.get_frame_at_index(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
-                return TimsFrame.from_py_tims_frame(frame_ptr)
+                return TimsFrame.from_py_ptr(frame_ptr)
             else:
                 raise ValueError("Frame pointer is None for valid index.")
         else:
@@ -323,7 +323,7 @@ class TimsSliceVectorized:
         Returns:
             List[TimsFrame]: Frames.
         """
-        return [TimsFrameVectorized.from_py_tims_frame_vectorized(frame) for frame in
+        return [TimsFrameVectorized.from_py_ptr(frame) for frame in
                 self.__slice_ptr.get_vectorized_frames]
 
     @property
@@ -344,7 +344,7 @@ class TimsSliceVectorized:
             frame_ptr = self.__slice_ptr.get_frame_at_index(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
-                return TimsFrameVectorized.from_py_tims_frame_vectorized(frame_ptr)
+                return TimsFrameVectorized.from_py_ptr(frame_ptr)
             else:
                 raise ValueError("Frame pointer is None for valid index.")
         else:

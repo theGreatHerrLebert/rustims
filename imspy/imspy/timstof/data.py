@@ -9,6 +9,7 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
+from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof.slice import TimsSlice
 
@@ -16,7 +17,7 @@ import imspy_connector
 ims = imspy_connector.py_dataset
 
 
-class AcquisitionMode:
+class AcquisitionMode(RustWrapperObject):
     def __init__(self, mode: str):
         """AcquisitionMode class.
 
@@ -37,7 +38,7 @@ class AcquisitionMode:
         return self.__mode_ptr.acquisition_mode
 
     @classmethod
-    def from_ptr(cls, ptr: ims.PyAcquisitionMode):
+    def from_py_ptr(cls, ptr: ims.PyAcquisitionMode):
         """Get an AcquisitionMode from a pointer.
 
         Args:
@@ -52,6 +53,9 @@ class AcquisitionMode:
 
     def __repr__(self):
         return f"AcquisitionMode({self.mode})"
+
+    def get_py_ptr(self):
+        return self.__mode_ptr
 
 
 class TimsDataset(ABC):
@@ -213,7 +217,7 @@ class TimsDataset(ABC):
         Returns:
             TimsFrame: TimsFrame.
         """
-        return TimsFrame.from_py_tims_frame(self.__dataset.get_frame(frame_id))
+        return TimsFrame.from_py_ptr(self.__dataset.get_frame(frame_id))
 
     def get_tims_slice(self, frame_ids: NDArray[np.int32], num_threads: int = 8) -> TimsSlice:
         """Get a TimsFrame.
@@ -331,7 +335,7 @@ class TimsDataset(ABC):
         Returns:
             List[NDArray[np.uint8]]: List of compressed bytes.
         """
-        return self.__dataset.compress_frames([f.get_frame_ptr() for f in frames], self.num_scans, num_threads)
+        return self.__dataset.compress_frames([f.get_py_ptr() for f in frames], self.num_scans, num_threads)
 
     def bytes_to_indexed_values(self, values: NDArray[np.uint8]) \
             -> (NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]):
@@ -356,7 +360,7 @@ class TimsDataset(ABC):
             frame_ptr = self.__dataset.get_frame(self.__current_index)
             self.__current_index += 1
             if frame_ptr is not None:
-                return TimsFrame.from_py_tims_frame(frame_ptr)
+                return TimsFrame.from_py_ptr(frame_ptr)
             else:
                 raise ValueError(f"Frame pointer is None for valid index: {self.__current_index}")
         else:

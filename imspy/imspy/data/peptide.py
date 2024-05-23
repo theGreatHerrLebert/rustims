@@ -4,12 +4,12 @@ from typing import List, Tuple, Union
 import imspy_connector
 
 from imspy.data.spectrum import MzSpectrum
-from imspy.simulation.annotation import MzSpectrumAnnotated, RustWrapper
+from imspy.simulation.annotation import MzSpectrumAnnotated, RustWrapperObject
 
 ims = imspy_connector.py_peptide
 
 
-class PeptideProductIonSeriesCollection(RustWrapper):
+class PeptideProductIonSeriesCollection(RustWrapperObject):
     def __init__(self, series: List['PeptideProductIonSeries']):
         """Create a new product ion series collection.
 
@@ -69,7 +69,7 @@ class PeptideProductIonSeriesCollection(RustWrapper):
             The isotope distribution of the product ion series collection.
         """
         py_spec = self.__py_ptr.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
-        return MzSpectrum.from_py_mz_spectrum(py_spec)
+        return MzSpectrum.from_py_ptr(py_spec)
 
     def generate_isotopic_spectrum_annotated(
             self,
@@ -93,7 +93,7 @@ class PeptideProductIonSeriesCollection(RustWrapper):
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
 
-class PeptideProductIonSeries(RustWrapper):
+class PeptideProductIonSeries(RustWrapperObject):
     def __init__(
             self,
             charge: int,
@@ -142,7 +142,7 @@ class PeptideProductIonSeries(RustWrapper):
                 f"c_ions={self.c_ions})")
 
 
-class PeptideProductIon(RustWrapper):
+class PeptideProductIon(RustWrapperObject):
     def __init__(self, kind: str, sequence: str, charge: int = 1, intensity: float = 1.0, peptide_id: Union[None, int] = None):
         """Create a new product ion.
 
@@ -226,7 +226,7 @@ class PeptideProductIon(RustWrapper):
                 f" intensity={self.intensity})")
 
 
-class PeptideSequence(RustWrapper):
+class PeptideSequence(RustWrapperObject):
     def __init__(self, sequence: str, peptide_id: Union[None, int] = None):
         """Create a new peptide sequence.
 
@@ -312,7 +312,7 @@ class PeptideSequence(RustWrapper):
                                                                     f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
         py_spec = self.__py_ptr.calculate_mono_isotopic_product_ion_spectrum(charge, fragment_type)
-        return MzSpectrum.from_py_mz_spectrum(py_spec)
+        return MzSpectrum.from_py_ptr(py_spec)
 
     def calculate_mono_isotopic_product_ion_spectrum_annotated(self, charge: int = 1,
                                                                fragment_type: str = 'b') -> MzSpectrumAnnotated:
@@ -400,7 +400,7 @@ class PeptideSequence(RustWrapper):
                 f"mono_isotopic_mass={self.mono_isotopic_mass}, peptide_id={self.peptide_id})")
 
 
-class PeptideIon(RustWrapper):
+class PeptideIon(RustWrapperObject):
     def __init__(self, sequence: str, charge: int, intensity: float, peptide_id: Union[None, int] = None):
         """Create a new peptide ion.
 
@@ -455,7 +455,7 @@ class PeptideIon(RustWrapper):
         """
         assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
         py_spec = self.__py_ptr.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min)
-        return MzSpectrum.from_py_mz_spectrum(py_spec)
+        return MzSpectrum.from_py_ptr(py_spec)
 
     def calculate_isotopic_spectrum_annotated(
             self,
