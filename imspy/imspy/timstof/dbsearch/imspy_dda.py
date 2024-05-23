@@ -146,12 +146,12 @@ def main():
 
     # randomize fasta
     parser.add_argument(
-        "--no_randomize_fasta_split",
+        "--randomize_fasta_split",
         dest="randomize_fasta_split",
-        action="store_false",
+        action="store_true",
         help="Randomize fasta split (default: False)"
     )
-    parser.set_defaults(randomize_fasta_split=True)
+    parser.set_defaults(randomize_fasta_split=False)
 
     # re-scoring settings
     parser.add_argument("--re_score_num_splits", type=int, default=10, help="Number of splits (default: 10)")
