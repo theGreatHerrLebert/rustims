@@ -294,6 +294,14 @@ class TimsFrame:
         """
         return TimsFrameAnnotated.from_py_ptr(self.__frame_ptr.to_noise_annotated_tims_frame())
 
+    def get_inverse_mobility_along_scan_marginal(self) -> float:
+        """Get the inverse mobility along the scan marginal.
+
+        Returns:
+            float: Inverse mobility.
+        """
+        return self.__frame_ptr.get_inverse_mobility_along_scan_marginal()
+
     def get_frame_ptr(self):
         return self.__frame_ptr
 

@@ -21,7 +21,7 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, get_inverse_mobility
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -259,7 +259,7 @@ def main():
             'parent_id': 'first',
         })
 
-        mobility = fragments.apply(lambda r: np.mean(r.raw_data.mobility), axis=1)
+        mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
         fragments['mobility'] = mobility
 
         # generate random string for for spec_id
