@@ -9,7 +9,7 @@ ims = imspy_connector.py_annotation
 
 
 # TODO: Add docstrings, add interface to all other classes that bind rust code
-class RustWrapper(ABC):
+class RustWrapperObject(ABC):
     @classmethod
     @abstractmethod
     def from_py_ptr(cls, obj):
@@ -20,7 +20,7 @@ class RustWrapper(ABC):
         pass
 
 
-class SourceType(RustWrapper):
+class SourceType(RustWrapperObject):
     def __init__(self, source_type: str):
         self.known_source_types = ['signal', 'chemical_noise', 'random_noise', 'unknown']
         source_type = source_type.lower()
@@ -47,7 +47,7 @@ class SourceType(RustWrapper):
 
 
 # charge_state: i32, peptide_id: i32, isotope_peak: i32
-class SignalAttributes(RustWrapper):
+class SignalAttributes(RustWrapperObject):
     def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int, description: Union[None, str] = None):
         self.__py_ptr = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak, description)
 
@@ -81,7 +81,7 @@ class SignalAttributes(RustWrapper):
         return self.__py_ptr
 
 
-class ContributionSource(RustWrapper):
+class ContributionSource(RustWrapperObject):
     def __init__(self, intensity_contribution: float, source_type: SourceType,
                  signal_attributes: Union[None, SignalAttributes] = None):
         self.__py_ptr = ims.PyContributionSource(
@@ -117,7 +117,7 @@ class ContributionSource(RustWrapper):
         return self.__py_ptr
 
 
-class PeakAnnotation(RustWrapper):
+class PeakAnnotation(RustWrapperObject):
     def __init__(self, contributions: list[ContributionSource]):
         assert len(contributions) > 0, "At least one contribution is required."
         self.__py_ptr = ims.PyPeakAnnotation(
@@ -141,7 +141,7 @@ class PeakAnnotation(RustWrapper):
         return self.__py_ptr
 
 
-class MzSpectrumAnnotated(RustWrapper):
+class MzSpectrumAnnotated(RustWrapperObject):
     def __init__(self, mz: list[float], intensity: list[float], annotations: list[PeakAnnotation]):
         assert len(mz) == len(intensity) == len(annotations), "Length of mz, intensity and annotations must be equal."
         self.__py_ptr = ims.PyMzSpectrumAnnotated(
@@ -179,7 +179,7 @@ class MzSpectrumAnnotated(RustWrapper):
         return self.__py_ptr
 
 
-class TimsFrameAnnotated(RustWrapper):
+class TimsFrameAnnotated(RustWrapperObject):
     def __init__(self,
                  frame_id: int,
                  retention_time: float,

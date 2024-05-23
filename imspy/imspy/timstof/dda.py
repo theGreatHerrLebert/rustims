@@ -1,7 +1,7 @@
 import sqlite3
 import pandas as pd
 
-from imspy.simulation.annotation import RustWrapper
+from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 from imspy.timstof.frame import TimsFrame
 
@@ -9,7 +9,7 @@ import imspy_connector
 ims = imspy_connector.py_dda
 
 
-class TimsDatasetDDA(TimsDataset, RustWrapper):
+class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
     def __init__(self, data_path: str, in_memory: bool = True):
         super().__init__(data_path=data_path, in_memory=in_memory)
@@ -107,7 +107,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapper):
         return instance
 
 
-class FragmentDDA(RustWrapper):
+class FragmentDDA(RustWrapperObject):
     def __init__(self, frame_id: int, precursor_id: int, collision_energy: float, selected_fragment: TimsFrame):
         self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, collision_energy, selected_fragment.get_frame_ptr())
 

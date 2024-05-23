@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from scipy.signal import find_peaks
 import imspy_connector
 
-from imspy.simulation.annotation import RustWrapper
+from imspy.simulation.annotation import RustWrapperObject
 
 ims = imspy_connector.py_spectrum
 
@@ -29,7 +29,7 @@ def get_peak_integral(peaks: NDArray[np.int32], peak_info: dict) -> NDArray[np.f
     return integrals
 
 
-class IndexedMzSpectrum(RustWrapper):
+class IndexedMzSpectrum(RustWrapperObject):
     def __init__(self, index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """IndexedMzSpectrum class.
 
@@ -124,7 +124,7 @@ class IndexedMzSpectrum(RustWrapper):
         return f"IndexedMzSpectrum(num_peaks={len(self.index)})"
 
 
-class MzSpectrum(RustWrapper):
+class MzSpectrum(RustWrapperObject):
     
     @classmethod
     def from_jsons(cls, jsons: str) -> MzSpectrum:
@@ -333,7 +333,7 @@ class MzSpectrum(RustWrapper):
         return self.__spec_ptr
 
     
-class MzSpectrumVectorized(RustWrapper):
+class MzSpectrumVectorized(RustWrapperObject):
     def __init__(self, indices: NDArray[np.int32], values: NDArray[np.float64], resolution: int):
         """MzSpectrum class.
 
@@ -415,7 +415,7 @@ class MzSpectrumVectorized(RustWrapper):
         return self.__spec_ptr
 
 
-class TimsSpectrum(RustWrapper):
+class TimsSpectrum(RustWrapperObject):
     def __init__(self, frame_id: int, scan: int, retention_time: float, mobility: float, ms_type: int,
                  index: NDArray[np.int32], mz: NDArray[np.float64], intensity: NDArray[np.float64]):
         """TimsSpectrum class.

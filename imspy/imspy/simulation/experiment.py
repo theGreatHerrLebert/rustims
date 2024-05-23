@@ -8,14 +8,14 @@ from numpy.typing import NDArray
 
 import pandas as pd
 
-from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapper
+from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 
 import imspy_connector
 ims = imspy_connector.py_simulation
 
 
-class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
+class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
     def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = 4):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
 
@@ -172,7 +172,7 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapper):
         return self.__py_ptr.count_number_transmissions_parallel(peptide_ids, charges, num_threads)
 
 
-class TimsTofSyntheticPrecursorFrameBuilder(RustWrapper):
+class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
     def __init__(self, db_path: str):
         self.__py_ptr = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)
 

@@ -1,12 +1,12 @@
 import imspy_connector
 
 from imspy.data.spectrum import MzSpectrum
-from imspy.simulation.annotation import RustWrapper
+from imspy.simulation.annotation import RustWrapperObject
 
 ims = imspy_connector.py_sumformula
 
 
-class SumFormula(RustWrapper):
+class SumFormula(RustWrapperObject):
     def __init__(self, sum_formula: str):
         self.__ptr = ims.PySumFormula(sum_formula)
 

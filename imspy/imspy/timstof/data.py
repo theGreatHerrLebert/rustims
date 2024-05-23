@@ -9,7 +9,7 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.simulation.annotation import RustWrapper
+from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof.slice import TimsSlice
 
@@ -17,7 +17,7 @@ import imspy_connector
 ims = imspy_connector.py_dataset
 
 
-class AcquisitionMode(RustWrapper):
+class AcquisitionMode(RustWrapperObject):
     def __init__(self, mode: str):
         """AcquisitionMode class.
 
