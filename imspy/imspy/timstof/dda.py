@@ -109,7 +109,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
 class FragmentDDA(RustWrapperObject):
     def __init__(self, frame_id: int, precursor_id: int, collision_energy: float, selected_fragment: TimsFrame):
-        self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, collision_energy, selected_fragment.get_frame_ptr())
+        self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, collision_energy, selected_fragment.get_py_ptr())
 
     @classmethod
     def from_py_ptr(cls, fragment: ims.PyTimsFragmentDDA):
@@ -131,7 +131,7 @@ class FragmentDDA(RustWrapperObject):
 
     @property
     def selected_fragment(self) -> TimsFrame:
-        return TimsFrame.from_py_tims_frame(self._fragment_ptr.selected_fragment)
+        return TimsFrame.from_py_ptr(self._fragment_ptr.selected_fragment)
 
     def __repr__(self):
         return f"FragmentDDA(frame_id={self.frame_id}, precursor_id={self.precursor_id}, " \

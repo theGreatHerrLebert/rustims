@@ -7,14 +7,14 @@ from tensorflow import sparse as sp
 
 import numpy as np
 from imspy.data.spectrum import TimsSpectrum, IndexedMzSpectrum
-from imspy.simulation.annotation import TimsFrameAnnotated
+from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
 from imspy.utility.utilities import re_index_indices
 
 import imspy_connector
 ims = imspy_connector.py_tims_frame
 
 
-class TimsFrame:
+class TimsFrame(RustWrapperObject):
     def __init__(self, frame_id: int, ms_type: int, retention_time: float, scan: NDArray[np.int32],
                  mobility: NDArray[np.float64], tof: NDArray[np.int32],
                  mz: NDArray[np.float64], intensity: NDArray[np.float64]):
@@ -48,10 +48,10 @@ class TimsFrame:
         Returns:
             TimsFrame: Sum of the two TimsFrames.
         """
-        return TimsFrame.from_py_tims_frame(self.__frame_ptr + other.__frame_ptr)
+        return TimsFrame.from_py_ptr(self.__frame_ptr + other.__frame_ptr)
 
     @classmethod
-    def from_py_tims_frame(cls, frame: ims.PyTimsFrame):
+    def from_py_ptr(cls, frame: ims.PyTimsFrame):
         """Create a TimsFrame from a PyTimsFrame.
 
         Args:
@@ -192,8 +192,8 @@ class TimsFrame:
             TimsFrame: Filtered frame.
         """
 
-        return TimsFrame.from_py_tims_frame(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
-                                                                           intensity_min, intensity_max))
+        return TimsFrame.from_py_ptr(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
+                                                                    intensity_min, intensity_max))
 
     def to_indexed_mz_spectrum(self) -> 'IndexedMzSpectrum':
         """Convert the frame to an IndexedMzSpectrum.
@@ -212,7 +212,7 @@ class TimsFrame:
         Returns:
             TimsFrame: Frame with the given resolution.
         """
-        return TimsFrame.from_py_tims_frame(self.__frame_ptr.to_resolution(resolution))
+        return TimsFrame.from_py_ptr(self.__frame_ptr.to_resolution(resolution))
 
     def vectorized(self, resolution: int = 2) -> 'TimsFrameVectorized':
         """Convert the frame to a vectorized frame.
@@ -223,7 +223,7 @@ class TimsFrame:
         Returns:
             TimsFrameVectorized: Vectorized frame.
         """
-        return TimsFrameVectorized.from_py_tims_frame_vectorized(self.__frame_ptr.vectorized(resolution))
+        return TimsFrameVectorized.from_py_ptr(self.__frame_ptr.vectorized(resolution))
 
     def to_tims_spectra(self) -> List['TimsSpectrum']:
         """Convert the frame to a list of TimsSpectrum.
@@ -259,7 +259,7 @@ class TimsFrame:
         Returns:
             TimsFrame: TimsFrame created from the windows.
         """
-        return TimsFrame.from_py_tims_frame(ims.PyTimsFrame.from_windows(
+        return TimsFrame.from_py_ptr(ims.PyTimsFrame.from_windows(
             [spec.get_py_ptr() for spec in windows]
         ))
 
@@ -273,7 +273,7 @@ class TimsFrame:
         Returns:
             TimsFrame: TimsFrame created from the TimsSpectrum.
         """
-        return TimsFrame.from_py_tims_frame(ims.PyTimsFrame.from_tims_spectra(
+        return TimsFrame.from_py_ptr(ims.PyTimsFrame.from_tims_spectra(
             [spec.get_py_ptr() for spec in spectra]
         ))
 
@@ -302,7 +302,7 @@ class TimsFrame:
         """
         return self.__frame_ptr.get_inverse_mobility_along_scan_marginal()
 
-    def get_frame_ptr(self):
+    def get_py_ptr(self):
         return self.__frame_ptr
 
     def __repr__(self):
@@ -320,10 +320,10 @@ class TimsFrame:
         """
 
         assert 0.0 <= take_probability <= 1.0, "The take probability must be between 0 and 1."
-        return TimsFrame.from_py_tims_frame(self.__frame_ptr.random_subsample_frame(take_probability))
+        return TimsFrame.from_py_ptr(self.__frame_ptr.random_subsample_frame(take_probability))
 
 
-class TimsFrameVectorized:
+class TimsFrameVectorized(RustWrapperObject):
     def __init__(self, frame_id: int, ms_type: int, retention_time: float, scan: NDArray[np.int32],
                  mobility: NDArray[np.float64], tof: NDArray[np.int32],
                  indices: NDArray[np.int32], intensity: NDArray[np.float64]):
@@ -350,7 +350,7 @@ class TimsFrameVectorized:
                                                       intensity)
 
     @classmethod
-    def from_py_tims_frame_vectorized(cls, frame: ims.PyTimsFrameVectorized):
+    def from_py_ptr(cls, frame: ims.PyTimsFrameVectorized):
         """Create a TimsFrameVectorized from a PyTimsFrameVectorized.
 
         Args:
@@ -511,5 +511,8 @@ class TimsFrameVectorized:
             TimsFrameVectorized: Filtered frame.
         """
 
-        return TimsFrameVectorized.from_py_tims_frame_vectorized(self.__frame_ptr.filter_ranged(
+        return TimsFrameVectorized.from_py_ptr(self.__frame_ptr.filter_ranged(
             mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max, intensity_min, intensity_max))
+
+    def get_py_ptr(self):
+        return self.__frame_ptr

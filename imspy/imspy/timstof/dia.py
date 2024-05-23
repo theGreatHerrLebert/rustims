@@ -1,6 +1,7 @@
 import sqlite3
 from typing import List
 
+from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 
@@ -8,7 +9,7 @@ import imspy_connector
 ims = imspy_connector.py_dia
 
 
-class TimsDatasetDIA(TimsDataset):
+class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def __init__(self, data_path: str, in_memory: bool = True):
         super().__init__(data_path=data_path, in_memory=in_memory)
         self.__dataset = ims.PyTimsDatasetDIA(self.data_path, self.binary_path, in_memory)
@@ -40,3 +41,12 @@ class TimsDatasetDIA(TimsDataset):
             List[bytes]: Compressed data.
         """
         return self.__dataset.read_compressed_data_full()
+
+    @classmethod
+    def from_py_ptr(cls, obj):
+        instance = cls.__new__(cls)
+        instance.__dataset = obj
+        return instance
+
+    def get_py_ptr(self):
+        return self.__dataset

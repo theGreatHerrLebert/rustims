@@ -24,7 +24,7 @@ class TimsTofQuadrupoleDIA:
                                                                     spectrum.get_py_ptr(), min_probability))
 
     def transmit_frame(self, frame: TimsFrame, min_probability: float | None = None) -> TimsFrame:
-        return TimsFrame.from_py_tims_frame(self.handle.transmit_tims_frame(frame.get_frame_ptr(), min_probability))
+        return TimsFrame.from_py_ptr(self.handle.transmit_tims_frame(frame.get_py_ptr(), min_probability))
 
     def frame_to_window_group(self, frame_id: int) -> int:
         return self.handle.frame_to_window_group(frame_id)

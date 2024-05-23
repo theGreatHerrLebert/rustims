@@ -55,7 +55,7 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
         frame = self.__py_ptr.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform,
                                           precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag)
 
-        return TimsFrame.from_py_tims_frame(frame)
+        return TimsFrame.from_py_ptr(frame)
 
     def build_frames(self,
                      frame_ids: List[int],
@@ -87,7 +87,7 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
         frames = self.__py_ptr.build_frames(frame_ids, fragment, mz_noise_precursor, mz_noise_uniform,
                                             precursor_noise_ppm,
                                             mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
-        return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
+        return [TimsFrame.from_py_ptr(frame) for frame in frames]
 
     def build_frame_annotated(self, frame_id: int, fragment: bool = True, mz_noise_precursor: bool = False,
                               mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
@@ -178,7 +178,7 @@ class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
 
     def build_precursor_frame(self, frame_id: int, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrame:
         frame = self.__py_ptr.build_precursor_frame(frame_id, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag)
-        return TimsFrame.from_py_tims_frame(frame)
+        return TimsFrame.from_py_ptr(frame)
 
     def build_precursor_frames(self, frame_ids: List[int], mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
                                right_drag: bool = True,
@@ -187,7 +187,7 @@ class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
                                                       precursor_noise_ppm,
                                                       right_drag,
                                                       num_threads)
-        return [TimsFrame.from_py_tims_frame(frame) for frame in frames]
+        return [TimsFrame.from_py_ptr(frame) for frame in frames]
 
     def build_precursor_frame_annotated(self, frame_id: int, mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrameAnnotated:
         frame = self.__py_ptr.build_precursor_frame_annotated(frame_id, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag)
