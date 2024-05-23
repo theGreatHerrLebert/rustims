@@ -197,11 +197,12 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str):
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm") -> Tuple[NDArray, NDArray]:
+def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.005) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
         psms: List of PeptideSpectrumMatch objects
         method: Method to use for training data generation
+        q_max: Maximum q-value allowed for positive examples
 
     Returns:
         Tuple[NDArray, NDArray]: X_train and Y_train
@@ -218,7 +219,7 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
                    right_on=["spec_idx", "match_idx", "decoy"])
 
     # select best positive examples
-    TARGET = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.001)]
+    TARGET = TDC[(TDC.decoy == False) & (TDC.q_value <= q_max)]
     X_target, Y_target = get_features(TARGET)
 
     # select all decoys

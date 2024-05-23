@@ -192,6 +192,10 @@ impl PyTimsFrame {
         return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
     }
 
+    pub fn get_inverse_mobility_along_scan_marginal(&self) -> f64 {
+        return self.inner.get_inverse_mobility_along_scan_marginal();
+    }
+
     #[staticmethod]
     pub fn from_windows(_py: Python, windows: &PyList) -> PyResult<Self> {
         let mut spectra: Vec<TimsSpectrum> = Vec::new();

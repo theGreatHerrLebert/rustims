@@ -402,6 +402,26 @@ impl TimsFrame {
             annotations,
         )
     }
+
+    pub fn get_inverse_mobility_along_scan_marginal(&self) -> f64 {
+        let mut marginal_map: BTreeMap<i32, (f64, f64)> = BTreeMap::new();
+        // go over all data points of scan, inv_mob and intensity
+        for (scan, inv_mob, intensity) in izip!(&self.scan, &self.ims_frame.mobility, &self.ims_frame.intensity) {
+            // create a key for the map
+            let key = *scan;
+            // get the entry from the map or insert a new one
+            let entry = marginal_map.entry(key).or_insert((0.0, 0.0));
+            // update the entry with the current intensity adding it to the existing intensity
+            entry.0 += *intensity;
+            // update the entry with the current inverse mobility, overwriting the existing value
+            entry.1 = *inv_mob;
+        }
+
+        // get the inverse mobility with the highest intensity
+        let (_, max_inv_mob) = marginal_map.iter().max_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap_or(std::cmp::Ordering::Equal)).unwrap().1;
+
+        *max_inv_mob
+    }
 }
 
 struct AggregateData {
