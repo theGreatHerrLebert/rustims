@@ -34,10 +34,10 @@ def calculate_transmission_dependent_fragment_ion_isotope_distribution(
     Returns:
         MzSpectrum: Transmission dependent fragment ion isotope distribution.
     """
-    return MzSpectrum.from_py_mz_spectrum(
+    return MzSpectrum.from_py_ptr(
         ims.calculate_transmission_dependent_fragment_ion_isotope_distribution(
-            target_spec.get_spec_ptr(),
-            complement_spec.get_spec_ptr(),
-            transmitted_isotopes.get_spec_ptr(), max_isotope
+            target_spec.get_py_ptr(),
+            complement_spec.get_py_ptr(),
+            transmitted_isotopes.get_py_ptr(), max_isotope
         )
     )

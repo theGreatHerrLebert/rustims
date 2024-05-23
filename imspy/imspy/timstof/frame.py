@@ -201,7 +201,7 @@ class TimsFrame:
         Returns:
             IndexedMzSpectrum: IndexedMzSpectrum.
         """
-        return IndexedMzSpectrum.from_py_indexed_mz_spectrum(self.__frame_ptr.to_indexed_mz_spectrum())
+        return IndexedMzSpectrum.from_py_ptr(self.__frame_ptr.to_indexed_mz_spectrum())
 
     def to_resolution(self, resolution: int) -> 'TimsFrame':
         """Convert the frame to a given resolution.
@@ -260,7 +260,7 @@ class TimsFrame:
             TimsFrame: TimsFrame created from the windows.
         """
         return TimsFrame.from_py_tims_frame(ims.PyTimsFrame.from_windows(
-            [spec.get_spec_ptr() for spec in windows]
+            [spec.get_py_ptr() for spec in windows]
         ))
 
     @classmethod
@@ -274,7 +274,7 @@ class TimsFrame:
             TimsFrame: TimsFrame created from the TimsSpectrum.
         """
         return TimsFrame.from_py_tims_frame(ims.PyTimsFrame.from_tims_spectra(
-            [spec.get_spec_ptr() for spec in spectra]
+            [spec.get_py_ptr() for spec in spectra]
         ))
 
     def to_dense_windows(self, window_length: float = 10, resolution: int = 1, overlapping: bool = True,

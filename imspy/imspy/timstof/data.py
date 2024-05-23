@@ -9,6 +9,7 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
+from imspy.simulation.annotation import RustWrapper
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof.slice import TimsSlice
 
@@ -16,7 +17,7 @@ import imspy_connector
 ims = imspy_connector.py_dataset
 
 
-class AcquisitionMode:
+class AcquisitionMode(RustWrapper):
     def __init__(self, mode: str):
         """AcquisitionMode class.
 
@@ -37,7 +38,7 @@ class AcquisitionMode:
         return self.__mode_ptr.acquisition_mode
 
     @classmethod
-    def from_ptr(cls, ptr: ims.PyAcquisitionMode):
+    def from_py_ptr(cls, ptr: ims.PyAcquisitionMode):
         """Get an AcquisitionMode from a pointer.
 
         Args:
@@ -52,6 +53,9 @@ class AcquisitionMode:
 
     def __repr__(self):
         return f"AcquisitionMode({self.mode})"
+
+    def get_py_ptr(self):
+        return self.__mode_ptr
 
 
 class TimsDataset(ABC):

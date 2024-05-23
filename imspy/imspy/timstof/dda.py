@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 
+from imspy.simulation.annotation import RustWrapper
 from imspy.timstof.data import TimsDataset
 from imspy.timstof.frame import TimsFrame
 
@@ -8,7 +9,7 @@ import imspy_connector
 ims = imspy_connector.py_dda
 
 
-class TimsDatasetDDA(TimsDataset):
+class TimsDatasetDDA(TimsDataset, RustWrapper):
 
     def __init__(self, data_path: str, in_memory: bool = True):
         super().__init__(data_path=data_path, in_memory=in_memory)
@@ -64,7 +65,7 @@ class TimsDatasetDDA(TimsDataset):
         Returns:
             List[FragmentDDA]: List of PASEF fragments.
         """
-        pasef_fragments = [FragmentDDA.from_py_tims_fragment_dda(fragment)
+        pasef_fragments = [FragmentDDA.from_py_ptr(fragment)
                            for fragment in self.__dataset.get_pasef_fragments(num_threads)]
 
         pasef_fragments = pd.DataFrame({
@@ -96,13 +97,22 @@ class TimsDatasetDDA(TimsDataset):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "
                 f"fragmented_precursors={self.fragmented_precursors.shape[0]})")
 
+    def get_py_ptr(self):
+        return self.__dataset
 
-class FragmentDDA:
+    @classmethod
+    def from_py_ptr(cls, ptr):
+        instance = cls.__new__(cls)
+        instance.__dataset = ptr
+        return instance
+
+
+class FragmentDDA(RustWrapper):
     def __init__(self, frame_id: int, precursor_id: int, collision_energy: float, selected_fragment: TimsFrame):
         self._fragment_ptr = ims.PyTimsFragmentDDA(frame_id, precursor_id, collision_energy, selected_fragment.get_frame_ptr())
 
     @classmethod
-    def from_py_tims_fragment_dda(cls, fragment: ims.PyTimsFragmentDDA):
+    def from_py_ptr(cls, fragment: ims.PyTimsFragmentDDA):
         instance = cls.__new__(cls)
         instance._fragment_ptr = fragment
         return instance
@@ -128,5 +138,5 @@ class FragmentDDA:
                f"collision_energy={self.collision_energy}, " \
                f"selected_fragment={self.selected_fragment})"
 
-    def get_fragment_ptr(self):
+    def get_py_ptr(self):
         return self._fragment_ptr
