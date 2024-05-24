@@ -350,7 +350,7 @@ def main():
         prosit_model = Prosit2023TimsTofWrapper(verbose=False)
         # the ion mobility predictor model
         im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
-                                                  load_tokenizer_from_resources("tokenizer_ionmob"))
+                                                  load_tokenizer_from_resources("tokenizer-ptm"))
         # the retention time predictor model
         rt_predictor = DeepChromatographyApex(load_deep_retention_time(),
                                               load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)

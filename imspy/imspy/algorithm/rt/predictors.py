@@ -14,7 +14,7 @@ def load_deep_retention_time() -> tf.keras.models.Model:
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('DeepRetentionTimePredictor'))
+    return tf.keras.models.load_model(get_model_path('rt/DeepRetentionTimePredictor'))
 
 
 class PeptideChromatographyApex(ABC):
