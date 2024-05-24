@@ -39,7 +39,7 @@ def token_seq_to_index(seq: str) -> List[int]:
     """
     tokenized_seq = tokenize_unimod_sequence(seq)
 
-    return [PTMS_ALPHABET[s] for s in seq]
+    return [PTMS_ALPHABET[s] for s in tokenized_seq]
 
 
 # Your existing code for data preparation, with modifications to name the inputs
