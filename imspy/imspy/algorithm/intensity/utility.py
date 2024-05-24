@@ -2,20 +2,20 @@ from numpy.typing import NDArray
 from typing import List
 
 import numpy as np
-
 import pandas as pd
 
 import tensorflow as tf
 from imspy.simulation.utility import sequence_to_numpy
-from dlomix.constants import ALPHABET_UNMOD
+from dlomix.constants import PTMS_ALPHABET
 
 from tensorflow.keras.layers.experimental import preprocessing
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 
+from imspy.utility import tokenize_unimod_sequence
 
-def seq_to_index(seq: str) -> List[int]:
+def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     """Convert a sequence to a list of indices into the alphabet.
 
     Args:
@@ -24,7 +24,20 @@ def seq_to_index(seq: str) -> List[int]:
     Returns:
         A list of integers, each representing an index into the alphabet.
     """
-    return [ALPHABET_UNMOD[s] for s in seq]
+    ret_arr = np.zeros(max_length, dtype=np.int32)
+    tokenized_seq = tokenize_unimod_sequence(seq)[1:-1]
+    assert len(tokenized_seq) <= max_length, f"Allowed sequence length is {max_length}, but got {len(tokenized_seq)}"
+
+    aa_indices = []
+
+    for s in tokenized_seq:
+        if s in PTMS_ALPHABET:
+            aa_indices.append(PTMS_ALPHABET[s])
+        else:
+            aa_indices.append(0)
+
+    ret_arr[:len(aa_indices)] = aa_indices
+    return ret_arr
 
 
 # Your existing code for data preparation, with modifications to name the inputs
@@ -41,13 +54,8 @@ def generate_prosit_intensity_prediction_dataset(
     elif len(collision_energies.shape) == 1:
         collision_energies = np.expand_dims(collision_energies, 1)
 
-    # Create a string lookup layer to convert sequences to indices, and one-hot encode charges
-    string_lookup = preprocessing.StringLookup(
-        vocabulary=list(ALPHABET_UNMOD.keys())
-    )
-
     charges = tf.one_hot(charges - 1, depth=6)
-    sequences = tf.cast(string_lookup([sequence_to_numpy(s) for s in sequences]), dtype=tf.int32)
+    sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
 
     # Create a dataset that yields batches in the format expected by the model??
     dataset = tf.data.Dataset.from_tensor_slices((
