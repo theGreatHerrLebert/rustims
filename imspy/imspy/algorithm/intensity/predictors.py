@@ -138,12 +138,11 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             batch_size: int = 512,
             flatten: bool = False,
     ) -> List[NDArray]:
-        sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]
         collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
 
         tf_ds = generate_prosit_intensity_prediction_dataset(
-            sequences_unmod,
+            sequences,
             charges,
             np.expand_dims(collision_energies_norm, 1)).batch(batch_size)
 
