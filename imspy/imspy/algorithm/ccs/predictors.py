@@ -85,23 +85,26 @@ class SquareRootProjectionLayer(tf.keras.layers.Layer):
     Simple sqrt regression layer, calculates ccs value as linear mapping from mz, charge -&gt; ccs
     """
 
-    def __init__(self, slopes, intercepts):
+    def __init__(self, slopes, intercepts, trainable: bool = True):
         super(SquareRootProjectionLayer, self).__init__()
         self.slopes_init = slopes
         self.intercepts_init = intercepts
+        self.trainable = trainable
         self.slopes = None
         self.intercepts = None
 
     def build(self, input_shape):
         num_charges = input_shape[1][-1]
-        self.slopes = self.add_weight(name='slopes',
+
+        self.slopes = self.add_weight(name='sqrt-coefficients',
                                       shape=(num_charges,),
                                       initializer=tf.constant_initializer(self.slopes_init),
-                                      trainable=True)
+                                      trainable=self.trainable)
+
         self.intercepts = self.add_weight(name='intercepts',
                                           shape=(num_charges,),
                                           initializer=tf.constant_initializer(self.intercepts_init),
-                                          trainable=True)
+                                          trainable=self.trainable)
 
     def call(self, inputs):
         mz, charge = inputs[0], inputs[1]
