@@ -29,7 +29,7 @@ def load_prosit_2023_timsTOF_predictor():
     Returns:
         The pretrained deep predictor model
     """
-    return tf.saved_model.load(get_model_path('Prosit2023TimsTOFPredictor'))
+    return tf.saved_model.load(get_model_path('intensity/Prosit2023TimsTOFPredictor'))
 
 
 class IonIntensityPredictor(ABC):

@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.models import load_model
+
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 from imspy.chemistry.mobility import ccs_to_one_over_k0
@@ -15,7 +17,16 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('IonmobPredictor'))
+
+    path = get_model_path('ccs/ionmob-24-05-2024.keras')
+
+    # Ensure that the custom objects are registered when loading the model
+    custom_objects = {
+        'SquareRootProjectionLayer': SquareRootProjectionLayer,
+        'GRUCCSPredictor': GRUCCSPredictor
+    }
+
+    return load_model(path, custom_objects=custom_objects)
 
 
 class PeptideIonMobilityApex(ABC):
