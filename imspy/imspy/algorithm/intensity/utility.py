@@ -14,6 +14,8 @@ from tensorflow.keras.layers.experimental import preprocessing
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 
+from imspy.utility import tokenize_unimod_sequence
+
 
 def seq_to_index(seq: str) -> List[int]:
     """Convert a sequence to a list of indices into the alphabet.
@@ -25,6 +27,19 @@ def seq_to_index(seq: str) -> List[int]:
         A list of integers, each representing an index into the alphabet.
     """
     return [ALPHABET_UNMOD[s] for s in seq]
+
+def token_seq_to_index(seq: str) -> List[int]:
+    """Convert a sequence to a list of indices into the alphabet.
+
+    Args:
+        seq: A string representing a sequence of amino acids.
+
+    Returns:
+        A list of integers, each representing an index into the alphabet.
+    """
+    tokenized_seq = tokenize_unimod_sequence(seq)
+
+    return [PTMS_ALPHABET[s] for s in seq]
 
 
 # Your existing code for data preparation, with modifications to name the inputs
