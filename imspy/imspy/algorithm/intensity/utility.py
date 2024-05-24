@@ -37,7 +37,7 @@ def token_seq_to_index(seq: str) -> List[int]:
     Returns:
         A list of integers, each representing an index into the alphabet.
     """
-    tokenized_seq = tokenize_unimod_sequence(seq)
+    tokenized_seq = tokenize_unimod_sequence(seq)[1:-1]
 
     return [PTMS_ALPHABET[s] for s in tokenized_seq]
 
