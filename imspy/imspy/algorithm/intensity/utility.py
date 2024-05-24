@@ -26,7 +26,7 @@ def seq_to_index(seq: str) -> List[int]:
     Returns:
         A list of integers, each representing an index into the alphabet.
     """
-    return [ALPHABET_UNMOD[s] for s in seq]
+    return np.array([ALPHABET_UNMOD[s] for s in seq])
 
 def token_seq_to_index(seq: str) -> List[int]:
     """Convert a sequence to a list of indices into the alphabet.
@@ -62,7 +62,7 @@ def generate_prosit_intensity_prediction_dataset(
     )
 
     charges = tf.one_hot(charges - 1, depth=6)
-    sequences = tf.cast(string_lookup([sequence_to_numpy(s) for s in sequences]), dtype=tf.int32)
+    sequences = tf.cast([token_seq_to_index(s) for s in sequences], dtype=tf.int32)
 
     # Create a dataset that yields batches in the format expected by the model??
     dataset = tf.data.Dataset.from_tensor_slices((
