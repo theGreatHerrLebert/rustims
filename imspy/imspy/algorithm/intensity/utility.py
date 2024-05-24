@@ -7,7 +7,7 @@ import pandas as pd
 
 import tensorflow as tf
 from imspy.simulation.utility import sequence_to_numpy
-from dlomix.constants import ALPHABET_UNMOD
+from dlomix.constants import ALPHABET_UNMOD, PTMS_ALPHABET
 
 from tensorflow.keras.layers.experimental import preprocessing
 
@@ -43,7 +43,7 @@ def generate_prosit_intensity_prediction_dataset(
 
     # Create a string lookup layer to convert sequences to indices, and one-hot encode charges
     string_lookup = preprocessing.StringLookup(
-        vocabulary=list(ALPHABET_UNMOD.keys())
+        vocabulary=list(PTMS_ALPHABET.keys())
     )
 
     charges = tf.one_hot(charges - 1, depth=6)
