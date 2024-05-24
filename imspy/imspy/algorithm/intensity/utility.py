@@ -2,12 +2,11 @@ from numpy.typing import NDArray
 from typing import List
 
 import numpy as np
-
 import pandas as pd
 
 import tensorflow as tf
 from imspy.simulation.utility import sequence_to_numpy
-from dlomix.constants import ALPHABET_UNMOD, PTMS_ALPHABET
+from dlomix.constants import PTMS_ALPHABET
 
 from tensorflow.keras.layers.experimental import preprocessing
 
@@ -28,7 +27,15 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     ret_arr = np.zeros(max_length, dtype=np.int32)
     tokenized_seq = tokenize_unimod_sequence(seq)[1:-1]
     assert len(tokenized_seq) <= max_length, f"Allowed sequence length is {max_length}, but got {len(tokenized_seq)}"
-    aa_indices = [PTMS_ALPHABET[s] for s in tokenized_seq]
+
+    aa_indices = []
+
+    for s in tokenized_seq:
+        if s in PTMS_ALPHABET:
+            aa_indices.append(PTMS_ALPHABET[s])
+        else:
+            aa_indices.append(0)
+
     ret_arr[:len(aa_indices)] = aa_indices
     return ret_arr
 
