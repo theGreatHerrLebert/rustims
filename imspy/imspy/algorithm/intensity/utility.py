@@ -16,8 +16,7 @@ from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
 
 from imspy.utility import tokenize_unimod_sequence
 
-
-def seq_to_index(seq: str) -> List[int]:
+def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     """Convert a sequence to a list of indices into the alphabet.
 
     Args:
@@ -26,20 +25,12 @@ def seq_to_index(seq: str) -> List[int]:
     Returns:
         A list of integers, each representing an index into the alphabet.
     """
-    return np.array([ALPHABET_UNMOD[s] for s in seq])
-
-def token_seq_to_index(seq: str) -> List[int]:
-    """Convert a sequence to a list of indices into the alphabet.
-
-    Args:
-        seq: A string representing a sequence of amino acids.
-
-    Returns:
-        A list of integers, each representing an index into the alphabet.
-    """
+    ret_arr = np.zeros(max_length, dtype=np.int32)
     tokenized_seq = tokenize_unimod_sequence(seq)[1:-1]
-
-    return [PTMS_ALPHABET[s] for s in tokenized_seq]
+    assert len(tokenized_seq) <= max_length, f"Allowed sequence length is {max_length}, but got {len(tokenized_seq)}"
+    aa_indices = [PTMS_ALPHABET[s] for s in tokenized_seq]
+    ret_arr[:len(aa_indices)] = aa_indices
+    return ret_arr
 
 
 # Your existing code for data preparation, with modifications to name the inputs
@@ -56,13 +47,8 @@ def generate_prosit_intensity_prediction_dataset(
     elif len(collision_energies.shape) == 1:
         collision_energies = np.expand_dims(collision_energies, 1)
 
-    # Create a string lookup layer to convert sequences to indices, and one-hot encode charges
-    string_lookup = preprocessing.StringLookup(
-        vocabulary=list(PTMS_ALPHABET.keys())
-    )
-
     charges = tf.one_hot(charges - 1, depth=6)
-    sequences = tf.cast([token_seq_to_index(s) for s in sequences], dtype=tf.int32)
+    sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
 
     # Create a dataset that yields batches in the format expected by the model??
     dataset = tf.data.Dataset.from_tensor_slices((
