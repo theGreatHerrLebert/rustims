@@ -500,6 +500,13 @@ def main():
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
     psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits)
+
+    # serialize all PSMs to JSON binary
+    bts = psms_to_json_bin(psms)
+
+    # write all PSMs to binary file
+    write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms")
+
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 

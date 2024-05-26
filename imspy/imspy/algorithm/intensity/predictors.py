@@ -98,7 +98,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             print("Generating Prosit compatible input data...")
 
         data['collision_energy'] = data.apply(lambda r: r.collision_energy / divide_collision_energy_by, axis=1)
-        data['sequence_length'] = data.apply(lambda r: len(r.sequence_unmod), axis=1)
+        data['sequence_length'] = data.apply(lambda r: len(remove_unimod_annotation(r.sequence)), axis=1)
 
         tf_ds = (generate_prosit_intensity_prediction_dataset(
             data.sequence,
