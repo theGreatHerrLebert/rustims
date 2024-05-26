@@ -54,12 +54,12 @@ def simulate_fragment_intensities(
     ):
 
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
-        batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
+        batch['intensity_flat'] = batch.apply(lambda r: set_percentage_to_zero(flat_intensity_to_sparse(r.intensity),
+                                                                               percentage=down_sample_factor), axis=1)
 
         batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'intensity_flat']]
 
-        R = batch.apply(lambda r: set_percentage_to_zero(flat_intensity_to_sparse(r.intensity_flat),
-                                                         percentage=down_sample_factor), axis=1)
+        R = batch.apply(lambda r: flat_intensity_to_sparse(r.intensity_flat), axis=1)
         R = R.apply(lambda r: (python_list_to_json_string(r[0], as_float=False), python_list_to_json_string(r[1])))
 
         batch['indices'] = R.apply(lambda r: r[0])
