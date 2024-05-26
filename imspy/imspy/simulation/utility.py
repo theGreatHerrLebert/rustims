@@ -473,7 +473,7 @@ def flat_intensity_to_sparse(intensity_flat: NDArray, num_elements: int = 174):
     return indices.astype(np.int32), values
 
 
-def set_percentage_to_zero_single_row(row, percentage):
+def set_percentage_to_zero(row, percentage):
     """
     Sets a given percentage of the non-zero elements of a numpy vector to zero,
     where the probability of being set to 0 is inversely proportional to the element's value
