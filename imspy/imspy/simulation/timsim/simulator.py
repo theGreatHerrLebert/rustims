@@ -223,12 +223,6 @@ def main():
     # Print table
     print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
-    # print a tabular representation of the arguments
-    print("\nArguments:")
-    for arg in vars(args):
-        print(f"{arg}: {getattr(args, arg)}")
-    print("\n")
-
     # Use the arguments
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
