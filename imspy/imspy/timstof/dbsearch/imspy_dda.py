@@ -14,7 +14,7 @@ from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_in
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex, load_deep_ccs_predictor, \
-    load_tokenizer_from_resources, load_deep_retention_time
+    load_tokenizer_from_resources, load_deep_retention_time_predictor
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
@@ -352,7 +352,7 @@ def main():
         im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                                   load_tokenizer_from_resources("tokenizer-ptm"))
         # the retention time predictor model
-        rt_predictor = DeepChromatographyApex(load_deep_retention_time(),
+        rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
         if args.verbose:

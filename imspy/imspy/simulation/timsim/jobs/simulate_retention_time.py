@@ -1,6 +1,6 @@
 import pandas as pd
 
-from imspy.algorithm import DeepChromatographyApex, load_tokenizer_from_resources, load_deep_retention_time
+from imspy.algorithm import DeepChromatographyApex, load_tokenizer_from_resources, load_deep_retention_time_predictor
 
 
 def simulate_retention_times(
@@ -14,7 +14,7 @@ def simulate_retention_times(
 
     # create RTColumn instance
     RTColumn = DeepChromatographyApex(
-        model=load_deep_retention_time(),
+        model=load_deep_retention_time_predictor(),
         tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
         verbose=verbose
     )
