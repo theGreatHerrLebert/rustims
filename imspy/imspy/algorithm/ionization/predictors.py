@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 
 from tqdm import tqdm
+from tensorflow.keras.models import load_model
 
 from imspy.algorithm.utility import get_model_path
 from imspy.utility import tokenize_unimod_sequence
@@ -20,7 +21,13 @@ def load_deep_charge_state_predictor() -> tf.keras.models.Model:
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('DeepChargeStatePredictor'))
+    path = get_model_path('charge/chargepred-26-05-2024.keras')
+
+    custom_objects = {
+        'GRUChargeStatePredictor': GRUChargeStatePredictor
+    }
+
+    return load_model(path, custom_objects=custom_objects)
 
 
 def charge_state_distribution_from_sequence_rust(sequence: str, max_charge: int = None,
@@ -156,6 +163,7 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
         return pd.DataFrame(r_table)
 
 
+@tf.keras.saving.register_keras_serializable()
 class GRUChargeStatePredictor(tf.keras.models.Model):
 
     def __init__(self,
@@ -169,34 +177,55 @@ class GRUChargeStatePredictor(tf.keras.models.Model):
                  do=0.2):
         super(GRUChargeStatePredictor, self).__init__()
 
+        self.num_tokens = num_tokens
+        self.max_charge = max_charge
+        self.seq_len = seq_len
+        self.emb_dim = emb_dim
+        self.gru_1 = gru_1
+        self.gru_2 = gru_2
+        self.rdo = rdo
+        self.do = do
+
         self.emb = tf.keras.layers.Embedding(input_dim=num_tokens + 1, output_dim=emb_dim, input_length=seq_len)
-
-        self.gru1 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_1, return_sequences=True,
-                                                                      name='GRU1'))
-
-        self.gru2 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_2, return_sequences=False,
-                                                                      name='GRU2',
-                                                                      recurrent_dropout=rdo))
-
-        self.dense1 = tf.keras.layers.Dense(128, activation='relu', name='Dense1',
-                                            kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
-
-        self.dense2 = tf.keras.layers.Dense(64, activation='relu', name='Dense2',
-                                            kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
-
+        self.gru1 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_1, return_sequences=True, name='GRU1'))
+        self.gru2 = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(gru_2, return_sequences=False, name='GRU2', recurrent_dropout=rdo))
+        self.dense1 = tf.keras.layers.Dense(128, activation='relu', name='Dense1', kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
+        self.dense2 = tf.keras.layers.Dense(64, activation='relu', name='Dense2', kernel_regularizer=tf.keras.regularizers.l1_l2(1e-3, 1e-3))
         self.dropout = tf.keras.layers.Dropout(do, name='Dropout')
-
         self.out = tf.keras.layers.Dense(max_charge, activation='softmax', name='Output')
 
-    def call(self, inputs, **kwargs):
-        """
-        :param inputs: should contain: (sequence)
-        """
-        # get inputs
+    def build(self, input_shape):
+        self.emb.build((input_shape[0], self.seq_len))
+        self.gru1.build((input_shape[0], self.seq_len, self.emb.output_dim))
+        gru1_output_dim = self.gru1.forward_layer.units + self.gru1.backward_layer.units
+        self.gru2.build((input_shape[0], self.seq_len, gru1_output_dim))
+        gru2_output_dim = self.gru2.forward_layer.units + self.gru2.backward_layer.units
+        self.dense1.build((input_shape[0], gru2_output_dim))
+        self.dense2.build((input_shape[0], self.dense1.units))
+        self.dropout.build((input_shape[0], self.dense1.units))
+        self.out.build((input_shape[0], self.dense2.units))
+        super(GRUChargeStatePredictor, self).build(input_shape)
+
+    def call(self, inputs, training=False):
         seq = inputs
-        # sequence learning
         x_recurrent = self.gru2(self.gru1(self.emb(seq)))
-        # regularize
-        d1 = self.dropout(self.dense1(x_recurrent))
-        # output
+        d1 = self.dropout(self.dense1(x_recurrent), training=training)
         return self.out(self.dense2(d1))
+
+    def get_config(self):
+        config = super(GRUChargeStatePredictor, self).get_config()
+        config.update({
+            "num_tokens": self.num_tokens,
+            "max_charge": self.max_charge,
+            "seq_len": self.seq_len,
+            "emb_dim": self.emb_dim,
+            "gru_1": self.gru_1,
+            "gru_2": self.gru_2,
+            "rdo": self.rdo,
+            "do": self.do,
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
