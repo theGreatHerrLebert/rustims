@@ -517,9 +517,13 @@ def set_percentage_to_zero(row, percentage):
     # Find non-zero elements
     non_zero_indices = np.nonzero(row)[0]
 
-    # Choose indices to be zeroed based on the calculated probabilities
-    chosen_indices = np.random.choice(non_zero_indices, num_elements_to_zero, replace=False,
-                                      p=probabilities[non_zero_indices])
+    try:
+        # Choose indices to be zeroed based on the calculated probabilities
+        chosen_indices = np.random.choice(non_zero_indices, num_elements_to_zero, replace=False,
+                                          p=probabilities[non_zero_indices])
+    except:
+        print(probabilities[non_zero_indices])
+        return result
 
     # Set the chosen elements to zero
     result[chosen_indices] = 0
