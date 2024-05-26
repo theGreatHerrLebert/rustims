@@ -508,7 +508,7 @@ def set_percentage_to_zero(row, percentage):
     non_zero_mask = result != 0
 
     # Inverse of non-zero, non-negative values
-    inverse_values[non_zero_mask] = 1.0 / (result[non_zero_mask] * 1000)
+    inverse_values[non_zero_mask] = 1.0 / (result[non_zero_mask] * 10_000.00)
 
     row_sum = inverse_values.sum()
     if row_sum == 0:
