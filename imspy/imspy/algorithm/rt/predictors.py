@@ -10,7 +10,7 @@ from imspy.simulation.utility import irt_to_rts_numba
 from tensorflow.keras.models import load_model
 
 
-def load_deep_retention_time() -> tf.keras.models.Model:
+def load_deep_retention_time_predictor() -> tf.keras.models.Model:
 
     path = get_model_path('rt/rtpred-26-05-2024.keras')
 
