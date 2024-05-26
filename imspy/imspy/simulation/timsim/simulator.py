@@ -184,6 +184,14 @@ def main():
         help="Maximum intensity for noise reference data (default: 30)"
     )
 
+    parser.add_argument(
+        "--down_sample_factor",
+        type=float,
+        default=0.5,
+        help="Down sample fragment peaks generated, sampling probability "
+             "is inverse proportional to intensity (default: 0.5)"
+    )
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -357,6 +365,7 @@ def main():
         batch_size=args.batch_size,
         verbose=verbose,
         num_threads=args.num_threads,
+        down_sample_factor=args.down_sample_factor,
     )
 
     # JOB 10: Assemble frames
