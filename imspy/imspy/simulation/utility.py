@@ -493,6 +493,7 @@ def set_percentage_to_zero(row, percentage):
         raise ValueError("Input must be a 1D vector")
 
     result = row.copy()
+    result[result == -1] = 0
 
     # Calculate the total number of non-zero elements to be set to zero
     total_non_zero_elements = np.count_nonzero(row)
