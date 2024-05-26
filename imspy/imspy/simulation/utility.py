@@ -473,14 +473,14 @@ def flat_intensity_to_sparse(intensity_flat: NDArray, num_elements: int = 174):
     return indices.astype(np.int32), values
 
 
-def set_percentage_to_zero(row, percentage):
+def set_percentage_to_zero_single_row(row, percentage):
     """
     Sets a given percentage of the non-zero elements of a numpy vector to zero,
     where the probability of being set to 0 is inversely proportional to the element's value
     relative to other values in the vector.
 
     Parameters:
-        row (np.ndarray): Input vector of shape (174,)
+        row (np.ndarray): Input vector of arbitrary length
         percentage (float): Percentage of non-zero elements to set to zero (between 0 and 1)
 
     Returns:
@@ -492,21 +492,23 @@ def set_percentage_to_zero(row, percentage):
     if row.ndim != 1:
         raise ValueError("Input must be a 1D vector")
 
+    # Copy the input row and replace -1 values with 0
     result = row.copy()
     result[result < 0] = 0
 
     # Calculate the total number of non-zero elements to be set to zero
-    total_non_zero_elements = np.count_nonzero(row)
+    total_non_zero_elements = np.count_nonzero(result)
     num_elements_to_zero = int(total_non_zero_elements * percentage)
 
     if total_non_zero_elements == 0:
         return result  # No non-zero elements to set to zero
 
     # Create a probability array inversely proportional to the values in the row
-    inverse_values = np.zeros_like(row, dtype=float)
-    non_zero_mask = row != 0
+    inverse_values = np.zeros_like(result, dtype=float)
+    non_zero_mask = result != 0
 
-    inverse_values[non_zero_mask] = 1.0 / row[non_zero_mask]
+    # Inverse of non-zero, non-negative values
+    inverse_values[non_zero_mask] = 1.0 / (result[non_zero_mask] * 1000)
 
     row_sum = inverse_values.sum()
     if row_sum == 0:
@@ -514,16 +516,16 @@ def set_percentage_to_zero(row, percentage):
 
     probabilities = inverse_values / row_sum
 
-    # Find non-zero elements
-    non_zero_indices = np.nonzero(row)[0]
+    # Ensure all probabilities are non-negative
+    if not np.all(probabilities >= 0):
+        raise ValueError("Probabilities contain negative values")
 
-    try:
-        # Choose indices to be zeroed based on the calculated probabilities
-        chosen_indices = np.random.choice(non_zero_indices, num_elements_to_zero, replace=False,
-                                          p=probabilities[non_zero_indices])
-    except:
-        print(probabilities[non_zero_indices])
-        return result
+    # Find non-zero elements
+    non_zero_indices = np.nonzero(result)[0]
+
+    # Choose indices to be zeroed based on the calculated probabilities
+    chosen_indices = np.random.choice(non_zero_indices, num_elements_to_zero, replace=False,
+                                      p=probabilities[non_zero_indices])
 
     # Set the chosen elements to zero
     result[chosen_indices] = 0
