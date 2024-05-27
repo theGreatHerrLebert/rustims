@@ -399,6 +399,9 @@ def main():
                 if args.verbose:
                     print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
 
+                if args.verbose:
+                    print("re-scoring PSMs after mz calibration ...")
+
                 psm = scorer.score_collection_psm(
                     db=indexed_db,
                     spectrum_collection=fragments['processed_spec'].values,
