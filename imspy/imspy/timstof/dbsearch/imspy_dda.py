@@ -409,7 +409,7 @@ def main():
                 for value in values:
                     value.file_name = ds_name
                     if args.calibrate_mz:
-                        value.calibration_ppm = ppm_error
+                        value.mz_calibration_ppm = ppm_error
 
             if i == 0:
                 merged_dict = psm
