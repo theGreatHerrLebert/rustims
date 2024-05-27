@@ -25,6 +25,7 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
+from sagepy.utility import apply_mz_calibration
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -123,6 +124,8 @@ def main():
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
+    parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
+    parser.set_defaults(calibrate_mz=False)
 
     parser.add_argument(
         "--no_decoys",
@@ -386,9 +389,27 @@ def main():
                 num_threads=args.num_threads,
             )
 
+            if args.calibrate_mz:
+
+                if args.verbose:
+                    print("calibrating mz ...")
+
+                ppm_error = apply_mz_calibration(psm, fragments)
+
+                if args.verbose:
+                    print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
+
+                psm = scorer.score_collection_psm(
+                    db=indexed_db,
+                    spectrum_collection=fragments['processed_spec'].values,
+                    num_threads=16,
+                )
+
             for _, values in psm.items():
                 for value in values:
                     value.file_name = ds_name
+                    if args.calibrate_mz:
+                        value.calibration_ppm = ppm_error
 
             if i == 0:
                 merged_dict = psm
