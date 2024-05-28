@@ -13,7 +13,6 @@ debug = true
 
 [dependencies]
 regex = "1.10.4"
-sage-core = { git = "https://github.com/lazear/sage.git" }
 clap = { version = "4.5.4", features = ["derive"] }
 libloading = "0.8.3"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
