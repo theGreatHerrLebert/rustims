@@ -16,6 +16,8 @@ from .jobs.simulate_scan_distributions import simulate_scan_distributions
 from .jobs.simulate_occurrences import simulate_peptide_occurrences
 from imspy.simulation.timsim.jobs.utility import check_path
 
+from tabulate import tabulate
+
 # silence warnings, will spam the console otherwise
 os.environ["WANDB_SILENT"] = "true"
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -48,11 +50,25 @@ def main():
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
-    parser.add_argument("--reference_in_memory", type=bool, default=True,
-                        help="Whether to load the reference dataset into memory (default: True)")
+    """
+     # randomize fasta
+    parser.add_argument(
+        "--randomize_fasta_split",
+        dest="randomize_fasta_split",
+        action="store_true",
+        help="Randomize fasta split (default: False)"
+    )
+    parser.set_defaults(randomize_fasta_split=False)
+    """
+
+    parser.add_argument("--reference_in_memory", dest="reference_in_memory", action="store_true",
+                        help="Whether to load the reference dataset into memory (default: False)")
+    parser.set_defaults(reference_in_memory=False)
 
     # Optional verbosity flag
-    parser.add_argument("-v", "--verbose", type=bool, default=True, help="Increase output verbosity")
+    parser.add_argument("-s", "--silent", dest="verbose", action="store_false",
+                        help="Silence output (default: False)")
+    parser.set_defaults(verbose=True)
 
     parser.add_argument("-acq", "--acquisition_type",
                         type=str,
@@ -62,8 +78,9 @@ def main():
     parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
                         default=f'TIMSIM-[PLACEHOLDER]-{int(time.time())}')
 
-    parser.add_argument("--use_reference_layout", type=bool, default=True,
+    parser.add_argument("--no_reference_layout", dest="use_reference_layout", action="store_false",
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
+    parser.set_defaults(use_reference_layout=True)
 
     # Peptide digestion arguments
     parser.add_argument(
@@ -77,7 +94,9 @@ def main():
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
-    parser.add_argument("--decoys", type=bool, default=False, help="Generate decoys (default: False)")
+    parser.add_argument("--add_decoys", dest="decoys", action="store_true",
+                        help="Generate decoys (default: False)")
+    parser.set_defaults(decoys=False)
 
     # Peptide intensities
     parser.add_argument("--intensity_mean", type=float, default=1e7, help="Mean peptide intensity (default: 1e6)")
@@ -87,12 +106,15 @@ def main():
     # Precursor isotopic pattern settings
     parser.add_argument("--isotope_k", type=int, default=8, help="Number of isotopes to simulate (default: 8)")
     parser.add_argument("--isotope_min_intensity", type=int, default=1, help="Min intensity for isotopes (default: 1)")
-    parser.add_argument("--isotope_centroid", type=bool, default=True, help="Centroid isotopes (default: True)")
+    parser.add_argument("--no_isotope_centroid", dest="isotope_centroid", action="store_false",
+                        help="Centroid isotopes (default: True)")
+    parser.set_defaults(isotope_centroid=True)
 
     # Sample occurrences parameters
-    parser.add_argument("--sample_occurrences",
-                        type=bool, default=True,
+    parser.add_argument("--no_sample_occurrences",
+                        dest="sample_occurrences", action="store_false",
                         help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
+    parser.set_defaults(sample_occurrences=True)
     parser.add_argument(
         "--intensity_value",
         type=float, default=1e6,
@@ -131,18 +153,17 @@ def main():
     # Noise settings
     # -- 1. RT and IM noise
     parser.add_argument(
-        "--add_noise_to_signals",
-        type=bool,
-        default=False,
+        "--add_noise_to_signals", dest="add_noise_to_signals", action="store_true",
         help="Add noise to ion distributions in retention time and ion mobility (default: False)")
+    parser.set_defaults(add_noise_to_signals=False)
 
     # -- 2. MZ noise precursor
     parser.add_argument(
-        "--mz_noise_precursor",
-        type=bool,
-        default=False,
+        "--mz_noise_precursor", dest="mz_noise_precursor", action="store_true",
         help="Add noise to precursor m/z (default: False)"
     )
+    parser.set_defaults(mz_noise_precursor=False)
+
     parser.add_argument(
         "--precursor_noise_ppm",
         type=float,
@@ -152,11 +173,11 @@ def main():
 
     # -- 3. MZ noise fragment
     parser.add_argument(
-        "--mz_noise_fragment",
-        type=bool,
-        default=False,
+        "--mz_noise_fragment", dest="mz_noise_fragment", action="store_true",
         help="Add noise to fragment m/z (default: False)"
     )
+    parser.set_defaults(mz_noise_fragment=False)
+
     parser.add_argument(
         "--fragment_noise_ppm",
         type=float,
@@ -164,18 +185,16 @@ def main():
         help="Fragment noise in ppm (default: 5.0)"
     )
     parser.add_argument(
-        "--mz_noise_uniform",
-        type=bool,
-        default=False,
+        "--mz_noise_uniform", dest="mz_noise_uniform", action="store_true",
         help="Use uniform distribution for m/z noise (default: False), otherwise normal distribution"
     )
+    parser.set_defaults(mz_noise_uniform=False)
 
     parser.add_argument(
-        "--add_real_data_noise",
-        type=bool,
-        default=False,
+        "--add_real_data_noise", dest="add_real_data_noise", action="store_true",
         help="Use given reference data to add noise to the simulated data (default: False)"
     )
+    parser.set_defaults(add_real_data_noise=False)
 
     parser.add_argument(
         "--reference_noise_intensity_max",
@@ -184,8 +203,25 @@ def main():
         help="Maximum intensity for noise reference data (default: 30)"
     )
 
+    parser.add_argument(
+        "--down_sample_factor",
+        type=float,
+        default=0.5,
+        help="Down sample fragment peaks generated, sampling probability "
+             "is inverse proportional to intensity (default: 0.5)"
+    )
+
     # Parse the arguments
     args = parser.parse_args()
+
+    # Convert arguments to a dictionary
+    args_dict = vars(args)
+
+    # Convert dictionary to a list of lists for tabulate
+    table = [[key, value] for key, value in args_dict.items()]
+
+    # Print table
+    print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     # Use the arguments
     path = check_path(args.path)
@@ -357,6 +393,7 @@ def main():
         batch_size=args.batch_size,
         verbose=verbose,
         num_threads=args.num_threads,
+        down_sample_factor=args.down_sample_factor,
     )
 
     # JOB 10: Assemble frames

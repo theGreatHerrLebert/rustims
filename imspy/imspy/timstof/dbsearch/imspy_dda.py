@@ -14,7 +14,7 @@ from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_in
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
 from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex, load_deep_ccs_predictor, \
-    load_tokenizer_from_resources, load_deep_retention_time
+    load_tokenizer_from_resources, load_deep_retention_time_predictor
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
@@ -25,6 +25,7 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
+from sagepy.utility import apply_mz_calibration
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -123,6 +124,8 @@ def main():
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
+    parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
+    parser.set_defaults(calibrate_mz=False)
 
     parser.add_argument(
         "--no_decoys",
@@ -350,9 +353,9 @@ def main():
         prosit_model = Prosit2023TimsTofWrapper(verbose=False)
         # the ion mobility predictor model
         im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
-                                                  load_tokenizer_from_resources("tokenizer_ionmob"))
+                                                  load_tokenizer_from_resources("tokenizer-ptm"))
         # the retention time predictor model
-        rt_predictor = DeepChromatographyApex(load_deep_retention_time(),
+        rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
         if args.verbose:
@@ -386,9 +389,30 @@ def main():
                 num_threads=args.num_threads,
             )
 
+            if args.calibrate_mz:
+
+                if args.verbose:
+                    print("calibrating mz ...")
+
+                ppm_error = apply_mz_calibration(psm, fragments)
+
+                if args.verbose:
+                    print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
+
+                if args.verbose:
+                    print("re-scoring PSMs after mz calibration ...")
+
+                psm = scorer.score_collection_psm(
+                    db=indexed_db,
+                    spectrum_collection=fragments['processed_spec'].values,
+                    num_threads=16,
+                )
+
             for _, values in psm.items():
                 for value in values:
                     value.file_name = ds_name
+                    if args.calibrate_mz:
+                        value.mz_calibration_ppm = ppm_error
 
             if i == 0:
                 merged_dict = psm
@@ -500,6 +524,13 @@ def main():
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
     psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits)
+
+    # serialize all PSMs to JSON binary
+    bts = psms_to_json_bin(psms)
+
+    # write all PSMs to binary file
+    write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms")
+
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 

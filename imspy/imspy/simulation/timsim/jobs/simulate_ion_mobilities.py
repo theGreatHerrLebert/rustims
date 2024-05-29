@@ -16,7 +16,7 @@ def simulate_ion_mobilities(
         # load IM predictor
     IMS = DeepPeptideIonMobilityApex(
         model=load_deep_ccs_predictor(),
-        tokenizer=load_tokenizer_from_resources('tokenizer_ionmob'),
+        tokenizer=load_tokenizer_from_resources('tokenizer-ptm'),
         verbose=verbose
     )
 

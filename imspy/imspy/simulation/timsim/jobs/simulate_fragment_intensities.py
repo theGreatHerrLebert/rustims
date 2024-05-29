@@ -7,7 +7,7 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
 from imspy.simulation.utility import flatten_prosit_array, flat_intensity_to_sparse, \
-    python_list_to_json_string
+    python_list_to_json_string, set_percentage_to_zero
 
 
 def simulate_fragment_intensities(
@@ -17,10 +17,13 @@ def simulate_fragment_intensities(
         batch_size: int,
         verbose: bool,
         num_threads: int,
+        down_sample_factor: int = 0.5,
 ) -> None:
 
     if verbose:
         print("Simulating fragment ion intensity distributions...")
+
+    assert 0 < down_sample_factor <= 1, "down_sample_factor must be in the range (0, 1]"
 
     native_path = Path(path) / name / 'synthetic_data.db'
 
@@ -51,7 +54,8 @@ def simulate_fragment_intensities(
     ):
 
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
-        batch['intensity_flat'] = batch.apply(lambda r: flatten_prosit_array(r.intensity), axis=1)
+        batch['intensity_flat'] = batch.apply(lambda r: set_percentage_to_zero(flatten_prosit_array(r.intensity),
+                                                                               percentage=down_sample_factor), axis=1)
 
         batch = batch[['peptide_id', 'ion_id', 'collision_energy', 'charge', 'intensity_flat']]
 

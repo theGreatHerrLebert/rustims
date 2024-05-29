@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.models import load_model
+
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 from imspy.chemistry.mobility import ccs_to_one_over_k0
@@ -15,7 +17,16 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
     Returns:
         The pretrained deep predictor model
     """
-    return tf.keras.models.load_model(get_model_path('IonmobPredictor'))
+
+    path = get_model_path('ccs/ionmob-24-05-2024.keras')
+
+    # Ensure that the custom objects are registered when loading the model
+    custom_objects = {
+        'SquareRootProjectionLayer': SquareRootProjectionLayer,
+        'GRUCCSPredictor': GRUCCSPredictor
+    }
+
+    return load_model(path, custom_objects=custom_objects)
 
 
 class PeptideIonMobilityApex(ABC):
@@ -80,28 +91,32 @@ def get_sqrt_slopes_and_intercepts(
     return np.array(slopes, np.float32), np.array(intercepts, np.float32)
 
 
+@tf.keras.saving.register_keras_serializable()
 class SquareRootProjectionLayer(tf.keras.layers.Layer):
     """
-    Simple sqrt regression layer, calculates ccs value as linear mapping from mz, charge -&gt; ccs
+    Simple sqrt regression layer, calculates ccs value as linear mapping from mz, charge -> ccs
     """
 
-    def __init__(self, slopes, intercepts):
-        super(SquareRootProjectionLayer, self).__init__()
-        self.slopes_init = slopes
-        self.intercepts_init = intercepts
+    def __init__(self, slopes, intercepts, trainable: bool = True, **kwargs):
+        super(SquareRootProjectionLayer, self).__init__(**kwargs)
+        self.slopes_init = list(slopes)
+        self.intercepts_init = list(intercepts)
+        self.trainable = trainable
         self.slopes = None
         self.intercepts = None
 
     def build(self, input_shape):
         num_charges = input_shape[1][-1]
-        self.slopes = self.add_weight(name='slopes',
+
+        self.slopes = self.add_weight(name='sqrt-coefficients',
                                       shape=(num_charges,),
                                       initializer=tf.constant_initializer(self.slopes_init),
-                                      trainable=True)
+                                      trainable=self.trainable)
+
         self.intercepts = self.add_weight(name='intercepts',
                                           shape=(num_charges,),
                                           initializer=tf.constant_initializer(self.intercepts_init),
-                                          trainable=True)
+                                          trainable=self.trainable)
 
     def call(self, inputs):
         mz, charge = inputs[0], inputs[1]
@@ -110,21 +125,38 @@ class SquareRootProjectionLayer(tf.keras.layers.Layer):
 
         return result
 
+    def get_config(self):
+        config = super(SquareRootProjectionLayer, self).get_config()
+        config.update({
+            'slopes': self.slopes_init,
+            'intercepts': self.intercepts_init,
+            'trainable': self.trainable
+        })
+        return config
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
+    def __repr__(self):
+        return f"SquareRootProjectionLayer(slopes={self.slopes_init}, intercepts={self.intercepts_init})"
+
+
+@tf.keras.saving.register_keras_serializable()
 class GRUCCSPredictor(tf.keras.models.Model):
     """
     Deep Learning model combining initial linear fit with sequence-based features, both scalar and complex
     """
 
     def __init__(self, slopes, intercepts, num_tokens,
-                 seq_len=50,
+                 max_peptide_length=50,
                  emb_dim=128,
                  gru_1=128,
                  gru_2=64,
                  rdo=0.0,
                  do=0.2):
         super(GRUCCSPredictor, self).__init__()
-        self.__seq_len = seq_len
+        self.max_peptide_length = max_peptide_length
 
         self.initial = SquareRootProjectionLayer(slopes, intercepts)
 
@@ -147,10 +179,10 @@ class GRUCCSPredictor(tf.keras.models.Model):
 
     def build(self, input_shape):
         self.initial.build(input_shape)
-        self.emb.build((input_shape[2][0], self.__seq_len))
-        self.gru1.build((input_shape[2][0], self.__seq_len, self.emb.output_dim))
+        self.emb.build((input_shape[2][0], self.max_peptide_length))
+        self.gru1.build((input_shape[2][0], self.max_peptide_length, self.emb.output_dim))
         gru1_output_dim = self.gru1.forward_layer.units + self.gru1.backward_layer.units
-        self.gru2.build((input_shape[2][0], self.__seq_len, gru1_output_dim))
+        self.gru2.build((input_shape[2][0], self.max_peptide_length, gru1_output_dim))
         gru2_output_dim = self.gru2.forward_layer.units + self.gru2.backward_layer.units
 
         dense1_input_shape = (input_shape[1][0], input_shape[1][1] + gru2_output_dim)
@@ -189,6 +221,25 @@ class GRUCCSPredictor(tf.keras.models.Model):
 
         # Only return the primary output during training
         return initial_output + out_output, out_output
+
+    def get_config(self):
+        config = super(GRUCCSPredictor, self).get_config()
+        config.update({
+            'slopes': self.initial.slopes_init,
+            'intercepts': self.initial.intercepts_init,
+            'num_tokens': self.emb.input_dim - 1,
+            'max_peptide_length': self.max_peptide_length,
+            'emb_dim': self.emb.output_dim,
+            'gru_1': self.gru1.forward_layer.units,
+            'gru_2': self.gru2.forward_layer.units,
+            'rdo': self.gru2.forward_layer.recurrent_dropout,
+            'do': self.dropout.rate
+        })
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 
 class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
