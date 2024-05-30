@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 statrs = "0.16.0"
-itertools = "0.12.1"
+itertools = "0.13.0"
 rayon = "1.10.0"
 nalgebra = "0.32.5"
 serde = { version = "1.0.198", features = ["derive"] }
