@@ -1109,7 +1109,7 @@ pub fn unimod_modifications_mass() -> HashMap<&'static str, f64> {
 /// use mscore::chemistry::unimod::unimod_modifications_mass_numerical;
 ///
 /// let mass = unimod_modifications_mass_numerical();
-/// assert_eq!(mass.get(&58), Some(&56.026215));
+/// assert_eq!(mass.get(&1), Some(&42.010565));
 /// ```
 pub fn unimod_modifications_mass_numerical() -> HashMap<u32, f64> {
     let mut map = HashMap::new();
