@@ -7,13 +7,13 @@ pub fn emg_cdf(x: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
 }
 
 #[pyfunction]
-pub fn accumulated_cdf_emg(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
-    mscore::algorithm::utility::emg_cdf_range(lower_limit, upper_limit, mu, sigma, lambda)
+pub fn accumulated_cdf_emg(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, lambda: f64, n_steps: Option<usize>) -> f64 {
+    mscore::algorithm::utility::emg_cdf_range(lower_limit, upper_limit, mu, sigma, lambda, n_steps)
 }
 
 #[pyfunction]
-pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, lower_start: f64, upper_start: f64) -> (f64, f64) {
-    mscore::algorithm::utility::calculate_bounds_emg(mu, sigma, lambda, step_size, target, lower_start, upper_start)
+pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, lower_start: f64, upper_start: f64, n_steps: Option<usize>) -> (f64, f64) {
+    mscore::algorithm::utility::calculate_bounds_emg(mu, sigma, lambda, step_size, target, lower_start, upper_start, n_steps)
 }
 
 #[pyfunction]
@@ -32,25 +32,25 @@ pub fn calculate_bounds_normal(mean: f64, std: f64, z_score: f64) -> (f64, f64) 
 }
 
 #[pyfunction]
-pub fn calculate_frame_occurrence_emg(retention_times: Vec<f64>, rt: f64, sigma: f64, lambda_: f64, target_p: f64, step_size: f64) -> Vec<i32> {
-    mscore::algorithm::utility::calculate_frame_occurrence_emg(&retention_times, rt, sigma, lambda_, target_p, step_size)
+pub fn calculate_frame_occurrence_emg(retention_times: Vec<f64>, rt: f64, sigma: f64, lambda_: f64, target_p: f64, step_size: f64, n_steps: Option<usize>) -> Vec<i32> {
+    mscore::algorithm::utility::calculate_frame_occurrence_emg(&retention_times, rt, sigma, lambda_, target_p, step_size, n_steps)
 }
 
 #[pyfunction]
-pub fn calculate_frame_abundance_emg(frame_ids: Vec<i32>, retention_times: Vec<f64>, frame_occurrences: Vec<i32>, rt: f64, sigma: f64, lambda_: f64, rt_cycle_length: f64) -> Vec<f64> {
+pub fn calculate_frame_abundance_emg(frame_ids: Vec<i32>, retention_times: Vec<f64>, frame_occurrences: Vec<i32>, rt: f64, sigma: f64, lambda_: f64, rt_cycle_length: f64, n_steps: Option<usize>) -> Vec<f64> {
     let time_map: HashMap<i32, f64> = frame_ids.iter().zip(retention_times.iter()).map(|(id, rt)| (*id, *rt)).collect();
-    mscore::algorithm::utility::calculate_frame_abundance_emg(&time_map, &frame_occurrences, rt, sigma, lambda_, rt_cycle_length)
+    mscore::algorithm::utility::calculate_frame_abundance_emg(&time_map, &frame_occurrences, rt, sigma, lambda_, rt_cycle_length, n_steps)
 }
 
 #[pyfunction]
-pub fn calculate_frame_occurrences_emg_par(retention_times: Vec<f64>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, target_p: f64, step_size: f64, num_threads: usize) -> Vec<Vec<i32>> {
-    mscore::algorithm::utility::calculate_frame_occurrences_emg_par(&retention_times, rts, sigmas, lambdas, target_p, step_size, num_threads)
+pub fn calculate_frame_occurrences_emg_par(retention_times: Vec<f64>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, target_p: f64, step_size: f64, num_threads: usize, n_steps: Option<usize>) -> Vec<Vec<i32>> {
+    mscore::algorithm::utility::calculate_frame_occurrences_emg_par(&retention_times, rts, sigmas, lambdas, target_p, step_size, num_threads, n_steps)
 }
 
 #[pyfunction]
-pub fn calculate_frame_abundances_emg_par(frame_ids: Vec<i32>, retention_times: Vec<f64>, frame_occurrences: Vec<Vec<i32>>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, rt_cycle_length: f64, num_threads: usize) -> Vec<Vec<f64>> {
+pub fn calculate_frame_abundances_emg_par(frame_ids: Vec<i32>, retention_times: Vec<f64>, frame_occurrences: Vec<Vec<i32>>, rts: Vec<f64>, sigmas: Vec<f64>, lambdas: Vec<f64>, rt_cycle_length: f64, num_threads: usize, n_steps: Option<usize>) -> Vec<Vec<f64>> {
     let time_map: HashMap<i32, f64> = frame_ids.iter().zip(retention_times.iter()).map(|(id, rt)| (*id, *rt)).collect();
-    mscore::algorithm::utility::calculate_frame_abundances_emg_par(&time_map, frame_occurrences, rts, sigmas, lambdas, rt_cycle_length, num_threads)
+    mscore::algorithm::utility::calculate_frame_abundances_emg_par(&time_map, frame_occurrences, rts, sigmas, lambdas, rt_cycle_length, num_threads, n_steps)
 }
 
 

@@ -32,6 +32,7 @@ def simulate_frame_distributions_emg(
         verbose: bool = False,
         add_noise: bool = False,
         normalize: bool = False,
+        n_steps: int = 1000,
         num_threads: int = 4,
 ) -> pd.DataFrame:
 
@@ -53,7 +54,8 @@ def simulate_frame_distributions_emg(
         lambdas,
         target_p,
         step_size,
-        num_threads=num_threads
+        num_threads=num_threads,
+        n_steps=n_steps,
     )
 
     abundances = ims.calculate_frame_abundances_emg_par(
@@ -64,7 +66,8 @@ def simulate_frame_distributions_emg(
         sigmas,
         lambdas,
         rt_cycle_length,
-        num_threads=num_threads
+        num_threads=num_threads,
+        n_steps=n_steps,
     )
 
     if verbose:
