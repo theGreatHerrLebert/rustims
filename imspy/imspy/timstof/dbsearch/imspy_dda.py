@@ -147,6 +147,11 @@ def main():
     parser.add_argument("--fragment_max_mz", type=float, default=4000, help="Fragment max mz (default: 4000)")
     parser.add_argument("--bucket_size", type=int, default=16384, help="Bucket size (default: 16384)")
 
+    # score configuration
+    parser.add_argument("--min_fragment_mass", type=float, default=50.0, help="Minimum fragment mass (default: 50.0)")
+    parser.add_argument("--max_fragment_mass", type=float, default=4000.0, help="Maximum fragment mass (default: 4000.0)")
+    parser.add_argument("--max_fragment_charge", type=int, default=2, help="Maximum fragment charge (default: 2)")
+
     # randomize fasta
     parser.add_argument(
         "--randomize_fasta_split",
@@ -224,13 +229,13 @@ def main():
     start_time = time.time()
 
     if args.verbose:
-        print(f"Found {len(paths)} RAW data folders in {args.path} ...")
+        print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
     # go over RAW data one file at a time
     for p, path in enumerate(paths):
         if args.verbose:
-            print(f"Processing {path} ...")
-            print(f"Processing {p + 1} of {len(paths)} ...")
+            print(f"processing {path} ...")
+            print(f"processing {p + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
@@ -304,7 +309,10 @@ def main():
             fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
             report_psms=args.report_psms,
             min_matched_peaks=args.min_matched_peaks,
-            annotate_matches=args.annotate_matches
+            annotate_matches=args.annotate_matches,
+            min_fragment_mass=args.min_fragment_mass,
+            max_fragment_mass=args.max_fragment_mass,
+            max_fragment_charge=args.max_fragment_charge,
         )
 
         if args.verbose:
@@ -505,7 +513,7 @@ def main():
         bts = psms_to_json_bin(psm)
 
         if args.verbose:
-            print("Writing PSMs to temp file ...")
+            print("writing PSMs to temp file ...")
 
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
