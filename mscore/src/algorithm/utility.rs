@@ -1,10 +1,69 @@
-// extern crate rgsl;
-
 use std::collections::HashMap;
-// use rgsl::{IntegrationWorkspace, error::erfc, error::erf};
 use std::f64::consts::SQRT_2;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
+
+use std::collections::VecDeque;
+
+fn gauss_kronrod(f: &dyn Fn(f64) -> f64, a: f64, b: f64) -> (f64, f64) {
+    let nodes = [
+        0.0, 0.20778495500789848, 0.40584515137739717, 0.58608723546769113,
+        0.74153118559939444, 0.86486442335976907, 0.94910791234275852, 0.99145537112081264,
+    ];
+    let weights_gauss = [
+        0.41795918367346939, 0.38183005050511894, 0.27970539148927667, 0.12948496616886969,
+    ];
+    let weights_kronrod = [
+        0.20948214108472783, 0.20443294007529889, 0.19035057806478541, 0.16900472663926790,
+        0.14065325971552592, 0.10479001032225018, 0.06309209262997855, 0.02293532201052922,
+    ];
+
+    let c1 = (b - a) / 2.0;
+    let c2 = (b + a) / 2.0;
+
+    let mut integral_gauss = 0.0;
+    let mut integral_kronrod = 0.0;
+
+    for i in 0..4 {
+        let x = c1 * nodes[i] + c2;
+        integral_gauss += weights_gauss[i] * (f(x) + f(2.0 * c2 - x));
+    }
+
+    for i in 0..8 {
+        let x = c1 * nodes[i] + c2;
+        integral_kronrod += weights_kronrod[i] * (f(x) + f(2.0 * c2 - x));
+    }
+
+    integral_gauss *= c1;
+    integral_kronrod *= c1;
+
+    (integral_kronrod, (integral_kronrod - integral_gauss).abs())
+}
+
+pub fn adaptive_integration(f: &dyn Fn(f64) -> f64, a: f64, b: f64, epsabs: f64, epsrel: f64) -> (f64, f64) {
+    let mut intervals = VecDeque::new();
+    intervals.push_back((a, b));
+
+    let mut result = 0.0;
+    let mut total_error = 0.0;
+
+    while let Some((a, b)) = intervals.pop_front() {
+        let (integral, error) = gauss_kronrod(f, a, b);
+        if error < epsabs || error < epsrel * integral.abs() {
+            result += integral;
+            total_error += error;
+        } else {
+            let mid = (a + b) / 2.0;
+            intervals.push_back((a, mid));
+            intervals.push_back((mid, b));
+        }
+    }
+
+    (result, total_error)
+}
+
+
+
 
 // Numerical integration using the trapezoidal rule
 fn integrate<F>(f: F, a: f64, b: f64, n: usize) -> f64
@@ -67,24 +126,6 @@ pub fn emg_function(x: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
     let erfc_part = erfc((mu + lambda * sigma.powi(2) - x) / (SQRT_2 * sigma));
     prefactor * erfc_part
 }
-
-/*
-pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, lambda: f64) -> f64 {
-    let mut workspace = IntegrationWorkspace::new(1000).expect("IntegrationWorkspace::new failed");
-
-    let (result, _) = workspace.qags(
-        |x| emg_function(x, mu, sigma, lambda),
-        lower_limit,
-        upper_limit,
-        0.0,
-        1e-7,
-        1000,
-    )
-        .unwrap();
-
-    result
-}
-*/
 
 pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, lambda: f64, n_steps: Option<usize>) -> f64 {
     let n_steps = n_steps.unwrap_or(1000);

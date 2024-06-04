@@ -1,17 +1,13 @@
-use mscore::algorithm::utility::{calculate_bounds_emg, emg_cdf_range};
+use mscore::algorithm::utility::adaptive_integration;
 
 fn main() {
-    let mu = 0.0;
-    let sigma = 1.0;
-    let lambda = 1.0;
-    let n_steps: usize = 1000;
-    let step_size = 0.0001;
-    let l_s = 25.0;
-    let u_s = 25.0;
+    let f = |x: f64| 1.0 / (x * x + 1.0); // Example: Integrating the function 1/(x^2 + 1)
+    let a = 0.0;
+    let b = 1.0;
+    let epsabs = 1e-4;
+    let epsrel = 1e-4;
 
-    let (lb, ub) = calculate_bounds_emg(mu, sigma, lambda, step_size, 0.99, l_s, u_s, Some(n_steps));
-
-    let cdf_range = emg_cdf_range(lb, ub, mu, sigma, lambda, Some(n_steps));
-
-    println!("EMG CDF from {} to {} = {}", lb, ub, cdf_range);
+    let (result, total_error) = adaptive_integration(&f, a, b, epsabs, epsrel);
+    println!("Result: {}", result);
+    println!("Total Estimated Error: {}", total_error);
 }
