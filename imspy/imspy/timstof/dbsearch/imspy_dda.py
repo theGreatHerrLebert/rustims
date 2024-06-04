@@ -231,6 +231,82 @@ def main():
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
+    scorer = Scorer(
+        precursor_tolerance=Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper)),
+        fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
+        report_psms=args.report_psms,
+        min_matched_peaks=args.min_matched_peaks,
+        annotate_matches=args.annotate_matches,
+        min_fragment_mass=args.min_fragment_mass,
+        max_fragment_mass=args.max_fragment_mass,
+        max_fragment_charge=args.max_fragment_charge,
+    )
+
+    if args.verbose:
+        print("generating fasta digest ...")
+
+    # configure a trypsin-like digestor of fasta files
+    enzyme_builder = EnzymeBuilder(
+        missed_cleavages=args.missed_cleavages,
+        min_len=args.min_len,
+        max_len=args.max_len,
+        cleave_at=args.cleave_at,
+        restrict=args.restrict,
+        c_terminal=args.c_terminal,
+    )
+
+    # generate static cysteine modification TODO: make configurable
+    static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
+
+    # generate variable methionine modification TODO: make configurable
+    variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
+                                       SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
+
+    # generate SAGE compatible mod representations
+    static = validate_mods(static_mods)
+    variab = validate_var_mods(variable_mods)
+
+    # check if fasta is a path or a file, if it is a path, read all files ending with fasta in that path
+    if os.path.isdir(args.fasta):
+        fasta_files = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith(".fasta")]
+        fasta = ""
+        for fasta_file in fasta_files:
+            with open(fasta_file, 'r') as infile:
+                fasta += infile.read()
+
+    # read fasta file
+    else:
+        with open(args.fasta, 'r') as infile:
+            fasta = infile.read()
+
+    fasta_list = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
+
+    # create indexed database reference
+    indexed_db = None
+
+    # if only one fasta file, use the same configuration for all RAW files (removes need to re-create db for each file)
+    if len(fasta_list) == 1:
+        sage_config = SageSearchConfiguration(
+            fasta=fasta,
+            static_mods=static,
+            variable_mods=variab,
+            enzyme_builder=enzyme_builder,
+            generate_decoys=args.decoys,
+            fragment_max_mz=args.fragment_max_mz,
+            bucket_size=int(args.bucket_size),
+        )
+
+        indexed_db = sage_config.generate_indexed_database()
+
+    if args.verbose:
+        print("loading deep learning models for intensity, retention time and ion mobility prediction ...")
+
+    # the intensity predictor model
+    prosit_model = Prosit2023TimsTofWrapper(verbose=False)
+    # the ion mobility predictor model
+    im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
+                                              load_tokenizer_from_resources("tokenizer-ptm"))
+
     # go over RAW data one file at a time
     for p, path in enumerate(paths):
         if args.verbose:
@@ -304,65 +380,7 @@ def main():
 
         fragments['processed_spec'] = processed_spec
 
-        scorer = Scorer(
-            precursor_tolerance=Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper)),
-            fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
-            report_psms=args.report_psms,
-            min_matched_peaks=args.min_matched_peaks,
-            annotate_matches=args.annotate_matches,
-            min_fragment_mass=args.min_fragment_mass,
-            max_fragment_mass=args.max_fragment_mass,
-            max_fragment_charge=args.max_fragment_charge,
-        )
-
-        if args.verbose:
-            print("generating fasta digest ...")
-
-        # configure a trypsin-like digestor of fasta files
-        enzyme_builder = EnzymeBuilder(
-            missed_cleavages=args.missed_cleavages,
-            min_len=args.min_len,
-            max_len=args.max_len,
-            cleave_at=args.cleave_at,
-            restrict=args.restrict,
-            c_terminal=args.c_terminal,
-        )
-
-        # generate static cysteine modification TODO: make configurable
-        static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
-
-        # generate variable methionine modification TODO: make configurable
-        variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
-                                           SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
-
-        # generate SAGE compatible mod representations
-        static = validate_mods(static_mods)
-        variab = validate_var_mods(variable_mods)
-
-        # check if fasta is a path or a file, if it is a path, read all files ending with fasta in that path
-        if os.path.isdir(args.fasta):
-            fasta_files = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith(".fasta")]
-            fasta = ""
-            for fasta_file in fasta_files:
-                with open(fasta_file, 'r') as infile:
-                    fasta += infile.read()
-
-        # read fasta file
-        else:
-            with open(args.fasta, 'r') as infile:
-                fasta = infile.read()
-
-        fasta_list = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
-
-        if args.verbose:
-            print("loading deep learning models for intensity, retention time and ion mobility prediction ...")
-
-        # the intensity predictor model
-        prosit_model = Prosit2023TimsTofWrapper(verbose=False)
-        # the ion mobility predictor model
-        im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
-                                                  load_tokenizer_from_resources("tokenizer-ptm"))
-        # the retention time predictor model
+        # the retention time predictor model, will be fine-tuned on best hits therefore reload of weights is necessary
         rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
@@ -372,21 +390,23 @@ def main():
         merged_dict = {}
 
         for i, fasta in enumerate(fasta_list):
-            sage_config = SageSearchConfiguration(
-                fasta=fasta,
-                static_mods=static,
-                variable_mods=variab,
-                enzyme_builder=enzyme_builder,
-                generate_decoys=args.decoys,
-                fragment_max_mz=args.fragment_max_mz,
-                bucket_size=int(args.bucket_size),
-            )
 
-            if args.verbose:
-                print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
+            if len(fasta_list) > 1:
+                sage_config = SageSearchConfiguration(
+                    fasta=fasta,
+                    static_mods=static,
+                    variable_mods=variab,
+                    enzyme_builder=enzyme_builder,
+                    generate_decoys=args.decoys,
+                    fragment_max_mz=args.fragment_max_mz,
+                    bucket_size=int(args.bucket_size),
+                )
 
-            # generate the database for searching against
-            indexed_db = sage_config.generate_indexed_database()
+                if args.verbose:
+                    print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
+
+                # generate the database for searching against
+                indexed_db = sage_config.generate_indexed_database()
 
             if args.verbose:
                 print("searching database ...")
