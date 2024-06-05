@@ -506,12 +506,9 @@ def main():
         TDC = pd.merge(PSM_q, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                        right_on=["spec_idx", "match_idx", "decoy"])
 
-        # filter TDC for good hits
-        TDC_filtered = TDC[TDC.q_value <= 0.005]
 
-        # if no good hits, use q-value threshold of 0.01
-        if len(TDC_filtered) == 0:
-            TDC_filtered = TDC[TDC.q_value <= 0.01]
+        # use first 1024 hits for fine-tuning
+        TDC_filtered = TDC.head(1024)
 
         if args.verbose and args.fine_tune_rt and len(TDC_filtered) > 0:
             print(f"fine tuning retention time predictor for {args.rt_fine_tune_epochs} epochs ...")
