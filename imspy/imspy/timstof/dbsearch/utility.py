@@ -21,6 +21,28 @@ from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from numpy.typing import NDArray
 
 
+def map_to_domain(data, gradient_length: float = 120.0):
+    """
+    Maps the input data linearly into the domain [0, l].
+
+    Parameters:
+    - data: list or numpy array of numerical values
+    - l: float, the upper limit of the target domain [0, l]
+
+    Returns:
+    - mapped_data: list of values mapped into the domain [0, l]
+    """
+    min_val = min(data)
+    max_val = max(data)
+
+    if max_val == min_val:
+        raise ValueError("All elements in data are the same. Linear mapping is not possible.")
+
+    mapped_data = [(gradient_length * (x - min_val) / (max_val - min_val)) for x in data]
+
+    return mapped_data
+
+
 def sanitize_charge(charge: Optional[float]) -> Optional[int]:
     """Sanitize charge value.
     Args:
@@ -179,18 +201,26 @@ def get_collision_energy_calibration_factor(
     return cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
 
 
-def write_psms_binary(byte_array, folder_path: str, file_name: str):
+def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool = False):
     """ Write PSMs to binary file.
     Args:
         byte_array: Byte array
         folder_path: Folder path
         file_name: File name
+        total: Whether to write to total folder
     """
     # create folder if it doesn't exist
     if not os.path.exists(f'{folder_path}/imspy/psm'):
         os.makedirs(f'{folder_path}/imspy/psm')
 
-    file = open(f'{folder_path}/imspy/psm/{file_name}.bin', 'wb')
+    # remove existing file, if any
+    if os.path.exists(f'{folder_path}/imspy/psm/{file_name}.bin'):
+        os.remove(f'{folder_path}/imspy/psm/{file_name}.bin')
+
+    if not total:
+        file = open(f'{folder_path}/imspy/psm/{file_name}.bin', 'wb')
+    else:
+        file = open(f'{folder_path}/imspy/{file_name}.bin', 'wb')
     try:
         file.write(bytearray(byte_array))
     finally:

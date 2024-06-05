@@ -21,7 +21,7 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -120,12 +120,15 @@ def main():
 
     # SAGE settings for digest of fasta file
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--min_len", type=int, default=8, help="Minimum peptide length (default: 8)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
     parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
     parser.set_defaults(calibrate_mz=False)
+    parser.add_argument("--no_cysteine_static", dest="cysteine_static", action="store_false",
+                        help="Cysteine static (default: True)")
+    parser.set_defaults(cysteine_static=True)
 
     parser.add_argument(
         "--no_decoys",
@@ -169,17 +172,6 @@ def main():
 
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
-
-    # fine tune retention time predictor
-    parser.add_argument(
-        "--no_fine_tune_rt",
-        dest="fine_tune_rt",
-        action="store_false",
-        help="Fine tune retention time predictor (default: True)"
-    )
-    parser.set_defaults(fine_tune_rt=True)
-
-    parser.add_argument("--rt_fine_tune_epochs", type=int, default=10, help="Retention time fine tune epochs (default: 10)")
 
     # TDC method
     parser.add_argument(
@@ -256,7 +248,10 @@ def main():
     )
 
     # generate static cysteine modification TODO: make configurable
-    static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
+    if args.cysteine_static:
+        static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
+    else:
+        static_mods = {}
 
     # generate variable methionine modification TODO: make configurable
     variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
@@ -306,6 +301,9 @@ def main():
     # the ion mobility predictor model
     im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"))
+    # the retention time predictor model
+    rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                          load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
     # go over RAW data one file at a time
     for p, path in enumerate(paths):
@@ -315,6 +313,8 @@ def main():
 
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
+
+        gradient_length = dataset.meta_data.Time.max() / 60.0
 
         if args.verbose:
             print("loading PASEF fragments ...")
@@ -379,10 +379,6 @@ def main():
         )
 
         fragments['processed_spec'] = processed_spec
-
-        # the retention time predictor model, will be fine-tuned on best hits therefore reload of weights is necessary
-        rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
-                                              load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
         if args.verbose:
             print("generating search configuration ...")
@@ -452,7 +448,8 @@ def main():
         for _, values in merged_dict.items():
             psm.extend(values)
 
-        sample = np.random.choice(psm, 4096)
+        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]
+
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
             sample,
             prosit_model,
@@ -497,23 +494,6 @@ def main():
         for p in psm:
             p.inverse_mobility_predicted += inv_mob_calibration_factor
 
-        PSM_pandas = peptide_spectrum_match_list_to_pandas(psm, use_sequence_as_match_idx=True)
-        PSM_q = target_decoy_competition_pandas(PSM_pandas, method=args.tdc_method)
-
-        PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
-
-        # use good psm hits to fine tune RT predictor for dataset
-        TDC = pd.merge(PSM_q, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
-                       right_on=["spec_idx", "match_idx", "decoy"])
-
-
-        # use first 1024 hits for fine-tuning
-        TDC_filtered = TDC.head(1024)
-
-        if args.verbose and args.fine_tune_rt and len(TDC_filtered) > 0:
-            print(f"fine tuning retention time predictor for {args.rt_fine_tune_epochs} epochs ...")
-            rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=args.rt_fine_tune_epochs, batch_size=2048)
-
         if args.verbose:
             print("predicting retention times ...")
 
@@ -522,9 +502,19 @@ def main():
             sequences=[x.sequence for x in psm]
         )
 
+        rt_pred = map_to_domain(rt_pred, gradient_length=gradient_length)
+
         # set retention times
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
+
+        # calculate calibration factor
+        rt_calibration_factor = np.mean(
+            [x.retention_time_observed - x.retention_time_predicted for x in psm])
+
+        # set calibrated retention times
+        for p in psm:
+            p.retention_time_predicted += rt_calibration_factor
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
@@ -554,7 +544,7 @@ def main():
     bts = psms_to_json_bin(psms)
 
     # write all PSMs to binary file
-    write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms")
+    write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms", total=True)
 
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
@@ -568,7 +558,7 @@ def main():
     psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
 
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
-                   right_on=["spec_idx", "match_idx", "decoy"])
+                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
 
     TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
 

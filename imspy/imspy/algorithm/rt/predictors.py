@@ -121,7 +121,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         tf_ds = tf.data.Dataset.from_tensor_slices((tokens, rts)).shuffle(len(data)).batch(batch_size)
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_squared_error')
-        self.model.fit(tf_ds, epochs=epochs, verbose=self.verbose)
+        self.model.fit(tf_ds, epochs=epochs, verbose=False)
 
     def simulate_separation_times_pandas(self, data: pd.DataFrame,
                                          gradient_length: float, batch_size: int = 1024) -> pd.DataFrame:
