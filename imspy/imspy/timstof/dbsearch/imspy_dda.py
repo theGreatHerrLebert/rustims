@@ -525,6 +525,11 @@ def main():
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
 
+        if args.verbose:
+            time_end_tmp = time.time()
+            minutes, seconds = divmod(time_end_tmp - start_time, 60)
+            print(f"file {ds_name} processed in {minutes} minutes and {seconds:.2f} seconds.")
+
     psms = []
 
     # read PSMs from binary files
