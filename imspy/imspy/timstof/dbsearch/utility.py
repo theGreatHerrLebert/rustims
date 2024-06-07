@@ -315,7 +315,7 @@ def re_score_psms(
         X_train, Y_train = generate_training_data(features)
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
 
-        lda = LinearDiscriminantAnalysis()
+        lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
         lda.fit(X_train, Y_train)
         Y_pred = np.squeeze(lda.transform(X))
         predictions.extend(Y_pred)
@@ -323,4 +323,4 @@ def re_score_psms(
     for score, match in zip(predictions, psms):
         match.re_score = score
 
-    return list(filter(lambda s: s.re_score <= 100, psms))
+    return psms
