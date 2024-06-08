@@ -72,7 +72,7 @@ def main():
         "--no_verbose",
         dest="verbose",
         action="store_false",
-        help="Increase output verbosity"
+        help="Decrease output verbosity"
     )
     parser.set_defaults(verbose=True)
 
