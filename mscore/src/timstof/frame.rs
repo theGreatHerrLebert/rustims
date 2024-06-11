@@ -418,7 +418,7 @@ impl TimsFrame {
         }
 
         // get the inverse mobility with the highest intensity
-        let (_, max_inv_mob) = marginal_map.iter().max_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap_or(std::cmp::Ordering::Equal)).unwrap().1;
+        let (_, max_inv_mob) = marginal_map.iter().max_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or((&0, &(0.0, 0.0))).1;
 
         *max_inv_mob
     }
