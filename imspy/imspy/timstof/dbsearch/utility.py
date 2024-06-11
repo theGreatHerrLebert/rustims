@@ -317,7 +317,11 @@ def re_score_psms(
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
         lda.fit(X_train, Y_train)
-        Y_pred = np.squeeze(lda.transform(X))
+
+        # check for flip sign of LDA classification return to be compatible with good score ascending
+        score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(X_train)))] == 1.0 else -1.0
+
+        Y_pred = np.squeeze(lda.transform(X)) * score_flip
         predictions.extend(Y_pred)
 
     for score, match in zip(predictions, psms):
