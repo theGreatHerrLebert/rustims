@@ -233,6 +233,20 @@ pub struct TimsLazyLoder {
 impl TimsData for TimsLazyLoder {
     fn get_frame(&self, frame_id: u32) -> TimsFrame {
         let frame_index = (frame_id - 1) as usize;
+
+        // turns out, there can be empty frames in the data, check for that, if so, return an empty frame
+        let num_peaks = self.raw_data_layout.frame_meta_data[frame_index].num_peaks;
+
+        if num_peaks == 0 {
+            return TimsFrame {
+                frame_id: frame_id as i32,
+                ms_type: MsType::Unknown,
+                scan: Vec::new(),
+                tof: Vec::new(),
+                ims_frame: ImsFrame { retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time, mobility: Vec::new(), mz: Vec::new(), intensity: Vec::new() }
+            };
+        }
+
         let offset = self.raw_data_layout.tims_offset_values[frame_index] as u64;
 
         let mut file_path = PathBuf::from(&self.raw_data_layout.raw_data_path);
@@ -299,6 +313,21 @@ impl TimsData for TimsLazyLoder {
 
         let frame_index = (frame_id - 1) as usize;
         let offset = self.raw_data_layout.tims_offset_values[frame_index] as u64;
+
+        // turns out, there can be empty frames in the data, check for that, if so, return an empty frame
+        let num_peaks = self.raw_data_layout.frame_meta_data[frame_index].num_peaks;
+
+        if num_peaks == 0 {
+            return RawTimsFrame {
+                frame_id: frame_id as i32,
+                retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time,
+                ms_type: MsType::Unknown,
+                scan: Vec::new(),
+                tof: Vec::new(),
+                intensity: Vec::new(),
+            };
+        }
+
 
         let mut file_path = PathBuf::from(&self.raw_data_layout.raw_data_path);
         file_path.push("analysis.tdf_bin");
@@ -386,6 +415,18 @@ impl TimsData for TimsInMemoryLoader {
     fn get_frame(&self, frame_id: u32) -> TimsFrame {
 
         let raw_frame = self.get_raw_frame(frame_id);
+
+        // if raw frame is empty, return an empty frame
+        if raw_frame.scan.is_empty() {
+            return TimsFrame {
+                frame_id: frame_id as i32,
+                ms_type: MsType::Unknown,
+                scan: Vec::new(),
+                tof: Vec::new(),
+                ims_frame: ImsFrame { retention_time: raw_frame.retention_time, mobility: Vec::new(), mz: Vec::new(), intensity: Vec::new() }
+            };
+        }
+
         let tof_i32 = raw_frame.tof.iter().map(|&x| x as i32).collect();
         let scan = flatten_scan_values(&raw_frame.scan, true);
 
