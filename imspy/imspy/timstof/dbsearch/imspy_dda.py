@@ -347,7 +347,7 @@ def main():
         fragments['mobility'] = mobility
 
         # generate random string for for spec_id
-        spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e9))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
+        spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e6))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
         fragments['spec_id'] = spec_id
 
         if args.verbose:
