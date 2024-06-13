@@ -227,7 +227,7 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool 
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.005) -> Tuple[NDArray, NDArray]:
+def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
         psms: List of PeptideSpectrumMatch objects
@@ -318,8 +318,12 @@ def re_score_psms(
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
         lda.fit(X_train, Y_train)
 
-        # check for flip sign of LDA classification return to be compatible with good score ascending
-        score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(X_train)))] == 1.0 else -1.0
+        score_flip = None
+        try:
+            # check for flip sign of LDA classification return to be compatible with good score ascending
+            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(X_train)))] == 1.0 else -1.0
+        except:
+            score_flip = 1.0
 
         Y_pred = np.squeeze(lda.transform(X)) * score_flip
         predictions.extend(Y_pred)
