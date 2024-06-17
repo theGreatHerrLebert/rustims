@@ -398,8 +398,8 @@ def main():
                 if args.verbose:
                     print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
 
-                indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
-                                             args.bucket_size)
+            indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+                                         args.bucket_size)
 
             if args.verbose:
                 print("searching database ...")
