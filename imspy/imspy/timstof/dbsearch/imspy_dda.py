@@ -238,6 +238,7 @@ def main():
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
+    """
     scorer = Scorer(
         precursor_tolerance=Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper)),
         fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
@@ -248,10 +249,20 @@ def main():
         max_fragment_mass=args.max_fragment_mass,
         max_fragment_charge=args.max_fragment_charge,
     )
+    """
+
+    scorer = Scorer(
+        precursor_tolerance=Tolerance(da=(-15, 15)),
+        fragment_tolerance=Tolerance(ppm=(-25, 25)),
+        report_psms=5,
+        min_matched_peaks=4,
+        annotate_matches=True
+    )
 
     if args.verbose:
         print("generating fasta digest ...")
 
+    """
     # configure a trypsin-like digestor of fasta files
     enzyme_builder = EnzymeBuilder(
         missed_cleavages=args.missed_cleavages,
@@ -260,6 +271,16 @@ def main():
         cleave_at=args.cleave_at,
         restrict=args.restrict,
         c_terminal=args.c_terminal,
+    )
+    """
+
+    enzyme_builder = EnzymeBuilder(
+        missed_cleavages=2,
+        min_len=8,
+        max_len=30,
+        cleave_at='KR',
+        restrict='P',
+        c_terminal=True,
     )
 
     # generate static cysteine modification TODO: make configurable
