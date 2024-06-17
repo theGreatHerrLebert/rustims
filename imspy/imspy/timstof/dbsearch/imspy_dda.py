@@ -289,9 +289,6 @@ def main():
         with open(args.fasta, 'r') as infile:
             fasta = infile.read()
 
-    # print number of bytes in fasta as mb
-    print(f"fasta size: {sys.getsizeof(fasta) / 1024 / 1024:.2f} MB")
-
     fastas = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
 
     # create indexed database reference
