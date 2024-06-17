@@ -422,6 +422,9 @@ def main():
         for _, values in merged_dict.items():
             psm.extend(values)
 
+        if args.verbose:
+            print(f"generated {len(psm)} PSMs ...")
+
         """
         sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]
 
