@@ -48,6 +48,20 @@ if gpus:
         print(e)
 
 
+def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size):
+    sage_config = SageSearchConfiguration(
+        fasta=fasta,
+        static_mods=static,
+        variable_mods=variab,
+        enzyme_builder=enzyme_builder,
+        generate_decoys=generate_decoys,
+        fragment_max_mz=fragment_max_mz,
+        bucket_size=bucket_size,
+    )
+
+    return sage_config.generate_indexed_database()
+
+
 def main():
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='🦀💻 IMSPY - timsTOF DDA 🔬🐍 - PROTEOMICS IMS DDA data analysis '
@@ -282,17 +296,8 @@ def main():
 
     # if only one fasta file, use the same configuration for all RAW files (removes need to re-create db for each file)
     if len(fasta_list) == 1:
-        sage_config = SageSearchConfiguration(
-            fasta=fasta_list[0],
-            static_mods=static,
-            variable_mods=variab,
-            enzyme_builder=enzyme_builder,
-            generate_decoys=args.decoys,
-            fragment_max_mz=args.fragment_max_mz,
-            bucket_size=int(args.bucket_size),
-        )
-
-        indexed_db = sage_config.generate_indexed_database()
+        indexed_db = create_database(fasta_list[0], static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+                                     args.bucket_size)
 
     if args.verbose:
         print("loading deep learning models for intensity, retention time and ion mobility prediction ...")
@@ -384,71 +389,37 @@ def main():
         if args.verbose:
             print("generating search configuration ...")
 
-        merged_list = []
+        psm_dicts = []
 
         for i, fasta in enumerate(fasta_list):
 
             if len(fasta_list) > 1:
-                sage_config = SageSearchConfiguration(
-                    fasta=fasta,
-                    static_mods=static,
-                    variable_mods=variab,
-                    enzyme_builder=enzyme_builder,
-                    generate_decoys=args.decoys,
-                    fragment_max_mz=args.fragment_max_mz,
-                    bucket_size=int(args.bucket_size),
-                )
 
                 if args.verbose:
                     print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
 
-                # generate the database for searching against
-                indexed_db = sage_config.generate_indexed_database()
+                indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+                                             args.bucket_size)
 
             if args.verbose:
                 print("searching database ...")
 
-            matches = scorer.score_collection_psm(
+            psm_dict = scorer.score_collection_psm(
                 db=indexed_db,
                 spectrum_collection=fragments['processed_spec'].values,
                 num_threads=args.num_threads,
             )
 
-            if args.calibrate_mz:
-
-                if args.verbose:
-                    print("calibrating mz ...")
-
-                ppm_error = apply_mz_calibration(matches, fragments)
-
-                if args.verbose:
-                    print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
-
-                if args.verbose:
-                    print("re-scoring PSMs after mz calibration ...")
-
-                matches = scorer.score_collection_psm(
-                    db=indexed_db,
-                    spectrum_collection=fragments['processed_spec'].values,
-                    num_threads=16,
-                )
-
-            for _, values in matches.items():
-                for value in values:
-                    value.file_name = ds_name
-                    if args.calibrate_mz:
-                        value.mz_calibration_ppm = ppm_error
-
-            merged_list.append(matches)
+            psm_dicts.append(psm_dict)
 
         if args.verbose:
             print("merging PSMs ...")
 
-        merge_dict = merge_dicts_with_merge_dict(merged_list)
+        merged_dict = merge_dicts_with_merge_dict(psm_dicts)
 
         psm = []
 
-        for _, values in merge_dict.items():
+        for _, values in merged_dict.items():
             psm.extend(values)
 
         sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]
@@ -580,3 +551,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""
+if args.calibrate_mz:
+
+    if args.verbose:
+        print("calibrating mz ...")
+
+    ppm_error = apply_mz_calibration(matches, fragments)
+
+    if args.verbose:
+        print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
+
+    if args.verbose:
+        print("re-scoring PSMs after mz calibration ...")
+
+    matches = scorer.score_collection_psm(
+        db=indexed_db,
+        spectrum_collection=fragments['processed_spec'].values,
+        num_threads=16,
+    )
+
+for _, values in matches.items():
+    for value in values:
+        value.file_name = ds_name
+        if args.calibrate_mz:
+            value.mz_calibration_ppm = ppm_error
+"""
