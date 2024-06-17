@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import sys
 import time
 
@@ -437,6 +438,8 @@ def main():
 
                 if args.verbose:
                     print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
+                    split_strings = re.split(r'\n>', fasta)
+                    print(f"Total number of sequences in batch: {len(split_strings)} ...")
 
                 indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
                                              args.bucket_size)
