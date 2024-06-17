@@ -50,7 +50,6 @@ if gpus:
 
 
 def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size):
-    """
     sage_config = SageSearchConfiguration(
         fasta=fasta,
         static_mods=static,
@@ -62,23 +61,6 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
     )
 
     return sage_config.generate_indexed_database()
-    """
-    # set-up a config for a sage-database
-    sage_config = SageSearchConfiguration(
-        fasta=fasta,
-        static_mods=static,
-        variable_mods=variab,
-        enzyme_builder=enzyme_builder,
-        generate_decoys=True,
-        fragment_min_mz=50,
-        fragment_max_mz=4000,
-        bucket_size=int(np.power(2, 14)),
-    )
-
-    # generate the database for searching against
-    indexed_db = sage_config.generate_indexed_database()
-
-    return indexed_db
 
 
 def main():
@@ -257,7 +239,6 @@ def main():
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
-    """
     scorer = Scorer(
         precursor_tolerance=Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper)),
         fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
@@ -268,20 +249,10 @@ def main():
         max_fragment_mass=args.max_fragment_mass,
         max_fragment_charge=args.max_fragment_charge,
     )
-    """
-
-    scorer = Scorer(
-        precursor_tolerance=Tolerance(da=(-15, 15)),
-        fragment_tolerance=Tolerance(ppm=(-25, 25)),
-        report_psms=5,
-        min_matched_peaks=4,
-        annotate_matches=True
-    )
 
     if args.verbose:
         print("generating fasta digest ...")
 
-    """
     # configure a trypsin-like digestor of fasta files
     enzyme_builder = EnzymeBuilder(
         missed_cleavages=args.missed_cleavages,
@@ -290,16 +261,6 @@ def main():
         cleave_at=args.cleave_at,
         restrict=args.restrict,
         c_terminal=args.c_terminal,
-    )
-    """
-
-    enzyme_builder = EnzymeBuilder(
-        missed_cleavages=2,
-        min_len=8,
-        max_len=30,
-        cleave_at='KR',
-        restrict='P',
-        c_terminal=True,
     )
 
     # generate static cysteine modification TODO: make configurable
@@ -438,8 +399,6 @@ def main():
 
                 if args.verbose:
                     print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
-                    split_strings = re.split(r'\n>', fasta)
-                    print(f"Total number of sequences in batch: {len(split_strings)} ...")
 
                 indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
                                              args.bucket_size)
@@ -457,9 +416,6 @@ def main():
 
             for _, values in psm_dict.items():
                 counter += len(values)
-
-            if args.verbose:
-                print(f"searched database and generated {counter} PSMs ...")
 
             psm_dicts.append(psm_dict)
 
