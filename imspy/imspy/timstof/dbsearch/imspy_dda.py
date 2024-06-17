@@ -49,6 +49,7 @@ if gpus:
 
 
 def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size):
+    """
     sage_config = SageSearchConfiguration(
         fasta=fasta,
         static_mods=static,
@@ -60,6 +61,23 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
     )
 
     return sage_config.generate_indexed_database()
+    """
+    # set-up a config for a sage-database
+    sage_config = SageSearchConfiguration(
+        fasta=fasta,
+        static_mods=static,
+        variable_mods=variab,
+        enzyme_builder=enzyme_builder,
+        generate_decoys=True,
+        fragment_min_mz=50,
+        fragment_max_mz=4000,
+        bucket_size=int(np.power(2, 14)),
+    )
+
+    # generate the database for searching against
+    indexed_db = sage_config.generate_indexed_database()
+
+    return indexed_db
 
 
 def main():
