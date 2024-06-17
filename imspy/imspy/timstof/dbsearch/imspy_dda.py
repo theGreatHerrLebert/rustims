@@ -441,7 +441,7 @@ def main():
             if i == 0:
                 merged_dict = psm
             else:
-                merged_dict = merge_psm_dicts(right_psms=psm, left_psms=merged_dict, max_hits=args.report_psms)
+                merged_dict = merge_psm_dicts(left_psms=psm, right_psms=merged_dict, max_hits=args.report_psms)
 
         psm = []
 
