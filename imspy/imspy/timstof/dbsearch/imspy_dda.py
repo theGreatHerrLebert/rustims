@@ -283,7 +283,7 @@ def main():
     # if only one fasta file, use the same configuration for all RAW files (removes need to re-create db for each file)
     if len(fasta_list) == 1:
         sage_config = SageSearchConfiguration(
-            fasta=fasta,
+            fasta=fasta_list[0],
             static_mods=static,
             variable_mods=variab,
             enzyme_builder=enzyme_builder,
@@ -408,7 +408,7 @@ def main():
             if args.verbose:
                 print("searching database ...")
 
-            psm = scorer.score_collection_psm(
+            matches = scorer.score_collection_psm(
                 db=indexed_db,
                 spectrum_collection=fragments['processed_spec'].values,
                 num_threads=args.num_threads,
@@ -419,7 +419,7 @@ def main():
                 if args.verbose:
                     print("calibrating mz ...")
 
-                ppm_error = apply_mz_calibration(psm, fragments)
+                ppm_error = apply_mz_calibration(matches, fragments)
 
                 if args.verbose:
                     print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
@@ -427,23 +427,28 @@ def main():
                 if args.verbose:
                     print("re-scoring PSMs after mz calibration ...")
 
-                psm = scorer.score_collection_psm(
+                matches = scorer.score_collection_psm(
                     db=indexed_db,
                     spectrum_collection=fragments['processed_spec'].values,
                     num_threads=16,
                 )
 
-            for _, values in psm.items():
+            for _, values in matches.items():
                 for value in values:
                     value.file_name = ds_name
                     if args.calibrate_mz:
                         value.mz_calibration_ppm = ppm_error
 
-            merged_list.append(psm)
+            merged_list.append(matches)
+
+        if args.verbose:
+            print("merging PSMs ...")
+
+        merge_dict = merge_dicts_with_merge_dict(merged_list)
 
         psm = []
 
-        for _, values in merge_dicts_with_merge_dict(merged_list).items():
+        for _, values in merge_dict.items():
             psm.extend(values)
 
         sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]
