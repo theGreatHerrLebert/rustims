@@ -422,6 +422,7 @@ def main():
         for _, values in merged_dict.items():
             psm.extend(values)
 
+        """
         sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]
 
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
@@ -489,6 +490,7 @@ def main():
         # set calibrated retention times
         for p in psm:
             p.retention_time_predicted += rt_calibration_factor
+        """
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
