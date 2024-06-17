@@ -411,6 +411,14 @@ def main():
                 num_threads=args.num_threads,
             )
 
+            counter = 0
+
+            for _, values in psm_dict.items():
+                counter += len(values)
+
+            if args.verbose:
+                print(f"searched database and generated {counter} PSMs ...")
+
             psm_dicts.append(psm_dict)
 
         if args.verbose:
