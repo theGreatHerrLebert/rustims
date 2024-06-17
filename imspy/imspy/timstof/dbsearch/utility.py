@@ -99,6 +99,8 @@ def split_fasta(fasta: str, num_splits: int = 16, randomize: bool = True) -> Lis
 
     split_strings = re.split(r'\n>', fasta)
 
+    print(f"Total number of sequences: {len(split_strings)} ...")
+
     if randomize:
         np.random.shuffle(split_strings)
 
