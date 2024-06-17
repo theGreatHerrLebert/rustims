@@ -21,7 +21,8 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
+    merge_dicts_with_merge_dict
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -383,7 +384,7 @@ def main():
         if args.verbose:
             print("generating search configuration ...")
 
-        merged_dict = {}
+        merged_list = []
 
         for i, fasta in enumerate(fasta_list):
 
@@ -438,14 +439,11 @@ def main():
                     if args.calibrate_mz:
                         value.mz_calibration_ppm = ppm_error
 
-            if i == 0:
-                merged_dict = psm
-            else:
-                merged_dict = merge_psm_dicts(left_psms=psm, right_psms=merged_dict, max_hits=args.report_psms)
+            merged_list.append(psm)
 
         psm = []
 
-        for _, values in merged_dict.items():
+        for _, values in merge_dicts_with_merge_dict(merged_list).items():
             psm.extend(values)
 
         sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]

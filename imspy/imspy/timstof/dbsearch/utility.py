@@ -20,6 +20,19 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from numpy.typing import NDArray
 
+from sagepy.core.scoring import merge_psm_dicts
+
+
+def merge_dicts_with_merge_dict(dicts):
+    d = None
+    for i, item in enumerate(dicts):
+        if i == 0:
+            d = item
+        else:
+            d = merge_psm_dicts(item, d)
+
+    return d
+
 
 def map_to_domain(data, gradient_length: float = 120.0):
     """
