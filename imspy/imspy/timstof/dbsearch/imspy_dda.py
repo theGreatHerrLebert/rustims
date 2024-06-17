@@ -289,14 +289,14 @@ def main():
         with open(args.fasta, 'r') as infile:
             fasta = infile.read()
 
-    fasta_list = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
+    fastas = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
 
     # create indexed database reference
     indexed_db = None
 
     # if only one fasta file, use the same configuration for all RAW files (removes need to re-create db for each file)
-    if len(fasta_list) == 1:
-        indexed_db = create_database(fasta_list[0], static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+    if len(fastas) == 1:
+        indexed_db = create_database(fastas[0], static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
                                      args.bucket_size)
 
     if args.verbose:
@@ -387,19 +387,20 @@ def main():
         fragments['processed_spec'] = processed_spec
 
         if args.verbose:
-            print("generating search configuration ...")
+            print(f"generated: {len(fragments)} spectra to be scored...")
+            print("creating search configuration ...")
 
         psm_dicts = []
 
-        for i, fasta in enumerate(fasta_list):
+        for j, fasta in enumerate(fastas):
 
-            if len(fasta_list) > 1:
+            if len(fastas) > 1:
 
                 if args.verbose:
-                    print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
+                    print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
 
-            indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
-                                         args.bucket_size)
+                indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+                                             args.bucket_size)
 
             if args.verbose:
                 print("searching database ...")
