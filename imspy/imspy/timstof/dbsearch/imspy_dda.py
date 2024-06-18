@@ -121,7 +121,7 @@ def main():
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
     # minimum number of matched peaks
-    parser.add_argument("--min_matched_peaks", type=int, default=4, help="Minimum number of matched peaks (default: 4)")
+    parser.add_argument("--min_matched_peaks", type=int, default=5, help="Minimum number of matched peaks (default: 5)")
     # annotate matches
 
     parser.add_argument(
