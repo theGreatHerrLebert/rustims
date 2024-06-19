@@ -206,6 +206,10 @@ def main():
     )
     parser.set_defaults(in_memory=False)
 
+    # rt refinement settings
+    parser.add_argument("--refine_rt", dest="refine_rt", action="store_true", help="Refine retention time")
+    parser.set_defaults(refine_rt=False)
+
     args = parser.parse_args()
 
     paths = []
@@ -321,7 +325,8 @@ def main():
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
 
-        gradient_length = dataset.meta_data.Time.max() / 60.0
+        rt_min = dataset.meta_data.Time.min() / 60.0
+        rt_max = dataset.meta_data.Time.max() / 60.0
 
         if args.verbose:
             print("loading PASEF fragments ...")
@@ -432,10 +437,10 @@ def main():
         if args.verbose:
             print(f"generated {len(psm)} PSMs ...")
 
-        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:2048]
+        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))
 
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
-            sample,
+            sample[:int(2 ** 12)],
             prosit_model,
             verbose=args.verbose,
         )
@@ -481,12 +486,27 @@ def main():
         if args.verbose:
             print("predicting retention times ...")
 
+        if args.refine_rt:
+
+            if args.verbose:
+                print("refining retention time predictions ...")
+            # fit retention time predictor
+            rt_predictor.fit_model(
+                data=peptide_spectrum_match_list_to_pandas(sample[:int(2 ** 14)]),
+                rt_min=rt_min,
+                rt_max=rt_max,
+                epochs=10,
+                batch_size=64,
+                re_compile=True,
+                verbose=args.verbose,
+            )
+
         # predict retention times
         rt_pred = rt_predictor.simulate_separation_times(
-            sequences=[x.sequence for x in psm]
+            sequences=[x.sequence for x in psm],
+            rt_min=rt_min,
+            rt_max=rt_max,
         )
-
-        rt_pred = map_to_domain(rt_pred, gradient_length=gradient_length)
 
         # set retention times
         for rt, p in zip(rt_pred, psm):
