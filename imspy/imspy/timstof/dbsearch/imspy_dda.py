@@ -512,6 +512,9 @@ def main():
             print("predicting retention times ...")
 
         if args.refine_rt:
+            # re-load retention time predictor, make sure to not re-fit on already refined retention times
+            rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                                  load_tokenizer_from_resources("tokenizer-ptm"), verbose=args.verbose)
 
             if args.verbose:
                 print("refining retention time predictions ...")
