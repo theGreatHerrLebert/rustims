@@ -23,14 +23,14 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
-    merge_dicts_with_merge_dict
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from sagepy.utility import apply_mz_calibration
 
+# suppress tensorflow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import tensorflow as tf
 
 # don't use all the memory for the GPU (if available)
@@ -462,10 +462,10 @@ def main():
         if args.verbose:
             print(f"generated {len(psm)} PSMs ...")
 
-        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))
+        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
 
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
-            sample[:int(2 ** 11)],
+            list(filter(lambda match: match.decoy is not True, sample)),
             prosit_model,
             verbose=args.verbose,
         )
@@ -484,7 +484,8 @@ def main():
             flatten=True,
         )
 
-        psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred, num_threads=args.num_threads)
+        psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
+                                                                        num_threads=args.num_threads)
 
         if args.verbose:
             print("predicting ion mobilities ...")
@@ -520,13 +521,14 @@ def main():
                 print("refining retention time predictions ...")
             # fit retention time predictor
             rt_predictor.fit_model(
-                data=peptide_spectrum_match_list_to_pandas(sample[:int(2 ** 14)]),
+                data=peptide_spectrum_match_list_to_pandas(generate_balanced_rt_dataset(
+                    psms=psm, hits_per_bin=64, rt_max=rt_max)),
                 rt_min=rt_min,
                 rt_max=rt_max,
-                epochs=10,
-                batch_size=64,
+                epochs=5,
+                batch_size=128,
                 re_compile=True,
-                verbose=args.verbose,
+                verbose=False,
             )
 
         # predict retention times
@@ -609,30 +611,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-"""
-if args.calibrate_mz:
-
-    if args.verbose:
-        print("calibrating mz ...")
-
-    ppm_error = apply_mz_calibration(matches, fragments)
-
-    if args.verbose:
-        print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
-
-    if args.verbose:
-        print("re-scoring PSMs after mz calibration ...")
-
-    matches = scorer.score_collection_psm(
-        db=indexed_db,
-        spectrum_collection=fragments['processed_spec'].values,
-        num_threads=16,
-    )
-
-for _, values in matches.items():
-    for value in values:
-        value.file_name = ds_name
-        if args.calibrate_mz:
-            value.mz_calibration_ppm = ppm_error
-"""

@@ -347,3 +347,21 @@ def re_score_psms(
         match.re_score = score
 
     return psms
+
+
+def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0, rt_max=60.0):
+    bin_width = (rt_max - rt_min) / (num_bins - 1)
+    bins = [rt_min + i * bin_width for i in range(num_bins)]
+
+    r_list = []
+
+    for i in range(len(bins) - 1):
+        rt_lower = bins[i]
+        rt_upper = bins[i + 1]
+
+        psm = list(
+            filter(lambda match: not match.decoy and (rt_lower <= match.retention_time_observed <= rt_upper), psms))
+
+        r_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:hits_per_bin])
+
+    return r_list
