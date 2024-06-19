@@ -417,6 +417,31 @@ def main():
                 num_threads=args.num_threads,
             )
 
+            if args.calibrate_mz:
+
+                if args.verbose:
+                    print("calibrating mz ...")
+
+                ppm_error = apply_mz_calibration(psm_dict, fragments)
+
+                if args.verbose:
+                    print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
+
+                if args.verbose:
+                    print("re-scoring PSMs after mz calibration ...")
+
+                psm_dict = scorer.score_collection_psm(
+                    db=indexed_db,
+                    spectrum_collection=fragments['processed_spec'].values,
+                    num_threads=16,
+                )
+
+                for _, values in psm_dict.items():
+                    for value in values:
+                        value.file_name = ds_name
+                        if args.calibrate_mz:
+                            value.mz_calibration_ppm = ppm_error
+
             counter = 0
 
             for _, values in psm_dict.items():
@@ -440,7 +465,7 @@ def main():
         sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))
 
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
-            sample[:int(2 ** 12)],
+            sample[:int(2 ** 11)],
             prosit_model,
             verbose=args.verbose,
         )
