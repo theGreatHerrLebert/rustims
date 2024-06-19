@@ -470,8 +470,8 @@ def main():
             verbose=args.verbose,
         )
 
-        for p in psm:
-            p.collision_energy_calibrated = p.collision_energy + collision_energy_calibration_factor
+        for ps in psm:
+            ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
 
         if args.verbose:
             print("predicting ion intensities ...")
@@ -498,8 +498,8 @@ def main():
         )
 
         # set ion mobilities
-        for mob, p in zip(inv_mob, psm):
-            p.inverse_mobility_predicted = mob
+        for mob, ps in zip(inv_mob, psm):
+            ps.inverse_mobility_predicted = mob
 
         # calculate calibration factor
         inv_mob_calibration_factor = np.mean(
@@ -547,8 +547,8 @@ def main():
             [x.retention_time_observed - x.retention_time_predicted for x in psm])
 
         # set calibrated retention times
-        for p in psm:
-            p.retention_time_predicted += rt_calibration_factor
+        for ps in psm:
+            ps.retention_time_predicted += rt_calibration_factor
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
