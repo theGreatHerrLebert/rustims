@@ -163,12 +163,12 @@ def main():
     parser.set_defaults(c_terminal=True)
 
     # sage search configuration
-    parser.add_argument("--fragment_max_mz", type=float, default=4000, help="Fragment max mz (default: 4000)")
+    parser.add_argument("--fragment_max_mz", type=float, default=1700.0, help="Fragment max mz (default: 1700.0)")
     parser.add_argument("--bucket_size", type=int, default=16384, help="Bucket size (default: 16384)")
 
     # score configuration
-    parser.add_argument("--min_fragment_mass", type=float, default=50.0, help="Minimum fragment mass (default: 50.0)")
-    parser.add_argument("--max_fragment_mass", type=float, default=4000.0, help="Maximum fragment mass (default: 4000.0)")
+    parser.add_argument("--min_fragment_mz", type=float, default=150.0, help="Minimum fragment mz (default: 150.0)")
+    parser.add_argument("--max_fragment_mz", type=float, default=1700.0, help="Maximum fragment mz (default: 1700.0)")
     parser.add_argument("--max_fragment_charge", type=int, default=2, help="Maximum fragment charge (default: 2)")
 
     # randomize fasta
@@ -245,8 +245,8 @@ def main():
         report_psms=args.report_psms,
         min_matched_peaks=args.min_matched_peaks,
         annotate_matches=args.annotate_matches,
-        min_fragment_mass=args.min_fragment_mass,
-        max_fragment_mass=args.max_fragment_mass,
+        min_fragment_mass=args.min_fragment_mz,
+        max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
     )
 
