@@ -23,7 +23,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -209,6 +209,10 @@ def main():
     # rt refinement settings
     parser.add_argument("--refine_rt", dest="refine_rt", action="store_true", help="Refine retention time")
     parser.set_defaults(refine_rt=False)
+
+    # inverse_mobility refinement settings
+    parser.add_argument("--refine_im", dest="refine_im", action="store_true", help="Refine inverse mobility")
+    parser.set_defaults(refine_im=False)
 
     args = parser.parse_args()
 
@@ -489,6 +493,22 @@ def main():
 
         if args.verbose:
             print("predicting ion mobilities ...")
+
+        if args.refine_im:
+            # re-load ion mobility predictor, make sure to not re-fit on already refined ion mobilities
+            im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
+                                                      load_tokenizer_from_resources("tokenizer-ptm"))
+
+            if args.verbose:
+                print("refining ion mobility predictions ...")
+            # fit ion mobility predictor
+            im_predictor.fit_model(
+                data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
+                epochs=5,
+                batch_size=128,
+                re_compile=True,
+                verbose=False,
+            )
 
         # predict ion mobilities
         inv_mob = im_predictor.simulate_ion_mobilities(

@@ -11,7 +11,7 @@ from imspy.simulation.utility import irt_to_rts_numba
 from tensorflow.keras.models import load_model
 
 
-def get_train_set(tokenizer, sequence, rt, rt_min=0.0, rt_max=60.0) -> tf.data.Dataset:
+def get_rt_train_set(tokenizer, sequence, rt, rt_min=0.0, rt_max=60.0) -> tf.data.Dataset:
     seq_padded = tf.keras.preprocessing.sequence.pad_sequences(tokenizer.texts_to_sequences(sequence),
                                                                50, padding='post')
     rt_min = np.expand_dims(np.repeat(rt_min, len(sequence)), 1)
@@ -162,7 +162,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
     def generate_tf_ds_train(self, sequences: list[str], rt_target, rt_min: float, rt_max: float) -> tf.data.Dataset:
         char_tokens = [tokenize_unimod_sequence(seq) for seq in sequences]
-        return get_train_set(tokenizer=self.tokenizer, sequence=char_tokens, rt=rt_target, rt_min=rt_min, rt_max=rt_max)
+        return get_rt_train_set(tokenizer=self.tokenizer, sequence=char_tokens, rt=rt_target, rt_min=rt_min, rt_max=rt_max)
 
     def simulate_separation_times(self,
                                   sequences: list[str],
@@ -178,7 +178,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
                   rt_min: float = 0.0,
                   rt_max: float = 60.0,
                   epochs: int = 10,
-                  batch_size: int = 1024,
+                  batch_size: int = 128,
                   re_compile=False,
                   verbose=False
                   ):

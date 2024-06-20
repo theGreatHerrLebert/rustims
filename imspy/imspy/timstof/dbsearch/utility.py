@@ -365,3 +365,13 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
         r_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:hits_per_bin])
 
     return r_list
+
+
+def generate_balanced_im_dataset(psms, num_charges=4, sequences_per_charge=1024):
+    im_list = []
+
+    for charge in range(1, num_charges + 1):
+        psm = list(filter(lambda match: not match.decoy and match.charge == charge, psms))
+        im_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:sequences_per_charge])
+
+    return im_list
