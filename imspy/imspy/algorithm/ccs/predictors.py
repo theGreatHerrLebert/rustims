@@ -260,15 +260,15 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
     def fit_model(self,
                   data: pd.DataFrame,
-                  epochs: int = 10,
+                  epochs: int = 15,
                   batch_size: int = 128,
                   re_compile=False,
                   verbose=False
                   ):
-        assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
-        assert 'charge' in data.columns, 'Data must contain a column named "charge"'
-        assert 'mono_mz_calculated' in data.columns, 'Data must contain a column named "mono_mz_calculated"'
-        assert 'inverse_mobility_observed' in data.columns, 'Data must contain a column named "inverse_mobility_observed"'
+        assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
+        assert 'charge' in data.columns, 'Data must contain column named "charge"'
+        assert 'mono_mz_calculated' in data.columns, 'Data must contain column named "mono_mz_calculated"'
+        assert 'inverse_mobility_observed' in data.columns, 'Data must contain column named "inverse_mobility_observed"'
 
         mz = data.mono_mz_calculated.values
         charges = data.charge.values
@@ -285,7 +285,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             ((m, charges_one_hot, tokenized_sequences), ccs)).shuffle(len(sequences)).batch(batch_size)
 
         if re_compile:
-            self.model.compile(optimizer='adam', loss='mean_absolute_error',
+            self.model.compile(optimizer='adam', loss='mean_absolute_error', loss_weights=[1.0, 0.0],
                                metrics=['mae', 'mean_absolute_percentage_error'])
 
         self.model.fit(ds, epochs=epochs, verbose=verbose)

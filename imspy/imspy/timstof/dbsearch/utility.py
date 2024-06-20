@@ -367,7 +367,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
     return r_list
 
 
-def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, sequences_per_charge=1024):
+def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, sequences_per_charge=2048):
     im_list = []
 
     for charge in range(min_charge, max_charge + 1):

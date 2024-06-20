@@ -397,7 +397,7 @@ def main():
         fragments['processed_spec'] = processed_spec
 
         if args.verbose:
-            print(f"generated: {len(fragments)} spectra to be scored...")
+            print(f"generated: {len(fragments)} spectra to be scored ...")
             print("creating search configuration ...")
 
         psm_dicts = []
@@ -504,10 +504,10 @@ def main():
             # fit ion mobility predictor
             im_predictor.fit_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
-                epochs=10,
+                epochs=15,
                 batch_size=128,
                 re_compile=True,
-                verbose=True,
+                verbose=False,
             )
 
         # predict ion mobilities
@@ -545,7 +545,7 @@ def main():
                     psms=psm, hits_per_bin=64, rt_max=rt_max)),
                 rt_min=rt_min,
                 rt_max=rt_max,
-                epochs=10,
+                epochs=15,
                 batch_size=128,
                 re_compile=True,
                 verbose=False,
