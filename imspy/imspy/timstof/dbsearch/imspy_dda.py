@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import sys
 import time
 
@@ -21,14 +22,15 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from sagepy.utility import apply_mz_calibration
 
+# suppress tensorflow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import tensorflow as tf
 
 # don't use all the memory for the GPU (if available)
@@ -45,6 +47,20 @@ if gpus:
 
     except RuntimeError as e:
         print(e)
+
+
+def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size):
+    sage_config = SageSearchConfiguration(
+        fasta=fasta,
+        static_mods=static,
+        variable_mods=variab,
+        enzyme_builder=enzyme_builder,
+        generate_decoys=generate_decoys,
+        fragment_max_mz=fragment_max_mz,
+        bucket_size=bucket_size,
+    )
+
+    return sage_config.generate_indexed_database()
 
 
 def main():
@@ -72,7 +88,7 @@ def main():
         "--no_verbose",
         dest="verbose",
         action="store_false",
-        help="Increase output verbosity"
+        help="Decrease output verbosity"
     )
     parser.set_defaults(verbose=True)
 
@@ -105,7 +121,7 @@ def main():
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
     # minimum number of matched peaks
-    parser.add_argument("--min_matched_peaks", type=int, default=4, help="Minimum number of matched peaks (default: 4)")
+    parser.add_argument("--min_matched_peaks", type=int, default=5, help="Minimum number of matched peaks (default: 5)")
     # annotate matches
 
     parser.add_argument(
@@ -120,12 +136,15 @@ def main():
 
     # SAGE settings for digest of fasta file
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--min_len", type=int, default=8, help="Minimum peptide length (default: 8)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
     parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
     parser.set_defaults(calibrate_mz=False)
+    parser.add_argument("--no_cysteine_static", dest="cysteine_static", action="store_false",
+                        help="Cysteine static (default: True)")
+    parser.set_defaults(cysteine_static=True)
 
     parser.add_argument(
         "--no_decoys",
@@ -144,12 +163,12 @@ def main():
     parser.set_defaults(c_terminal=True)
 
     # sage search configuration
-    parser.add_argument("--fragment_max_mz", type=float, default=4000, help="Fragment max mz (default: 4000)")
+    parser.add_argument("--fragment_max_mz", type=float, default=1700.0, help="Fragment max mz (default: 1700.0)")
     parser.add_argument("--bucket_size", type=int, default=16384, help="Bucket size (default: 16384)")
 
     # score configuration
-    parser.add_argument("--min_fragment_mass", type=float, default=50.0, help="Minimum fragment mass (default: 50.0)")
-    parser.add_argument("--max_fragment_mass", type=float, default=4000.0, help="Maximum fragment mass (default: 4000.0)")
+    parser.add_argument("--min_fragment_mz", type=float, default=150.0, help="Minimum fragment mz (default: 150.0)")
+    parser.add_argument("--max_fragment_mz", type=float, default=1700.0, help="Maximum fragment mz (default: 1700.0)")
     parser.add_argument("--max_fragment_charge", type=int, default=2, help="Maximum fragment charge (default: 2)")
 
     # randomize fasta
@@ -170,17 +189,6 @@ def main():
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
 
-    # fine tune retention time predictor
-    parser.add_argument(
-        "--no_fine_tune_rt",
-        dest="fine_tune_rt",
-        action="store_false",
-        help="Fine tune retention time predictor (default: True)"
-    )
-    parser.set_defaults(fine_tune_rt=True)
-
-    parser.add_argument("--rt_fine_tune_epochs", type=int, default=10, help="Retention time fine tune epochs (default: 10)")
-
     # TDC method
     parser.add_argument(
         "--tdc_method",
@@ -197,6 +205,14 @@ def main():
         help="Load dataset in memory"
     )
     parser.set_defaults(in_memory=False)
+
+    # rt refinement settings
+    parser.add_argument("--refine_rt", dest="refine_rt", action="store_true", help="Refine retention time")
+    parser.set_defaults(refine_rt=False)
+
+    # inverse_mobility refinement settings
+    parser.add_argument("--refine_im", dest="refine_im", action="store_true", help="Refine inverse mobility")
+    parser.set_defaults(refine_im=False)
 
     args = parser.parse_args()
 
@@ -237,8 +253,8 @@ def main():
         report_psms=args.report_psms,
         min_matched_peaks=args.min_matched_peaks,
         annotate_matches=args.annotate_matches,
-        min_fragment_mass=args.min_fragment_mass,
-        max_fragment_mass=args.max_fragment_mass,
+        min_fragment_mass=args.min_fragment_mz,
+        max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
     )
 
@@ -256,7 +272,10 @@ def main():
     )
 
     # generate static cysteine modification TODO: make configurable
-    static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
+    if args.cysteine_static:
+        static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
+    else:
+        static_mods = {}
 
     # generate variable methionine modification TODO: make configurable
     variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
@@ -279,24 +298,15 @@ def main():
         with open(args.fasta, 'r') as infile:
             fasta = infile.read()
 
-    fasta_list = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
+    fastas = split_fasta(fasta, args.fasta_batch_size, randomize=args.randomize_fasta_split)
 
     # create indexed database reference
     indexed_db = None
 
     # if only one fasta file, use the same configuration for all RAW files (removes need to re-create db for each file)
-    if len(fasta_list) == 1:
-        sage_config = SageSearchConfiguration(
-            fasta=fasta,
-            static_mods=static,
-            variable_mods=variab,
-            enzyme_builder=enzyme_builder,
-            generate_decoys=args.decoys,
-            fragment_max_mz=args.fragment_max_mz,
-            bucket_size=int(args.bucket_size),
-        )
-
-        indexed_db = sage_config.generate_indexed_database()
+    if len(fastas) == 1:
+        indexed_db = create_database(fastas[0], static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+                                     args.bucket_size)
 
     if args.verbose:
         print("loading deep learning models for intensity, retention time and ion mobility prediction ...")
@@ -306,6 +316,9 @@ def main():
     # the ion mobility predictor model
     im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"))
+    # the retention time predictor model
+    rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                          load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
     # go over RAW data one file at a time
     for p, path in enumerate(paths):
@@ -315,6 +328,9 @@ def main():
 
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
+
+        rt_min = dataset.meta_data.Time.min() / 60.0
+        rt_max = dataset.meta_data.Time.max() / 60.0
 
         if args.verbose:
             print("loading PASEF fragments ...")
@@ -347,7 +363,7 @@ def main():
         fragments['mobility'] = mobility
 
         # generate random string for for spec_id
-        spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e9))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
+        spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e6))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
         fragments['spec_id'] = spec_id
 
         if args.verbose:
@@ -380,38 +396,26 @@ def main():
 
         fragments['processed_spec'] = processed_spec
 
-        # the retention time predictor model, will be fine-tuned on best hits therefore reload of weights is necessary
-        rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
-                                              load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
-
         if args.verbose:
-            print("generating search configuration ...")
+            print(f"generated: {len(fragments)} spectra to be scored ...")
+            print("creating search configuration ...")
 
-        merged_dict = {}
+        psm_dicts = []
 
-        for i, fasta in enumerate(fasta_list):
+        for j, fasta in enumerate(fastas):
 
-            if len(fasta_list) > 1:
-                sage_config = SageSearchConfiguration(
-                    fasta=fasta,
-                    static_mods=static,
-                    variable_mods=variab,
-                    enzyme_builder=enzyme_builder,
-                    generate_decoys=args.decoys,
-                    fragment_max_mz=args.fragment_max_mz,
-                    bucket_size=int(args.bucket_size),
-                )
+            if len(fastas) > 1:
 
                 if args.verbose:
-                    print(f"generating indexed database for fasta split {i + 1} of {len(fasta_list)} ...")
+                    print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
 
-                # generate the database for searching against
-                indexed_db = sage_config.generate_indexed_database()
+                indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
+                                             args.bucket_size)
 
             if args.verbose:
                 print("searching database ...")
 
-            psm = scorer.score_collection_psm(
+            psm_dict = scorer.score_collection_psm(
                 db=indexed_db,
                 spectrum_collection=fragments['processed_spec'].values,
                 num_threads=args.num_threads,
@@ -422,7 +426,7 @@ def main():
                 if args.verbose:
                     print("calibrating mz ...")
 
-                ppm_error = apply_mz_calibration(psm, fragments)
+                ppm_error = apply_mz_calibration(psm_dict, fragments)
 
                 if args.verbose:
                     print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
@@ -430,37 +434,48 @@ def main():
                 if args.verbose:
                     print("re-scoring PSMs after mz calibration ...")
 
-                psm = scorer.score_collection_psm(
+                psm_dict = scorer.score_collection_psm(
                     db=indexed_db,
                     spectrum_collection=fragments['processed_spec'].values,
                     num_threads=16,
                 )
 
-            for _, values in psm.items():
-                for value in values:
-                    value.file_name = ds_name
-                    if args.calibrate_mz:
-                        value.mz_calibration_ppm = ppm_error
+                for _, values in psm_dict.items():
+                    for value in values:
+                        value.file_name = ds_name
+                        if args.calibrate_mz:
+                            value.mz_calibration_ppm = ppm_error
 
-            if i == 0:
-                merged_dict = psm
-            else:
-                merged_dict = merge_psm_dicts(right_psms=psm, left_psms=merged_dict, max_hits=args.report_psms)
+            counter = 0
+
+            for _, values in psm_dict.items():
+                counter += len(values)
+
+            psm_dicts.append(psm_dict)
+
+        if args.verbose:
+            print("merging PSMs ...")
+
+        merged_dict = merge_dicts_with_merge_dict(psm_dicts)
 
         psm = []
 
         for _, values in merged_dict.items():
             psm.extend(values)
 
-        sample = np.random.choice(psm, 4096)
+        if args.verbose:
+            print(f"generated {len(psm)} PSMs ...")
+
+        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
+
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
-            sample,
+            list(filter(lambda match: match.decoy is not True, sample)),
             prosit_model,
             verbose=args.verbose,
         )
 
-        for p in psm:
-            p.collision_energy_calibrated = p.collision_energy + collision_energy_calibration_factor
+        for ps in psm:
+            ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
 
         if args.verbose:
             print("predicting ion intensities ...")
@@ -473,10 +488,27 @@ def main():
             flatten=True,
         )
 
-        psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred, num_threads=args.num_threads)
+        psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
+                                                                        num_threads=args.num_threads)
 
         if args.verbose:
             print("predicting ion mobilities ...")
+
+        if args.refine_im:
+            # re-load ion mobility predictor, make sure to not re-fit on already refined ion mobilities
+            im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
+                                                      load_tokenizer_from_resources("tokenizer-ptm"))
+
+            if args.verbose:
+                print("refining ion mobility predictions ...")
+            # fit ion mobility predictor
+            im_predictor.fit_model(
+                data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
+                epochs=15,
+                batch_size=128,
+                re_compile=True,
+                verbose=False,
+            )
 
         # predict ion mobilities
         inv_mob = im_predictor.simulate_ion_mobilities(
@@ -486,8 +518,8 @@ def main():
         )
 
         # set ion mobilities
-        for mob, p in zip(inv_mob, psm):
-            p.inverse_mobility_predicted = mob
+        for mob, ps in zip(inv_mob, psm):
+            ps.inverse_mobility_predicted = mob
 
         # calculate calibration factor
         inv_mob_calibration_factor = np.mean(
@@ -497,37 +529,46 @@ def main():
         for p in psm:
             p.inverse_mobility_predicted += inv_mob_calibration_factor
 
-        PSM_pandas = peptide_spectrum_match_list_to_pandas(psm, use_sequence_as_match_idx=True)
-        PSM_q = target_decoy_competition_pandas(PSM_pandas, method=args.tdc_method)
-
-        PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
-
-        # use good psm hits to fine tune RT predictor for dataset
-        TDC = pd.merge(PSM_q, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
-                       right_on=["spec_idx", "match_idx", "decoy"])
-
-        # filter TDC for good hits
-        TDC_filtered = TDC[TDC.q_value <= 0.005]
-
-        # if no good hits, use q-value threshold of 0.01
-        if len(TDC_filtered) == 0:
-            TDC_filtered = TDC[TDC.q_value <= 0.01]
-
-        if args.verbose and args.fine_tune_rt and len(TDC_filtered) > 0:
-            print(f"fine tuning retention time predictor for {args.rt_fine_tune_epochs} epochs ...")
-            rt_predictor.fit_model(TDC_filtered[TDC_filtered.decoy == False], epochs=args.rt_fine_tune_epochs, batch_size=2048)
-
         if args.verbose:
             print("predicting retention times ...")
 
+        if args.refine_rt:
+            # re-load retention time predictor, make sure to not re-fit on already refined retention times
+            rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                                  load_tokenizer_from_resources("tokenizer-ptm"), verbose=args.verbose)
+
+            if args.verbose:
+                print("refining retention time predictions ...")
+            # fit retention time predictor
+            rt_predictor.fit_model(
+                data=peptide_spectrum_match_list_to_pandas(generate_balanced_rt_dataset(
+                    psms=psm, hits_per_bin=64, rt_max=rt_max)),
+                rt_min=rt_min,
+                rt_max=rt_max,
+                epochs=15,
+                batch_size=128,
+                re_compile=True,
+                verbose=False,
+            )
+
         # predict retention times
         rt_pred = rt_predictor.simulate_separation_times(
-            sequences=[x.sequence for x in psm]
+            sequences=[x.sequence for x in psm],
+            rt_min=rt_min,
+            rt_max=rt_max,
         )
 
         # set retention times
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
+
+        # calculate calibration factor
+        rt_calibration_factor = np.mean(
+            [x.retention_time_observed - x.retention_time_predicted for x in psm])
+
+        # set calibrated retention times
+        for ps in psm:
+            ps.retention_time_predicted += rt_calibration_factor
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
@@ -537,6 +578,11 @@ def main():
 
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
+
+        if args.verbose:
+            time_end_tmp = time.time()
+            minutes, seconds = divmod(time_end_tmp - start_time, 60)
+            print(f"file {ds_name} processed after {minutes} minutes and {seconds:.2f} seconds.")
 
     psms = []
 
@@ -557,7 +603,7 @@ def main():
     bts = psms_to_json_bin(psms)
 
     # write all PSMs to binary file
-    write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms")
+    write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms", total=True)
 
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
@@ -571,7 +617,7 @@ def main():
     psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
 
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
-                   right_on=["spec_idx", "match_idx", "decoy"])
+                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
 
     TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
 

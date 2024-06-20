@@ -5,7 +5,7 @@ from tensorflow.keras.models import load_model
 
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
-from imspy.chemistry.mobility import ccs_to_one_over_k0
+from imspy.chemistry.mobility import ccs_to_one_over_k0, one_over_k0_to_ccs
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
 from imspy.algorithm.utility import get_model_path
@@ -257,6 +257,38 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         char_tokens = self.tokenizer.texts_to_sequences(char_tokens)
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
+
+    def fit_model(self,
+                  data: pd.DataFrame,
+                  epochs: int = 15,
+                  batch_size: int = 128,
+                  re_compile=False,
+                  verbose=False
+                  ):
+        assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
+        assert 'charge' in data.columns, 'Data must contain column named "charge"'
+        assert 'mono_mz_calculated' in data.columns, 'Data must contain column named "mono_mz_calculated"'
+        assert 'inverse_mobility_observed' in data.columns, 'Data must contain column named "inverse_mobility_observed"'
+
+        mz = data.mono_mz_calculated.values
+        charges = data.charge.values
+        sequences = data.sequence.values
+        inv_mob = data.inverse_mobility_observed.values
+
+        ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
+
+        m = np.expand_dims(mz, 1)
+        charges_one_hot = tf.one_hot(np.array(charges) - 1, 4)
+        tokenized_sequences = self._preprocess_sequences(sequences)
+
+        ds = tf.data.Dataset.from_tensor_slices(
+            ((m, charges_one_hot, tokenized_sequences), ccs)).shuffle(len(sequences)).batch(batch_size)
+
+        if re_compile:
+            self.model.compile(optimizer='adam', loss='mean_absolute_error', loss_weights=[1.0, 0.0],
+                               metrics=['mae', 'mean_absolute_percentage_error'])
+
+        self.model.fit(ds, epochs=epochs, verbose=verbose)
 
     def simulate_ion_mobilities(
             self,

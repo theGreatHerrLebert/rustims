@@ -11,7 +11,7 @@ ims = imspy_connector.py_dda
 
 class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
-    def __init__(self, data_path: str, in_memory: bool = True):
+    def __init__(self, data_path: str, in_memory: bool = False):
         super().__init__(data_path=data_path, in_memory=in_memory)
         self.__dataset = ims.PyTimsDatasetDDA(self.data_path, self.binary_path, in_memory)
         self.meta_data = self.meta_data.rename(columns={"Id": "frame_id"})

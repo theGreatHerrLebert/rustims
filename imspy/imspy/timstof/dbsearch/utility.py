@@ -20,6 +20,41 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from numpy.typing import NDArray
 
+from sagepy.core.scoring import merge_psm_dicts
+
+
+def merge_dicts_with_merge_dict(dicts):
+    d = None
+    for i, item in enumerate(dicts):
+        if i == 0:
+            d = item
+        else:
+            d = merge_psm_dicts(item, d)
+
+    return d
+
+
+def map_to_domain(data, gradient_length: float = 120.0):
+    """
+    Maps the input data linearly into the domain [0, l].
+
+    Parameters:
+    - data: list or numpy array of numerical values
+    - l: float, the upper limit of the target domain [0, l]
+
+    Returns:
+    - mapped_data: list of values mapped into the domain [0, l]
+    """
+    min_val = min(data)
+    max_val = max(data)
+
+    if max_val == min_val:
+        raise ValueError("All elements in data are the same. Linear mapping is not possible.")
+
+    mapped_data = [(gradient_length * (x - min_val) / (max_val - min_val)) for x in data]
+
+    return mapped_data
+
 
 def sanitize_charge(charge: Optional[float]) -> Optional[int]:
     """Sanitize charge value.
@@ -63,6 +98,8 @@ def split_fasta(fasta: str, num_splits: int = 16, randomize: bool = True) -> Lis
         return [fasta]
 
     split_strings = re.split(r'\n>', fasta)
+
+    print(f"Total number of sequences: {len(split_strings)} ...")
 
     if randomize:
         np.random.shuffle(split_strings)
@@ -179,25 +216,33 @@ def get_collision_energy_calibration_factor(
     return cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
 
 
-def write_psms_binary(byte_array, folder_path: str, file_name: str):
+def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool = False):
     """ Write PSMs to binary file.
     Args:
         byte_array: Byte array
         folder_path: Folder path
         file_name: File name
+        total: Whether to write to total folder
     """
     # create folder if it doesn't exist
     if not os.path.exists(f'{folder_path}/imspy/psm'):
         os.makedirs(f'{folder_path}/imspy/psm')
 
-    file = open(f'{folder_path}/imspy/psm/{file_name}.bin', 'wb')
+    # remove existing file, if any
+    if os.path.exists(f'{folder_path}/imspy/psm/{file_name}.bin'):
+        os.remove(f'{folder_path}/imspy/psm/{file_name}.bin')
+
+    if not total:
+        file = open(f'{folder_path}/imspy/psm/{file_name}.bin', 'wb')
+    else:
+        file = open(f'{folder_path}/imspy/{file_name}.bin', 'wb')
     try:
         file.write(bytearray(byte_array))
     finally:
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.005) -> Tuple[NDArray, NDArray]:
+def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
         psms: List of PeptideSpectrumMatch objects
@@ -285,12 +330,48 @@ def re_score_psms(
         X_train, Y_train = generate_training_data(features)
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
 
-        lda = LinearDiscriminantAnalysis()
+        lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
         lda.fit(X_train, Y_train)
-        Y_pred = np.squeeze(lda.transform(X))
+
+        score_flip = None
+        try:
+            # check for flip sign of LDA classification return to be compatible with good score ascending
+            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(X_train)))] == 1.0 else -1.0
+        except:
+            score_flip = 1.0
+
+        Y_pred = np.squeeze(lda.transform(X)) * score_flip
         predictions.extend(Y_pred)
 
     for score, match in zip(predictions, psms):
         match.re_score = score
 
-    return list(filter(lambda s: s.re_score <= 100, psms))
+    return psms
+
+
+def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0, rt_max=60.0):
+    bin_width = (rt_max - rt_min) / (num_bins - 1)
+    bins = [rt_min + i * bin_width for i in range(num_bins)]
+
+    r_list = []
+
+    for i in range(len(bins) - 1):
+        rt_lower = bins[i]
+        rt_upper = bins[i + 1]
+
+        psm = list(
+            filter(lambda match: not match.decoy and (rt_lower <= match.retention_time_observed <= rt_upper), psms))
+
+        r_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:hits_per_bin])
+
+    return r_list
+
+
+def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, sequences_per_charge=2048):
+    im_list = []
+
+    for charge in range(min_charge, max_charge + 1):
+        psm = list(filter(lambda match: not match.decoy and match.charge == charge, psms))
+        im_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:sequences_per_charge])
+
+    return im_list
