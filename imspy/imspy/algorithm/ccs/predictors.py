@@ -275,7 +275,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         sequences = data.sequence.values
         inv_mob = data.inverse_mobility_observed.values
 
-        ccs = np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)])
+        ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
 
         m = np.expand_dims(mz, 1)
         charges_one_hot = tf.one_hot(np.array(charges) - 1, 4)
@@ -285,7 +285,8 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             ((m, charges_one_hot, tokenized_sequences), ccs)).shuffle(len(sequences)).batch(batch_size)
 
         if re_compile:
-            self.model.compile(optimizer='adam', loss='mean_absolute_error')
+            self.model.compile(optimizer='adam', loss='mean_absolute_error',
+                               metrics=['mae', 'mean_absolute_percentage_error'])
 
         self.model.fit(ds, epochs=epochs, verbose=verbose)
 

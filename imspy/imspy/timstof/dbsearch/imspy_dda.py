@@ -504,10 +504,10 @@ def main():
             # fit ion mobility predictor
             im_predictor.fit_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
-                epochs=5,
+                epochs=10,
                 batch_size=128,
                 re_compile=True,
-                verbose=False,
+                verbose=True,
             )
 
         # predict ion mobilities
@@ -545,7 +545,7 @@ def main():
                     psms=psm, hits_per_bin=64, rt_max=rt_max)),
                 rt_min=rt_min,
                 rt_max=rt_max,
-                epochs=5,
+                epochs=10,
                 batch_size=128,
                 re_compile=True,
                 verbose=False,
