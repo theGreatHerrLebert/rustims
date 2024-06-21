@@ -186,15 +186,15 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
         sequences = data.sequence.values
         rts = data.retention_time_observed.values
-        ds = self.generate_tf_ds_train(sequences, rts, rt_min, rt_max).shuffle(len(sequences)).batch(batch_size)
+        ds = self.generate_tf_ds_train(sequences, rts, rt_min, rt_max).shuffle(len(sequences))
 
         # split data into training and validation
         n = len(sequences)
         n_train = int(0.8 * n)
         n_val = n - n_train
 
-        ds_train = ds.take(n_train)
-        ds_val = ds.skip(n_train).take(n_val)
+        ds_train = ds.take(n_train).batch(batch_size)
+        ds_val = ds.skip(n_train).take(n_val).batch(batch_size)
 
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_absolute_error')

@@ -281,15 +281,15 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         tokenized_sequences = self._preprocess_sequences(sequences)
 
         ds = tf.data.Dataset.from_tensor_slices(
-            ((m, charges_one_hot, tokenized_sequences), ccs)).shuffle(len(sequences)).batch(batch_size)
+            ((m, charges_one_hot, tokenized_sequences), ccs)).shuffle(len(sequences))
 
         # split data into training and validation
         n = len(sequences)
         n_train = int(0.8 * n)
         n_val = n - n_train
 
-        ds_train = ds.take(n_train)
-        ds_val = ds.skip(n_train).take(n_val)
+        ds_train = ds.take(n_train).batch(batch_size)
+        ds_val = ds.skip(n_train).take(n_val).batch(batch_size)
 
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_absolute_error', loss_weights=[1.0, 0.0],
@@ -298,13 +298,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         self.model.fit(ds_train, verbose=verbose, epochs=50, validation_data=ds_val,
                        callbacks=[tf.keras.callbacks.EarlyStopping(patience=3)])
 
-    def simulate_ion_mobilities(
-            self,
-            sequences: list[str],
-            charges: list[int],
-            mz: list[float],
-            batch_size: int = 1024
-    ) -> NDArray:
+    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], batch_size: int = 1024) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences
