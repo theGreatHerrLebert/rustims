@@ -502,10 +502,9 @@ def main():
             if args.verbose:
                 print("refining ion mobility predictions ...")
             # fit ion mobility predictor
-            im_predictor.fit_model(
+            im_predictor.fine_tune_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
-                epochs=15,
-                batch_size=128,
+                batch_size=64,
                 re_compile=True,
                 verbose=False,
             )
@@ -540,13 +539,12 @@ def main():
             if args.verbose:
                 print("refining retention time predictions ...")
             # fit retention time predictor
-            rt_predictor.fit_model(
+            rt_predictor.fine_tune_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_rt_dataset(
                     psms=psm, hits_per_bin=64, rt_max=rt_max)),
                 rt_min=rt_min,
                 rt_max=rt_max,
-                epochs=15,
-                batch_size=128,
+                batch_size=64,
                 re_compile=True,
                 verbose=False,
             )

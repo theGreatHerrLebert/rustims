@@ -258,13 +258,12 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         char_tokens = tf.keras.preprocessing.sequence.pad_sequences(char_tokens, pad_len, padding='post')
         return char_tokens
 
-    def fit_model(self,
-                  data: pd.DataFrame,
-                  epochs: int = 15,
-                  batch_size: int = 128,
-                  re_compile=False,
-                  verbose=False
-                  ):
+    def fine_tune_model(self,
+                        data: pd.DataFrame,
+                        batch_size: int = 64,
+                        re_compile=False,
+                        verbose=False
+                        ):
         assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
         assert 'charge' in data.columns, 'Data must contain column named "charge"'
         assert 'mono_mz_calculated' in data.columns, 'Data must contain column named "mono_mz_calculated"'
@@ -284,11 +283,20 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ds = tf.data.Dataset.from_tensor_slices(
             ((m, charges_one_hot, tokenized_sequences), ccs)).shuffle(len(sequences)).batch(batch_size)
 
+        # split data into training and validation
+        n = len(sequences)
+        n_train = int(0.8 * n)
+        n_val = n - n_train
+
+        ds_train = ds.take(n_train)
+        ds_val = ds.skip(n_train).take(n_val)
+
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_absolute_error', loss_weights=[1.0, 0.0],
                                metrics=['mae', 'mean_absolute_percentage_error'])
 
-        self.model.fit(ds, epochs=epochs, verbose=verbose)
+        self.model.fit(ds_train, verbose=verbose, epochs=50, validation_data=ds_val,
+                       callbacks=[tf.keras.callbacks.EarlyStopping(patience=3)])
 
     def simulate_ion_mobilities(
             self,
