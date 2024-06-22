@@ -353,25 +353,35 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
     bin_width = (rt_max - rt_min) / (num_bins - 1)
     bins = [rt_min + i * bin_width for i in range(num_bins)]
 
+    PSM_pandas = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms), method="psm")
+
     r_list = []
 
     for i in range(len(bins) - 1):
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
 
-        psm = list(
-            filter(lambda match: not match.decoy and (rt_lower <= match.retention_time_observed <= rt_upper), psms))
+        psm_pandas = PSM_pandas[((PSM_pandas.retention_time_observed >= rt_lower) & (PSM_pandas.retention_time_observed <= rt_upper)) & (PSM_pandas.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
+        spec_idx_set = set(psm_pandas.spec_idx.head(hits_per_bin).values)
 
-        r_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:hits_per_bin])
+        psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
+        r_list.extend(psm)
 
     return r_list
 
 
 def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, sequences_per_charge=2048):
+
+    PSM_pandas = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms), method="psm")
+
     im_list = []
 
     for charge in range(min_charge, max_charge + 1):
-        psm = list(filter(lambda match: not match.decoy and match.charge == charge, psms))
-        im_list.extend(list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:sequences_per_charge])
+
+        psm_pandas = PSM_pandas[(PSM_pandas.charge == charge) & (PSM_pandas.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence", "charge"])
+        spec_idx_set = set(psm_pandas.spec_idx.head(sequences_per_charge).values)
+
+        psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
+        im_list.extend(psm)
 
     return im_list
