@@ -296,7 +296,9 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                                metrics=['mae', 'mean_absolute_percentage_error'])
 
         self.model.fit(ds_train, verbose=verbose, epochs=50, validation_data=ds_val,
-                       callbacks=[tf.keras.callbacks.EarlyStopping(patience=3)])
+                       # use early stopping and learning rate reduction where
+                       callbacks=[tf.keras.callbacks.EarlyStopping(patience=6),
+                                  tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-6, patience=3)])
 
     def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], batch_size: int = 1024) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
