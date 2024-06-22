@@ -354,6 +354,9 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
     bins = [rt_min + i * bin_width for i in range(num_bins)]
 
     PSM_pandas = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms), method="psm")
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"])
 
     r_list = []
 
@@ -361,8 +364,8 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
 
-        psm_pandas = PSM_pandas[((PSM_pandas.retention_time_observed >= rt_lower) & (PSM_pandas.retention_time_observed <= rt_upper)) & (PSM_pandas.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
-        spec_idx_set = set(psm_pandas.spec_idx.head(hits_per_bin).values)
+        subset = TDC[((TDC.retention_time_observed >= rt_lower) & (TDC.retention_time_observed <= rt_upper)) & (TDC.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
+        spec_idx_set = set(subset.spec_idx.head(hits_per_bin).values)
 
         psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
         r_list.extend(psm)
@@ -373,13 +376,17 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
 def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, sequences_per_charge=2048):
 
     PSM_pandas = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms), method="psm")
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
+                   right_on=["spec_idx", "match_idx", "decoy"])
 
     im_list = []
 
     for charge in range(min_charge, max_charge + 1):
 
-        psm_pandas = PSM_pandas[(PSM_pandas.charge == charge) & (PSM_pandas.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence", "charge"])
-        spec_idx_set = set(psm_pandas.spec_idx.head(sequences_per_charge).values)
+        subset = TDC[(TDC.charge == charge) & (TDC.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence", "charge"])
+        spec_idx_set = set(subset.spec_idx.head(sequences_per_charge).values)
 
         psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
         im_list.extend(psm)
