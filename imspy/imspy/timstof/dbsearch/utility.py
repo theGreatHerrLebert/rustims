@@ -356,7 +356,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
-    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
 
     r_list = []
 
