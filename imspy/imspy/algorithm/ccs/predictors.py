@@ -295,7 +295,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             self.model.compile(optimizer='adam', loss='mean_absolute_error', loss_weights=[1.0, 0.0],
                                metrics=['mae', 'mean_absolute_percentage_error'])
 
-        self.model.fit(ds_train, verbose=verbose, epochs=50, validation_data=ds_val,
+        self.model.fit(ds_train, verbose=verbose, epochs=150, validation_data=ds_val,
                        # use early stopping and learning rate reduction where
                        callbacks=[tf.keras.callbacks.EarlyStopping(patience=6),
                                   tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-6, patience=3)])
