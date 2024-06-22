@@ -214,6 +214,9 @@ def main():
     parser.add_argument("--refine_im", dest="refine_im", action="store_true", help="Refine inverse mobility")
     parser.set_defaults(refine_im=False)
 
+    parser.add_argument("--refinement_verbose", dest="refinement_verbose", action="store_true", help="Refinement verbose")
+    parser.set_defaults(refinement_verbose=False)
+
     args = parser.parse_args()
 
     paths = []
@@ -429,7 +432,7 @@ def main():
                 ppm_error = apply_mz_calibration(psm_dict, fragments)
 
                 if args.verbose:
-                    print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
+                    print(f"calibrated mz with error: {np.round(ppm_error, 2)} ppm ...")
 
                 if args.verbose:
                     print("re-scoring PSMs after mz calibration ...")
@@ -502,12 +505,11 @@ def main():
             if args.verbose:
                 print("refining ion mobility predictions ...")
             # fit ion mobility predictor
-            im_predictor.fit_model(
+            im_predictor.fine_tune_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
-                epochs=15,
-                batch_size=128,
+                batch_size=64,
                 re_compile=True,
-                verbose=False,
+                verbose=args.refinement_verbose,
             )
 
         # predict ion mobilities
@@ -540,15 +542,14 @@ def main():
             if args.verbose:
                 print("refining retention time predictions ...")
             # fit retention time predictor
-            rt_predictor.fit_model(
+            rt_predictor.fine_tune_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_rt_dataset(
                     psms=psm, hits_per_bin=64, rt_max=rt_max)),
                 rt_min=rt_min,
                 rt_max=rt_max,
-                epochs=15,
-                batch_size=128,
+                batch_size=64,
                 re_compile=True,
-                verbose=False,
+                verbose=args.refinement_verbose,
             )
 
         # predict retention times

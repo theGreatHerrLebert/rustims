@@ -173,26 +173,36 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
         return self.model.predict(tf_ds, verbose=self.verbose)
 
-    def fit_model(self,
-                  data: pd.DataFrame,
-                  rt_min: float = 0.0,
-                  rt_max: float = 60.0,
-                  epochs: int = 10,
-                  batch_size: int = 128,
-                  re_compile=False,
-                  verbose=False
-                  ):
+    def fine_tune_model(self,
+                        data: pd.DataFrame,
+                        rt_min: float = 0.0,
+                        rt_max: float = 60.0,
+                        batch_size: int = 64,
+                        re_compile=False,
+                        verbose=False
+                        ):
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
         assert 'retention_time_observed' in data.columns, 'Data must contain a column named "retention_time_observed"'
 
         sequences = data.sequence.values
         rts = data.retention_time_observed.values
-        tf_ds = self.generate_tf_ds_train(sequences, rts, rt_min, rt_max).shuffle(len(sequences)).batch(batch_size)
+        ds = self.generate_tf_ds_train(sequences, rts, rt_min, rt_max).shuffle(len(sequences))
+
+        # split data into training and validation
+        n = len(sequences)
+        n_train = int(0.8 * n)
+        n_val = n - n_train
+
+        ds_train = ds.take(n_train).batch(batch_size)
+        ds_val = ds.skip(n_train).take(n_val).batch(batch_size)
 
         if re_compile:
-            self.model.compile(optimizer='adam', loss='mean_absolute_error')
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4), loss='mean_absolute_error')
 
-        self.model.fit(tf_ds, epochs=epochs, verbose=verbose)
+        self.model.fit(ds_train, verbose=verbose, epochs=150, validation_data=ds_val,
+                       # use early stopping and learning rate reduction where
+                       callbacks=[tf.keras.callbacks.EarlyStopping(patience=10),
+                                  tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-6, patience=3)])
 
     def simulate_separation_times_pandas(self,
                                          data: pd.DataFrame,
