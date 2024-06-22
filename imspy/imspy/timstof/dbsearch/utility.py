@@ -359,8 +359,8 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
 
-        psm = list(sorted(key=filter(
-            lambda match: rt_lower <= match.retention_time_observed <= rt_upper and match.decoy is False, psms)))
+        psm = list(filter(
+            lambda m: rt_lower <= m.retention_time_observed <= rt_upper and m.decoy is False and m.rank is 1, psms))
 
         # sort by hyper_score descending
         psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_bin]
@@ -375,7 +375,7 @@ def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_char
 
     for charge in range(min_charge, max_charge + 1):
 
-        psm = list(filter(lambda match: match.charge == charge and match.decoy is False, psms))
+        psm = list(filter(lambda m: m.charge == charge and m.decoy is False and m.rank is 1, psms))
 
         # sort by hyper_score descending
         psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_charge]
