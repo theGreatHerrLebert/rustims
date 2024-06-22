@@ -356,7 +356,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
-    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"])
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
 
     r_list = []
 
@@ -364,7 +364,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
 
-        subset = TDC[((TDC.retention_time_observed >= rt_lower) & (TDC.retention_time_observed <= rt_upper)) & (TDC.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
+        subset = TDC[((TDC.retention_time_observed >= rt_lower) & (TDC.retention_time_observed <= rt_upper)) & (TDC.decoy == False)].sort_values(by="score", ascending=False)
         spec_idx_set = set(subset.spec_idx.head(hits_per_bin).values)
 
         psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
