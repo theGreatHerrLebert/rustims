@@ -349,14 +349,9 @@ def re_score_psms(
     return psms
 
 
-def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0, rt_max=60.0):
+def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0, rt_max=60.0):
     bin_width = (rt_max - rt_min) / (num_bins - 1)
     bins = [rt_min + i * bin_width for i in range(num_bins)]
-
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
-    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
-    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
-    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
 
     r_list = []
 
@@ -364,32 +359,26 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
 
-        subset = TDC[((TDC.retention_time_observed >= rt_lower) & (TDC.retention_time_observed <= rt_upper)) & (TDC.decoy == False)].sort_values(by="score", ascending=False)
-        spec_idx_set = set(subset.spec_idx.head(hits_per_bin).values)
+        psm = list(sorted(key=filter(
+            lambda match: rt_lower <= match.retention_time_observed <= rt_upper and match.decoy is False, psms)))
 
-        psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
+        # sort by hyper_score descending
+        psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_bin]
         r_list.extend(psm)
 
     return r_list
 
 
-def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_charge=1024):
-
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
-    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
-    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
-    TDC = pd.merge(PSM_q, PSM_pandas_dropped,
-                   left_on=["spec_idx", "match_idx", "decoy"],
-                   right_on=["spec_idx", "match_idx", "decoy"])
+def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_charge=2048):
 
     im_list = []
 
     for charge in range(min_charge, max_charge + 1):
 
-        subset = TDC[(TDC.charge == charge) & (TDC.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence", "charge"])
-        spec_idx_set = set(subset.spec_idx.head(hits_per_charge).values)
+        psm = list(filter(lambda match: match.charge == charge and match.decoy is False, psms))
 
-        psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
+        # sort by hyper_score descending
+        psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_charge]
         im_list.extend(psm)
 
     return im_list
