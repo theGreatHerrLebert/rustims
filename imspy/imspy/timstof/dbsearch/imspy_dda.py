@@ -432,7 +432,7 @@ def main():
                 ppm_error = apply_mz_calibration(psm_dict, fragments)
 
                 if args.verbose:
-                    print(f"calibrated mz with error: {np.round(ppm_error, 2)}")
+                    print(f"calibrated mz with error: {np.round(ppm_error, 2)} ppm ...")
 
                 if args.verbose:
                     print("re-scoring PSMs after mz calibration ...")
