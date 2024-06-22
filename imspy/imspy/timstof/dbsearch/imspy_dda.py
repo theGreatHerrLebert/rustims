@@ -509,7 +509,7 @@ def main():
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
                 batch_size=64,
                 re_compile=True,
-                verbose=False,
+                verbose=args.refinement_verbose,
             )
 
         # predict ion mobilities
@@ -549,7 +549,7 @@ def main():
                 rt_max=rt_max,
                 batch_size=64,
                 re_compile=True,
-                verbose=False,
+                verbose=args.refinement_verbose,
             )
 
         # predict retention times
