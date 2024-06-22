@@ -199,7 +199,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         if re_compile:
             self.model.compile(optimizer='adam', loss='mean_absolute_error')
 
-        self.model.fit(ds_train, verbose=verbose, epochs=50, validation_data=ds_val,
+        self.model.fit(ds_train, verbose=verbose, epochs=150, validation_data=ds_val,
                        # use early stopping and learning rate reduction where
                        callbacks=[tf.keras.callbacks.EarlyStopping(patience=6),
                                   tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-6, patience=3)])
