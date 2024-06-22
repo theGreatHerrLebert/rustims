@@ -506,7 +506,7 @@ def main():
                 print("refining ion mobility predictions ...")
             # fit ion mobility predictor
             im_predictor.fine_tune_model(
-                data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm, hits_per_charge=2048)),
+                data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm, hits_per_charge=1024)),
                 batch_size=64,
                 re_compile=True,
                 verbose=args.refinement_verbose,
