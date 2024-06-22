@@ -214,6 +214,9 @@ def main():
     parser.add_argument("--refine_im", dest="refine_im", action="store_true", help="Refine inverse mobility")
     parser.set_defaults(refine_im=False)
 
+    parser.add_argument("--refinement_verbose", dest="refinement_verbose", action="store_true", help="Refinement verbose")
+    parser.set_defaults(refinement_verbose=False)
+
     args = parser.parse_args()
 
     paths = []
