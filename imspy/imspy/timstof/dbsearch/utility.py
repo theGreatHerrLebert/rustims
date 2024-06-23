@@ -358,7 +358,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
-    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)]
+    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset="sequence")
 
     bin_width = (rt_max - rt_min) / (num_bins - 1)
     bins = [rt_min + i * bin_width for i in range(num_bins)]
@@ -385,7 +385,7 @@ def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_char
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
-    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)]
+    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset=["sequence", "charge"])
     id_set = set()
 
     for charge in range(min_charge, max_charge + 1):
