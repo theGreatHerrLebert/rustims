@@ -16,6 +16,7 @@ from imspy.timstof.frame import TimsFrame
 from sagepy.utility import get_features
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler
 
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from numpy.typing import NDArray
@@ -315,6 +316,10 @@ def re_score_psms(
         List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
     """
 
+    scaler = StandardScaler()
+    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms))
+    scaler.fit(X_all)
+
     splits = split_psms(psms=psms, num_splits=num_splits)
     predictions = []
 
@@ -331,16 +336,15 @@ def re_score_psms(
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
-        lda.fit(X_train, Y_train)
+        lda.fit(scaler.transform(X_train), Y_train)
 
-        score_flip = None
         try:
             # check for flip sign of LDA classification return to be compatible with good score ascending
-            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(X_train)))] == 1.0 else -1.0
+            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(scaler.transform(X_train))))] == 1.0 else -1.0
         except:
             score_flip = 1.0
 
-        Y_pred = np.squeeze(lda.transform(X)) * score_flip
+        Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
         predictions.extend(Y_pred)
 
     for score, match in zip(predictions, psms):
