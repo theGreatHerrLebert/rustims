@@ -366,7 +366,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0
         psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_bin]
         r_list.extend(psm)
 
-    return r_list
+    return np.random.permutation(r_list)
 
 
 def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_charge=2048):
