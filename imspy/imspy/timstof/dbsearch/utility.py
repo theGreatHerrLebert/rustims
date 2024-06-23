@@ -349,7 +349,7 @@ def re_score_psms(
     return psms
 
 
-def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0, rt_max=120.0):
+def generate_balanced_rt_dataset(psms, num_bins=128, rt_min=0.0, rt_max=120.0):
     # generate good hits
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
@@ -368,7 +368,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
         TDC_tmp = TDC[(rt_lower <= TDC.retention_time_observed) & (TDC.retention_time_observed <= rt_upper)]
-        TDC_tmp = TDC_tmp.sample(frac=1).head(hits_per_bin)
+        TDC_tmp = TDC_tmp.sample(frac=1)
         id_set = id_set.union(set(TDC_tmp.spec_idx.values))
 
     r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
@@ -389,7 +389,7 @@ def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_char
     id_set = set()
 
     for charge in range(min_charge, max_charge + 1):
-        TDC_tmp = TDC[TDC.charge == charge].sample(frac=1).head(hits_per_charge)
+        TDC_tmp = TDC[TDC.charge == charge].sample(frac=1)
         id_set = id_set.union(set(TDC_tmp.spec_idx.values))
 
     im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
