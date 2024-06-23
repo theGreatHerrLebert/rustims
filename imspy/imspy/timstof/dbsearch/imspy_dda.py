@@ -541,13 +541,17 @@ def main():
 
             if args.verbose:
                 print("refining retention time predictions ...")
+
+            ds = peptide_spectrum_match_list_to_pandas(
+                generate_balanced_rt_dataset(psms=psm, num_bins=256, hits_per_bin=64, rt_min=rt_min, rt_max=rt_max)
+            )
+
             # fit retention time predictor
             rt_predictor.fine_tune_model(
-                data=peptide_spectrum_match_list_to_pandas(generate_balanced_rt_dataset(
-                    psms=psm, hits_per_bin=64, rt_max=rt_max)),
+                data=ds,
                 rt_min=rt_min,
                 rt_max=rt_max,
-                batch_size=32,
+                batch_size=64,
                 re_compile=True,
                 verbose=args.refinement_verbose,
             )

@@ -349,36 +349,49 @@ def re_score_psms(
     return psms
 
 
-def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0, rt_max=60.0):
+def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=64, rt_min=0.0, rt_max=120.0):
+    # generate good hits
+    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+
+    # merge data with q-values
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
+                   right_on=["spec_idx", "match_idx", "decoy"])
+    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)]
+
     bin_width = (rt_max - rt_min) / (num_bins - 1)
     bins = [rt_min + i * bin_width for i in range(num_bins)]
-
-    r_list = []
+    id_set = set()
 
     for i in range(len(bins) - 1):
         rt_lower = bins[i]
         rt_upper = bins[i + 1]
+        TDC_tmp = TDC[(rt_lower <= TDC.retention_time_observed) & (TDC.retention_time_observed <= rt_upper)]
+        TDC_tmp = TDC_tmp.sample(frac=1).head(hits_per_bin)
+        id_set = id_set.union(set(TDC_tmp.spec_idx.values))
 
-        psm = list(filter(
-            lambda m: rt_lower <= m.retention_time_observed <= rt_upper and m.decoy is False and m.rank is 1, psms))
+    r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
-        # sort by hyper_score descending
-        psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_bin]
-        r_list.extend(psm)
-
-    return np.random.permutation(r_list)
+    return r_list
 
 
 def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_charge=2048):
+    # generate good hits
+    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
 
-    im_list = []
+    # merge data with q-values
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
+                   right_on=["spec_idx", "match_idx", "decoy"])
+    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)]
+    id_set = set()
 
     for charge in range(min_charge, max_charge + 1):
+        TDC_tmp = TDC[TDC.charge == charge].sample(frac=1).head(hits_per_charge)
+        id_set = id_set.union(set(TDC_tmp.spec_idx.values))
 
-        psm = list(filter(lambda m: m.charge == charge and m.decoy is False and m.rank is 1, psms))
-
-        # sort by hyper_score descending
-        psm = sorted(psm, key=lambda x: x.hyper_score, reverse=True)[:hits_per_charge]
-        im_list.extend(psm)
+    im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
     return im_list
