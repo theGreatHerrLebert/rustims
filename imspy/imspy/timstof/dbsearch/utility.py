@@ -376,7 +376,7 @@ def generate_balanced_rt_dataset(psms, num_bins=128, rt_min=0.0, rt_max=120.0):
     return r_list
 
 
-def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, hits_per_charge=2048):
+def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4):
     # generate good hits
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
