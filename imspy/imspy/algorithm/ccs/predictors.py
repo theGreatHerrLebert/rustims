@@ -292,7 +292,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ds_val = ds.skip(n_train).take(n_val).batch(batch_size)
 
         if re_compile:
-            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4), loss='mean_absolute_error', loss_weights=[1.0, 0.0],
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss='mean_absolute_error', loss_weights=[1.0, 0.0],
                                metrics=['mae', 'mean_absolute_percentage_error'])
 
         self.model.fit(ds_train, verbose=verbose, epochs=150, validation_data=ds_val,
