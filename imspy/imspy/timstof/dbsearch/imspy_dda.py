@@ -527,9 +527,10 @@ def main():
         inv_mob_calibration_factor = np.mean(
             [x.inverse_mobility_observed - x.inverse_mobility_predicted for x in psm])
 
-        # set calibrated ion mobilities
-        for p in psm:
-            p.inverse_mobility_predicted += inv_mob_calibration_factor
+        if not args.refine_im:
+            # set calibrated ion mobilities
+            for p in psm:
+                p.inverse_mobility_predicted += inv_mob_calibration_factor
 
         if args.verbose:
             print("predicting retention times ...")
@@ -563,9 +564,10 @@ def main():
             rt_max=rt_max,
         )
 
-        # set retention times
-        for rt, p in zip(rt_pred, psm):
-            p.retention_time_predicted = rt
+        if not args.refine_rt:
+            # set retention times
+            for rt, p in zip(rt_pred, psm):
+                p.retention_time_predicted = rt
 
         # calculate calibration factor
         rt_calibration_factor = np.mean(
