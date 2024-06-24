@@ -137,7 +137,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
                         verbose=False
                         ):
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
-        assert 'retention_time_observed' in data.columns, 'Data must contain a column named "retention_time_observed"'
+        assert 'projected_rt' in data.columns, 'Data must contain a column named "projected_rt"'
 
         sequences = data.sequence.values
         rts = data.projected_rt.values
@@ -154,7 +154,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         checkpoint = InMemoryCheckpoint()
 
         if re_compile:
-            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss='mean_absolute_error')
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss='mean_absolute_percentage_error')
 
         self.model.fit(ds_train, verbose=verbose, epochs=150, validation_data=ds_val,
                        # use early stopping and learning rate reduction where
