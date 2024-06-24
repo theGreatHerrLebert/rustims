@@ -1,6 +1,6 @@
 import argparse
+import logging
 import os
-import re
 import sys
 import time
 
@@ -244,6 +244,14 @@ def main():
     # get the write folder path
     write_folder_path = "/".join(args.path.split("/")[:-1])
 
+    # Set up logging
+    logging.basicConfig(filename=f"{write_folder_path}/imspy.log",
+                        level=logging.INFO, format='%(asctime)s %(message)s')
+
+    logging.info("Arguments settings:")
+    for arg in vars(args):
+        logging.info(f"{arg}: {getattr(args, arg)}")
+
     # get time
     start_time = time.time()
 
@@ -404,6 +412,8 @@ def main():
             print("creating search configuration ...")
 
         psm_dicts = []
+
+        logging.info(f"Processing {ds_name} ...")
 
         for j, fasta in enumerate(fastas):
 
@@ -577,10 +587,13 @@ def main():
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
 
+        logging.info(f"Processed {ds_name} ...")
+
         if args.verbose:
             time_end_tmp = time.time()
             minutes, seconds = divmod(time_end_tmp - start_time, 60)
             print(f"file {ds_name} processed after {minutes} minutes and {seconds:.2f} seconds.")
+
 
     psms = []
 
@@ -620,6 +633,8 @@ def main():
     TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
 
     end_time = time.time()
+
+    logging.info("Done processing all RAW files.")
 
     if args.verbose:
         print("Done processing all RAW files.")
