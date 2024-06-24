@@ -27,17 +27,18 @@ def load_tokenizer_from_resources(tokenizer_name: str) -> tf.keras.preprocessing
 
 
 class InMemoryCheckpoint(tf.keras.callbacks.Callback):
-    def __init__(self):
+    def __init__(self, validation_target="val_loss"):
         super(InMemoryCheckpoint, self).__init__()
         self.best_weights = None
         self.best_val_loss = np.Inf
         self.initial_weights = None
+        self.validation_target = validation_target
 
     def on_train_begin(self, logs=None):
         self.initial_weights = self.model.get_weights()
 
     def on_epoch_end(self, epoch, logs=None):
-        val_loss = logs.get("val_loss")
+        val_loss = logs.get(self.validation_target)
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
             self.best_weights = self.model.get_weights()

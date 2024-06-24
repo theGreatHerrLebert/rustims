@@ -291,7 +291,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ds_train = ds.take(n_train).batch(batch_size)
         ds_val = ds.skip(n_train).take(n_val).batch(batch_size)
 
-        checkpoint = InMemoryCheckpoint()
+        checkpoint = InMemoryCheckpoint(validation_target='val_output_1_mean_absolute_percentage_error')
 
         if re_compile:
             self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss='mean_absolute_error', loss_weights=[1.0, 0.0],
