@@ -1,3 +1,4 @@
+import numpy as np
 import tensorflow as tf
 import importlib.resources as resources
 from imspy.utility.utilities import tokenizer_from_json
@@ -23,3 +24,24 @@ def load_tokenizer_from_resources(tokenizer_name: str) -> tf.keras.preprocessing
         The pretrained tokenizer
     """
     return tokenizer_from_json(resources.files('imspy.algorithm.pretrained').joinpath(f'{tokenizer_name}.json'))
+
+
+class InMemoryCheckpoint(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super(InMemoryCheckpoint, self).__init__()
+        self.best_weights = None
+        self.best_val_loss = np.Inf
+        self.initial_weights = None
+
+    def on_train_begin(self, logs=None):
+        self.initial_weights = self.model.get_weights()
+
+    def on_epoch_end(self, epoch, logs=None):
+        val_loss = logs.get("val_loss")
+        if val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+            self.best_weights = self.model.get_weights()
+
+    def on_train_end(self, logs=None):
+        if self.best_weights is not None:
+            self.model.set_weights(self.best_weights)
