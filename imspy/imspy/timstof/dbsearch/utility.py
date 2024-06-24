@@ -353,7 +353,7 @@ def re_score_psms(
     return psms
 
 
-def generate_balanced_rt_dataset(psms, num_bins=128, rt_min=0.0, rt_max=120.0):
+def generate_balanced_rt_dataset(psms):
     # generate good hits
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
@@ -364,23 +364,14 @@ def generate_balanced_rt_dataset(psms, num_bins=128, rt_min=0.0, rt_max=120.0):
                    right_on=["spec_idx", "match_idx", "decoy"])
     TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset="sequence")
 
-    bin_width = (rt_max - rt_min) / (num_bins - 1)
-    bins = [rt_min + i * bin_width for i in range(num_bins)]
-    id_set = set()
-
-    for i in range(len(bins) - 1):
-        rt_lower = bins[i]
-        rt_upper = bins[i + 1]
-        TDC_tmp = TDC[(rt_lower <= TDC.retention_time_observed) & (TDC.retention_time_observed <= rt_upper)]
-        TDC_tmp = TDC_tmp.sample(frac=1)
-        id_set = id_set.union(set(TDC_tmp.spec_idx.values))
+    id_set = set(TDC.spec_idx.values)
 
     r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
     return r_list
 
 
-def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4):
+def generate_balanced_im_dataset(psms):
     # generate good hits
     PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
@@ -390,11 +381,7 @@ def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4):
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
     TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset=["sequence", "charge"])
-    id_set = set()
-
-    for charge in range(min_charge, max_charge + 1):
-        TDC_tmp = TDC[TDC.charge == charge].sample(frac=1)
-        id_set = id_set.union(set(TDC_tmp.spec_idx.values))
+    id_set = set(TDC.spec_idx.values)
 
     im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
