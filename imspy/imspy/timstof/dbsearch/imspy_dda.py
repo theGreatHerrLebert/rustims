@@ -523,11 +523,11 @@ def main():
         for mob, ps in zip(inv_mob, psm):
             ps.inverse_mobility_predicted = mob
 
-        # calculate calibration factor
-        inv_mob_calibration_factor = np.mean(
-            [x.inverse_mobility_observed - x.inverse_mobility_predicted for x in psm])
-
         if not args.refine_im:
+            # calculate calibration factor
+            inv_mob_calibration_factor = np.mean(
+                [x.inverse_mobility_observed - x.inverse_mobility_predicted for x in psm])
+
             # set calibrated ion mobilities
             for p in psm:
                 p.inverse_mobility_predicted += inv_mob_calibration_factor
@@ -564,18 +564,9 @@ def main():
             rt_max=rt_max,
         )
 
-        if not args.refine_rt:
-            # set retention times
-            for rt, p in zip(rt_pred, psm):
-                p.retention_time_predicted = rt
-
-        # calculate calibration factor
-        rt_calibration_factor = np.mean(
-            [x.retention_time_observed - x.retention_time_predicted for x in psm])
-
-        # set calibrated retention times
-        for ps in psm:
-            ps.retention_time_predicted += rt_calibration_factor
+        # set retention times
+        for rt, p in zip(rt_pred, psm):
+            p.retention_time_predicted = rt
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
