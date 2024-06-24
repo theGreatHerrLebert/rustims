@@ -244,6 +244,10 @@ def main():
     # get the write folder path
     write_folder_path = "/".join(args.path.split("/")[:-1])
 
+    # create imspy folder if it does not exist
+    if not os.path.exists(write_folder_path + "/imspy"):
+        os.makedirs(write_folder_path + "/imspy")
+
     # Set up logging
     logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy.log",
                         level=logging.INFO, format='%(asctime)s %(message)s')
