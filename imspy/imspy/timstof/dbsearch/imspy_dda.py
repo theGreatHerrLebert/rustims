@@ -292,6 +292,10 @@ def main():
     variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
                                        SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
 
+    # cysteinylation should be set as variable modification if cysteine_static is False (MHC search)
+    if args.cysteine_static is False:
+        variable_mods["C"] = [119.001]
+
     # generate SAGE compatible mod representations
     static = validate_mods(static_mods)
     variab = validate_var_mods(variable_mods)
