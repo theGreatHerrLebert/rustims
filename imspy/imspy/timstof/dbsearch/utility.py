@@ -22,6 +22,16 @@ from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from numpy.typing import NDArray
 
 from sagepy.core.scoring import merge_psm_dicts
+from numba import jit
+
+
+@jit(nopython=True)
+def linear_map(value, old_min, old_max, new_min=0.0, new_max=60.0):
+    scale = (new_max - new_min) / (old_max - old_min)
+    offset = new_min - old_min * scale
+
+    new_value = value * scale + offset
+    return new_value
 
 
 def merge_dicts_with_merge_dict(dicts):

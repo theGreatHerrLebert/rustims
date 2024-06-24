@@ -23,7 +23,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -484,6 +484,10 @@ def main():
         for _, values in merged_dict.items():
             psm.extend(values)
 
+        # map PSMs rt domain to [0, 60]
+        for p in psm:
+            p.projected_rt = linear_map(p.retention_time_observed, rt_min, rt_max, 0.0, 60.0)
+
         if args.verbose:
             print(f"generated {len(psm)} PSMs ...")
 
@@ -568,8 +572,6 @@ def main():
             # fit retention time predictor
             rt_predictor.fine_tune_model(
                 data=ds,
-                rt_min=rt_min,
-                rt_max=rt_max,
                 batch_size=1024,
                 re_compile=True,
                 verbose=args.refinement_verbose,
@@ -578,8 +580,6 @@ def main():
         # predict retention times
         rt_pred = rt_predictor.simulate_separation_times(
             sequences=[x.sequence for x in psm],
-            rt_min=rt_min,
-            rt_max=rt_max,
         )
 
         # set retention times
