@@ -245,7 +245,7 @@ def main():
     write_folder_path = "/".join(args.path.split("/")[:-1])
 
     # Set up logging
-    logging.basicConfig(filename=f"{write_folder_path}/imspy.log",
+    logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy.log",
                         level=logging.INFO, format='%(asctime)s %(message)s')
 
     logging.info("Arguments settings:")
