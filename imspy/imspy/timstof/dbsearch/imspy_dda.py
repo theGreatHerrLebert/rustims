@@ -7,10 +7,10 @@ import time
 import pandas as pd
 import numpy as np
 
-from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SAGE_KNOWN_MODS, validate_mods, \
-    validate_var_mods, SageSearchConfiguration
+from sagepy.core import (Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder,
+                         SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration)
 
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, merge_psm_dicts
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
@@ -22,7 +22,7 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, \
     merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
 
 from sagepy.core.scoring import psms_to_json_bin
