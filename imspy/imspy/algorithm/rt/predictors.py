@@ -6,7 +6,6 @@ from numpy.typing import NDArray
 
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
 from imspy.utility import tokenize_unimod_sequence
-from imspy.simulation.utility import irt_to_rts_numba
 
 from tensorflow.keras.models import load_model
 
