@@ -16,11 +16,22 @@ from imspy.timstof.frame import TimsFrame
 from sagepy.utility import get_features
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler
 
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
 from numpy.typing import NDArray
 
 from sagepy.core.scoring import merge_psm_dicts
+from numba import jit
+
+
+@jit(nopython=True)
+def linear_map(value, old_min, old_max, new_min=0.0, new_max=60.0):
+    scale = (new_max - new_min) / (old_max - old_min)
+    offset = new_min - old_min * scale
+
+    new_value = value * scale + offset
+    return new_value
 
 
 def merge_dicts_with_merge_dict(dicts):
@@ -315,6 +326,10 @@ def re_score_psms(
         List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
     """
 
+    scaler = StandardScaler()
+    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms))
+    scaler.fit(X_all)
+
     splits = split_psms(psms=psms, num_splits=num_splits)
     predictions = []
 
@@ -331,16 +346,15 @@ def re_score_psms(
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
-        lda.fit(X_train, Y_train)
+        lda.fit(scaler.transform(X_train), Y_train)
 
-        score_flip = None
         try:
             # check for flip sign of LDA classification return to be compatible with good score ascending
-            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(X_train)))] == 1.0 else -1.0
+            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(scaler.transform(X_train))))] == 1.0 else -1.0
         except:
             score_flip = 1.0
 
-        Y_pred = np.squeeze(lda.transform(X)) * score_flip
+        Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
         predictions.extend(Y_pred)
 
     for score, match in zip(predictions, psms):
@@ -349,47 +363,36 @@ def re_score_psms(
     return psms
 
 
-def generate_balanced_rt_dataset(psms, num_bins=128, hits_per_bin=32, rt_min=0.0, rt_max=60.0):
-    bin_width = (rt_max - rt_min) / (num_bins - 1)
-    bins = [rt_min + i * bin_width for i in range(num_bins)]
-
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
+def generate_balanced_rt_dataset(psms):
+    # generate good hits
+    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
-    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"], right_on=["spec_idx", "match_idx", "decoy"])
 
-    r_list = []
+    # merge data with q-values
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
+                   right_on=["spec_idx", "match_idx", "decoy"])
+    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset="sequence")
 
-    for i in range(len(bins) - 1):
-        rt_lower = bins[i]
-        rt_upper = bins[i + 1]
+    id_set = set(TDC.spec_idx.values)
 
-        subset = TDC[((TDC.retention_time_observed >= rt_lower) & (TDC.retention_time_observed <= rt_upper)) & (TDC.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence"])
-        spec_idx_set = set(subset.spec_idx.head(hits_per_bin).values)
-
-        psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
-        r_list.extend(psm)
+    r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
     return r_list
 
 
-def generate_balanced_im_dataset(psms, min_charge=1, max_charge=4, sequences_per_charge=2048):
-
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
+def generate_balanced_im_dataset(psms):
+    # generate good hits
+    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
-    TDC = pd.merge(PSM_q, PSM_pandas_dropped,
-                   left_on=["spec_idx", "match_idx", "decoy"],
+
+    # merge data with q-values
+    TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"])
+    TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset=["sequence", "charge"])
+    id_set = set(TDC.spec_idx.values)
 
-    im_list = []
-
-    for charge in range(min_charge, max_charge + 1):
-
-        subset = TDC[(TDC.charge == charge) & (TDC.decoy == False)].sort_values(by="score", ascending=False).drop_duplicates(subset=["sequence", "charge"])
-        spec_idx_set = set(subset.spec_idx.head(sequences_per_charge).values)
-
-        psm = list(filter(lambda match: match.spec_idx in spec_idx_set, psms))
-        im_list.extend(psm)
+    im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
     return im_list

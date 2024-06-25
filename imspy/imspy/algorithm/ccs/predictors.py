@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from imspy.chemistry.mobility import ccs_to_one_over_k0, one_over_k0_to_ccs
 from scipy.optimize import curve_fit
 from imspy.utility import tokenize_unimod_sequence
-from imspy.algorithm.utility import get_model_path
+from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:
@@ -291,14 +291,16 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ds_train = ds.take(n_train).batch(batch_size)
         ds_val = ds.skip(n_train).take(n_val).batch(batch_size)
 
+        checkpoint = InMemoryCheckpoint(validation_target='val_output_1_mean_absolute_percentage_error')
+
         if re_compile:
-            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4), loss='mean_absolute_error', loss_weights=[1.0, 0.0],
+            self.model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3), loss='mean_absolute_error', loss_weights=[1.0, 0.0],
                                metrics=['mae', 'mean_absolute_percentage_error'])
 
         self.model.fit(ds_train, verbose=verbose, epochs=150, validation_data=ds_val,
                        # use early stopping and learning rate reduction where
-                       callbacks=[tf.keras.callbacks.EarlyStopping(patience=6),
-                                  tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-10, patience=3)])
+                       callbacks=[tf.keras.callbacks.EarlyStopping(patience=6), checkpoint,
+                                  tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-6, patience=3)])
 
     def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], batch_size: int = 1024) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)

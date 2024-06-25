@@ -15,11 +15,13 @@ from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
 
 from imspy.utility import tokenize_unimod_sequence
 
+
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     """Convert a sequence to a list of indices into the alphabet.
 
     Args:
         seq: A string representing a sequence of amino acids.
+        max_length: The maximum length of the sequence to allow.
 
     Returns:
         A list of integers, each representing an index into the alphabet.

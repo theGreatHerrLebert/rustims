@@ -1,16 +1,16 @@
 import argparse
+import logging
 import os
-import re
 import sys
 import time
 
 import pandas as pd
 import numpy as np
 
-from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SAGE_KNOWN_MODS, validate_mods, \
-    validate_var_mods, SageSearchConfiguration
+from sagepy.core import (Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder,
+                         SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration)
 
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, merge_psm_dicts
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
@@ -22,8 +22,8 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, map_to_domain, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset
+    get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, \
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -244,6 +244,18 @@ def main():
     # get the write folder path
     write_folder_path = "/".join(args.path.split("/")[:-1])
 
+    # create imspy folder if it does not exist
+    if not os.path.exists(write_folder_path + "/imspy"):
+        os.makedirs(write_folder_path + "/imspy")
+
+    # Set up logging
+    logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy.log",
+                        level=logging.INFO, format='%(asctime)s %(message)s')
+
+    logging.info("Arguments settings:")
+    for arg in vars(args):
+        logging.info(f"{arg}: {getattr(args, arg)}")
+
     # get time
     start_time = time.time()
 
@@ -283,6 +295,10 @@ def main():
     # generate variable methionine modification TODO: make configurable
     variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
                                        SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
+
+    # cysteinylation should be set as variable modification if cysteine_static is False (MHC search)
+    if args.cysteine_static is False:
+        variable_mods["C"] = [119.001]
 
     # generate SAGE compatible mod representations
     static = validate_mods(static_mods)
@@ -405,6 +421,8 @@ def main():
 
         psm_dicts = []
 
+        logging.info(f"Processing {ds_name} ...")
+
         for j, fasta in enumerate(fastas):
 
             if len(fastas) > 1:
@@ -466,6 +484,10 @@ def main():
         for _, values in merged_dict.items():
             psm.extend(values)
 
+        # map PSMs rt domain to [0, 60]
+        for p in psm:
+            p.projected_rt = linear_map(p.retention_time_observed, rt_min, rt_max, 0.0, 60.0)
+
         if args.verbose:
             print(f"generated {len(psm)} PSMs ...")
 
@@ -507,7 +529,7 @@ def main():
             # fit ion mobility predictor
             im_predictor.fine_tune_model(
                 data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
-                batch_size=64,
+                batch_size=1024,
                 re_compile=True,
                 verbose=args.refinement_verbose,
             )
@@ -523,13 +545,14 @@ def main():
         for mob, ps in zip(inv_mob, psm):
             ps.inverse_mobility_predicted = mob
 
-        # calculate calibration factor
-        inv_mob_calibration_factor = np.mean(
-            [x.inverse_mobility_observed - x.inverse_mobility_predicted for x in psm])
+        if not args.refine_im:
+            # calculate calibration factor
+            inv_mob_calibration_factor = np.mean(
+                [x.inverse_mobility_observed - x.inverse_mobility_predicted for x in psm])
 
-        # set calibrated ion mobilities
-        for p in psm:
-            p.inverse_mobility_predicted += inv_mob_calibration_factor
+            # set calibrated ion mobilities
+            for p in psm:
+                p.inverse_mobility_predicted += inv_mob_calibration_factor
 
         if args.verbose:
             print("predicting retention times ...")
@@ -541,13 +564,15 @@ def main():
 
             if args.verbose:
                 print("refining retention time predictions ...")
+
+            ds = peptide_spectrum_match_list_to_pandas(
+                generate_balanced_rt_dataset(psms=psm)
+            )
+
             # fit retention time predictor
             rt_predictor.fine_tune_model(
-                data=peptide_spectrum_match_list_to_pandas(generate_balanced_rt_dataset(
-                    psms=psm, hits_per_bin=64, rt_max=rt_max)),
-                rt_min=rt_min,
-                rt_max=rt_max,
-                batch_size=64,
+                data=ds,
+                batch_size=1024,
                 re_compile=True,
                 verbose=args.refinement_verbose,
             )
@@ -555,21 +580,11 @@ def main():
         # predict retention times
         rt_pred = rt_predictor.simulate_separation_times(
             sequences=[x.sequence for x in psm],
-            rt_min=rt_min,
-            rt_max=rt_max,
         )
 
         # set retention times
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
-
-        # calculate calibration factor
-        rt_calibration_factor = np.mean(
-            [x.retention_time_observed - x.retention_time_predicted for x in psm])
-
-        # set calibrated retention times
-        for ps in psm:
-            ps.retention_time_predicted += rt_calibration_factor
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
@@ -580,10 +595,13 @@ def main():
         # write PSMs to binary file
         write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name=ds_name)
 
+        logging.info(f"Processed {ds_name} ...")
+
         if args.verbose:
             time_end_tmp = time.time()
             minutes, seconds = divmod(time_end_tmp - start_time, 60)
             print(f"file {ds_name} processed after {minutes} minutes and {seconds:.2f} seconds.")
+
 
     psms = []
 
@@ -623,6 +641,8 @@ def main():
     TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
 
     end_time = time.time()
+
+    logging.info("Done processing all RAW files.")
 
     if args.verbose:
         print("Done processing all RAW files.")
