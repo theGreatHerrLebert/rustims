@@ -105,6 +105,24 @@ def main():
     parser.add_argument("--isolation_window_lower", type=float, default=-3.0, help="Isolation window (default: -3.0)")
     parser.add_argument("--isolation_window_upper", type=float, default=3.0, help="Isolation window (default: 3.0)")
 
+    # decide whether precursor tolerance should be in ppm or dalton
+    parser.add_argument(
+        "--precursor_tolerance_ppm",
+        dest="precursor_tolerance_ppm",
+        action="store_true",
+        help="Precursor tolerance in ppm (default: False)"
+    )
+    parser.set_defaults(precursor_tolerance_ppm=False)
+
+    # decide whether fragment tolerance should be in ppm or dalton
+    parser.add_argument(
+        "--fragment_tolerance_ppm",
+        dest="fragment_tolerance_ppm",
+        action="store_true",
+        help="Fragment tolerance in ppm (default: False)"
+    )
+    parser.set_defaults(fragment_tolerance_ppm=False)
+
     # SAGE Scoring settings
     # precursor tolerance lower and upper
     parser.add_argument("--precursor_tolerance_lower", type=float, default=-15.0,
@@ -113,10 +131,10 @@ def main():
                         help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
-    parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
-                        help="Fragment tolerance lower (default: -25.0)")
-    parser.add_argument("--fragment_tolerance_upper", type=float, default=25.0,
-                        help="Fragment tolerance upper (default: 25.0)")
+    parser.add_argument("--fragment_tolerance_lower", type=float, default=-0.03,
+                        help="Fragment tolerance lower (default: -0.03)")
+    parser.add_argument("--fragment_tolerance_upper", type=float, default=0.03,
+                        help="Fragment tolerance upper (default: 0.03)")
 
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
@@ -262,9 +280,19 @@ def main():
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
+    if args.precursor_tolerance_ppm:
+        prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+    else:
+        prec_tol = Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+
+    if args.fragment_tolerance_ppm:
+        frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+    else:
+        frag_tol = Tolerance(da=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+
     scorer = Scorer(
-        precursor_tolerance=Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper)),
-        fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
+        precursor_tolerance=prec_tol,
+        fragment_tolerance=frag_tol,
         report_psms=args.report_psms,
         min_matched_peaks=args.min_matched_peaks,
         annotate_matches=args.annotate_matches,
