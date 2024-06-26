@@ -477,7 +477,10 @@ def main():
         if args.verbose:
             print("merging PSMs ...")
 
-        merged_dict = merge_dicts_with_merge_dict(psm_dicts)
+        if len(psm_dicts) > 1:
+            merged_dict = merge_dicts_with_merge_dict(psm_dicts)
+        else:
+            merged_dict = psm_dicts[0]
 
         psm = []
 
