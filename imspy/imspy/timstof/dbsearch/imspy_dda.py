@@ -60,7 +60,7 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
         fragment_max_mz=fragment_max_mz,
         bucket_size=bucket_size,
         shuffle_decoys=shuffle_decoys,
-        shuffle_include_ends=False,
+        shuffle_include_ends=shuffle_include_ends,
     )
 
     return sage_config.generate_indexed_database()
