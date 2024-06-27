@@ -49,7 +49,8 @@ if gpus:
         print(e)
 
 
-def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size):
+def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size,
+                    shuffle_decoys=True, shuffle_include_ends=True):
     sage_config = SageSearchConfiguration(
         fasta=fasta,
         static_mods=static,
@@ -58,6 +59,8 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
         generate_decoys=generate_decoys,
         fragment_max_mz=fragment_max_mz,
         bucket_size=bucket_size,
+        shuffle_decoys=shuffle_decoys,
+        shuffle_include_ends=False,
     )
 
     return sage_config.generate_indexed_database()
@@ -153,6 +156,14 @@ def main():
         help="Generate decoys (default: True)"
     )
     parser.set_defaults(decoys=True)
+
+    parser.add_argument("--shuffle_decoys", dest="shuffle_decoys", action="store_true",
+                        help="Shuffle decoys (default: False)")
+    parser.set_defaults(shuffle_decoys=False)
+
+    parser.add_argument("--shuffle_include_ends", dest="shuffle_include_ends", action="store_true",
+                        help="Shuffle include ends (default: False)")
+    parser.set_defaults(shuffle_include_ends=False)
 
     parser.add_argument(
         "--not_c_terminal",
@@ -431,7 +442,8 @@ def main():
                     print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
 
                 indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
-                                             args.bucket_size)
+                                             args.bucket_size, shuffle_decoys=args.shuffle_decoys,
+                                             shuffle_include_ends=args.shuffle_include_ends)
 
             if args.verbose:
                 print("searching database ...")
