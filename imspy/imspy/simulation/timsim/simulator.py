@@ -72,7 +72,7 @@ def main():
 
     parser.add_argument("-acq", "--acquisition_type",
                         type=str,
-                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA]",
+                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA",
                         default='DIA')
 
     parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
