@@ -49,7 +49,8 @@ if gpus:
         print(e)
 
 
-def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size):
+def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size,
+                    shuffle_decoys=True, keep_ends=True):
     sage_config = SageSearchConfiguration(
         fasta=fasta,
         static_mods=static,
@@ -58,6 +59,8 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
         generate_decoys=generate_decoys,
         fragment_max_mz=fragment_max_mz,
         bucket_size=bucket_size,
+        shuffle_decoys=shuffle_decoys,
+        keep_ends=keep_ends,
     )
 
     return sage_config.generate_indexed_database()
@@ -105,6 +108,24 @@ def main():
     parser.add_argument("--isolation_window_lower", type=float, default=-3.0, help="Isolation window (default: -3.0)")
     parser.add_argument("--isolation_window_upper", type=float, default=3.0, help="Isolation window (default: 3.0)")
 
+    # decide whether precursor tolerance should be in ppm or dalton
+    parser.add_argument(
+        "--precursor_tolerance_ppm",
+        dest="precursor_tolerance_ppm",
+        action="store_true",
+        help="Precursor tolerance in ppm (default: False)"
+    )
+    parser.set_defaults(precursor_tolerance_ppm=False)
+
+    # decide whether fragment tolerance should be in ppm or dalton
+    parser.add_argument(
+        "--fragment_tolerance_ppm",
+        dest="fragment_tolerance_ppm",
+        action="store_true",
+        help="Fragment tolerance in ppm (default: False)"
+    )
+    parser.set_defaults(fragment_tolerance_ppm=False)
+
     # SAGE Scoring settings
     # precursor tolerance lower and upper
     parser.add_argument("--precursor_tolerance_lower", type=float, default=-15.0,
@@ -113,10 +134,10 @@ def main():
                         help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
-    parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
-                        help="Fragment tolerance lower (default: -25.0)")
-    parser.add_argument("--fragment_tolerance_upper", type=float, default=25.0,
-                        help="Fragment tolerance upper (default: 25.0)")
+    parser.add_argument("--fragment_tolerance_lower", type=float, default=-0.03,
+                        help="Fragment tolerance lower (default: -0.03)")
+    parser.add_argument("--fragment_tolerance_upper", type=float, default=0.03,
+                        help="Fragment tolerance upper (default: 0.03)")
 
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
@@ -153,6 +174,14 @@ def main():
         help="Generate decoys (default: True)"
     )
     parser.set_defaults(decoys=True)
+
+    parser.add_argument("--shuffle_decoys", dest="shuffle_decoys", action="store_true",
+                        help="Shuffle decoys (default: False)")
+    parser.set_defaults(shuffle_decoys=False)
+
+    parser.add_argument("--include_peptide_ends", dest="keep_ends", action="store_false",
+                        help="Keep decoy generated decoy start / end amino acids the same (default: True)")
+    parser.set_defaults(keep_ends=True)
 
     parser.add_argument(
         "--not_c_terminal",
@@ -262,9 +291,19 @@ def main():
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
+    if args.precursor_tolerance_ppm:
+        prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+    else:
+        prec_tol = Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+
+    if args.fragment_tolerance_ppm:
+        frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+    else:
+        frag_tol = Tolerance(da=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+
     scorer = Scorer(
-        precursor_tolerance=Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper)),
-        fragment_tolerance=Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper)),
+        precursor_tolerance=prec_tol,
+        fragment_tolerance=frag_tol,
         report_psms=args.report_psms,
         min_matched_peaks=args.min_matched_peaks,
         annotate_matches=args.annotate_matches,
@@ -431,7 +470,8 @@ def main():
                     print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
 
                 indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
-                                             args.bucket_size)
+                                             args.bucket_size, shuffle_decoys=args.shuffle_decoys,
+                                             keep_ends=args.keep_ends)
 
             if args.verbose:
                 print("searching database ...")
@@ -477,7 +517,10 @@ def main():
         if args.verbose:
             print("merging PSMs ...")
 
-        merged_dict = merge_dicts_with_merge_dict(psm_dicts)
+        if len(psm_dicts) > 1:
+            merged_dict = merge_dicts_with_merge_dict(psm_dicts)
+        else:
+            merged_dict = psm_dicts[0]
 
         psm = []
 
