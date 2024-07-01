@@ -140,7 +140,7 @@ def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Trav
 
 
 def get_dilution_factors():
-    table = pd.read_csv(str(resources.files('imspy.simulation.resources.configs').joinpath('dilution_factors.csv')))
+    table = pd.read_csv(str(resources.files('imspy.simulation.resources.configs').joinpath('dilution_factors.tsv')), sep='\t')
 
     print(table)
 
