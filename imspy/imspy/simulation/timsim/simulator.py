@@ -3,7 +3,6 @@ import argparse
 import time
 import pandas as pd
 
-from imspy.simulation.utility import get_fasta_file_paths
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
 from .jobs.digest_fasta import digest_fasta
@@ -73,7 +72,7 @@ def main():
 
     parser.add_argument("-acq", "--acquisition_type",
                         type=str,
-                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA]",
+                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA",
                         default='DIA')
 
     parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
@@ -229,7 +228,18 @@ def main():
     reference_path = check_path(args.reference_path)
     name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
 
-    fastas = get_fasta_file_paths(args.fasta)
+    # check if provided fasta path is a folder or file, if it's a folder, check if it exists
+    if os.path.isdir(args.fasta):
+        fastas = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith('.fasta')]
+        # check if there are any fasta files in the folder
+        if len(fastas) == 0:
+            raise argparse.ArgumentTypeError(f"No fasta files found in folder: {args.fasta}")
+
+    # if the fasta path is a file, check if it is a fasta file
+    else:
+        if not args.fasta.endswith('.fasta'):
+            raise argparse.ArgumentTypeError(f"Invalid fasta file: {args.fasta}")
+        fastas = [args.fasta]
 
     verbose = args.verbose
 

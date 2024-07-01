@@ -1,3 +1,5 @@
+from typing import Union
+
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -5,6 +7,7 @@ from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
+from imspy.timstof.dbsearch.utility import linear_map
 from imspy.utility import tokenize_unimod_sequence
 
 from tensorflow.keras.models import load_model
@@ -162,12 +165,17 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
     def simulate_separation_times_pandas(self,
                                          data: pd.DataFrame,
-                                         batch_size: int = 1024) -> pd.DataFrame:
+                                         batch_size: int = 1024,
+                                         gradient_length: Union[None, float] = None
+                                         ) -> pd.DataFrame:
 
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
         sequences = data.sequence.values
         tf_ds = self.generate_tf_ds_inference(sequences).batch(batch_size)
 
         rts = self.model.predict(tf_ds, verbose=self.verbose)
+        if gradient_length is not None:
+            rts = linear_map(rts, old_min=rts.min(), old_max=rts.max(), new_min=0, new_max=gradient_length)
+
         data[f'retention_time_{self.name}'] = rts
         return data
