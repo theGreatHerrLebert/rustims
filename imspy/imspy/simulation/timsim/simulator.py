@@ -203,9 +203,9 @@ def main():
 
     # Proteome mixture settings
     parser.add_argument(
-        "--proteome_mixture",
+        "--proteome_mix",
         action="store_true",
-        dest="proteome_mixture",
+        dest="proteome_mix",
     )
     parser.set_defaults(proteome_mixture=False)
 
@@ -226,7 +226,7 @@ def main():
     reference_path = check_path(args.reference_path)
     name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
 
-    if args.proteome_mixture:
+    if args.proteome_mix:
         factors = get_dilution_factors()
         print(f"Proteome mixture factors: {factors}")
 
