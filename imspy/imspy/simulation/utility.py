@@ -8,7 +8,7 @@ import toml
 import numpy as np
 import importlib.resources as resources
 
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Union
 from numpy.typing import NDArray
 
 from importlib.abc import Traversable
@@ -25,7 +25,7 @@ import imspy_connector
 ims = imspy_connector.py_chemistry
 
 
-def get_fasta_file_paths(fasta_path):
+def get_fasta_file_paths(fasta_path) -> Dict[str, str]:
     """
     Check if the provided fasta path is a folder or file, if its a folder, check if it exists and return all fasta
     Args:
@@ -37,7 +37,7 @@ def get_fasta_file_paths(fasta_path):
 
     # check if provided fasta path is a folder or file, if its a folder, check if it exists
     if os.path.isdir(fasta_path):
-        fastas = [os.path.join(fasta_path, f) for f in os.listdir(fasta_path) if f.endswith('.fasta')]
+        fastas = {f: os.path.join(fasta_path, f) for f in os.listdir(fasta_path) if f.endswith('.fasta')}
 
         # check if there are any fasta files in the folder
         if len(fastas) == 0:
@@ -48,7 +48,7 @@ def get_fasta_file_paths(fasta_path):
         if not fasta_path.endswith('.fasta'):
             raise argparse.ArgumentTypeError(f"Invalid fasta file: {fasta_path}")
 
-        fastas = [fasta_path]
+        fastas = {os.path.basename(fasta_path): fasta_path}
 
     return fastas
 

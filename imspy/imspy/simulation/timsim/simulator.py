@@ -232,6 +232,8 @@ def main():
 
     fastas = get_fasta_file_paths(args.fasta)
 
+    print(f"FASTA files: {fastas}")
+
     verbose = args.verbose
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
@@ -259,9 +261,9 @@ def main():
 
     peptide_list = []
 
-    for fasta in fastas:
+    for name, fasta in fastas.items():
         if verbose:
-            print(f"Digesting fasta file: {fasta}...")
+            print(f"Digesting fasta file: {name}...")
 
         # JOB 1: Digest the fasta file(s)
         peptides = digest_fasta(
