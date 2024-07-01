@@ -1,5 +1,8 @@
+import argparse
 import json
 import math
+import os
+
 import toml
 import numpy as np
 import importlib.resources as resources
@@ -19,6 +22,34 @@ from imspy.chemistry.utility import calculate_mz
 
 import imspy_connector
 ims = imspy_connector.py_chemistry
+
+
+def get_fasta_file_paths(fasta_path):
+    """
+    Check if the provided fasta path is a folder or file, if its a folder, check if it exists and return all fasta
+    Args:
+        fasta_path:  Path to the fasta file or folder containing fasta files
+
+    Returns:
+        List of fasta file paths
+    """
+
+    # check if provided fasta path is a folder or file, if its a folder, check if it exists
+    if os.path.isdir(fasta_path):
+        fastas = [os.path.join(fasta_path, f) for f in os.listdir(fasta_path) if f.endswith('.fasta')]
+
+        # check if there are any fasta files in the folder
+        if len(fastas) == 0:
+            raise argparse.ArgumentTypeError(f"No fasta files found in folder: {fasta_path}")
+
+    # if the fasta path is a file, check if it is a fasta file
+    else:
+        if not fasta_path.endswith('.fasta'):
+            raise argparse.ArgumentTypeError(f"Invalid fasta file: {fasta_path}")
+
+        fastas = [fasta_path]
+
+    return fastas
 
 
 @jit(nopython=True)
