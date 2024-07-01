@@ -3,6 +3,7 @@ import json
 import math
 import os
 
+import pandas as pd
 import toml
 import numpy as np
 import importlib.resources as resources
@@ -136,6 +137,17 @@ def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Trav
         f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
 
     return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
+
+
+def get_dilution_factors():
+    table = pd.read_csv(str(resources.files('imspy.simulation.resources.configs').joinpath('dilution_factors.csv')))
+
+    dilution_dict = {}
+
+    for _, row in table.iterrows():
+        dilution_dict[row.proteome] = row.dilution_factor
+
+    return dilution_dict
 
 
 def get_ms_ms_window_layout_resource_path(acquisition_mode: str) -> Traversable:

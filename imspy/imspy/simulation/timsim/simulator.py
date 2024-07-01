@@ -3,7 +3,7 @@ import argparse
 import time
 import pandas as pd
 
-from imspy.simulation.utility import get_fasta_file_paths
+from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
 from .jobs.digest_fasta import digest_fasta
@@ -50,17 +50,6 @@ def main():
     parser.add_argument("path", type=str, help="Path to save the experiment to")
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
-
-    """
-     # randomize fasta
-    parser.add_argument(
-        "--randomize_fasta_split",
-        dest="randomize_fasta_split",
-        action="store_true",
-        help="Randomize fasta split (default: False)"
-    )
-    parser.set_defaults(randomize_fasta_split=False)
-    """
 
     parser.add_argument("--reference_in_memory", dest="reference_in_memory", action="store_true",
                         help="Whether to load the reference dataset into memory (default: False)")
@@ -212,6 +201,14 @@ def main():
              "is inverse proportional to intensity (default: 0.5)"
     )
 
+    # Proteome mixture settings
+    parser.add_argument(
+        "--proteome_mixture",
+        action="store_true",
+        dest="proteome_mixture",
+    )
+    parser.set_defaults(proteome_mixture=False)
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -228,6 +225,10 @@ def main():
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
     name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
+
+    if args.proteome_mixture:
+        factors = get_dilution_factors()
+        print(f"Proteome mixture factors: {factors}")
 
     fastas = get_fasta_file_paths(args.fasta)
 
