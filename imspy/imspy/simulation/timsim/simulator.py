@@ -228,7 +228,6 @@ def main():
 
     if args.proteome_mix:
         factors = get_dilution_factors()
-        print(f"Proteome mixture factors: {factors}")
 
     fastas = get_fasta_file_paths(args.fasta)
 
@@ -268,6 +267,10 @@ def main():
         if args.proteome_mix:
             try:
                 mixture_factor = factors[fasta_name]
+
+                if verbose:
+                    print(f"Using mixture factor {mixture_factor} for {fasta_name}")
+
             except KeyError:
                 # print warning and set mixture factor to 1.0
                 print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")

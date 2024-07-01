@@ -1,4 +1,4 @@
 proteome,dilution_factor
-"A",1.0
-"B",1.0
-"C",1.0
+"HUMAN.fasta",1.0
+"YEAST.fasta",0.33
+"ECOLI.fasta",0.11
