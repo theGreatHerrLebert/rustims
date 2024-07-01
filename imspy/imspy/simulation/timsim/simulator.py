@@ -221,6 +221,10 @@ def main():
     # Print table
     print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
+    # Save the arguments to a file
+    with open(os.path.join(args.path, 'arguments.txt'), 'w') as f:
+        f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
+
     # Use the arguments
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
