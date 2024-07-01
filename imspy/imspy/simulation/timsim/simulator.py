@@ -232,8 +232,6 @@ def main():
 
     fastas = get_fasta_file_paths(args.fasta)
 
-    print(f"FASTA files: {fastas}")
-
     verbose = args.verbose
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
@@ -265,6 +263,15 @@ def main():
         if verbose:
             print(f"Digesting fasta file: {name}...")
 
+        mixture_factor = 1.0
+
+        if args.proteome_mix:
+            try:
+                mixture_factor = factors[name]
+            except KeyError:
+                # print warning and set mixture factor to 1.0
+                print(f"Warning: No mixture factor found for {name}, setting to 1.0")
+
         # JOB 1: Digest the fasta file(s)
         peptides = digest_fasta(
             fasta_file_path=fasta,
@@ -286,7 +293,7 @@ def main():
             verbose=verbose,
             sample_occurrences=args.sample_occurrences,
             intensity_value=args.intensity_value,
-            mixture_contribution=1.0,
+            mixture_contribution=mixture_factor,
         )
 
         peptide_list.append(peptides)
