@@ -259,18 +259,18 @@ def main():
 
     peptide_list = []
 
-    for name, fasta in fastas.items():
+    for fasta_name, fasta in fastas.items():
         if verbose:
-            print(f"Digesting fasta file: {name}...")
+            print(f"Digesting fasta file: {fasta_name}...")
 
         mixture_factor = 1.0
 
         if args.proteome_mix:
             try:
-                mixture_factor = factors[name]
+                mixture_factor = factors[fasta_name]
             except KeyError:
                 # print warning and set mixture factor to 1.0
-                print(f"Warning: No mixture factor found for {name}, setting to 1.0")
+                print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
         # JOB 1: Digest the fasta file(s)
         peptides = digest_fasta(
