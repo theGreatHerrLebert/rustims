@@ -145,7 +145,7 @@ def get_dilution_factors():
     dilution_dict = {}
 
     for _, row in table.iterrows():
-        dilution_dict[row.proteome] = row.dilution_factor
+        dilution_dict[row["proteome"]] = row["dilution_factor"]
 
     return dilution_dict
 
