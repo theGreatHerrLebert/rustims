@@ -1,10 +1,14 @@
+import argparse
 import json
 import math
+import os
+
+import pandas as pd
 import toml
 import numpy as np
 import importlib.resources as resources
 
-from typing import List, Tuple, Any, Dict
+from typing import List, Tuple, Any, Dict, Union
 from numpy.typing import NDArray
 
 from importlib.abc import Traversable
@@ -19,6 +23,34 @@ from imspy.chemistry.utility import calculate_mz
 
 import imspy_connector
 ims = imspy_connector.py_chemistry
+
+
+def get_fasta_file_paths(fasta_path) -> Dict[str, str]:
+    """
+    Check if the provided fasta path is a folder or file, if its a folder, check if it exists and return all fasta
+    Args:
+        fasta_path:  Path to the fasta file or folder containing fasta files
+
+    Returns:
+        List of fasta file paths
+    """
+
+    # check if provided fasta path is a folder or file, if its a folder, check if it exists
+    if os.path.isdir(fasta_path):
+        fastas = {f: os.path.join(fasta_path, f) for f in os.listdir(fasta_path) if f.endswith('.fasta')}
+
+        # check if there are any fasta files in the folder
+        if len(fastas) == 0:
+            raise argparse.ArgumentTypeError(f"No fasta files found in folder: {fasta_path}")
+
+    # if the fasta path is a file, check if it is a fasta file
+    else:
+        if not fasta_path.endswith('.fasta'):
+            raise argparse.ArgumentTypeError(f"Invalid fasta file: {fasta_path}")
+
+        fastas = {os.path.basename(fasta_path): fasta_path}
+
+    return fastas
 
 
 @jit(nopython=True)
@@ -105,6 +137,17 @@ def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Trav
         f"acquisition_mode needs to be one of 'dia', 'midia', 'slice', 'synchro', was: {acquisition_mode}"
 
     return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
+
+
+def get_dilution_factors():
+    table = pd.read_csv(str(resources.files('imspy.simulation.resources.configs').joinpath('dilution_factors.csv')))
+
+    dilution_dict = {}
+
+    for _, row in table.iterrows():
+        dilution_dict[row["proteome"]] = row["dilution_factor"]
+
+    return dilution_dict
 
 
 def get_ms_ms_window_layout_resource_path(acquisition_mode: str) -> Traversable:

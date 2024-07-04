@@ -3,6 +3,7 @@ import argparse
 import time
 import pandas as pd
 
+from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
 from .jobs.digest_fasta import digest_fasta
@@ -49,17 +50,6 @@ def main():
     parser.add_argument("path", type=str, help="Path to save the experiment to")
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
-
-    """
-     # randomize fasta
-    parser.add_argument(
-        "--randomize_fasta_split",
-        dest="randomize_fasta_split",
-        action="store_true",
-        help="Randomize fasta split (default: False)"
-    )
-    parser.set_defaults(randomize_fasta_split=False)
-    """
 
     parser.add_argument("--reference_in_memory", dest="reference_in_memory", action="store_true",
                         help="Whether to load the reference dataset into memory (default: False)")
@@ -211,6 +201,14 @@ def main():
              "is inverse proportional to intensity (default: 0.5)"
     )
 
+    # Proteome mixture settings
+    parser.add_argument(
+        "--proteome_mix",
+        action="store_true",
+        dest="proteome_mix",
+    )
+    parser.set_defaults(proteome_mixture=False)
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -223,23 +221,19 @@ def main():
     # Print table
     print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
+    # Save the arguments to a file
+    with open(os.path.join(args.path, 'arguments.txt'), 'w') as f:
+        f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
+
     # Use the arguments
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
     name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
 
-    # check if provided fasta path is a folder or file, if its a folder, check if it exists
-    if os.path.isdir(args.fasta):
-        fastas = [os.path.join(args.fasta, f) for f in os.listdir(args.fasta) if f.endswith('.fasta')]
-        # check if there are any fasta files in the folder
-        if len(fastas) == 0:
-            raise argparse.ArgumentTypeError(f"No fasta files found in folder: {args.fasta}")
+    if args.proteome_mix:
+        factors = get_dilution_factors()
 
-    # if the fasta path is a file, check if it is a fasta file
-    else:
-        if not args.fasta.endswith('.fasta'):
-            raise argparse.ArgumentTypeError(f"Invalid fasta file: {args.fasta}")
-        fastas = [args.fasta]
+    fastas = get_fasta_file_paths(args.fasta)
 
     verbose = args.verbose
 
@@ -268,9 +262,22 @@ def main():
 
     peptide_list = []
 
-    for fasta in fastas:
+    for fasta_name, fasta in fastas.items():
         if verbose:
-            print(f"Digesting fasta file: {fasta}...")
+            print(f"Digesting fasta file: {fasta_name}...")
+
+        mixture_factor = 1.0
+
+        if args.proteome_mix:
+            try:
+                mixture_factor = factors[fasta_name]
+
+                if verbose:
+                    print(f"Using mixture factor {mixture_factor} for {fasta_name}")
+
+            except KeyError:
+                # print warning and set mixture factor to 1.0
+                print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
         # JOB 1: Digest the fasta file(s)
         peptides = digest_fasta(
@@ -293,7 +300,7 @@ def main():
             verbose=verbose,
             sample_occurrences=args.sample_occurrences,
             intensity_value=args.intensity_value,
-            mixture_contribution=1.0,
+            mixture_contribution=mixture_factor,
         )
 
         peptide_list.append(peptides)

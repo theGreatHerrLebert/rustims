@@ -14,8 +14,9 @@ from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_in
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
-from imspy.algorithm import DeepPeptideIonMobilityApex, DeepChromatographyApex, load_deep_ccs_predictor, \
-    load_tokenizer_from_resources, load_deep_retention_time_predictor
+from imspy.algorithm import DeepPeptideIonMobilityApex, load_deep_ccs_predictor, load_tokenizer_from_resources
+
+from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
@@ -110,21 +111,21 @@ def main():
 
     # decide whether precursor tolerance should be in ppm or dalton
     parser.add_argument(
-        "--precursor_tolerance_ppm",
-        dest="precursor_tolerance_ppm",
+        "--precursor_tolerance_da",
+        dest="precursor_tolerance_da",
         action="store_true",
-        help="Precursor tolerance in ppm (default: False)"
+        help="Precursor tolerance in Dalton (default: False)"
     )
-    parser.set_defaults(precursor_tolerance_ppm=False)
+    parser.set_defaults(precursor_tolerance_da=False)
 
     # decide whether fragment tolerance should be in ppm or dalton
     parser.add_argument(
-        "--fragment_tolerance_ppm",
-        dest="fragment_tolerance_ppm",
+        "--fragment_tolerance_da",
+        dest="fragment_tolerance_da",
         action="store_true",
-        help="Fragment tolerance in ppm (default: False)"
+        help="Fragment tolerance in Dalton (default: False)"
     )
-    parser.set_defaults(fragment_tolerance_ppm=False)
+    parser.set_defaults(fragment_tolerance_da=False)
 
     # SAGE Scoring settings
     # precursor tolerance lower and upper
@@ -291,15 +292,15 @@ def main():
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
-    if args.precursor_tolerance_ppm:
-        prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
-    else:
+    if args.precursor_tolerance_da:
         prec_tol = Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
-
-    if args.fragment_tolerance_ppm:
-        frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
     else:
+        prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+
+    if args.fragment_tolerance_da:
         frag_tol = Tolerance(da=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+    else:
+        frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
 
     scorer = Scorer(
         precursor_tolerance=prec_tol,
