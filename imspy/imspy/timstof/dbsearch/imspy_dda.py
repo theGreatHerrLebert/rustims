@@ -293,13 +293,25 @@ def main():
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
     if args.precursor_tolerance_da:
+        if args.verbose:
+            print("using precursor tolerance in Da ...")
+            print(f"precursor tolerance: {args.precursor_tolerance_lower} Da to {args.precursor_tolerance_upper} Da ...")
         prec_tol = Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
     else:
+        if args.verbose:
+            print("using precursor tolerance in ppm ...")
+            print(f"precursor tolerance: {args.precursor_tolerance_lower} ppm to {args.precursor_tolerance_upper} ppm ...")
         prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
 
     if args.fragment_tolerance_da:
+        if args.verbose:
+            print("using fragment tolerance in Da ...")
+            print(f"fragment tolerance: {args.fragment_tolerance_lower} Da to {args.fragment_tolerance_upper} Da ...")
         frag_tol = Tolerance(da=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
     else:
+        if args.verbose:
+            print("using fragment tolerance in ppm ...")
+            print(f"fragment tolerance: {args.fragment_tolerance_lower} ppm to {args.fragment_tolerance_upper} ppm ...")
         frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
 
     scorer = Scorer(
