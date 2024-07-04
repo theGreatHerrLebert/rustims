@@ -129,14 +129,14 @@ def main():
 
     # SAGE Scoring settings
     # precursor tolerance lower and upper
-    parser.add_argument("--precursor_tolerance_lower", type=float, default=15.0,
-                        help="Precursor tolerance lower (default: 15.0)")
+    parser.add_argument("--precursor_tolerance_lower", type=float, default=-15.0,
+                        help="Precursor tolerance lower (default: -15.0)")
     parser.add_argument("--precursor_tolerance_upper", type=float, default=15.0,
                         help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
     parser.add_argument("--fragment_tolerance_lower", type=float, default=25.0,
-                        help="Fragment tolerance lower (default: 25.0)")
+                        help="Fragment tolerance lower (default: -25.0)")
     parser.add_argument("--fragment_tolerance_upper", type=float, default=25.0,
                         help="Fragment tolerance upper (default: 25.0)")
 
@@ -293,14 +293,14 @@ def main():
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
     if args.precursor_tolerance_da:
-        prec_tol = Tolerance(da=(-args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+        prec_tol = Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
     else:
-        prec_tol = Tolerance(ppm=(-args.precursor_tolerance_lower, args.precursor_tolerance_upper))
+        prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
 
     if args.fragment_tolerance_da:
-        frag_tol = Tolerance(da=(-args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+        frag_tol = Tolerance(da=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
     else:
-        frag_tol = Tolerance(ppm=(-args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+        frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
 
     scorer = Scorer(
         precursor_tolerance=prec_tol,
