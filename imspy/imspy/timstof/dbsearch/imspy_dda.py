@@ -278,8 +278,10 @@ def main():
     if not os.path.exists(write_folder_path + "/imspy"):
         os.makedirs(write_folder_path + "/imspy")
 
+    current_time = time.strftime("%Y%m%d-%H%M%S")
+
     # Set up logging
-    logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy.log",
+    logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy-{current_time}.log",
                         level=logging.INFO, format='%(asctime)s %(message)s')
 
     logging.info("Arguments settings:")
@@ -699,11 +701,14 @@ def main():
     end_time = time.time()
 
     logging.info("Done processing all RAW files.")
+    minutes, seconds = divmod(end_time - start_time, 60)
 
     if args.verbose:
         print("Done processing all RAW files.")
-        minutes, seconds = divmod(end_time - start_time, 60)
         print(f"Processed {len(paths)} RAW files in {minutes} minutes and {seconds:.2f} seconds.")
+
+    # add time to log
+    logging.info(f"Processed {len(paths)} RAW files in {minutes} minutes and {seconds:.2f} seconds.")
 
 
 if __name__ == "__main__":
