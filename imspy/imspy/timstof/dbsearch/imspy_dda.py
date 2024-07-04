@@ -135,10 +135,10 @@ def main():
                         help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
-    parser.add_argument("--fragment_tolerance_lower", type=float, default=-0.03,
-                        help="Fragment tolerance lower (default: -0.03)")
-    parser.add_argument("--fragment_tolerance_upper", type=float, default=0.03,
-                        help="Fragment tolerance upper (default: 0.03)")
+    parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
+                        help="Fragment tolerance lower (default: -25.0)")
+    parser.add_argument("--fragment_tolerance_upper", type=float, default=25.0,
+                        help="Fragment tolerance upper (default: 25.0)")
 
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
