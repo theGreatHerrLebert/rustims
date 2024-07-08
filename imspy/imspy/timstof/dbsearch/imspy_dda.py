@@ -223,12 +223,12 @@ def main():
 
     # if train splits should be balanced
     parser.add_argument(
-        "--balanced_re_score",
+        "--no_balanced_re_score",
         dest="balanced_re_score",
-        action="store_true",
-        help="Balanced train splits (default: False)"
+        action="store_false",
+        help="Balanced train splits (default: True)"
     )
-    parser.set_defaults(balanced_re_score=False)
+    parser.set_defaults(balanced_re_score=True)
 
     # TDC method
     parser.add_argument(
