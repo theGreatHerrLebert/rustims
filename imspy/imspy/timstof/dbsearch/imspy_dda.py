@@ -327,8 +327,10 @@ def main():
             print(f"fragment tolerance: {args.fragment_tolerance_lower} ppm to {args.fragment_tolerance_upper} ppm ...")
         frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
 
-
     score_type = ScoreType(args.score_type)
+
+    if args.verbose:
+        print(f"using {args.score_type} as score type ...")
 
     scorer = Scorer(
         precursor_tolerance=prec_tol,
