@@ -253,12 +253,14 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool 
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01) -> Tuple[NDArray, NDArray]:
+def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01,
+                           balance: bool = True) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
         psms: List of PeptideSpectrumMatch objects
         method: Method to use for training data generation
         q_max: Maximum q-value allowed for positive examples
+        balance: Whether to balance the dataset
 
     Returns:
         Tuple[NDArray, NDArray]: X_train and Y_train
@@ -281,6 +283,14 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
     # select all decoys
     DECOY = TDC[TDC.decoy]
     X_decoy, Y_decoy = get_features(DECOY)
+
+    # balance the dataset such that the number of target and decoy examples are equal
+    if balance:
+        num_target = np.min((len(DECOY), len(TARGET)))
+        target_indices = np.random.choice(np.arange(len(X_target)), size=num_target)
+        X_target = X_target[target_indices, :]
+        Y_target = Y_target[target_indices]
+
     X_train = np.vstack((X_target, X_decoy))
     Y_train = np.hstack((Y_target, Y_decoy))
 
@@ -315,12 +325,14 @@ def re_score_psms(
         psms: List[PeptideSpectrumMatch],
         num_splits: int = 10,
         verbose: bool = True,
+        balance: bool = True,
 ) -> List[PeptideSpectrumMatch]:
     """ Re-score PSMs using LDA.
     Args:
         psms: List of PeptideSpectrumMatch objects
         num_splits: Number of splits
         verbose: Whether to print progress
+        balance: Whether to balance the dataset
 
     Returns:
         List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
@@ -342,7 +354,7 @@ def re_score_psms(
             if j != i:
                 features.extend(splits[j])
 
-        X_train, Y_train = generate_training_data(features)
+        X_train, Y_train = generate_training_data(features, balance=balance)
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")

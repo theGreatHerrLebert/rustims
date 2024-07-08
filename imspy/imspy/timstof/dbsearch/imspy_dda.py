@@ -221,6 +221,15 @@ def main():
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
 
+    # if train splits should be balanced
+    parser.add_argument(
+        "--balanced_re_score",
+        dest="balanced_re_score",
+        action="store_true",
+        help="Balanced train splits (default: False)"
+    )
+    parser.set_defaults(balanced_re_score=False)
+
     # TDC method
     parser.add_argument(
         "--tdc_method",
@@ -680,7 +689,8 @@ def main():
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
-    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits)
+    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits,
+                         balance=args.balanced_re_score)
 
     # serialize all PSMs to JSON binary
     bts = psms_to_json_bin(psms)
