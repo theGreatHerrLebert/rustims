@@ -153,7 +153,7 @@ def main():
         help="Annotate matches (default: True)")
     parser.set_defaults(annotate_matches=True)
 
-    parser.add_argument("--score_type", type=str, default="sage", help="Score type (default: sage)")
+    parser.add_argument("--score_type", type=str, default="openms", help="Score type (default: openms)")
 
     # SAGE Preprocessing settings
     parser.add_argument("--take_top_n", type=int, default=150, help="Take top n peaks (default: 150)")
