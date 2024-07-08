@@ -10,7 +10,7 @@ import numpy as np
 from sagepy.core import (Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder,
                          SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration)
 
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, ScoreType
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
@@ -152,6 +152,8 @@ def main():
         action="store_false",
         help="Annotate matches (default: True)")
     parser.set_defaults(annotate_matches=True)
+
+    parser.add_argument("--score_type", type=str, default="sage", help="Score type (default: sage)")
 
     # SAGE Preprocessing settings
     parser.add_argument("--take_top_n", type=int, default=150, help="Take top n peaks (default: 150)")
@@ -316,6 +318,9 @@ def main():
             print(f"fragment tolerance: {args.fragment_tolerance_lower} ppm to {args.fragment_tolerance_upper} ppm ...")
         frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
 
+
+    score_type = ScoreType(args.score_type)
+
     scorer = Scorer(
         precursor_tolerance=prec_tol,
         fragment_tolerance=frag_tol,
@@ -325,6 +330,7 @@ def main():
         min_fragment_mass=args.min_fragment_mz,
         max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
+        score_type=score_type,
     )
 
     if args.verbose:
