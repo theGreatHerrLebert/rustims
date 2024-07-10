@@ -1,0 +1,9 @@
+pandas
+numpy
+git+https://github.com/midiaIDorg/pandas_ops.git
+UpSetPlot
+plotnine
+matplotlib
+jupyterlab
+ipython
+
