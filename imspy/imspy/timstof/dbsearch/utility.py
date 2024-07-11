@@ -2,7 +2,9 @@ import os
 import re
 from typing import List, Tuple
 
+import numba
 import pandas as pd
+from sagepy.core.ion_series import IonType
 from tqdm import tqdm
 
 import numpy as np
@@ -408,3 +410,41 @@ def generate_balanced_im_dataset(psms):
     im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
     return im_list
+
+
+@numba.njit
+def log_factorial(n: int, k: int) -> float:
+    k = max(k, 2)
+    result = 0.0
+    for i in range(n, k - 1, -1):
+        result += np.log(i)
+    return result
+
+
+def beta_score(fragments_observed, fragments_predicted, openms_style: bool = True) -> float:
+
+    summed_intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
+
+    len_b, len_y = 0, 0
+
+    b_type = IonType("b")
+    y_type = IonType("y")
+
+    for t in fragments_observed.ion_types:
+        if t == b_type:
+            len_b += 1
+        elif t == y_type:
+            len_y += 1
+
+    i_min = min(len_b, len_y)
+    i_max = max(len_b, len_y)
+
+    score = np.log1p(summed_intensity)
+
+    if openms_style:
+        score += 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
+
+    else:
+        score += len(fragments_observed.ion_types)
+
+    return score

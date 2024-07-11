@@ -24,7 +24,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, beta_score
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -257,6 +257,12 @@ def main():
 
     parser.add_argument("--refinement_verbose", dest="refinement_verbose", action="store_true", help="Refinement verbose")
     parser.set_defaults(refinement_verbose=False)
+
+    parser.add_argument("--beta_score", dest="beta_score", action="store_true", help="calculate beta score")
+    parser.set_defaults(beta_score=False)
+
+    parser.add_argument("beta_score_openms_style", dest="beta_score_openms_style", action="store_true", help="Use beta score openms style")
+    parser.set_defaults(beta_score_openms_style=False)
 
     args = parser.parse_args()
 
@@ -590,6 +596,12 @@ def main():
 
         psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
                                                                         num_threads=args.num_threads)
+
+        if args.beta_score:
+            for ps in psm:
+                ps.beta_score = beta_score(ps.fragments_observed,
+                                           ps.fragments_predicted,
+                                           openms_style=args.beta_score_openms_style)
 
         if args.verbose:
             print("predicting ion mobilities ...")
