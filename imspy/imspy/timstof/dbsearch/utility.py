@@ -425,7 +425,7 @@ def log_factorial(n: int, k: int) -> float:
 
 def beta_score(fragments_observed, fragments_predicted) -> float:
 
-    intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities / np.sum(fragments_predicted.intensities))
+    intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
 
     len_b, len_y = 0, 0
 
