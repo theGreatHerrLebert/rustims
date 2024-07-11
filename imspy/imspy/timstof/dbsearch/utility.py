@@ -421,9 +421,9 @@ def log_factorial(n: int, k: int) -> float:
     return result
 
 
-def beta_score(fragments_observed, fragments_predicted, openms_style: bool = True) -> float:
+def beta_score(fragments_observed, fragments_predicted) -> float:
 
-    summed_intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
+    intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
 
     len_b, len_y = 0, 0
 
@@ -439,12 +439,4 @@ def beta_score(fragments_observed, fragments_predicted, openms_style: bool = Tru
     i_min = min(len_b, len_y)
     i_max = max(len_b, len_y)
 
-    score = np.log1p(summed_intensity)
-
-    if openms_style:
-        score += 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
-
-    else:
-        score += len(fragments_observed.ion_types)
-
-    return score
+    return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)

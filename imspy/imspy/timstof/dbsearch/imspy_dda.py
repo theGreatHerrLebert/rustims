@@ -261,9 +261,6 @@ def main():
     parser.add_argument("--beta_score", dest="beta_score", action="store_true", help="calculate beta score")
     parser.set_defaults(beta_score=False)
 
-    parser.add_argument("--beta_score_openms_style", dest="beta_score_openms_style", action="store_true", help="Use beta score openms style")
-    parser.set_defaults(beta_score_openms_style=False)
-
     args = parser.parse_args()
 
     paths = []
@@ -598,10 +595,11 @@ def main():
                                                                         num_threads=args.num_threads)
 
         if args.beta_score:
+            if args.verbose:
+                print("calculating beta score ...")
+
             for ps in psm:
-                ps.beta_score = beta_score(ps.fragments_observed,
-                                           ps.fragments_predicted,
-                                           openms_style=args.beta_score_openms_style)
+                ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted,)
 
         if args.verbose:
             print("predicting ion mobilities ...")
