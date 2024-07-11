@@ -2,7 +2,9 @@ import os
 import re
 from typing import List, Tuple
 
+import numba
 import pandas as pd
+from sagepy.core.ion_series import IonType
 from tqdm import tqdm
 
 import numpy as np
@@ -253,12 +255,14 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool 
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01) -> Tuple[NDArray, NDArray]:
+def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01,
+                           balance: bool = True) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
         psms: List of PeptideSpectrumMatch objects
         method: Method to use for training data generation
         q_max: Maximum q-value allowed for positive examples
+        balance: Whether to balance the dataset
 
     Returns:
         Tuple[NDArray, NDArray]: X_train and Y_train
@@ -281,6 +285,14 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
     # select all decoys
     DECOY = TDC[TDC.decoy]
     X_decoy, Y_decoy = get_features(DECOY)
+
+    # balance the dataset such that the number of target and decoy examples are equal
+    if balance:
+        num_target = np.min((len(DECOY), len(TARGET)))
+        target_indices = np.random.choice(np.arange(len(X_target)), size=num_target)
+        X_target = X_target[target_indices, :]
+        Y_target = Y_target[target_indices]
+
     X_train = np.vstack((X_target, X_decoy))
     Y_train = np.hstack((Y_target, Y_decoy))
 
@@ -315,19 +327,23 @@ def re_score_psms(
         psms: List[PeptideSpectrumMatch],
         num_splits: int = 10,
         verbose: bool = True,
+        balance: bool = True,
+        score: str = "hyper_score",
 ) -> List[PeptideSpectrumMatch]:
     """ Re-score PSMs using LDA.
     Args:
         psms: List of PeptideSpectrumMatch objects
         num_splits: Number of splits
         verbose: Whether to print progress
+        balance: Whether to balance the dataset
+        score: Score to use for re-scoring
 
     Returns:
         List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
     """
 
     scaler = StandardScaler()
-    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms))
+    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms), score=score)
     scaler.fit(X_all)
 
     splits = split_psms(psms=psms, num_splits=num_splits)
@@ -342,7 +358,7 @@ def re_score_psms(
             if j != i:
                 features.extend(splits[j])
 
-        X_train, Y_train = generate_training_data(features)
+        X_train, Y_train = generate_training_data(features, balance=balance)
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
@@ -396,3 +412,33 @@ def generate_balanced_im_dataset(psms):
     im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
 
     return im_list
+
+
+@numba.njit
+def log_factorial(n: int, k: int) -> float:
+    k = max(k, 2)
+    result = 0.0
+    for i in range(n, k - 1, -1):
+        result += np.log(i)
+    return result
+
+
+def beta_score(fragments_observed, fragments_predicted) -> float:
+
+    intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
+
+    len_b, len_y = 0, 0
+
+    b_type = IonType("b")
+    y_type = IonType("y")
+
+    for t in fragments_observed.ion_types:
+        if t == b_type:
+            len_b += 1
+        elif t == y_type:
+            len_y += 1
+
+    i_min = min(len_b, len_y)
+    i_max = max(len_b, len_y)
+
+    return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)

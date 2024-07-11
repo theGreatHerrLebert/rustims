@@ -10,7 +10,7 @@ import numpy as np
 from sagepy.core import (Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder,
                          SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration)
 
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, ScoreType
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
@@ -24,7 +24,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, beta_score
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_list_to_pandas
@@ -135,10 +135,10 @@ def main():
                         help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
-    parser.add_argument("--fragment_tolerance_lower", type=float, default=-0.03,
-                        help="Fragment tolerance lower (default: -0.03)")
-    parser.add_argument("--fragment_tolerance_upper", type=float, default=0.03,
-                        help="Fragment tolerance upper (default: 0.03)")
+    parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
+                        help="Fragment tolerance lower (default: -25.0)")
+    parser.add_argument("--fragment_tolerance_upper", type=float, default=25.0,
+                        help="Fragment tolerance upper (default: 25.0)")
 
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
@@ -152,6 +152,8 @@ def main():
         action="store_false",
         help="Annotate matches (default: True)")
     parser.set_defaults(annotate_matches=True)
+
+    parser.add_argument("--score_type", type=str, default="openms", help="Score type (default: openms)")
 
     # SAGE Preprocessing settings
     parser.add_argument("--take_top_n", type=int, default=150, help="Take top n peaks (default: 150)")
@@ -219,6 +221,15 @@ def main():
     # number of threads
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
 
+    # if train splits should be balanced
+    parser.add_argument(
+        "--no_balanced_re_score",
+        dest="balanced_re_score",
+        action="store_false",
+        help="Balanced train splits (default: True)"
+    )
+    parser.set_defaults(balanced_re_score=True)
+
     # TDC method
     parser.add_argument(
         "--tdc_method",
@@ -246,6 +257,8 @@ def main():
 
     parser.add_argument("--refinement_verbose", dest="refinement_verbose", action="store_true", help="Refinement verbose")
     parser.set_defaults(refinement_verbose=False)
+
+    parser.add_argument("--score", type=str, default="hyper_score", help="Score type (default: hyper_score)")
 
     args = parser.parse_args()
 
@@ -278,8 +291,10 @@ def main():
     if not os.path.exists(write_folder_path + "/imspy"):
         os.makedirs(write_folder_path + "/imspy")
 
+    current_time = time.strftime("%Y%m%d-%H%M%S")
+
     # Set up logging
-    logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy.log",
+    logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy-{current_time}.log",
                         level=logging.INFO, format='%(asctime)s %(message)s')
 
     logging.info("Arguments settings:")
@@ -289,18 +304,38 @@ def main():
     # get time
     start_time = time.time()
 
+    scores = ["hyper_score", "beta_score"]
+    assert args.score in scores, f"Score type {args.score} not supported. Supported score types are: {scores}"
+
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
 
     if args.precursor_tolerance_da:
+        if args.verbose:
+            print("using precursor tolerance in Da ...")
+            print(f"precursor tolerance: {args.precursor_tolerance_lower} Da to {args.precursor_tolerance_upper} Da ...")
         prec_tol = Tolerance(da=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
     else:
+        if args.verbose:
+            print("using precursor tolerance in ppm ...")
+            print(f"precursor tolerance: {args.precursor_tolerance_lower} ppm to {args.precursor_tolerance_upper} ppm ...")
         prec_tol = Tolerance(ppm=(args.precursor_tolerance_lower, args.precursor_tolerance_upper))
 
     if args.fragment_tolerance_da:
+        if args.verbose:
+            print("using fragment tolerance in Da ...")
+            print(f"fragment tolerance: {args.fragment_tolerance_lower} Da to {args.fragment_tolerance_upper} Da ...")
         frag_tol = Tolerance(da=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
     else:
+        if args.verbose:
+            print("using fragment tolerance in ppm ...")
+            print(f"fragment tolerance: {args.fragment_tolerance_lower} ppm to {args.fragment_tolerance_upper} ppm ...")
         frag_tol = Tolerance(ppm=(args.fragment_tolerance_lower, args.fragment_tolerance_upper))
+
+    score_type = ScoreType(args.score_type)
+
+    if args.verbose:
+        print(f"using {args.score_type} as score type ...")
 
     scorer = Scorer(
         precursor_tolerance=prec_tol,
@@ -311,6 +346,7 @@ def main():
         min_fragment_mass=args.min_fragment_mz,
         max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
+        score_type=score_type,
     )
 
     if args.verbose:
@@ -561,6 +597,12 @@ def main():
                                                                         num_threads=args.num_threads)
 
         if args.verbose:
+            print("calculating beta score ...")
+
+        for ps in psm:
+            ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
+
+        if args.verbose:
             print("predicting ion mobilities ...")
 
         if args.refine_im:
@@ -660,7 +702,8 @@ def main():
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
-    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits)
+    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits,
+                         balance=args.balanced_re_score, score=args.score)
 
     # serialize all PSMs to JSON binary
     bts = psms_to_json_bin(psms)
@@ -687,11 +730,14 @@ def main():
     end_time = time.time()
 
     logging.info("Done processing all RAW files.")
+    minutes, seconds = divmod(end_time - start_time, 60)
 
     if args.verbose:
         print("Done processing all RAW files.")
-        minutes, seconds = divmod(end_time - start_time, 60)
         print(f"Processed {len(paths)} RAW files in {minutes} minutes and {seconds:.2f} seconds.")
+
+    # add time to log
+    logging.info(f"Processed {len(paths)} RAW files in {minutes} minutes and {seconds:.2f} seconds.")
 
 
 if __name__ == "__main__":
