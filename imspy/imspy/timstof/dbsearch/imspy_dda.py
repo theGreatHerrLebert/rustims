@@ -261,7 +261,7 @@ def main():
     parser.add_argument("--beta_score", dest="beta_score", action="store_true", help="calculate beta score")
     parser.set_defaults(beta_score=False)
 
-    parser.add_argument("beta_score_openms_style", dest="beta_score_openms_style", action="store_true", help="Use beta score openms style")
+    parser.add_argument("--beta_score_openms_style", dest="beta_score_openms_style", action="store_true", help="Use beta score openms style")
     parser.set_defaults(beta_score_openms_style=False)
 
     args = parser.parse_args()
