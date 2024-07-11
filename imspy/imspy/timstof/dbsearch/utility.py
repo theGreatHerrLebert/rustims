@@ -328,6 +328,7 @@ def re_score_psms(
         num_splits: int = 10,
         verbose: bool = True,
         balance: bool = True,
+        score: str = "hyper_score",
 ) -> List[PeptideSpectrumMatch]:
     """ Re-score PSMs using LDA.
     Args:
@@ -335,13 +336,14 @@ def re_score_psms(
         num_splits: Number of splits
         verbose: Whether to print progress
         balance: Whether to balance the dataset
+        score: Score to use for re-scoring
 
     Returns:
         List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
     """
 
     scaler = StandardScaler()
-    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms))
+    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms), score=score)
     scaler.fit(X_all)
 
     splits = split_psms(psms=psms, num_splits=num_splits)

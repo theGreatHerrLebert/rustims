@@ -258,8 +258,7 @@ def main():
     parser.add_argument("--refinement_verbose", dest="refinement_verbose", action="store_true", help="Refinement verbose")
     parser.set_defaults(refinement_verbose=False)
 
-    parser.add_argument("--beta_score", dest="beta_score", action="store_true", help="calculate beta score")
-    parser.set_defaults(beta_score=False)
+    parser.add_argument("--score", type=str, default="hyper_score", help="Score type (default: hyper_score)")
 
     args = parser.parse_args()
 
@@ -304,6 +303,9 @@ def main():
 
     # get time
     start_time = time.time()
+
+    scores = ["hyper_score", "beta_score"]
+    assert args.score in scores, f"Score type {args.score} not supported. Supported score types are: {scores}"
 
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
@@ -594,12 +596,11 @@ def main():
         psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
                                                                         num_threads=args.num_threads)
 
-        if args.beta_score:
-            if args.verbose:
-                print("calculating beta score ...")
+        if args.verbose:
+            print("calculating beta score ...")
 
-            for ps in psm:
-                ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted,)
+        for ps in psm:
+            ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
 
         if args.verbose:
             print("predicting ion mobilities ...")
@@ -702,7 +703,7 @@ def main():
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
     psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits,
-                         balance=args.balanced_re_score)
+                         balance=args.balanced_re_score, score=args.score)
 
     # serialize all PSMs to JSON binary
     bts = psms_to_json_bin(psms)
