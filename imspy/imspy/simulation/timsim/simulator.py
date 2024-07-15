@@ -308,7 +308,7 @@ def main():
     peptides = pd.concat(peptide_list)
 
     if args.sample_fraction < 1.0:
-        peptides = peptides.sample(frac=args.sample_fraction)
+        peptides = peptides.sample(frac=args.sample_fraction, random_state=41)
         peptides.reset_index(drop=True, inplace=True)
 
     if verbose:
