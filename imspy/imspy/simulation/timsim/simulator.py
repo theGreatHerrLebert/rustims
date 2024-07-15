@@ -72,15 +72,19 @@ def main():
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
     parser.set_defaults(use_reference_layout=True)
 
+    parser.add_argument("--no_sample_peptides", dest="sample_peptides", action="store_false",
+                        help="Sample peptides from the digested fasta (default: True)")
+    parser.set_defaults(sample_peptides=True)
+
     # Peptide digestion arguments
     parser.add_argument(
-        "--sample_fraction",
-        type=float,
-        default=0.005,
+        "--num_sample_peptides",
+        type=int,
+        default=25_000,
         help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
 
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--min_len", type=int, default=8, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
@@ -307,8 +311,8 @@ def main():
 
     peptides = pd.concat(peptide_list)
 
-    if args.sample_fraction < 1.0:
-        peptides = peptides.sample(frac=args.sample_fraction, random_state=41)
+    if args.sample_peptides:
+        peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
         peptides.reset_index(drop=True, inplace=True)
 
     if verbose:
