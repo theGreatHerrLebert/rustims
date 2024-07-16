@@ -1,6 +1,6 @@
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.simulation.utility import read_acquisition_config
-from imspy.timstof import TimsDataset, TimsDatasetDIA
+from imspy.timstof import TimsDatasetDIA
 
 
 def build_acquisition(
