@@ -84,7 +84,7 @@ def main():
         help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
 
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=8, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
