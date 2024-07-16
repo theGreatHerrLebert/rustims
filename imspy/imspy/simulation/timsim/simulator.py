@@ -72,7 +72,7 @@ def main():
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
     parser.set_defaults(use_reference_layout=True)
 
-    parser.add_argument("--no_sample_peptides", dest="sample_peptides", action="store_false",
+    parser.add_argument("--no_peptide_sampling", dest="sample_peptides", action="store_false",
                         help="Sample peptides from the digested fasta (default: True)")
     parser.set_defaults(sample_peptides=True)
 
@@ -211,7 +211,7 @@ def main():
         action="store_true",
         dest="proteome_mix",
     )
-    parser.set_defaults(proteome_mixture=False)
+    parser.set_defaults(proteome_mix=False)
 
     # Parse the arguments
     args = parser.parse_args()
