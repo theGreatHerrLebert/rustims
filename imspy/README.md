@@ -1,0 +1,121 @@
+# imspy - Python package for working with timsTOF raw data
+
+
+
+## Raw data access
+
+### Establish a connection to a timsTOF raw file and access data
+
+```python
+import numpy as np
+from imspy.timstof import TimsDataset
+
+# you can use in-memory mode for faster access, but it requires more memory
+tdf = TimsDataset("path/to/rawfolder.d", in_memory=False)
+
+# show global meta data table
+print(tdf.global_meta_data)
+
+# show frame meta data
+print(tdf.meta_data)
+
+# get the first frame (bruker frame indices start at 1)
+frame = tdf.get_tims_frame(1)
+
+# you can also use indexing
+frame = tdf[1]
+
+# print data as pandas dataframe
+frame.df()
+
+# get all spectra in a tims frame (sorted by scan = ion mobility)
+spectra = frame.to_tims_spectra()
+
+# get a slice of multiple frames
+frames = tdf.get_tims_slice(np.array([1, 2, 3]))
+
+# or, by using slicing
+frames = tdf[1:4]
+```
+
+### DDA data
+
+```python
+from imspy.timstof import TimsDatasetDDA
+# read a DDA dataset
+tdf = TimsDatasetDDA("path/to/rawfolder.d", in_memory=False)
+
+# get raw data of precursors together with their fragment ions
+dda_fragments = tdf.get_pasef_fragments()
+
+# the timsTOF re-fragments precursors below a certain intensity threshold,
+# you can aggregate the data for increased sensitivity like so:
+dda_fragments_grouped = dda_fragments.groupby('precursor_id').agg({
+    'frame_id': 'first',
+    'time': 'first',
+    'precursor_id': 'first',
+    # this will sum up the raw data of all fragments with the same precursor_id
+    'raw_data': 'sum',
+    'scan_begin': 'first',
+    'scan_end': 'first',
+    'isolation_mz': 'first',
+    'isolation_width': 'first',
+    'collision_energy': 'first',
+    'largest_peak_mz': 'first',
+    'average_mz': 'first',
+    'monoisotopic_mz': 'first',
+    'charge': 'first',
+    'average_scan': 'first',
+    'intensity': 'first',
+    'parent_id': 'first',
+})
+
+# for convenience, you can calculate the inverse mobility 
+# of the precursor ion by finding the maximum intensity along the scan dimension
+mobility = dda_fragments_grouped.apply(
+    lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1
+)
+
+# add the inverse mobility to the grouped data as a new column
+dda_fragments_grouped['mobility'] = mobility
+```
+
+### DIA data
+
+```python
+from imspy.timstof import TimsDatasetDIA
+# read a DIA dataset
+tdf = TimsDatasetDIA("path/to/rawfolder.d", in_memory=False)
+```
+
+## The chemistry module
+
+### Basic usage
+```python
+```
+
+### Working with peptide sequences
+```python
+```
+
+## Algorithms and machine learning
+
+### ion mobility and retention time prediction
+```python
+```
+
+### Locality sensitive hashing
+```python
+```
+
+### Mixture models
+```python
+```
+
+## Pipeline: DDA data analysis (imspy_dda)
+```python
+```
+
+## Pipeline: Synthetic raw data generation (timsim)
+```python
+```
