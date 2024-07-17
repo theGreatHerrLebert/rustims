@@ -12,6 +12,7 @@ def simulate_charge_states(
         mz_upper: float,
         p_charge: float = 0.5,
         charge_state_one_probability: float = 0.0,
+        min_charge_contrib: float = 0.15,
 ) -> pd.DataFrame:
 
     IonSource = DeepChargeStateDistribution(
@@ -20,7 +21,11 @@ def simulate_charge_states(
     )
 
     # IonSource = BinomialChargeStateDistributionModel(charged_probability=p_charge)
-    peptide_ions = IonSource.simulate_charge_state_distribution_pandas(peptides, charge_state_one_probability=charge_state_one_probability)
+    peptide_ions = IonSource.simulate_charge_state_distribution_pandas(
+        peptides,
+        charge_state_one_probability=charge_state_one_probability,
+        min_charge_contrib=min_charge_contrib,
+    )
 
     # merge tables to have sequences with ions, remove mz values outside scope
     ions = pd.merge(left=peptide_ions, right=peptides, left_on=['peptide_id'], right_on=['peptide_id'])

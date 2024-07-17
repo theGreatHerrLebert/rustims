@@ -72,15 +72,19 @@ def main():
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
     parser.set_defaults(use_reference_layout=True)
 
+    parser.add_argument("--no_peptide_sampling", dest="sample_peptides", action="store_false",
+                        help="Sample peptides from the digested fasta (default: True)")
+    parser.set_defaults(sample_peptides=True)
+
     # Peptide digestion arguments
     parser.add_argument(
-        "--sample_fraction",
-        type=float,
-        default=0.005,
+        "--num_sample_peptides",
+        type=int,
+        default=25_000,
         help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
 
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=9, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
@@ -134,11 +138,13 @@ def main():
                         help="Sampling step size for frame distributions (default: 0.001)")
 
     # Number of cores to use
-    parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
+    parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads to use (default: -1, all available)")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size (default: 256)")
 
     # charge state probabilities
     parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
+    parser.add_argument("--min_charge_contrib", type=float, default=0.15,
+                        help="Minimum charge contribution (default: 0.15)")
 
     # Noise settings
     # -- 1. RT and IM noise
@@ -207,7 +213,7 @@ def main():
         action="store_true",
         dest="proteome_mix",
     )
-    parser.set_defaults(proteome_mixture=False)
+    parser.set_defaults(proteome_mix=False)
 
     # Parse the arguments
     args = parser.parse_args()
@@ -221,14 +227,14 @@ def main():
     # Print table
     print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
-    # Save the arguments to a file
-    with open(os.path.join(args.path, 'arguments.txt'), 'w') as f:
-        f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
-
     # Use the arguments
     path = check_path(args.path)
     reference_path = check_path(args.reference_path)
     name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
+
+    # Save the arguments to a file, should go into the database folder
+    with open(os.path.join(path, f'arguments-{name}.txt'), 'w') as f:
+        f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     if args.proteome_mix:
         factors = get_dilution_factors()
@@ -307,8 +313,8 @@ def main():
 
     peptides = pd.concat(peptide_list)
 
-    if args.sample_fraction < 1.0:
-        peptides = peptides.sample(frac=args.sample_fraction)
+    if args.sample_peptides:
+        peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
         peptides.reset_index(drop=True, inplace=True)
 
     if verbose:
@@ -327,6 +333,10 @@ def main():
     columns = list(peptides.columns)
     columns[-2], columns[-1] = columns[-1], columns[-2]
     peptides = peptides[columns]
+
+    # get the number of available threads of the system if not specified
+    if args.num_threads == -1:
+        args.num_threads = os.cpu_count()
 
     # JOB 4: Simulate frame distributions emg
     peptides = simulate_frame_distributions_emg(
@@ -355,7 +365,8 @@ def main():
         peptides=peptides,
         mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
         mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
-        p_charge=p_charge
+        p_charge=p_charge,
+        min_charge_contrib=args.min_charge_contrib,
     )
 
     # JOB 6: Simulate ion mobilities

@@ -59,8 +59,8 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
     def get_pasef_fragments(self, num_threads: int = 1) -> pd.DataFrame:
         """Get PASEF fragments.
 
-        Args:
-            num_threads (int, optional): Number of threads. Defaults to 1.
+        Args: num_threads (int, optional): Number of threads. Defaults to 1. CAUTION: As long as connection to
+        datasets is established via bruker so / dll, using multiple threads is unstable.
 
         Returns:
             List[FragmentDDA]: List of PASEF fragments.
