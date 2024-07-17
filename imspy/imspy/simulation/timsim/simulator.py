@@ -143,6 +143,8 @@ def main():
 
     # charge state probabilities
     parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
+    parser.add_argument("--min_charge_contrib", type=float, default=0.15,
+                        help="Minimum charge contribution (default: 0.15)")
 
     # Noise settings
     # -- 1. RT and IM noise
@@ -359,7 +361,8 @@ def main():
         peptides=peptides,
         mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
         mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
-        p_charge=p_charge
+        p_charge=p_charge,
+        min_charge_contrib=args.min_charge_contrib,
     )
 
     # JOB 6: Simulate ion mobilities
