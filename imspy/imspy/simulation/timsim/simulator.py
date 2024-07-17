@@ -138,7 +138,7 @@ def main():
                         help="Sampling step size for frame distributions (default: 0.001)")
 
     # Number of cores to use
-    parser.add_argument("--num_threads", type=int, default=16, help="Number of threads to use (default: 16)")
+    parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads to use (default: -1, all available)")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size (default: 256)")
 
     # charge state probabilities
@@ -333,6 +333,10 @@ def main():
     columns = list(peptides.columns)
     columns[-2], columns[-1] = columns[-1], columns[-2]
     peptides = peptides[columns]
+
+    # get the number of available threads of the system if not specified
+    if args.num_threads == -1:
+        args.num_threads = os.cpu_count()
 
     # JOB 4: Simulate frame distributions emg
     peptides = simulate_frame_distributions_emg(
