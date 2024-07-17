@@ -3,6 +3,14 @@
 <p align="center">
   <img src="rustims_logo.png" alt="logo" width="250"/>
 </p>
+<div align="center">
+
+> "I have spread my dreams under your feet;
+> Tread softly because you tread on my dreams."
+> 
+> — **W.B. Yeats**
+
+</div>
 
 `rustims` is a framework developed for processing raw data from Ion-Mobility Spectrometry (IMS) in [prote]omics mass spectrometry. This project emerged from my Ph.D. research and reflects our involvement in [MSCORESYS](https://www.mscoresys.de/), especially within the [DIASYM](https://diasym.mscoresys.de/) segment. RustIMS draws inspiration from OpenMS but is distinguished by its use of [Rust](https://www.rust-lang.org/) as the backend language, aiming for efficient algorithm implementations and robust data structures. Like OpenMS, rustims exposes most of its logic to Python via [pyO3](https://docs.rs/pyo3/latest/pyo3/). This setup is intended to enable quick prototyping and integration into existing scientific workflows.
 
