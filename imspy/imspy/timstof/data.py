@@ -59,7 +59,7 @@ class AcquisitionMode(RustWrapperObject):
 
 
 class TimsDataset(ABC):
-    def __init__(self, data_path: str, in_memory: bool = True):
+    def __init__(self, data_path: str, in_memory: bool = False):
         """TimsDataHandle class.
 
         Args:
