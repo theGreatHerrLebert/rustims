@@ -76,6 +76,7 @@ def main():
 
     # the intensity predictor model
     prosit_model = Prosit2023TimsTofWrapper(verbose=False)
+
     # the ion mobility predictor model
     im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"))
@@ -185,15 +186,18 @@ def main():
     # log that re-scoring is starting
     logging.info("Re-scoring PSMs...")
 
-    # run the target decoy competition
+    # re-score the PSMs
     PSMS["re_score"] = re_score_psms(PSMS, num_splits=args.num_splits, balance=args.balance)
 
+    # run the target decoy competition
     TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="hyperscore")
     TDC_rescore = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="re_score")
 
+    # rename the columns to match the output
     TDC = TDC.rename(columns={"match_idx": "peptide", "spec_idx": "psm_id"})
     TDC_rescore = TDC_rescore.rename(columns={"match_idx": "peptide", "spec_idx": "psm_id"})
 
+    # log the number of PSMs with q-value <= 0.01 before and after re-scoring
     before, after = len(TDC[TDC.q_value <= 0.01]), len(TDC_rescore[TDC_rescore.q_value <= 0.01])
     logging.info(f"Before re-scoring: {before} PSMs with q-value <= 0.01")
     logging.info(f"After re-scoring: {after} PSMs with q-value <= 0.01")
