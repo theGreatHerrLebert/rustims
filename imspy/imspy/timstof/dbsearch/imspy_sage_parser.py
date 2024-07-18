@@ -170,6 +170,10 @@ def main():
     TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method,score="hyperscore")
     TDC_rescore = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="re_score")
 
+    before, after = len(TDC[TDC.q_value <= 0.01]), len(TDC_rescore[TDC_rescore.q_value <= 0.01])
+    logging.info(f"Before re-scoring: {before} PSMs with q-value <= 0.01")
+    logging.info(f"After re-scoring: {after} PSMs with q-value <= 0.01")
+
     # create output path for both files
     output_path = os.path.dirname(args.output)
     if not os.path.exists(output_path):
