@@ -104,6 +104,9 @@ def main():
     # filter fragments to remove sequences not in the results
     fragments = fragments[[f in S for f in fragments.psm_id.values]]
 
+    # logg how many psms are going to be processed
+    logging.info(f"Processing {len(results_filtered)} PSMs.")
+
     # group the fragments by PSM id, create a Fragments object for each PSM
     fragments_grouped = fragments.groupby("psm_id").agg({
         "fragment_type": list,
@@ -119,6 +122,9 @@ def main():
     # select only the psm_id and fragments_observed columns
     fragments_grouped = fragments_grouped[["psm_id", "fragments_observed"]]
 
+    # log that intensity prediction is starting
+    logging.info("Predicting intensities...")
+
     # use prosit to predict intensities
     intensity_pred = prosit_model.predict_intensities(
         results_filtered.peptide.values,
@@ -128,10 +134,16 @@ def main():
         flatten=True,
     )
 
+    # log that ion mobility prediction is starting
+    logging.info("Predicting peptide retention times...")
+
     # predict retention times
     rt_pred = rt_predictor.simulate_separation_times(
         sequences=results_filtered.peptide.values,
     )
+
+    # log that ion mobility prediction is starting
+    logging.info("Predicting ion mobilities...")
 
     # predict ion mobilities
     inv_mob = im_predictor.simulate_ion_mobilities(
@@ -164,6 +176,9 @@ def main():
     PSMS["score"] = PSMS.hyperscore
     PSMS["q_value"] = None
 
+    # log that re-scoring is starting
+    logging.info("Re-scoring PSMs...")
+
     # run the target decoy competition
     PSMS["re_score"] = re_score_psms(PSMS, num_splits=args.num_splits, balance=args.balance)
 
@@ -179,8 +194,8 @@ def main():
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    file_name = os.path.basename(args.output) + "imspy_sage_hyperscore.tsv"
-    file_name_rescore = os.path.basename(args.output) + "imspy_sage_rescore.tsv"
+    file_name = os.path.join(output_path, "imspy_sage_hyperscore.tsv")
+    file_name_rescore = os.path.join(output_path, "imspy_sage_rescore.tsv")
 
     # save the results
     TDC.to_csv(file_name, sep="\t", index=False)
@@ -188,3 +203,4 @@ def main():
 
     # log the output file
     logging.info(f"Output file {file_name} saved.")
+    logging.info(f"Output file {file_name_rescore} saved.")
