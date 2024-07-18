@@ -16,6 +16,7 @@ from .sage_output_utility import *
 # supress pandas warnings about column assignment
 pd.options.mode.chained_assignment = None
 
+
 def main():
     # argument parser
     parser = argparse.ArgumentParser(description='🦀💻 IMSPY - SAGE Parser DDA 🔬🐍 - PROTEOMICS IMS DDA '
@@ -24,7 +25,7 @@ def main():
     # add the arguments
     parser.add_argument("sage_results", help="The path to the SAGE results file")
     parser.add_argument("sage_fragments", help="The path to the SAGE fragments file")
-    parser.add_argument("output", help="The path to the output file")
+    parser.add_argument("output", help="The path to where the output files should be created")
 
     # add target decoy competition method
     parser.add_argument("--tdc_method", default="peptide_psm_peptide", help="The target decoy competition method, default is peptide_psm_peptide")
@@ -34,6 +35,10 @@ def main():
                         action="store_false", dest="balance",
                         help="Whether to balance the training dataset, sampling same amount of target and decoy examples, default is True")
     parser.set_defaults(balance=True)
+
+    # if hyper score results should be stored
+    parser.add_argument("--no_store_hyperscore", action="store_false", help="Store the results with the hyperscore as score")
+    parser.set_defaults(store_hyperscore=True)
 
     # parse the arguments
     args = parser.parse_args()
@@ -186,6 +191,9 @@ def main():
     TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="hyperscore")
     TDC_rescore = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="re_score")
 
+    TDC = TDC.rename(columns={"match_idx": "peptide", "spec_idx": "psm_id"})
+    TDC_rescore = TDC_rescore.rename(columns={"match_idx": "peptide", "spec_idx": "psm_id"})
+
     before, after = len(TDC[TDC.q_value <= 0.01]), len(TDC_rescore[TDC_rescore.q_value <= 0.01])
     logging.info(f"Before re-scoring: {before} PSMs with q-value <= 0.01")
     logging.info(f"After re-scoring: {after} PSMs with q-value <= 0.01")
@@ -199,9 +207,9 @@ def main():
     file_name_rescore = os.path.join(output_path, "imspy_sage_rescore.tsv")
 
     # save the results
-    TDC.to_csv(file_name, sep="\t", index=False)
-    TDC_rescore.to_csv(file_name_rescore, sep="\t", index=False)
+    if args.store_hyperscore:
+        TDC.to_csv(file_name, sep="\t", index=False)
+        logging.info(f"Output file {file_name} saved.")
 
-    # log the output file
-    logging.info(f"Output file {file_name} saved.")
+    TDC_rescore.to_csv(file_name_rescore, sep="\t", index=False)
     logging.info(f"Output file {file_name_rescore} saved.")
