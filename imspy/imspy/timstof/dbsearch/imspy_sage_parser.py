@@ -28,7 +28,8 @@ def main():
 
     # add target decoy competition method
     parser.add_argument("--tdc_method", default="peptide_psm_peptide", help="The target decoy competition method, default is peptide_psm_peptide")
-    parser.add_argument("--num_splits", default=5, type=int, help="The number of splits for the target decoy competition cross-validation, default is 5")
+    # re-scoring parameters
+    parser.add_argument("--num_splits", default=10, type=int, help="The number of splits for the target decoy competition cross-validation, default is 10")
     parser.add_argument("--no_balanced_split",
                         action="store_false", dest="balance",
                         help="Whether to balance the training dataset, sampling same amount of target and decoy examples, default is True")
@@ -182,7 +183,7 @@ def main():
     # run the target decoy competition
     PSMS["re_score"] = re_score_psms(PSMS, num_splits=args.num_splits, balance=args.balance)
 
-    TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method,score="hyperscore")
+    TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="hyperscore")
     TDC_rescore = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="re_score")
 
     before, after = len(TDC[TDC.q_value <= 0.01]), len(TDC_rescore[TDC_rescore.q_value <= 0.01])
