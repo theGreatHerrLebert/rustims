@@ -19,7 +19,7 @@ from imspy.chemistry.utility import calculate_mz
 from imspy.timstof.dbsearch.utility import linear_map
 from sagepy.core.scoring import prosit_intensities_to_fragments_par
 
-from sage_output_utility import *
+from .sage_output_utility import *
 
 
 def main():
@@ -187,3 +187,6 @@ def main():
     # save the results
     TDC.to_csv(file_name, sep="\t", index=False)
     TDC_rescore.to_csv(file_name_rescore, sep="\t", index=False)
+
+    # log the output file
+    logging.info(f"Output file {file_name} saved.")
