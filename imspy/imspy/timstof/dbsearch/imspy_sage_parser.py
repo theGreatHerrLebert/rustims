@@ -13,6 +13,8 @@ from sagepy.core.scoring import prosit_intensities_to_fragments_par
 
 from .sage_output_utility import *
 
+# supress pandas warnings about column assignment
+pd.options.mode.chained_assignment = None
 
 def main():
     # argument parser
