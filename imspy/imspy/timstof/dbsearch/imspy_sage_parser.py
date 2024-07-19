@@ -28,17 +28,25 @@ def main():
     parser.add_argument("output", help="The path to where the output files should be created")
 
     # add target decoy competition method
-    parser.add_argument("--tdc_method", default="peptide_psm_peptide", help="The target decoy competition method, default is peptide_psm_peptide")
+    parser.add_argument("--tdc_method", default="peptide_psm_peptide",
+                        help="The target decoy competition method, default is peptide_psm_peptide",
+                        choices=["psm", "peptide_psm_only", "peptide_peptide_only", "peptide_psm_peptide"])
     # re-scoring parameters
-    parser.add_argument("--num_splits", default=10, type=int, help="The number of splits for the target decoy competition cross-validation, default is 10")
+    parser.add_argument("--num_splits", default=10, type=int,
+                        help="The number of splits for the target decoy competition cross-validation, default is 10")
     parser.add_argument("--no_balanced_split",
                         action="store_false", dest="balance",
-                        help="Whether to balance the training dataset, sampling same amount of target and decoy examples, default is True")
+                        help="Whether to balance the training dataset, sampling same amount "
+                             "of target and decoy examples, default is True")
     parser.set_defaults(balance=True)
 
     # if hyper score results should be stored
-    parser.add_argument("--no_store_hyperscore", action="store_false", help="Store the results with the hyperscore as score")
+    parser.add_argument("--no_store_hyperscore", action="store_false",
+                        help="Store the results with the hyperscore as score")
     parser.set_defaults(store_hyperscore=True)
+
+    parser.add_argument("--positive_example_q_max", default=0.01, type=float,
+                        help="Maximum q-value allowed for positive examples, default is 0.01 (1% FDR)")
 
     # parse the arguments
     args = parser.parse_args()
@@ -187,7 +195,8 @@ def main():
     logging.info("Re-scoring PSMs...")
 
     # re-score the PSMs
-    PSMS["re_score"] = re_score_psms(PSMS, num_splits=args.num_splits, balance=args.balance)
+    PSMS["re_score"] = re_score_psms(PSMS, num_splits=args.num_splits, balance=args.balance,
+                                     positive_example_q_max=args.positive_example_q_max)
 
     # run the target decoy competition
     TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="hyperscore")

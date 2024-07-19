@@ -73,6 +73,7 @@ def re_score_psms(
         verbose: bool = True,
         balance: bool = True,
         score: str = "hyperscore",
+        positive_example_q_max: float = 0.01,
 ) -> pd.DataFrame:
     """ Re-score PSMs using LDA.
     Args:
@@ -81,6 +82,7 @@ def re_score_psms(
         verbose: Whether to print progress
         balance: Whether to balance the dataset
         score: Score to use for re-scoring
+        positive_example_q_max: Maximum q-value allowed for positive examples
 
     Returns:
         List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
@@ -106,7 +108,7 @@ def re_score_psms(
         if num_splits == 1:
             features = [target]
 
-        X_train, Y_train = generate_training_data(pd.concat(features), balance=balance)
+        X_train, Y_train = generate_training_data(pd.concat(features), balance=balance, q_max=positive_example_q_max)
         X_train, Y_train = np.nan_to_num(X_train, nan=0.0), np.nan_to_num(Y_train, nan=0.0)
         X, _ = get_features(target)
         X = np.nan_to_num(X, nan=0.0)
