@@ -35,18 +35,22 @@ def main():
     parser.add_argument("--num_splits", default=10, type=int,
                         help="The number of splits for the target decoy competition cross-validation, default is 10")
     parser.add_argument("--no_balanced_split",
-                        action="store_false", dest="balance",
+                        action="store_false",
+                        dest="balance",
                         help="Whether to balance the training dataset, sampling same amount "
                              "of target and decoy examples, default is True")
     parser.set_defaults(balance=True)
 
     # if hyper score results should be stored
-    parser.add_argument("--no_store_hyperscore", action="store_false",
+    parser.add_argument("--no_store_hyperscore",
+                        action="store_false",
+                        dest="store_hyperscore",
                         help="Store the results with the hyperscore as score")
+
     parser.set_defaults(store_hyperscore=True)
 
     parser.add_argument("--positive_example_q_max", default=0.01, type=float,
-                        help="Maximum q-value allowed for positive examples, default is 0.01 (1% FDR)")
+                        help="Maximum q-value allowed for positive examples, default is 0.01 (1 percent FDR)")
 
     # parse the arguments
     args = parser.parse_args()
