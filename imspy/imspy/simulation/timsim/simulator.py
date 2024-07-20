@@ -143,8 +143,8 @@ def main():
 
     # charge state probabilities
     parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
-    parser.add_argument("--min_charge_contrib", type=float, default=0.15,
-                        help="Minimum charge contribution (default: 0.15)")
+    parser.add_argument("--min_charge_contrib", type=float, default=0.25,
+                        help="Minimum charge contribution (default: 0.25)")
 
     # Noise settings
     # -- 1. RT and IM noise
