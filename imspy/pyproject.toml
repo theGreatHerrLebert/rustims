@@ -22,7 +22,7 @@ pyopenms = ">=2.6.0"
 sagepy = ">=0.2.12"
 sagepy-connector = ">=0.2.12"
 
-imspy-connector = ">=0.2.24"
+imspy-connector = ">=0.2.25"
 
 scipy = ">=1.7.1"
 tqdm = ">=4.66"
