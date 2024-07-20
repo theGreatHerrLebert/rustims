@@ -45,7 +45,7 @@ def main():
                         help="Store the results with the hyperscore as score")
     parser.set_defaults(store_hyperscore=True)
 
-    parser.add_argument("--positive_example_q_max", default=0.01, type=float,
+    parser.add_argument("--positive_example_q_max", default=.01, type=float,
                         help="Maximum q-value allowed for positive examples, default is 0.01 (1% FDR)")
 
     # parse the arguments
