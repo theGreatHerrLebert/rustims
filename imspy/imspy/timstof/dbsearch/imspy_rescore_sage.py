@@ -47,10 +47,26 @@ def main():
                         dest="store_hyperscore",
                         help="Store the results with the hyperscore as score")
 
+    parser.add_argument("--fine_tune_predictors",
+                        action="store_true",
+                        help="Fine tune the rt and inv-mob predictors, default is False")
+    parser.set_defaults(fine_tune_predictors=False)
+
     parser.set_defaults(store_hyperscore=True)
 
     parser.add_argument("--positive_example_q_max", default=0.01, type=float,
                         help="Maximum q-value allowed for positive examples, default is 0.01 (1 percent FDR)")
+
+    parser.add_argument("--verbose",
+                        action="store_true",
+                        help="Print verbose output, default is False")
+    parser.set_defaults(verbose=False)
+
+    parser.add_argument("--no_summary_plot",
+                        action="store_false",
+                        dest="summary_plot",
+                        help="Whether to create a summary plot, default is True")
+    parser.set_defaults(summary_plot=True)
 
     # parse the arguments
     args = parser.parse_args()
@@ -105,13 +121,19 @@ def main():
 
     # create the token replacer
     token_replacer = PatternReplacer(replace_tokens)
-    results_filtered["peptide"] = results_filtered.apply(lambda r: token_replacer.apply(r.peptide), axis=1)
+    results_filtered["sequence"] = results_filtered.apply(lambda r: token_replacer.apply(r.peptide), axis=1)
 
     # calculate missing mz value for PSMs
-    results_filtered["mz"] = results_filtered.apply(lambda r: calculate_mz(r.calcmass, r.charge), axis=1)
-    results_filtered["rt_projected"] = results_filtered.apply(lambda r:
+    results_filtered["mono_mz_calculated"] = results_filtered.apply(lambda r: calculate_mz(r.calcmass, r.charge), axis=1)
+    results_filtered["inverse_mobility_observed"] = results.ion_mobility
+    results_filtered["projected_rt"] = results_filtered.apply(lambda r:
                                                               linear_map(r.rt, old_min=results_filtered.rt.min(),
                                                                          old_max=results_filtered.rt.max()), axis=1)
+
+    results_filtered["match_idx"] = results_filtered.sequence
+    results_filtered["spec_idx"] = [str(x) for x in results_filtered.psm_id]
+    results_filtered["score"] = results_filtered.hyperscore
+    results_filtered["q_value"] = None
 
     if len(results_filtered) < len(results):
         s = len(results) - len(results_filtered)
@@ -119,6 +141,13 @@ def main():
 
     # create filtered set of ids
     S = set(results_filtered.psm_id)
+
+    # create fine-tuning data
+    if args.fine_tune_predictors:
+        TDC_train = target_decoy_competition_pandas(results_filtered, method="psm")
+        TDC_train_f = TDC_train[(TDC_train.decoy == False) & (TDC_train.q_value <= 0.01)]
+        TDC_train_f["spec_idxi"] = [int(x) for x in TDC_train_f.spec_idx]
+        FT_data = pd.merge(TDC_train_f, results_filtered, left_on=["spec_idxi"], right_on=["psm_id"])
 
     # filter fragments to remove sequences not in the results
     fragments = fragments[[f in S for f in fragments.psm_id.values]]
@@ -146,7 +175,7 @@ def main():
 
     # use prosit to predict intensities
     intensity_pred = prosit_model.predict_intensities(
-        results_filtered.peptide.values,
+        results_filtered.sequence.values,
         results_filtered.charge.values,
         collision_energies=np.zeros_like(results_filtered.charge.values) + 30,
         batch_size=2048,
@@ -156,19 +185,31 @@ def main():
     # log that ion mobility prediction is starting
     logging.info("Predicting peptide retention times...")
 
+    if args.fine_tune_predictors:
+        rt_predictor.fine_tune_model(
+            data=FT_data,
+            verbose=args.verbose,
+        )
+
     # predict retention times
     rt_pred = rt_predictor.simulate_separation_times(
-        sequences=results_filtered.peptide.values,
+        sequences=results_filtered.sequence.values,
     )
 
     # log that ion mobility prediction is starting
     logging.info("Predicting ion mobilities...")
 
+    if args.fine_tune_predictors:
+        im_predictor.fine_tune_model(
+            data=FT_data,
+            verbose=args.verbose,
+        )
+
     # predict ion mobilities
     inv_mob = im_predictor.simulate_ion_mobilities(
-        sequences=results_filtered.peptide.values,
+        sequences=results_filtered.sequence.values,
         charges=results_filtered.charge.values,
-        mz=results_filtered.mz.values,
+        mz=results_filtered.mono_mz_calculated.values,
     )
 
     results_filtered["inv_mob_predicted"] = inv_mob
@@ -189,11 +230,6 @@ def main():
     PSMS = PSMS.rename(columns={"ms2_intensity": "intensity_ms2",
                                 "fragment_ppm": "average_ppm", "precursor_ppm": "delta_mass"})
 
-    # IDs for TDC
-    PSMS["match_idx"] = PSMS.peptide
-    PSMS["spec_idx"] = [str(x) for x in PSMS.psm_id]
-    PSMS["score"] = PSMS.hyperscore
-    PSMS["q_value"] = None
 
     # log that re-scoring is starting
     logging.info("Re-scoring PSMs...")
@@ -214,6 +250,13 @@ def main():
     before, after = len(TDC[TDC.q_value <= 0.01]), len(TDC_rescore[TDC_rescore.q_value <= 0.01])
     logging.info(f"Before re-scoring: {before} PSMs with q-value <= 0.01")
     logging.info(f"After re-scoring: {after} PSMs with q-value <= 0.01")
+
+    if args.summary_plot:
+        TARGET = PSMS[PSMS.decoy == False]
+        DECOY = PSMS[PSMS.decoy]
+
+        output_path = os.path.join(args.output, "summary_plot.png")
+        plot_summary(TARGET, DECOY, output_path, dpi=300)
 
     # create output path for both files
     output_path = os.path.dirname(args.output)
