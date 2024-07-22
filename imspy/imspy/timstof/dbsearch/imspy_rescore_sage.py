@@ -223,7 +223,7 @@ def main():
     PSMS["observed_dict"] = PSMS.apply(lambda r: fragments_to_dict(r.fragments_observed), axis=1)
     PSMS["predicted_dict"] = PSMS.apply(lambda r: fragments_to_dict(r.fragments_predicted), axis=1)
     PSMS["cosine_similarity"] = PSMS.apply(lambda s: cosim_from_dict(s.observed_dict, s.predicted_dict), axis=1)
-    PSMS["delta_rt"] = PSMS.rt_projected - PSMS.rt_predicted
+    PSMS["delta_rt"] = PSMS.projected_rt - PSMS.rt_predicted
     PSMS["delta_ims"] = PSMS.ion_mobility - PSMS.inv_mob_predicted
     PSMS["intensity_ms1"] = 0.0
     PSMS["collision_energy"] = 0.0
