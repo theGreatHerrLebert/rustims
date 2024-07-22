@@ -255,6 +255,8 @@ def main():
         TARGET = PSMS[PSMS.decoy == False]
         DECOY = PSMS[PSMS.decoy]
 
+        logging.info("Creating summary plot...")
+
         output_path = os.path.join(args.output, "summary_plot.png")
         plot_summary(TARGET, DECOY, output_path, dpi=300)
 
