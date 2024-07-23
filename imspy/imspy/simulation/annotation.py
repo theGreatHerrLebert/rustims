@@ -265,7 +265,11 @@ class TimsFrameAnnotated(RustWrapperObject):
             'isotope_peak': self.isotope_peaks_first_only
         })
 
-
+    def filter(self, mz_min: float, mz_max: float, inv_mobility_min: float, inv_mobility_max: float,
+               scan_min: int, scan_max: int, intensity_min: float, intensity_max: float) -> 'TimsFrameAnnotated':
+        return TimsFrameAnnotated.from_py_ptr(
+            self.__py_ptr.filter_ranged(mz_min, mz_max, inv_mobility_min,
+                                        inv_mobility_max, scan_min, scan_max, intensity_min, intensity_max))
 
     @property
     def ms_type_numeric(self) -> int:
