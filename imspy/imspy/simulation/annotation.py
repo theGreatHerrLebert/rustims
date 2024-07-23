@@ -178,6 +178,10 @@ class MzSpectrumAnnotated(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyMzSpectrumAnnotated:
         return self.__py_ptr
 
+    def filter(self, mz_min: float, mz_max: float, intensity_min: float, intensity_max: float) -> 'MzSpectrumAnnotated':
+        return MzSpectrumAnnotated.from_py_ptr(
+            self.__py_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
+
 
 class TimsFrameAnnotated(RustWrapperObject):
     def __init__(self,
