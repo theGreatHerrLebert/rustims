@@ -68,6 +68,10 @@ impl PyTimsSpectrumAnnotated {
     pub fn __add__(&self, other: PyTimsSpectrumAnnotated) -> PyResult<PyTimsSpectrumAnnotated> {
         Ok(PyTimsSpectrumAnnotated { inner: self.inner.clone() + other.inner })
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsSpectrumAnnotated {
+        PyTimsSpectrumAnnotated { inner: self.inner.clone().filter_ranged(mz_min, mz_max, intensity_min, intensity_max) }
+    }
 }
 
 #[pyclass]
@@ -182,6 +186,10 @@ impl PyTimsFrameAnnotated {
 
     pub fn to_tims_spectra_annotated(&self) -> Vec<PyTimsSpectrumAnnotated> {
         self.inner.to_tims_spectra_annotated().iter().map(|x| PyTimsSpectrumAnnotated { inner: x.clone() }).collect()
+    }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, inv_mobility_min: f64, inv_mobility_max: f64, scan_min: u32, scan_max: u32, intensity_min: f64, intensity_max: f64) -> PyTimsFrameAnnotated {
+        PyTimsFrameAnnotated { inner: self.inner.clone().filter_ranged(mz_min, mz_max, inv_mobility_min, inv_mobility_max, scan_min, scan_max, intensity_min, intensity_max) }
     }
 
 }
