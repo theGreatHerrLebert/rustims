@@ -278,7 +278,7 @@ class TimsFrameAnnotated(RustWrapperObject):
                mz_max: float = 1700.0,
                inv_mobility_min: float = 0.0,
                inv_mobility_max: float = 4.0,
-               scan_min: int = 0.0,
+               scan_min: int = 0,
                scan_max: int = 1000,
                intensity_min: float = 0.0,
                intensity_max: float = 1e9,
