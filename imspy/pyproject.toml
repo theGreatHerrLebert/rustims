@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "imspy"
-version = "0.2.23"
+version = "0.2.25"
 description = ""
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 readme = "README.md"
@@ -19,10 +19,10 @@ wandb = ">=0.12.1"
 
 pyopenms = ">=2.6.0"
 
-sagepy = ">=0.2.10"
-sagepy-connector = ">=0.2.11"
+sagepy = ">=0.2.12"
+sagepy-connector = ">=0.2.12"
 
-imspy-connector = ">=0.2.22"
+imspy-connector = ">=0.2.25"
 
 scipy = ">=1.7.1"
 tqdm = ">=4.66"
@@ -38,3 +38,4 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
 timsim = "imspy.simulation.timsim.simulator:main"
+imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
