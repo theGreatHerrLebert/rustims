@@ -18,7 +18,7 @@ from typing import Tuple
 from tqdm import tqdm
 
 
-def break_into_equal_size_sets(sequence_set, k: int = 10):
+def break_into_equal_size_sets(df, k: int = 10):
     """
     Breaks a set of objects into k sets of equal size at random.
 
@@ -26,7 +26,7 @@ def break_into_equal_size_sets(sequence_set, k: int = 10):
     :param k: Number of sets to divide the objects into
     :return: A list containing k sets, each with equal number of randomly chosen sequences
     """
-    objects_list = list(sequence_set)  # Convert the set to a list
+    objects_list = list(zip(df.sequence, df.charge))  # Convert the set to a list
 
     # Shuffle the objects to ensure randomness
     random.shuffle(objects_list)
@@ -47,13 +47,12 @@ def break_into_equal_size_sets(sequence_set, k: int = 10):
 
 def split_dataframe_randomly(df: pd.DataFrame, n: int) -> list:
 
-    sequences_set = set(df.sequence.values)
-    split_sets = break_into_equal_size_sets(sequences_set, n)
+    split_sets = break_into_equal_size_sets(df, n)
 
     ret_list = []
 
     for seq_set in split_sets:
-        ret_list.append(df[df['sequence'].apply(lambda s: s in seq_set)])
+        ret_list.append(df[df.apply(lambda s: (s.sequence, s.charge) in seq_set, axis=1)])
 
     return ret_list
 
