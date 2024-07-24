@@ -18,7 +18,7 @@ from typing import Tuple
 from tqdm import tqdm
 
 
-def break_into_equal_size_sets(df, k: int = 10):
+def break_into_equal_size_sets(sequence_set, k: int = 10):
     """
     Breaks a set of objects into k sets of equal size at random.
 
@@ -26,7 +26,7 @@ def break_into_equal_size_sets(df, k: int = 10):
     :param k: Number of sets to divide the objects into
     :return: A list containing k sets, each with equal number of randomly chosen sequences
     """
-    objects_list = list(zip(df.sequence, df.charge))  # Convert the set to a list
+    objects_list = list(sequence_set)  # Convert the set to a list
 
     # Shuffle the objects to ensure randomness
     random.shuffle(objects_list)
@@ -47,12 +47,13 @@ def break_into_equal_size_sets(df, k: int = 10):
 
 def split_dataframe_randomly(df: pd.DataFrame, n: int) -> list:
 
-    split_sets = break_into_equal_size_sets(df, n)
+    sequences_set = set(df.sequence.values)
+    split_sets = break_into_equal_size_sets(sequences_set, n)
 
     ret_list = []
 
     for seq_set in split_sets:
-        ret_list.append(df[df.apply(lambda s: (s.sequence, s.charge) in seq_set, axis=1)])
+        ret_list.append(df[df['sequence'].apply(lambda s: s in seq_set)])
 
     return ret_list
 
@@ -128,11 +129,12 @@ def re_score_psms(
     scaler.fit(X_all)
 
     splits = split_dataframe_randomly(df=psms, n=num_splits)
-    predictions = []
+    predictions, ids = [], []
 
     for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):
 
         target = splits[i]
+        ids.extend(target["spec_idx"].values)
         features = []
 
         for j in range(num_splits):
@@ -160,7 +162,7 @@ def re_score_psms(
         Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
         predictions.extend(Y_pred)
 
-    return predictions
+    return pd.DataFrame({"spec_idx": ids, "re_score": predictions})
 
 
 def cosim_from_dict(observed, predicted):
