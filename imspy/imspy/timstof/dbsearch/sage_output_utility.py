@@ -129,12 +129,13 @@ def re_score_psms(
     scaler.fit(X_all)
 
     splits = split_dataframe_randomly(df=psms, n=num_splits)
-    predictions, ids = [], []
+    predictions, ids, ranks = [], [], []
 
     for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):
 
         target = splits[i]
         ids.extend(target["spec_idx"].values)
+        ranks.extend(target["rank"].values)
         features = []
 
         for j in range(num_splits):
@@ -162,7 +163,9 @@ def re_score_psms(
         Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
         predictions.extend(Y_pred)
 
-    return pd.DataFrame({"spec_idx": ids, "re_score": predictions})
+    return pd.DataFrame({"spec_idx": ids,
+                         "rank": ranks,
+                         "re_score": predictions})
 
 
 def cosim_from_dict(observed, predicted):
