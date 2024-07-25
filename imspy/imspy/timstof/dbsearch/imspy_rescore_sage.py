@@ -227,18 +227,25 @@ def main():
     PSMS["delta_ims"] = PSMS.ion_mobility - PSMS.inv_mob_predicted
     PSMS["intensity_ms1"] = 0.0
     PSMS["collision_energy"] = 0.0
-    PSMS = PSMS.rename(columns={"ms2_intensity": "intensity_ms2",
-                                "fragment_ppm": "average_ppm", "precursor_ppm": "delta_mass"})
+    PSMS = PSMS.rename(
+        columns={
+            "ms2_intensity": "intensity_ms2",
+            "fragment_ppm": "average_ppm",
+            "precursor_ppm": "delta_mass"
+        }
+    )
 
 
     # log that re-scoring is starting
     logging.info("Re-scoring PSMs...")
 
     # re-score the PSMs
-    RE_SCORE = re_score_psms(PSMS,
-                             num_splits=args.num_splits,
-                             balance=args.balance,
-                             positive_example_q_max=args.positive_example_q_max)
+    RE_SCORE = re_score_psms(
+        PSMS,
+        num_splits=args.num_splits,
+        balance=args.balance,
+        positive_example_q_max=args.positive_example_q_max
+    )
 
     PSMS = pd.merge(PSMS, RE_SCORE, on=["spec_idx", "rank"])
 
