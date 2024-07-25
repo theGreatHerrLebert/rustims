@@ -181,13 +181,18 @@ def main():
     # features for re-scoring
     PSMS["observed_dict"] = PSMS.apply(lambda r: fragments_to_dict(r.fragments_observed), axis=1)
     PSMS["predicted_dict"] = PSMS.apply(lambda r: fragments_to_dict(r.fragments_predicted), axis=1)
-    PSMS["cosine_similarity"] = PSMS.apply(lambda s: cosim_from_dict(s.observed_dict, s.predicted_dict), axis=1)
+    PSMS["cosine_similarity"] = PSMS.apply(lambda r: cosim_from_dict(r.observed_dict, r.predicted_dict), axis=1)
     PSMS["delta_rt"] = PSMS.rt_projected - PSMS.rt_predicted
     PSMS["delta_ims"] = PSMS.ion_mobility - PSMS.inv_mob_predicted
     PSMS["intensity_ms1"] = 0.0
     PSMS["collision_energy"] = 0.0
-    PSMS = PSMS.rename(columns={"ms2_intensity": "intensity_ms2",
-                                "fragment_ppm": "average_ppm", "precursor_ppm": "delta_mass"})
+    PSMS = PSMS.rename(
+        columns={
+            "ms2_intensity": "intensity_ms2",
+            "fragment_ppm": "average_ppm",
+            "precursor_ppm": "delta_mass"
+        }
+    )
 
     # IDs for TDC
     PSMS["match_idx"] = PSMS.peptide
@@ -199,10 +204,12 @@ def main():
     logging.info("Re-scoring PSMs...")
 
     # re-score the PSMs
-    RE_SCORE = re_score_psms(PSMS,
-                             num_splits=args.num_splits,
-                             balance=args.balance,
-                             positive_example_q_max=args.positive_example_q_max)
+    RE_SCORE = re_score_psms(
+        PSMS,
+        num_splits=args.num_splits,
+        balance=args.balance,
+        positive_example_q_max=args.positive_example_q_max
+    )
 
     PSMS = pd.merge(PSMS, RE_SCORE, on=["spec_idx", "rank"])
 
