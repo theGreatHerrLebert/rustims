@@ -235,8 +235,12 @@ def main():
     logging.info("Re-scoring PSMs...")
 
     # re-score the PSMs
-    PSMS["re_score"] = re_score_psms(PSMS, num_splits=args.num_splits, balance=args.balance,
-                                     positive_example_q_max=args.positive_example_q_max)
+    RE_SCORE = re_score_psms(PSMS,
+                             num_splits=args.num_splits,
+                             balance=args.balance,
+                             positive_example_q_max=args.positive_example_q_max)
+
+    PSMS = pd.merge(PSMS, RE_SCORE, on=["spec_idx", "rank"])
 
     # run the target decoy competition
     TDC = target_decoy_competition_pandas(PSMS, method=args.tdc_method, score="hyperscore")

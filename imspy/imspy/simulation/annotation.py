@@ -178,6 +178,14 @@ class MzSpectrumAnnotated(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyMzSpectrumAnnotated:
         return self.__py_ptr
 
+    def filter(self,
+               mz_min: float = 0.0,
+               mz_max: float = 1700.0,
+               intensity_min: float = 0.0,
+               intensity_max: float = 1e9) -> 'MzSpectrumAnnotated':
+        return MzSpectrumAnnotated.from_py_ptr(
+            self.__py_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
+
 
 class TimsFrameAnnotated(RustWrapperObject):
     def __init__(self,
@@ -265,7 +273,19 @@ class TimsFrameAnnotated(RustWrapperObject):
             'isotope_peak': self.isotope_peaks_first_only
         })
 
-
+    def filter(self,
+               mz_min: float = 0.0,
+               mz_max: float = 1700.0,
+               inv_mobility_min: float = 0.0,
+               inv_mobility_max: float = 4.0,
+               scan_min: int = 0,
+               scan_max: int = 1000,
+               intensity_min: float = 0.0,
+               intensity_max: float = 1e9,
+               ) -> 'TimsFrameAnnotated':
+        return TimsFrameAnnotated.from_py_ptr(
+            self.__py_ptr.filter_ranged(mz_min, mz_max, inv_mobility_min,
+                                        inv_mobility_max, scan_min, scan_max, intensity_min, intensity_max))
 
     @property
     def ms_type_numeric(self) -> int:
