@@ -2,6 +2,8 @@ import re
 import numpy as np
 import pandas as pd
 
+import random
+
 from sagepy.core import Fragments, IonType
 from scipy.spatial import distance
 
@@ -16,11 +18,44 @@ from typing import Tuple
 from tqdm import tqdm
 
 
-def split_dataframe_randomly(df: pd.DataFrame, n: int) -> list:
-    # Split the DataFrame into n parts
-    split_dfs = np.array_split(df, n)
+def break_into_equal_size_sets(sequence_set, k: int = 10):
+    """
+    Breaks a set of objects into k sets of equal size at random.
 
-    return split_dfs
+    :param sequence_set: Set of sequences to be divided
+    :param k: Number of sets to divide the objects into
+    :return: A list containing k sets, each with equal number of randomly chosen sequences
+    """
+    objects_list = list(sequence_set)  # Convert the set to a list
+
+    # Shuffle the objects to ensure randomness
+    random.shuffle(objects_list)
+
+    # Calculate the size of each set
+    set_size = len(objects_list) // k
+    remainder = len(objects_list) % k
+
+    sets = []
+    start = 0
+    for i in range(k):
+        end = start + set_size + (1 if i < remainder else 0)
+        sets.append(set(objects_list[start:end]))
+        start = end
+
+    return sets
+
+
+def split_dataframe_randomly(df: pd.DataFrame, n: int) -> list:
+
+    sequences_set = set(df.sequence.values)
+    split_sets = break_into_equal_size_sets(sequences_set, n)
+
+    ret_list = []
+
+    for seq_set in split_sets:
+        ret_list.append(df[df['sequence'].apply(lambda s: s in seq_set)])
+
+    return ret_list
 
 
 def generate_training_data(psms: pd.DataFrame, method: str = "psm", q_max: float = 0.01,
@@ -94,11 +129,13 @@ def re_score_psms(
     scaler.fit(X_all)
 
     splits = split_dataframe_randomly(df=psms, n=num_splits)
-    predictions = []
+    predictions, ids, ranks = [], [], []
 
     for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):
 
         target = splits[i]
+        ids.extend(target["spec_idx"].values)
+        ranks.extend(target["rank"].values)
         features = []
 
         for j in range(num_splits):
@@ -126,7 +163,9 @@ def re_score_psms(
         Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
         predictions.extend(Y_pred)
 
-    return predictions
+    return pd.DataFrame({"spec_idx": ids,
+                         "rank": ranks,
+                         "re_score": predictions})
 
 
 def cosim_from_dict(observed, predicted):
