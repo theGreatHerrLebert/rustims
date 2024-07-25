@@ -12,6 +12,8 @@ from sagepy.qfdr.tdc import target_decoy_competition_pandas
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import StandardScaler
 
+from matplotlib import pyplot as plt
+
 from numpy.typing import NDArray
 from typing import Tuple
 
@@ -252,3 +254,63 @@ def fragments_to_dict(fragments: Fragments):
         dict[(charge, ion_type, ordinal)] = intensity
 
     return dict
+
+
+def plot_summary(TARGET, DECOY, save_path, dpi=300, file_format='png'):
+    fig, axs = plt.subplots(3, 2, figsize=(15, 18))
+
+    # Plot 1
+    axs[0, 0].scatter(TARGET.projected_rt, TARGET.rt_predicted, s=1, alpha=.1, c="darkblue", label="Target")
+    axs[0, 0].scatter(DECOY.projected_rt, DECOY.rt_predicted, s=1, alpha=.1, c="orange", label="Decoy")
+    axs[0, 0].set_xlabel("Retention time observed")
+    axs[0, 0].set_ylabel("Retention time predicted")
+    axs[0, 0].legend()
+    axs[0, 0].set_title("Retention Time Prediction")
+
+    # Plot 2
+    axs[0, 1].scatter(TARGET.ion_mobility, TARGET.inv_mob_predicted, s=1, alpha=.1, c="darkblue", label="Target")
+    axs[0, 1].scatter(DECOY.ion_mobility, DECOY.inv_mob_predicted, s=1, alpha=.1, c="orange", label="Decoy")
+    axs[0, 1].set_xlabel("Ion mobility observed")
+    axs[0, 1].set_ylabel("Ion mobility predicted")
+    axs[0, 1].legend()
+    axs[0, 1].set_title("Ion Mobility Prediction")
+
+    # Plot 3
+    axs[1, 0].hist(TARGET.projected_rt - TARGET.rt_predicted, alpha=.8, bins="auto", density=True, color="darkblue",
+                   label="Target")
+    axs[1, 0].hist(DECOY.projected_rt - DECOY.rt_predicted, alpha=.5, bins="auto", density=True, color="orange",
+                   label="Decoy")
+    axs[1, 0].set_xlabel("Retention time delta")
+    axs[1, 0].set_ylabel("Density")
+    axs[1, 0].legend()
+    axs[1, 0].set_title("Retention Time Delta")
+
+    # Plot 4
+    axs[1, 1].hist(TARGET.ion_mobility - TARGET.inv_mob_predicted, alpha=.8, bins="auto", density=True,
+                   color="darkblue", label="Target")
+    axs[1, 1].hist(DECOY.ion_mobility - DECOY.inv_mob_predicted, alpha=.5, bins="auto", density=True, color="orange",
+                   label="Decoy")
+    axs[1, 1].set_xlim((-0.4, 0.4))
+    axs[1, 1].set_xlabel("Ion mobility delta")
+    axs[1, 1].set_ylabel("Density")
+    axs[1, 1].legend()
+    axs[1, 1].set_title("Ion Mobility Delta")
+
+    # Plot 5
+    axs[2, 0].hist(TARGET.cosine_similarity, bins="auto", density=True, alpha=.8, color="darkblue", label="Target")
+    axs[2, 0].hist(DECOY.cosine_similarity, bins="auto", density=True, alpha=.5, color="orange", label="Decoy")
+    axs[2, 0].set_xlabel("Cosine similarity")
+    axs[2, 0].set_ylabel("Density")
+    axs[2, 0].legend()
+    axs[2, 0].set_title("Cosine Similarity")
+
+    # Plot 6
+    axs[2, 1].hist(TARGET.re_score, bins="auto", density=True, alpha=.8, color="darkblue", label="Target")
+    axs[2, 1].hist(DECOY.re_score, bins="auto", density=True, alpha=.5, color="orange", label="Decoy")
+    axs[2, 1].set_xlabel("Score")
+    axs[2, 1].set_ylabel("Density")
+    axs[2, 1].legend()
+    axs[2, 1].set_title("Score Information")
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=dpi, format=file_format)
