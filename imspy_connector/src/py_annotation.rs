@@ -234,6 +234,10 @@ impl PyMzSpectrumAnnotated {
     pub fn __mul__(&self, other: f64) -> PyResult<PyMzSpectrumAnnotated> {
         Ok(PyMzSpectrumAnnotated { inner: self.inner.clone() * other })
     }
+
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyMzSpectrumAnnotated {
+        PyMzSpectrumAnnotated { inner: self.inner.clone().filter_ranged(mz_min, mz_max, intensity_min, intensity_max) }
+    }
 }
 
 #[pyclass]
