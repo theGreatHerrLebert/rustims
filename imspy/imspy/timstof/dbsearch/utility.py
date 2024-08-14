@@ -344,6 +344,8 @@ def re_score_psms(
 
     scaler = StandardScaler()
     X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms), score=score)
+    # replace NaN values with 0
+    X_all = np.nan_to_num(X_all)
     scaler.fit(X_all)
 
     splits = split_psms(psms=psms, num_splits=num_splits)
