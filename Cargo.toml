@@ -2,7 +2,6 @@
 members = [
     "mscore",
     "rustdf", 
-    "rustms",
     "imspy_connector"
 ]
 
