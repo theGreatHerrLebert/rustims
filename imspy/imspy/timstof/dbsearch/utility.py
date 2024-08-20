@@ -344,6 +344,7 @@ def re_score_psms(
 
     scaler = StandardScaler()
     X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms), score=score)
+
     # replace NaN values with 0
     X_all = np.nan_to_num(X_all)
     scaler.fit(X_all)
@@ -361,7 +362,9 @@ def re_score_psms(
                 features.extend(splits[j])
 
         X_train, Y_train = generate_training_data(features, balance=balance)
+        X_train = np.nan_to_num(X_train)
         X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
+        X = np.nan_to_num(X)
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
         lda.fit(scaler.transform(X_train), Y_train)
