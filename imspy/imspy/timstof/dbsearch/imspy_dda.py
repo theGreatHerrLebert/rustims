@@ -288,8 +288,8 @@ def main():
 
     # Now you can use these dictionaries in your tool
     if args.verbose:
-        print(f"Variable Modifications to be applied: {variable_modifications}")
-        print(f"Static Modifications to be applied: {static_modifications}")
+        print(f"Variable modifications to be applied: {variable_modifications}")
+        print(f"Static modifications to be applied: {static_modifications}")
 
     paths = []
 
