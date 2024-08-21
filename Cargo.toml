@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "mscore",
-    "rustdf", 
+    "rustdf",
+    "rustms", 
     "imspy_connector"
 ]
 
