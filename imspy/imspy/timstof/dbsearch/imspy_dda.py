@@ -10,8 +10,7 @@ import numpy as np
 
 from pathlib import Path
 
-from sagepy.core import (Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder,
-                         SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration)
+from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SageSearchConfiguration
 
 from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, ScoreType
 
