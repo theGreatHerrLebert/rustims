@@ -180,7 +180,7 @@ impl PeptideSequence {
     pub fn new(raw_sequence: String, peptide_id: Option<i32>) -> Self {
 
         // constructor will parse the sequence and check if it is valid
-        let pattern = Regex::new(r"\[UNIMOD:(\d+)]").unwrap();
+        let pattern = Regex::new(r"\[UNIMOD:(\d+|\?)]").unwrap();
 
         // remove the modifications from the sequence
         let sequence = pattern.replace_all(&raw_sequence, "").to_string();
@@ -188,7 +188,7 @@ impl PeptideSequence {
         // check if all remaining characters are valid amino acids
         let valid_amino_acids = sequence.chars().all(|c| amino_acid_masses().contains_key(&c.to_string()[..]));
         if !valid_amino_acids {
-            panic!("Invalid amino acid sequence, use only valid amino acids: ARNDCQEGHILKMFPSTWYVU, and modifications in the format [UNIMOD:ID]");
+            panic!("Invalid amino acid sequence: {}, use only valid amino acids: ARNDCQEGHILKMFPSTWYVU, and modifications in the format [UNIMOD:ID]", raw_sequence);
         }
 
         PeptideSequence { sequence: raw_sequence, peptide_id }
