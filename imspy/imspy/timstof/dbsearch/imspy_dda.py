@@ -3,9 +3,12 @@ import logging
 import os
 import sys
 import time
+import toml
 
 import pandas as pd
 import numpy as np
+
+from pathlib import Path
 
 from sagepy.core import (Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder,
                          SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration)
@@ -64,6 +67,12 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
 
     return sage_config.generate_indexed_database()
 
+# helper function to load configuration of modifications from a TOML file
+def load_config(config_path):
+    with open(config_path, 'r') as config_file:
+        config = toml.load(config_file)
+    return config
+
 
 def main():
     # use argparse to parse command line arguments
@@ -82,6 +91,20 @@ def main():
         "fasta",
         type=str,
         help="Path to the fasta file of proteins to be digested"
+    )
+
+    # Path to the script directory
+    script_dir = Path(__file__).parent
+
+    # Default config modification config path
+    default_config_path = script_dir / "configs" / "modifications.toml"
+
+    # Optional argument for path to the configuration file
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=default_config_path,
+        help="Path to the configuration file (TOML format). Default: configs/modifications.toml"
     )
 
     # Optional verbosity flag
@@ -164,9 +187,6 @@ def main():
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
     parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
     parser.set_defaults(calibrate_mz=False)
-    parser.add_argument("--no_cysteine_static", dest="cysteine_static", action="store_false",
-                        help="Cysteine static (default: True)")
-    parser.set_defaults(cysteine_static=True)
 
     parser.add_argument(
         "--no_decoys",
@@ -260,6 +280,18 @@ def main():
 
     args = parser.parse_args()
 
+    # Load the configuration from the specified file
+    config = load_config(args.config)
+
+    # Access the modifications from the config
+    variable_modifications = config.get('variable_modifications', {})
+    static_modifications = config.get('static_modifications', {})
+
+    # Now you can use these dictionaries in your tool
+    if args.verbose:
+        print(f"Variable Modifications to be applied: {variable_modifications}")
+        print(f"Static Modifications to be applied: {static_modifications}")
+
     paths = []
 
     # Check if path exists
@@ -345,6 +377,8 @@ def main():
         max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
         score_type=score_type,
+        variable_modifications=variable_modifications,
+        static_modifications=static_modifications,
     )
 
     if args.verbose:
@@ -359,24 +393,6 @@ def main():
         restrict=args.restrict,
         c_terminal=args.c_terminal,
     )
-
-    # generate static cysteine modification TODO: make configurable
-    if args.cysteine_static:
-        static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
-    else:
-        static_mods = {}
-
-    # generate variable methionine modification TODO: make configurable
-    variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable(),
-                                       SAGE_KNOWN_MODS.protein_n_terminus_variable()]}
-
-    # cysteinylation should be set as variable modification if cysteine_static is False (MHC search)
-    if args.cysteine_static is False:
-        variable_mods["C"] = [119.001]
-
-    # generate SAGE compatible mod representations
-    static = validate_mods(static_mods)
-    variab = validate_var_mods(variable_mods)
 
     # check if fasta is a path or a file, if it is a path, read all files ending with fasta in that path
     if os.path.isdir(args.fasta):
@@ -398,8 +414,15 @@ def main():
 
     # if only one fasta file, use the same configuration for all RAW files (removes need to re-create db for each file)
     if len(fastas) == 1:
-        indexed_db = create_database(fastas[0], static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
-                                     args.bucket_size)
+        indexed_db = create_database(
+            fastas[0],
+            static_modifications,
+            variable_modifications,
+            enzyme_builder,
+            args.decoys,
+            args.fragment_max_mz,
+            args.bucket_size
+        )
 
     if args.verbose:
         print("loading deep learning models for intensity, retention time and ion mobility prediction ...")
@@ -504,9 +527,17 @@ def main():
                 if args.verbose:
                     print(f"generating indexed database for fasta split {j + 1} of {len(fastas)} ...")
 
-                indexed_db = create_database(fasta, static, variab, enzyme_builder, args.decoys, args.fragment_max_mz,
-                                             args.bucket_size, shuffle_decoys=args.shuffle_decoys,
-                                             keep_ends=args.keep_ends)
+                indexed_db = create_database(
+                    fasta,
+                    static_modifications,
+                    variable_modifications,
+                    enzyme_builder,
+                    args.decoys,
+                    args.fragment_max_mz,
+                    args.bucket_size,
+                    shuffle_decoys=args.shuffle_decoys,
+                    keep_ends=args.keep_ends
+                )
 
             if args.verbose:
                 print("searching database ...")
