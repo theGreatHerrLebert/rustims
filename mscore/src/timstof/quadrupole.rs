@@ -455,12 +455,16 @@ impl IonTransmission for TimsTransmissionDIA {
     fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64> {
 
         let setting = self.get_setting(self.frame_to_window_group(frame_id), scan_id);
+        let is_precursor = self.is_precursor(frame_id);
 
         match setting {
             Some((isolation_mz, isolation_width)) => {
                 apply_transmission(*isolation_mz, *isolation_width, self.k, mz.clone())
             },
-            None => vec![1.0; mz.len()],
+            None => match is_precursor {
+                true => vec![1.0; mz.len()],
+                false => vec![0.0; mz.len()],
+            }
         }
     }
 }
