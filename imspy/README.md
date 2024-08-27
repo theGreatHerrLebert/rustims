@@ -118,14 +118,14 @@ tdf = TimsDatasetDIA("path/to/rawfolder.d", in_memory=False)
 
 ## Pipeline: DDA data analysis (imspy_dda)
 After you successfully installed the package, you can use the `imspy_dda` command line tool to analyze DDA data.
-This will print out a list of options and arguments that you can use to analyze your data.
+This will print out a list of options and arguments that you can use to analyze your data:
 ```python
 imspy_dda --help
 ```
 
 ## Pipeline: Synthetic raw data generation (timsim)
 After you successfully installed the package, you can use the `timsim` command line tool to generate synthetic raw data.
-This will print out a list of options and arguments that you can use to generate synthetic raw data.
+This will print out a list of options and arguments that you can use to generate synthetic raw data:
 ```python
 timsim --help
 ```
