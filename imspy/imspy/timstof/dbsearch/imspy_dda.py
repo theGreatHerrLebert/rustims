@@ -563,7 +563,7 @@ def main():
                 psm_dict = scorer.score_collection_psm(
                     db=indexed_db,
                     spectrum_collection=fragments['processed_spec'].values,
-                    num_threads=16,
+                    num_threads=args.num_threads,
                 )
 
                 for _, values in psm_dict.items():
