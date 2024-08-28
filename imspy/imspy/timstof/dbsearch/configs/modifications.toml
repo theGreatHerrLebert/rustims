@@ -2,8 +2,8 @@
 # For a detailed description of the supported modification types, consult the SAGE documentation: https://sage-docs.vercel.app/docs/configuration#file
 # compared to sage, variable modifications are not put into a list, please provide each modified variant of the amino acid as a single key-value pair
 [variable_modifications]
-M = "[UNIMOD:35]" # Oxidation of methionine
-"[" = "[UNIMOD:1]" # N-terminal acetylation
+M = ["[UNIMOD:35]"] # Oxidation of methionine
+"[M" = ["[UNIMOD:1]"] # N-terminal acetylation of methionine
 
 [static_modifications]
 C = "[UNIMOD:4]" # Carbamidomethylation of cysteine
