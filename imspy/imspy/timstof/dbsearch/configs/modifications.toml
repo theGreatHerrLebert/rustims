@@ -4,6 +4,7 @@
 [variable_modifications]
 M = ["[UNIMOD:35]"] # Oxidation of methionine
 "[M" = ["[UNIMOD:1]"] # Peptide N-terminal acetylation of methionine
+"K" = ["[UNIMOD:1]"] # Acetylation of lysine
 
 [static_modifications]
 C = "[UNIMOD:4]" # Carbamidomethylation of cysteine
