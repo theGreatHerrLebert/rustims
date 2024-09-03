@@ -27,7 +27,7 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
     merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, beta_score
 
 from sagepy.core.scoring import psms_to_json_bin
-from sagepy.utility import peptide_spectrum_match_list_to_pandas
+from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 from sagepy.utility import apply_mz_calibration
 
 # suppress tensorflow warnings
@@ -642,7 +642,7 @@ def main():
                 print("refining ion mobility predictions ...")
             # fit ion mobility predictor
             im_predictor.fine_tune_model(
-                data=peptide_spectrum_match_list_to_pandas(generate_balanced_im_dataset(psms=psm)),
+                data=peptide_spectrum_match_collection_to_pandas(generate_balanced_im_dataset(psms=psm)),
                 batch_size=1024,
                 re_compile=True,
                 verbose=args.refinement_verbose,
@@ -679,7 +679,7 @@ def main():
             if args.verbose:
                 print("refining retention time predictions ...")
 
-            ds = peptide_spectrum_match_list_to_pandas(
+            ds = peptide_spectrum_match_collection_to_pandas(
                 generate_balanced_rt_dataset(psms=psm)
             )
 
@@ -739,13 +739,13 @@ def main():
     # write all PSMs to binary file
     write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms", total=True)
 
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
+    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms)
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
     if args.verbose:
         print(f"FDR calculation, using target decoy competition: {args.tdc_method} ...")
 
-    psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_list_to_pandas(psms, re_score=True),
+    psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_collection_to_pandas(psms, re_score=True),
                                                     method=args.tdc_method)
 
     psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
