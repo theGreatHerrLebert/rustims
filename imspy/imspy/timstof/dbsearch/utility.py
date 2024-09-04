@@ -9,10 +9,11 @@ from tqdm import tqdm
 
 import numpy as np
 from typing import Optional
-from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation
+from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation, Tolerance
 from sagepy.core.scoring import PeptideSpectrumMatch, associate_fragment_ions_with_prosit_predicted_intensities
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
+from imspy.timstof import TimsDatasetDDA
 from imspy.timstof.frame import TimsFrame
 
 from sagepy.utility import get_features
@@ -20,7 +21,7 @@ from sagepy.qfdr.tdc import target_decoy_competition_pandas
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import StandardScaler
 
-from sagepy.utility import peptide_spectrum_match_list_to_pandas
+from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 from numpy.typing import NDArray
 
 from sagepy.core.scoring import merge_psm_dicts
@@ -268,7 +269,7 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
         Tuple[NDArray, NDArray]: X_train and Y_train
     """
     # create pandas table from psms
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms)
+    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms)
 
     # calculate q-values to get inital "good" hits
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method=method)
@@ -343,7 +344,7 @@ def re_score_psms(
     """
 
     scaler = StandardScaler()
-    X_all, _ = get_features(peptide_spectrum_match_list_to_pandas(psms), score=score)
+    X_all, _ = get_features(peptide_spectrum_match_collection_to_pandas(psms), score=score)
 
     # replace NaN values with 0
     X_all = np.nan_to_num(X_all)
@@ -363,7 +364,7 @@ def re_score_psms(
 
         X_train, Y_train = generate_training_data(features, balance=balance)
         X_train = np.nan_to_num(X_train)
-        X, _ = get_features(peptide_spectrum_match_list_to_pandas(target))
+        X, _ = get_features(peptide_spectrum_match_collection_to_pandas(target))
         X = np.nan_to_num(X)
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
@@ -386,7 +387,7 @@ def re_score_psms(
 
 def generate_balanced_rt_dataset(psms):
     # generate good hits
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
+    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
 
@@ -404,7 +405,7 @@ def generate_balanced_rt_dataset(psms):
 
 def generate_balanced_im_dataset(psms):
     # generate good hits
-    PSM_pandas = peptide_spectrum_match_list_to_pandas(psms, re_score=False)
+    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms, re_score=False)
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
 
@@ -447,3 +448,79 @@ def beta_score(fragments_observed, fragments_predicted) -> float:
     i_max = max(len_b, len_y)
 
     return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
+
+
+def extract_timstof_dda_data(path: str,
+                             in_memory: bool = False,
+                             isolation_window_lower: float = -3.0,
+                             isolation_window_upper: float = 3.0,
+                             take_top_n: int = 100,
+                             ) -> pd.DataFrame:
+    """
+    Extract TIMSTOF DDA data from bruker timsTOF TDF file.
+    Args:
+        path: Path to TIMSTOF DDA data
+        in_memory: Whether to load data in memory
+        isolation_window_lower: Lower bound for isolation window
+        isolation_window_upper: Upper bound for isolation
+        take_top_n: Number of top peaks to take
+
+    Returns:
+        pd.DataFrame: DataFrame containing timsTOF DDA data
+    """
+    ds_name = os.path.basename(path)
+
+    dataset = TimsDatasetDDA(path, in_memory=in_memory)
+    fragments = dataset.get_pasef_fragments(num_threads=1)
+
+    fragments = fragments.groupby('precursor_id').agg({
+        'frame_id': 'first',
+        'time': 'first',
+        'precursor_id': 'first',
+        'raw_data': 'sum',
+        'scan_begin': 'first',
+        'scan_end': 'first',
+        'isolation_mz': 'first',
+        'isolation_width': 'first',
+        'collision_energy': 'first',
+        'largest_peak_mz': 'first',
+        'average_mz': 'first',
+        'monoisotopic_mz': 'first',
+        'charge': 'first',
+        'average_scan': 'first',
+        'intensity': 'first',
+        'parent_id': 'first',
+    })
+
+    mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
+    fragments['mobility'] = mobility
+
+    # generate random string for for spec_id
+    spec_id = fragments.apply(lambda r: str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
+    fragments['spec_id'] = spec_id
+
+    sage_precursor = fragments.apply(lambda r: Precursor(
+        mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
+        intensity=r['intensity'],
+        charge=sanitize_charge(r['charge']),
+        isolation_window=Tolerance(da=(isolation_window_lower, isolation_window_upper)),
+        collision_energy=r.collision_energy,
+        inverse_ion_mobility=r.mobility,
+    ), axis=1)
+
+    fragments['sage_precursor'] = sage_precursor
+
+    processed_spec = fragments.apply(
+        lambda r: get_searchable_spec(
+            precursor=r.sage_precursor,
+            raw_fragment_data=r.raw_data,
+            spec_processor=SpectrumProcessor(take_top_n=take_top_n),
+            spec_id=r.spec_id,
+            time=r['time'],
+        ),
+        axis=1
+    )
+
+    fragments['processed_spec'] = processed_spec
+
+    return fragments

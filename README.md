@@ -3,14 +3,6 @@
 <p align="center">
   <img src="rustims_logo.png" alt="logo" width="250"/>
 </p>
-<div align="center">
-
-> "I have spread my dreams under your feet;
-> Tread softly because you tread on my dreams."
-> 
-> — **W.B. Yeats**
-
-</div>
 
 `rustims` is a framework developed for processing raw data from Ion-Mobility Spectrometry (IMS) in [prote]omics mass spectrometry. This project emerged from my Ph.D. research and reflects our involvement in [MSCORESYS](https://www.mscoresys.de/), especially within the [DIASYM](https://diasym.mscoresys.de/) segment. RustIMS draws inspiration from OpenMS but is distinguished by its use of [Rust](https://www.rust-lang.org/) as the backend language, aiming for efficient algorithm implementations and robust data structures. Like OpenMS, rustims exposes most of its logic to Python via [pyO3](https://docs.rs/pyo3/latest/pyo3/). This setup is intended to enable quick prototyping and integration into existing scientific workflows.
 
@@ -20,14 +12,39 @@ If you're diving into the realm of ion-mobility mass spectrometry raw data, rust
 * Have an interest in the **processing of raw IMS data**.
 * Are curious about the **algorithms** behind IMS data processing.
 * Have a basic understanding of **programming** concepts.
-* Don't mind engaging with a **project that's still evolving**, where bugs and updates are part of the journey (the free-and-open-source way of things).
-
-Conversely, rustims might *not* meet your expectations if you:
-* Anticipate a complete, out-of-the-box framework, possibly with a graphical interface.
-* Lack any programming experience.
-* Are looking for tools focused on downstream analysis or data interpretation for specific research questions.
+* Don't mind engaging with a **project that's still evolving**.
 
 rustims is about exploring and improving the way we process ion-mobility spectrometry data. It's a work in progress, reflecting the open-source ethos of collaboration, engagement, and sharing of knowledge. Whether you're here to contribute or learn, we welcome your interest!
+
+
+# Quickstart
+To quickly get started, we recommend installing the Python package `imspy` via pip into a separate Virtual
+Environment using Python3.11 (currently the only supported Python version due to TensorFlow). If you don't know how to create a Virtual Environment, you can follow the instructions [here](https://docs.python.org/3/library/venv.html).
+This way, you can avoid potential dependency conflicts with other Python packages.
+The following command installs the latest version of `imspy` from PyPi:
+```shell
+pip install imspy
+```
+
+## Analyzing a DDA dataset from Bruker timsTOF with imspy_dda
+You can directly run the `imspy_dda` command to analyze a DDA dataset:
+```shell
+imspy_dda path/to/bruker.tdf path/to/proteome.fasta
+```
+The tool has a lot of options, which you can explore by running:
+```shell
+imspy_dda --help
+```
+
+## Generating a synthetic PASEF-like dataset with timsim
+You can also generate a synthetic PASEF-like dataset using the following command (timsim currently requires a reference.tdf file of a real dataset):
+```shell
+timsim path/to/output.tdf path/to/reference.tdf path/to/proteome.fasta
+```
+The tool has a lot of options, which you can explore by running:
+```shell
+timsim --help
+```
 
 # Repository Structure
 <figure align="center">

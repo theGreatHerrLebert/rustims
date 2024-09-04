@@ -47,21 +47,11 @@ class PeptideDigest:
             c_terminal=self.c_terminal
         )
 
-        # generate static cysteine modification
-        static_mods = {k: v for k, v in [SAGE_KNOWN_MODS.cysteine_static()]}
-
-        # generate variable methionine modification
-        variable_mods = {k: v for k, v in [SAGE_KNOWN_MODS.methionine_variable()]}
-
-        # generate SAGE compatible mod representations
-        static = validate_mods(static_mods)
-        variable = validate_var_mods(variable_mods)
-
         sage_config = SageSearchConfiguration(
             fasta=fasta,
             enzyme_builder=enzyme_builder,
-            static_mods=static,
-            variable_mods=variable,
+            static_mods={"C": "[UNIMOD:4]"},
+            variable_mods={"M": ["[UNIMOD:35]"]},
             generate_decoys=self.generate_decoys,
             bucket_size=int(np.power(2, 6))
         )

@@ -136,10 +136,18 @@ class TDFWriter:
         return r
 
     def compress_frame(self, frame: TimsFrame, only_frame_one: bool = False) -> bytes:
+        """Compress a single frame using zstd.
+            Arguments:
+                frame: TimsFrame object
+                only_frame_one: bool
+
+            Returns:
+                bytes: compressed data
+        """
         # either use frame 1 or the ref handle frame for writing of calibration data and call to conversion function
         i = 1 if only_frame_one else frame.frame_id
         max_index = self.helper_handle.meta_data.Id.max()
-        if frame.frame_id > max_index:
+        if frame.frame_id > max_index and not only_frame_one:
             i = max_index
 
         # transform mz and mobility to tof and scan
@@ -152,6 +160,12 @@ class TDFWriter:
         return zstd.ZSTD_compress(bytes(real_data), 0)
 
     def write_frame(self, frame: TimsFrame, scan_mode: int, only_frame_one: bool = False) -> None:
+        """Write a single frame to the binary file.
+            Arguments:
+                frame: TimsFrame object
+                scan_mode: int
+                only_frame_one: bool
+        """
         self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position, only_frame_one))
         compressed_data = self.compress_frame(frame, only_frame_one)
 
