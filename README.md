@@ -16,6 +16,36 @@ If you're diving into the realm of ion-mobility mass spectrometry raw data, rust
 
 rustims is about exploring and improving the way we process ion-mobility spectrometry data. It's a work in progress, reflecting the open-source ethos of collaboration, engagement, and sharing of knowledge. Whether you're here to contribute or learn, we welcome your interest!
 
+
+# Quickstart
+To quickly get started, we recommend installing the Python package `imspy` via pip into a separate Virtual
+Environment using Python3.11 (currently the only supported Python version due to TensorFlow). If you don't know how to create a Virtual Environment, you can follow the instructions [here](https://docs.python.org/3/library/venv.html).
+This way, you can avoid potential dependency conflicts with other Python packages.
+The following command installs the latest version of `imspy` from PyPi:
+```shell
+pip install imspy
+```
+
+## Analyzing a DDA dataset from Bruker timsTOF with imspy_dda
+You can directly run the `imspy_dda` command to analyze a DDA dataset:
+```shell
+imspy_dda path/to/bruker.tdf path/to/proteome.fasta
+```
+The tool has a lot of options, which you can explore by running:
+```shell
+imspy_dda --help
+```
+
+## Generating a synthetic PASEF-like dataset with timsim
+You can also generate a synthetic PASEF-like dataset using the following command (timsim currently requires a reference.tdf file of a real dataset):
+```shell
+timsim path/to/output.tdf path/to/reference.tdf path/to/proteome.fasta
+```
+The tool has a lot of options, which you can explore by running:
+```shell
+timsim --help
+```
+
 # Repository Structure
 <figure align="center">
   <img src="rustims_layout.png" alt="RustIMS Project Structure" width="700"/>
