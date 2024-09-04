@@ -376,8 +376,8 @@ def main():
         max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
         score_type=score_type,
-        variable_modifications=variable_modifications,
-        static_modifications=static_modifications,
+        variable_mods=variable_modifications,
+        static_mods=static_modifications,
     )
 
     if args.verbose:
