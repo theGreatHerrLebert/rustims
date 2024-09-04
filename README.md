@@ -25,6 +25,12 @@ The following command installs the latest version of `imspy` from PyPi:
 ```shell
 pip install imspy
 ```
+This will install tensorflow as a dependency without GPU support.
+The easiest way to get GPU support is to additionally install the tensorflow[and-cuda] package:
+```shell
+pip install tensorflow[and-cuda]==2.15.0.post1
+```
+Which comes with the necessary CUDA and cuDNN libraries.
 
 ## Analyzing a DDA dataset from Bruker timsTOF with imspy_dda
 You can directly run the `imspy_dda` command to analyze a DDA dataset:
