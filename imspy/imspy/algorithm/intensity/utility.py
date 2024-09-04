@@ -5,10 +5,8 @@ import numpy as np
 import pandas as pd
 
 import tensorflow as tf
-from imspy.simulation.utility import sequence_to_numpy
-from dlomix.constants import PTMS_ALPHABET
 
-from tensorflow.keras.layers.experimental import preprocessing
+from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
@@ -33,8 +31,8 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     aa_indices = []
 
     for s in tokenized_seq:
-        if s in PTMS_ALPHABET:
-            aa_indices.append(PTMS_ALPHABET[s])
+        if s in ALPHABET_UNMOD:
+            aa_indices.append(ALPHABET_UNMOD[s])
         else:
             aa_indices.append(0)
 

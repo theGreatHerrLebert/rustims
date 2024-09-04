@@ -1,6 +1,4 @@
 import pandas as pd
-import numpy as np
-
 from imspy.simulation.utility import generate_events
 
 
