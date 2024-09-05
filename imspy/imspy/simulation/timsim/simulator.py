@@ -314,8 +314,12 @@ def main():
     peptides = pd.concat(peptide_list)
 
     if args.sample_peptides:
-        peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
-        peptides.reset_index(drop=True, inplace=True)
+        try:
+            peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
+            peptides.reset_index(drop=True, inplace=True)
+        except ValueError:
+            print(f"Warning: Not enough peptides to sample {args.num_sample_peptides}, "
+                  f"using all {peptides.shape[0]} peptides.")
 
     if verbose:
         print(f"Simulating {peptides.shape[0]} peptides...")
