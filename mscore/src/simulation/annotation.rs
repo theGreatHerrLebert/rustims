@@ -273,7 +273,7 @@ impl std::ops::Mul<f64> for MzSpectrumAnnotated {
         for annotation in self.annotations.iter(){
             let mut scaled_contributions: Vec<ContributionSource> = Vec::new();
             for contribution in annotation.contributions.iter(){
-                let scaled_intensity = scale*contribution.intensity_contribution;
+                let scaled_intensity = (contribution.intensity_contribution*scale).round();
                 let scaled_contribution = ContributionSource{
                     intensity_contribution: scaled_intensity,
                     source_type: contribution.source_type.clone(),
