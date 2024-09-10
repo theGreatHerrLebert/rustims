@@ -67,7 +67,11 @@ def predict_intensities_prosit(
         flatten=True,
     )
 
-    associate_fragment_ions_with_prosit_predicted_intensities(psm_collection, intensity_pred, num_threads=num_threads)
+    psm_collection_intensity = associate_fragment_ions_with_prosit_predicted_intensities(
+        psm_collection, intensity_pred, num_threads=num_threads)
+
+    for psm, psm_intensity in zip(psm_collection, psm_collection_intensity):
+        psm.fragments_predicted = psm_intensity.fragments_predicted
 
     for ps in psm_collection:
         ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
