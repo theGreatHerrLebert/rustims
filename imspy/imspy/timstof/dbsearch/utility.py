@@ -430,6 +430,15 @@ def log_factorial(n: int, k: int) -> float:
 
 
 def beta_score(fragments_observed, fragments_predicted) -> float:
+    """
+    The beta score is a variant of the OpenMS proposed score calculation, using predicted intensities instead of a constant value for the expected intensity.
+    Args:
+        fragments_observed: The Sage Fragment object containing the observed intensities
+        fragments_predicted: The Sage Fragment object containing the predicted intensities, e.g. from Prosit
+
+    Returns:
+        float: The beta score, hyper score variant using predicted intensities instead of a constant value for the expected intensity
+    """
 
     intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
 
@@ -461,8 +470,8 @@ def extract_timstof_dda_data(path: str,
     Args:
         path: Path to TIMSTOF DDA data
         in_memory: Whether to load data in memory
-        isolation_window_lower: Lower bound for isolation window
-        isolation_window_upper: Upper bound for isolation
+        isolation_window_lower: Lower bound for isolation window (Da)
+        isolation_window_upper: Upper bound for isolation window (Da)
         take_top_n: Number of top peaks to take
 
     Returns:
