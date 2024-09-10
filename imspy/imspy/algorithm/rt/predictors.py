@@ -38,7 +38,7 @@ def predict_retention_time(
     rt_max = np.max([x.retention_time_observed for x in psm_collection])
 
     for psm in psm_collection:
-        psm.rt_projected = linear_map(psm.retention_time_observed, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
+        psm.projected_rt = linear_map(psm.retention_time_observed, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
 
     if refine_model:
         rt_predictor.fine_tune_model(
