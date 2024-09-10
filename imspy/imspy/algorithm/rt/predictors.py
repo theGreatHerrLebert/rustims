@@ -42,7 +42,7 @@ def predict_retention_time(
         )
 
     # predict retention times
-    inv_mob = rt_predictor.simulate_separation_times(
+    rt_predicted = rt_predictor.simulate_separation_times(
         sequences=[x.sequence for x in psm_collection],
     )
 
@@ -50,7 +50,7 @@ def predict_retention_time(
     rt_max = np.max([x.retention_time_observed for x in psm_collection])
 
     # set the predicted retention times
-    for rt, ps in zip(inv_mob, psm_collection):
+    for rt, ps in zip(rt_predicted, psm_collection):
         ps.retention_time_predicted = rt
         # map the retention times to a 0-60 scale, which is the range the model was trained on
         # projected RT can be used if no fine-tuning was performed
