@@ -1,3 +1,4 @@
+import os
 import re
 from typing import List
 
@@ -6,6 +7,8 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
+
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, PeptideSpectrumMatch
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
@@ -14,6 +17,62 @@ from imspy.algorithm.intensity.utility import (generate_prosit_intensity_predict
 from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
 
 from imspy.simulation.utility import flatten_prosit_array
+from imspy.timstof.dbsearch.utility import beta_score, get_collision_energy_calibration_factor
+
+
+def predict_intensities_prosit(
+        psm_collection: List[PeptideSpectrumMatch],
+        calibrate_collision_energy: bool = True,
+        verbose: bool = False,
+        num_threads: int = -1,
+) -> None:
+    """
+    Predict the fragment ion intensities using Prosit.
+    Args:
+        psm_collection: a list of peptide-spectrum matches
+        calibrate_collision_energy: whether to calibrate the collision energy
+        verbose:
+        num_threads:
+
+    Returns:
+
+    """
+    # check if num_threads is -1, if so, use all available threads
+    if num_threads == -1:
+        num_threads = os.cpu_count()
+
+    # the intensity predictor model
+    prosit_model = Prosit2023TimsTofWrapper(verbose=False)
+
+    # sample for collision energy calibration
+    sample = list(sorted(psm_collection, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
+
+    if calibrate_collision_energy:
+        collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
+            list(filter(lambda match: match.decoy is not True, sample)),
+            prosit_model,
+            verbose=verbose
+        )
+
+    else:
+        collision_energy_calibration_factor = 0.0
+
+    for ps in psm_collection:
+        ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
+
+    intensity_pred = prosit_model.predict_intensities(
+        [p.sequence for p in psm_collection],
+        np.array([p.charge for p in psm_collection]),
+        [p.collision_energy_calibrated for p in psm_collection],
+        batch_size=2048,
+        flatten=True,
+    )
+
+    psm = associate_fragment_ions_with_prosit_predicted_intensities(psm_collection, intensity_pred,
+                                                                    num_threads=num_threads)
+
+    for ps in psm:
+        ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
 
 
 def remove_unimod_annotation(sequence: str) -> str:

@@ -4,4 +4,4 @@ from .ionization.predictors import DeepChargeStateDistribution, GRUChargeStatePr
 
 from .ccs.predictors import predict_inverse_ion_mobility
 from .rt.predictors import predict_retention_time
-from .intensity.utility import predict_intensities_prosit
+from .intensity.predictors import predict_intensities_prosit
