@@ -28,7 +28,7 @@ from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_sea
     write_psms_binary, re_score_psms, \
     merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
 
-from imspy.algorithm.intensity.utility import get_collision_energy_calibration_factor
+from imspy.algorithm.intensity.predictors import get_collision_energy_calibration_factor
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_collection_to_pandas
