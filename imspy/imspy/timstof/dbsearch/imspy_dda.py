@@ -17,6 +17,7 @@ from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_in
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
 from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
+from imspy.algorithm.intensity.utility import beta_score
 from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
@@ -25,7 +26,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     get_collision_energy_calibration_factor, write_psms_binary, re_score_psms, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, beta_score
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_collection_to_pandas
