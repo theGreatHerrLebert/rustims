@@ -4,4 +4,4 @@ from imspy.algorithm.ionization.predictors import DeepChargeStateDistribution, G
 
 from imspy.algorithm.ccs.predictors import predict_inverse_ion_mobility
 from imspy.algorithm.rt.predictors import predict_retention_time
-from imspy.algorithm.intensity.utility import predict_intensities_prosit
+from imspy.algorithm.intensity.predictors import predict_intensities_prosit
