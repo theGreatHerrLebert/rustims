@@ -81,7 +81,7 @@ def main():
         "--num_sample_peptides",
         type=int,
         default=25_000,
-        help="Sample fraction, fraction of peptides to be sampled at random from digested fasta (default: 0.005)")
+        help="Number of peptides to sample from the digested fasta (default: 25_000)")
 
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
@@ -314,8 +314,12 @@ def main():
     peptides = pd.concat(peptide_list)
 
     if args.sample_peptides:
-        peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
-        peptides.reset_index(drop=True, inplace=True)
+        try:
+            peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
+            peptides.reset_index(drop=True, inplace=True)
+        except ValueError:
+            print(f"Warning: Not enough peptides to sample {args.num_sample_peptides}, "
+                  f"using all {peptides.shape[0]} peptides.")
 
     if verbose:
         print(f"Simulating {peptides.shape[0]} peptides...")

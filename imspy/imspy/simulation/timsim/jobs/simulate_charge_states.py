@@ -1,6 +1,6 @@
 import pandas as pd
 
-from imspy.algorithm import load_tokenizer_from_resources
+from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.algorithm.ionization.predictors import BinomialChargeStateDistributionModel, DeepChargeStateDistribution, \
     load_deep_charge_state_predictor
 from imspy.chemistry.utility import calculate_mz

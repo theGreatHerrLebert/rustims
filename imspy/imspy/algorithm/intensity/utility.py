@@ -1,6 +1,8 @@
-from numpy.typing import NDArray
-from typing import List
+import os
 
+from numpy.typing import NDArray
+from typing import List, Tuple
+import numba
 import numpy as np
 import pandas as pd
 
@@ -10,8 +12,47 @@ from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
+from sagepy.core import IonType
 
 from imspy.utility import tokenize_unimod_sequence
+
+@numba.njit
+def log_factorial(n: int, k: int) -> float:
+    k = max(k, 2)
+    result = 0.0
+    for i in range(n, k - 1, -1):
+        result += np.log(i)
+    return result
+
+
+def beta_score(fragments_observed, fragments_predicted) -> float:
+    """
+    The beta score is a variant of the OpenMS proposed score calculation, using predicted intensities instead of a constant value for the expected intensity.
+    Args:
+        fragments_observed: The Sage Fragment object containing the observed intensities
+        fragments_predicted: The Sage Fragment object containing the predicted intensities, e.g. from Prosit
+
+    Returns:
+        float: The beta score, hyper score variant using predicted intensities instead of a constant value for the expected intensity
+    """
+
+    intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
+
+    len_b, len_y = 0, 0
+
+    b_type = IonType("b")
+    y_type = IonType("y")
+
+    for t in fragments_observed.ion_types:
+        if t == b_type:
+            len_b += 1
+        elif t == y_type:
+            len_y += 1
+
+    i_min = min(len_b, len_y)
+    i_max = max(len_b, len_y)
+
+    return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
 
 
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:

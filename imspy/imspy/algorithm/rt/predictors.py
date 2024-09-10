@@ -1,16 +1,61 @@
-from typing import Union
+from typing import Union, List
 
 import pandas as pd
 import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
+from sagepy.core import PeptideSpectrumMatch
+from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 
-from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
-from imspy.timstof.dbsearch.utility import linear_map
+from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint, load_tokenizer_from_resources
+from imspy.timstof.dbsearch.utility import linear_map, generate_balanced_rt_dataset
 from imspy.utility import tokenize_unimod_sequence
 
 from tensorflow.keras.models import load_model
+
+
+def predict_retention_time(
+        psm_collection: List[PeptideSpectrumMatch],
+        refine_model: bool = True,
+        verbose: bool = False) -> None:
+    """
+    Predict the retention times for a collection of peptide-spectrum matches
+    Args:
+        psm_collection: a list of peptide-spectrum matches
+        refine_model: whether to refine the model
+        verbose: whether to print verbose output
+
+    Returns:
+        None, retention times are set in the peptide-spectrum matches
+    """
+
+    rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                              load_tokenizer_from_resources("tokenizer-ptm"),
+                                              verbose=verbose)
+
+    rt_min = np.min([x.retention_time_observed for x in psm_collection])
+    rt_max = np.max([x.retention_time_observed for x in psm_collection])
+
+    for psm in psm_collection:
+        psm.projected_rt = linear_map(psm.retention_time_observed, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
+
+    if refine_model:
+        rt_predictor.fine_tune_model(
+            peptide_spectrum_match_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
+            batch_size=128,
+            re_compile=True,
+            verbose=verbose
+        )
+
+    # predict retention times
+    rt_predicted = rt_predictor.simulate_separation_times(
+        sequences=[x.sequence for x in psm_collection],
+    )
+
+    # set the predicted retention times
+    for rt, ps in zip(rt_predicted, psm_collection):
+        ps.retention_time_predicted = rt
 
 
 def get_rt_train_set(tokenizer, sequence, rt) -> tf.data.Dataset:

@@ -2,17 +2,14 @@ import os
 import re
 from typing import List, Tuple
 
-import numba
 import pandas as pd
-from sagepy.core.ion_series import IonType
 from tqdm import tqdm
 
 import numpy as np
 from typing import Optional
 from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation, Tolerance
-from sagepy.core.scoring import PeptideSpectrumMatch, associate_fragment_ions_with_prosit_predicted_intensities
+from sagepy.core.scoring import PeptideSpectrumMatch
 
-from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.timstof import TimsDatasetDDA
 from imspy.timstof.frame import TimsFrame
 
@@ -185,49 +182,6 @@ def get_searchable_spec(precursor: Precursor,
 
     processed_spec = spec_processor.process(spec)
     return processed_spec
-
-
-def get_collision_energy_calibration_factor(
-        sample: List[PeptideSpectrumMatch],
-        model: Prosit2023TimsTofWrapper,
-        lower: int = -30,
-        upper: int = 30,
-        verbose: bool = False,
-) -> Tuple[float, List[float]]:
-    """
-    Get the collision energy calibration factor for a given sample.
-    Args:
-        sample: a list of PeptideSpectrumMatch objects
-        model: a Prosit2023TimsTofWrapper object
-        lower: lower bound for the search
-        upper: upper bound for the search
-        verbose: whether to print progress
-
-    Returns:
-        Tuple[float, List[float]]: the collision energy calibration factor and the cosine similarities
-    """
-    cos_target, cos_decoy = [], []
-
-    if verbose:
-        print(f"Searching for collision energy calibration factor between {lower} and {upper} ...")
-
-    for i in tqdm(range(lower, upper), disable=not verbose, desc='calibrating CE', ncols=100):
-        I = model.predict_intensities(
-            [p.sequence for p in sample],
-            np.array([p.charge for p in sample]),
-            [p.collision_energy + i for p in sample],
-            batch_size=2048,
-            flatten=True
-        )
-
-        psm_i = associate_fragment_ions_with_prosit_predicted_intensities(sample, I)
-        target = list(filter(lambda x: not x.decoy, psm_i))
-        decoy = list(filter(lambda x: x.decoy, psm_i))
-
-        cos_target.append((i, np.mean([x.cosine_similarity for x in target])))
-        cos_decoy.append((i, np.mean([x.cosine_similarity for x in decoy])))
-
-    return cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
 
 
 def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool = False):
@@ -420,36 +374,6 @@ def generate_balanced_im_dataset(psms):
     return im_list
 
 
-@numba.njit
-def log_factorial(n: int, k: int) -> float:
-    k = max(k, 2)
-    result = 0.0
-    for i in range(n, k - 1, -1):
-        result += np.log(i)
-    return result
-
-
-def beta_score(fragments_observed, fragments_predicted) -> float:
-
-    intensity = np.dot(fragments_observed.intensities, fragments_predicted.intensities)
-
-    len_b, len_y = 0, 0
-
-    b_type = IonType("b")
-    y_type = IonType("y")
-
-    for t in fragments_observed.ion_types:
-        if t == b_type:
-            len_b += 1
-        elif t == y_type:
-            len_y += 1
-
-    i_min = min(len_b, len_y)
-    i_max = max(len_b, len_y)
-
-    return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
-
-
 def extract_timstof_dda_data(path: str,
                              in_memory: bool = False,
                              isolation_window_lower: float = -3.0,
@@ -461,8 +385,8 @@ def extract_timstof_dda_data(path: str,
     Args:
         path: Path to TIMSTOF DDA data
         in_memory: Whether to load data in memory
-        isolation_window_lower: Lower bound for isolation window
-        isolation_window_upper: Upper bound for isolation
+        isolation_window_lower: Lower bound for isolation window (Da)
+        isolation_window_upper: Upper bound for isolation window (Da)
         take_top_n: Number of top peaks to take
 
     Returns:

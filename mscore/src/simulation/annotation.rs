@@ -268,7 +268,26 @@ impl std::ops::Mul<f64> for MzSpectrumAnnotated {
             scaled_intensities[idx] = scale*intensity;
         }
 
-        MzSpectrumAnnotated { mz: self.mz.clone(), intensity: scaled_intensities, annotations: self.annotations.clone() }
+        let mut scaled_annotations: Vec<PeakAnnotation> = Vec::new();
+
+        for annotation in self.annotations.iter(){
+            let mut scaled_contributions: Vec<ContributionSource> = Vec::new();
+            for contribution in annotation.contributions.iter(){
+                let scaled_intensity = (contribution.intensity_contribution*scale).round();
+                let scaled_contribution = ContributionSource{
+                    intensity_contribution: scaled_intensity,
+                    source_type: contribution.source_type.clone(),
+                    signal_attributes: contribution.signal_attributes.clone(),
+                };
+                scaled_contributions.push(scaled_contribution);
+            }
+            let scaled_annotation = PeakAnnotation{
+                contributions: scaled_contributions,
+            };
+            scaled_annotations.push(scaled_annotation);
+        }
+
+        MzSpectrumAnnotated { mz: self.mz.clone(), intensity: scaled_intensities, annotations: scaled_annotations }
     }
 }
 
