@@ -152,7 +152,24 @@ annotated_spectrum = sequence.calculate_mono_isotopic_product_ion_spectrum_annot
 
 ### ion mobility and retention time prediction
 ```python
+from imspy.algorithm import (DeepPeptideIonMobilityApex, DeepChromatographyApex, 
+                             load_deep_ccs_predictor, load_deep_retention_time_predictor)
+from imspy.algorithm.utility import load_tokenizer_from_resources
+
+# the ion mobility predictor model
+im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
+                                          load_tokenizer_from_resources("tokenizer-ptm"))
+# the retention time predictor model
+rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                      load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 ```
+
+### Intensity prediction
+We provide a wrapper for the Prosit intensity prediction model, which can be used to predict the intensity of fragment ions.
+```python
+from imspy.algorithm import Prosit2023TimsTofWrapper
+```
+
 
 ### Locality sensitive hashing
 ```python
