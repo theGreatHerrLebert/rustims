@@ -13,12 +13,11 @@ from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
 from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
-                                               post_process_predicted_fragment_spectra, reshape_dims)
+                                               post_process_predicted_fragment_spectra, reshape_dims,
+                                               get_collision_energy_calibration_factor, beta_score)
 from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
 
 from imspy.simulation.utility import flatten_prosit_array
-from imspy.timstof.dbsearch.utility import beta_score, get_collision_energy_calibration_factor
-
 
 def predict_intensities_prosit(
         psm_collection: List[PeptideSpectrumMatch],
