@@ -1,14 +1,61 @@
+from typing import List
+
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from sagepy.core import PeptideSpectrumMatch
+
+from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 from tensorflow.keras.models import load_model
 
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
+
+from imspy.algorithm import load_tokenizer_from_resources
 from imspy.chemistry.mobility import ccs_to_one_over_k0, one_over_k0_to_ccs
 from scipy.optimize import curve_fit
+
+from imspy.timstof.dbsearch.utility import generate_balanced_im_dataset
 from imspy.utility import tokenize_unimod_sequence
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
+
+
+def predict_inverse_ion_mobility(
+        psm_collection: List[PeptideSpectrumMatch],
+        refine_model: bool = True,
+        verbose: bool = False) -> None:
+    """
+    Predict the inverse mobility of a peptide-spectrum match collection
+    Args:
+        psm_collection: a list of peptide-spectrum matches
+        refine_model: whether to refine the model
+        verbose: whether to print verbose output
+
+    Returns:
+        None, inverse mobility values are added to the PSMs
+    """
+
+    im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
+                                              load_tokenizer_from_resources("tokenizer-ptm"),
+                                              verbose=verbose)
+    if refine_model:
+        im_predictor.fine_tune_model(
+            generate_balanced_im_dataset(peptide_spectrum_match_collection_to_pandas(psm_collection)),
+            batch_size=128,
+            re_compile=True,
+            verbose=verbose
+        )
+
+    # predict ion mobilities
+    inv_mob = im_predictor.simulate_ion_mobilities(
+        sequences=[x.sequence for x in psm_collection],
+        charges=[x.charge for x in psm_collection],
+        mz=[x.mono_mz_calculated for x in psm_collection]
+    )
+
+    # set ion mobilities
+    for mob, ps in zip(inv_mob, psm_collection):
+        ps.inverse_mobility_predicted = mob
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:

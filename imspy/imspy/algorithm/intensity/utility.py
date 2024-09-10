@@ -1,3 +1,5 @@
+import os
+
 from numpy.typing import NDArray
 from typing import List
 
@@ -10,8 +12,66 @@ from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
+from sagepy.core import PeptideSpectrumMatch
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities
 
+from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
+from imspy.timstof.dbsearch.utility import get_collision_energy_calibration_factor, beta_score
 from imspy.utility import tokenize_unimod_sequence
+
+def predict_intensities_prosit(
+        psm_collection: List[PeptideSpectrumMatch],
+        calibrate_collision_energy: bool = True,
+        verbose: bool = False,
+        num_threads: int = -1,
+) -> None:
+    """
+    Predict the fragment ion intensities using Prosit.
+    Args:
+        psm_collection: a list of peptide-spectrum matches
+        calibrate_collision_energy: whether to calibrate the collision energy
+        verbose:
+        num_threads:
+
+    Returns:
+
+    """
+    # check if num_threads is -1, if so, use all available threads
+    if num_threads == -1:
+        num_threads = os.cpu_count()
+
+    # the intensity predictor model
+    prosit_model = Prosit2023TimsTofWrapper(verbose=False)
+
+    # sample for collision energy calibration
+    sample = list(sorted(psm_collection, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
+
+    if calibrate_collision_energy:
+        collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
+            list(filter(lambda match: match.decoy is not True, sample)),
+            prosit_model,
+            verbose=verbose
+        )
+
+    else:
+        collision_energy_calibration_factor = 0.0
+
+    for ps in psm_collection:
+        ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
+
+    intensity_pred = prosit_model.predict_intensities(
+        [p.sequence for p in psm_collection],
+        np.array([p.charge for p in psm_collection]),
+        [p.collision_energy_calibrated for p in psm_collection],
+        batch_size=2048,
+        flatten=True,
+    )
+
+    psm = associate_fragment_ions_with_prosit_predicted_intensities(psm_collection, intensity_pred,
+                                                                    num_threads=num_threads)
+
+    for ps in psm:
+        ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
 
 
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
