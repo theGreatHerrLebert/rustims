@@ -1,6 +1,7 @@
 import pandas as pd
 
-from imspy.algorithm import DeepPeptideIonMobilityApex, load_deep_ccs_predictor, load_tokenizer_from_resources
+from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
+from imspy.algorithm.utility import load_tokenizer_from_resources
 
 
 def simulate_ion_mobilities(

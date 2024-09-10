@@ -11,7 +11,7 @@ from tensorflow.keras.models import load_model
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 
-from imspy.algorithm import load_tokenizer_from_resources
+from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.chemistry.mobility import ccs_to_one_over_k0, one_over_k0_to_ccs
 from scipy.optimize import curve_fit
 

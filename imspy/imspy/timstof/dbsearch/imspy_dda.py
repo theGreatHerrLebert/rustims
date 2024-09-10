@@ -16,7 +16,8 @@ from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_in
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
-from imspy.algorithm import DeepPeptideIonMobilityApex, load_deep_ccs_predictor, load_tokenizer_from_resources
+from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
+from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 

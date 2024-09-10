@@ -8,8 +8,7 @@ from numpy.typing import NDArray
 from sagepy.core import PeptideSpectrumMatch
 from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 
-from imspy.algorithm import load_tokenizer_from_resources
-from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
+from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint, load_tokenizer_from_resources
 from imspy.timstof.dbsearch.utility import linear_map, generate_balanced_rt_dataset
 from imspy.utility import tokenize_unimod_sequence
 
