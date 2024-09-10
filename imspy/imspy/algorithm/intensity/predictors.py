@@ -12,7 +12,7 @@ from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_in
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
-from imspy.algorithm.intensity.utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
+from .utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims, beta_score)
 
 from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
