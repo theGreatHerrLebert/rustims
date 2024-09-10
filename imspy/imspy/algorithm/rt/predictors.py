@@ -33,6 +33,13 @@ def predict_retention_time(
     rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"),
                                               verbose=verbose)
+
+    rt_min = np.min([x.retention_time_observed for x in psm_collection])
+    rt_max = np.max([x.retention_time_observed for x in psm_collection])
+
+    for psm in psm_collection:
+        psm.rt_projected = linear_map(psm.retention_time_observed, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
+
     if refine_model:
         rt_predictor.fine_tune_model(
             peptide_spectrum_match_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
@@ -46,15 +53,9 @@ def predict_retention_time(
         sequences=[x.sequence for x in psm_collection],
     )
 
-    rt_min = np.min([x.retention_time_observed for x in psm_collection])
-    rt_max = np.max([x.retention_time_observed for x in psm_collection])
-
     # set the predicted retention times
     for rt, ps in zip(rt_predicted, psm_collection):
         ps.retention_time_predicted = rt
-        # map the retention times to a 0-60 scale, which is the range the model was trained on
-        # projected RT can be used if no fine-tuning was performed
-        ps.rt_projected = linear_map(rt, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
 
 
 def get_rt_train_set(tokenizer, sequence, rt) -> tf.data.Dataset:
