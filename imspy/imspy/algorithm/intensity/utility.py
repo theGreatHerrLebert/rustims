@@ -12,68 +12,9 @@ from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
-from sagepy.core import IonType, PeptideSpectrumMatch
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities
-from tqdm import tqdm
+from sagepy.core import IonType
 
-from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.utility import tokenize_unimod_sequence
-
-
-def predict_intensities_prosit(
-        psm_collection: List[PeptideSpectrumMatch],
-        calibrate_collision_energy: bool = True,
-        verbose: bool = False,
-        num_threads: int = -1,
-) -> None:
-    """
-    Predict the fragment ion intensities using Prosit.
-    Args:
-        psm_collection: a list of peptide-spectrum matches
-        calibrate_collision_energy: whether to calibrate the collision energy
-        verbose:
-        num_threads:
-
-    Returns:
-
-    """
-    # check if num_threads is -1, if so, use all available threads
-    if num_threads == -1:
-        num_threads = os.cpu_count()
-
-    # the intensity predictor model
-    prosit_model = Prosit2023TimsTofWrapper(verbose=False)
-
-    # sample for collision energy calibration
-    sample = list(sorted(psm_collection, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
-
-    if calibrate_collision_energy:
-        collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
-            list(filter(lambda match: match.decoy is not True, sample)),
-            prosit_model,
-            verbose=verbose
-        )
-
-    else:
-        collision_energy_calibration_factor = 0.0
-
-    for ps in psm_collection:
-        ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
-
-    intensity_pred = prosit_model.predict_intensities(
-        [p.sequence for p in psm_collection],
-        np.array([p.charge for p in psm_collection]),
-        [p.collision_energy_calibrated for p in psm_collection],
-        batch_size=2048,
-        flatten=True,
-    )
-
-    psm = associate_fragment_ions_with_prosit_predicted_intensities(psm_collection, intensity_pred,
-                                                                    num_threads=num_threads)
-
-    for ps in psm:
-        ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
-
 
 @numba.njit
 def log_factorial(n: int, k: int) -> float:
@@ -112,48 +53,6 @@ def beta_score(fragments_observed, fragments_predicted) -> float:
     i_max = max(len_b, len_y)
 
     return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
-
-def get_collision_energy_calibration_factor(
-        sample: List[PeptideSpectrumMatch],
-        model: Prosit2023TimsTofWrapper,
-        lower: int = -30,
-        upper: int = 30,
-        verbose: bool = False,
-) -> Tuple[float, List[float]]:
-    """
-    Get the collision energy calibration factor for a given sample.
-    Args:
-        sample: a list of PeptideSpectrumMatch objects
-        model: a Prosit2023TimsTofWrapper object
-        lower: lower bound for the search
-        upper: upper bound for the search
-        verbose: whether to print progress
-
-    Returns:
-        Tuple[float, List[float]]: the collision energy calibration factor and the cosine similarities
-    """
-    cos_target, cos_decoy = [], []
-
-    if verbose:
-        print(f"Searching for collision energy calibration factor between {lower} and {upper} ...")
-
-    for i in tqdm(range(lower, upper), disable=not verbose, desc='calibrating CE', ncols=100):
-        I = model.predict_intensities(
-            [p.sequence for p in sample],
-            np.array([p.charge for p in sample]),
-            [p.collision_energy + i for p in sample],
-            batch_size=2048,
-            flatten=True
-        )
-
-        psm_i = associate_fragment_ions_with_prosit_predicted_intensities(sample, I)
-        target = list(filter(lambda x: not x.decoy, psm_i))
-        decoy = list(filter(lambda x: x.decoy, psm_i))
-
-        cos_target.append((i, np.mean([x.cosine_similarity for x in target])))
-        cos_decoy.append((i, np.mean([x.cosine_similarity for x in decoy])))
-
-    return cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
 
 
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
