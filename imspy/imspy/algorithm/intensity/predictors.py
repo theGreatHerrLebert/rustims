@@ -72,6 +72,7 @@ def predict_intensities_prosit(
 
     for psm, psm_intensity in zip(psm_collection, psm_collection_intensity):
         psm.fragments_predicted = psm_intensity.fragments_predicted
+        psm.cosine_similarity = psm_intensity.cosine_similarity
 
     for ps in psm_collection:
         ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
