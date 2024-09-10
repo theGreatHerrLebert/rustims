@@ -96,10 +96,56 @@ tdf = TimsDatasetDIA("path/to/rawfolder.d", in_memory=False)
 
 ### Basic usage
 ```python
+from imspy.chemistry.elements import ELEMENTAL_MONO_ISOTOPIC_MASSES, ELEMENTAL_ISOTOPIC_ABUNDANCES
+from imspy.chemistry.sum_formula import SumFormula
+
+# create a sum formula object that represents the molecule stachyose trihydrate
+stachyose_trihydrate = SumFormula("C24H48O24")
+
+# get the monoisotopic mass of the molecule
+mono_mass = stachyose_trihydrate.monoisotopic_mass
+
+# get the isotope distribution of the molecule, will be returned as an MzSpectrum object
+mz_spec = stachyose_trihydrate.generate_isotope_distribution(charge=1)
 ```
 
+This functionality is easily combined with the UNIMOD annotation database, which is included in the sagpy package.
+```python
+from sagepy.core.unimod import modification_atomic_composition
+from imspy.chemistry.sum_formula import SumFormula
+
+# carbamidomethylation is a common modification that is annotated in the UNIMOD database
+mods = modification_atomic_composition()
+
+# get the atomic composition of carbamidomethylation
+carbamidomethylation = mods["[UNIMOD:4]"]
+
+# create a sum formula object that represents the molecule with carbamidomethylation
+formula = SumFormula(''.join([key + str(value) for key, value in carbamidomethylation.items()]))
+mono_mass = formula.monoisotopic_mass
+```
 ### Working with peptide sequences
 ```python
+from imspy.data.peptide import PeptideSequence
+
+# create a peptide sequence object, might contain modifications
+sequence = PeptideSequence("PEPTIDEC[UNIMOD:4]PEPTIDE")
+
+# get the monoisotopic mass of the peptide
+mono_mass = sequence.mono_isotopic_mass
+
+# get the product ion series of the peptide sequence, e.g. b- and y-ions
+b_ions, y_ions = product_ion_series = sequence.calculate_product_ion_series(
+    charge=2,
+    fragment_type='b',
+)
+
+# generate an isotopic distribution of the peptide product ion sequence with annotations, this will hold 
+# detailed information about every single peak in the spectrum like b- and y-ion annotations, charge, isotopic number, etc.
+annotated_spectrum = sequence.calculate_mono_isotopic_product_ion_spectrum_annotated(
+    charge=2,
+    fragment_type='b'
+)
 ```
 
 ## Algorithms and machine learning
