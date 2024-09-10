@@ -40,7 +40,7 @@ def predict_inverse_ion_mobility(
                                               verbose=verbose)
     if refine_model:
         im_predictor.fine_tune_model(
-            generate_balanced_im_dataset(psm_collection),
+            peptide_spectrum_match_collection_to_pandas(generate_balanced_im_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose

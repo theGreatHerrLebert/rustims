@@ -35,7 +35,7 @@ def predict_retention_time(
                                               verbose=verbose)
     if refine_model:
         rt_predictor.fine_tune_model(
-            generate_balanced_rt_dataset(psm_collection),
+            peptide_spectrum_match_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose
