@@ -71,24 +71,25 @@ def predict_intensities_prosit(
         psm_collection, intensity_pred, num_threads=num_threads)
 
     # calculate the spectral similarity metrics
-    for psm, psm_intensity, prosit_intensity in tqdm(zip(psm_collection, psm_collection_intensity, intensity_pred, psm_collection),
-                                                      desc='Calculating spectral similarity metrics', ncols=100, disable=not verbose):
+    for psm, psm_intensity, prosit_intensity in tqdm(zip(psm_collection, psm_collection_intensity, intensity_pred),
+                                                      desc='Calc spectral similarity metrics', ncols=100, disable=not verbose):
         psm.fragments_predicted = psm_intensity.fragments_predicted
         psm.cosine_similarity = psm_intensity.cosine_similarity
         psm.prosit_intensities = prosit_intensity
 
-        i_obs = dict_to_dense_array(psm.fragments_observed)
+        i_obs = dict_to_dense_array(psm.observed_fragment_map())
         i_pred = dict_to_dense_array(psm.prosit_fragment_map())
         diff = np.sum(i_pred - i_obs) / (np.sum(i_obs) + np.sum(i_pred))
         corr_pearson = spectral_correlation(i_obs, i_pred, method='pearson')
         corr_spearman = spectral_correlation(i_obs, i_pred, method='spearman')
         entropy = spectral_entropy_similarity(i_obs, i_pred)
 
+        # set spectral similarity metrics
         psm.spectral_normalized_intensity_difference = diff
-        psm.spectral_correlation_pearson = corr_pearson
-        psm.spectral_correlation_spearman = corr_spearman
+        psm.spectral_correlation_similarity_pearson = corr_pearson
+        psm.spectral_correlation_similarity_spearman = corr_spearman
         psm.spectral_entropy_similarity = entropy
-        psm.beta_score = beta_score(i_obs, i_pred)
+        psm.beta_score = beta_score(psm.fragments_observed, psm.fragments_predicted)
 
 
 def get_collision_energy_calibration_factor(

@@ -630,8 +630,8 @@ def main():
         psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
                                                                         num_threads=args.num_threads)
 
-        for ps in tqdm(psm, desc="Calculating spectral similarity metrics", ncols=100, disable=(not args.verbose)):
-            i_obs = dict_to_dense_array(ps.fragments_observed)
+        for ps in tqdm(psm, desc="Calc spectral similarity metrics", ncols=100, disable=(not args.verbose)):
+            i_obs = dict_to_dense_array(ps.observed_fragment_map())
             i_pred = dict_to_dense_array(ps.prosit_fragment_map())
 
             # calculate spectral similarity metrics
@@ -642,14 +642,9 @@ def main():
 
             # set spectral similarity metrics
             ps.spectral_normalized_intensity_difference = diff
-            ps.spectral_correlation_pearson = corr_pearson
-            ps.spectral_correlation_spearman = corr_spearman
+            ps.spectral_correlation_similarity_pearson = corr_pearson
+            ps.spectral_correlation_similarity_spearman = corr_spearman
             ps.spectral_entropy_similarity = entropy
-
-        if args.verbose:
-            print("calculating beta score ...")
-
-        for ps in psm:
             ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
 
         if args.verbose:
