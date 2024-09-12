@@ -179,7 +179,10 @@ ccs = [one_over_k0_to_ccs(inv_im, mz, charge) for inv_im, mz, charge in zip(pred
 ```
 
 ### Intensity prediction
-We provide a wrapper for the Prosit intensity prediction model, which can be used to predict the intensity of fragment ions.
+We provide a wrapper for the [Prosit intensity prediction model](https://www.nature.com/articles/s41592-019-0426-7),
+[timsTOF version](https://www.nature.com/articles/s41467-024-48322-0),
+which can be used to predict the intensity of fragment ions. If you use this model, please give credit to the original 
+authors.
 ```python
 from imspy.algorithm import Prosit2023TimsTofWrapper
 
@@ -187,6 +190,7 @@ from imspy.algorithm import Prosit2023TimsTofWrapper
 sequences = ["PEPTIDE", "PEPTIDEC[UNIMOD:4]PEPTIDE"]
 mz_values = [784.58, 1423.72]
 charges = [1, 2]
+
 # collision energies need to be calibrated, check out the Prosit documentation for more information or read the calibrate_collision_energies function
 collision_energies = [20.5, 30.2]
 
