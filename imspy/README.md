@@ -152,10 +152,83 @@ annotated_spectrum = sequence.calculate_mono_isotopic_product_ion_spectrum_annot
 
 ### ion mobility and retention time prediction
 ```python
+from imspy.algorithm import (DeepPeptideIonMobilityApex, DeepChromatographyApex, 
+                             load_deep_ccs_predictor, load_deep_retention_time_predictor)
+from imspy.algorithm.utility import load_tokenizer_from_resources
+from imspy.chemistry.mobility import one_over_k0_to_ccs
+
+# some example peptide sequences
+sequences = ["PEPTIDE", "PEPTIDEC[UNIMOD:4]PEPTIDE"]
+mz_values = [784.58, 1423.72]
+charges = [1, 2]
+
+# the retention time predictor model
+rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
+                                      load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
+
+# predict retention times for peptide sequences
+predicted_rt = rt_predictor.simulate_separation_times(sequences=sequences)
+
+# the ion mobility predictor model
+im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
+                                          load_tokenizer_from_resources("tokenizer-ptm"))
+
+# predict ion mobilities for peptide sequences and translate them to collision cross sections
+predicted_inverse_mobility = im_predictor.simulate_ion_mobilities(sequences=sequences, charges=charges, mz=mz_values)
+ccs = [one_over_k0_to_ccs(inv_im, mz, charge) for inv_im, mz, charge in zip(predicted_inverse_mobility, mz_values, charges)]
 ```
 
-### Locality sensitive hashing
+### Intensity prediction
+We provide a wrapper for the Prosit intensity prediction model, which can be used to predict the intensity of fragment ions.
 ```python
+from imspy.algorithm import Prosit2023TimsTofWrapper
+
+# some example peptide sequences
+sequences = ["PEPTIDE", "PEPTIDEC[UNIMOD:4]PEPTIDE"]
+mz_values = [784.58, 1423.72]
+charges = [1, 2]
+# collision energies need to be calibrated, check out the Prosit documentation for more information or read the calibrate_collision_energies function
+collision_energies = [20.5, 30.2]
+
+# the Prosit model
+prosit_model = Prosit2023TimsTofWrapper()
+
+# predict expected ion intensities for peptide sequences
+predicted_intensity = prosit_model.predict_intensities(
+    sequences=sequences,
+    charges=charges,
+    collision_energies=collision_energies,
+    # will return the flat 174 dimensional feature vector per sequence created by Prosit
+    flatten=True
+)
+```
+
+
+### Locality sensitive hashing
+Locality sensitive hashing is a technique to find similar data points in high-dimensional spaces.
+We provide the option to cluster spectra based on their similarity using the LSH algorithm.
+```python
+from imspy.timstof import TimsDatasetDDA
+from imspy.algorithm.hashing import TimsHasher
+
+# read a DDA dataset
+tdf = TimsDatasetDDA("path/to/raw/folder.d", in_memory=False)
+
+# read a frame
+frame = tdf.get_tims_frame(1)
+
+# create windows from frame
+scans, indices, W = frame.to_dense_windows(
+    window_length=5,
+    resolution=1,
+    overlapping=True,
+)
+
+# create a TimsHasher object
+hasher = TimsHasher(trials=256, len_trial=22, seed=42, num_dalton=5, resolution=1)
+
+# calculate trials number of keys, each having len_tral bits for each window
+K = hasher.calculate_keys(W)
 ```
 
 ### Mixture models
