@@ -15,6 +15,7 @@ from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeB
 from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, ScoreType
 
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
+from tqdm import tqdm
 
 from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
 from imspy.algorithm.intensity.utility import beta_score
@@ -33,6 +34,7 @@ from imspy.algorithm.intensity.predictors import get_collision_energy_calibratio
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 from sagepy.utility import apply_mz_calibration
+from sagepy.rescore.utility import dict_to_dense_array, spectral_entropy_similarity, spectral_correlation
 
 # suppress tensorflow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -627,6 +629,22 @@ def main():
 
         psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
                                                                         num_threads=args.num_threads)
+
+        for ps in tqdm(psm, desc="Calculating spectral similarity metrics", ncols=100, disable=(not args.verbose)):
+            i_obs = dict_to_dense_array(ps.fragments_observed)
+            i_pred = dict_to_dense_array(ps.prosit_fragment_map())
+
+            # calculate spectral similarity metrics
+            diff = np.sum(i_pred - i_obs) / (np.sum(i_obs) + np.sum(i_pred))
+            corr_pearson = spectral_correlation(i_obs, i_pred, method='pearson')
+            corr_spearman = spectral_correlation(i_obs, i_pred, method='spearman')
+            entropy = spectral_entropy_similarity(i_obs, i_pred)
+
+            # set spectral similarity metrics
+            ps.spectral_normalized_intensity_difference = diff
+            ps.spectral_correlation_pearson = corr_pearson
+            ps.spectral_correlation_spearman = corr_spearman
+            ps.spectral_entropy_similarity = entropy
 
         if args.verbose:
             print("calculating beta score ...")

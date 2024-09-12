@@ -16,8 +16,8 @@ from .utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims, beta_score)
 
 from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
-
 from imspy.simulation.utility import flatten_prosit_array
+from sagepy.rescore.utility import dict_to_dense_array, spectral_entropy_similarity, spectral_correlation
 
 def predict_intensities_prosit(
         psm_collection: List[PeptideSpectrumMatch],
@@ -70,12 +70,25 @@ def predict_intensities_prosit(
     psm_collection_intensity = associate_fragment_ions_with_prosit_predicted_intensities(
         psm_collection, intensity_pred, num_threads=num_threads)
 
-    for psm, psm_intensity in zip(psm_collection, psm_collection_intensity):
+    # calculate the spectral similarity metrics
+    for psm, psm_intensity, prosit_intensity in tqdm(zip(psm_collection, psm_collection_intensity, intensity_pred, psm_collection),
+                                                      desc='Calculating spectral similarity metrics', ncols=100, disable=not verbose):
         psm.fragments_predicted = psm_intensity.fragments_predicted
         psm.cosine_similarity = psm_intensity.cosine_similarity
+        psm.prosit_intensities = prosit_intensity
 
-    for ps in psm_collection:
-        ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
+        i_obs = dict_to_dense_array(psm.fragments_observed)
+        i_pred = dict_to_dense_array(psm.prosit_fragment_map())
+        diff = np.sum(i_pred - i_obs) / (np.sum(i_obs) + np.sum(i_pred))
+        corr_pearson = spectral_correlation(i_obs, i_pred, method='pearson')
+        corr_spearman = spectral_correlation(i_obs, i_pred, method='spearman')
+        entropy = spectral_entropy_similarity(i_obs, i_pred)
+
+        psm.spectral_normalized_intensity_difference = diff
+        psm.spectral_correlation_pearson = corr_pearson
+        psm.spectral_correlation_spearman = corr_spearman
+        psm.spectral_entropy_similarity = entropy
+        psm.beta_score = beta_score(i_obs, i_pred)
 
 
 def get_collision_energy_calibration_factor(
