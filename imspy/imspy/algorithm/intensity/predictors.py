@@ -73,22 +73,14 @@ def predict_intensities_prosit(
     # calculate the spectral similarity metrics
     for psm, psm_intensity, prosit_intensity in tqdm(zip(psm_collection, psm_collection_intensity, intensity_pred),
                                                       desc='Calc spectral similarity metrics', ncols=100, disable=not verbose):
+
         psm.fragments_predicted = psm_intensity.fragments_predicted
         psm.cosine_similarity = psm_intensity.cosine_similarity
         psm.prosit_intensities = prosit_intensity
 
-        i_obs = dict_to_dense_array(psm.observed_fragment_map())
-        i_pred = dict_to_dense_array(psm.prosit_fragment_map())
-        diff = np.sum(i_pred - i_obs) / (np.sum(i_obs) + np.sum(i_pred))
-        corr_pearson = spectral_correlation(i_obs, i_pred, method='pearson')
-        corr_spearman = spectral_correlation(i_obs, i_pred, method='spearman')
-        entropy = spectral_entropy_similarity(i_obs, i_pred)
-
-        # set spectral similarity metrics
-        psm.spectral_normalized_intensity_difference = diff
-        psm.spectral_correlation_similarity_pearson = corr_pearson
-        psm.spectral_correlation_similarity_spearman = corr_spearman
-        psm.spectral_entropy_similarity = entropy
+        psm.spectral_correlation_similarity_pearson = psm_intensity.spectral_correlation_similarity_pearson
+        psm.spectral_correlation_similarity_spearman = psm_intensity.spectral_correlation_similarity_spearman
+        psm.spectral_entropy_similarity = psm_intensity.spectral_entropy_similarity
         psm.beta_score = beta_score(psm.fragments_observed, psm.fragments_predicted)
 
 
