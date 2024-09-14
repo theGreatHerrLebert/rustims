@@ -242,7 +242,7 @@ def main():
     parser.add_argument("--fdr_threshold", type=float, default=0.01, help="FDR threshold (default: 0.01)")
 
     # number of threads
-    parser.add_argument("--num_threads", type=int, default=16, help="Number of threads (default: 16)")
+    parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads (default: -1)")
 
     # if train splits should be balanced
     parser.add_argument(
@@ -331,6 +331,10 @@ def main():
     # Set up logging
     logging.basicConfig(filename=f"{write_folder_path}/imspy/imspy-{current_time}.log",
                         level=logging.INFO, format='%(asctime)s %(message)s')
+
+    if args.num_threads == -1 and args.verbose:
+        print(f"Using all available CPU threads: {os.cpu_count()} ...")
+        args.num_threads = os.cpu_count()
 
     logging.info("Arguments settings:")
     for arg in vars(args):
