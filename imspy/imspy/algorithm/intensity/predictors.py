@@ -16,8 +16,8 @@ from .utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
                                                post_process_predicted_fragment_spectra, reshape_dims, beta_score)
 
 from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
-
 from imspy.simulation.utility import flatten_prosit_array
+from sagepy.rescore.utility import dict_to_dense_array, spectral_entropy_similarity, spectral_correlation
 
 def predict_intensities_prosit(
         psm_collection: List[PeptideSpectrumMatch],
@@ -70,12 +70,18 @@ def predict_intensities_prosit(
     psm_collection_intensity = associate_fragment_ions_with_prosit_predicted_intensities(
         psm_collection, intensity_pred, num_threads=num_threads)
 
-    for psm, psm_intensity in zip(psm_collection, psm_collection_intensity):
+    # calculate the spectral similarity metrics
+    for psm, psm_intensity, prosit_intensity in tqdm(zip(psm_collection, psm_collection_intensity, intensity_pred),
+                                                      desc='Calc spectral similarity metrics', ncols=100, disable=not verbose):
+
         psm.fragments_predicted = psm_intensity.fragments_predicted
         psm.cosine_similarity = psm_intensity.cosine_similarity
+        psm.prosit_intensities = prosit_intensity
 
-    for ps in psm_collection:
-        ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
+        psm.spectral_correlation_similarity_pearson = psm_intensity.spectral_correlation_similarity_pearson
+        psm.spectral_correlation_similarity_spearman = psm_intensity.spectral_correlation_similarity_spearman
+        psm.spectral_entropy_similarity = psm_intensity.spectral_entropy_similarity
+        psm.beta_score = beta_score(psm.fragments_observed, psm.fragments_predicted)
 
 
 def get_collision_energy_calibration_factor(

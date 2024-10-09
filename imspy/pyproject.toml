@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "imspy"
-version = "0.2.32"
+version = "0.2.33"
 description = ""
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 readme = "README.md"
@@ -18,9 +18,10 @@ tensorflow-probability = ">=0.22.1"
 wandb = ">=0.12.1"
 
 pyopenms = ">=2.6.0"
+mokapot = ">=0.10.0"
 
-sagepy = ">=0.2.22"
-imspy-connector = ">=0.2.32"
+sagepy = ">=0.2.23"
+imspy-connector = ">=0.2.33"
 
 scipy = ">=1.7.1"
 tqdm = ">=4.66"

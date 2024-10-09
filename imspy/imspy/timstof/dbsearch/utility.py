@@ -448,3 +448,45 @@ def extract_timstof_dda_data(path: str,
     fragments['processed_spec'] = processed_spec
 
     return fragments
+
+
+def transform_psm_to_pin(psm_df):
+    columns_map = {
+        'spec_idx': 'SpecId',
+        'decoy': 'Label',
+        'charge': 'Charge',
+        'sequence': 'Peptide',
+        'proteins': 'Proteins',
+        # feature mapping for re-scoring
+        'hyper_score': 'Feature1',
+        'isotope_error': 'Feature2',
+        'delta_mass': 'Feature3',
+        'delta_rt': 'Feature4',
+        'delta_ims': 'Feature5',
+        'matched_peaks': 'Feature6',
+        'matched_intensity_pct': 'Feature7',
+        'intensity_ms1': 'Feature8',
+        'intensity_ms2': 'Feature9',
+        'average_ppm': 'Feature1ß',
+        'poisson': 'Feature11',
+        'spectral_entropy_similarity': 'Feature12',
+        'spectral_correlation_similarity_pearson': 'Feature13',
+        'spectral_correlation_similarity_spearman': 'Feature14',
+        'spectral_normalized_intensity_difference': 'Feature15',
+        'collision_energy': 'Feature16',
+        'delta_next': 'Feature17',
+        'delta_best': 'Feature18',
+        'longest_b': 'Feature19',
+        'longest_y': 'Feature20',
+        'longest_y_pct': 'Feature21',
+    }
+
+    psm_df = psm_df[list(columns_map.keys())]
+    df_pin = psm_df.rename(columns=columns_map)
+    df_pin_clean = df_pin.dropna(axis=1, how='all')
+    df_pin_clean = df_pin_clean.dropna()
+
+    df_pin_clean['Label'] = df_pin_clean['Label'].apply(lambda x: -1 if x else 1)
+    df_pin_clean['ScanNr'] = range(1, len(df_pin_clean) + 1)
+
+    return df_pin_clean
