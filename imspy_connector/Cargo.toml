@@ -1,6 +1,6 @@
 [package]
 name = "imspy-connector"
-version = "0.2.32"
+version = "0.2.33"
 edition = "2021"
 
 [lib]
@@ -14,4 +14,4 @@ mscore = {path = "../mscore"}
 rustdf = {path = "../rustdf"}
 serde = "1.0.202"
 serde_json = "1.0.117"
-ndarray = "0.15.6"
+ndarray = "0.16.1"
