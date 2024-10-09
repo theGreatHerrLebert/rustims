@@ -5,6 +5,8 @@ import sys
 import time
 import toml
 
+import mokapot
+
 import pandas as pd
 import numpy as np
 
@@ -27,14 +29,14 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     write_psms_binary, re_score_psms, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, \
+    transform_psm_to_pin
 
 from imspy.algorithm.intensity.predictors import get_collision_energy_calibration_factor
 
 from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import peptide_spectrum_match_collection_to_pandas
 from sagepy.utility import apply_mz_calibration
-from sagepy.rescore.utility import dict_to_dense_array, spectral_entropy_similarity, spectral_correlation
 
 # suppress tensorflow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -130,6 +132,15 @@ def main():
         default=1,
         help="Batch size for fasta file (default: 1)"
     )
+
+    parser.add_argument(
+        "--no_re_score_mokapot",
+        dest="re_score_mokapot",
+        action="store_false",
+        help="Re-score PSMs using mokapot"
+    )
+
+    parser.set_defaults(re_score_mokapot=True)
 
     # SAGE isolation window settings
     parser.add_argument("--isolation_window_lower", type=float, default=-3.0, help="Isolation window (default: -3.0)")
@@ -252,14 +263,6 @@ def main():
         help="Balanced train splits (default: True)"
     )
     parser.set_defaults(balanced_re_score=True)
-
-    # TDC method
-    parser.add_argument(
-        "--tdc_method",
-        type=str,
-        default="peptide_psm_peptide",
-        help="TDC method (default: peptide_psm_peptide aka double competition)"
-    )
 
     # load dataset in memory
     parser.add_argument(
@@ -747,17 +750,45 @@ def main():
     write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms", total=True)
 
     PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms)
+
+    if args.re_score_mokapot:
+        if args.verbose:
+            print("re-scoring PSMs using mokapot ...")
+
+        # create a mokapot folder in the imspy folder
+        if not os.path.exists(write_folder_path + "/imspy/mokapot"):
+            os.makedirs(write_folder_path + "/imspy/mokapot")
+
+        # create a PIN file from the PSMs
+        PSM_pin = transform_psm_to_pin(PSM_pandas)
+        PSM_pin.to_csv(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin", index=False, sep="\t")
+
+        psms_moka = mokapot.read_pin(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin")
+        results, models = mokapot.brew(psms_moka)
+
+        results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/")
+
     PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
 
     if args.verbose:
-        print(f"FDR calculation, using target decoy competition: {args.tdc_method} ...")
+        print(f"FDR calculation ...")
 
     psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_collection_to_pandas(psms, re_score=True),
-                                                    method=args.tdc_method)
+                                                    method="psm")
 
     psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
 
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
+                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
+
+    TDC.to_csv(f"{write_folder_path}" + "/imspy/PSMs.csv", index=False)
+
+    peptides_rescored = target_decoy_competition_pandas(peptide_spectrum_match_collection_to_pandas(psms, re_score=True),
+                                                    method="peptide_psm_peptide")
+
+    peptides_rescored = peptides_rescored[(peptides_rescored.q_value <= 0.01) & (peptides_rescored.decoy == False)]
+
+    TDC = pd.merge(peptides_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
 
     TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
