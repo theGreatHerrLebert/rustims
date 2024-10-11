@@ -17,7 +17,7 @@ from sagepy.core import IonType
 from imspy.utility import tokenize_unimod_sequence
 
 @numba.njit
-def log_factorial(n: int, k: int) -> float:
+def _log_factorial(n: int, k: int) -> float:
     k = max(k, 2)
     result = 0.0
     for i in range(n, k - 1, -1):
@@ -52,7 +52,7 @@ def beta_score(fragments_observed, fragments_predicted) -> float:
     i_min = min(len_b, len_y)
     i_max = max(len_b, len_y)
 
-    return np.log1p(intensity) + 2.0 * log_factorial(int(i_min), 2) + log_factorial(int(i_max), int(i_min) + 1)
+    return np.log1p(intensity) + 2.0 * _log_factorial(int(i_min), 2) + _log_factorial(int(i_max), int(i_min) + 1)
 
 
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
@@ -86,6 +86,17 @@ def generate_prosit_intensity_prediction_dataset(
         sequences: List[str],
         charges: NDArray,
         collision_energies: NDArray | None = None):
+    """
+    Generate a dataset for predicting fragment intensities using Prosit.
+    Args:
+        sequences: A list of peptide sequences.
+        charges: A numpy array of precursor charges.
+        collision_energies: A numpy array of collision energies.
+
+    Returns:
+        A tf.data.Dataset object that yields batches of data in the format expected by the model.
+    """
+
 
     # set default for unprovided collision_energies
     if collision_energies is None:
@@ -165,6 +176,11 @@ def to_prosit_tensor(sequences: List) -> tf.Tensor:
 
 
 def get_prosit_intensity_flat_labels() -> List[str]:
+    """
+    Get the list of fragment ion labels for Prosit.
+    Returns:
+        List of fragment ion labels, giving the returned order of fragment intensities.
+    """
     return [
         "y1+1",
         "y1+2",
