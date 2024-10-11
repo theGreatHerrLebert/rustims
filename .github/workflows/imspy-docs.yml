@@ -35,11 +35,12 @@ jobs:
         run: |
           cd imspy
           poetry install
-
+      
       # Step 5: Build the documentation
       - name: Build Documentation
         run: |
           cd imspy
+          mkdir -p docs/source/_static  # Create the static folder if it doesn't exist
           poetry run sphinx-build docs/source/ docs/build/html
 
       # Step 6: Deploy to GitHub Pages (to the 'imspy' subfolder)
