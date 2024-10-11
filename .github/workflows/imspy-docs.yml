@@ -42,9 +42,10 @@ jobs:
           cd imspy
           poetry run sphinx-build docs/source/ docs/build/html
 
-      # Step 6: Deploy documentation to GitHub Pages
+      # Step 6: Deploy to GitHub Pages (to the 'imspy' subfolder)
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: imspy/docs/build/html
+          destination_dir: imspy  # This ensures the docs go into the 'imspy' subfolder
