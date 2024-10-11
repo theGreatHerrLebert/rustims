@@ -11,14 +11,7 @@ Contents:
    :maxdepth: 2
    :caption: Main Modules
 
-   imspy
-   imspy.algorithm
-   imspy.chemistry
-   imspy.data
-   imspy.simulation
-   imspy.timstof
-   imspy.utility
-   imspy.vis
+   modules
 
 Indices and tables
 ==================
@@ -26,4 +19,3 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
-
