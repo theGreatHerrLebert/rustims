@@ -14,6 +14,19 @@ def simulate_charge_states(
         charge_state_one_probability: float = 0.0,
         min_charge_contrib: float = 0.15,
 ) -> pd.DataFrame:
+    """
+    Simulate charge states for peptides.
+    Args:
+        peptides: Peptides DataFrame.
+        mz_lower: Lower m/z value.
+        mz_upper: Upper m/z value.
+        p_charge: Probability of charge.
+        charge_state_one_probability: Probability of charge state one.
+        min_charge_contrib: Minimum charge contribution.
+
+    Returns:
+        pd.DataFrame: Ions DataFrame.
+    """
 
     IonSource = DeepChargeStateDistribution(
         model=load_deep_charge_state_predictor(),

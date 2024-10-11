@@ -19,6 +19,20 @@ def simulate_fragment_intensities(
         num_threads: int,
         down_sample_factor: int = 0.5,
 ) -> None:
+    """
+    Simulate fragment ion intensity distributions.
+    Args:
+        path: Path to the synthetic data.
+        name: Name of the synthetic data.
+        acquisition_builder: Acquisition builder object.
+        batch_size: Batch size for frame assembly, i.e. how many frames are assembled at once.
+        verbose: Verbosity.
+        num_threads: Number of threads for frame assembly.
+        down_sample_factor: Down sample factor for fragment ion intensity distributions.
+
+    Returns:
+        None, writes frames to disk and metadata to database.
+    """
 
     if verbose:
         print("Simulating fragment ion intensity distributions...")

@@ -15,6 +15,23 @@ def build_acquisition(
         round_collision_energy: bool = True,
         collision_energy_decimals: int = 0,
 ) -> TimsTofAcquisitionBuilderDIA:
+    """
+    Build acquisition object from reference path.
+    Args:
+        path: Path where the acquisition will be saved.
+        reference_path: Path to the reference dataset.
+        exp_name: Experiment name.
+        acquisition_type: Acquisition type, must be 'dia', 'midia', 'slice' or 'synchro'.
+        verbose: Verbosity.
+        gradient_length: Gradient length.
+        use_reference_ds_layout: Use reference dataset layout for synthetic dataset.
+        reference_in_memory: Load reference dataset into memory.
+        round_collision_energy: Round collision energy.
+        collision_energy_decimals: Number of decimals for collision energy (controls coarseness).
+
+    Returns:
+        TimsTofAcquisitionBuilderDIA: Acquisition object.
+    """
 
     acquisition_type = acquisition_type.lower()
 

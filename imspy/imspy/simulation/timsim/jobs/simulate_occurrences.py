@@ -12,6 +12,21 @@ def simulate_peptide_occurrences(
         intensity_value: float = 1e6,
         mixture_contribution: float = 1.0,
 ) -> pd.DataFrame:
+    """
+    Simulate peptide occurrences.
+    Args:
+        peptides: Peptides DataFrame.
+        intensity_mean: Intensity mean.
+        intensity_min: Intensity minimum.
+        intensity_max: Intensity maximum.
+        verbose: Verbosity.
+        sample_occurrences: Sample occurrences.
+        intensity_value: Intensity value.
+        mixture_contribution: Mixture contribution.
+
+    Returns:
+        pd.DataFrame: Peptides DataFrame.
+    """
 
     if verbose:
         print("Simulating peptide occurrences...")

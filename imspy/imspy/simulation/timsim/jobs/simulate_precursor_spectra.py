@@ -8,6 +8,17 @@ def simulate_precursor_spectra_sequence(
         num_threads: int = 16,
         verbose: bool = False
 ) -> pd.DataFrame:
+    """
+    Simulate sequence specific precursor isotopic distributions.
+    Args:
+        ions: DataFrame containing ions.
+        num_threads: Number of threads.
+        verbose: Verbosity.
+
+    Returns:
+        pd.DataFrame: DataFrame containing ions with simulated spectra.
+    """
+
     if verbose:
         print("Simulating sequence specific precursor isotopic distributions ...")
 
