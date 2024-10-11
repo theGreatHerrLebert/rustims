@@ -10,8 +10,8 @@ def simulate_ion_mobilities(
         im_upper: float,
         verbose: bool = False
 ) -> pd.DataFrame:
-    """
-    Simulate ion mobilities.
+    """Simulate ion mobilities.
+
     Args:
         ions: Ions DataFrame.
         im_lower: Lower ion mobility.

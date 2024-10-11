@@ -16,8 +16,8 @@ def simulate_frame_distributions(
         add_noise: bool = False,
         normalize: bool = False
 ) -> pd.DataFrame:
-    """
-    Simulate frame distributions for peptides.
+    """Simulate frame distributions for peptides.
+
     Args:
         peptides: Peptide DataFrame.
         frames: Frame DataFrame.

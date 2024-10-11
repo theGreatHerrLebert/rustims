@@ -4,12 +4,14 @@ import argparse
 import sys
 import os
 
-from imspy.algorithm import DeepPeptideIonMobilityApex, load_deep_ccs_predictor, load_tokenizer_from_resources
+from imspy.algorithm import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 from imspy.chemistry.utility import calculate_mz
 from imspy.timstof.dbsearch.utility import linear_map
 from sagepy.core.scoring import prosit_intensities_to_fragments_par
+
+from ...algorithm.utility import load_tokenizer_from_resources
 
 from .sage_output_utility import *
 

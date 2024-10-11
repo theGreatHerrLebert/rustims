@@ -14,8 +14,8 @@ def simulate_charge_states(
         charge_state_one_probability: float = 0.0,
         min_charge_contrib: float = 0.15,
 ) -> pd.DataFrame:
-    """
-    Simulate charge states for peptides.
+    """Simulate charge states for peptides.
+
     Args:
         peptides: Peptides DataFrame.
         mz_lower: Lower m/z value.
