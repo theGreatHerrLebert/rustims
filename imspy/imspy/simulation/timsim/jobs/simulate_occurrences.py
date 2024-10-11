@@ -12,8 +12,8 @@ def simulate_peptide_occurrences(
         intensity_value: float = 1e6,
         mixture_contribution: float = 1.0,
 ) -> pd.DataFrame:
-    """
-    Simulate peptide occurrences.
+    """Simulate peptide occurrences.
+
     Args:
         peptides: Peptides DataFrame.
         intensity_mean: Intensity mean.

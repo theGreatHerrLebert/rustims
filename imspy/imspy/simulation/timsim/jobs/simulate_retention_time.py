@@ -9,8 +9,8 @@ def simulate_retention_times(
         verbose: bool = False,
         gradient_length: float = 60 * 60,
 ) -> pd.DataFrame:
-    """
-    Simulate retention times.
+    """Simulate retention times.
+
     Args:
         peptides: Peptides DataFrame.
         verbose: Verbosity.

@@ -15,8 +15,8 @@ def build_acquisition(
         round_collision_energy: bool = True,
         collision_energy_decimals: int = 0,
 ) -> TimsTofAcquisitionBuilderDIA:
-    """
-    Build acquisition object from reference path.
+    """Build acquisition object from reference path.
+
     Args:
         path: Path where the acquisition will be saved.
         reference_path: Path to the reference dataset.

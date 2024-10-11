@@ -38,24 +38,11 @@ def factorial(n: int):
 # linear dependency of mass
 @numba.jit(nopython=True)
 def lam(mass: float, slope: float = 0.000594, intercept: float = -0.03091):
-    """
-    :param intercept:
-    :param slope:
-    :param mass:
-    :return:
-    """
-
     return slope * mass + intercept
 
 
 @numba.jit(nopython=True)
 def weight(mass: float, peak_nums: NDArray, normalize: bool = True):
-    """
-    :param peak_nums:
-    :param mass:
-    :param normalize:
-    :return:
-    """
 
     factorials = np.zeros_like(peak_nums)
     norm = 1
@@ -68,17 +55,6 @@ def weight(mass: float, peak_nums: NDArray, normalize: bool = True):
 
 
 def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenms.CoarseIsotopePatternGenerator):
-    """
-    Gets hypothetical intensities of isotopic peaks.
-
-    :param peak_nums:
-    :param sequence: Peptide sequence in proForma format.
-    :type sequence: str
-    :param generator: pyopenms generator for isotopic pattern calculation
-    :type generator: pyopenms.CoarseIsotopePatternGenerator
-    :return: List of isotopic peak intensities
-    :rtype: List
-    """
 
     n = peak_nums.shape[0]
     generator.setMaxIsotope(n)
@@ -93,18 +69,6 @@ def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenm
 @numba.jit(nopython=True)
 def iso(x: NDArray, mass: float, charge: float, sigma: float, amp: float, K: int, step_size: float,
         add_detection_noise: bool = False, mass_neutron: float = MASS_NEUTRON):
-    """
-    :param mass_neutron:
-    :param x:
-    :param mass:
-    :param charge:
-    :param sigma:
-    :param amp:
-    :param K:4
-    :param step_size:
-    :param add_detection_noise:
-    :return:
-    """
 
     k = np.arange(K)
     means = ((mass + mass_neutron * k) / charge).reshape((1, -1))
@@ -126,17 +90,6 @@ def numba_generate_pattern(
         k: int,
         sigma: float = 0.008492569002123142,
         resolution: int = 3) -> Tuple[ArrayLike, ArrayLike]:
-    """
-    :param lower_bound:
-    :param upper_bound:
-    :param mass:
-    :param charge:
-    :param amp:
-    :param k:
-    :param sigma:
-    :param resolution:
-    :return:
-    """
 
     step_size = min(sigma / 10, 1 / np.power(10, resolution))
     size = int((upper_bound - lower_bound) // step_size + 1)

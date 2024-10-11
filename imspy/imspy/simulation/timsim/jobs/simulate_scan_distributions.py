@@ -15,8 +15,8 @@ def simulate_scan_distributions(
         add_noise: bool = False,
         normalize: bool = False
 ) -> pd.DataFrame:
-    """
-    Simulate scan distributions for ions.
+    """Simulate scan distributions for ions.
+
     Args:
         ions: Ions DataFrame.
         scans: Scan DataFrame.

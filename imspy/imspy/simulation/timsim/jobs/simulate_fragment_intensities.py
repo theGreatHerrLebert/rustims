@@ -19,8 +19,8 @@ def simulate_fragment_intensities(
         num_threads: int,
         down_sample_factor: int = 0.5,
 ) -> None:
-    """
-    Simulate fragment ion intensity distributions.
+    """Simulate fragment ion intensity distributions.
+
     Args:
         path: Path to the synthetic data.
         name: Name of the synthetic data.

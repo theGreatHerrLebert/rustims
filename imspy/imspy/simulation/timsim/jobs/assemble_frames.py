@@ -22,8 +22,8 @@ def assemble_frames(
         add_real_data_noise: bool = False,
         reference_noise_intensity_max: float = 30,
 ) -> None:
-    """
-    Assemble frames from frame ids and write them to the database.
+    """Assemble frames from frame ids and write them to the database.
+
     Args:
         acquisition_builder: Acquisition builder object.
         frames: DataFrame containing frame ids.
