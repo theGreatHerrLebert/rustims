@@ -1,4 +1,3 @@
-# from .mixture import GaussianMixtureModel
 from .rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from .ccs.predictors import DeepPeptideIonMobilityApex, GRUCCSPredictor, load_deep_ccs_predictor
 from .ionization.predictors import DeepChargeStateDistribution, GRUChargeStatePredictor, load_deep_charge_state_predictor

@@ -44,6 +44,7 @@ def lam(mass: float, slope: float = 0.000594, intercept: float = -0.03091):
     :param mass:
     :return:
     """
+
     return slope * mass + intercept
 
 
@@ -55,6 +56,7 @@ def weight(mass: float, peak_nums: NDArray, normalize: bool = True):
     :param normalize:
     :return:
     """
+
     factorials = np.zeros_like(peak_nums)
     norm = 1
     for i, k in enumerate(peak_nums):
@@ -103,6 +105,7 @@ def iso(x: NDArray, mass: float, charge: float, sigma: float, amp: float, K: int
     :param add_detection_noise:
     :return:
     """
+
     k = np.arange(K)
     means = ((mass + mass_neutron * k) / charge).reshape((1, -1))
     weights = weight(mass, k).reshape((1, -1))
@@ -134,6 +137,7 @@ def numba_generate_pattern(
     :param resolution:
     :return:
     """
+
     step_size = min(sigma / 10, 1 / np.power(10, resolution))
     size = int((upper_bound - lower_bound) // step_size + 1)
     mzs = np.linspace(lower_bound, upper_bound, size)
