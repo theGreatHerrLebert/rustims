@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,6 +24,17 @@ def predict_inverse_ion_mobility(
         psm_collection: List[PeptideSpectrumMatch],
         refine_model: bool = True,
         verbose: bool = False) -> None:
+    """
+    Predicts the inverse ion mobility for a collection of peptide spectrum matches.
+    Args:
+        psm_collection: A list of peptide spectrum matches.
+        refine_model: Whether to refine the model by fine-tuning it on the provided data.
+        verbose: Whether to print additional information during the prediction.
+
+    Returns:
+        None, the inverse ion mobility is set in the peptide spectrum matches in place.
+    """
+
 
     im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"),
@@ -62,7 +73,6 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
 
 
 class PeptideIonMobilityApex(ABC):
-
     def __init__(self):
         pass
 
@@ -76,11 +86,22 @@ class PeptideIonMobilityApex(ABC):
 
 
 def get_sqrt_slopes_and_intercepts(
-        mz: np.ndarray,
-        charge: np.ndarray,
-        ccs: np.ndarray,
+        mz: NDArray,
+        charge: NDArray,
+        ccs: NDArray,
         fit_charge_state_one: bool = False
-) -> (np.ndarray, np.ndarray):
+) -> Tuple[NDArray, NDArray]:
+    """
+    Fit the square root model to the provided data.
+    Args:
+        mz: The m/z values.
+        charge: The charge states.
+        ccs: The collision cross sections.
+        fit_charge_state_one: Whether to fit the charge state one.
+
+    Returns:
+        The slopes and intercepts of the square root model fit.
+    """
 
     if fit_charge_state_one:
         slopes, intercepts = [], []
@@ -302,7 +323,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                        callbacks=[tf.keras.callbacks.EarlyStopping(patience=6), checkpoint,
                                   tf.keras.callbacks.ReduceLROnPlateau(min_lr=1e-6, patience=3)])
 
-    def simulate_ion_mobilities(self, sequences: list[str], charges: list[int], mz: list[float], batch_size: int = 1024) -> NDArray:
+    def simulate_ion_mobilities(self, sequences: List[str], charges: List[int], mz: List[float], batch_size: int = 1024) -> NDArray:
         tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences

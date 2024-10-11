@@ -13,7 +13,22 @@ def digest_fasta(
         verbose: bool = False,
         job_name: str = "digest_fasta",
 ) -> PeptideDigest:
-    """Digest a fasta file to a PeptideDigest object."""
+    """Digest a fasta file.
+
+    Args:
+        fasta_file_path: Path to the fasta file.
+        missed_cleavages: Number of missed cleavages.
+        min_len: Minimum peptide length.
+        max_len: Maximum peptide length.
+        cleave_at: Cleavage sites.
+        restrict: Restrict to specific proteins.
+        decoys: Generate decoys.
+        verbose: Verbosity.
+        job_name: Job name.
+
+    Returns:
+        PeptideDigest: Peptide digest object.
+    """
     if verbose:
         print("Digesting peptides...")
 

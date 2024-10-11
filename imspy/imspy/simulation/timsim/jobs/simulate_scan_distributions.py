@@ -15,6 +15,20 @@ def simulate_scan_distributions(
         add_noise: bool = False,
         normalize: bool = False
 ) -> pd.DataFrame:
+    """
+    Simulate scan distributions for ions.
+    Args:
+        ions: Ions DataFrame.
+        scans: Scan DataFrame.
+        z_score: Z-score.
+        std_im: Standard deviation of ion mobility.
+        verbose: Verbosity.
+        add_noise: Add noise.
+        normalize: Normalize scan abundance.
+
+    Returns:
+        pd.DataFrame: Ions DataFrame with scan distributions.
+    """
 
     im_cycle_length = np.mean(np.diff(scans.mobility))
 

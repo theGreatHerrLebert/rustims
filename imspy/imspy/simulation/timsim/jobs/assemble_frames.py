@@ -22,6 +22,25 @@ def assemble_frames(
         add_real_data_noise: bool = False,
         reference_noise_intensity_max: float = 30,
 ) -> None:
+    """
+    Assemble frames from frame ids and write them to the database.
+    Args:
+        acquisition_builder: Acquisition builder object.
+        frames: DataFrame containing frame ids.
+        batch_size: Batch size for frame assembly, i.e. how many frames are assembled at once.
+        verbose: Verbosity.
+        mz_noise_precursor: Add noise to precursor m/z values.
+        mz_noise_uniform: Add uniform noise to m/z values.
+        precursor_noise_ppm: PPM value for precursor noise.
+        mz_noise_fragment: Add noise to fragment m/z values.
+        fragment_noise_ppm: PPM value for fragment noise.
+        num_threads: Number of threads for frame assembly.
+        add_real_data_noise: Add real data noise to the frames.
+        reference_noise_intensity_max: Maximum intensity for real data noise.
+
+    Returns:
+        None, writes frames to disk and metadata to database.
+    """
 
     if verbose:
         print("Starting frame assembly...")

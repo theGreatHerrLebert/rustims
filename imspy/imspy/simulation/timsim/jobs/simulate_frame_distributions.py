@@ -16,6 +16,22 @@ def simulate_frame_distributions(
         add_noise: bool = False,
         normalize: bool = False
 ) -> pd.DataFrame:
+    """
+    Simulate frame distributions for peptides.
+    Args:
+        peptides: Peptide DataFrame.
+        frames: Frame DataFrame.
+        z_score: Z-score.
+        std_rt: Standard deviation of retention time.
+        rt_cycle_length: Retention time cycle length in seconds.
+        verbose: Verbosity.
+        add_noise: Add noise.
+        normalize: Normalize frame abundance.
+
+    Returns:
+        pd.DataFrame: Peptide DataFrame with frame distributions.
+    """
+
     # distribution parameters
     z_score = get_z_score_for_percentile(target_score=z_score)
     frames_np = frames.time.values

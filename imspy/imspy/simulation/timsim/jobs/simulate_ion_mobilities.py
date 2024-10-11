@@ -10,6 +10,17 @@ def simulate_ion_mobilities(
         im_upper: float,
         verbose: bool = False
 ) -> pd.DataFrame:
+    """
+    Simulate ion mobilities.
+    Args:
+        ions: Ions DataFrame.
+        im_lower: Lower ion mobility.
+        im_upper: Upper ion mobility.
+        verbose: Verbosity.
+
+    Returns:
+        pd.DataFrame: Ions DataFrame.
+    """
 
     if verbose:
         print("Simulating ion mobilities...")

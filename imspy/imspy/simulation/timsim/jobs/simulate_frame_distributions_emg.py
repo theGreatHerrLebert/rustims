@@ -35,6 +35,27 @@ def simulate_frame_distributions_emg(
         n_steps: int = 1000,
         num_threads: int = 4,
 ) -> pd.DataFrame:
+    """
+    Simulate frame distributions for peptides.
+    Args:
+        peptides: Peptide DataFrame.
+        frames: Frame DataFrame.
+        mean_std_rt: mean retention time.
+        variance_std_rt: variance retention time.
+        mean_scewness: mean scewness.
+        variance_scewness: variance scewness.
+        target_p: target p.
+        step_size: step size.
+        rt_cycle_length: Retention time cycle length in seconds.
+        verbose: Verbosity.
+        add_noise: Add noise.
+        normalize: Normalize frame abundance.
+        n_steps: number of steps.
+        num_threads: number of threads.
+
+    Returns:
+        pd.DataFrame: Peptide DataFrame with frame distributions.
+    """
 
     frames_np = frames.frame_id.values
     times_np = frames.time.values

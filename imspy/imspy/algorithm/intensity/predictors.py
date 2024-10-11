@@ -30,11 +30,11 @@ def predict_intensities_prosit(
     Args:
         psm_collection: a list of peptide-spectrum matches
         calibrate_collision_energy: whether to calibrate the collision energy
-        verbose:
-        num_threads:
+        verbose: whether to print progress
+        num_threads: number of threads to use
 
     Returns:
-
+        None, the fragment ion intensities are stored in the PeptideSpectrumMatch objects
     """
     # check if num_threads is -1, if so, use all available threads
     if num_threads == -1:
@@ -129,7 +129,15 @@ def get_collision_energy_calibration_factor(
 
 
 def remove_unimod_annotation(sequence: str) -> str:
-    """Remove [UNIMOD:N] annotations from the sequence."""
+    """
+    Remove the unimod annotation from a peptide sequence.
+    Args:
+        sequence: a peptide sequence
+
+    Returns:
+        str: the peptide sequence without unimod annotation
+    """
+
     pattern = r'\[UNIMOD:\d+\]'
     return re.sub(pattern, '', sequence)
 
