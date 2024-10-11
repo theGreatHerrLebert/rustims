@@ -1,0 +1,52 @@
+name: Build Documentation
+
+# This triggers the action on push and pull requests to the main branch
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      # Step 2: Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # or your preferred version of Python
+
+      # Step 3: Install Poetry
+      - name: Install Poetry
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: 'latest'
+
+      # Step 4: Install dependencies
+      - name: Install Dependencies
+        run: |
+          cd imspy
+          poetry install
+      
+      # Step 5: Build the documentation
+      - name: Build Documentation
+        run: |
+          cd imspy
+          mkdir -p docs/source/_static  # Create the static folder if it doesn't exist
+          poetry run sphinx-build docs/source/ docs/build/html
+
+      # Step 6: Deploy to GitHub Pages (to the 'imspy' subfolder)
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: imspy/docs/build/html
+          destination_dir: imspy  # This ensures the docs go into the 'imspy' subfolder
