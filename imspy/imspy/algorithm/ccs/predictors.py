@@ -24,16 +24,6 @@ def predict_inverse_ion_mobility(
         psm_collection: List[PeptideSpectrumMatch],
         refine_model: bool = True,
         verbose: bool = False) -> None:
-    """
-    Predict the inverse mobility of a peptide-spectrum match collection
-    Args:
-        psm_collection: a list of peptide-spectrum matches
-        refine_model: whether to refine the model
-        verbose: whether to print verbose output
-
-    Returns:
-        None, inverse mobility values are added to the PSMs
-    """
 
     im_predictor = DeepPeptideIonMobilityApex(load_deep_ccs_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"),
@@ -59,11 +49,6 @@ def predict_inverse_ion_mobility(
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:
-    """ Get a pretrained deep predictor model
-
-    Returns:
-        The pretrained deep predictor model
-    """
 
     path = get_model_path('ccs/ionmob-24-05-2024.keras')
 
@@ -77,9 +62,6 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
 
 
 class PeptideIonMobilityApex(ABC):
-    """
-    ABSTRACT INTERFACE for simulation of ion-mobility apex value
-    """
 
     def __init__(self):
         pass
@@ -99,17 +81,6 @@ def get_sqrt_slopes_and_intercepts(
         ccs: np.ndarray,
         fit_charge_state_one: bool = False
 ) -> (np.ndarray, np.ndarray):
-    """
-
-    Args:
-        mz:
-        charge:
-        ccs:
-        fit_charge_state_one:
-
-    Returns:
-
-    """
 
     if fit_charge_state_one:
         slopes, intercepts = [], []
@@ -140,10 +111,6 @@ def get_sqrt_slopes_and_intercepts(
 
 @tf.keras.saving.register_keras_serializable()
 class SquareRootProjectionLayer(tf.keras.layers.Layer):
-    """
-    Simple sqrt regression layer, calculates ccs value as linear mapping from mz, charge -> ccs
-    """
-
     def __init__(self, slopes, intercepts, trainable: bool = True, **kwargs):
         super(SquareRootProjectionLayer, self).__init__(**kwargs)
         self.slopes_init = list(slopes)
@@ -154,16 +121,9 @@ class SquareRootProjectionLayer(tf.keras.layers.Layer):
 
     def build(self, input_shape):
         num_charges = input_shape[1][-1]
+        self.slopes = self.add_weight(name='sqrt-coefficients',shape=(num_charges,), initializer=tf.constant_initializer(self.slopes_init),trainable=self.trainable)
 
-        self.slopes = self.add_weight(name='sqrt-coefficients',
-                                      shape=(num_charges,),
-                                      initializer=tf.constant_initializer(self.slopes_init),
-                                      trainable=self.trainable)
-
-        self.intercepts = self.add_weight(name='intercepts',
-                                          shape=(num_charges,),
-                                          initializer=tf.constant_initializer(self.intercepts_init),
-                                          trainable=self.trainable)
+        self.intercepts = self.add_weight(name='intercepts',shape=(num_charges,),initializer=tf.constant_initializer(self.intercepts_init),trainable=self.trainable)
 
     def call(self, inputs):
         mz, charge = inputs[0], inputs[1]
@@ -191,10 +151,6 @@ class SquareRootProjectionLayer(tf.keras.layers.Layer):
 
 @tf.keras.saving.register_keras_serializable()
 class GRUCCSPredictor(tf.keras.models.Model):
-    """
-    Deep Learning model combining initial linear fit with sequence-based features, both scalar and complex
-    """
-
     def __init__(self, slopes, intercepts, num_tokens,
                  max_peptide_length=50,
                  emb_dim=128,
@@ -246,9 +202,6 @@ class GRUCCSPredictor(tf.keras.models.Model):
         super(GRUCCSPredictor, self).build(input_shape)
 
     def call(self, inputs, training=False):
-        """
-        :param inputs: should contain: (mz, charge_one_hot, seq_as_token_indices)
-        """
         # get inputs
         mz, charge, seq = inputs[0], inputs[1], inputs[2]
 
