@@ -3,8 +3,8 @@ ims = imspy_connector.py_chemistry
 
 
 def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
-    """
-    Convert reduced ion mobility (1/k0) to CCS.
+    """Convert reduced ion mobility (1/k0) to CCS.
+
     Args:
         one_over_k0: reduced ion mobility
         mz: mass-over-charge of the ion
@@ -20,8 +20,8 @@ def one_over_k0_to_ccs(one_over_k0, mz, charge, mass_gas=28.013, temp=31.85, t_d
 
 
 def ccs_to_one_over_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.15):
-    """
-    Convert CCS to reduced ion mobility (1/k0).
+    """Convert CCS to reduced ion mobility (1/k0).
+
     Args:
         ccs: collision cross-section
         mz: mass-over-charge of the ion

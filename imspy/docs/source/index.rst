@@ -15,3 +15,25 @@ documentation for details.
    :maxdepth: 2
    :caption: Contents:
 
+   imspy
+   imspy.algorithm
+   imspy.algorithm.ccs
+   imspy.algorithm.intensity
+   imspy.algorithm.ionization
+   imspy.algorithm.pretrained
+   imspy.algorithm.rt
+   imspy.chemistry
+   imspy.data
+   imspy.simulation
+   imspy.simulation.timsim
+   imspy.timstof
+   imspy.timstof.dbsearch
+   imspy.utility
+   imspy.vis
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`
