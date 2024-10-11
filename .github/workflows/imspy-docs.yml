@@ -42,9 +42,9 @@ jobs:
           cd imspy
           poetry run sphinx-build docs/source/ docs/build/html
 
-      # Optional Step: Upload the documentation as an artifact
-      - name: Upload Documentation
-        uses: actions/upload-artifact@v3
+      # Step 6: Deploy documentation to GitHub Pages
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          name: html-docs
-          path: imspy/docs/build/html
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: imspy/docs/build/html
