@@ -34,8 +34,8 @@ def main():
                         help="The target decoy competition method, default is peptide_psm_peptide",
                         choices=["psm", "peptide_psm_only", "peptide_peptide_only", "peptide_psm_peptide"])
     # re-scoring parameters
-    parser.add_argument("--num_splits", default=10, type=int,
-                        help="The number of splits for the target decoy competition cross-validation, default is 10")
+    parser.add_argument("--num_splits", default=5, type=int,
+                        help="The number of splits for the target decoy competition cross-validation, default is 5")
     parser.add_argument("--no_balanced_split",
                         action="store_false",
                         dest="balance",
