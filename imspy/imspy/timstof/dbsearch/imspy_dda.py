@@ -172,10 +172,10 @@ def main():
                         help="Precursor tolerance upper (default: 15.0)")
 
     # fragment tolerance lower and upper
-    parser.add_argument("--fragment_tolerance_lower", type=float, default=-25.0,
-                        help="Fragment tolerance lower (default: -25.0)")
-    parser.add_argument("--fragment_tolerance_upper", type=float, default=25.0,
-                        help="Fragment tolerance upper (default: 25.0)")
+    parser.add_argument("--fragment_tolerance_lower", type=float, default=-20.0,
+                        help="Fragment tolerance lower (default: -20.0)")
+    parser.add_argument("--fragment_tolerance_upper", type=float, default=20.0,
+                        help="Fragment tolerance upper (default: 20.0)")
 
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=5, help="Number of PSMs to report (default: 5)")
@@ -197,7 +197,7 @@ def main():
 
     # SAGE settings for digest of fasta file
     parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=8, help="Minimum peptide length (default: 8)")
+    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
@@ -247,13 +247,23 @@ def main():
     parser.set_defaults(randomize_fasta_split=False)
 
     # re-scoring settings
-    parser.add_argument("--re_score_num_splits", type=int, default=10, help="Number of splits (default: 10)")
+    parser.add_argument("--re_score_num_splits", type=int, default=5, help="Number of splits (default: 5)")
 
-    # fdr threshold
+    # fdr threshold, aka q-value to filter PSMs
     parser.add_argument("--fdr_threshold", type=float, default=0.01, help="FDR threshold (default: 0.01)")
 
     # number of threads
     parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads (default: -1)")
+
+    # do not remove decoys
+    parser.add_argument(
+        "--no_remove_decoys",
+        dest="remove_decoys",
+        action="store_false",
+        help="Remove decoys (default: True)"
+    )
+    # remove decoys
+    parser.set_defaults(remove_decoys=True)
 
     # if train splits should be balanced
     parser.add_argument(
@@ -776,7 +786,11 @@ def main():
     psms_rescored = target_decoy_competition_pandas(peptide_spectrum_match_collection_to_pandas(psms, re_score=True),
                                                     method="psm")
 
-    psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01) & (psms_rescored.decoy == False)]
+    # remove decoys if specified
+    if args.remove_decoys:
+        psms_rescored = psms_rescored[psms_rescored.decoy == False]
+
+    psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01)]
 
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
@@ -786,7 +800,11 @@ def main():
     peptides_rescored = target_decoy_competition_pandas(peptide_spectrum_match_collection_to_pandas(psms, re_score=True),
                                                     method="peptide_psm_peptide")
 
-    peptides_rescored = peptides_rescored[(peptides_rescored.q_value <= 0.01) & (peptides_rescored.decoy == False)]
+    # remove decoys if specified
+    if args.remove_decoys:
+        peptides_rescored = peptides_rescored[peptides_rescored.decoy == False]
+
+    peptides_rescored = peptides_rescored[(peptides_rescored.q_value <= 0.01)]
 
     TDC = pd.merge(peptides_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
