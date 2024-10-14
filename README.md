@@ -28,7 +28,7 @@ pip install imspy
 This will install tensorflow as a dependency without GPU support.
 The easiest way to get GPU support is to additionally install the tensorflow[and-cuda] package:
 ```shell
-pip install tensorflow[and-cuda]==2.15.0.post1
+pip install tensorflow[and-cuda]==2.15.*
 ```
 Which comes with the necessary CUDA and cuDNN libraries.
 
