@@ -36,7 +36,7 @@ jobs:
         run: |
           cd imspy
           poetry install
-      
+
       # Step 5: Build the documentation
       - name: Build Documentation
         run: |
@@ -44,11 +44,11 @@ jobs:
           mkdir -p docs/source/_static  # Create the static folder if it doesn't exist
           poetry run sphinx-build docs/source/ docs/build/html
 
-      # Step 6: Deploy to GitHub Pages (to the 'imspy' subfolder)
+      # Step 6: Deploy to GitHub Pages (dev documentation)
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: imspy/docs/build/html
-          destination_dir: imspy  # This ensures the docs go into the 'imspy' subfolder
+          destination_dir: imspy/main
