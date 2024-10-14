@@ -5,48 +5,54 @@ on:
   push:
     branches:
       - main
+    tags:
+      - '*'
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build-docs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Checkout the repository
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # Step 2: Set up Python
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # or your preferred version of Python
+          python-version: '3.11'
 
-      # Step 3: Install Poetry
       - name: Install Poetry
-        uses: abatilo/actions-poetry@v2
+        uses: abatilo/actions-poetry@v3
         with:
           poetry-version: 'latest'
 
-      # Step 4: Install dependencies
       - name: Install Dependencies
         run: |
           cd imspy
           poetry install
-      
-      # Step 5: Build the documentation
+
       - name: Build Documentation
         run: |
           cd imspy
           mkdir -p docs/source/_static  # Create the static folder if it doesn't exist
           poetry run sphinx-build docs/source/ docs/build/html
 
-      # Step 6: Deploy to GitHub Pages (to the 'imspy' subfolder)
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Deploy to GitHub Pages (dev documentation)
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: imspy/docs/build/html
-          destination_dir: imspy  # This ensures the docs go into the 'imspy' subfolder
+          destination_dir: imspy/main
+
+      - name: Deploy to GitHub Pages (release documentation)
+        if: startswith(github.ref, 'refs/tags/')
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: imspy/docs/build/html
+          destination_dir: 'imspy/${{ github.ref_name }}'

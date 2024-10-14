@@ -20,3 +20,7 @@ __pycache__/
 
 # vscode developing
 .vscode/
+
+# generated documentation
+imspy/docs/build
+
