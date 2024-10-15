@@ -46,7 +46,7 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: imspy/docs/build/html
-          destination_dir: imspy/main
+          destination_dir: main/imspy
 
       - name: Deploy to GitHub Pages (release documentation)
         if: startswith(github.ref, 'refs/tags/')
@@ -54,4 +54,4 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: imspy/docs/build/html
-          destination_dir: 'imspy/${{ github.ref_name }}'
+          destination_dir: '${{ github.ref_name }}/imspy'
