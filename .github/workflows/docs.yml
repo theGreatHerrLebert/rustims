@@ -1,6 +1,5 @@
 name: Build Documentation
 
-# This triggers the action on push and pull requests to the main branch
 on:
   push:
     branches:
