@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-docs:
+  build-python-docs:
     runs-on: ubuntu-latest
 
     steps:
@@ -55,3 +55,36 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: imspy/docs/build/html
           destination_dir: '${{ github.ref_name }}/imspy'
+
+  build-rust-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Documentation
+        run: |
+          rustup update
+          cargo doc --no-deps -p mscore -p rustdf -p rustms
+
+      - name: Deploy to GitHub Pages (dev documentation)
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc
+          destination_dir: main
+
+      - name: Deploy to GitHub Pages (release documentation)
+        if: startswith(github.ref, 'refs/tags/')
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: target/doc
+          destination_dir: '${{ github.ref_name }}'
