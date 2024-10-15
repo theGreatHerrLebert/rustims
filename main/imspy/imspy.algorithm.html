@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>imspy.algorithm package &#8212; imspy 0.2.33 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d1102ebc" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=686e5160" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=73d7b0fc"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="canonical" href="https://thegreatherrlebert.github.io/rustims/imspy/imspy.algorithm.html" />
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="imspy.algorithm.ccs package" href="imspy.algorithm.ccs.html" />
+    <link rel="prev" title="imspy Package" href="imspy.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="imspy-algorithm-package">
+<h1>imspy.algorithm package<a class="headerlink" href="#imspy-algorithm-package" title="Link to this heading">¶</a></h1>
+<section id="subpackages">
+<h2>Subpackages<a class="headerlink" href="#subpackages" title="Link to this heading">¶</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="imspy.algorithm.ccs.html">imspy.algorithm.ccs package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.ccs.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.ccs.html#module-imspy.algorithm.ccs.predictors">imspy.algorithm.ccs.predictors module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex"><code class="docutils literal notranslate"><span class="pre">DeepPeptideIonMobilityApex</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex.fine_tune_model"><code class="docutils literal notranslate"><span class="pre">DeepPeptideIonMobilityApex.fine_tune_model()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex.simulate_ion_mobilities"><code class="docutils literal notranslate"><span class="pre">DeepPeptideIonMobilityApex.simulate_ion_mobilities()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex.simulate_ion_mobilities_pandas"><code class="docutils literal notranslate"><span class="pre">DeepPeptideIonMobilityApex.simulate_ion_mobilities_pandas()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.GRUCCSPredictor"><code class="docutils literal notranslate"><span class="pre">GRUCCSPredictor</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.GRUCCSPredictor.build"><code class="docutils literal notranslate"><span class="pre">GRUCCSPredictor.build()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.GRUCCSPredictor.call"><code class="docutils literal notranslate"><span class="pre">GRUCCSPredictor.call()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.GRUCCSPredictor.from_config"><code class="docutils literal notranslate"><span class="pre">GRUCCSPredictor.from_config()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.GRUCCSPredictor.get_config"><code class="docutils literal notranslate"><span class="pre">GRUCCSPredictor.get_config()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex"><code class="docutils literal notranslate"><span class="pre">PeptideIonMobilityApex</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities"><code class="docutils literal notranslate"><span class="pre">PeptideIonMobilityApex.simulate_ion_mobilities()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities_pandas"><code class="docutils literal notranslate"><span class="pre">PeptideIonMobilityApex.simulate_ion_mobilities_pandas()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer"><code class="docutils literal notranslate"><span class="pre">SquareRootProjectionLayer</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.build"><code class="docutils literal notranslate"><span class="pre">SquareRootProjectionLayer.build()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.call"><code class="docutils literal notranslate"><span class="pre">SquareRootProjectionLayer.call()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.from_config"><code class="docutils literal notranslate"><span class="pre">SquareRootProjectionLayer.from_config()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.get_config"><code class="docutils literal notranslate"><span class="pre">SquareRootProjectionLayer.get_config()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.get_sqrt_slopes_and_intercepts"><code class="docutils literal notranslate"><span class="pre">get_sqrt_slopes_and_intercepts()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.load_deep_ccs_predictor"><code class="docutils literal notranslate"><span class="pre">load_deep_ccs_predictor()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ccs.html#imspy.algorithm.ccs.predictors.predict_inverse_ion_mobility"><code class="docutils literal notranslate"><span class="pre">predict_inverse_ion_mobility()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.ccs.html#module-imspy.algorithm.ccs">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="imspy.algorithm.intensity.html">imspy.algorithm.intensity package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.intensity.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.intensity.html#module-imspy.algorithm.intensity.predictors">imspy.algorithm.intensity.predictors module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.IonIntensityPredictor"><code class="docutils literal notranslate"><span class="pre">IonIntensityPredictor</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.IonIntensityPredictor.simulate_ion_intensities"><code class="docutils literal notranslate"><span class="pre">IonIntensityPredictor.simulate_ion_intensities()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.IonIntensityPredictor.simulate_ion_intensities_pandas"><code class="docutils literal notranslate"><span class="pre">IonIntensityPredictor.simulate_ion_intensities_pandas()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.Prosit2023TimsTofWrapper"><code class="docutils literal notranslate"><span class="pre">Prosit2023TimsTofWrapper</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.Prosit2023TimsTofWrapper.predict_intensities"><code class="docutils literal notranslate"><span class="pre">Prosit2023TimsTofWrapper.predict_intensities()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.Prosit2023TimsTofWrapper.simulate_ion_intensities"><code class="docutils literal notranslate"><span class="pre">Prosit2023TimsTofWrapper.simulate_ion_intensities()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.Prosit2023TimsTofWrapper.simulate_ion_intensities_pandas"><code class="docutils literal notranslate"><span class="pre">Prosit2023TimsTofWrapper.simulate_ion_intensities_pandas()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.Prosit2023TimsTofWrapper.simulate_ion_intensities_pandas_batched"><code class="docutils literal notranslate"><span class="pre">Prosit2023TimsTofWrapper.simulate_ion_intensities_pandas_batched()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.get_collision_energy_calibration_factor"><code class="docutils literal notranslate"><span class="pre">get_collision_energy_calibration_factor()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.load_prosit_2023_timsTOF_predictor"><code class="docutils literal notranslate"><span class="pre">load_prosit_2023_timsTOF_predictor()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.predict_intensities_prosit"><code class="docutils literal notranslate"><span class="pre">predict_intensities_prosit()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.predictors.remove_unimod_annotation"><code class="docutils literal notranslate"><span class="pre">remove_unimod_annotation()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.intensity.html#module-imspy.algorithm.intensity.utility">imspy.algorithm.intensity.utility module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.beta_score"><code class="docutils literal notranslate"><span class="pre">beta_score()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.generate_prosit_intensity_prediction_dataset"><code class="docutils literal notranslate"><span class="pre">generate_prosit_intensity_prediction_dataset()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.get_prosit_intensity_flat_labels"><code class="docutils literal notranslate"><span class="pre">get_prosit_intensity_flat_labels()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.post_process_predicted_fragment_spectra"><code class="docutils literal notranslate"><span class="pre">post_process_predicted_fragment_spectra()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.seq_to_index"><code class="docutils literal notranslate"><span class="pre">seq_to_index()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.to_prosit_tensor"><code class="docutils literal notranslate"><span class="pre">to_prosit_tensor()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.intensity.html#imspy.algorithm.intensity.utility.unpack_dict"><code class="docutils literal notranslate"><span class="pre">unpack_dict()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.intensity.html#module-imspy.algorithm.intensity">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="imspy.algorithm.ionization.html">imspy.algorithm.ionization package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.ionization.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.ionization.html#module-imspy.algorithm.ionization.predictors">imspy.algorithm.ionization.predictors module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.BinomialChargeStateDistributionModel"><code class="docutils literal notranslate"><span class="pre">BinomialChargeStateDistributionModel</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.BinomialChargeStateDistributionModel.simulate_charge_state_distribution_pandas"><code class="docutils literal notranslate"><span class="pre">BinomialChargeStateDistributionModel.simulate_charge_state_distribution_pandas()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.BinomialChargeStateDistributionModel.simulate_ionizations"><code class="docutils literal notranslate"><span class="pre">BinomialChargeStateDistributionModel.simulate_ionizations()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.DeepChargeStateDistribution"><code class="docutils literal notranslate"><span class="pre">DeepChargeStateDistribution</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.DeepChargeStateDistribution.simulate_charge_state_distribution_pandas"><code class="docutils literal notranslate"><span class="pre">DeepChargeStateDistribution.simulate_charge_state_distribution_pandas()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.DeepChargeStateDistribution.simulate_ionizations"><code class="docutils literal notranslate"><span class="pre">DeepChargeStateDistribution.simulate_ionizations()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.GRUChargeStatePredictor"><code class="docutils literal notranslate"><span class="pre">GRUChargeStatePredictor</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.GRUChargeStatePredictor.build"><code class="docutils literal notranslate"><span class="pre">GRUChargeStatePredictor.build()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.GRUChargeStatePredictor.call"><code class="docutils literal notranslate"><span class="pre">GRUChargeStatePredictor.call()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.GRUChargeStatePredictor.from_config"><code class="docutils literal notranslate"><span class="pre">GRUChargeStatePredictor.from_config()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.GRUChargeStatePredictor.get_config"><code class="docutils literal notranslate"><span class="pre">GRUChargeStatePredictor.get_config()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.PeptideChargeStateDistribution"><code class="docutils literal notranslate"><span class="pre">PeptideChargeStateDistribution</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.PeptideChargeStateDistribution.simulate_charge_state_distribution_pandas"><code class="docutils literal notranslate"><span class="pre">PeptideChargeStateDistribution.simulate_charge_state_distribution_pandas()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.PeptideChargeStateDistribution.simulate_ionizations"><code class="docutils literal notranslate"><span class="pre">PeptideChargeStateDistribution.simulate_ionizations()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.charge_state_distribution_from_sequence_rust"><code class="docutils literal notranslate"><span class="pre">charge_state_distribution_from_sequence_rust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.charge_state_distributions_from_sequences_rust"><code class="docutils literal notranslate"><span class="pre">charge_state_distributions_from_sequences_rust()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.ionization.html#imspy.algorithm.ionization.predictors.load_deep_charge_state_predictor"><code class="docutils literal notranslate"><span class="pre">load_deep_charge_state_predictor()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.ionization.html#module-imspy.algorithm.ionization">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="imspy.algorithm.pretrained.html">imspy.algorithm.pretrained package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.pretrained.html#module-imspy.algorithm.pretrained">Module contents</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="imspy.algorithm.rt.html">imspy.algorithm.rt package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.rt.html#submodules">Submodules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.rt.html#module-imspy.algorithm.rt.predictors">imspy.algorithm.rt.predictors module</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.DeepChromatographyApex"><code class="docutils literal notranslate"><span class="pre">DeepChromatographyApex</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.DeepChromatographyApex.fine_tune_model"><code class="docutils literal notranslate"><span class="pre">DeepChromatographyApex.fine_tune_model()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.DeepChromatographyApex.generate_tf_ds_inference"><code class="docutils literal notranslate"><span class="pre">DeepChromatographyApex.generate_tf_ds_inference()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.DeepChromatographyApex.generate_tf_ds_train"><code class="docutils literal notranslate"><span class="pre">DeepChromatographyApex.generate_tf_ds_train()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.DeepChromatographyApex.simulate_separation_times"><code class="docutils literal notranslate"><span class="pre">DeepChromatographyApex.simulate_separation_times()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.DeepChromatographyApex.simulate_separation_times_pandas"><code class="docutils literal notranslate"><span class="pre">DeepChromatographyApex.simulate_separation_times_pandas()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.GRURetentionTimePredictor"><code class="docutils literal notranslate"><span class="pre">GRURetentionTimePredictor</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.GRURetentionTimePredictor.build"><code class="docutils literal notranslate"><span class="pre">GRURetentionTimePredictor.build()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.GRURetentionTimePredictor.call"><code class="docutils literal notranslate"><span class="pre">GRURetentionTimePredictor.call()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.GRURetentionTimePredictor.from_config"><code class="docutils literal notranslate"><span class="pre">GRURetentionTimePredictor.from_config()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.GRURetentionTimePredictor.get_config"><code class="docutils literal notranslate"><span class="pre">GRURetentionTimePredictor.get_config()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.PeptideChromatographyApex"><code class="docutils literal notranslate"><span class="pre">PeptideChromatographyApex</span></code></a><ul>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.PeptideChromatographyApex.simulate_separation_times"><code class="docutils literal notranslate"><span class="pre">PeptideChromatographyApex.simulate_separation_times()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.PeptideChromatographyApex.simulate_separation_times_pandas"><code class="docutils literal notranslate"><span class="pre">PeptideChromatographyApex.simulate_separation_times_pandas()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.get_rt_prediction_set"><code class="docutils literal notranslate"><span class="pre">get_rt_prediction_set()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.get_rt_train_set"><code class="docutils literal notranslate"><span class="pre">get_rt_train_set()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.load_deep_retention_time_predictor"><code class="docutils literal notranslate"><span class="pre">load_deep_retention_time_predictor()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="imspy.algorithm.rt.html#imspy.algorithm.rt.predictors.predict_retention_time"><code class="docutils literal notranslate"><span class="pre">predict_retention_time()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.rt.html#module-imspy.algorithm.rt">Module contents</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.algorithm.hashing">
+<span id="imspy-algorithm-hashing-module"></span><h2>imspy.algorithm.hashing module<a class="headerlink" href="#module-imspy.algorithm.hashing" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="imspy.algorithm.hashing.CosimHasher">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.hashing.</span></span><span class="sig-name descname"><span class="pre">CosimHasher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">target_vector_length</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trials</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">len_trial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">20</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">42</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.hashing.CosimHasher" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="imspy.algorithm.hashing.CosimHasher.calculate_keys">
+<span class="sig-name descname"><span class="pre">calculate_keys</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">W</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.hashing.CosimHasher.calculate_keys" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tensor</span></code></span></p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="imspy.algorithm.hashing.TimsHasher">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.hashing.</span></span><span class="sig-name descname"><span class="pre">TimsHasher</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">trials</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">32</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">len_trial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">20</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">seed</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5671</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">resolution</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_dalton</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.hashing.TimsHasher" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#imspy.algorithm.hashing.CosimHasher" title="imspy.algorithm.hashing.CosimHasher"><code class="xref py py-class docutils literal notranslate"><span class="pre">CosimHasher</span></code></a></p>
+<p>Class to create hash keys from a given set of weights.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>trials</strong> (<em>int</em>) – number of trials to use for random projection.</p></li>
+<li><p><strong>len_trial</strong> (<em>int</em>) – length of each trial.</p></li>
+<li><p><strong>seed</strong> (<em>int</em>) – seed for random projection.</p></li>
+<li><p><strong>resolution</strong> (<em>int</em>) – resolution of the random projection.</p></li>
+<li><p><strong>num_dalton</strong> (<em>int</em>) – number of dalton to use for random projection.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="imspy-algorithm-mixture-module">
+<h2>imspy.algorithm.mixture module<a class="headerlink" href="#imspy-algorithm-mixture-module" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.algorithm.utility">
+<span id="imspy-algorithm-utility-module"></span><h2>imspy.algorithm.utility module<a class="headerlink" href="#module-imspy.algorithm.utility" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="imspy.algorithm.utility.InMemoryCheckpoint">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.utility.</span></span><span class="sig-name descname"><span class="pre">InMemoryCheckpoint</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">validation_target</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'val_loss'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.utility.InMemoryCheckpoint" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Callback</span></code></p>
+<dl class="py method">
+<dt class="sig sig-object py" id="imspy.algorithm.utility.InMemoryCheckpoint.on_epoch_end">
+<span class="sig-name descname"><span class="pre">on_epoch_end</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">epoch</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">logs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.utility.InMemoryCheckpoint.on_epoch_end" title="Link to this definition">¶</a></dt>
+<dd><p>Called at the end of an epoch.</p>
+<p>Subclasses should override for any actions to run. This function should
+only be called during TRAIN mode.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>epoch</strong> – Integer, index of epoch.</p></li>
+<li><p><strong>logs</strong> – Dict, metric results for this training epoch, and for the
+validation epoch if validation is performed. Validation result
+keys are prefixed with <cite>val_</cite>. For training epoch, the values of
+the <cite>Model</cite>’s metrics are returned. Example:
+<cite>{‘loss’: 0.2, ‘accuracy’: 0.7}</cite>.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="imspy.algorithm.utility.InMemoryCheckpoint.on_train_begin">
+<span class="sig-name descname"><span class="pre">on_train_begin</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">logs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.utility.InMemoryCheckpoint.on_train_begin" title="Link to this definition">¶</a></dt>
+<dd><p>Called at the beginning of training.</p>
+<p>Subclasses should override for any actions to run.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>logs</strong> – Dict. Currently no data is passed to this argument for this
+method but that may change in the future.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="imspy.algorithm.utility.InMemoryCheckpoint.on_train_end">
+<span class="sig-name descname"><span class="pre">on_train_end</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">logs</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.utility.InMemoryCheckpoint.on_train_end" title="Link to this definition">¶</a></dt>
+<dd><p>Called at the end of training.</p>
+<p>Subclasses should override for any actions to run.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>logs</strong> – Dict. Currently the output of the last call to
+<cite>on_epoch_end()</cite> is passed to this argument for this method but
+that may change in the future.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.algorithm.utility.get_model_path">
+<span class="sig-prename descclassname"><span class="pre">imspy.algorithm.utility.</span></span><span class="sig-name descname"><span class="pre">get_model_path</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model_name</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.utility.get_model_path" title="Link to this definition">¶</a></dt>
+<dd><p>Get the path to a pretrained model</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>model_name</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – The name of the model to load</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Traversable</span></code></span></p>
+</dd>
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The path to the pretrained model</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.algorithm.utility.load_tokenizer_from_resources">
+<span class="sig-prename descclassname"><span class="pre">imspy.algorithm.utility.</span></span><span class="sig-name descname"><span class="pre">load_tokenizer_from_resources</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer_name</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.utility.load_tokenizer_from_resources" title="Link to this definition">¶</a></dt>
+<dd><p>Load a tokenizer from resources</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tokenizer</span></code></span></p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The pretrained tokenizer</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-imspy.algorithm">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-imspy.algorithm" title="Link to this heading">¶</a></h2>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">imspy</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Main Modules</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="modules.html">imspy Modules</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="imspy.html">imspy Package</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">imspy.algorithm package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.chemistry.html">imspy.chemistry package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.data.html">imspy.data package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.simulation.html">imspy.simulation package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.timstof.html">imspy.timstof package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.utility.html">imspy.utility package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.vis.html">imspy.vis package</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+  <li><a href="modules.html">imspy Modules</a><ul>
+      <li>Previous: <a href="imspy.html" title="previous chapter">imspy Package</a></li>
+      <li>Next: <a href="imspy.algorithm.ccs.html" title="next chapter">imspy.algorithm.ccs package</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2024, David Teschner.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.1.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/imspy.algorithm.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
