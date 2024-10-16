@@ -42,6 +42,17 @@ The tool has a lot of options, which you can explore by running:
 imspy_dda --help
 ```
 
+## NEW: Dive into processing of timsTOF DDA data with jupyter notebooks
+We are now providing [jupyter notebook examples](https://github.com/theGreatHerrLebert/rustims/blob/main/imspy/examples/) that allow you to interactively learn about the functionality of our tooling.
+
+## NEW: Read the docs
+The codbease of all native rust crates and python packages is now available:
+
+* [rustdf](https://thegreatherrlebert.github.io/rustims/main/rustdf/)
+* [mscore](https://thegreatherrlebert.github.io/rustims/main/mscore/)
+* [rustms](https://thegreatherrlebert.github.io/rustims/main/rustms/)
+* [imspy](https://thegreatherrlebert.github.io/rustims/main/imspy/)
+
 ## Generating a synthetic PASEF-like dataset with timsim
 You can also generate a synthetic PASEF-like dataset using the following command (timsim currently requires a reference.tdf file of a real dataset):
 ```shell
