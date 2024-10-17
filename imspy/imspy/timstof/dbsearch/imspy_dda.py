@@ -58,7 +58,7 @@ if gpus:
         print(e)
 
 
-def create_database(fasta, static, variab, enzyme_builder, generate_decoys, fragment_max_mz, bucket_size,
+def create_database(fasta, static, variab, enzyme_builder, generate_decoys, bucket_size,
                     shuffle_decoys=True, keep_ends=True):
     sage_config = SageSearchConfiguration(
         fasta=fasta,
@@ -66,7 +66,6 @@ def create_database(fasta, static, variab, enzyme_builder, generate_decoys, frag
         variable_mods=variab,
         enzyme_builder=enzyme_builder,
         generate_decoys=generate_decoys,
-        fragment_max_mz=fragment_max_mz,
         bucket_size=bucket_size,
         shuffle_decoys=shuffle_decoys,
         keep_ends=keep_ends,
@@ -233,8 +232,6 @@ def main():
     parser.add_argument("--bucket_size", type=int, default=16384, help="Bucket size (default: 16384)")
 
     # score configuration
-    parser.add_argument("--min_fragment_mz", type=float, default=150.0, help="Minimum fragment mz (default: 150.0)")
-    parser.add_argument("--max_fragment_mz", type=float, default=1700.0, help="Maximum fragment mz (default: 1700.0)")
     parser.add_argument("--max_fragment_charge", type=int, default=2, help="Maximum fragment charge (default: 2)")
 
     # randomize fasta
@@ -395,8 +392,6 @@ def main():
         report_psms=args.report_psms,
         min_matched_peaks=args.min_matched_peaks,
         annotate_matches=args.annotate_matches,
-        min_fragment_mass=args.min_fragment_mz,
-        max_fragment_mass=args.max_fragment_mz,
         max_fragment_charge=args.max_fragment_charge,
         score_type=score_type,
         variable_mods=variable_modifications,
@@ -442,7 +437,6 @@ def main():
             variable_modifications,
             enzyme_builder,
             args.decoys,
-            args.fragment_max_mz,
             args.bucket_size
         )
 
@@ -555,7 +549,6 @@ def main():
                     variable_modifications,
                     enzyme_builder,
                     args.decoys,
-                    args.fragment_max_mz,
                     args.bucket_size,
                     shuffle_decoys=args.shuffle_decoys,
                     keep_ends=args.keep_ends
