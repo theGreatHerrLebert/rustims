@@ -1,6 +1,7 @@
 import sys
 import time
 from pathlib import Path
+import qdarkstyle
 
 import toml
 from PyQt5.QtWidgets import (
@@ -932,6 +933,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("TimSim")
+    app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
