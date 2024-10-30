@@ -104,6 +104,7 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.performance_settings_group)
         self.main_layout.addWidget(self.console)
         self.main_layout.addWidget(self.run_button)
+        self.main_layout.addWidget(self.cancel_button)
 
         # Add spacing
         self.main_layout.addStretch()
@@ -120,10 +121,10 @@ class MainWindow(QMainWindow):
         logo_layout.addStretch()
         logo_layout.addWidget(self.logo_label)
         logo_layout.addStretch()
-	
-	# Add the centered logo layout to the main layout
+
+    # Add the centered logo layout to the main layout
         self.main_layout.addLayout(logo_layout)
-	
+
         # Add scroll area if needed
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -533,6 +534,14 @@ class MainWindow(QMainWindow):
         self.run_button.setStyleSheet("background-color: #4CAF50; color: white; border: none;")
         self.run_button.clicked.connect(self.run_simulation)
 
+        # CANCEL button (initially hidden)
+        self.cancel_button = QPushButton("CANCEL Simulation")
+        self.cancel_button.setFixedHeight(50)
+        self.cancel_button.setFont(QFont('Arial', 14))
+        self.cancel_button.setStyleSheet("background-color: #f44336; color: white; border: none;")
+        self.cancel_button.clicked.connect(self.cancel_simulation)
+        self.cancel_button.setVisible(False)
+
     # Placeholder methods for browsing files
     def browse_save_path(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Save Directory")
@@ -690,7 +699,9 @@ class MainWindow(QMainWindow):
         if self.process and self.process.state() == QProcess.Running:
             self.process.kill()
 
+        # Update buttons
         self.run_button.setEnabled(False)
+        self.cancel_button.setVisible(True)
 
         # Initialize QProcess
         self.process = QProcess()
@@ -711,7 +722,27 @@ class MainWindow(QMainWindow):
     def process_finished(self):
         self.console.append("Simulation finished.")
         self.run_button.setEnabled(True)
-    
+        self.cancel_button.setVisible(False)
+
+    def cancel_simulation(self):
+        if self.process is not None and self.process.state() == QProcess.Running:
+            # Prompt the user to confirm cancellation
+            reply = QMessageBox.question(
+                self,
+                "Cancel Simulation",
+                "Are you sure you want to cancel the simulation?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+
+            # If the user confirms, cancel the simulation
+            if reply == QMessageBox.Yes:
+                self.process.kill()
+                self.console.append("Simulation canceled by user.")
+                self.process_finished()  # Clean up UI and reset buttons
+            else:
+                self.console.append("Cancellation aborted by user.")
+
     def closeEvent(self, event):
         if self.process is not None and self.process.state() == QProcess.Running:
             # Prompt the user to confirm they want to terminate the running process

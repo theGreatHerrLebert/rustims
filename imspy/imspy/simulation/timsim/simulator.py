@@ -215,6 +215,14 @@ def main():
     )
     parser.set_defaults(proteome_mix=False)
 
+    # Debug mode
+    parser.add_argument(
+        "--debug_mode",
+        action="store_true",
+        dest="debug_mode",
+    )
+    parser.set_defaults(debug_mode=False)
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -225,7 +233,8 @@ def main():
     table = [[key, value] for key, value in args_dict.items()]
 
     # Print table
-    print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
+    if args.debug_mode:
+        print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     # Use the arguments
     path = check_path(args.path)
