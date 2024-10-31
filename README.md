@@ -4,21 +4,12 @@
   <img src="rustims_logo.png" alt="logo" width="250"/>
 </p>
 
-`rustims` is a framework developed for processing raw data from Ion-Mobility Spectrometry (IMS) in [prote]omics mass spectrometry. This project emerged from my Ph.D. research and reflects our involvement in [MSCORESYS](https://www.mscoresys.de/), especially within the [DIASYM](https://diasym.mscoresys.de/) segment. RustIMS draws inspiration from OpenMS but is distinguished by its use of [Rust](https://www.rust-lang.org/) as the backend language, aiming for efficient algorithm implementations and robust data structures. Like OpenMS, rustims exposes most of its logic to Python via [pyO3](https://docs.rs/pyo3/latest/pyo3/). This setup is intended to enable quick prototyping and integration into existing scientific workflows.
+`rustims` is a framework developed for processing raw data from Ion-Mobility Spectrometry (IMS) in proteomics mass spectrometry. It draws inspiration from OpenMS but is distinguished by its use of [Rust](https://www.rust-lang.org/) as the backend language, aiming for efficient algorithm implementations and robust data structures. Like OpenMS, `rustims` exposes most of its logic to Python, here via [PyO3](https://docs.rs/pyo3/latest/pyo3/). This setup is intended to enable easy pick-up, quick prototyping, and integration into existing Python-centric scientific workflows. 
 
-# Overview
-If you're diving into the realm of ion-mobility mass spectrometry raw data, rustims might offer valuable insights and tools. It could be a fitting project if you:
-
-* Have an interest in the **processing of raw IMS data**.
-* Are curious about the **algorithms** behind IMS data processing.
-* Have a basic understanding of **programming** concepts.
-* Don't mind engaging with a **project that's still evolving**.
-
-rustims is about exploring and improving the way we process ion-mobility spectrometry data. It's a work in progress, reflecting the open-source ethos of collaboration, engagement, and sharing of knowledge. Whether you're here to contribute or learn, we welcome your interest!
-
+`rustims` is about exploring and improving the way we process ion-mobility spectrometry data, providing re-usable building blocks that can be extensively configured. It's a work in progress, reflecting the open-source ethos of collaboration, engagement, and sharing of knowledge. Whether you're here to contribute or learn, we welcome your interest!
 
 # Quickstart
-To quickly get started, we recommend installing the Python package `imspy` via pip into a separate Virtual
+To quickly get started, we recommend installing the Python package `imspy`, the high-level Python API designed for most users to interact with `rustims` functionality, via pip into a separate Virtual
 Environment using Python3.11 (currently the only supported Python version due to TensorFlow). If you don't know how to create a Virtual Environment, you can follow the instructions [here](https://docs.python.org/3/library/venv.html).
 This way, you can avoid potential dependency conflicts with other Python packages.
 The following command installs the latest version of `imspy` from PyPi:
@@ -31,37 +22,7 @@ The easiest way to get GPU support is to additionally install the tensorflow[and
 pip install tensorflow[and-cuda]==2.15.*
 ```
 Which comes with the necessary CUDA and cuDNN libraries.
-
-## Analyzing a DDA dataset from Bruker timsTOF with imspy_dda
-You can directly run the `imspy_dda` command to analyze a DDA dataset:
-```shell
-imspy_dda path/to/bruker.tdf path/to/proteome.fasta
-```
-The tool has a lot of options, which you can explore by running:
-```shell
-imspy_dda --help
-```
-
-## NEW: Dive into processing of timsTOF DDA data with jupyter notebooks
-We are now providing [jupyter notebook examples](https://github.com/theGreatHerrLebert/rustims/blob/main/imspy/examples/) that allow you to interactively learn about the functionality of our tooling.
-
-## NEW: Read the docs
-The codbease of all native rust crates and python packages is now available:
-
-* [rustdf](https://thegreatherrlebert.github.io/rustims/main/rustdf/)
-* [mscore](https://thegreatherrlebert.github.io/rustims/main/mscore/)
-* [rustms](https://thegreatherrlebert.github.io/rustims/main/rustms/)
-* [imspy](https://thegreatherrlebert.github.io/rustims/main/imspy/)
-
-## Generating a synthetic PASEF-like dataset with timsim
-You can also generate a synthetic PASEF-like dataset using the following command (timsim currently requires a reference.tdf file of a real dataset):
-```shell
-timsim path/to/output.tdf path/to/reference.tdf path/to/proteome.fasta
-```
-The tool has a lot of options, which you can explore by running:
-```shell
-timsim --help
-```
+Have a look at the [imspy-README](https://github.com/theGreatHerrLebert/rustims/tree/main/imspy) to learn about basic functionalities of the package.
 
 # Repository Structure
 <figure align="center">
@@ -81,6 +42,37 @@ timsim --help
   </figcaption>
 </figure>
 
+## Analyzing a DDA dataset from Bruker timsTOF with imspy_dda
+You can directly run the `imspy_dda` command to analyze a DDA dataset:
+```shell
+imspy_dda path/to/bruker.tdf path/to/proteome.fasta
+```
+The tool has a lot of options, which you can explore by running:
+```shell
+imspy_dda --help
+```
+
+## Dive into processing of timsTOF DDA data with jupyter notebooks
+We are now providing [jupyter notebook examples](https://github.com/theGreatHerrLebert/rustims/blob/main/imspy/examples/) that allow you to interactively learn about the functionality of our tooling. You can also checkout the [sagepy notebook examples](https://github.com/theGreatHerrLebert/sagepy/tree/main/sagepy/examples) which are hosted in a separate repository since sagepy is not limited to DB searching of timsTOF data.
+
+## Read the docs
+The codbease of all native rust crates and python packages is now available:
+
+* [rustdf](https://thegreatherrlebert.github.io/rustims/main/rustdf/)
+* [mscore](https://thegreatherrlebert.github.io/rustims/main/mscore/)
+* [rustms](https://thegreatherrlebert.github.io/rustims/main/rustms/)
+* [imspy](https://thegreatherrlebert.github.io/rustims/main/imspy/)
+
+## Generating a synthetic PASEF-like dataset with timsim
+You can also generate a synthetic PASEF-like dataset using the following command (timsim currently requires a reference.tdf file of a real dataset):
+```shell
+timsim path/to/output.tdf path/to/reference.tdf path/to/proteome.fasta
+```
+The tool has a lot of options, which you can explore by running:
+```shell
+timsim --help
+```
+
 ## Rust backend: mscore and rustdf
 There are two Rrust projects: `mscore` and `rustdf`. The former is a library that contains implementations of in-memory data structures and algorithms for raw-data processing. The latter contains a Rust-native reader and writer of TDF, the serialization format written by [Bruker timsTOF](https://www.bruker.com/en/products-and-solutions/mass-spectrometry/timstof.html) devices. It also contains the implementation of the I/O logic needed for synthetic timsTOF PASEF-like in-silico dataset generation.
 
@@ -88,7 +80,7 @@ There are two Rrust projects: `mscore` and `rustdf`. The former is a library tha
 The `imspy_connector` module bridges Rust code with Python, allowing Rust components to be used in Python with minimal dependencies. This setup keeps the system lightweight for Python users but introduces complexity, especially in development and debugging. Changes in Rust need to be reflected in Python, often requiring updates in multiple places. Despite the added complexity, this architecture is chosen for its benefits. It allows for parts of the code in Rust or Python that don't interact with the other language to be developed independently and asynchronously. However, this flexibility is limited to components that do not require cross-language access.
 
 ## Python package: imspy
-`imspy` is a Python package designed for end-users. It utilizes `imspy_connector` for accessing Rust functionalities exposed via `pyO3`, incorporating additional libraries like `tensorflow`, `scikit-learn`, and `sagepy`. This setup enables users to perform detailed tasks such as calculating peptide fragment ions, analyzing isotope patterns, studying quadrupole transmission, and applying deep learning to ion mobility and retention time predictions. `imspy` serves those who require advanced analytical capabilities within the Python environment for proteomics research.
+`imspy` is a Python package designed for end-users. It utilizes `imspy_connector` for accessing Rust functionalities exposed via `pyO3`, incorporating additional libraries like `tensorflow`, `scikit-learn`, and `sagepy`. This setup enables users to perform detailed tasks such as calculating peptide fragment ions, analyzing isotope patterns, studying quadrupole transmission, and applying deep learning to ion mobility and retention time predictions.
 
 ## Julia bindings
 Julia support is currently experimental. Julia interfaces via `imsjl_connector`, [FFI](https://doc.rust-lang.org/nomicon/ffi.html).
