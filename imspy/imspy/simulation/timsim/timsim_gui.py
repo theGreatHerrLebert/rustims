@@ -549,9 +549,9 @@ class MainWindow(QMainWindow):
             self.path_input.setText(directory)
 
     def browse_reference_path(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Reference Dataset")
-        if file_path:
-            self.reference_input.setText(file_path)
+        directory = QFileDialog.getExistingDirectory(self, "Select Reference Dataset")
+        if directory:
+            self.reference_input.setText(directory)
 
     def browse_fasta_path(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select FASTA File")
