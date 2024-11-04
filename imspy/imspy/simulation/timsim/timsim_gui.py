@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QVBoxLayout, QHBoxLayout, QFileDialog, QCheckBox, QSpinBox, QToolButton,
     QDoubleSpinBox, QComboBox, QGroupBox, QScrollArea, QAction, QMessageBox,
-    QTextEdit
+    QTextEdit, QSlider
 )
 from PyQt5.QtCore import Qt, QProcess
 from PyQt5.QtGui import QFont, QIcon, QPixmap
@@ -277,32 +277,52 @@ class MainWindow(QMainWindow):
         self.peptide_intensity_group = CollapsibleBox("Peptide Intensity Settings")
         layout = self.peptide_intensity_group.content_layout
 
-        # Mean Intensity
-        self.intensity_mean_label = QLabel("Mean Intensity:")
-        self.intensity_mean_spin = QDoubleSpinBox()
-        self.intensity_mean_spin.setRange(1e3, 1e10)
-        self.intensity_mean_spin.setValue(1e7)
-        self.intensity_mean_spin.setSingleStep(1e5)
+        # Function to format slider value as 10^power
+        def update_label_from_slider(slider, label):
+            power = slider.value()
+            label.setText(f"10^{power} ({10 ** power:.1e})")
+
+        # Create slider for Mean Intensity
+        self.intensity_mean_label = QLabel()
+        self.intensity_mean_slider = QSlider(Qt.Horizontal)
+        self.intensity_mean_slider.setRange(0, 10)  # Range from 10^0 to 10^10
+        self.intensity_mean_slider.setValue(7)  # Default to 10^7
+        update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)  # Initialize label
+
+        self.intensity_mean_slider.valueChanged.connect(
+            lambda: update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)
+        )
+        layout.addWidget(QLabel("Mean Intensity:"))
         layout.addWidget(self.intensity_mean_label)
-        layout.addWidget(self.intensity_mean_spin)
+        layout.addWidget(self.intensity_mean_slider)
 
-        # Minimum Intensity
-        self.intensity_min_label = QLabel("Minimum Intensity:")
-        self.intensity_min_spin = QDoubleSpinBox()
-        self.intensity_min_spin.setRange(1e3, 1e10)
-        self.intensity_min_spin.setValue(1e5)
-        self.intensity_min_spin.setSingleStep(1e5)
+        # Create slider for Minimum Intensity
+        self.intensity_min_label = QLabel()
+        self.intensity_min_slider = QSlider(Qt.Horizontal)
+        self.intensity_min_slider.setRange(0, 10)
+        self.intensity_min_slider.setValue(5)  # Default to 10^5
+        update_label_from_slider(self.intensity_min_slider, self.intensity_min_label)
+
+        self.intensity_min_slider.valueChanged.connect(
+            lambda: update_label_from_slider(self.intensity_min_slider, self.intensity_min_label)
+        )
+        layout.addWidget(QLabel("Minimum Intensity:"))
         layout.addWidget(self.intensity_min_label)
-        layout.addWidget(self.intensity_min_spin)
+        layout.addWidget(self.intensity_min_slider)
 
-        # Maximum Intensity
-        self.intensity_max_label = QLabel("Maximum Intensity:")
-        self.intensity_max_spin = QDoubleSpinBox()
-        self.intensity_max_spin.setRange(1e3, 1e10)
-        self.intensity_max_spin.setValue(1e9)
-        self.intensity_max_spin.setSingleStep(1e5)
+        # Create slider for Maximum Intensity
+        self.intensity_max_label = QLabel()
+        self.intensity_max_slider = QSlider(Qt.Horizontal)
+        self.intensity_max_slider.setRange(0, 10)
+        self.intensity_max_slider.setValue(9)  # Default to 10^9
+        update_label_from_slider(self.intensity_max_slider, self.intensity_max_label)
+
+        self.intensity_max_slider.valueChanged.connect(
+            lambda: update_label_from_slider(self.intensity_max_slider, self.intensity_max_label)
+        )
+        layout.addWidget(QLabel("Maximum Intensity:"))
         layout.addWidget(self.intensity_max_label)
-        layout.addWidget(self.intensity_max_spin)
+        layout.addWidget(self.intensity_max_slider)
 
         # Sample Occurrences Randomly
         self.sample_occurrences_checkbox = QCheckBox("Sample Occurrences Randomly")
@@ -310,13 +330,18 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sample_occurrences_checkbox)
 
         # Fixed Intensity Value
-        self.intensity_value_label = QLabel("Fixed Intensity Value:")
-        self.intensity_value_spin = QDoubleSpinBox()
-        self.intensity_value_spin.setRange(1e3, 1e10)
-        self.intensity_value_spin.setValue(1e6)
-        self.intensity_value_spin.setSingleStep(1e5)
+        self.intensity_value_label = QLabel()
+        self.intensity_value_slider = QSlider(Qt.Horizontal)
+        self.intensity_value_slider.setRange(0, 10)
+        self.intensity_value_slider.setValue(6)  # Default to 10^6
+        update_label_from_slider(self.intensity_value_slider, self.intensity_value_label)
+
+        self.intensity_value_slider.valueChanged.connect(
+            lambda: update_label_from_slider(self.intensity_value_slider, self.intensity_value_label)
+        )
+        layout.addWidget(QLabel("Fixed Intensity Value:"))
         layout.addWidget(self.intensity_value_label)
-        layout.addWidget(self.intensity_value_spin)
+        layout.addWidget(self.intensity_value_slider)
 
     def init_isotopic_pattern_settings(self):
         self.isotopic_pattern_group = CollapsibleBox("Isotopic Pattern Settings")
@@ -344,7 +369,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.isotope_centroid_checkbox)
 
     def init_distribution_settings(self):
-        self.distribution_settings_group = CollapsibleBox("Distribution Settings")
+        self.distribution_settings_group = CollapsibleBox("Signal distribution Settings")
         layout = self.distribution_settings_group.content_layout
 
         # Gradient Length
@@ -428,12 +453,12 @@ class MainWindow(QMainWindow):
 
         # Add Noise to Signals
         self.add_noise_to_signals_checkbox = QCheckBox("Add Noise to Signals")
-        self.add_noise_to_signals_checkbox.setChecked(False)
+        self.add_noise_to_signals_checkbox.setChecked(True)
         layout.addWidget(self.add_noise_to_signals_checkbox)
 
         # Add Precursor M/Z Noise
         self.mz_noise_precursor_checkbox = QCheckBox("Add Precursor M/Z Noise")
-        self.mz_noise_precursor_checkbox.setChecked(False)
+        self.mz_noise_precursor_checkbox.setChecked(True)
         layout.addWidget(self.mz_noise_precursor_checkbox)
 
         # Precursor Noise PPM
@@ -446,14 +471,14 @@ class MainWindow(QMainWindow):
 
         # Add Fragment M/Z Noise
         self.mz_noise_fragment_checkbox = QCheckBox("Add Fragment M/Z Noise")
-        self.mz_noise_fragment_checkbox.setChecked(False)
+        self.mz_noise_fragment_checkbox.setChecked(True)
         layout.addWidget(self.mz_noise_fragment_checkbox)
 
         # Fragment Noise PPM
         self.fragment_noise_ppm_label = QLabel("Fragment Noise PPM:")
         self.fragment_noise_ppm_spin = QDoubleSpinBox()
         self.fragment_noise_ppm_spin.setRange(0, 100)
-        self.fragment_noise_ppm_spin.setValue(5.0)
+        self.fragment_noise_ppm_spin.setValue(10.0)
         layout.addWidget(self.fragment_noise_ppm_label)
         layout.addWidget(self.fragment_noise_ppm_spin)
 
@@ -464,14 +489,14 @@ class MainWindow(QMainWindow):
 
         # Add Real Data Noise
         self.add_real_data_noise_checkbox = QCheckBox("Add Real Data Noise")
-        self.add_real_data_noise_checkbox.setChecked(False)
+        self.add_real_data_noise_checkbox.setChecked(True)
         layout.addWidget(self.add_real_data_noise_checkbox)
 
         # Reference Noise Intensity Max
         self.reference_noise_intensity_max_label = QLabel("Reference Noise Intensity Max:")
         self.reference_noise_intensity_max_spin = QDoubleSpinBox()
-        self.reference_noise_intensity_max_spin.setRange(0, 1e5)
-        self.reference_noise_intensity_max_spin.setValue(30)
+        self.reference_noise_intensity_max_spin.setRange(1, 1e5)
+        self.reference_noise_intensity_max_spin.setValue(75)
         layout.addWidget(self.reference_noise_intensity_max_label)
         layout.addWidget(self.reference_noise_intensity_max_spin)
 
@@ -531,14 +556,14 @@ class MainWindow(QMainWindow):
         self.run_button.setFixedHeight(50)
         self.run_button.setFont(QFont('Arial', 14))
         # Set button style
-        self.run_button.setStyleSheet("background-color: #4CAF50; color: white; border: none;")
+        self.run_button.setStyleSheet("background-color: #6a994e; color: white; border: none;")
         self.run_button.clicked.connect(self.run_simulation)
 
         # CANCEL button (initially hidden)
         self.cancel_button = QPushButton("CANCEL Simulation")
         self.cancel_button.setFixedHeight(50)
         self.cancel_button.setFont(QFont('Arial', 14))
-        self.cancel_button.setStyleSheet("background-color: #f44336; color: white; border: none;")
+        self.cancel_button.setStyleSheet("background-color: #bc4749; color: white; border: none;")
         self.cancel_button.clicked.connect(self.cancel_simulation)
         self.cancel_button.setVisible(False)
 
@@ -589,11 +614,20 @@ class MainWindow(QMainWindow):
         cleave_at = self.cleave_at_input.text()
         restrict = self.restrict_input.text()
 
-        intensity_mean = self.intensity_mean_spin.value()
-        intensity_min = self.intensity_min_spin.value()
-        intensity_max = self.intensity_max_spin.value()
+        intensity_mean = 10 ** self.intensity_mean_slider.value()
+        intensity_min = 10 ** self.intensity_min_slider.value()
+        intensity_max = 10 ** self.intensity_max_slider.value()
         sample_occurrences = self.sample_occurrences_checkbox.isChecked()
-        intensity_value = self.intensity_value_spin.value()
+        intensity_value = 10 ** self.intensity_value_slider.value()
+
+        # Validation conditions
+        if not (intensity_min < intensity_mean < intensity_max):
+            QMessageBox.warning(
+                self,
+                "Invalid Intensity Settings",
+                "Ensure that:\n- Minimum Intensity < Mean Intensity < Maximum Intensity.\nPlease adjust the values and try again."
+            )
+            return
 
         isotope_k = self.isotope_k_spin.value()
         isotope_min_intensity = self.isotope_min_intensity_spin.value()
@@ -701,6 +735,7 @@ class MainWindow(QMainWindow):
 
         # Update buttons
         self.run_button.setEnabled(False)
+        self.run_button.setStyleSheet("background-color: #6d6875; color: white; border: none;")
         self.cancel_button.setVisible(True)
 
         # Initialize QProcess
@@ -722,6 +757,8 @@ class MainWindow(QMainWindow):
     def process_finished(self):
         self.console.append("Simulation finished.")
         self.run_button.setEnabled(True)
+        self.run_button.setStyleSheet("background-color: #6a994e; color: white; border: none;")
+
         self.cancel_button.setVisible(False)
 
     def cancel_simulation(self):
@@ -831,11 +868,11 @@ class MainWindow(QMainWindow):
 
         # Peptide Intensity Settings
         config['peptide_intensity'] = {
-            'intensity_mean': self.intensity_mean_spin.value(),
-            'intensity_min': self.intensity_min_spin.value(),
-            'intensity_max': self.intensity_max_spin.value(),
+            'intensity_mean': 10 ** self.intensity_mean_slider.value(),
+            'intensity_min': 10 ** self.intensity_min_slider.value(),
+            'intensity_max': 10 ** self.intensity_max_slider.value(),
             'sample_occurrences': self.sample_occurrences_checkbox.isChecked(),
-            'intensity_value': self.intensity_value_spin.value(),
+            'intensity_value': 10 ** self.intensity_value_slider.value(),
         }
 
         # Isotopic Pattern Settings
