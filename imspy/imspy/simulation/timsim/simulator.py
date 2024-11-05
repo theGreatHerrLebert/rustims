@@ -364,8 +364,7 @@ def main():
             )
 
             peptide_list.append(peptides)
-
-        peptides = pd.concat(peptide_list)
+            peptides = pd.concat(peptide_list)
 
     if args.sample_peptides and not args.from_existing:
         try:
@@ -462,8 +461,9 @@ def main():
         std_means=std_im,
     )
 
-    ion_id = ions.index
-    ions.insert(0, 'ion_id', ion_id)
+    if not args.from_existing:
+        ion_id = ions.index
+        ions.insert(0, 'ion_id', ion_id)
 
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
