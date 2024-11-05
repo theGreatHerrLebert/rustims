@@ -3,6 +3,7 @@ import argparse
 import time
 import pandas as pd
 
+from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
@@ -225,11 +226,44 @@ def main():
     )
     parser.set_defaults(debug_mode=False)
 
+    # add from existing simulation
+    parser.add_argument(
+        "--from_existing",
+        action="store_true",
+        dest="from_existing",
+    )
+    parser.set_defaults(from_existing=False)
+
+    # add existing simulation path
+    parser.add_argument(
+        "--existing_simulation_df_path",
+        type=str,
+        default=None,
+        help="Path to existing simulation to use for frame distributions",
+    )
+
     # Parse the arguments
     args = parser.parse_args()
 
     # Convert arguments to a dictionary
     args_dict = vars(args)
+
+    rt_sigma = None
+    rt_lambda = None
+    std_im = None
+
+    if args.from_existing:
+        existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_simulation_df_path)
+        peptides = existing_sim_handle.get_table('peptides')
+        ions = existing_sim_handle.get_table('ions')
+        rt_sigma = peptides['rt_sigma'].values
+        rt_lambda = peptides['rt_lambda'].values
+        std_im = ions['std_im'].values
+
+        if args.verbose:
+            print(f"Using existing simulation from {args.existing_simulation_df_path}")
+            print(f"Peptides: {peptides.shape[0]}")
+            print(f"Ions: {ions.shape[0]}")
 
     # Convert dictionary to a list of lists for tabulate
     table = [[key, value] for key, value in args_dict.items()]
@@ -280,7 +314,7 @@ def main():
     peptide_list = []
 
     for fasta_name, fasta in fastas.items():
-        if verbose:
+        if verbose and not args.from_existing:
             print(f"Digesting fasta file: {fasta_name}...")
 
         mixture_factor = 1.0
@@ -289,42 +323,43 @@ def main():
             try:
                 mixture_factor = factors[fasta_name]
 
-                if verbose:
+                if verbose and not args.from_existing:
                     print(f"Using mixture factor {mixture_factor} for {fasta_name}")
 
             except KeyError:
                 # print warning and set mixture factor to 1.0
                 print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
-        # JOB 1: Digest the fasta file(s)
-        peptides = digest_fasta(
-            fasta_file_path=fasta,
-            missed_cleavages=args.missed_cleavages,
-            min_len=args.min_len,
-            max_len=args.max_len,
-            cleave_at=args.cleave_at,
-            restrict=args.restrict,
-            decoys=args.decoys,
-            verbose=verbose,
-        ).peptides
+        if not args.from_existing:
+            # JOB 1: Digest the fasta file(s)
+            peptides = digest_fasta(
+                fasta_file_path=fasta,
+                missed_cleavages=args.missed_cleavages,
+                min_len=args.min_len,
+                max_len=args.max_len,
+                cleave_at=args.cleave_at,
+                restrict=args.restrict,
+                decoys=args.decoys,
+                verbose=verbose,
+            ).peptides
 
-        # JOB 2: Simulate peptide occurrences
-        peptides = simulate_peptide_occurrences(
-            peptides=peptides,
-            intensity_mean=args.intensity_mean,
-            intensity_min=args.intensity_min,
-            intensity_max=args.intensity_max,
-            verbose=verbose,
-            sample_occurrences=args.sample_occurrences,
-            intensity_value=args.intensity_value,
-            mixture_contribution=mixture_factor,
-        )
+            # JOB 2: Simulate peptide occurrences
+            peptides = simulate_peptide_occurrences(
+                peptides=peptides,
+                intensity_mean=args.intensity_mean,
+                intensity_min=args.intensity_min,
+                intensity_max=args.intensity_max,
+                verbose=verbose,
+                sample_occurrences=args.sample_occurrences,
+                intensity_value=args.intensity_value,
+                mixture_contribution=mixture_factor,
+            )
 
-        peptide_list.append(peptides)
+            peptide_list.append(peptides)
 
-    peptides = pd.concat(peptide_list)
+        peptides = pd.concat(peptide_list)
 
-    if args.sample_peptides:
+    if args.sample_peptides and not args.from_existing:
         try:
             peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
             peptides.reset_index(drop=True, inplace=True)
@@ -332,22 +367,24 @@ def main():
             print(f"Warning: Not enough peptides to sample {args.num_sample_peptides}, "
                   f"using all {peptides.shape[0]} peptides.")
 
-    if verbose:
+    if verbose and not args.from_existing:
         print(f"Simulating {peptides.shape[0]} peptides...")
 
-    # JOB 3: Simulate retention times
-    peptides = simulate_retention_times(
-        peptides=peptides,
-        verbose=verbose,
-        gradient_length=acquisition_builder.gradient_length
-    )
+    if not args.from_existing:
+        # JOB 3: Simulate retention times
+        peptides = simulate_retention_times(
+            peptides=peptides,
+            verbose=verbose,
+            gradient_length=acquisition_builder.gradient_length,
+        )
 
-    # TODO: Need to fix this on the backend,
-    #  the columns need to be in the correct order but generation of occurrences and retention times was swapped
-    #  to account for multiple fasta files and potential mixture factors of the peptides
-    columns = list(peptides.columns)
-    columns[-2], columns[-1] = columns[-1], columns[-2]
-    peptides = peptides[columns]
+    if not args.from_existing:
+        # TODO: Need to fix this on the backend,
+        #  the columns need to be in the correct order but generation of occurrences and retention times was swapped
+        #  to account for multiple fasta files and potential mixture factors of the peptides
+        columns = list(peptides.columns)
+        columns[-2], columns[-1] = columns[-1], columns[-2]
+        peptides = peptides[columns]
 
     # get the number of available threads of the system if not specified
     if args.num_threads == -1:
@@ -367,7 +404,9 @@ def main():
         verbose=verbose,
         add_noise=args.add_noise_to_signals,
         num_threads=args.num_threads,
-
+        from_existing=args.from_existing,
+        sigmas=rt_sigma,
+        lambdas=rt_lambda,
     )
 
     # save peptides to database
@@ -376,29 +415,30 @@ def main():
         table=peptides,
     )
 
-    # JOB 5: Simulate charge states
-    ions = simulate_charge_states(
-        peptides=peptides,
-        mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
-        mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
-        p_charge=p_charge,
-        min_charge_contrib=args.min_charge_contrib,
-    )
+    if not args.from_existing:
+        # JOB 5: Simulate charge states
+        ions = simulate_charge_states(
+            peptides=peptides,
+            mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
+            mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
+            p_charge=p_charge,
+            min_charge_contrib=args.min_charge_contrib,
+        )
 
-    # JOB 6: Simulate ion mobilities
-    ions = simulate_ion_mobilities(
-        ions=ions,
-        im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
-        im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
-        verbose=verbose
-    )
+        # JOB 6: Simulate ion mobilities
+        ions = simulate_ion_mobilities(
+            ions=ions,
+            im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
+            im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
+            verbose=verbose
+        )
 
-    # JOB 7: Simulate precursor isotopic distributions
-    ions = simulate_precursor_spectra_sequence(
-        ions=ions,
-        num_threads=args.num_threads,
-        verbose=verbose
-    )
+        # JOB 7: Simulate precursor isotopic distributions
+        ions = simulate_precursor_spectra_sequence(
+            ions=ions,
+            num_threads=args.num_threads,
+            verbose=verbose
+        )
 
     # JOB 8: Simulate scan distributions
     # TODO: sample standard deviation of ion mobility from a distribution (e.g., normal?)
@@ -409,7 +449,9 @@ def main():
         mean_std_im=args.std_im,
         variance_std_im=args.variance_std_im,
         verbose=verbose,
-        add_noise=args.add_noise_to_signals
+        add_noise=args.add_noise_to_signals,
+        from_existing=args.from_existing,
+        std_means=std_im,
     )
 
     ion_id = ions.index

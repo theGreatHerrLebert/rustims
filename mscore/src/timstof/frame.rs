@@ -262,9 +262,21 @@ impl TimsFrame {
         };
 
         // Step 1: Get frame coordinates
-        let frame_id = spectra.first().unwrap().frame_id;
-        let ms_type = spectra.first().unwrap().ms_type.clone();
-        let retention_time = spectra.first().unwrap().retention_time;
+        let first_spec = spectra.first();
+        let frame_id = match first_spec {
+            Some(first_spec) => first_spec.frame_id,
+            _ => 1
+        };
+        
+        let ms_type = match first_spec {
+            Some(first_spec) => first_spec.ms_type.clone(),
+            _ => MsType::Unknown,
+        };
+        
+        let retention_time = match first_spec { 
+            Some(first_spec) => first_spec.retention_time,
+            _ => 0.0
+        };
 
         let mut frame_map: BTreeMap<i32, (f64, BTreeMap<i64, (i32, f64)>)> = BTreeMap::new();
         let mut capacity_count = 0;
