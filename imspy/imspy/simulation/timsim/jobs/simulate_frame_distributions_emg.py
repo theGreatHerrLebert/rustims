@@ -34,6 +34,9 @@ def simulate_frame_distributions_emg(
         normalize: bool = False,
         n_steps: int = 1000,
         num_threads: int = 4,
+        from_existing: bool = False,
+        sigmas: np.ndarray = None,
+        lambdas: np.ndarray = None,
 ) -> pd.DataFrame:
     """Simulate frame distributions for peptides.
 
@@ -52,6 +55,9 @@ def simulate_frame_distributions_emg(
         normalize: Normalize frame abundance.
         n_steps: number of steps.
         num_threads: number of threads.
+        from_existing: Use existing parameters.
+        sigmas: sigmas.
+        lambdas: lambdas.
 
     Returns:
         pd.DataFrame: Peptide DataFrame with frame distributions.
@@ -66,7 +72,11 @@ def simulate_frame_distributions_emg(
 
     n = peptides.shape[0]
 
-    sigmas, lambdas = sample_parameters_rejection(mean_std_rt, variance_std_rt, mean_scewness, variance_scewness, n)
+    if not from_existing:
+        sigmas, lambdas = sample_parameters_rejection(mean_std_rt, variance_std_rt, mean_scewness, variance_scewness, n)
+
+    peptide_rt['rt_sigma'] = sigmas
+    peptide_rt['rt_lambda'] = lambdas
 
     occurrences = ims.calculate_frame_occurrences_emg_par(
         times_np,

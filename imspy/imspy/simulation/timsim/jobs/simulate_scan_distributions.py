@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.typing import NDArray
 import pandas as pd
 from tqdm import tqdm
 
@@ -10,10 +11,13 @@ def simulate_scan_distributions(
         ions: pd.DataFrame,
         scans: pd.DataFrame,
         z_score: float,
-        std_im: float,
+        mean_std_im: float = 0.01,
+        variance_std_im: float = 0.0,
         verbose: bool = False,
         add_noise: bool = False,
-        normalize: bool = False
+        normalize: bool = False,
+        from_existing: bool = False,
+        std_means: NDArray = None,
 ) -> pd.DataFrame:
     """Simulate scan distributions for ions.
 
@@ -21,10 +25,13 @@ def simulate_scan_distributions(
         ions: Ions DataFrame.
         scans: Scan DataFrame.
         z_score: Z-score.
-        std_im: Standard deviation of ion mobility.
+        mean_std_im: Standard deviation of ion mobility.
+        variance_std_im: Variance of standard deviation of ion mobility.
         verbose: Verbosity.
         add_noise: Add noise.
         normalize: Normalize scan abundance.
+        from_existing: Use existing parameters.
+        std_means: Standard deviations.
 
     Returns:
         pd.DataFrame: Ions DataFrame with scan distributions.
@@ -42,14 +49,21 @@ def simulate_scan_distributions(
     im_scans = []
     im_contributions = []
 
+    # Generate random standard deviations for ion mobility, if not from_existing
+    if not from_existing:
+        std_im = np.random.normal(loc=mean_std_im, scale=np.sqrt(variance_std_im), size=ions.shape[0])
+        ions['std_im'] = std_im
+    else:
+        std_im = std_means
+
     if verbose:
         print("Calculating scan distributions...")
 
-    for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
+    for i, (_, row) in enumerate(tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100)):
         scan_occurrence, scan_abundance = [], []
 
         im_value = row.inv_mobility_gru_predictor
-        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im, z_score)
+        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im[i], z_score)
 
         for scan in contributing_scans:
             im = im_dict[scan]
