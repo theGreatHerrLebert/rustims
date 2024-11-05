@@ -52,9 +52,11 @@ def simulate_scan_distributions(
     # Generate random standard deviations for ion mobility, if not from_existing
     if not from_existing:
         std_im = np.random.normal(loc=mean_std_im, scale=np.sqrt(variance_std_im), size=ions.shape[0])
-        ions['std_im'] = std_im
     else:
         std_im = std_means
+
+    # Add standard deviation deviations to ions DataFrame
+    ions['std_im'] = std_im
 
     if verbose:
         print("Calculating scan distributions...")
