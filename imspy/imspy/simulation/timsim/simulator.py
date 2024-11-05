@@ -403,7 +403,7 @@ def main():
         ions=ions,
         scans=acquisition_builder.scan_table,
         z_score=args.z_score,
-        std_im=args.std_im,
+        mean_std_im=args.std_im,
         verbose=verbose,
         add_noise=args.add_noise_to_signals
     )
