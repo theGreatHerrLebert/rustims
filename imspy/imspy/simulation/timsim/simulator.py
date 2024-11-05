@@ -260,6 +260,14 @@ def main():
         rt_lambda = peptides['rt_lambda'].values
         std_im = ions['std_im'].values
 
+        # warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more then 5 percent
+        rt_max = peptides['retention_time_gru_predictor'].max()
+
+        if abs(rt_max - args.gradient_length) / args.gradient_length > 0.05:
+            print(f"Warning: The gradient length of the existing simulation is {rt_max} seconds, "
+                  f"which is off by more than 5 percent of the new gradient length of {args.gradient_length} seconds. "
+                  f"This might result in distorted frame distributions and missing ions.")
+
         if args.verbose:
             print(f"Using existing simulation from {args.existing_simulation_df_path}")
             print(f"Peptides: {peptides.shape[0]}")
