@@ -260,7 +260,7 @@ def main():
         rt_lambda = peptides['rt_lambda'].values
         std_im = ions['std_im'].values
 
-        # warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more then 5 percent
+        # warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more than 5 percent
         rt_max = peptides['retention_time_gru_predictor'].max()
 
         if abs(rt_max - args.gradient_length) / args.gradient_length > 0.05:
