@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
         path_layout.addWidget(self.path_info)
         layout.addLayout(path_layout)
 
+        # Reference Dataset Path
         reference_layout = QHBoxLayout()
         self.reference_label = QLabel("Reference Dataset Path:")
         self.reference_input = QLineEdit()
@@ -202,6 +203,7 @@ class MainWindow(QMainWindow):
         reference_layout.addWidget(self.reference_info)
         layout.addLayout(reference_layout)
 
+        # FASTA File Path
         fasta_layout = QHBoxLayout()
         self.fasta_label = QLabel("FASTA File Path:")
         self.fasta_input = QLineEdit()
@@ -218,90 +220,149 @@ class MainWindow(QMainWindow):
         fasta_layout.addWidget(self.fasta_info)
         layout.addLayout(fasta_layout)
 
-        # Experiment Details
+        # Experiment Name
+        name_layout = QHBoxLayout()
         self.name_label = QLabel("Experiment Name:")
         self.name_input = QLineEdit(f"TIMSIM-{int(time.time())}")
-        layout.addWidget(self.name_label)
-        layout.addWidget(self.name_input)
+        name_layout.addWidget(self.name_label)
+        name_layout.addWidget(self.name_input)
 
         # Experiment Name Info Icon
         self.name_info = QLabel()
         self.name_info.setPixmap(info_icon)
         self.name_info.setToolTip("Name your experiment to identify it in saved outputs and reports.")
-        layout.addWidget(self.name_info)
+        name_layout.addWidget(self.name_info)
+        layout.addLayout(name_layout)
 
+        # Acquisition Type
+        acquisition_layout = QHBoxLayout()
         self.acquisition_label = QLabel("Acquisition Type:")
         self.acquisition_combo = QComboBox()
         self.acquisition_combo.addItems(["DIA", "SYNCHRO", "SLICE", "MIDIA"])
-        layout.addWidget(self.acquisition_label)
-        layout.addWidget(self.acquisition_combo)
+        acquisition_layout.addWidget(self.acquisition_label)
+        acquisition_layout.addWidget(self.acquisition_combo)
 
         # Acquisition Type Info Icon
         self.acquisition_info = QLabel()
         self.acquisition_info.setPixmap(info_icon)
         self.acquisition_info.setToolTip("Select the acquisition method used to simulate data.")
-        layout.addWidget(self.acquisition_info)
+        acquisition_layout.addWidget(self.acquisition_info)
+        layout.addLayout(acquisition_layout)
 
-        # Checkboxes for options, each with an info icon to the right
-        options_layout = QGridLayout()
+        # Options with checkboxes and icons to the right
+        options_layout = QVBoxLayout()
 
         # Use Reference Layout
+        reference_layout_checkbox = QHBoxLayout()
         self.use_reference_layout_checkbox = QCheckBox("Use Reference Layout")
         self.use_reference_layout_checkbox.setChecked(True)
         self.use_reference_layout_info = QLabel()
         self.use_reference_layout_info.setPixmap(info_icon)
         self.use_reference_layout_info.setToolTip(
             "Use the layout of the reference dataset as a template for simulation.")
-        options_layout.addWidget(self.use_reference_layout_checkbox, 0, 0)
-        options_layout.addWidget(self.use_reference_layout_info, 0, 1)
+        reference_layout_checkbox.addWidget(self.use_reference_layout_checkbox)
+        reference_layout_checkbox.addWidget(self.use_reference_layout_info)
+        options_layout.addLayout(reference_layout_checkbox)
 
         # Load Reference into Memory
+        memory_layout_checkbox = QHBoxLayout()
         self.reference_in_memory_checkbox = QCheckBox("Load Reference into Memory")
         self.reference_in_memory_checkbox.setChecked(False)
         self.reference_in_memory_info = QLabel()
         self.reference_in_memory_info.setPixmap(info_icon)
         self.reference_in_memory_info.setToolTip("Load the reference dataset entirely into memory to speed up access.")
-        options_layout.addWidget(self.reference_in_memory_checkbox, 1, 0)
-        options_layout.addWidget(self.reference_in_memory_info, 1, 1)
+        memory_layout_checkbox.addWidget(self.reference_in_memory_checkbox)
+        memory_layout_checkbox.addWidget(self.reference_in_memory_info)
+        options_layout.addLayout(memory_layout_checkbox)
 
         # Sample Peptides
+        sample_layout_checkbox = QHBoxLayout()
         self.sample_peptides_checkbox = QCheckBox("Sample Peptides")
         self.sample_peptides_checkbox.setChecked(True)
         self.sample_peptides_info = QLabel()
         self.sample_peptides_info.setPixmap(info_icon)
         self.sample_peptides_info.setToolTip("Enable to randomly sample peptides for a subset of the dataset.")
-        options_layout.addWidget(self.sample_peptides_checkbox, 2, 0)
-        options_layout.addWidget(self.sample_peptides_info, 2, 1)
+        sample_layout_checkbox.addWidget(self.sample_peptides_checkbox)
+        sample_layout_checkbox.addWidget(self.sample_peptides_info)
+        options_layout.addLayout(sample_layout_checkbox)
 
         # Generate Decoys
+        decoys_layout_checkbox = QHBoxLayout()
         self.add_decoys_checkbox = QCheckBox("Generate Decoys")
         self.add_decoys_checkbox.setChecked(False)
         self.add_decoys_info = QLabel()
         self.add_decoys_info.setPixmap(info_icon)
         self.add_decoys_info.setToolTip("Also simulate inverted decoy peptides (non-biological).")
-        options_layout.addWidget(self.add_decoys_checkbox, 3, 0)
-        options_layout.addWidget(self.add_decoys_info, 3, 1)
+        decoys_layout_checkbox.addWidget(self.add_decoys_checkbox)
+        decoys_layout_checkbox.addWidget(self.add_decoys_info)
+        options_layout.addLayout(decoys_layout_checkbox)
 
         # Proteome Mixture
+        proteome_layout_checkbox = QHBoxLayout()
         self.proteome_mix_checkbox = QCheckBox("Proteome Mixture")
         self.proteome_mix_checkbox.setChecked(False)
         self.proteome_mix_info = QLabel()
         self.proteome_mix_info.setPixmap(info_icon)
         self.proteome_mix_info.setToolTip("Use a mixture of proteomes to simulate a more complex sample.")
-        options_layout.addWidget(self.proteome_mix_checkbox, 4, 0)
-        options_layout.addWidget(self.proteome_mix_info, 4, 1)
+        proteome_layout_checkbox.addWidget(self.proteome_mix_checkbox)
+        proteome_layout_checkbox.addWidget(self.proteome_mix_info)
+        options_layout.addLayout(proteome_layout_checkbox)
 
         # Silent Mode
+        silent_layout_checkbox = QHBoxLayout()
         self.silent_checkbox = QCheckBox("Silent Mode")
         self.silent_checkbox.setChecked(False)
         self.silent_info = QLabel()
         self.silent_info.setPixmap(info_icon)
         self.silent_info.setToolTip("Run the simulation in silent mode, suppressing most output messages.")
-        options_layout.addWidget(self.silent_checkbox, 5, 0)
-        options_layout.addWidget(self.silent_info, 5, 1)
+        silent_layout_checkbox.addWidget(self.silent_checkbox)
+        silent_layout_checkbox.addWidget(self.silent_info)
+        options_layout.addLayout(silent_layout_checkbox)
 
+        # Use Existing Data as Template
+        existing_layout_checkbox = QHBoxLayout()
+        self.from_existing_checkbox = QCheckBox("Use existing simulated data as template")
+        self.from_existing_checkbox.setChecked(False)
+        self.from_existing_info = QLabel()
+        self.from_existing_info.setPixmap(info_icon)
+        self.from_existing_info.setToolTip("Use existing simulated data as template for the current simulation.")
+        existing_layout_checkbox.addWidget(self.from_existing_checkbox)
+        existing_layout_checkbox.addWidget(self.from_existing_info)
+        options_layout.addLayout(existing_layout_checkbox)
+
+        # Add the options layout to the main layout
         layout.addLayout(options_layout)
+
+        # Container for "Existing simulated experiment" path selection, initially hidden
+        self.existing_path_container = QWidget()
+        existing_path_layout = QHBoxLayout()
+        self.existing_path_label = QLabel("Existing simulated Experiment:")
+        self.existing_path_input = QLineEdit()
+        self.existing_path_browse = QPushButton("Browse")
+        self.existing_path_browse.clicked.connect(self.browse_existing_save_path)
+        existing_path_layout.addWidget(self.existing_path_label)
+        existing_path_layout.addWidget(self.existing_path_input)
+        existing_path_layout.addWidget(self.existing_path_browse)
+
+        # Existing Path Info Icon
+        self.existing_path_info = QLabel()
+        self.existing_path_info.setPixmap(info_icon)
+        self.existing_path_info.setToolTip("Select the directory where the existing simulated data is saved.")
+        existing_path_layout.addWidget(self.existing_path_info)
+
+        # Set layout for the container and hide it initially
+        self.existing_path_container.setLayout(existing_path_layout)
+        self.existing_path_container.setVisible(False)
+
+        # Toggle visibility of existing path container when checkbox is checked/unchecked
+        self.from_existing_checkbox.toggled.connect(self.existing_path_container.setVisible)
+
+        # Add the existing_path_container after the checkboxes
+        layout.addWidget(self.existing_path_container)
+
+        # Set layout for the group box
         self.main_settings_group.setLayout(layout)
+        self.main_layout.addWidget(self.main_settings_group)
 
     def init_peptide_digestion_settings(self):
         info_text = "Configure how peptides are generated from protein sequences, including cleavage rules and peptide length constraints."
@@ -940,6 +1001,11 @@ class MainWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select FASTA File")
         if file_path:
             self.fasta_input.setText(file_path)
+
+    def browse_existing_save_path(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Existing Save Directory")
+        if directory:
+            self.existing_path_input.setText(directory)
 
     def init_console(self):
         self.console = QTextEdit()
