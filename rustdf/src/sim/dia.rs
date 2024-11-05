@@ -470,8 +470,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     }
 
     pub fn get_ion_transmission_matrix(&self, peptide_id: u32, charge: i8, include_precursor_frames: bool) -> Vec<Vec<f32>> {
-
-        let mut frame_ids = self.precursor_frame_builder.peptides.get(&peptide_id).unwrap().frame_distribution.occurrence.clone();
+        
+        let maybe_peptide_sim = self.precursor_frame_builder.peptides.get(&peptide_id);
+        
+        let mut frame_ids = match maybe_peptide_sim {
+            Some(maybe_peptide_sim) => maybe_peptide_sim.frame_distribution.occurrence.clone(),
+            _ => vec![]
+        };
 
         if !include_precursor_frames {
             frame_ids = frame_ids.iter().filter(|frame_id| !self.precursor_frame_builder.precursor_frame_id_set.contains(frame_id)).cloned().collect();

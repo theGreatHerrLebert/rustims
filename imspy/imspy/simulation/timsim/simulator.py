@@ -132,6 +132,8 @@ def main():
                         help="Variance scewness for retention time distribution (default: 0.1)")
     parser.add_argument("--std_im", type=float, default=0.01,
                         help="Standard deviation for mobility distribution (default: 0.01)")
+    parser.add_argument("--variance_std_im", type=float, default=0.003,
+                        help="Variance standard deviation for mobility distribution (default: 0.003)")
     parser.add_argument("--target_p", type=float, default=0.999,
                         help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, default=0.001,
@@ -364,7 +366,8 @@ def main():
         step_size=args.sampling_step_size,
         verbose=verbose,
         add_noise=args.add_noise_to_signals,
-        num_threads=args.num_threads
+        num_threads=args.num_threads,
+
     )
 
     # save peptides to database
@@ -404,6 +407,7 @@ def main():
         scans=acquisition_builder.scan_table,
         z_score=args.z_score,
         mean_std_im=args.std_im,
+        variance_std_im=args.variance_std_im,
         verbose=verbose,
         add_noise=args.add_noise_to_signals
     )

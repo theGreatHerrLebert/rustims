@@ -59,16 +59,16 @@ def simulate_scan_distributions(
     if verbose:
         print("Calculating scan distributions...")
 
-    for i, (_, row) in enumerate(tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100)):
+    for index, (_, row) in enumerate(tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100)):
         scan_occurrence, scan_abundance = [], []
 
         im_value = row.inv_mobility_gru_predictor
-        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im[i], z_score)
+        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im[index], z_score)
 
         for scan in contributing_scans:
             im = im_dict[scan]
             start = im - im_cycle_length
-            i = accumulated_intensity_cdf_numba(start, im, im_value, std_im)
+            i = accumulated_intensity_cdf_numba(start, im, im_value, std_im[index])
             scan_occurrence.append(scan)
             scan_abundance.append(i)
 
