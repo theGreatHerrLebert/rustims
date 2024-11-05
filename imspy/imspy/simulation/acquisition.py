@@ -77,6 +77,34 @@ class TimsTofAcquisitionBuilder:
     def calculate_frame_types(self, *args) -> NDArray:
         pass
 
+    @classmethod
+    def from_existing(cls, path: str, reference_ds: TimsDataset) -> "TimsTofAcquisitionBuilder":
+        """ Create an instance from existing data without calling __init__.
+        """
+        # Create a new instance without calling __init__
+        instance = cls.__new__(cls)
+        instance.synthetics_handle = SyntheticExperimentDataHandle(database_path=path)
+
+        # Manually set fields from data dictionary
+        instance.path = path
+        instance.frame_table = instance.synthetics_handle.get_table('frames')
+        instance.scan_table = instance.synthetics_handle.get_table('scans')
+        instance.gradient_length = np.round(instance.frame_table.time.max())
+        instance.rt_cycle_length = np.mean(np.diff(instance.frame_table.time))
+        instance.num_frames = instance.frame_table.shape[0]
+
+        # extract experiment name from the path
+        exp_name = Path(path).name
+
+        # Set up the TDFWriter and SyntheticExperimentDataHandle
+        instance.tdf_writer = TDFWriter(
+            path=instance.path,
+            helper_handle=reference_ds,
+            exp_name=exp_name,
+        )
+
+        return instance
+
 
 class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
@@ -253,6 +281,50 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             round_collision_energy=round_collision_energy,
             collision_energy_decimals=collision_energy_decimals
         )
+
+    @classmethod
+    def from_existing(cls,
+                      path: str,
+                      reference_ds: TimsDatasetDIA,
+                      use_reference_ds_layout: bool = True,
+                      verbose: bool = True) -> "TimsTofAcquisitionBuilderDIA":
+        """ Create an instance from existing data for DIA without calling __init__."""
+
+        # Create an instance without calling __init__
+        instance = cls.__new__(cls)
+
+        # Initialize shared attributes as done in the parent’s from_existing
+        instance.synthetics_handle = SyntheticExperimentDataHandle(database_path=path)
+        instance.path = path
+        instance.frame_table = instance.synthetics_handle.get_table('frames')
+        instance.scan_table = instance.synthetics_handle.get_table('scans')
+        instance.gradient_length = np.round(instance.frame_table.time.max())
+        instance.rt_cycle_length = np.mean(np.diff(instance.frame_table.time))
+        instance.num_frames = instance.frame_table.shape[0]
+        exp_name = Path(path).name
+        instance.tdf_writer = TDFWriter(
+            path=instance.path,
+            helper_handle=reference_ds,
+            exp_name=exp_name,
+        )
+
+        # Ensure use_reference_ds_layout is supported
+        assert use_reference_ds_layout, "Only use_reference_ds_layout=True is supported for existing DIA acquisitions"
+
+        # Set DIA-specific fields
+        instance.reference = reference_ds
+        instance.verbose = verbose
+        instance.window_group_file = None
+        instance.precursor_every = int(np.diff(instance.reference.precursor_frames)[0])
+        instance.round_collision_energy = True
+        instance.collision_energy_decimals = 1
+        instance.use_reference_ds_layout = use_reference_ds_layout
+
+        # Load additional tables for DIA-specific data
+        instance.frames_to_window_groups = instance.synthetics_handle.get_table('dia_ms_ms_info')
+        instance.dia_ms_ms_windows = instance.synthetics_handle.get_table('dia_ms_ms_windows')
+
+        return instance
 
     def __repr__(self):
         return (f"TimsTofAcquisitionBuilderDIA(name={self.acquisition_name}, path={self.path}, "
