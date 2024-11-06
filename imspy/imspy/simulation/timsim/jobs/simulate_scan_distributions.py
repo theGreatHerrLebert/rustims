@@ -58,6 +58,9 @@ def simulate_scan_distributions(
     # Add standard deviation deviations to ions DataFrame
     ions['std_im'] = std_im
 
+    # DEBUG, TODO: NEED TO RE-IMPLEMENT TO MAKE THIS WORK WITHOUT HARD-CODING
+    std_im = np.repeat(0.01, ions.shape[0])
+
     if verbose:
         print("Calculating scan distributions...")
 
