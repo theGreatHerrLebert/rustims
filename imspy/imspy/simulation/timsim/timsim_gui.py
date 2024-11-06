@@ -661,7 +661,7 @@ class MainWindow(QMainWindow):
         self.variance_std_rt_info = QLabel()
         self.variance_std_rt_info.setPixmap(info_icon)
         self.variance_std_rt_info.setToolTip(
-            "Variance of the standard deviation of retention time, affecting distribution spread.")
+            "Variance of the standard deviation of retention time, affecting variance of distribution spread.")
         variance_std_rt_layout.addWidget(self.variance_std_rt_info)
         layout.addLayout(variance_std_rt_layout)
 
@@ -713,6 +713,24 @@ class MainWindow(QMainWindow):
             "Standard deviation in ion mobility, which affects peak width in the mobility dimension.")
         std_im_layout.addWidget(self.std_im_info)
         layout.addLayout(std_im_layout)
+
+        # Add variance_std_im
+        variance_std_im_layout = QHBoxLayout()
+        self.variance_std_im_label = QLabel("Variance Std IM:")
+        self.variance_std_im_spin = QDoubleSpinBox()
+        self.variance_std_im_spin.setRange(0, 1)
+        self.variance_std_im_spin.setDecimals(4)
+        self.variance_std_im_spin.setValue(0.001)
+        variance_std_im_layout.addWidget(self.variance_std_im_label)
+        variance_std_im_layout.addWidget(self.variance_std_im_spin)
+
+        self.variance_std_im_info = QLabel()
+        self.variance_std_im_info.setPixmap(info_icon)
+        self.variance_std_im_info.setToolTip(
+            "Variance of the standard deviation of ion mobility, affecting distribution spread.")
+        variance_std_im_layout.addWidget(self.variance_std_im_info)
+        layout.addLayout(variance_std_im_layout)
+
 
         # Z-Score
         z_score_layout = QHBoxLayout()
@@ -1063,6 +1081,7 @@ class MainWindow(QMainWindow):
         mean_skewness = self.mean_skewness_spin.value()
         variance_skewness = self.variance_skewness_spin.value()
         std_im = self.std_im_spin.value()
+        variance_std_im = self.variance_std_im_spin.value()
         z_score = self.z_score_spin.value()
         target_p = self.target_p_spin.value()
         sampling_step_size = self.sampling_step_size_spin.value()
@@ -1082,6 +1101,9 @@ class MainWindow(QMainWindow):
 
         num_threads = self.num_threads_spin.value()
         batch_size = self.batch_size_spin.value()
+
+        use_existing = self.from_existing_checkbox.isChecked()
+        use_existing_path = self.existing_path_input.text()
 
         # Build the argument list
         args = [
@@ -1109,6 +1131,7 @@ class MainWindow(QMainWindow):
             "--mean_scewness", str(mean_skewness),
             "--variance_scewness", str(variance_skewness),
             "--std_im", str(std_im),
+            "--variance_std_im", str(variance_std_im),
             "--z_score", str(z_score),
             "--target_p", str(target_p),
             "--sampling_step_size", str(sampling_step_size),
@@ -1120,6 +1143,7 @@ class MainWindow(QMainWindow):
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
+            "--existing_simulation_df_path", str(use_existing_path)
         ]
 
         # Add boolean flags
@@ -1149,6 +1173,8 @@ class MainWindow(QMainWindow):
             args.append("--mz_noise_uniform")
         if add_real_data_noise:
             args.append("--add_real_data_noise")
+        if use_existing:
+            args.append("--from_existing")
 
         # Convert the list to strings
         args = [str(arg) for arg in args]
@@ -1278,6 +1304,8 @@ class MainWindow(QMainWindow):
             'add_decoys': self.add_decoys_checkbox.isChecked(),
             'proteome_mix': self.proteome_mix_checkbox.isChecked(),
             'silent_mode': self.silent_checkbox.isChecked(),
+            'from_existing': self.from_existing_checkbox.isChecked(),
+            'existing_path': self.existing_path_input.text(),
         }
 
         # Peptide Digestion Settings
@@ -1314,6 +1342,7 @@ class MainWindow(QMainWindow):
             'mean_skewness': self.mean_skewness_spin.value(),
             'variance_skewness': self.variance_skewness_spin.value(),
             'std_im': self.std_im_spin.value(),
+            'variance_std_im': self.variance_std_im_spin.value(),
             'z_score': self.z_score_spin.value(),
             'target_p': self.target_p_spin.value(),
             'sampling_step_size': self.sampling_step_size_spin.value(),
@@ -1363,6 +1392,8 @@ class MainWindow(QMainWindow):
         self.add_decoys_checkbox.setChecked(main_settings.get('add_decoys', False))
         self.proteome_mix_checkbox.setChecked(main_settings.get('proteome_mix', False))
         self.silent_checkbox.setChecked(main_settings.get('silent_mode', False))
+        self.from_existing_checkbox.setChecked(main_settings.get('from_existing', False))
+        self.existing_path_input.setText(main_settings.get('existing_path', ''))
 
         # Peptide Digestion Settings
         peptide_digestion = config.get('peptide_digestion', {})
@@ -1395,6 +1426,8 @@ class MainWindow(QMainWindow):
         self.mean_skewness_spin.setValue(distribution_settings.get('mean_skewness', 0.3))
         self.variance_skewness_spin.setValue(distribution_settings.get('variance_skewness', 0.1))
         self.std_im_spin.setValue(distribution_settings.get('std_im', 0.01))
+        self.variance_std_im_spin.setValue(distribution_settings.get('variance_std_im', 0.001))
+        self.variance_std_im_spin.setValue(distribution_settings.get('variance_std_im', 0.001))
         self.z_score_spin.setValue(distribution_settings.get('z_score', 0.99))
         self.target_p_spin.setValue(distribution_settings.get('target_p', 0.999))
         self.sampling_step_size_spin.setValue(distribution_settings.get('sampling_step_size', 0.001))
