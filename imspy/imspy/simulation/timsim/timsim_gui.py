@@ -319,6 +319,17 @@ class MainWindow(QMainWindow):
         silent_layout_checkbox.addWidget(self.silent_info)
         options_layout.addLayout(silent_layout_checkbox)
 
+        # Apply fragmentation to Ions
+        apply_fragmenation_layout_checkbox = QHBoxLayout()
+        self.apply_fragmentation_checkbox = QCheckBox("Apply Fragmentation to Ions")
+        self.apply_fragmentation_checkbox.setChecked(True)
+        self.apply_fragmentation_info = QLabel()
+        self.apply_fragmentation_info.setPixmap(info_icon)
+        self.apply_fragmentation_info.setToolTip("If disabled, quadrupole selection will still be applied but fragmentation will be skipped.")
+        apply_fragmenation_layout_checkbox.addWidget(self.apply_fragmentation_checkbox)
+        apply_fragmenation_layout_checkbox.addWidget(self.apply_fragmentation_info)
+        options_layout.addLayout(apply_fragmenation_layout_checkbox)
+
         # Use Existing Data as Template
         existing_layout_checkbox = QHBoxLayout()
         self.from_existing_checkbox = QCheckBox("Use existing simulated data as template")
@@ -1105,6 +1116,8 @@ class MainWindow(QMainWindow):
         use_existing = self.from_existing_checkbox.isChecked()
         use_existing_path = self.existing_path_input.text()
 
+        apply_fragmentation = self.apply_fragmentation_checkbox.isChecked()
+
         # Build the argument list
         args = [
             "timsim",
@@ -1175,6 +1188,8 @@ class MainWindow(QMainWindow):
             args.append("--add_real_data_noise")
         if use_existing:
             args.append("--from_existing")
+        if not apply_fragmentation:
+            args.append("--no_fragmentation")
 
         # Convert the list to strings
         args = [str(arg) for arg in args]
@@ -1306,6 +1321,7 @@ class MainWindow(QMainWindow):
             'silent_mode': self.silent_checkbox.isChecked(),
             'from_existing': self.from_existing_checkbox.isChecked(),
             'existing_path': self.existing_path_input.text(),
+            'apply_fragmentation': self.apply_fragmentation_checkbox.isChecked(),
         }
 
         # Peptide Digestion Settings
@@ -1392,6 +1408,7 @@ class MainWindow(QMainWindow):
         self.add_decoys_checkbox.setChecked(main_settings.get('add_decoys', False))
         self.proteome_mix_checkbox.setChecked(main_settings.get('proteome_mix', False))
         self.silent_checkbox.setChecked(main_settings.get('silent_mode', False))
+        self.apply_fragmentation_checkbox.setChecked(main_settings.get('fragmentation', True))
         self.from_existing_checkbox.setChecked(main_settings.get('from_existing', False))
         self.existing_path_input.setText(main_settings.get('existing_path', ''))
 
