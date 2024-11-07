@@ -21,6 +21,7 @@ def assemble_frames(
         num_threads: int = 4,
         add_real_data_noise: bool = False,
         reference_noise_intensity_max: float = 30,
+        fragment: bool = True,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -37,6 +38,7 @@ def assemble_frames(
         num_threads: Number of threads for frame assembly.
         add_real_data_noise: Add real data noise to the frames.
         reference_noise_intensity_max: Maximum intensity for real data noise.
+        fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -74,7 +76,8 @@ def assemble_frames(
             precursor_noise_ppm=precursor_noise_ppm,
             mz_noise_fragment=mz_noise_fragment,
             fragment_noise_ppm=fragment_noise_ppm,
-            num_threads=num_threads
+            num_threads=num_threads,
+            fragment=fragment,
         )
 
         if add_real_data_noise:

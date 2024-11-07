@@ -77,6 +77,10 @@ def main():
                         help="Sample peptides from the digested fasta (default: True)")
     parser.set_defaults(sample_peptides=True)
 
+    parser.add_argument("--no_fragmentation", dest="fragment", action="store_false",
+                        help="Do not perform fragmentation (default: True)")
+    parser.set_defaults(fragment=True)
+
     # Peptide digestion arguments
     parser.add_argument(
         "--num_sample_peptides",
@@ -495,6 +499,7 @@ def main():
         num_threads=args.num_threads,
         add_real_data_noise=args.add_real_data_noise,
         reference_noise_intensity_max=args.reference_noise_intensity_max,
+        fragment=args.fragment,
     )
 
 
