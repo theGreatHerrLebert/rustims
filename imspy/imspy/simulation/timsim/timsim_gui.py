@@ -4,6 +4,8 @@ from pathlib import Path
 import qdarkstyle
 
 import toml
+import numpy as np
+from scipy.special import erfc
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QVBoxLayout, QHBoxLayout, QFileDialog, QCheckBox, QSpinBox, QToolButton,
@@ -12,6 +14,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QProcess, QSize
 from PyQt5.QtGui import QFont, QIcon, QPixmap
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+import matplotlib.pyplot as plt
 
 
 # CollapsibleBox class definition
@@ -68,6 +72,68 @@ class CollapsibleBox(QWidget):
 
     def add_widget(self, widget):
         self.content_layout.addWidget(widget)
+
+
+# EMGPlot class definition
+class EMGPlot(FigureCanvas):
+    def __init__(self):
+        self.fig, self.ax = plt.subplots()
+        super().__init__(self.fig)
+        # Fixed mean value at 0
+        self.mean = 0
+        # Default values for parameters (match with your spin boxes)
+        self.std = 1.5  # Corresponds to Mean Std RT
+        self.skewness = 0.3  # Corresponds to Mean Skewness
+        # Variance values for randomness
+        self.std_variance = 0.3  # Corresponds to Variance Std RT
+        self.skewness_variance = 0.1  # Corresponds to Variance Skewness
+        # Number of curves
+        self.N = 25
+        self.x = np.linspace(-20, 20, 1000)
+        self.update_plot()
+
+    def emg_pdf(self, x, mean, std, skewness):
+        lambda_ = 1 / skewness if skewness != 0 else 1e6  # Avoid division by zero
+        exp_component = lambda_ / 2 * np.exp(
+            lambda_ / 2 * (2 * mean + lambda_ * std ** 2 - 2 * x)
+        )
+        erfc_component = erfc(
+            (mean + lambda_ * std ** 2 - x) / (np.sqrt(2) * std)
+        )
+        return exp_component * erfc_component
+
+    def update_plot(self):
+        self.ax.clear()
+        self.ax.set_xlim(-10, 10)
+        for _ in range(self.N):
+            sampled_std = max(np.random.normal(self.std, self.std_variance), 0.01)
+            sampled_skewness = max(
+                np.random.normal(self.skewness, self.skewness_variance), 0.01
+            )
+            y = self.emg_pdf(self.x, self.mean, sampled_std, sampled_skewness)
+            self.ax.plot(self.x, y, alpha=0.5)
+        self.ax.set_title("Exponentially Modified Gaussian Distribution")
+        self.ax.set_xlabel("Retention Time Spread [Seconds]")
+        self.ax.set_ylabel("Intensity")
+        self.draw()
+
+    # Methods to update parameters
+    def set_std(self, value):
+        self.std = value
+        self.update_plot()
+
+    def set_std_variance(self, value):
+        self.std_variance = value
+        self.update_plot()
+
+    def set_skewness(self, value):
+        self.skewness = value
+        self.update_plot()
+
+    def set_skewness_variance(self, value):
+        self.skewness_variance = value
+        self.update_plot()
+
 
 # MainWindow class
 class MainWindow(QMainWindow):
@@ -325,7 +391,8 @@ class MainWindow(QMainWindow):
         self.apply_fragmentation_checkbox.setChecked(True)
         self.apply_fragmentation_info = QLabel()
         self.apply_fragmentation_info.setPixmap(info_icon)
-        self.apply_fragmentation_info.setToolTip("If disabled, quadrupole selection will still be applied but fragmentation will be skipped.")
+        self.apply_fragmentation_info.setToolTip(
+            "If disabled, quadrupole selection will still be applied but fragmentation will be skipped.")
         apply_fragmenation_layout_checkbox.addWidget(self.apply_fragmentation_checkbox)
         apply_fragmenation_layout_checkbox.addWidget(self.apply_fragmentation_info)
         options_layout.addLayout(apply_fragmenation_layout_checkbox)
@@ -624,7 +691,15 @@ class MainWindow(QMainWindow):
     def init_distribution_settings(self):
         info_text = "Adjust the parameters for signal distribution in the simulation, including gradient length and skewness."
         self.distribution_settings_group = CollapsibleBox("Signal Distribution Settings", info_text)
-        layout = self.distribution_settings_group.content_layout
+
+        # Create a horizontal layout to hold settings and plot side by side
+        main_layout = QHBoxLayout()
+
+        # Left vertical layout for settings
+        settings_layout = QVBoxLayout()
+
+        # Right vertical layout for the plot
+        plot_layout = QVBoxLayout()
 
         # Load info icon image
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
@@ -643,7 +718,7 @@ class MainWindow(QMainWindow):
         self.gradient_length_info.setToolTip(
             "Defines the total length of the simulated chromatographic gradient in seconds.")
         gradient_length_layout.addWidget(self.gradient_length_info)
-        layout.addLayout(gradient_length_layout)
+        settings_layout.addLayout(gradient_length_layout)
 
         # Mean Std RT
         mean_std_rt_layout = QHBoxLayout()
@@ -658,7 +733,7 @@ class MainWindow(QMainWindow):
         self.mean_std_rt_info.setPixmap(info_icon)
         self.mean_std_rt_info.setToolTip("The mean standard deviation for retention time, affecting peak widths.")
         mean_std_rt_layout.addWidget(self.mean_std_rt_info)
-        layout.addLayout(mean_std_rt_layout)
+        settings_layout.addLayout(mean_std_rt_layout)
 
         # Variance Std RT
         variance_std_rt_layout = QHBoxLayout()
@@ -674,7 +749,7 @@ class MainWindow(QMainWindow):
         self.variance_std_rt_info.setToolTip(
             "Variance of the standard deviation of retention time, affecting variance of distribution spread.")
         variance_std_rt_layout.addWidget(self.variance_std_rt_info)
-        layout.addLayout(variance_std_rt_layout)
+        settings_layout.addLayout(variance_std_rt_layout)
 
         # Mean Skewness
         mean_skewness_layout = QHBoxLayout()
@@ -690,7 +765,7 @@ class MainWindow(QMainWindow):
         self.mean_skewness_info.setToolTip(
             "Average skewness for retention time distribution, impacting peak asymmetry.")
         mean_skewness_layout.addWidget(self.mean_skewness_info)
-        layout.addLayout(mean_skewness_layout)
+        settings_layout.addLayout(mean_skewness_layout)
 
         # Variance Skewness
         variance_skewness_layout = QHBoxLayout()
@@ -706,7 +781,7 @@ class MainWindow(QMainWindow):
         self.variance_skewness_info.setToolTip(
             "Variance in skewness of retention time distribution, altering peak shapes.")
         variance_skewness_layout.addWidget(self.variance_skewness_info)
-        layout.addLayout(variance_skewness_layout)
+        settings_layout.addLayout(variance_skewness_layout)
 
         # Standard Deviation IM
         std_im_layout = QHBoxLayout()
@@ -723,9 +798,9 @@ class MainWindow(QMainWindow):
         self.std_im_info.setToolTip(
             "Standard deviation in ion mobility, which affects peak width in the mobility dimension.")
         std_im_layout.addWidget(self.std_im_info)
-        layout.addLayout(std_im_layout)
+        settings_layout.addLayout(std_im_layout)
 
-        # Add variance_std_im
+        # Variance Std IM
         variance_std_im_layout = QHBoxLayout()
         self.variance_std_im_label = QLabel("Variance Std IM:")
         self.variance_std_im_spin = QDoubleSpinBox()
@@ -740,8 +815,7 @@ class MainWindow(QMainWindow):
         self.variance_std_im_info.setToolTip(
             "Variance of the standard deviation of ion mobility, affecting distribution spread.")
         variance_std_im_layout.addWidget(self.variance_std_im_info)
-        layout.addLayout(variance_std_im_layout)
-
+        settings_layout.addLayout(variance_std_im_layout)
 
         # Z-Score
         z_score_layout = QHBoxLayout()
@@ -756,7 +830,7 @@ class MainWindow(QMainWindow):
         self.z_score_info.setPixmap(info_icon)
         self.z_score_info.setToolTip("Defines the z-score threshold for filtering data, removing low-signal regions.")
         z_score_layout.addWidget(self.z_score_info)
-        layout.addLayout(z_score_layout)
+        settings_layout.addLayout(z_score_layout)
 
         # Target Percentile
         target_p_layout = QHBoxLayout()
@@ -773,7 +847,7 @@ class MainWindow(QMainWindow):
         self.target_p_info.setToolTip(
             "Specifies the target percentile for retention time, capturing high-density regions.")
         target_p_layout.addWidget(self.target_p_info)
-        layout.addLayout(target_p_layout)
+        settings_layout.addLayout(target_p_layout)
 
         # Sampling Step Size
         sampling_step_size_layout = QHBoxLayout()
@@ -790,7 +864,40 @@ class MainWindow(QMainWindow):
         self.sampling_step_size_info.setToolTip(
             "Sets the step size for data sampling, adjusting resolution and computation time.")
         sampling_step_size_layout.addWidget(self.sampling_step_size_info)
-        layout.addLayout(sampling_step_size_layout)
+        settings_layout.addLayout(sampling_step_size_layout)
+
+        # Add the EMG visualization to the plot layout
+        self.emg_plot = EMGPlot()
+        plot_layout.addWidget(self.emg_plot)
+
+        # Add settings and plot layouts to the main horizontal layout
+        main_layout.addLayout(settings_layout)
+        main_layout.addLayout(plot_layout)
+
+        # Set the main layout to the content layout of the collapsible group
+        self.distribution_settings_group.content_layout.addLayout(main_layout)
+
+        # Connect the spin boxes to the EMGPlot methods
+        self.mean_std_rt_spin.valueChanged.connect(self.update_emg_std)
+        self.variance_std_rt_spin.valueChanged.connect(self.update_emg_std_variance)
+        self.mean_skewness_spin.valueChanged.connect(self.update_emg_skewness)
+        self.variance_skewness_spin.valueChanged.connect(self.update_emg_skewness_variance)
+
+        # Add the distribution settings group to the main layout
+        self.main_layout.addWidget(self.distribution_settings_group)
+
+    # Methods to update EMGPlot parameters
+    def update_emg_std(self, value):
+        self.emg_plot.set_std(value)
+
+    def update_emg_std_variance(self, value):
+        self.emg_plot.set_std_variance(value)
+
+    def update_emg_skewness(self, value):
+        self.emg_plot.set_skewness(value)
+
+    def update_emg_skewness_variance(self, value):
+        self.emg_plot.set_skewness_variance(value)
 
     def init_noise_settings(self):
         info_text = "Configure the noise parameters for the simulation, including adding m/z noise and real data noise."
@@ -1015,7 +1122,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_simulation)
         self.cancel_button.setVisible(False)
 
-    # Placeholder methods for browsing files
+        # Placeholder methods for browsing files
+
     def browse_save_path(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Save Directory")
         if directory:
@@ -1193,7 +1301,7 @@ class MainWindow(QMainWindow):
 
         # Convert the list to strings
         args = [str(arg) for arg in args]
-        
+
         # Ensure no existing process is running before starting a new one
         if self.process and self.process.state() == QProcess.Running:
             self.process.kill()
