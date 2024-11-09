@@ -10,12 +10,160 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QVBoxLayout, QHBoxLayout, QFileDialog, QCheckBox, QSpinBox, QToolButton,
     QDoubleSpinBox, QComboBox, QGroupBox, QScrollArea, QAction, QMessageBox,
-    QTextEdit, QSlider, QGridLayout
+    QTextEdit, QSlider, QGridLayout, QTabWidget
 )
 from PyQt5.QtCore import Qt, QProcess, QSize
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
+
+import vtk
+from vtk.util.numpy_support import numpy_to_vtk
+from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+import matplotlib.pyplot as plt
+
+from imspy.timstof import TimsDatasetDIA
+from imspy.timstof.data import TimsFrame, TimsSlice
+
+# **VTKVisualizer Class**
+class VTKVisualizer(QWidget):
+    def __init__(self, data_path, parent=None):
+        super(VTKVisualizer, self).__init__(parent)
+        self.data_path = data_path
+
+        self.layout = QVBoxLayout(self)
+
+        # VTK Widget
+        self.vtkWidget = QVTKRenderWindowInteractor(self)
+        self.layout.addWidget(self.vtkWidget)
+
+        # Set up the renderer
+        self.renderer = vtk.vtkRenderer()
+        self.vtkWidget.GetRenderWindow().AddRenderer(self.renderer)
+
+        # Load and visualize data
+        self.load_and_visualize_data()
+
+    def load_and_visualize_data(self):
+        # Clear the renderer
+        self.renderer.RemoveAllViewProps()
+
+        # **Load data using TimsDatasetDIA**
+        try:
+            dia_data = TimsDatasetDIA("/media/hd02/data/sim/dia/timsim-gui/plain/TIMSIM-HeLa-G3600-25KP-PLAIN-DIA-FRAGT/TIMSIM-HeLa-G3600-25KP-PLAIN-DIA-FRAGT.d")
+            t_slice = dia_data.get_tims_slice(dia_data.precursor_frames[500:1000]).filter(
+                mz_min=500, mz_max=800, intensity_min=5, mobility_min=0.5, mobility_max=1.1)
+            mz = t_slice.df.mz.values
+            rt = t_slice.df.retention_time.values
+            intensity = t_slice.df.intensity.values
+            im = t_slice.df.mobility.values
+
+            # Proceed with visualization
+            self.visualize_data(rt, im, mz, intensity)
+        except Exception as e:
+            # Handle exceptions (e.g., invalid data path)
+            QMessageBox.warning(self, "Error", f"Failed to load data:\n{e}")
+
+    def visualize_data(self, rt, im, mz, intensity):
+        # Store original min and max values for real axis labeling
+        rt_min, rt_max = rt.min(), rt.max()
+        im_min, im_max = im.min(), im.max()
+        mz_min, mz_max = mz.min(), mz.max()
+
+        # Normalize the dimensions to create a more cubic aspect ratio
+        rt_norm = (rt - rt_min) / (rt_max - rt_min)
+        im_norm = (im - im_min) / (im_max - im_min)
+        mz_norm = (mz - mz_min) / (mz_max - mz_min)
+
+        # Log scale the intensity for visualization
+        log_intensity = np.log10(intensity)
+
+        # Map the intensity values to an inferno color gradient
+        cmap = plt.get_cmap("inferno")
+        norm_log_intensity = (log_intensity - log_intensity.min()) / (log_intensity.max() - log_intensity.min())
+        colors_inferno = (cmap(norm_log_intensity)[:, :3] * 255).astype(np.uint8)
+
+        # Create VTK point cloud
+        mapper = self.create_vtk_point_cloud(rt_norm, im_norm, mz_norm, colors_inferno)
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetOpacity(0.6)  # Set point opacity to 60%
+
+        # Add the point cloud actor to the renderer
+        self.renderer.AddActor(actor)
+
+        # Define bounds for the cube axes (using normalized range)
+        bounds = [0, 1, 0, 1, 0, 1]
+
+        # Add cube axes around the data points
+        cube_axes_actor = self.create_cube_axes(bounds, rt_min, rt_max, im_min, im_max, mz_min, mz_max)
+        self.renderer.AddActor(cube_axes_actor)
+
+        # Set light gray background
+        self.renderer.SetBackground(0.9, 0.9, 0.9)
+
+        # Center the camera on the data
+        self.renderer.ResetCamera()
+
+        # Initialize the interactor
+        self.vtkWidget.GetRenderWindow().Render()
+
+    def create_vtk_point_cloud(self, rt, im, mz, colors_inferno):
+        # Create a VTK Points object
+        points = vtk.vtkPoints()
+        vtk_points_array = numpy_to_vtk(np.column_stack((rt, im, mz)).astype(np.float32), deep=True)
+        points.SetData(vtk_points_array)
+
+        # Convert the inferno colors to VTK array and add as colors
+        vtk_colors = numpy_to_vtk(colors_inferno, deep=True, array_type=vtk.VTK_UNSIGNED_CHAR)
+        vtk_colors.SetName("Colors")
+
+        # Create a PolyData object to hold points and colors
+        point_cloud = vtk.vtkPolyData()
+        point_cloud.SetPoints(points)
+        point_cloud.GetPointData().SetScalars(vtk_colors)  # Set the colors array for the mapper to use
+
+        # Set up the mapper for rendering points
+        mapper = vtk.vtkGlyph3DMapper()
+        mapper.SetInputData(point_cloud)
+        mapper.ScalarVisibilityOn()  # Enable scalar coloring
+        mapper.SetColorModeToDefault()  # Use the colors from the data
+
+        # Define the glyph shape (e.g., spheres)
+        glyph = vtk.vtkSphereSource()
+        glyph.SetRadius(0.001)  # Reduced size for less overplotting
+        mapper.SetSourceConnection(glyph.GetOutputPort())
+
+        return mapper
+
+    def create_cube_axes(self, bounds, rt_min, rt_max, im_min, im_max, mz_min, mz_max):
+        axes = vtk.vtkCubeAxesActor()
+        axes.SetBounds(bounds)
+        axes.SetCamera(self.renderer.GetActiveCamera())
+
+        # Set axis labels with real values
+        axes.SetXTitle("Retention Time (s)")
+        axes.SetYTitle("Ion Mobility (1/K0)")
+        axes.SetZTitle("m/z")
+        axes.SetXUnits(f"[{rt_min:.1f} - {rt_max:.1f}]")
+        axes.SetYUnits(f"[{im_min:.1f} - {im_max:.1f}]")
+        axes.SetZUnits(f"[{mz_min:.1f} - {mz_max:.1f}]")
+
+        # Configure properties
+        axes.GetTitleTextProperty(0).SetColor(0, 0, 0)  # X-axis title color
+        axes.GetTitleTextProperty(1).SetColor(0, 0, 0)  # Y-axis title color
+        axes.GetTitleTextProperty(2).SetColor(0, 0, 0)  # Z-axis title color
+        axes.GetLabelTextProperty(0).SetColor(0, 0, 0)  # X-axis labels color
+        axes.GetLabelTextProperty(1).SetColor(0, 0, 0)  # Y-axis labels color
+        axes.GetLabelTextProperty(2).SetColor(0, 0, 0)  # Z-axis labels color
+
+        # Enable grid lines for visual reference
+        axes.DrawXGridlinesOn()
+        axes.DrawYGridlinesOn()
+        axes.DrawZGridlinesOn()
+        axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
+
+        return axes
 
 
 # CollapsibleBox class definition
@@ -155,10 +303,21 @@ class MainWindow(QMainWindow):
         # Initialize the menu bar
         self.init_menu_bar()
 
-        # Central widget and main layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        self.main_layout = QVBoxLayout(central_widget)
+        # **Create the tab widget**
+        self.tab_widget = QTabWidget()
+        self.setCentralWidget(self.tab_widget)
+
+        # Create tabs
+        self.create_main_tab()
+        # self.create_plot_tab()
+
+        # Initialize the process variable
+        self.process = None
+
+    def create_main_tab(self):
+        # **Create the main tab widget**
+        main_tab = QWidget()
+        self.main_layout = QVBoxLayout(main_tab)
 
         # Initialize sections
         self.init_main_settings()
@@ -203,14 +362,64 @@ class MainWindow(QMainWindow):
         # Add the centered logo layout to the main layout
         self.main_layout.addLayout(logo_layout)
 
-        # Add scroll area if needed
+        # **Add scroll area if needed**
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(central_widget)
-        self.setCentralWidget(scroll)
+        scroll.setWidget(main_tab)
 
-        # Initialize the process variable
-        self.process = None
+        # **Add the scroll area to the first tab**
+        self.tab_widget.addTab(scroll, "Main Settings")
+
+    def create_plot_tab(self):
+        # **Create the second tab for plotting**
+        plot_tab = QWidget()
+        plot_layout = QVBoxLayout(plot_tab)
+
+        # **Data Path Input**
+        data_path_layout = QHBoxLayout()
+        self.data_path_label = QLabel("Data Path:")
+        self.data_path_input = QLineEdit()
+        self.data_path_browse = QPushButton("Browse")
+        self.data_path_browse.clicked.connect(self.browse_data_path)
+
+        data_path_layout.addWidget(self.data_path_label)
+        data_path_layout.addWidget(self.data_path_input)
+        data_path_layout.addWidget(self.data_path_browse)
+
+        plot_layout.addLayout(data_path_layout)
+
+        # **Set default data path to save path from simulator tab**
+        self.data_path_input.setText(self.path_input.text())
+
+        # **Add VTK Visualizer**
+        self.vtk_visualizer = VTKVisualizer(self.data_path_input.text())
+        plot_layout.addWidget(self.vtk_visualizer)
+
+        # **Update visualization when data path changes**
+        self.data_path_input.textChanged.connect(self.update_visualization)
+        self.path_input.textChanged.connect(self.update_data_path_from_simulator)
+
+        # **Add the plot tab to the tab widget**
+        self.tab_widget.addTab(plot_tab, "Plotting")
+
+    def browse_data_path(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Data Directory")
+        if directory:
+            self.data_path_input.setText(directory)
+
+    def update_visualization(self):
+        # Remove the old visualizer widget
+        self.vtk_visualizer.setParent(None)
+        # Create a new visualizer with the updated path
+        self.vtk_visualizer = VTKVisualizer(self.data_path_input.text())
+        # Add it back to the layout
+        plot_tab = self.tab_widget.widget(1)
+        plot_layout = plot_tab.layout()
+        plot_layout.addWidget(self.vtk_visualizer)
+
+    def update_data_path_from_simulator(self):
+        # Update the data path in the plot tab when the simulator save path changes
+        self.data_path_input.setText(self.path_input.text())
 
     def init_menu_bar(self):
         menubar = self.menuBar()
@@ -725,7 +934,7 @@ class MainWindow(QMainWindow):
         self.mean_std_rt_label = QLabel("Mean Std RT:")
         self.mean_std_rt_spin = QDoubleSpinBox()
         self.mean_std_rt_spin.setRange(0.1, 10)
-        self.mean_std_rt_spin.setValue(1.5)
+        self.mean_std_rt_spin.setValue(1.0)
         mean_std_rt_layout.addWidget(self.mean_std_rt_label)
         mean_std_rt_layout.addWidget(self.mean_std_rt_spin)
 
@@ -740,7 +949,7 @@ class MainWindow(QMainWindow):
         self.variance_std_rt_label = QLabel("Variance Std RT:")
         self.variance_std_rt_spin = QDoubleSpinBox()
         self.variance_std_rt_spin.setRange(0, 5)
-        self.variance_std_rt_spin.setValue(0.3)
+        self.variance_std_rt_spin.setValue(0.1)
         variance_std_rt_layout.addWidget(self.variance_std_rt_label)
         variance_std_rt_layout.addWidget(self.variance_std_rt_spin)
 
@@ -755,8 +964,8 @@ class MainWindow(QMainWindow):
         mean_skewness_layout = QHBoxLayout()
         self.mean_skewness_label = QLabel("Mean Skewness:")
         self.mean_skewness_spin = QDoubleSpinBox()
-        self.mean_skewness_spin.setRange(-5, 5)
-        self.mean_skewness_spin.setValue(0.3)
+        self.mean_skewness_spin.setRange(0, 5)
+        self.mean_skewness_spin.setValue(1.5)
         mean_skewness_layout.addWidget(self.mean_skewness_label)
         mean_skewness_layout.addWidget(self.mean_skewness_spin)
 
@@ -959,7 +1168,7 @@ class MainWindow(QMainWindow):
         self.fragment_noise_ppm_label = QLabel("Fragment Noise PPM:")
         self.fragment_noise_ppm_spin = QDoubleSpinBox()
         self.fragment_noise_ppm_spin.setRange(0, 100)
-        self.fragment_noise_ppm_spin.setValue(10.0)
+        self.fragment_noise_ppm_spin.setValue(5.0)
         fragment_noise_ppm_layout.addWidget(self.fragment_noise_ppm_label)
         fragment_noise_ppm_layout.addWidget(self.fragment_noise_ppm_spin)
         self.fragment_noise_ppm_info = QLabel()

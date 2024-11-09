@@ -12,9 +12,9 @@ def sample_parameters_rejection(sigma_mean, sigma_variance, lambda_mean, lambda_
     # Re-sample any negative values
     while any(sigmas < 0):
         sigmas[sigmas < 0] = np.random.normal(loc=sigma_mean, scale=np.sqrt(sigma_variance), size=np.sum(sigmas < 0))
-    while any(lambdas <= 0.05):
-        lambdas[lambdas <= 0.05] = np.random.normal(loc=lambda_mean, scale=np.sqrt(lambda_variance),
-                                                    size=np.sum(lambdas < 0.05))
+    while any(lambdas <= 0.01):
+        lambdas[lambdas <= 0.01] = np.random.normal(loc=lambda_mean, scale=np.sqrt(lambda_variance),
+                                                    size=np.sum(lambdas < 0.01))
 
     return sigmas, lambdas
 

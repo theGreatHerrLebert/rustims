@@ -135,7 +135,7 @@ pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, la
 pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, lower_start: f64, upper_start: f64, n_steps: Option<usize>) -> (f64, f64) {
     assert!(0.0 <= target && target <= 1.0, "target must be in [0, 1]");
 
-    let lower_initial = mu - lower_start * sigma;
+    let lower_initial = mu - lower_start * sigma - 2.0;
     let upper_initial = mu + upper_start * sigma;
 
     let steps = ((upper_initial - lower_initial) / step_size).round() as usize;
