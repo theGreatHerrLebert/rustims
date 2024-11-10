@@ -592,22 +592,79 @@ impl TimsData for TimsDataLoader {
     }
 }
 
-pub struct SimpleIndexConverter;
+pub struct SimpleIndexConverter {
+    pub tof_intercept: f64,
+    pub tof_slope: f64,
+    pub scan_intercept: f64,
+    pub scan_slope: f64,  
+}
+
+impl SimpleIndexConverter {
+    pub fn from_boundaries(
+        mz_min: f64,
+        mz_max: f64,
+        tof_max_index: u32,
+        im_min: f64,
+        im_max: f64,
+        scan_max_index: u32,
+    ) -> Self {
+        let tof_intercept: f64 = mz_min.sqrt();
+        let tof_slope: f64 =
+            (mz_max.sqrt() - tof_intercept) / tof_max_index as f64;
+        
+        let scan_intercept: f64 = im_max;
+        let scan_slope: f64 = (im_min - scan_intercept) / scan_max_index as f64;
+        Self {
+            tof_intercept,
+            tof_slope,
+            scan_intercept,
+            scan_slope,
+        }
+    }
+}
 
 impl IndexConverter for SimpleIndexConverter {
     fn tof_to_mz(&self, _frame_id: u32, _tof_values: &Vec<u32>) -> Vec<f64> {
-        todo!()
+        let mut mz_values: Vec<f64> = Vec::new();
+        mz_values.resize(_tof_values.len(), 0.0);
+        
+        for (i, &val) in _tof_values.iter().enumerate() {
+            mz_values[i] = (self.tof_intercept + self.tof_slope * val as f64).powi(2);
+        }
+        
+        mz_values
     }
 
     fn mz_to_tof(&self, _frame_id: u32, _mz_values: &Vec<f64>) -> Vec<u32> {
-        todo!()
+        let mut tof_values: Vec<u32> = Vec::new();
+        tof_values.resize(_mz_values.len(), 0);
+        
+        for (i, &val) in _mz_values.iter().enumerate() {
+            tof_values[i] = ((val.sqrt() - self.tof_intercept) / self.tof_slope) as u32;
+        }
+        
+        tof_values
     }
 
     fn scan_to_inverse_mobility(&self, _frame_id: u32, _scan_values: &Vec<u32>) -> Vec<f64> {
-        todo!()
+        let mut inv_mobility_values: Vec<f64> = Vec::new();
+        inv_mobility_values.resize(_scan_values.len(), 0.0);
+        
+        for (i, &val) in _scan_values.iter().enumerate() {
+            inv_mobility_values[i] = self.scan_intercept + self.scan_slope * val as f64;
+        }
+        
+        inv_mobility_values
     }
 
     fn inverse_mobility_to_scan(&self, _frame_id: u32, _inverse_mobility_values: &Vec<f64>) -> Vec<u32> {
-        todo!()
+        let mut scan_values: Vec<u32> = Vec::new();
+        scan_values.resize(_inverse_mobility_values.len(), 0);
+        
+        for (i, &val) in _inverse_mobility_values.iter().enumerate() {
+            scan_values[i] = ((val - self.scan_intercept) / self.scan_slope) as u32;
+        }
+        
+        scan_values
     }
 }
