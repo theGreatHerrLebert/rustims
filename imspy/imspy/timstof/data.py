@@ -71,10 +71,6 @@ class TimsDataset(ABC):
         self.binary_path = None
         self.use_bruker_sdk = use_bruker_sdk
 
-        if not self.use_bruker_sdk:
-            print("Warning: Not using bruker SDK is currently experimental, tof to mz and scan to inverse mobility "
-                    "conversions may not work as expected.")
-
         self.data_path = data_path
         if data_path[-1] == "/":
             data_path = data_path[:-1]
