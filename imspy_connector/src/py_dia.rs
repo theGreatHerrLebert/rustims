@@ -13,8 +13,8 @@ pub struct PyTimsDatasetDIA {
 #[pymethods]
 impl PyTimsDatasetDIA {
     #[new]
-    pub fn new(data_path: &str, bruker_lib_path: &str, in_memory: bool) -> Self {
-        let dataset = TimsDatasetDIA::new(bruker_lib_path, data_path, in_memory);
+    pub fn new(data_path: &str, bruker_lib_path: &str, in_memory: bool, use_bruker_sdk: bool) -> Self {
+        let dataset = TimsDatasetDIA::new(bruker_lib_path, data_path, in_memory, use_bruker_sdk);
         PyTimsDatasetDIA { inner: dataset }
     }
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {

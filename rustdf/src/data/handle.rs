@@ -516,18 +516,27 @@ pub enum TimsDataLoader {
 }
 
 impl TimsDataLoader {
-    pub fn new_lazy(bruker_lib_path: &str, data_path: &str) -> Self {
+    pub fn new_lazy(bruker_lib_path: &str, data_path: &str, use_bruker_sdk: bool, scan_max_index: u32, im_lower: f64, im_upper: f64, tof_max_index: u32, mz_lower: f64, mz_upper: f64) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
-        let index_converter = TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path));
+        
+        let index_converter = match use_bruker_sdk {
+            true => TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)),
+            false => TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(mz_lower, mz_upper, tof_max_index, im_lower, im_upper, scan_max_index))
+        };
+        
         TimsDataLoader::Lazy(TimsLazyLoder {
             raw_data_layout,
             index_converter
         })
     }
 
-    pub fn new_in_memory(bruker_lib_path: &str, data_path: &str) -> Self {
+    pub fn new_in_memory(bruker_lib_path: &str, data_path: &str, use_bruker_sdk: bool, scan_max_index: u32, im_lower: f64, im_upper: f64, tof_max_index: u32, mz_lower: f64, mz_upper: f64) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
-        let index_converter = TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path));
+        
+        let index_converter = match use_bruker_sdk {
+            true => TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)),
+            false => TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(mz_lower, mz_upper, tof_max_index, im_lower, im_upper, scan_max_index))
+        };
 
         let mut file_path = PathBuf::from(data_path);
         file_path.push("analysis.tdf_bin");

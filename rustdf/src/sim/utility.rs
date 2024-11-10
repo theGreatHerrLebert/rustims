@@ -4,17 +4,6 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use serde_json::to_string;
 
-trait RoundDecimals {
-    fn round_decimals(&self, num_decimals: u32) -> f64;
-}
-
-impl RoundDecimals for f64 {
-    fn round_decimals(&self, num_decimals: u32) -> f64 {
-        let multiplier = 10f64.powi(num_decimals as i32);
-        (self * multiplier).round() / multiplier
-    }
-}
-
 /// helper function to reshape the flat prosit predicted intensity array into a 3D array where:
 /// 1st dimension: 29 rows for every potential ion since prosit allows precursor sequences up to 30 amino acids
 /// 2nd dimension: 2 columns for B and Y ions

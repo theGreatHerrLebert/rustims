@@ -143,7 +143,7 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
     let conn = Connection::open(db_path)?;
 
     // execute the query
-    let frames_rows: Result<Vec<GlobalMetaInternal>, _> = conn.prepare("SELECT * FROM GlobalMetaData")?.query_map([], |row| {
+    let frames_rows: Result<Vec<GlobalMetaInternal>, _> = conn.prepare("SELECT * FROM GlobalMetadata")?.query_map([], |row| {
         Ok(GlobalMetaInternal {
             key: row.get(0)?,
             value: row.get(1)?,
