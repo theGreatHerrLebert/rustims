@@ -476,7 +476,7 @@ def main():
         if args.verbose:
             print("loading PASEF fragments ...")
 
-        fragments = dataset.get_pasef_fragments(num_threads=args.num_threads)
+        fragments = dataset.get_pasef_fragments(num_threads=args.num_threads if not args.bruker_sdk else 1)
 
         if args.verbose:
             print("aggregating re-fragmented PASEF frames ...")
