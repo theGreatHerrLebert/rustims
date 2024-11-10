@@ -69,6 +69,7 @@ class TimsDataset(ABC):
         """
         self.__dataset = None
         self.binary_path = None
+        self.use_bruker_sdk = use_bruker_sdk
 
         self.data_path = data_path
         if data_path[-1] == "/":
@@ -92,6 +93,7 @@ class TimsDataset(ABC):
         if current_os == "Darwin" and use_bruker_sdk:
             print("Warning: MacOS does not support bruker SDK, setting use_bruker_sdk to False.")
             use_bruker_sdk = False
+            self.use_bruker_sdk = False
 
         if not use_bruker_sdk:
             self.__dataset = ims.PyTimsDataset(self.data_path, "NO_SDK", in_memory, use_bruker_sdk)

@@ -280,6 +280,15 @@ def main():
     )
     parser.set_defaults(in_memory=False)
 
+    # dont use bruker sdk
+    parser.add_argument(
+        "--no_bruker_sdk",
+        dest="bruker_sdk",
+        action="store_false",
+        help="Do not use bruker sdk"
+    )
+    parser.set_defaults(bruker_sdk=True)
+
     # rt refinement settings
     parser.add_argument("--refine_rt", dest="refine_rt", action="store_true", help="Refine retention time")
     parser.set_defaults(refine_rt=False)
@@ -459,7 +468,7 @@ def main():
             print(f"processing {p + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
-        dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory)
+        dataset = TimsDatasetDDA(str(path), in_memory=args.in_memory, use_bruker_sdk=args.bruker_sdk)
 
         rt_min = dataset.meta_data.Time.min() / 60.0
         rt_max = dataset.meta_data.Time.max() / 60.0
@@ -467,7 +476,7 @@ def main():
         if args.verbose:
             print("loading PASEF fragments ...")
 
-        fragments = dataset.get_pasef_fragments(num_threads=1)
+        fragments = dataset.get_pasef_fragments(num_threads=args.num_threads)
 
         if args.verbose:
             print("aggregating re-fragmented PASEF frames ...")
