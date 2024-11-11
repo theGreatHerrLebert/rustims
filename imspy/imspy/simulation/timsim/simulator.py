@@ -246,8 +246,22 @@ def main():
         help="Path to existing simulation to use for frame distributions",
     )
 
+    # dont use bruker sdk
+    parser.add_argument(
+        "--no_bruker_sdk",
+        action="store_false",
+        dest="use_bruker_sdk",
+    )
+    parser.set_defaults(use_bruker_sdk=True)
+
+
     # Parse the arguments
     args = parser.parse_args()
+
+    # check if current system the simulator runs on is MacOS
+    if os.uname().sysname == 'Darwin':
+        print("Warning: Using bruker sdk on MacOS is not supported, setting use_bruker_sdk to False.")
+        args.use_bruker_sdk = False
 
     # Convert arguments to a dictionary
     args_dict = vars(args)
