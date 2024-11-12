@@ -68,7 +68,8 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         """
 
         if self.use_bruker_sdk:
-            warnings.warn("Using multiple threads is currently not supported when using Bruker SDK.")
+            warnings.warn("Using multiple threads is currently not supported when using Bruker SDK, "
+                            "setting num_threads to 1.")
             num_threads = 1
 
         pasef_fragments = [FragmentDDA.from_py_ptr(fragment)
