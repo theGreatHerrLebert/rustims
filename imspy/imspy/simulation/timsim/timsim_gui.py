@@ -561,6 +561,21 @@ class MainWindow(QMainWindow):
         sample_layout_checkbox.addWidget(self.sample_peptides_info)
         options_layout.addLayout(sample_layout_checkbox)
 
+        # Sample Peptides Seed numeric
+        sample_seed_layout = QHBoxLayout()
+        self.sample_seed_label = QLabel("Sample Seed:")
+        self.sample_seed_spin = QSpinBox()
+        self.sample_seed_spin.setRange(0, 1000000)
+        self.sample_seed_spin.setValue(41)
+        self.sample_seed_info = QLabel()
+        self.sample_seed_info.setPixmap(info_icon)
+        self.sample_seed_info.setToolTip("Set the seed for the random peptide sampling.")
+
+        sample_seed_layout.addWidget(self.sample_seed_label)
+        sample_seed_layout.addWidget(self.sample_seed_spin)
+        sample_seed_layout.addWidget(self.sample_seed_info)
+        options_layout.addLayout(sample_seed_layout)
+
         # Generate Decoys
         decoys_layout_checkbox = QHBoxLayout()
         self.add_decoys_checkbox = QCheckBox("Generate Decoys")
@@ -1372,6 +1387,7 @@ class MainWindow(QMainWindow):
         use_reference_layout = self.use_reference_layout_checkbox.isChecked()
         reference_in_memory = self.reference_in_memory_checkbox.isChecked()
         sample_peptides = self.sample_peptides_checkbox.isChecked()
+        sample_seed = self.sample_seed_spin.value()
         add_decoys = self.add_decoys_checkbox.isChecked()
         proteome_mix = self.proteome_mix_checkbox.isChecked()
         silent_mode = self.silent_checkbox.isChecked()
@@ -1444,6 +1460,7 @@ class MainWindow(QMainWindow):
             "--name", experiment_name,
             "--acquisition_type", acquisition_type,
             "--num_sample_peptides", str(num_sample_peptides),
+            "--sample_seed", str(sample_seed),
             "--missed_cleavages", str(missed_cleavages),
             "--min_len", str(min_len),
             "--max_len", str(max_len),
@@ -1633,6 +1650,7 @@ class MainWindow(QMainWindow):
             'use_reference_layout': self.use_reference_layout_checkbox.isChecked(),
             'reference_in_memory': self.reference_in_memory_checkbox.isChecked(),
             'sample_peptides': self.sample_peptides_checkbox.isChecked(),
+            'sample_seed': self.sample_seed_spin.value(),
             'add_decoys': self.add_decoys_checkbox.isChecked(),
             'proteome_mix': self.proteome_mix_checkbox.isChecked(),
             'silent_mode': self.silent_checkbox.isChecked(),
@@ -1722,6 +1740,7 @@ class MainWindow(QMainWindow):
         self.use_reference_layout_checkbox.setChecked(main_settings.get('use_reference_layout', True))
         self.reference_in_memory_checkbox.setChecked(main_settings.get('reference_in_memory', False))
         self.sample_peptides_checkbox.setChecked(main_settings.get('sample_peptides', True))
+        self.sample_seed_spin.setValue(main_settings.get('sample_seed', 41))
         self.add_decoys_checkbox.setChecked(main_settings.get('add_decoys', False))
         self.proteome_mix_checkbox.setChecked(main_settings.get('proteome_mix', False))
         self.silent_checkbox.setChecked(main_settings.get('silent_mode', False))

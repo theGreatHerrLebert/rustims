@@ -76,6 +76,7 @@ def main():
     parser.add_argument("--no_peptide_sampling", dest="sample_peptides", action="store_false",
                         help="Sample peptides from the digested fasta (default: True)")
     parser.set_defaults(sample_peptides=True)
+    parser.add_argument("--sample_seed", type=int, default=41, help="Seed for peptide sampling (default: 41)")
 
     parser.add_argument("--no_fragmentation", dest="fragment", action="store_false",
                         help="Do not perform fragmentation (default: True)")
