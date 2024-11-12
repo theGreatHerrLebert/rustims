@@ -70,6 +70,10 @@ class TimsDataset(ABC):
         """
         self.__dataset = None
         self.binary_path = None
+        if not use_bruker_sdk:
+            warnings.warn("Warning: SDK free data read is still experimental, expect higher mass errors and inverse "
+                            "mobility errors.")
+
         self.use_bruker_sdk = use_bruker_sdk
 
         self.data_path = data_path
