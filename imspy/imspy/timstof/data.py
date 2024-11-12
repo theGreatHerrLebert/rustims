@@ -17,6 +17,7 @@ from imspy.timstof.slice import TimsSlice
 
 import imspy_connector
 ims = imspy_connector.py_dataset
+import warnings
 
 
 class AcquisitionMode(RustWrapperObject):
@@ -91,7 +92,7 @@ class TimsDataset(ABC):
 
         # if use_bruker_sdk is True on MacOS, warn the user and set it to False
         if current_os == "Darwin" and use_bruker_sdk:
-            print("Warning: MacOS does not support bruker SDK, setting use_bruker_sdk to False.")
+            warnings.warn("Warning: MacOS does not support bruker SDK, setting use_bruker_sdk to False.")
             use_bruker_sdk = False
             self.use_bruker_sdk = False
 

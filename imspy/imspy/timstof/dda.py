@@ -7,6 +7,7 @@ from imspy.timstof.frame import TimsFrame
 
 import imspy_connector
 ims = imspy_connector.py_dda
+import warnings
 
 
 class TimsDatasetDDA(TimsDataset, RustWrapperObject):
@@ -65,6 +66,11 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         Returns:
             List[FragmentDDA]: List of PASEF fragments.
         """
+
+        if self.use_bruker_sdk:
+            warnings.warn("Using multiple threads is currently not supported when using Bruker SDK.")
+            num_threads = 1
+
         pasef_fragments = [FragmentDDA.from_py_ptr(fragment)
                            for fragment in self.__dataset.get_pasef_fragments(num_threads)]
 
