@@ -110,13 +110,13 @@ def main():
     script_dir = Path(__file__).parent
 
     # Default configs modification configs path
-    default_config_path = script_dir / "configs" / "modifications.toml"
+    default_mods_config_path = script_dir / "configs" / "modifications.toml"
 
     # Optional argument for path to the configuration file
     parser.add_argument(
-        "--config",
+        "--modifications_config",
         type=str,
-        default=default_config_path,
+        default=default_mods_config_path,
         help="Path to the configuration file (TOML format). Default: configs/modifications.toml"
     )
 
@@ -282,7 +282,7 @@ def main():
     args = parser.parse_args()
 
     # Load the configuration from the specified file
-    config = load_config(args.config)
+    config = load_config(args.modifications_config)
 
     # Access the modifications from the configs
     variable_modifications = config.get('variable_modifications', { "M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"] })

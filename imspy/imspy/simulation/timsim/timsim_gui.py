@@ -747,6 +747,14 @@ class MainWindow(QMainWindow):
             "Residues where cleavage is restricted, e.g., 'P' to prevent cleavage after proline."
         )
 
+        # Specify toml config file for Amino Acid modifications
+        self.amino_acid_modifications_input = QLineEdit()
+        add_setting_with_info(
+            "Amino Acid Modifications:",
+            self.amino_acid_modifications_input,
+            "Specify a TOML file for amino acid modifications."
+        )
+
         # Add the updated collapsible group to the main layout
         self.main_layout.addWidget(self.peptide_digestion_group)
 
@@ -1399,6 +1407,7 @@ class MainWindow(QMainWindow):
         max_len = self.max_len_spin.value()
         cleave_at = self.cleave_at_input.text()
         restrict = self.restrict_input.text()
+        modifications = self.modifications_input.text()
 
         intensity_mean = 10 ** self.intensity_mean_slider.value()
         intensity_min = 10 ** self.intensity_min_slider.value()
@@ -1524,6 +1533,10 @@ class MainWindow(QMainWindow):
             args.append("--from_existing")
         if not apply_fragmentation:
             args.append("--no_fragmentation")
+
+        # check if modifications are provided by checking if the input string is empty
+        if modifications:
+            args.extend(["--modifications", modifications])
 
         # Convert the list to strings
         args = [str(arg) for arg in args]
