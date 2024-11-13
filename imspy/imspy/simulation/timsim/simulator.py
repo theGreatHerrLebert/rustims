@@ -3,6 +3,8 @@ import argparse
 import time
 import pandas as pd
 
+import toml
+
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
@@ -40,6 +42,12 @@ if gpus:
     except RuntimeError as e:
         # Virtual devices must be set before GPUs have been initialized
         print(e)
+
+# helper function to load configuration of modifications from a TOML file
+def load_config(config_path):
+    with open(config_path, 'r') as config_file:
+        config = toml.load(config_file)
+    return config
 
 
 def main():
@@ -97,6 +105,20 @@ def main():
     parser.add_argument("--add_decoys", dest="decoys", action="store_true",
                         help="Generate decoys (default: False)")
     parser.set_defaults(decoys=False)
+
+    # Path to the script directory
+    script_dir = Path(__file__).parent
+
+    # Default configs modification configs path
+    default_config_path = script_dir / "configs" / "modifications.toml"
+
+    # Optional argument for path to the configuration file
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=default_config_path,
+        help="Path to the configuration file (TOML format). Default: configs/modifications.toml"
+    )
 
     # Peptide intensities
     parser.add_argument("--intensity_mean", type=float, default=1e7, help="Mean peptide intensity (default: 1e6)")
@@ -258,6 +280,13 @@ def main():
 
     # Parse the arguments
     args = parser.parse_args()
+
+    # Load the configuration from the specified file
+    config = load_config(args.config)
+
+    # Access the modifications from the configs
+    variable_modifications = config.get('variable_modifications', { "M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"] })
+    static_modifications = config.get('static_modifications', {"C": "[UNIMOD:4]"})
 
     # check if current system the simulator runs on is MacOS
     if os.uname().sysname == 'Darwin':

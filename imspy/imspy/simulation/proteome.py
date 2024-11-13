@@ -16,7 +16,10 @@ class PeptideDigest:
                  restrict: str = 'P',
                  generate_decoys: bool = False,
                  c_terminal: bool = True,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 variable_mods: dict[str, list[str]] = { "M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"] },
+                 static_mods: dict[str, str] = {"C": "[UNIMOD:4]"}
+                 ):
 
         self.verbose = verbose
         self.peptides = None
@@ -50,8 +53,8 @@ class PeptideDigest:
         sage_config = SageSearchConfiguration(
             fasta=fasta,
             enzyme_builder=enzyme_builder,
-            static_mods={"C": "[UNIMOD:4]"},
-            variable_mods={"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
+            static_mods=static_mods,
+            variable_mods=variable_mods,
             generate_decoys=self.generate_decoys,
             bucket_size=int(np.power(2, 6))
         )

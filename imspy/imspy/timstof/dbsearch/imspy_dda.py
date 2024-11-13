@@ -102,7 +102,7 @@ def main():
     # Path to the script directory
     script_dir = Path(__file__).parent
 
-    # Default config modification config path
+    # Default configs modification configs path
     default_config_path = script_dir / "configs" / "modifications.toml"
 
     # Optional argument for path to the configuration file
@@ -307,7 +307,7 @@ def main():
     # Load the configuration from the specified file
     config = load_config(args.config)
 
-    # Access the modifications from the config
+    # Access the modifications from the configs
     variable_modifications = config.get('variable_modifications', {})
     static_modifications = config.get('static_modifications', {})
 
