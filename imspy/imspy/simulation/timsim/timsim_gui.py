@@ -747,12 +747,14 @@ class MainWindow(QMainWindow):
             "Residues where cleavage is restricted, e.g., 'P' to prevent cleavage after proline."
         )
 
-        # Specify toml config file for Amino Acid modifications
+        # Specify toml config file for Amino Acid modifications, needs to be a PATH that can be chosen by the user
         self.amino_acid_modifications_input = QLineEdit()
+        self.amino_acid_modifications_browse = QPushButton("Browse")
+        self.amino_acid_modifications_browse.clicked.connect(self.browse_amino_acid_modifications)
         add_setting_with_info(
             "Amino Acid Modifications:",
             self.amino_acid_modifications_input,
-            "Specify a TOML file for amino acid modifications."
+            "Specify a TOML file containing amino acid modifications for peptides."
         )
 
         # Add the updated collapsible group to the main layout
