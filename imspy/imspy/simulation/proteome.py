@@ -51,7 +51,7 @@ class PeptideDigest:
             fasta=fasta,
             enzyme_builder=enzyme_builder,
             static_mods={"C": "[UNIMOD:4]"},
-            variable_mods={"M": ["[UNIMOD:35]"]},
+            variable_mods={"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
             generate_decoys=self.generate_decoys,
             bucket_size=int(np.power(2, 6))
         )
