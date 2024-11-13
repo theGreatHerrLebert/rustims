@@ -1536,7 +1536,7 @@ class MainWindow(QMainWindow):
 
         # check if modifications are provided by checking if the input string is empty
         if modifications:
-            args.extend(["--modifications", modifications])
+            args.extend(["--modifications_config", modifications])
 
         # Convert the list to strings
         args = [str(arg) for arg in args]
