@@ -1143,7 +1143,7 @@ class MainWindow(QMainWindow):
 
     def init_noise_settings(self):
         info_text = "Configure the noise parameters for the simulation, including adding m/z noise and real data noise."
-        self.noise_settings_group = CollapsibleBox("Noise Settings", info_text)
+        self.noise_settings_group = CollapsibleBox("Noise Settings / Signal Downsampling", info_text)
         layout = self.noise_settings_group.content_layout
 
         # Load info icon image
