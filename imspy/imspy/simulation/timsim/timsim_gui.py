@@ -1671,6 +1671,7 @@ class MainWindow(QMainWindow):
         )
         if file_path:
             QMessageBox.information(self, "Success", "Modifications loaded successfully.")
+            self.mods_input.setText(file_path)
         else:
             QMessageBox.warning(self, "Error", f"Failed to load modifications file.")
 
