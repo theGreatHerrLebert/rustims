@@ -285,11 +285,9 @@ def main():
     # Load the configuration from the specified file
     mod_config = load_config(args.modifications_config)
 
-    print(f"Using modifications configuration from {args.modifications_config}")
-
     # Access the modifications from the configs
-    variable_modifications = mod_config.get('variable_modifications', { "M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"] })
-    static_modifications = mod_config.get('static_modifications', {"C": "[UNIMOD:4]"})
+    variable_modifications = mod_config.get('variable_modifications', {})
+    static_modifications = mod_config.get('static_modifications', {})
 
     if args.verbose:
         print(f"Using variable modifications: {variable_modifications}")
