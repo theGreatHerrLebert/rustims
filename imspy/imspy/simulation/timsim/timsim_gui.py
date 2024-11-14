@@ -747,15 +747,23 @@ class MainWindow(QMainWindow):
             "Residues where cleavage is restricted, e.g., 'P' to prevent cleavage after proline."
         )
 
-        # Specify toml config file for Amino Acid modifications, needs to be a PATH that can be chosen by the user
-        self.amino_acid_modifications_input = QLineEdit()
-        self.amino_acid_modifications_browse = QPushButton("Browse")
-        self.amino_acid_modifications_browse.clicked.connect(self.browse_amino_acid_modifications)
-        add_setting_with_info(
-            "Amino Acid Modifications:",
-            self.amino_acid_modifications_input,
-            "Specify a TOML file containing amino acid modifications for peptides."
-        )
+        # Specify toml config file for Amino Acid modifications, needs to be a PATH that can be chosen by the user, and the path needs to be displayed in the GUI
+        # Reference Dataset Path
+        mods_layout = QHBoxLayout()
+        self.mods_label = QLabel("Reference Dataset Path:")
+        self.mods_input = QLineEdit()
+        self.mods_browse = QPushButton("Browse")
+        self.mods_browse.clicked.connect(self.browse_reference_path)
+        mods_layout.addWidget(self.reference_label)
+        mods_layout.addWidget(self.reference_input)
+        mods_layout.addWidget(self.reference_browse)
+
+        # Reference Dataset Path Info Icon
+        self.mods_info = QLabel()
+        self.mods_info.setPixmap(info_icon)
+        self.mods_info.setToolTip("Specify the path to the reference dataset used as a template for simulation.")
+        mods_layout.addWidget(self.reference_info)
+        layout.addLayout(mods_layout)
 
         # Add the updated collapsible group to the main layout
         self.main_layout.addWidget(self.peptide_digestion_group)
@@ -1409,7 +1417,7 @@ class MainWindow(QMainWindow):
         max_len = self.max_len_spin.value()
         cleave_at = self.cleave_at_input.text()
         restrict = self.restrict_input.text()
-        modifications = self.modifications_input.text()
+        modifications = self.mods_input.text()
 
         intensity_mean = 10 ** self.intensity_mean_slider.value()
         intensity_min = 10 ** self.intensity_min_slider.value()
