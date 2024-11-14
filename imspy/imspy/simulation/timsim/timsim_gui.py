@@ -754,9 +754,9 @@ class MainWindow(QMainWindow):
         self.mods_input = QLineEdit()
         self.mods_browse = QPushButton("Browse")
         self.mods_browse.clicked.connect(self.browse_reference_path)
-        mods_layout.addWidget(self.reference_label)
-        mods_layout.addWidget(self.reference_input)
-        mods_layout.addWidget(self.reference_browse)
+        mods_layout.addWidget(self.mods_label)
+        mods_layout.addWidget(self.mods_input)
+        mods_layout.addWidget(self.mods_browse)
 
         # Reference Dataset Path Info Icon
         self.mods_info = QLabel()
