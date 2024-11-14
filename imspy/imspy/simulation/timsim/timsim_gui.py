@@ -1251,7 +1251,7 @@ class MainWindow(QMainWindow):
 
         # Downsample Factor
         downsample_factor_layout = QHBoxLayout()
-        self.down_sample_factor_label = QLabel("Downsample Factor:")
+        self.down_sample_factor_label = QLabel("Fragment downsample Factor:")
         self.down_sample_factor_spin = QDoubleSpinBox()
         self.down_sample_factor_spin.setRange(0, 1)
         self.down_sample_factor_spin.setDecimals(2)
@@ -1260,7 +1260,7 @@ class MainWindow(QMainWindow):
         downsample_factor_layout.addWidget(self.down_sample_factor_spin)
         self.down_sample_factor_info = QLabel()
         self.down_sample_factor_info.setPixmap(info_icon)
-        self.down_sample_factor_info.setToolTip("Set the downsampling factor for noise data.")
+        self.down_sample_factor_info.setToolTip("Set the downsample factor for fragment ions, fragment ions will be de-selected with probability inverse proportional to their intensity until the specified factor is reached.")
         downsample_factor_layout.addWidget(self.down_sample_factor_info)
         layout.addLayout(downsample_factor_layout)
 
