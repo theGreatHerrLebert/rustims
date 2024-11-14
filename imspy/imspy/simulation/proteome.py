@@ -31,6 +31,8 @@ class PeptideDigest:
         self.generate_decoys = generate_decoys
         self.c_terminal = c_terminal
         self.fasta_path = fasta_path
+        self.variable_mods = variable_mods
+        self.static_mods = static_mods
 
         self._setup()
 
@@ -53,8 +55,8 @@ class PeptideDigest:
         sage_config = SageSearchConfiguration(
             fasta=fasta,
             enzyme_builder=enzyme_builder,
-            static_mods=static_mods,
-            variable_mods=variable_mods,
+            static_mods=self.static_mods,
+            variable_mods=self.variable_mods,
             generate_decoys=self.generate_decoys,
             bucket_size=int(np.power(2, 6))
         )
