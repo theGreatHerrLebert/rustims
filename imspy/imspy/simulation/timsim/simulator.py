@@ -288,6 +288,10 @@ def main():
     variable_modifications = config.get('variable_modifications', { "M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"] })
     static_modifications = config.get('static_modifications', {"C": "[UNIMOD:4]"})
 
+    if args.verbose:
+        print(f"Using variable modifications: {variable_modifications}")
+        print(f"Using static modifications: {static_modifications}")
+
     # check if current system the simulator runs on is MacOS
     if os.uname().sysname == 'Darwin':
         print("Warning: Using bruker sdk on MacOS is not supported, setting use_bruker_sdk to False.")
@@ -397,6 +401,8 @@ def main():
                 restrict=args.restrict,
                 decoys=args.decoys,
                 verbose=verbose,
+                variable_mods=variable_modifications,
+                static_mods=static_modifications,
             ).peptides
 
             # JOB 2: Simulate peptide occurrences

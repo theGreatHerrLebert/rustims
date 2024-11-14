@@ -12,6 +12,8 @@ def digest_fasta(
         decoys: bool = False,
         verbose: bool = False,
         job_name: str = "digest_fasta",
+        static_mods: dict[str, str] = {"C": "[UNIMOD:4]"},
+        variable_mods: dict[str, list[str]] = {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
 ) -> PeptideDigest:
     """Digest a fasta file.
 
@@ -41,4 +43,6 @@ def digest_fasta(
         restrict=restrict,
         generate_decoys=decoys,
         verbose=verbose,
+        variable_mods=variable_mods,
+        static_mods=static_mods
     )
