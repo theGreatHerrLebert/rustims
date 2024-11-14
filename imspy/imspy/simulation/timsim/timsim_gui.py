@@ -1705,6 +1705,7 @@ class MainWindow(QMainWindow):
             'max_len': self.max_len_spin.value(),
             'cleave_at': self.cleave_at_input.text(),
             'restrict': self.restrict_input.text(),
+            'modifications': self.mods_input.text(),
         }
 
         # Peptide Intensity Settings
