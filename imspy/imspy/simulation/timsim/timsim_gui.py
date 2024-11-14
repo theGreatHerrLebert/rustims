@@ -750,10 +750,10 @@ class MainWindow(QMainWindow):
         # Specify toml config file for Amino Acid modifications, needs to be a PATH that can be chosen by the user, and the path needs to be displayed in the GUI
         # Reference Dataset Path
         mods_layout = QHBoxLayout()
-        self.mods_label = QLabel("Reference Dataset Path:")
+        self.mods_label = QLabel("Amino Acid Modifications:")
         self.mods_input = QLineEdit()
         self.mods_browse = QPushButton("Browse")
-        self.mods_browse.clicked.connect(self.browse_reference_path)
+        self.mods_browse.clicked.connect(self.load_modifications)
         mods_layout.addWidget(self.mods_label)
         mods_layout.addWidget(self.mods_input)
         mods_layout.addWidget(self.mods_browse)
@@ -761,7 +761,7 @@ class MainWindow(QMainWindow):
         # Reference Dataset Path Info Icon
         self.mods_info = QLabel()
         self.mods_info.setPixmap(info_icon)
-        self.mods_info.setToolTip("Specify the path to the reference dataset used as a template for simulation.")
+        self.mods_info.setToolTip("Specify the path to the modifications toml file, containing fixed and variable modifications.")
         mods_layout.addWidget(self.reference_info)
         layout.addLayout(mods_layout)
 
@@ -1660,6 +1660,20 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
 
+    def load_modifications(self):
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Modifications File",
+            "",
+            "TOML Files (*.toml);;All Files (*)",
+            options=options
+        )
+        if file_path:
+            QMessageBox.information(self, "Success", "Modifications loaded successfully.")
+        else:
+            QMessageBox.warning(self, "Error", f"Failed to load modifications file.")
+
     def collect_settings(self):
         config = {}
 
@@ -1779,6 +1793,7 @@ class MainWindow(QMainWindow):
         self.max_len_spin.setValue(peptide_digestion.get('max_len', 30))
         self.cleave_at_input.setText(peptide_digestion.get('cleave_at', 'KR'))
         self.restrict_input.setText(peptide_digestion.get('restrict', 'P'))
+        self.mods_input.setText(peptide_digestion.get('modifications', ''))
 
         # Peptide Intensity Settings
         peptide_intensity = config.get('peptide_intensity', {})
