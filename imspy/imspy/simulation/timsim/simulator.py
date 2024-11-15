@@ -404,6 +404,8 @@ def main():
                 verbose=verbose,
                 variable_mods=variable_modifications,
                 static_mods=static_modifications,
+                exclude_accumulated_gradient_start=True,
+                gradient_length=acquisition_builder.gradient_length,
             ).peptides
 
             # JOB 2: Simulate peptide occurrences
@@ -423,7 +425,7 @@ def main():
 
     if args.sample_peptides and not args.from_existing:
         try:
-            peptides = peptides.sample(n=args.num_sample_peptides, random_state=41)
+            peptides = peptides.sample(n=args.num_sample_peptides, random_state=args.sample_seed)
             peptides.reset_index(drop=True, inplace=True)
         except ValueError:
             print(f"Warning: Not enough peptides to sample {args.num_sample_peptides}, "
