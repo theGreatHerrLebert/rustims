@@ -89,11 +89,17 @@ def digest_fasta(
         # Identify indices where the condition is false
         false_indices = np.where(peptide_rt['retention_time_gru_predictor'] <= min_rt)[0]
 
-        # Determine the number of indices to set to true (up to 100)
-        num_to_set_true = min(100, len(false_indices))
+        # count peptides for each retention time grouping by 0.1 minutes
+        rt_counts = peptide_rt['retention_time_gru_predictor'].value_counts(bins=600)
+
+        # get the median count
+        median_rt_count = rt_counts.median()
+
+        if verbose:
+            print(f"Median retention time count: {median_rt_count}")
 
         # Randomly select indices to set to true
-        random_indices = np.random.choice(false_indices, size=num_to_set_true, replace=False)
+        random_indices = np.random.choice(false_indices, size=median_rt_count, replace=False)
 
         # Set the selected indices to true
         rt_filter[random_indices] = True
