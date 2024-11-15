@@ -66,8 +66,11 @@ def digest_fasta(
         RTColumn = DeepChromatographyApex(
             model=load_deep_retention_time_predictor(),
             tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
-            verbose=verbose
+            verbose=False
         )
+
+        if verbose:
+            print("Simulating retention times for exclusion of low retention times...")
 
         # predict rts
         peptide_rt = RTColumn.simulate_separation_times_pandas(
@@ -88,6 +91,9 @@ def digest_fasta(
 
         # Set the selected indices to true
         rt_filter[random_indices] = True
+
+        if verbose:
+            print(f"Excluded {len(peptides.peptides) - len(peptides.peptides[rt_filter])} peptides with low retention times.")
 
         peptides.peptides = peptides.peptides[rt_filter]
 
