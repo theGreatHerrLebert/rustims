@@ -3,7 +3,6 @@ import pandas as pd
 
 from .utility import check_path
 from imspy.simulation.proteome import PeptideDigest
-
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.utility import load_tokenizer_from_resources
 
@@ -61,12 +60,9 @@ def digest_fasta(
         static_mods=static_mods
     )
 
-    # synthetic peptides tend to accumulate at the start of the gradient, exclude them
     if exclude_accumulated_gradient_start:
-
         assert 0 <= min_rt_percent <= 100, "min_rt_percent must be between 0 and 100"
 
-        # create RTColumn instance
         RTColumn = DeepChromatographyApex(
             model=load_deep_retention_time_predictor(),
             tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
@@ -76,41 +72,48 @@ def digest_fasta(
         if verbose:
             print("Simulating retention times for exclusion of low retention times...")
 
-        # predict rts
         peptide_rt = RTColumn.simulate_separation_times_pandas(
             data=peptides.peptides,
             gradient_length=gradient_length,
         )
 
+        min_rt = gradient_length * min_rt_percent / 100
+        rt_filter = peptide_rt['retention_time_gru_predictor'] > min_rt
+
+        false_indices = np.where(peptide_rt['retention_time_gru_predictor'] <= min_rt)[0]
+
         # Define the bin size
         bin_size = 0.1
-
-        # Create bins
         bins = np.arange(0, peptide_rt['retention_time_gru_predictor'].max() + bin_size, bin_size)
         peptide_rt["rt_bins"] = pd.cut(peptide_rt['retention_time_gru_predictor'], bins)
 
         # Count rows in each bin
         binned_counts = peptide_rt["rt_bins"].value_counts().sort_index()
 
-        # Calculate the target count per bin (mean or median can be used)
-        target_count = int(binned_counts.mean())  # or use binned_counts.median()
+        # Get the median count
+        median_rt_count = binned_counts.median()
 
-        # Smooth the distribution
-        adjusted_rt_filter = peptide_rt.index.isin([])  # Start with an empty filter
-        for bin_range, count in binned_counts.items():
-            bin_indices = peptide_rt[peptide_rt["rt_bins"] == bin_range].index
-            if count > target_count:
-                # Randomly sample excess peptides from overpopulated bins
-                sampled_indices = np.random.choice(bin_indices, size=target_count, replace=False)
-            else:
-                # Keep all peptides in underpopulated bins
-                sampled_indices = bin_indices
-            adjusted_rt_filter = adjusted_rt_filter | peptide_rt.index.isin(sampled_indices)
-
-        # Apply the adjusted filter to peptides
-        peptides.peptides = peptides.peptides[adjusted_rt_filter]
+        # Get the number of bins covered by the minimum retention time
+        bins_covered = int(min_rt / bin_size)
+        rt_count = bins_covered * median_rt_count
 
         if verbose:
-            print(f"Smoothed distribution: Targeted ~{target_count} peptides per bin.")
+            print(f"Minimum retention time: {min_rt}")
+            print(f"Number of peptides to sample in min_rt range: {rt_count}")
+
+        # Randomly select indices to set to true
+        random_indices = np.random.choice(false_indices, size=int(rt_count), replace=False)
+
+        # Set the selected indices to true
+        rt_filter[random_indices] = True
+
+        if verbose:
+            print(f"Excluded {len(peptides.peptides) - len(peptides.peptides[rt_filter])} peptides with low retention times.")
+
+        # Drop the 'rt_bins' column
+        peptide_rt = peptide_rt.drop(columns=["rt_bins"])
+
+        # Apply the filter
+        peptides.peptides = peptides.peptides[rt_filter]
 
     return peptides
