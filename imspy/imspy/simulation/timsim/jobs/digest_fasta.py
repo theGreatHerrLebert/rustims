@@ -96,7 +96,8 @@ def digest_fasta(
         # Create bins
         bins = pd.cut(peptide_rt['retention_time_gru_predictor'],
                       bins=range(int(peptide_rt['retention_time_gru_predictor'].min()),
-                                 int(peptide_rt['retention_time_gru_predictor'].max()) + bin_width, bin_width))
+                                 int(peptide_rt['retention_time_gru_predictor'].max()) + int(bin_width),
+                                 int(bin_width)))
 
         # Count the number of rows in each bin
         bin_counts = bins.value_counts().sort_index()
