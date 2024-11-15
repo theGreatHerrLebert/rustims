@@ -90,16 +90,25 @@ def digest_fasta(
         false_indices = np.where(peptide_rt['retention_time_gru_predictor'] <= min_rt)[0]
 
         # count peptides for each retention time grouping by 0.1 minutes
-        rt_counts = peptide_rt['retention_time_gru_predictor'].value_counts(bins=600)
+        rt_counts = peptide_rt['retention_time_gru_predictor'].value_counts(bins=10000)
 
         # get the median count
         median_rt_count = rt_counts.median()
 
+        # get the real gradient length the bin width has
+        bin_width = gradient_length / 10000
+
+        # get the number of bins covered by the minimum retention time
+        bins_covered = int(min_rt / bin_width)
+
+        rt_count = bins_covered * median_rt_count
+
         if verbose:
-            print(f"Median retention time count: {median_rt_count}")
+            print(f"Minimum retention time: {min_rt}")
+            print(f"Number of peptides to sample in min_rt range: {rt_count}")
 
         # Randomly select indices to set to true
-        random_indices = np.random.choice(false_indices, size=median_rt_count, replace=False)
+        random_indices = np.random.choice(false_indices, size=rt_count, replace=False)
 
         # Set the selected indices to true
         rt_filter[random_indices] = True
