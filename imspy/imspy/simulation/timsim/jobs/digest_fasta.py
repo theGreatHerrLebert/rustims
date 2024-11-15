@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 from .utility import check_path
 from imspy.simulation.proteome import PeptideDigest
@@ -89,14 +90,19 @@ def digest_fasta(
         # Identify indices where the condition is false
         false_indices = np.where(peptide_rt['retention_time_gru_predictor'] <= min_rt)[0]
 
-        # count peptides for each retention time grouping by 0.1 minutes
-        rt_counts = peptide_rt['retention_time_gru_predictor'].value_counts(bins=10000)
+        # Define the bin width
+        bin_width = 0.1  # Replace k with your desired bin width
+
+        # Create bins
+        bins = pd.cut(peptide_rt['retention_time_gru_predictor'],
+                      bins=range(int(peptide_rt['retention_time_gru_predictor'].min()),
+                                 int(peptide_rt['retention_time_gru_predictor'].max()) + bin_width, bin_width))
+
+        # Count the number of rows in each bin
+        bin_counts = bins.value_counts().sort_index()
 
         # get the median count
-        median_rt_count = rt_counts.median()
-
-        # get the real gradient length the bin width has
-        bin_width = gradient_length / 10000
+        median_rt_count = bin_counts.median()
 
         # get the number of bins covered by the minimum retention time
         bins_covered = int(min_rt / bin_width)
