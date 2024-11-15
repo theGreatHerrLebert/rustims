@@ -90,23 +90,21 @@ def digest_fasta(
         # Identify indices where the condition is false
         false_indices = np.where(peptide_rt['retention_time_gru_predictor'] <= min_rt)[0]
 
-        # Define the bin width
-        bin_width = 0.1  # Replace k with your desired bin width
+        # Define the bin size
+        bin_size = 0.1
 
         # Create bins
-        bins = pd.cut(peptide_rt['retention_time_gru_predictor'],
-                      bins=range(int(peptide_rt['retention_time_gru_predictor'].min()),
-                                 int(peptide_rt['retention_time_gru_predictor'].max()) + int(bin_width),
-                                 int(bin_width)))
+        bins = np.arange(0, peptide_rt['retention_time_gru_predictor'].max() + bin_size, bin_size)
+        peptide_rt["rt_bins"] = pd.cut(peptide_rt['retention_time_gru_predictor'], bins)
 
-        # Count the number of rows in each bin
-        bin_counts = bins.value_counts().sort_index()
+        # Count rows in each bin
+        binned_counts = peptide_rt["rt_bins"].value_counts().sort_index()
 
         # get the median count
-        median_rt_count = bin_counts.median()
+        median_rt_count = binned_counts.median()
 
         # get the number of bins covered by the minimum retention time
-        bins_covered = int(min_rt / bin_width)
+        bins_covered = int(min_rt / bin_size)
 
         rt_count = bins_covered * median_rt_count
 
