@@ -73,7 +73,8 @@ def digest_fasta(
             print("Simulating retention times for exclusion of low retention times...")
 
         peptide_rt = RTColumn.simulate_separation_times_pandas(
-            data=peptides.peptides,
+            # deep copy the data to avoid modifying the original data
+            data=peptides.peptides.copy(),
             gradient_length=gradient_length,
         )
 
@@ -109,9 +110,6 @@ def digest_fasta(
 
         if verbose:
             print(f"Excluded {len(peptides.peptides) - len(peptides.peptides[rt_filter])} peptides with low retention times.")
-
-        # Drop the 'rt_bins' column
-        peptide_rt = peptide_rt.drop(columns=["rt_bins"])
 
         # Apply the filter
         peptides.peptides = peptides.peptides[rt_filter]
