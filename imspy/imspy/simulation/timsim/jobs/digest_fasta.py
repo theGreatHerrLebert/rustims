@@ -82,14 +82,6 @@ def digest_fasta(
             gradient_length=gradient_length,
         )
 
-        # Determine the minimum retention time
-        min_rt = gradient_length * min_rt_percent / 100
-
-        rt_filter = peptide_rt['retention_time_gru_predictor'] > min_rt
-
-        # Identify indices where the condition is false
-        false_indices = np.where(peptide_rt['retention_time_gru_predictor'] <= min_rt)[0]
-
         # Define the bin size
         bin_size = 0.1
 
@@ -100,27 +92,25 @@ def digest_fasta(
         # Count rows in each bin
         binned_counts = peptide_rt["rt_bins"].value_counts().sort_index()
 
-        # get the median count
-        median_rt_count = binned_counts.median()
+        # Calculate the target count per bin (mean or median can be used)
+        target_count = int(binned_counts.mean())  # or use binned_counts.median()
 
-        # get the number of bins covered by the minimum retention time
-        bins_covered = int(min_rt / bin_size)
+        # Smooth the distribution
+        adjusted_rt_filter = peptide_rt.index.isin([])  # Start with an empty filter
+        for bin_range, count in binned_counts.items():
+            bin_indices = peptide_rt[peptide_rt["rt_bins"] == bin_range].index
+            if count > target_count:
+                # Randomly sample excess peptides from overpopulated bins
+                sampled_indices = np.random.choice(bin_indices, size=target_count, replace=False)
+            else:
+                # Keep all peptides in underpopulated bins
+                sampled_indices = bin_indices
+            adjusted_rt_filter = adjusted_rt_filter | peptide_rt.index.isin(sampled_indices)
 
-        rt_count = bins_covered * median_rt_count
+        # Apply the adjusted filter to peptides
+        peptides.peptides = peptides.peptides[adjusted_rt_filter]
 
         if verbose:
-            print(f"Minimum retention time: {min_rt}")
-            print(f"Number of peptides to sample in min_rt range: {rt_count}")
-
-        # Randomly select indices to set to true
-        random_indices = np.random.choice(false_indices, size=int(rt_count), replace=False)
-
-        # Set the selected indices to true
-        rt_filter[random_indices] = True
-
-        if verbose:
-            print(f"Excluded {len(peptides.peptides) - len(peptides.peptides[rt_filter])} peptides with low retention times.")
-
-        peptides.peptides = peptides.peptides[rt_filter]
+            print(f"Smoothed distribution: Targeted ~{target_count} peptides per bin.")
 
     return peptides
