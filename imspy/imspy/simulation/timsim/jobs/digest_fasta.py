@@ -113,7 +113,7 @@ def digest_fasta(
             print(f"Number of peptides to sample in min_rt range: {rt_count}")
 
         # Randomly select indices to set to true
-        random_indices = np.random.choice(false_indices, size=rt_count, replace=False)
+        random_indices = np.random.choice(false_indices, size=int(rt_count), replace=False)
 
         # Set the selected indices to true
         rt_filter[random_indices] = True
