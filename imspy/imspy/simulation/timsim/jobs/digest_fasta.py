@@ -20,7 +20,7 @@ def digest_fasta(
         static_mods: dict[str, str] = {"C": "[UNIMOD:4]"},
         variable_mods: dict[str, list[str]] = {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
         exclude_accumulated_gradient_start: bool = True,
-        min_rt: float = 1.2,
+        min_rt_percent: float = 2.0,
         gradient_length: float = 60 * 60,
 ) -> PeptideDigest:
     """Digest a fasta file.
@@ -38,7 +38,7 @@ def digest_fasta(
         static_mods: Static modifications.
         variable_mods: Variable modifications.
         exclude_accumulated_gradient_start: Exclude low retention times.
-        min_rt: Minimum retention time (in minutes).
+        min_rt_percent: Minimum retention time in percent.
         gradient_length: Gradient length in seconds (in seconds).
 
     Returns:
@@ -62,6 +62,9 @@ def digest_fasta(
 
     # synthetic peptides tend to accumulate at the start of the gradient, exclude them
     if exclude_accumulated_gradient_start:
+
+        assert 0 <= min_rt_percent <= 100, "min_rt_percent must be between 0 and 100"
+
         # create RTColumn instance
         RTColumn = DeepChromatographyApex(
             model=load_deep_retention_time_predictor(),
@@ -77,6 +80,9 @@ def digest_fasta(
             data=peptides.peptides,
             gradient_length=gradient_length,
         )
+
+        # Determine the minimum retention time
+        min_rt = gradient_length * min_rt_percent / 100
 
         rt_filter = peptide_rt['retention_time_gru_predictor'] > min_rt
 
