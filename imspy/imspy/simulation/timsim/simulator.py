@@ -12,7 +12,7 @@ from imspy.simulation.timsim.jobs.simulate_proteins import simulate_proteins
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
-from .jobs.digest_fasta import digest_fasta
+
 from .jobs.simulate_charge_states import simulate_charge_states
 from .jobs.simulate_fragment_intensities import simulate_fragment_intensities
 from .jobs.simulate_frame_distributions_emg import simulate_frame_distributions_emg
@@ -20,7 +20,7 @@ from .jobs.simulate_ion_mobilities import simulate_ion_mobilities
 from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.simulate_scan_distributions import simulate_scan_distributions
-from .jobs.simulate_occurrences import simulate_peptide_occurrences
+
 from imspy.simulation.timsim.jobs.utility import check_path
 
 from tabulate import tabulate
