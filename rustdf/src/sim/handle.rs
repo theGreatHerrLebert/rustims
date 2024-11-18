@@ -79,18 +79,19 @@ impl TimsTofSyntheticsDataHandle {
                 0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
 
             Ok(PeptidesSim {
-                peptide_id: row.get(0)?,
-                sequence: PeptideSequence::new(row.get(1)?, row.get(0)?),
-                proteins: row.get(2)?,
-                decoy: row.get(3)?,
-                missed_cleavages: row.get(4)?,
-                n_term: row.get(5)?,
-                c_term: row.get(6)?,
-                mono_isotopic_mass: row.get(7)?,
-                retention_time: row.get(8)?,
-                events: row.get(9)?,
-                frame_start: row.get(12)?,
-                frame_end: row.get(13)?,
+                protein_id: row.get(0)?,
+                peptide_id: row.get(1)?,
+                sequence: PeptideSequence::new(row.get(2)?, row.get(1)?),
+                proteins: row.get(3)?,
+                decoy: row.get(4)?,
+                missed_cleavages: row.get(5)?,
+                n_term: row.get(6)?,
+                c_term: row.get(7)?,
+                mono_isotopic_mass: row.get(8)?,
+                retention_time: row.get(9)?,
+                events: row.get(10)?,
+                frame_start: row.get(13)?,
+                frame_end: row.get(14)?,
                 frame_distribution,
             })
         })?;

@@ -35,6 +35,7 @@ impl SignalDistribution {
 
 #[derive(Debug, Clone)]
 pub struct PeptidesSim {
+    pub protein_id: u32,
     pub peptide_id: u32,
     pub sequence: PeptideSequence,
     pub proteins: String,
@@ -52,6 +53,7 @@ pub struct PeptidesSim {
 
 impl PeptidesSim {
     pub fn new(
+        protein_id: u32,
         peptide_id: u32,
         sequence: String,
         proteins: String,
@@ -68,6 +70,7 @@ impl PeptidesSim {
         frame_abundance: Vec<f32>,
     ) -> Self {
         PeptidesSim {
+            protein_id,
             peptide_id,
             sequence: PeptideSequence::new(sequence, Some(peptide_id as i32)),
             proteins,
