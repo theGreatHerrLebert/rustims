@@ -322,7 +322,7 @@ class MainWindow(QMainWindow):
         # Initialize sections
         self.init_main_settings()
         self.init_peptide_digestion_settings()
-        # self.init_peptide_intensity_settings()
+        self.init_peptide_intensity_settings()
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
