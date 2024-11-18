@@ -8,7 +8,7 @@ import toml
 import numpy as np
 import importlib.resources as resources
 
-from typing import List, Tuple, Any, Dict, Union
+from typing import List, Tuple, Any, Dict
 from numpy.typing import NDArray
 
 from importlib.abc import Traversable

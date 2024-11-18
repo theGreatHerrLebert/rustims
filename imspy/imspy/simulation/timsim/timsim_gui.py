@@ -322,7 +322,7 @@ class MainWindow(QMainWindow):
         # Initialize sections
         self.init_main_settings()
         self.init_peptide_digestion_settings()
-        self.init_peptide_intensity_settings()
+        # self.init_peptide_intensity_settings()
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
         # Add all sections to the main layout
         self.main_layout.addWidget(self.main_settings_group)
         self.main_layout.addWidget(self.peptide_digestion_group)
-        self.main_layout.addWidget(self.peptide_intensity_group)
+        # self.main_layout.addWidget(self.peptide_intensity_group)
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
         self.main_layout.addWidget(self.noise_settings_group)
@@ -587,17 +587,6 @@ class MainWindow(QMainWindow):
         decoys_layout_checkbox.addWidget(self.add_decoys_info)
         options_layout.addLayout(decoys_layout_checkbox)
 
-        # Proteome Mixture
-        proteome_layout_checkbox = QHBoxLayout()
-        self.proteome_mix_checkbox = QCheckBox("Proteome Mixture")
-        self.proteome_mix_checkbox.setChecked(False)
-        self.proteome_mix_info = QLabel()
-        self.proteome_mix_info.setPixmap(info_icon)
-        self.proteome_mix_info.setToolTip("Use a mixture of proteomes to simulate a more complex sample.")
-        proteome_layout_checkbox.addWidget(self.proteome_mix_checkbox)
-        proteome_layout_checkbox.addWidget(self.proteome_mix_info)
-        options_layout.addLayout(proteome_layout_checkbox)
-
         # Silent Mode
         silent_layout_checkbox = QHBoxLayout()
         self.silent_checkbox = QCheckBox("Silent Mode")
@@ -664,6 +653,47 @@ class MainWindow(QMainWindow):
 
         # Set layout for the group box
         self.main_settings_group.setLayout(layout)
+        self.main_layout.addWidget(self.main_settings_group)
+
+        # Proteome Mixture
+        proteome_layout_checkbox = QHBoxLayout()
+        self.proteome_mix_checkbox = QCheckBox("Proteome Mixture")
+        self.proteome_mix_checkbox.setChecked(False)
+        self.proteome_mix_info = QLabel()
+        self.proteome_mix_info.setPixmap(info_icon)
+        self.proteome_mix_info.setToolTip("Use a mixture of proteomes to simulate a more complex sample.")
+        proteome_layout_checkbox.addWidget(self.proteome_mix_checkbox)
+        proteome_layout_checkbox.addWidget(self.proteome_mix_info)
+        options_layout.addLayout(proteome_layout_checkbox)
+
+        # Container for multi-Fasta input, initially hidden
+        self.multi_fasta_container = QWidget()
+        multi_fasta_layout = QHBoxLayout()
+        self.multi_fasta_label = QLabel("Multi-Fasta Path:")
+        self.multi_fasta_input = QLineEdit()
+        self.multi_fasta_browse = QPushButton("Browse")
+        self.multi_fasta_browse.clicked.connect(self.browse_multi_fasta_path)
+        multi_fasta_layout.addWidget(self.multi_fasta_label)
+        multi_fasta_layout.addWidget(self.multi_fasta_input)
+        multi_fasta_layout.addWidget(self.multi_fasta_browse)
+
+        # Multi-Fasta Info Icon
+        self.multi_fasta_info = QLabel()
+        self.multi_fasta_info.setPixmap(info_icon)
+        self.multi_fasta_info.setToolTip("Select the directory containing multiple FASTA files for the proteome mixture.")
+        multi_fasta_layout.addWidget(self.multi_fasta_info)
+
+        # Set layout for the container and hide it initially
+        self.multi_fasta_container.setLayout(multi_fasta_layout)
+        self.multi_fasta_container.setVisible(False)
+
+        # Toggle visibility of multi-fasta container when checkbox is checked/unchecked
+        self.proteome_mix_checkbox.toggled.connect(self.multi_fasta_container.setVisible)
+
+        # Add the multi_fasta_container after the checkboxes
+        layout.addWidget(self.multi_fasta_container)
+
+        # Add the updated group box to the main layout
         self.main_layout.addWidget(self.main_settings_group)
 
     def init_peptide_digestion_settings(self):
@@ -1385,6 +1415,11 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "Select Existing Save Directory")
         if directory:
             self.existing_path_input.setText(directory)
+
+    def browse_multi_fasta_path(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Folder with Multi-FASTA Files")
+        if directory:
+            self.multi_fasta_input.setText(directory)
 
     def init_console(self):
         self.console = QTextEdit()
