@@ -424,6 +424,9 @@ def main():
                 )
             """
 
+            if args.verbose:
+                print(f"Digesting fasta file: {fasta_name}...")
+
             # JOB 0: Generate Protein Data
             proteins = simulate_proteins(
                 fasta_file_path=fasta,
@@ -438,6 +441,9 @@ def main():
                 static_mods=static_modifications,
                 verbose=verbose,
             )
+
+            if args.verbose:
+                print("Creating Peptides from Proteins...")
 
             # JOB 1: Simulate peptides
             peptides = simulate_peptides(
