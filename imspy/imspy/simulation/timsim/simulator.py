@@ -402,8 +402,6 @@ def main():
                 print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
         if not args.from_existing:
-            if args.verbose:
-                print(f"Digesting fasta file: {fasta_name}...")
 
             # JOB 0: Generate Protein Data
             proteins = simulate_proteins(
