@@ -696,6 +696,36 @@ class MainWindow(QMainWindow):
         # Add the updated group box to the main layout
         self.main_layout.addWidget(self.main_settings_group)
 
+        # Container for multi-Fasta dilution factor csv input, initially hidden
+        self.multi_fasta_dilution_container = QWidget()
+        multi_fasta_dilution_layout = QHBoxLayout()
+        self.multi_fasta_dilution_label = QLabel("Multi-Fasta Dilution Factor Path:")
+        self.multi_fasta_dilution_input = QLineEdit()
+        self.multi_fasta_dilution_browse = QPushButton("Browse")
+        self.multi_fasta_dilution_browse.clicked.connect(self.browse_multi_fasta_dilution_path)
+        multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_label)
+        multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_input)
+        multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_browse)
+
+        # Multi-Fasta Dilution Factor Info Icon
+        self.multi_fasta_dilution_info = QLabel()
+        self.multi_fasta_dilution_info.setPixmap(info_icon)
+        self.multi_fasta_dilution_info.setToolTip("Select the csv file containing the dilution factors for the proteome mixture.")
+        multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_info)
+
+        # Set layout for the container and hide it initially
+        self.multi_fasta_dilution_container.setLayout(multi_fasta_dilution_layout)
+        self.multi_fasta_dilution_container.setVisible(False)
+
+        # Toggle visibility of multi-fasta dilution container when checkbox is checked/unchecked
+        self.proteome_mix_checkbox.toggled.connect(self.multi_fasta_dilution_container.setVisible)
+
+        # Add the multi_fasta_dilution_container after the checkboxes
+        layout.addWidget(self.multi_fasta_dilution_container)
+
+        # Add the updated group box to the main layout
+        self.main_layout.addWidget(self.main_settings_group)
+
     def init_peptide_digestion_settings(self):
         info_text = "Configure how peptides are generated from protein sequences, including cleavage rules and peptide length constraints."
         self.peptide_digestion_group = CollapsibleBox("Peptide Digestion Settings", info_text)
@@ -1420,6 +1450,11 @@ class MainWindow(QMainWindow):
         directory = QFileDialog.getExistingDirectory(self, "Select Folder with Multi-FASTA Files")
         if directory:
             self.multi_fasta_input.setText(directory)
+
+    def browse_multi_fasta_dilution_path(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Multi-FASTA Dilution File")
+        if file_path:
+            self.multi_fasta_dilution_input.setText(file_path)
 
     def init_console(self):
         self.console = QTextEdit()
