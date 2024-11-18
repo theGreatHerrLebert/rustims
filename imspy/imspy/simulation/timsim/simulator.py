@@ -7,6 +7,8 @@ import toml
 from pathlib import Path
 
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
+from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
+from imspy.simulation.timsim.jobs.simulate_proteins import simulate_proteins
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
@@ -372,7 +374,7 @@ def main():
     if verbose:
         print(acquisition_builder)
 
-    peptide_list = []
+    protein_list, peptide_list = [], []
 
     for fasta_name, fasta in fastas.items():
         if verbose and not args.from_existing:
@@ -392,6 +394,8 @@ def main():
                 print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
         if not args.from_existing:
+
+            """
             # JOB 1: Digest the fasta file(s)
             peptides = digest_fasta(
                 fasta_file_path=fasta,
@@ -407,8 +411,7 @@ def main():
                 exclude_accumulated_gradient_start=True,
                 gradient_length=acquisition_builder.gradient_length,
             ).peptides
-
-            # JOB 2: Simulate peptide occurrences
+            
             peptides = simulate_peptide_occurrences(
                 peptides=peptides,
                 intensity_mean=args.intensity_mean,
@@ -418,9 +421,40 @@ def main():
                 sample_occurrences=args.sample_occurrences,
                 intensity_value=args.intensity_value,
                 mixture_contribution=mixture_factor,
+                )
+            """
+
+            # JOB 0: Generate Protein Data
+            proteins = simulate_proteins(
+                fasta_file_path=fasta,
+                n_proteins=20_000,
+                cleave_at=args.cleave_at,
+                restrict=args.restrict,
+                missed_cleavages=args.missed_cleavages,
+                min_len=args.min_len,
+                max_len=args.max_len,
+                generate_decoys=args.decoys,
+                variable_mods=variable_modifications,
+                static_mods=static_modifications,
+                verbose=verbose,
             )
 
+            # JOB 1: Simulate peptides
+            peptides = simulate_peptides(
+                protein_table=proteins,
+                num_peptides_total=200_000,
+                verbose=verbose,
+                exclude_accumulated_gradient_start=True,
+                min_rt_percent=2.0,
+                gradient_length=acquisition_builder.gradient_length,
+            )
+
+            protein_list.append(proteins)
             peptide_list.append(peptides)
+
+        if not args.from_existing:
+            proteins = pd.concat(protein_list)
+            proteins = proteins[["protein_id", "protein", "sequence", "events"]]
             peptides = pd.concat(peptide_list)
 
     if args.sample_peptides and not args.from_existing:
@@ -472,6 +506,12 @@ def main():
         sigmas=rt_sigma,
         lambdas=rt_lambda,
     )
+
+    if not args.from_existing:
+        acquisition_builder.synthetics_handle.create_table(
+            table_name='proteins',
+            table=proteins,
+        )
 
     # save peptides to database
     acquisition_builder.synthetics_handle.create_table(
