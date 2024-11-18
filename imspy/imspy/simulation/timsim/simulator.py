@@ -248,6 +248,14 @@ def main():
     )
     parser.set_defaults(proteome_mix=False)
 
+    # Dilution factors csv file path
+    parser.add_argument(
+        "--dilution_factors",
+        type=str,
+        default=None,
+        help="Path to a CSV file containing dilution factors for the proteome mixture"
+    )
+
     # Debug mode
     parser.add_argument(
         "--debug_mode",
@@ -345,7 +353,7 @@ def main():
         f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     if args.proteome_mix:
-        factors = get_dilution_factors()
+        factors = get_dilution_factors(args.dilution_factors)
 
     fastas = get_fasta_file_paths(args.fasta)
 

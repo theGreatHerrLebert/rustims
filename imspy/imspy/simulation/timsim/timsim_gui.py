@@ -1540,6 +1540,13 @@ class MainWindow(QMainWindow):
 
         apply_fragmentation = self.apply_fragmentation_checkbox.isChecked()
 
+        multi_fasta_dilution_path = None
+
+        # check if multi-fasta is enabled, if so, get the path and replace the fasta path
+        if self.proteome_mix_checkbox.isChecked():
+            fasta_path = self.multi_fasta_input.text()
+            multi_fasta_dilution_path = self.multi_fasta_dilution_input.text()
+
         # Build the argument list
         args = [
             "timsim",
@@ -1579,8 +1586,12 @@ class MainWindow(QMainWindow):
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
-            "--existing_simulation_df_path", str(use_existing_path)
+            "--existing_simulation_df_path", str(use_existing_path),
         ]
+
+        # Check for dilution path
+        if multi_fasta_dilution_path is not None and proteome_mix:
+            args.extend(["--multi_fasta_dilution_path", multi_fasta_dilution_path])
 
         # Add boolean flags
         if not use_reference_layout:
@@ -1765,6 +1776,8 @@ class MainWindow(QMainWindow):
             'from_existing': self.from_existing_checkbox.isChecked(),
             'existing_path': self.existing_path_input.text(),
             'apply_fragmentation': self.apply_fragmentation_checkbox.isChecked(),
+            'multi_fasta': self.multi_fasta_input.text(),
+            'multi_fasta_dilution': self.multi_fasta_dilution_input.text(),
         }
 
         # Peptide Digestion Settings
@@ -1856,6 +1869,8 @@ class MainWindow(QMainWindow):
         self.apply_fragmentation_checkbox.setChecked(main_settings.get('fragmentation', True))
         self.from_existing_checkbox.setChecked(main_settings.get('from_existing', False))
         self.existing_path_input.setText(main_settings.get('existing_path', ''))
+        self.multi_fasta_input.setText(main_settings.get('multi_fasta', ''))
+        self.multi_fasta_dilution_input.setText(main_settings.get('multi_fasta_dilution', ''))
 
         # Peptide Digestion Settings
         peptide_digestion = config.get('peptide_digestion', {})

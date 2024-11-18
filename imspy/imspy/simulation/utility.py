@@ -139,8 +139,12 @@ def get_acquisition_builder_resource_path(acquisition_mode: str = 'dia') -> Trav
     return resources.files('imspy.simulation.resources.configs').joinpath(acquisition_mode + 'pasef.toml')
 
 
-def get_dilution_factors():
-    table = pd.read_csv(str(resources.files('imspy.simulation.resources.configs').joinpath('dilution_factors.csv')))
+def get_dilution_factors(path: str = None) -> Dict[str, float]:
+
+    if path is not None:
+        table = pd.read_csv(path)
+    else:
+        table = pd.read_csv(str(resources.files('imspy.simulation.resources.configs').joinpath('dilution_factors.csv')))
 
     dilution_dict = {}
 
