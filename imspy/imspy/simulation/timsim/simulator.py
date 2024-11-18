@@ -280,7 +280,6 @@ def main():
     )
     parser.set_defaults(use_bruker_sdk=True)
 
-
     # Parse the arguments
     args = parser.parse_args()
 
@@ -310,6 +309,7 @@ def main():
     if args.from_existing:
         existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_simulation_df_path)
         peptides = existing_sim_handle.get_table('peptides')
+        proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
         rt_sigma = peptides['rt_sigma'].values
         rt_lambda = peptides['rt_lambda'].values
@@ -394,36 +394,6 @@ def main():
                 print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
         if not args.from_existing:
-
-            """
-            # JOB 1: Digest the fasta file(s)
-            peptides = digest_fasta(
-                fasta_file_path=fasta,
-                missed_cleavages=args.missed_cleavages,
-                min_len=args.min_len,
-                max_len=args.max_len,
-                cleave_at=args.cleave_at,
-                restrict=args.restrict,
-                decoys=args.decoys,
-                verbose=verbose,
-                variable_mods=variable_modifications,
-                static_mods=static_modifications,
-                exclude_accumulated_gradient_start=True,
-                gradient_length=acquisition_builder.gradient_length,
-            ).peptides
-            
-            peptides = simulate_peptide_occurrences(
-                peptides=peptides,
-                intensity_mean=args.intensity_mean,
-                intensity_min=args.intensity_min,
-                intensity_max=args.intensity_max,
-                verbose=verbose,
-                sample_occurrences=args.sample_occurrences,
-                intensity_value=args.intensity_value,
-                mixture_contribution=mixture_factor,
-                )
-            """
-
             if args.verbose:
                 print(f"Digesting fasta file: {fasta_name}...")
 
@@ -454,6 +424,10 @@ def main():
                 min_rt_percent=2.0,
                 gradient_length=acquisition_builder.gradient_length,
             )
+
+            # If the proteome is mixed, scale the number of peptides
+            if args.proteome_mix:
+                peptides['events'] = peptides['events'] * mixture_factor
 
             protein_list.append(proteins)
             peptide_list.append(peptides)
@@ -513,11 +487,11 @@ def main():
         lambdas=rt_lambda,
     )
 
-    if not args.from_existing:
-        acquisition_builder.synthetics_handle.create_table(
-            table_name='proteins',
-            table=proteins,
-        )
+    # save proteins to database
+    acquisition_builder.synthetics_handle.create_table(
+        table_name='proteins',
+        table=proteins,
+    )
 
     # save peptides to database
     acquisition_builder.synthetics_handle.create_table(

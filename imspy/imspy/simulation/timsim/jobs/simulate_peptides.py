@@ -128,4 +128,7 @@ def simulate_peptides(
         if verbose:
             print(f"Excluded {len(peptide_table) - rt_filter.sum()} peptides with low retention times.")
 
+        # remove rt values of 0.01 and below
+        peptide_table = peptide_table[peptide_rt['retention_time_gru_predictor'] > 0.01]
+
     return peptide_table
