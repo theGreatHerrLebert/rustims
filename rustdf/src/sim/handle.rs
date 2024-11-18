@@ -54,13 +54,13 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_peptides(&self) -> rusqlite::Result<Vec<PeptidesSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
         let peptides_iter = stmt.query_map([], |row| {
-            let frame_occurrence_str: String = row.get(14)?;
-            let frame_abundance_str: String = row.get(15)?;
+            let frame_occurrence_str: String = row.get(15)?;
+            let frame_abundance_str: String = row.get(16)?;
 
             let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    12,
+                    15,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -69,7 +69,7 @@ impl TimsTofSyntheticsDataHandle {
             let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    11,
+                    16,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
