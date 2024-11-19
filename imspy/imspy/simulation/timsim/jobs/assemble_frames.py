@@ -20,7 +20,8 @@ def assemble_frames(
         fragment_noise_ppm: float = 5.,
         num_threads: int = 4,
         add_real_data_noise: bool = False,
-        reference_noise_intensity_max: float = 30,
+        reference_noise_intensity_precursor_max: float = 30,
+        reference_noise_intensity_fragment_max: float = 30,
         fragment: bool = True,
         num_frames: int = 10,
 ) -> None:
@@ -38,7 +39,8 @@ def assemble_frames(
         fragment_noise_ppm: PPM value for fragment noise.
         num_threads: Number of threads for frame assembly.
         add_real_data_noise: Add real data noise to the frames.
-        reference_noise_intensity_max: Maximum intensity for real data noise.
+        reference_noise_intensity_precursor_max: Maximum intensity for precursor noise.
+        reference_noise_intensity_fragment_max: Maximum intensity for fragment noise.
         fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
         num_frames: Number of frames to sample for real data noise.
 
@@ -83,8 +85,8 @@ def assemble_frames(
             built_frames = add_real_data_noise_to_frames(
                 acquisition_builder=acquisition_builder,
                 frames=built_frames,
-                intensity_max_fragment=reference_noise_intensity_max,
-                intensity_max_precursor=reference_noise_intensity_max,
+                intensity_max_fragment=reference_noise_intensity_fragment_max,
+                intensity_max_precursor=reference_noise_intensity_precursor_max,
                 num_frames=num_frames,
             )
 

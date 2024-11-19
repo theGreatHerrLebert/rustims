@@ -577,7 +577,8 @@ def main():
         fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
         add_real_data_noise=args.add_real_data_noise,
-        reference_noise_intensity_max=args.reference_noise_intensity_max,
+        reference_noise_intensity_precursor_max=args.reference_noise_intensity_max,
+        reference_noise_intensity_fragment_max=args.reference_noise_intensity_max,
         fragment=args.fragment,
     )
 
