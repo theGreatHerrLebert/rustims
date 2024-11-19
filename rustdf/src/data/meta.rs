@@ -250,7 +250,7 @@ pub fn read_dia_ms_ms_info(bruker_d_folder_name: &str) -> Result<Vec<DiaMsMisInf
 
     // prepare the query
     let rows: Vec<&str> = vec!["Frame", "WindowGroup"];
-    let query = format!("SELECT {} FROM DiaMsMsInfo", rows.join(", "));
+    let query = format!("SELECT {} FROM DiaFrameMsMsInfo", rows.join(", "));
 
     // execute the query
     let frames_rows: Result<Vec<DiaMsMisInfo>, _> = conn.prepare(&query)?.query_map([], |row| {
@@ -271,7 +271,7 @@ pub fn read_dia_ms_ms_windows(bruker_d_folder_name: &str) -> Result<Vec<DiaMsMsW
 
     // prepare the query
     let rows: Vec<&str> = vec!["WindowGroup", "ScanNumBegin", "ScanNumEnd", "IsolationMz", "IsolationWidth", "CollisionEnergy"];
-    let query = format!("SELECT {} FROM DiaMsMsWindow", rows.join(", "));
+    let query = format!("SELECT {} FROM DiaFrameMsMsWindows", rows.join(", "));
 
     // execute the query
     let frames_rows: Result<Vec<DiaMsMsWindow>, _> = conn.prepare(&query)?.query_map([], |row| {
