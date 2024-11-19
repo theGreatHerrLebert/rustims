@@ -172,7 +172,7 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         if use_reference_ds_layout:
             rt_cycle_length = np.mean(np.diff(reference_ds.meta_data.Time))
             if verbose:
-                print('Using reference dataset cycle length:', rt_cycle_length)
+                print('Using reference dataset cycle length:', np.round(rt_cycle_length, 4))
             self.rt_cycle_length = rt_cycle_length
 
         self.acquisition_name = acquisition_name
