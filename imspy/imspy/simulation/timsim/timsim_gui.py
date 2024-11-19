@@ -1311,7 +1311,7 @@ class MainWindow(QMainWindow):
 
         # Downsample Factor
         downsample_factor_layout = QHBoxLayout()
-        self.down_sample_factor_label = QLabel("Fragment downsample Factor:")
+        self.down_sample_factor_label = QLabel("Peak take Probability:")
         self.down_sample_factor_spin = QDoubleSpinBox()
         self.down_sample_factor_spin.setRange(0, 1)
         self.down_sample_factor_spin.setDecimals(2)
