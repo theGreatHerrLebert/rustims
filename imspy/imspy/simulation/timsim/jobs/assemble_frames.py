@@ -22,6 +22,7 @@ def assemble_frames(
         add_real_data_noise: bool = False,
         reference_noise_intensity_max: float = 30,
         fragment: bool = True,
+        num_frames: int = 10,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -39,6 +40,7 @@ def assemble_frames(
         add_real_data_noise: Add real data noise to the frames.
         reference_noise_intensity_max: Maximum intensity for real data noise.
         fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
+        num_frames: Number of frames to sample for real data noise.
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -60,9 +62,6 @@ def assemble_frames(
         num_threads=num_threads,
     )
 
-    wg = acquisition_builder.tdf_writer.helper_handle.dia_ms_ms_info
-    frame_to_window_group = dict(zip(wg.Frame, wg.WindowGroup))
-
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
         start_index = b * batch_size
@@ -81,8 +80,13 @@ def assemble_frames(
         )
 
         if add_real_data_noise:
-            built_frames = add_real_data_noise_to_frames(acquisition_builder, built_frames, frame_to_window_group,
-                                                         intensity_max=reference_noise_intensity_max)
+            built_frames = add_real_data_noise_to_frames(
+                acquisition_builder=acquisition_builder,
+                frames=built_frames,
+                intensity_max_fragment=reference_noise_intensity_max,
+                intensity_max_precursor=reference_noise_intensity_max,
+                num_frames=num_frames,
+            )
 
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
