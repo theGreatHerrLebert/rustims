@@ -10,7 +10,7 @@ def add_real_data_noise_to_frames(
         intensity_max_precursor: float = 30,
         intensity_max_fragment: float = 30,
         sample_fraction: float = 0.5,
-        num_frames: int = 10,
+        num_frames: int = 5,
 ) -> List[TimsFrame]:
     """Add noise to frame.
 

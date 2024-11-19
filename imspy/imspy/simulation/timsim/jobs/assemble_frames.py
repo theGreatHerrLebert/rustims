@@ -23,7 +23,7 @@ def assemble_frames(
         reference_noise_intensity_precursor_max: float = 30,
         reference_noise_intensity_fragment_max: float = 30,
         fragment: bool = True,
-        num_frames: int = 10,
+        num_frames: int = 5,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
