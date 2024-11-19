@@ -37,7 +37,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         return pd.read_sql_query("SELECT * from DiaFrameMsMsInfo",
                                  sqlite3.connect(self.data_path + "/analysis.tdf"))
 
-    def sample_precursor_signal(self, num_frames: int, max_intensity: float, take_probability: float) -> TimsFrame:
+    def sample_precursor_signal(self, num_frames: int, max_intensity: float = 25.0, take_probability: float = 0.5) -> TimsFrame:
         """Sample precursor signal.
 
         Args:
@@ -54,7 +54,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
         return TimsFrame.from_py_ptr(self.__dataset.sample_precursor_signal(num_frames, max_intensity, take_probability))
 
-    def sample_fragment_signal(self, num_frames: int, window_group: int, max_intensity: float, take_probability: float) -> TimsFrame:
+    def sample_fragment_signal(self, num_frames: int, window_group: int, max_intensity: float = 25.0, take_probability: float = 0.5) -> TimsFrame:
         """Sample fragment signal.
 
         Args:
