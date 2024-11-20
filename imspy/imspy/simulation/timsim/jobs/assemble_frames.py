@@ -20,10 +20,13 @@ def assemble_frames(
         fragment_noise_ppm: float = 5.,
         num_threads: int = 4,
         add_real_data_noise: bool = False,
-        reference_noise_intensity_precursor_max: float = 30,
-        reference_noise_intensity_fragment_max: float = 30,
+        intensity_max_precursor: float = 30,
+        intensity_max_fragment: float = 30,
+        precursor_sample_fraction: float = 0.2,
+        fragment_sample_fraction: float = 0.2,
+        num_precursor_frames: int = 5,
+        num_fragment_frames: int = 5,
         fragment: bool = True,
-        num_frames: int = 5,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -39,10 +42,14 @@ def assemble_frames(
         fragment_noise_ppm: PPM value for fragment noise.
         num_threads: Number of threads for frame assembly.
         add_real_data_noise: Add real data noise to the frames.
-        reference_noise_intensity_precursor_max: Maximum intensity for precursor noise.
-        reference_noise_intensity_fragment_max: Maximum intensity for fragment noise.
+        intensity_max_precursor: Maximum intensity for precursor noise.
+        intensity_max_fragment: Maximum intensity for fragment noise.
+        precursor_sample_fraction: Sample fraction for precursor noise.
+        fragment_sample_fraction: Sample fraction for fragment noise.
+        num_precursor_frames: Number of precursor frames.
+        num_fragment_frames: Number of fragment frames.
         fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
-        num_frames: Number of frames to sample for real data noise.
+
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -85,9 +92,12 @@ def assemble_frames(
             built_frames = add_real_data_noise_to_frames(
                 acquisition_builder=acquisition_builder,
                 frames=built_frames,
-                intensity_max_fragment=reference_noise_intensity_fragment_max,
-                intensity_max_precursor=reference_noise_intensity_precursor_max,
-                num_frames=num_frames,
+                intensity_max_precursor=intensity_max_precursor,
+                intensity_max_fragment=intensity_max_fragment,
+                precursor_sample_fraction=precursor_sample_fraction,
+                fragment_sample_fraction=fragment_sample_fraction,
+                num_precursor_frames=num_precursor_frames,
+                num_fragment_frames=num_fragment_frames,
             )
 
         for frame in built_frames:
