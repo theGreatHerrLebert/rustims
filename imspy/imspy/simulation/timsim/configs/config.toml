@@ -1,17 +1,17 @@
 [general]
-path = "/path/to/save/experiment"
+save_path = "/path/to/save/experiment"
 reference_path = "/path/to/reference/dataset"
 fasta = "/path/to/fasta/file"
 
 [acquisition]
 reference_in_memory = false
-verbose = true
+silent_mode = false
 acquisition_type = "DIA"
-name = "ExperimentName"
+experiment_name = "ExperimentName"
 use_reference_layout = true
 sample_peptides = true
 sample_seed = 41
-fragment = true
+apply_fragmentation = true
 
 [peptide_digestion]
 num_sample_peptides = 25000
@@ -23,7 +23,7 @@ restrict = "P"
 decoys = false
 
 [modifications]
-modifications_config = "/path/to/modifications.toml"
+modifications_config = ""
 
 [peptide_intensities]
 intensity_mean = 1e7
@@ -44,8 +44,8 @@ gradient_length = 3600
 z_score = 0.99
 mean_std_rt = 1.5
 variance_std_rt = 0.3
-mean_scewness = 0.3
-variance_scewness = 0.1
+mean_skewness = 0.3
+variance_skewness = 0.1
 std_im = 0.01
 variance_std_im = 0.003
 target_p = 0.999
@@ -72,14 +72,14 @@ down_sample_factor = 0.5
 
 [proteome_mix]
 proteome_mix = false
-dilution_factors = ""
+multi_fasta_dilution = ""
 
 [debug]
 debug_mode = false
 
 [existing_simulation]
 from_existing = false
-existing_simulation_df_path = ""
+existing_path = ""
 
 [bruker_sdk]
 use_bruker_sdk = true

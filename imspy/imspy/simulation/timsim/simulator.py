@@ -56,9 +56,9 @@ def main():
     # Default configuration values
     defaults = {
         'reference_in_memory': False,
-        'verbose': True,
+        'silent_mode': False,
         'acquisition_type': 'DIA',
-        'name': f'TIMSIM-[PLACEHOLDER]-{int(time.time())}',
+        'experiment_name': f'TIMSIM-[PLACEHOLDER]-{int(time.time())}',
         'use_reference_layout': True,
         'sample_peptides': True,
         'sample_seed': 41,
@@ -70,7 +70,7 @@ def main():
         'cleave_at': 'KR',
         'restrict': 'P',
         'decoys': False,
-        'modifications_config': None,
+        'modifications': None,
         'intensity_mean': 1e7,
         'intensity_min': 1e5,
         'intensity_max': 1e9,
@@ -83,8 +83,8 @@ def main():
         'z_score': 0.99,
         'mean_std_rt': 1.5,
         'variance_std_rt': 0.3,
-        'mean_scewness': 0.3,
-        'variance_scewness': 0.1,
+        'mean_skewness': 0.3,
+        'variance_skewness': 0.1,
         'std_im': 0.01,
         'variance_std_im': 0.003,
         'target_p': 0.999,
@@ -103,10 +103,10 @@ def main():
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
         'proteome_mix': False,
-        'dilution_factors': None,
+        'multi_fasta_dilution': None,
         'debug_mode': False,
         'from_existing': False,
-        'existing_simulation_df_path': None,
+        'existing_path': None,
         'use_bruker_sdk': True,
     }
 
@@ -118,7 +118,7 @@ def main():
     parser.add_argument("--config", type=str, default=None, help="Path to configuration file (TOML format)")
 
     # Required string arguments
-    parser.add_argument("path", type=str, help="Path to save the experiment to")
+    parser.add_argument("save_path", type=str, help="Path to save the experiment to")
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
@@ -127,15 +127,15 @@ def main():
                         help="Whether to load the reference dataset into memory (default: False)")
     parser.set_defaults(reference_in_memory=False)
 
-    parser.add_argument("-s", "--silent", dest="verbose", action="store_false",
+    parser.add_argument("-s", "--silent_mode,", dest="silent_mode", action="store_true",
                         help="Silence output (default: False)")
-    parser.set_defaults(verbose=True)
+    parser.set_defaults(silent_mode=False)
 
     parser.add_argument("-acq", "--acquisition_type",
                         type=str,
                         help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA")
 
-    parser.add_argument("-n", "--name", type=str, help="Name of the experiment")
+    parser.add_argument("-n", "--experiment_name", type=str, help="Name of the experiment")
 
     parser.add_argument("--no_reference_layout", dest="use_reference_layout", action="store_false",
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
@@ -161,19 +161,13 @@ def main():
     parser.add_argument("--max_len", type=int, help="Maximum peptide length (default: 30)")
     parser.add_argument("--cleave_at", type=str, help="Cleave at (default: KR)")
     parser.add_argument("--restrict", type=str, help="Restrict (default: P)")
-    parser.add_argument("--add_decoys", dest="decoys", action="store_true",
+    parser.add_argument("--decoys", dest="decoys", action="store_true",
                         help="Generate decoys (default: False)")
     parser.set_defaults(decoys=False)
 
-    # Path to the script directory
-    script_dir = Path(__file__).parent
-
-    # Default configs modification configs path
-    default_mods_config_path = script_dir / "configs" / "modifications.toml"
-
     # Optional argument for path to the configuration file
     parser.add_argument(
-        "--modifications_config",
+        "--modifications",
         type=str,
         help="Path to the configuration file (TOML format). Default: configs/modifications.toml"
     )
@@ -211,9 +205,9 @@ def main():
                         help="Mean standard deviation for retention time distribution (default: 1.5)")
     parser.add_argument("--variance_std_rt", type=float,
                         help="Variance standard deviation for retention time distribution (default: 0.3)")
-    parser.add_argument("--mean_scewness", type=float,
+    parser.add_argument("--mean_skewness", type=float,
                         help="Mean scewness for retention time distribution (default: 0.3)")
-    parser.add_argument("--variance_scewness", type=float,
+    parser.add_argument("--variance_skewness", type=float,
                         help="Variance scewness for retention time distribution (default: 0.1)")
     parser.add_argument("--std_im", type=float,
                         help="Standard deviation for mobility distribution (default: 0.01)")
@@ -300,7 +294,7 @@ def main():
 
     # Dilution factors csv file path
     parser.add_argument(
-        "--dilution_factors",
+        "--multi_fasta_dilution",
         type=str,
         help="Path to a CSV file containing dilution factors for the proteome mixture"
     )
@@ -323,7 +317,7 @@ def main():
 
     # Add existing simulation path
     parser.add_argument(
-        "--existing_simulation_df_path",
+        "--existing_path",
         type=str,
         help="Path to existing simulation to use for frame distributions",
     )
@@ -353,19 +347,19 @@ def main():
     args = parser.parse_args()
 
     # Load the modifications configuration
-    if not args.modifications_config:
+    if not args.modifications or args.modifications == "":
         # Path to the script directory
         script_dir = Path(__file__).parent
         # Default configs modification configs path
-        args.modifications_config = script_dir / "configs" / "modifications.toml"
+        args.modifications = script_dir / "configs" / "modifications.toml"
 
-    mod_config = load_config(args.modifications_config)
+    mod_config = load_config(args.modifications)
 
     # Access the modifications from the configs
     variable_modifications = mod_config.get('variable_modifications', {})
     static_modifications = mod_config.get('static_modifications', {})
 
-    if args.verbose:
+    if not args.silent_mode:
         print(f"Using variable modifications: {variable_modifications}")
         print(f"Using static modifications: {static_modifications}")
 
@@ -398,7 +392,7 @@ def main():
                   f"which is off by more than 5 percent of the new gradient length of {args.gradient_length} seconds. "
                   f"This might result in distorted frame distributions and missing ions.")
 
-        if args.verbose:
+        if not args.silent_mode:
             print(f"Using existing simulation from {args.existing_simulation_df_path}")
             print(f"Peptides: {peptides.shape[0]}")
             print(f"Ions: {ions.shape[0]}")
@@ -411,27 +405,25 @@ def main():
         print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     # Use the arguments
-    path = check_path(args.path)
+    path = check_path(args.save_path)
     reference_path = check_path(args.reference_path)
-    name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
+    name = args.experiment_name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
 
     # Save the arguments to a file, should go into the database folder
     with open(os.path.join(path, f'arguments-{name}.txt'), 'w') as f:
         f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     if args.proteome_mix:
-        factors = get_dilution_factors(args.dilution_factors)
+        factors = get_dilution_factors(args.multi_fasta_dilution)
 
     fastas = get_fasta_file_paths(args.fasta)
-
-    verbose = args.verbose
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
-    if verbose:
+    if not args.silent_mode:
         print(f"Simulating experiment {name} at {path}...")
 
     # Create acquisition
@@ -440,19 +432,19 @@ def main():
         reference_path=reference_path,
         exp_name=name,
         acquisition_type=args.acquisition_type,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         gradient_length=args.gradient_length,
         use_reference_ds_layout=args.use_reference_layout,
         reference_in_memory=args.reference_in_memory,
     )
 
-    if verbose:
+    if not args.silent_mode:
         print(acquisition_builder)
 
     protein_list, peptide_list = [], []
 
     for fasta_name, fasta in fastas.items():
-        if verbose and not args.from_existing:
+        if not args.silent_mode and not args.from_existing:
             print(f"Digesting fasta file: {fasta_name}...")
 
         mixture_factor = 1.0
@@ -461,7 +453,7 @@ def main():
             try:
                 mixture_factor = factors[fasta_name]
 
-                if verbose and not args.from_existing:
+                if not args.silent_mode and not args.from_existing:
                     print(f"Using mixture factor {mixture_factor} for {fasta_name}")
 
             except KeyError:
@@ -481,17 +473,17 @@ def main():
                 generate_decoys=args.decoys,
                 variable_mods=variable_modifications,
                 static_mods=static_modifications,
-                verbose=verbose,
+                verbose=not args.silent_mode,
             )
 
-            if args.verbose:
+            if not args.silent_mode:
                 print("Creating Peptides from Proteins...")
 
             # JOB 1: Simulate peptides
             peptides = simulate_peptides(
                 protein_table=proteins,
                 num_peptides_total=200_000,
-                verbose=verbose,
+                verbose=not args.silent_mode,
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,
                 gradient_length=acquisition_builder.gradient_length,
@@ -517,14 +509,14 @@ def main():
             print(f"Warning: Not enough peptides to sample {args.num_sample_peptides}, "
                   f"using all {peptides.shape[0]} peptides.")
 
-    if verbose and not args.from_existing:
+    if not args.silent_mode and not args.from_existing:
         print(f"Simulating {peptides.shape[0]} peptides...")
 
     if not args.from_existing:
         # JOB 3: Simulate retention times
         peptides = simulate_retention_times(
             peptides=peptides,
-            verbose=verbose,
+            verbose=not args.silent_mode,
             gradient_length=acquisition_builder.gradient_length,
         )
 
@@ -546,12 +538,12 @@ def main():
         frames=acquisition_builder.frame_table,
         mean_std_rt=args.mean_std_rt,
         variance_std_rt=args.variance_std_rt,
-        mean_scewness=args.mean_scewness,
-        variance_scewness=args.variance_scewness,
+        mean_scewness=args.mean_skewness,
+        variance_scewness=args.variance_skewness,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
         target_p=args.target_p,
         step_size=args.sampling_step_size,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         add_noise=args.add_noise_to_signals,
         num_threads=args.num_threads,
         from_existing=args.from_existing,
@@ -586,14 +578,14 @@ def main():
             ions=ions,
             im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
-            verbose=verbose
+            verbose=not args.silent_mode,
         )
 
         # JOB 7: Simulate precursor isotopic distributions
         ions = simulate_precursor_spectra_sequence(
             ions=ions,
             num_threads=args.num_threads,
-            verbose=verbose
+            verbose=not args.silent_mode,
         )
 
     # JOB 8: Simulate scan distributions
@@ -604,7 +596,7 @@ def main():
         z_score=args.z_score,
         mean_std_im=args.std_im,
         variance_std_im=args.variance_std_im,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         add_noise=args.add_noise_to_signals,
         from_existing=args.from_existing,
         std_means=std_im,
@@ -625,7 +617,7 @@ def main():
         name=name,
         acquisition_builder=acquisition_builder,
         batch_size=args.batch_size,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         num_threads=args.num_threads,
         down_sample_factor=args.down_sample_factor,
     )
@@ -635,7 +627,7 @@ def main():
         acquisition_builder=acquisition_builder,
         frames=acquisition_builder.frame_table,
         batch_size=args.batch_size,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         mz_noise_precursor=args.mz_noise_precursor,
         mz_noise_uniform=args.mz_noise_uniform,
         precursor_noise_ppm=args.precursor_noise_ppm,
@@ -649,7 +641,7 @@ def main():
         fragment_sample_fraction=0.2,
         num_precursor_frames=5,
         num_fragment_frames=5,
-        fragment=args.fragment,
+        fragment=args.apply_fragmentation,
     )
 
 if __name__ == '__main__':
