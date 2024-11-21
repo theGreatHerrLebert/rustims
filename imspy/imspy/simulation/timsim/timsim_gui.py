@@ -384,7 +384,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(load_action)
 
     def add_setting_with_info(self, layout, label_text, widget, tooltip_text):
-        setting_layout = QHBoxLayout()
+        setting_widget = QWidget()
+        setting_layout = QHBoxLayout(setting_widget)
+        setting_layout.setContentsMargins(0, 0, 0, 0)
         label = QLabel(label_text)
         info_label = QLabel()
         info_label.setPixmap(self.info_icon)
@@ -392,7 +394,8 @@ class MainWindow(QMainWindow):
         setting_layout.addWidget(label)
         setting_layout.addWidget(widget)
         setting_layout.addWidget(info_label)
-        layout.addLayout(setting_layout)
+        layout.addWidget(setting_widget)
+        return setting_widget  # Return the setting widget to control its visibility
 
     def add_checkbox_with_info(self, layout, checkbox, tooltip_text):
         checkbox_layout = QHBoxLayout()
@@ -571,15 +574,15 @@ class MainWindow(QMainWindow):
         existing_path_layout.setContentsMargins(0, 0, 0, 0)
         existing_path_layout.addWidget(self.existing_path_input)
         existing_path_layout.addWidget(self.existing_path_browse)
-        self.add_setting_with_info(
+        existing_setting_widget = self.add_setting_with_info(
             layout,
             "Existing simulated Experiment:",
             existing_path_widget,
             "Select the directory where the existing simulated data is saved."
         )
-        # Hide the existing path input initially
-        existing_path_widget.setVisible(False)
-        self.from_existing_checkbox.toggled.connect(existing_path_widget.setVisible)
+        # Hide the entire setting initially
+        existing_setting_widget.setVisible(False)
+        self.from_existing_checkbox.toggled.connect(existing_setting_widget.setVisible)
 
         # Multi-Fasta Path (visible based on checkbox)
         self.multi_fasta_input = QLineEdit()
@@ -590,14 +593,14 @@ class MainWindow(QMainWindow):
         multi_fasta_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_layout.addWidget(self.multi_fasta_input)
         multi_fasta_layout.addWidget(self.multi_fasta_browse)
-        self.add_setting_with_info(
+        multi_fasta_setting_widget = self.add_setting_with_info(
             layout,
             "Multi-Fasta Path:",
             multi_fasta_widget,
             "Select the directory containing multiple FASTA files for the proteome mixture."
         )
-        # Hide the multi-fasta input initially
-        multi_fasta_widget.setVisible(False)
+        # Hide the entire setting initially
+        multi_fasta_setting_widget.setVisible(False)
 
         # Multi-Fasta Dilution Factor Path (visible based on checkbox)
         self.multi_fasta_dilution_input = QLineEdit()
@@ -608,18 +611,18 @@ class MainWindow(QMainWindow):
         multi_fasta_dilution_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_input)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_browse)
-        self.add_setting_with_info(
+        multi_fasta_dilution_setting_widget = self.add_setting_with_info(
             layout,
             "Multi-Fasta Dilution Factor Path:",
             multi_fasta_dilution_widget,
             "Select the CSV file containing the dilution factors for the proteome mixture."
         )
-        # Hide the multi-fasta dilution input initially
-        multi_fasta_dilution_widget.setVisible(False)
+        # Hide the entire setting initially
+        multi_fasta_dilution_setting_widget.setVisible(False)
 
         # Connect the visibility of multi-fasta widgets to the proteome_mix_checkbox
-        self.proteome_mix_checkbox.toggled.connect(multi_fasta_widget.setVisible)
-        self.proteome_mix_checkbox.toggled.connect(multi_fasta_dilution_widget.setVisible)
+        self.proteome_mix_checkbox.toggled.connect(multi_fasta_setting_widget.setVisible)
+        self.proteome_mix_checkbox.toggled.connect(multi_fasta_dilution_setting_widget.setVisible)
 
         # Set layout for the group box
         self.main_settings_group.setLayout(layout)
