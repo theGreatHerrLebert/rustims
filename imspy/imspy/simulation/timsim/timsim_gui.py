@@ -321,6 +321,7 @@ class MainWindow(QMainWindow):
         # Initialize sections
         self.init_main_settings()
         self.init_peptide_digestion_settings()
+        self.init_peptide_intensity_settings()  # Add this line
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
@@ -331,6 +332,7 @@ class MainWindow(QMainWindow):
         # Add all sections to the main layout
         self.main_layout.addWidget(self.main_settings_group)
         self.main_layout.addWidget(self.peptide_digestion_group)
+        self.main_layout.addWidget(self.peptide_intensity_group)  # Add this line
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
         self.main_layout.addWidget(self.noise_settings_group)
@@ -396,6 +398,27 @@ class MainWindow(QMainWindow):
         setting_layout.addWidget(info_label)
         layout.addWidget(setting_widget)
         return setting_widget  # Return the setting widget to control its visibility
+
+    def add_spinbox_with_info(self, layout, attribute_name, label_text, tooltip_text, min_value, max_value,
+                              default_value, decimals=2, step=None):
+        setting_widget = QWidget()
+        setting_layout = QHBoxLayout(setting_widget)
+        setting_layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(label_text)
+        spinbox = QDoubleSpinBox()
+        spinbox.setRange(min_value, max_value)
+        spinbox.setDecimals(decimals)
+        if step is not None:
+            spinbox.setSingleStep(step)
+        spinbox.setValue(default_value)
+        info_label = QLabel()
+        info_label.setPixmap(self.info_icon)
+        info_label.setToolTip(tooltip_text)
+        setting_layout.addWidget(label)
+        setting_layout.addWidget(spinbox)
+        setting_layout.addWidget(info_label)
+        layout.addWidget(setting_widget)
+        setattr(self, attribute_name, spinbox)  # Assign spinbox to self.attribute_name
 
     def add_checkbox_with_info(self, layout, checkbox, tooltip_text):
         checkbox_layout = QHBoxLayout()
@@ -889,170 +912,113 @@ class MainWindow(QMainWindow):
         # Right vertical layout for the plot
         plot_layout = QVBoxLayout()
 
-        # Load info icon image
-        info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
+        # Define your settings in a list of dictionaries
+        settings = [
+            {
+                'attribute_name': 'gradient_length_spin',
+                'label_text': 'Gradient Length (seconds):',
+                'tooltip_text': 'Defines the total length of the simulated chromatographic gradient in seconds.',
+                'min_value': 1,
+                'max_value': 1e5,
+                'default_value': 3600,
+                'decimals': 0
+            },
+            {
+                'attribute_name': 'mean_std_rt_spin',
+                'label_text': 'Mean Std RT:',
+                'tooltip_text': 'The mean standard deviation for retention time, affecting peak widths.',
+                'min_value': 0.1,
+                'max_value': 10,
+                'default_value': 1.0,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'variance_std_rt_spin',
+                'label_text': 'Variance Std RT:',
+                'tooltip_text': 'Variance of the standard deviation of retention time, affecting variance of distribution spread.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 0.1,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'mean_skewness_spin',
+                'label_text': 'Mean Skewness:',
+                'tooltip_text': 'Average skewness for retention time distribution, impacting peak asymmetry.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 1.5,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'variance_skewness_spin',
+                'label_text': 'Variance Skewness:',
+                'tooltip_text': 'Variance in skewness of retention time distribution, altering peak shapes.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 0.1,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'std_im_spin',
+                'label_text': 'Standard Deviation IM:',
+                'tooltip_text': 'Standard deviation in ion mobility, which affects peak width in the mobility dimension.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.01,
+                'decimals': 4
+            },
+            {
+                'attribute_name': 'variance_std_im_spin',
+                'label_text': 'Variance Std IM:',
+                'tooltip_text': 'Variance of the standard deviation of ion mobility, affecting distribution spread.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.001,
+                'decimals': 4
+            },
+            {
+                'attribute_name': 'z_score_spin',
+                'label_text': 'Z-Score:',
+                'tooltip_text': 'Defines the z-score threshold for filtering data, removing low-signal regions.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 0.99,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'target_p_spin',
+                'label_text': 'Target Percentile:',
+                'tooltip_text': 'Specifies the target percentile for retention time, capturing high-density regions.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.999,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'sampling_step_size_spin',
+                'label_text': 'Sampling Step Size:',
+                'tooltip_text': 'Sets the step size for data sampling, adjusting resolution and computation time.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.001,
+                'decimals': 4
+            },
+        ]
 
-        # Gradient Length
-        gradient_length_layout = QHBoxLayout()
-        self.gradient_length_label = QLabel("Gradient Length (seconds):")
-        self.gradient_length_spin = QDoubleSpinBox()
-        self.gradient_length_spin.setRange(1, 1e5)
-        self.gradient_length_spin.setValue(3600)
-        gradient_length_layout.addWidget(self.gradient_length_label)
-        gradient_length_layout.addWidget(self.gradient_length_spin)
-
-        self.gradient_length_info = QLabel()
-        self.gradient_length_info.setPixmap(info_icon)
-        self.gradient_length_info.setToolTip(
-            "Defines the total length of the simulated chromatographic gradient in seconds.")
-        gradient_length_layout.addWidget(self.gradient_length_info)
-        settings_layout.addLayout(gradient_length_layout)
-
-        # Mean Std RT
-        mean_std_rt_layout = QHBoxLayout()
-        self.mean_std_rt_label = QLabel("Mean Std RT:")
-        self.mean_std_rt_spin = QDoubleSpinBox()
-        self.mean_std_rt_spin.setRange(0.1, 10)
-        self.mean_std_rt_spin.setValue(1.0)
-        mean_std_rt_layout.addWidget(self.mean_std_rt_label)
-        mean_std_rt_layout.addWidget(self.mean_std_rt_spin)
-
-        self.mean_std_rt_info = QLabel()
-        self.mean_std_rt_info.setPixmap(info_icon)
-        self.mean_std_rt_info.setToolTip("The mean standard deviation for retention time, affecting peak widths.")
-        mean_std_rt_layout.addWidget(self.mean_std_rt_info)
-        settings_layout.addLayout(mean_std_rt_layout)
-
-        # Variance Std RT
-        variance_std_rt_layout = QHBoxLayout()
-        self.variance_std_rt_label = QLabel("Variance Std RT:")
-        self.variance_std_rt_spin = QDoubleSpinBox()
-        self.variance_std_rt_spin.setRange(0, 5)
-        self.variance_std_rt_spin.setValue(0.1)
-        variance_std_rt_layout.addWidget(self.variance_std_rt_label)
-        variance_std_rt_layout.addWidget(self.variance_std_rt_spin)
-
-        self.variance_std_rt_info = QLabel()
-        self.variance_std_rt_info.setPixmap(info_icon)
-        self.variance_std_rt_info.setToolTip(
-            "Variance of the standard deviation of retention time, affecting variance of distribution spread.")
-        variance_std_rt_layout.addWidget(self.variance_std_rt_info)
-        settings_layout.addLayout(variance_std_rt_layout)
-
-        # Mean Skewness
-        mean_skewness_layout = QHBoxLayout()
-        self.mean_skewness_label = QLabel("Mean Skewness:")
-        self.mean_skewness_spin = QDoubleSpinBox()
-        self.mean_skewness_spin.setRange(0, 5)
-        self.mean_skewness_spin.setValue(1.5)
-        mean_skewness_layout.addWidget(self.mean_skewness_label)
-        mean_skewness_layout.addWidget(self.mean_skewness_spin)
-
-        self.mean_skewness_info = QLabel()
-        self.mean_skewness_info.setPixmap(info_icon)
-        self.mean_skewness_info.setToolTip(
-            "Average skewness for retention time distribution, impacting peak asymmetry.")
-        mean_skewness_layout.addWidget(self.mean_skewness_info)
-        settings_layout.addLayout(mean_skewness_layout)
-
-        # Variance Skewness
-        variance_skewness_layout = QHBoxLayout()
-        self.variance_skewness_label = QLabel("Variance Skewness:")
-        self.variance_skewness_spin = QDoubleSpinBox()
-        self.variance_skewness_spin.setRange(0, 5)
-        self.variance_skewness_spin.setValue(0.1)
-        variance_skewness_layout.addWidget(self.variance_skewness_label)
-        variance_skewness_layout.addWidget(self.variance_skewness_spin)
-
-        self.variance_skewness_info = QLabel()
-        self.variance_skewness_info.setPixmap(info_icon)
-        self.variance_skewness_info.setToolTip(
-            "Variance in skewness of retention time distribution, altering peak shapes.")
-        variance_skewness_layout.addWidget(self.variance_skewness_info)
-        settings_layout.addLayout(variance_skewness_layout)
-
-        # Standard Deviation IM
-        std_im_layout = QHBoxLayout()
-        self.std_im_label = QLabel("Standard Deviation IM:")
-        self.std_im_spin = QDoubleSpinBox()
-        self.std_im_spin.setRange(0, 1)
-        self.std_im_spin.setDecimals(4)
-        self.std_im_spin.setValue(0.01)
-        std_im_layout.addWidget(self.std_im_label)
-        std_im_layout.addWidget(self.std_im_spin)
-
-        self.std_im_info = QLabel()
-        self.std_im_info.setPixmap(info_icon)
-        self.std_im_info.setToolTip(
-            "Standard deviation in ion mobility, which affects peak width in the mobility dimension.")
-        std_im_layout.addWidget(self.std_im_info)
-        settings_layout.addLayout(std_im_layout)
-
-        # Variance Std IM
-        variance_std_im_layout = QHBoxLayout()
-        self.variance_std_im_label = QLabel("Variance Std IM:")
-        self.variance_std_im_spin = QDoubleSpinBox()
-        self.variance_std_im_spin.setRange(0, 1)
-        self.variance_std_im_spin.setDecimals(4)
-        self.variance_std_im_spin.setValue(0.001)
-        variance_std_im_layout.addWidget(self.variance_std_im_label)
-        variance_std_im_layout.addWidget(self.variance_std_im_spin)
-
-        self.variance_std_im_info = QLabel()
-        self.variance_std_im_info.setPixmap(info_icon)
-        self.variance_std_im_info.setToolTip(
-            "Variance of the standard deviation of ion mobility, affecting distribution spread.")
-        variance_std_im_layout.addWidget(self.variance_std_im_info)
-        settings_layout.addLayout(variance_std_im_layout)
-
-        # Z-Score
-        z_score_layout = QHBoxLayout()
-        self.z_score_label = QLabel("Z-Score:")
-        self.z_score_spin = QDoubleSpinBox()
-        self.z_score_spin.setRange(0, 5)
-        self.z_score_spin.setValue(0.99)
-        z_score_layout.addWidget(self.z_score_label)
-        z_score_layout.addWidget(self.z_score_spin)
-
-        self.z_score_info = QLabel()
-        self.z_score_info.setPixmap(info_icon)
-        self.z_score_info.setToolTip("Defines the z-score threshold for filtering data, removing low-signal regions.")
-        z_score_layout.addWidget(self.z_score_info)
-        settings_layout.addLayout(z_score_layout)
-
-        # Target Percentile
-        target_p_layout = QHBoxLayout()
-        self.target_p_label = QLabel("Target Percentile:")
-        self.target_p_spin = QDoubleSpinBox()
-        self.target_p_spin.setRange(0, 1)
-        self.target_p_spin.setDecimals(3)
-        self.target_p_spin.setValue(0.999)
-        target_p_layout.addWidget(self.target_p_label)
-        target_p_layout.addWidget(self.target_p_spin)
-
-        self.target_p_info = QLabel()
-        self.target_p_info.setPixmap(info_icon)
-        self.target_p_info.setToolTip(
-            "Specifies the target percentile for retention time, capturing high-density regions.")
-        target_p_layout.addWidget(self.target_p_info)
-        settings_layout.addLayout(target_p_layout)
-
-        # Sampling Step Size
-        sampling_step_size_layout = QHBoxLayout()
-        self.sampling_step_size_label = QLabel("Sampling Step Size:")
-        self.sampling_step_size_spin = QDoubleSpinBox()
-        self.sampling_step_size_spin.setRange(0, 1)
-        self.sampling_step_size_spin.setDecimals(4)
-        self.sampling_step_size_spin.setValue(0.001)
-        sampling_step_size_layout.addWidget(self.sampling_step_size_label)
-        sampling_step_size_layout.addWidget(self.sampling_step_size_spin)
-
-        self.sampling_step_size_info = QLabel()
-        self.sampling_step_size_info.setPixmap(info_icon)
-        self.sampling_step_size_info.setToolTip(
-            "Sets the step size for data sampling, adjusting resolution and computation time.")
-        sampling_step_size_layout.addWidget(self.sampling_step_size_info)
-        settings_layout.addLayout(sampling_step_size_layout)
+        # Loop over the settings and add them to the layout
+        for setting in settings:
+            self.add_spinbox_with_info(
+                layout=settings_layout,
+                attribute_name=setting['attribute_name'],
+                label_text=setting['label_text'],
+                tooltip_text=setting['tooltip_text'],
+                min_value=setting['min_value'],
+                max_value=setting['max_value'],
+                default_value=setting['default_value'],
+                decimals=setting.get('decimals', 2),
+                step=setting.get('step', None)
+            )
 
         # Add the EMG visualization to the plot layout
         self.emg_plot = EMGPlot()
