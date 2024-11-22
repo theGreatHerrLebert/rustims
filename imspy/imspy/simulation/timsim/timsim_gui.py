@@ -1473,8 +1473,8 @@ class MainWindow(QMainWindow):
             args.append("--add_real_data_noise")
         if use_existing:
             args.append("--from_existing")
-        if not apply_fragmentation:
-            args.append("--no_fragmentation")
+        if apply_fragmentation:
+            args.append("--apply_fragmentation")
 
         # Include modifications if provided
         if modifications:

@@ -62,7 +62,7 @@ def main():
         'use_reference_layout': True,
         'sample_peptides': True,
         'sample_seed': 41,
-        'apply_fragmentation': False,
+        'fragment': False,
         'num_sample_peptides': 25000,
         'missed_cleavages': 2,
         'min_len': 7,
@@ -146,9 +146,10 @@ def main():
     parser.set_defaults(sample_peptides=True)
     parser.add_argument("--sample_seed", type=int, help="Seed for peptide sampling (default: 41)")
 
-    parser.add_argument("--apply_fragmentation", dest="apply_fragmentation", action="store_true",
+    parser.add_argument("--apply_fragmentation", dest="fragment", action="store_true",
                         help="Do not perform fragmentation (default: False)")
-    parser.set_defaults(apply_fragmentation=False)
+    parser.set_defaults(fragment=False)
+
 
     # Peptide digestion arguments
     parser.add_argument(
@@ -370,6 +371,10 @@ def main():
     if not args.silent_mode:
         print(f"Using variable modifications: {variable_modifications}")
         print(f"Using static modifications: {static_modifications}")
+        if args.fragment:
+            print("Fragmentation is enabled.")
+        else:
+            print("Fragmentation is disabled.")
 
     # Check if current system the simulator runs on is MacOS
     if os.uname().sysname == 'Darwin':
@@ -649,7 +654,7 @@ def main():
         fragment_sample_fraction=0.2,
         num_precursor_frames=5,
         num_fragment_frames=5,
-        fragment=args.apply_fragmentation,
+        fragment=args.fragment,
     )
 
 
