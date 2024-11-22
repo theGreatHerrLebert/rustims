@@ -62,7 +62,7 @@ def main():
         'use_reference_layout': True,
         'sample_peptides': True,
         'sample_seed': 41,
-        'fragment': False,
+        'apply_fragmentation': False,
         'num_sample_peptides': 25000,
         'missed_cleavages': 2,
         'min_len': 7,
@@ -118,9 +118,11 @@ def main():
     parser.add_argument("--config", type=str, default=None, help="Path to configuration file (TOML format)")
 
     # Required string arguments
-    parser.add_argument("save_path", type=str, help="Path to save the experiment to")
-    parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
-    parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
+    parser.add_argument("save_path", type=str, nargs='?', default=None, help="Path to save the experiment to")
+    parser.add_argument("reference_path", type=str, nargs='?', default=None,
+                        help="Path to a real TDF reference dataset")
+    parser.add_argument("fasta_path", type=str, nargs='?', default=None,
+                        help="Path to the fasta file of proteins to be digested")
 
     # Optional arguments
     parser.add_argument("--reference_in_memory", dest="reference_in_memory", action="store_true",
@@ -146,9 +148,9 @@ def main():
     parser.set_defaults(sample_peptides=True)
     parser.add_argument("--sample_seed", type=int, help="Seed for peptide sampling (default: 41)")
 
-    parser.add_argument("--apply_fragmentation", dest="fragment", action="store_true",
+    parser.add_argument("--apply_fragmentation", dest="apply_fragmentation", action="store_true",
                         help="Do not perform fragmentation (default: False)")
-    parser.set_defaults(fragment=False)
+    parser.set_defaults(apply_fragmentation=False)
 
 
     # Peptide digestion arguments
@@ -349,11 +351,25 @@ def main():
             params = config[section]
             defaults.update(params)
 
+        # Update defaults with positional arguments if they exist in config
+        defaults['save_path'] = config.get('save_path', defaults.get('save_path'))
+        defaults['reference_path'] = config.get('reference_path', defaults.get('reference_path'))
+        defaults['fasta_path'] = config.get('fasta_path', defaults.get('fasta_path'))
+
+        print(defaults)
+
     # Set defaults in parser
     parser.set_defaults(**defaults)
 
     # Parse arguments with defaults from config
     args = parser.parse_args()
+
+    if args.save_path is None:
+        parser.error("the following argument is required: save_path")
+    if args.reference_path is None:
+        parser.error("the following argument is required: reference_path")
+    if args.fasta_path is None:
+        parser.error("the following argument is required: fasta_path")
 
     # Load the modifications configuration
     if not args.modifications or args.modifications == "":
@@ -371,7 +387,7 @@ def main():
     if not args.silent_mode:
         print(f"Using variable modifications: {variable_modifications}")
         print(f"Using static modifications: {static_modifications}")
-        if args.fragment:
+        if args.apply_fragmentation:
             print("Fragmentation is enabled.")
         else:
             print("Fragmentation is disabled.")
@@ -429,7 +445,7 @@ def main():
     if args.proteome_mix:
         factors = get_dilution_factors(args.multi_fasta_dilution)
 
-    fastas = get_fasta_file_paths(args.fasta)
+    fastas = get_fasta_file_paths(args.fasta_path)
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
@@ -654,7 +670,7 @@ def main():
         fragment_sample_fraction=0.2,
         num_precursor_frames=5,
         num_fragment_frames=5,
-        fragment=args.fragment,
+        fragment=args.apply_fragmentation,
     )
 
 
