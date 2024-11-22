@@ -20,12 +20,12 @@ def assemble_frames(
         fragment_noise_ppm: float = 5.,
         num_threads: int = 4,
         add_real_data_noise: bool = False,
-        intensity_max_precursor: float = 30,
-        intensity_max_fragment: float = 30,
-        precursor_sample_fraction: float = 0.2,
-        fragment_sample_fraction: float = 0.2,
-        num_precursor_frames: int = 5,
-        num_fragment_frames: int = 5,
+        intensity_max_precursor: float = 150,
+        intensity_max_fragment: float = 75,
+        precursor_sample_fraction: float = 0.01,
+        fragment_sample_fraction: float = 0.05,
+        num_precursor_frames: int = 10,
+        num_fragment_frames: int = 10,
         fragment: bool = True,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.

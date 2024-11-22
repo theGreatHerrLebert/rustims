@@ -424,7 +424,7 @@ def main():
             # JOB 1: Simulate peptides
             peptides = simulate_peptides(
                 protein_table=proteins,
-                num_peptides_total=200_000,
+                num_peptides_total=500_000,
                 verbose=verbose,
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,

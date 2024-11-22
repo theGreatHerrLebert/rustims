@@ -37,6 +37,22 @@ def sample_peptides_from_proteins(table, num_peptides_total=100_000):
     return [x[1] for x in tmp]
 
 
+def generate_normal_efficiency(n, mean_log=-2, std_log=0.6, min_val=0.0001, max_val=1):
+    efficiency = []
+    while len(efficiency) < n:
+        # Generate more samples than needed to reduce iterations
+        samples = 10 ** np.random.normal(loc=mean_log, scale=std_log, size=n)
+
+        # Filter only the values within the desired range
+        valid_samples = samples[(samples >= min_val) & (samples <= max_val)]
+
+        # Append valid samples to the list
+        efficiency.extend(valid_samples)
+
+    # Truncate to exactly `n` values
+    return np.array(efficiency[:n])
+
+
 def simulate_peptides(
         protein_table: pd.DataFrame,
         num_peptides_total: int = 100_000,
@@ -79,11 +95,14 @@ def simulate_peptides(
         "events": events}
     )
 
-    # simulate peptide efficiency by sampling from a normal distribution
-    efficiency = np.random.normal(loc=0, scale=1, size=len(peptide_table))
-
-    # normalize all values to be between 0 and 1
-    efficiency = (efficiency - np.min(efficiency)) / (np.max(efficiency) - np.min(efficiency))
+    # Simulate peptide efficiency using rejection sampling in log-normal space
+    efficiency = generate_normal_efficiency(
+        n=len(peptide_table),
+        mean_log=-2,  # Center the log values around log10(0.01)
+        std_log=1,  # Spread the values across 3 orders of magnitude
+        min_val=0.0001,  # Minimum value
+        max_val=1  # Maximum value
+    )
 
     peptide_table["events"] = (peptide_table.events * efficiency).astype(np.int32)
 
@@ -127,8 +146,5 @@ def simulate_peptides(
 
         if verbose:
             print(f"Excluded {len(peptide_table) - rt_filter.sum()} peptides with low retention times.")
-
-        # remove rt values of 0.01 and below
-        peptide_table = peptide_table[peptide_rt['retention_time_gru_predictor'] > 0.5]
 
     return peptide_table
