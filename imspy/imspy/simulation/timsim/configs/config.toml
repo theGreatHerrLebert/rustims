@@ -1,0 +1,85 @@
+[general]
+save_path = "/path/to/save/experiment"
+reference_path = "/path/to/reference/dataset"
+fasta = "/path/to/fasta/file"
+
+[acquisition]
+reference_in_memory = false
+silent_mode = false
+acquisition_type = "DIA"
+experiment_name = "ExperimentName"
+use_reference_layout = true
+sample_peptides = true
+sample_seed = 41
+apply_fragmentation = true
+
+[peptide_digestion]
+num_sample_peptides = 25000
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
+decoys = false
+
+[modifications]
+modifications_config = ""
+
+[peptide_intensities]
+intensity_mean = 1e7
+intensity_min = 1e5
+intensity_max = 1e9
+
+[isotope_pattern]
+isotope_k = 8
+isotope_min_intensity = 1
+isotope_centroid = true
+
+[sample_occurrences]
+sample_occurrences = true
+intensity_value = 1e6
+
+[distributions]
+gradient_length = 3600
+z_score = 0.99
+mean_std_rt = 1.5
+variance_std_rt = 0.3
+mean_skewness = 0.3
+variance_skewness = 0.1
+std_im = 0.01
+variance_std_im = 0.003
+target_p = 0.999
+sampling_step_size = 0.001
+
+[performance]
+num_threads = -1
+batch_size = 256
+
+[charge_state]
+p_charge = 0.5
+min_charge_contrib = 0.25
+
+[noise_settings]
+add_noise_to_signals = false
+mz_noise_precursor = false
+precursor_noise_ppm = 5.0
+mz_noise_fragment = false
+fragment_noise_ppm = 5.0
+mz_noise_uniform = false
+add_real_data_noise = false
+reference_noise_intensity_max = 30
+down_sample_factor = 0.5
+
+[proteome_mix]
+proteome_mix = false
+multi_fasta_dilution = ""
+
+[debug]
+debug_mode = false
+
+[existing_simulation]
+from_existing = false
+existing_path = ""
+
+[bruker_sdk]
+use_bruker_sdk = true

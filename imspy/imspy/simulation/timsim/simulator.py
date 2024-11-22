@@ -52,33 +52,90 @@ def load_config(config_path):
         config = toml.load(config_file)
     return config
 
-
 def main():
+    # Default configuration values
+    defaults = {
+        'reference_in_memory': False,
+        'silent_mode': False,
+        'acquisition_type': 'DIA',
+        'experiment_name': f'TIMSIM-[PLACEHOLDER]-{int(time.time())}',
+        'use_reference_layout': True,
+        'sample_peptides': True,
+        'sample_seed': 41,
+        'fragment': True,
+        'num_sample_peptides': 25000,
+        'missed_cleavages': 2,
+        'min_len': 7,
+        'max_len': 30,
+        'cleave_at': 'KR',
+        'restrict': 'P',
+        'decoys': False,
+        'modifications': None,
+        'intensity_mean': 1e7,
+        'intensity_min': 1e5,
+        'intensity_max': 1e9,
+        'isotope_k': 8,
+        'isotope_min_intensity': 1,
+        'isotope_centroid': True,
+        'sample_occurrences': True,
+        'intensity_value': 1e6,
+        'gradient_length': 3600,
+        'z_score': 0.99,
+        'mean_std_rt': 1.5,
+        'variance_std_rt': 0.3,
+        'mean_skewness': 0.3,
+        'variance_skewness': 0.1,
+        'std_im': 0.01,
+        'variance_std_im': 0.003,
+        'target_p': 0.999,
+        'sampling_step_size': 0.001,
+        'num_threads': -1,
+        'batch_size': 256,
+        'p_charge': 0.5,
+        'min_charge_contrib': 0.25,
+        'add_noise_to_signals': False,
+        'mz_noise_precursor': False,
+        'precursor_noise_ppm': 5.0,
+        'mz_noise_fragment': False,
+        'fragment_noise_ppm': 5.0,
+        'mz_noise_uniform': False,
+        'add_real_data_noise': False,
+        'reference_noise_intensity_max': 30,
+        'down_sample_factor': 0.5,
+        'proteome_mix': False,
+        'multi_fasta_dilution': None,
+        'debug_mode': False,
+        'from_existing': False,
+        'existing_path': None,
+        'use_bruker_sdk': True,
+    }
+
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation '
                                                  'with diaPASEF-like acquisition on a BRUKER TimsTOF.')
 
-    # Required string argument for path
-    parser.add_argument("path", type=str, help="Path to save the experiment to")
+    # Configuration file argument
+    parser.add_argument("--config", type=str, default=None, help="Path to configuration file (TOML format)")
+
+    # Required string arguments
+    parser.add_argument("save_path", type=str, help="Path to save the experiment to")
     parser.add_argument("reference_path", type=str, help="Path to a real TDF reference dataset")
     parser.add_argument("fasta", type=str, help="Path to the fasta file of proteins to be digested")
 
+    # Optional arguments
     parser.add_argument("--reference_in_memory", dest="reference_in_memory", action="store_true",
                         help="Whether to load the reference dataset into memory (default: False)")
     parser.set_defaults(reference_in_memory=False)
 
-    # Optional verbosity flag
-    parser.add_argument("-s", "--silent", dest="verbose", action="store_false",
+    parser.add_argument("-s", "--silent_mode,", dest="silent_mode", action="store_true",
                         help="Silence output (default: False)")
-    parser.set_defaults(verbose=True)
+    parser.set_defaults(silent_mode=False)
 
     parser.add_argument("-acq", "--acquisition_type",
                         type=str,
-                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA",
-                        default='DIA')
+                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA")
 
-    parser.add_argument("-n", "--name", type=str, help="Name of the experiment",
-                        default=f'TIMSIM-[PLACEHOLDER]-{int(time.time())}')
+    parser.add_argument("-n", "--experiment_name", type=str, help="Name of the experiment")
 
     parser.add_argument("--no_reference_layout", dest="use_reference_layout", action="store_false",
                         help="Use the layout of the reference dataset for the acquisition (default: True)")
@@ -87,7 +144,7 @@ def main():
     parser.add_argument("--no_peptide_sampling", dest="sample_peptides", action="store_false",
                         help="Sample peptides from the digested fasta (default: True)")
     parser.set_defaults(sample_peptides=True)
-    parser.add_argument("--sample_seed", type=int, default=41, help="Seed for peptide sampling (default: 41)")
+    parser.add_argument("--sample_seed", type=int, help="Seed for peptide sampling (default: 41)")
 
     parser.add_argument("--no_fragmentation", dest="fragment", action="store_false",
                         help="Do not perform fragmentation (default: True)")
@@ -100,12 +157,12 @@ def main():
         default=25_000,
         help="Number of peptides to sample from the digested fasta (default: 25_000)")
 
-    parser.add_argument("--missed_cleavages", type=int, default=2, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, default=7, help="Minimum peptide length (default: 7)")
-    parser.add_argument("--max_len", type=int, default=30, help="Maximum peptide length (default: 30)")
-    parser.add_argument("--cleave_at", type=str, default='KR', help="Cleave at (default: KR)")
-    parser.add_argument("--restrict", type=str, default='P', help="Restrict (default: P)")
-    parser.add_argument("--add_decoys", dest="decoys", action="store_true",
+    parser.add_argument("--missed_cleavages", type=int, help="Number of missed cleavages (default: 2)")
+    parser.add_argument("--min_len", type=int, help="Minimum peptide length (default: 7)")
+    parser.add_argument("--max_len", type=int, help="Maximum peptide length (default: 30)")
+    parser.add_argument("--cleave_at", type=str, help="Cleave at (default: KR)")
+    parser.add_argument("--restrict", type=str, help="Restrict (default: P)")
+    parser.add_argument("--decoys", dest="decoys", action="store_true",
                         help="Generate decoys (default: False)")
     parser.set_defaults(decoys=False)
 
@@ -117,20 +174,20 @@ def main():
 
     # Optional argument for path to the configuration file
     parser.add_argument(
-        "--modifications_config",
+        "--modifications",
         type=str,
         default=default_mods_config_path,
         help="Path to the configuration file (TOML format). Default: configs/modifications.toml"
     )
 
     # Peptide intensities
-    parser.add_argument("--intensity_mean", type=float, default=1e7, help="Mean peptide intensity (default: 1e6)")
-    parser.add_argument("--intensity_min", type=float, default=1e5, help="Std peptide intensity (default: 1e5)")
-    parser.add_argument("--intensity_max", type=float, default=1e9, help="Min peptide intensity (default: 1e9)")
+    parser.add_argument("--intensity_mean", type=float, help="Mean peptide intensity (default: 1e7)")
+    parser.add_argument("--intensity_min", type=float, help="Min peptide intensity (default: 1e5)")
+    parser.add_argument("--intensity_max", type=float, help="Max peptide intensity (default: 1e9)")
 
     # Precursor isotopic pattern settings
-    parser.add_argument("--isotope_k", type=int, default=8, help="Number of isotopes to simulate (default: 8)")
-    parser.add_argument("--isotope_min_intensity", type=int, default=1, help="Min intensity for isotopes (default: 1)")
+    parser.add_argument("--isotope_k", type=int, help="Number of isotopes to simulate (default: 8)")
+    parser.add_argument("--isotope_min_intensity", type=int, help="Min intensity for isotopes (default: 1)")
     parser.add_argument("--no_isotope_centroid", dest="isotope_centroid", action="store_false",
                         help="Centroid isotopes (default: True)")
     parser.set_defaults(isotope_centroid=True)
@@ -142,41 +199,40 @@ def main():
     parser.set_defaults(sample_occurrences=True)
     parser.add_argument(
         "--intensity_value",
-        type=float, default=1e6,
+        type=float,
         help="Intensity value of all peptides if sample occurrence sampling is deactivated (default: 1e6)")
 
     # Distribution parameters
     parser.add_argument(
         "--gradient_length",
         type=float,
-        default=60 * 60,
         help="Length of the gradient in seconds (default: 3600)")
-    parser.add_argument("--z_score", type=float, default=.99,
+    parser.add_argument("--z_score", type=float,
                         help="Z-score for frame and scan distributions (default: .99)")
-    parser.add_argument("--mean_std_rt", type=float, default=1.5,
+    parser.add_argument("--mean_std_rt", type=float,
                         help="Mean standard deviation for retention time distribution (default: 1.5)")
-    parser.add_argument("--variance_std_rt", type=float, default=0.3,
+    parser.add_argument("--variance_std_rt", type=float,
                         help="Variance standard deviation for retention time distribution (default: 0.3)")
-    parser.add_argument("--mean_scewness", type=float, default=0.3,
+    parser.add_argument("--mean_skewness", type=float,
                         help="Mean scewness for retention time distribution (default: 0.3)")
-    parser.add_argument("--variance_scewness", type=float, default=0.1,
+    parser.add_argument("--variance_skewness", type=float,
                         help="Variance scewness for retention time distribution (default: 0.1)")
-    parser.add_argument("--std_im", type=float, default=0.01,
+    parser.add_argument("--std_im", type=float,
                         help="Standard deviation for mobility distribution (default: 0.01)")
-    parser.add_argument("--variance_std_im", type=float, default=0.003,
+    parser.add_argument("--variance_std_im", type=float,
                         help="Variance standard deviation for mobility distribution (default: 0.003)")
-    parser.add_argument("--target_p", type=float, default=0.999,
+    parser.add_argument("--target_p", type=float,
                         help="Target percentile for frame distributions (default: 0.999)")
-    parser.add_argument("--sampling_step_size", type=float, default=0.001,
+    parser.add_argument("--sampling_step_size", type=float,
                         help="Sampling step size for frame distributions (default: 0.001)")
 
     # Number of cores to use
-    parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads to use (default: -1, all available)")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size (default: 256)")
+    parser.add_argument("--num_threads", type=int, help="Number of threads to use (default: -1, all available)")
+    parser.add_argument("--batch_size", type=int, help="Batch size (default: 256)")
 
-    # charge state probabilities
-    parser.add_argument("--p_charge", type=float, default=0.5, help="Probability of being charged (default: 0.5)")
-    parser.add_argument("--min_charge_contrib", type=float, default=0.25,
+    # Charge state probabilities
+    parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.5)")
+    parser.add_argument("--min_charge_contrib", type=float,
                         help="Minimum charge contribution (default: 0.25)")
 
     # Noise settings
@@ -196,7 +252,6 @@ def main():
     parser.add_argument(
         "--precursor_noise_ppm",
         type=float,
-        default=5.0,
         help="Precursor noise in ppm (default: 5.0)"
     )
 
@@ -210,7 +265,6 @@ def main():
     parser.add_argument(
         "--fragment_noise_ppm",
         type=float,
-        default=5.0,
         help="Fragment noise in ppm (default: 5.0)"
     )
     parser.add_argument(
@@ -228,14 +282,12 @@ def main():
     parser.add_argument(
         "--reference_noise_intensity_max",
         type=float,
-        default=30,
         help="Maximum intensity for noise reference data (default: 30)"
     )
 
     parser.add_argument(
         "--down_sample_factor",
         type=float,
-        default=0.5,
         help="Down sample fragment peaks generated, sampling probability "
              "is inverse proportional to intensity (default: 0.5)"
     )
@@ -250,9 +302,8 @@ def main():
 
     # Dilution factors csv file path
     parser.add_argument(
-        "--dilution_factors",
+        "--multi_fasta_dilution",
         type=str,
-        default=None,
         help="Path to a CSV file containing dilution factors for the proteome mixture"
     )
 
@@ -264,7 +315,7 @@ def main():
     )
     parser.set_defaults(debug_mode=False)
 
-    # add from existing simulation
+    # Add from existing simulation
     parser.add_argument(
         "--from_existing",
         action="store_true",
@@ -272,15 +323,14 @@ def main():
     )
     parser.set_defaults(from_existing=False)
 
-    # add existing simulation path
+    # Add existing simulation path
     parser.add_argument(
-        "--existing_simulation_df_path",
+        "--existing_path",
         type=str,
-        default=None,
         help="Path to existing simulation to use for frame distributions",
     )
 
-    # dont use bruker sdk
+    # Don't use bruker sdk
     parser.add_argument(
         "--no_bruker_sdk",
         action="store_false",
@@ -288,23 +338,42 @@ def main():
     )
     parser.set_defaults(use_bruker_sdk=True)
 
-    # Parse the arguments
+    # Parse known arguments to get config file
+    args, remaining_argv = parser.parse_known_args()
+
+    # Load configuration from file if provided
+    if args.config:
+        config = load_config(args.config)
+        for section in config:
+            params = config[section]
+            defaults.update(params)
+
+    # Set defaults in parser
+    parser.set_defaults(**defaults)
+
+    # Parse arguments with defaults from config
     args = parser.parse_args()
 
-    # Load the configuration from the specified file
-    mod_config = load_config(args.modifications_config)
+    # Load the modifications configuration
+    if not args.modifications or args.modifications == "":
+        # Path to the script directory
+        script_dir = Path(__file__).parent
+        # Default configs modification configs path
+        args.modifications = script_dir / "configs" / "modifications.toml"
+
+    mod_config = load_config(args.modifications)
 
     # Access the modifications from the configs
     variable_modifications = mod_config.get('variable_modifications', {})
     static_modifications = mod_config.get('static_modifications', {})
 
-    if args.verbose:
+    if not args.silent_mode:
         print(f"Using variable modifications: {variable_modifications}")
         print(f"Using static modifications: {static_modifications}")
 
-    # check if current system the simulator runs on is MacOS
+    # Check if current system the simulator runs on is MacOS
     if os.uname().sysname == 'Darwin':
-        print("Warning: Using bruker sdk on MacOS is not supported, setting use_bruker_sdk to False.")
+        print("Warning: Using Bruker SDK on MacOS is not supported, setting use_bruker_sdk to False.")
         args.use_bruker_sdk = False
 
     # Convert arguments to a dictionary
@@ -323,7 +392,7 @@ def main():
         rt_lambda = peptides['rt_lambda'].values
         std_im = ions['std_im'].values
 
-        # warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more than 5 percent
+        # Warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more than 5 percent
         rt_max = peptides['retention_time_gru_predictor'].max()
 
         if abs(rt_max - args.gradient_length) / args.gradient_length > 0.05:
@@ -331,7 +400,7 @@ def main():
                   f"which is off by more than 5 percent of the new gradient length of {args.gradient_length} seconds. "
                   f"This might result in distorted frame distributions and missing ions.")
 
-        if args.verbose:
+        if not args.silent_mode:
             print(f"Using existing simulation from {args.existing_simulation_df_path}")
             print(f"Peptides: {peptides.shape[0]}")
             print(f"Ions: {ions.shape[0]}")
@@ -344,48 +413,46 @@ def main():
         print(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     # Use the arguments
-    path = check_path(args.path)
+    path = check_path(args.save_path)
     reference_path = check_path(args.reference_path)
-    name = args.name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
+    name = args.experiment_name.replace('[PLACEHOLDER]', f'{args.acquisition_type}').replace("'", "")
 
     # Save the arguments to a file, should go into the database folder
     with open(os.path.join(path, f'arguments-{name}.txt'), 'w') as f:
         f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
 
     if args.proteome_mix:
-        factors = get_dilution_factors(args.dilution_factors)
+        factors = get_dilution_factors(args.multi_fasta_dilution)
 
     fastas = get_fasta_file_paths(args.fasta)
-
-    verbose = args.verbose
 
     assert 0.0 < args.z_score < 1.0, f"Z-score must be between 0 and 1, was {args.z_score}"
 
     p_charge = args.p_charge
     assert 0.0 < p_charge < 1.0, f"Probability of being charged must be between 0 and 1, was {p_charge}"
 
-    if verbose:
+    if not args.silent_mode:
         print(f"Simulating experiment {name} at {path}...")
 
-    # create acquisition
+    # Create acquisition
     acquisition_builder = build_acquisition(
         path=path,
         reference_path=reference_path,
         exp_name=name,
         acquisition_type=args.acquisition_type,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         gradient_length=args.gradient_length,
         use_reference_ds_layout=args.use_reference_layout,
         reference_in_memory=args.reference_in_memory,
     )
 
-    if verbose:
+    if not args.silent_mode:
         print(acquisition_builder)
 
     protein_list, peptide_list = [], []
 
     for fasta_name, fasta in fastas.items():
-        if verbose and not args.from_existing:
+        if not args.silent_mode and not args.from_existing:
             print(f"Digesting fasta file: {fasta_name}...")
 
         mixture_factor = 1.0
@@ -394,15 +461,14 @@ def main():
             try:
                 mixture_factor = factors[fasta_name]
 
-                if verbose and not args.from_existing:
+                if not args.silent_mode and not args.from_existing:
                     print(f"Using mixture factor {mixture_factor} for {fasta_name}")
 
             except KeyError:
-                # print warning and set mixture factor to 1.0
+                # Print warning and set mixture factor to 1.0
                 print(f"Warning: No mixture factor found for {fasta_name}, setting to 1.0")
 
         if not args.from_existing:
-
             # JOB 0: Generate Protein Data
             proteins = simulate_proteins(
                 fasta_file_path=fasta,
@@ -415,17 +481,17 @@ def main():
                 generate_decoys=args.decoys,
                 variable_mods=variable_modifications,
                 static_mods=static_modifications,
-                verbose=verbose,
+                verbose=not args.silent_mode,
             )
 
-            if args.verbose:
+            if not args.silent_mode:
                 print("Creating Peptides from Proteins...")
 
             # JOB 1: Simulate peptides
             peptides = simulate_peptides(
                 protein_table=proteins,
-                num_peptides_total=500_000,
-                verbose=verbose,
+                num_peptides_total=200_000,
+                verbose=not args.silent_mode,
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,
                 gradient_length=acquisition_builder.gradient_length,
@@ -451,14 +517,14 @@ def main():
             print(f"Warning: Not enough peptides to sample {args.num_sample_peptides}, "
                   f"using all {peptides.shape[0]} peptides.")
 
-    if verbose and not args.from_existing:
+    if not args.silent_mode and not args.from_existing:
         print(f"Simulating {peptides.shape[0]} peptides...")
 
     if not args.from_existing:
         # JOB 3: Simulate retention times
         peptides = simulate_retention_times(
             peptides=peptides,
-            verbose=verbose,
+            verbose=not args.silent_mode,
             gradient_length=acquisition_builder.gradient_length,
         )
 
@@ -470,7 +536,7 @@ def main():
         columns[-2], columns[-1] = columns[-1], columns[-2]
         peptides = peptides[columns]
 
-    # get the number of available threads of the system if not specified
+    # Get the number of available threads of the system if not specified
     if args.num_threads == -1:
         args.num_threads = os.cpu_count()
 
@@ -480,12 +546,12 @@ def main():
         frames=acquisition_builder.frame_table,
         mean_std_rt=args.mean_std_rt,
         variance_std_rt=args.variance_std_rt,
-        mean_scewness=args.mean_scewness,
-        variance_scewness=args.variance_scewness,
+        mean_scewness=args.mean_skewness,
+        variance_scewness=args.variance_skewness,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
         target_p=args.target_p,
         step_size=args.sampling_step_size,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         add_noise=args.add_noise_to_signals,
         num_threads=args.num_threads,
         from_existing=args.from_existing,
@@ -493,13 +559,13 @@ def main():
         lambdas=rt_lambda,
     )
 
-    # save proteins to database
+    # Save proteins to database
     acquisition_builder.synthetics_handle.create_table(
         table_name='proteins',
         table=proteins,
     )
 
-    # save peptides to database
+    # Save peptides to database
     acquisition_builder.synthetics_handle.create_table(
         table_name='peptides',
         table=peptides,
@@ -520,14 +586,14 @@ def main():
             ions=ions,
             im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
-            verbose=verbose
+            verbose=not args.silent_mode,
         )
 
         # JOB 7: Simulate precursor isotopic distributions
         ions = simulate_precursor_spectra_sequence(
             ions=ions,
             num_threads=args.num_threads,
-            verbose=verbose
+            verbose=not args.silent_mode,
         )
 
     # JOB 8: Simulate scan distributions
@@ -538,7 +604,7 @@ def main():
         z_score=args.z_score,
         mean_std_im=args.std_im,
         variance_std_im=args.variance_std_im,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         add_noise=args.add_noise_to_signals,
         from_existing=args.from_existing,
         std_means=std_im,
@@ -559,7 +625,7 @@ def main():
         name=name,
         acquisition_builder=acquisition_builder,
         batch_size=args.batch_size,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         num_threads=args.num_threads,
         down_sample_factor=args.down_sample_factor,
     )
@@ -569,7 +635,7 @@ def main():
         acquisition_builder=acquisition_builder,
         frames=acquisition_builder.frame_table,
         batch_size=args.batch_size,
-        verbose=verbose,
+        verbose=not args.silent_mode,
         mz_noise_precursor=args.mz_noise_precursor,
         mz_noise_uniform=args.mz_noise_uniform,
         precursor_noise_ppm=args.precursor_noise_ppm,
@@ -577,13 +643,13 @@ def main():
         fragment_noise_ppm=args.fragment_noise_ppm,
         num_threads=args.num_threads,
         add_real_data_noise=args.add_real_data_noise,
-        intensity_max_precursor = args.reference_noise_intensity_max,
-        intensity_max_fragment = args.reference_noise_intensity_max,
-        precursor_sample_fraction = 0.2,
-        fragment_sample_fraction = 0.2,
-        num_precursor_frames = 5,
-        num_fragment_frames = 5,
-        fragment=args.fragment,
+        intensity_max_precursor=args.reference_noise_intensity_max,
+        intensity_max_fragment=args.reference_noise_intensity_max,
+        precursor_sample_fraction=0.2,
+        fragment_sample_fraction=0.2,
+        num_precursor_frames=5,
+        num_fragment_frames=5,
+        fragment=args.apply_fragmentation,
     )
 
 

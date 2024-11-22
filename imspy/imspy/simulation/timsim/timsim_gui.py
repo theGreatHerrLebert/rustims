@@ -298,31 +298,30 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(self.script_dir / "logo_2.png")))
 
         # Load the info icon image once
-        self.info_icon = QPixmap(str(self.script_dir / "info_icon.png"))
+        self.info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
 
         # Initialize the menu bar
         self.init_menu_bar()
 
-        # **Create the tab widget**
+        # Create the tab widget
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
 
         # Create tabs
         self.create_main_tab()
-        # self.create_plot_tab()
 
         # Initialize the process variable
         self.process = None
 
     def create_main_tab(self):
-        # **Create the main tab widget**
+        # Create the main tab widget
         main_tab = QWidget()
         self.main_layout = QVBoxLayout(main_tab)
 
         # Initialize sections
         self.init_main_settings()
         self.init_peptide_digestion_settings()
-        self.init_peptide_intensity_settings()
+        self.init_peptide_intensity_settings()  # Add this line
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
@@ -333,7 +332,7 @@ class MainWindow(QMainWindow):
         # Add all sections to the main layout
         self.main_layout.addWidget(self.main_settings_group)
         self.main_layout.addWidget(self.peptide_digestion_group)
-        # self.main_layout.addWidget(self.peptide_intensity_group)
+        self.main_layout.addWidget(self.peptide_intensity_group)  # Add this line
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
         self.main_layout.addWidget(self.noise_settings_group)
@@ -362,64 +361,13 @@ class MainWindow(QMainWindow):
         # Add the centered logo layout to the main layout
         self.main_layout.addLayout(logo_layout)
 
-        # **Add scroll area if needed**
+        # Add scroll area if needed
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(main_tab)
 
-        # **Add the scroll area to the first tab**
+        # Add the scroll area to the first tab
         self.tab_widget.addTab(scroll, "Main Settings")
-
-    def create_plot_tab(self):
-        # **Create the second tab for plotting**
-        plot_tab = QWidget()
-        plot_layout = QVBoxLayout(plot_tab)
-
-        # **Data Path Input**
-        data_path_layout = QHBoxLayout()
-        self.data_path_label = QLabel("Data Path:")
-        self.data_path_input = QLineEdit()
-        self.data_path_browse = QPushButton("Browse")
-        self.data_path_browse.clicked.connect(self.browse_data_path)
-
-        data_path_layout.addWidget(self.data_path_label)
-        data_path_layout.addWidget(self.data_path_input)
-        data_path_layout.addWidget(self.data_path_browse)
-
-        plot_layout.addLayout(data_path_layout)
-
-        # **Set default data path to save path from simulator tab**
-        self.data_path_input.setText(self.path_input.text())
-
-        # **Add VTK Visualizer**
-        self.vtk_visualizer = VTKVisualizer(self.data_path_input.text())
-        plot_layout.addWidget(self.vtk_visualizer)
-
-        # **Update visualization when data path changes**
-        self.data_path_input.textChanged.connect(self.update_visualization)
-        self.path_input.textChanged.connect(self.update_data_path_from_simulator)
-
-        # **Add the plot tab to the tab widget**
-        self.tab_widget.addTab(plot_tab, "Plotting")
-
-    def browse_data_path(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Data Directory")
-        if directory:
-            self.data_path_input.setText(directory)
-
-    def update_visualization(self):
-        # Remove the old visualizer widget
-        self.vtk_visualizer.setParent(None)
-        # Create a new visualizer with the updated path
-        self.vtk_visualizer = VTKVisualizer(self.data_path_input.text())
-        # Add it back to the layout
-        plot_tab = self.tab_widget.widget(1)
-        plot_layout = plot_tab.layout()
-        plot_layout.addWidget(self.vtk_visualizer)
-
-    def update_data_path_from_simulator(self):
-        # Update the data path in the plot tab when the simulator save path changes
-        self.data_path_input.setText(self.path_input.text())
 
     def init_menu_bar(self):
         menubar = self.menuBar()
@@ -437,293 +385,270 @@ class MainWindow(QMainWindow):
         load_action.triggered.connect(self.load_config)
         file_menu.addAction(load_action)
 
+    def add_setting_with_info(self, layout, label_text, widget, tooltip_text):
+        setting_widget = QWidget()
+        setting_layout = QHBoxLayout(setting_widget)
+        setting_layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(label_text)
+        info_label = QLabel()
+        info_label.setPixmap(self.info_icon)
+        info_label.setToolTip(tooltip_text)
+        setting_layout.addWidget(label)
+        setting_layout.addWidget(widget)
+        setting_layout.addWidget(info_label)
+        layout.addWidget(setting_widget)
+        return setting_widget  # Return the setting widget to control its visibility
+
+    def add_spinbox_with_info(self, layout, attribute_name, label_text, tooltip_text, min_value, max_value,
+                              default_value, decimals=2, step=None):
+        setting_widget = QWidget()
+        setting_layout = QHBoxLayout(setting_widget)
+        setting_layout.setContentsMargins(0, 0, 0, 0)
+        label = QLabel(label_text)
+        spinbox = QDoubleSpinBox()
+        spinbox.setRange(min_value, max_value)
+        spinbox.setDecimals(decimals)
+        if step is not None:
+            spinbox.setSingleStep(step)
+        spinbox.setValue(default_value)
+        info_label = QLabel()
+        info_label.setPixmap(self.info_icon)
+        info_label.setToolTip(tooltip_text)
+        setting_layout.addWidget(label)
+        setting_layout.addWidget(spinbox)
+        setting_layout.addWidget(info_label)
+        layout.addWidget(setting_widget)
+        setattr(self, attribute_name, spinbox)  # Assign spinbox to self.attribute_name
+
+    def add_checkbox_with_info(self, layout, checkbox, tooltip_text):
+        checkbox_layout = QHBoxLayout()
+        info_label = QLabel()
+        info_label.setPixmap(self.info_icon)
+        info_label.setToolTip(tooltip_text)
+        checkbox_layout.addWidget(checkbox)
+        checkbox_layout.addWidget(info_label)
+        layout.addLayout(checkbox_layout)
+
     def init_main_settings(self):
         self.main_settings_group = QGroupBox("Main Settings")
         layout = QVBoxLayout()
 
-        # Load info icon image
-        info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-
-        # Experiment Paths
-        path_layout = QHBoxLayout()
-        self.path_label = QLabel("Save Path:")
+        # Save Path
         self.path_input = QLineEdit()
         self.path_browse = QPushButton("Browse")
         self.path_browse.clicked.connect(self.browse_save_path)
-        path_layout.addWidget(self.path_label)
+        path_widget = QWidget()
+        path_layout = QHBoxLayout(path_widget)
+        path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.addWidget(self.path_input)
         path_layout.addWidget(self.path_browse)
-
-        # Save Path Info Icon
-        self.path_info = QLabel()
-        self.path_info.setPixmap(info_icon)
-        self.path_info.setToolTip("Select the directory to save simulation outputs.")
-        path_layout.addWidget(self.path_info)
-        layout.addLayout(path_layout)
+        self.add_setting_with_info(
+            layout,
+            "Save Path:",
+            path_widget,
+            "Select the directory to save simulation outputs."
+        )
 
         # Reference Dataset Path
-        reference_layout = QHBoxLayout()
-        self.reference_label = QLabel("Reference Dataset Path:")
         self.reference_input = QLineEdit()
         self.reference_browse = QPushButton("Browse")
         self.reference_browse.clicked.connect(self.browse_reference_path)
-        reference_layout.addWidget(self.reference_label)
+        reference_widget = QWidget()
+        reference_layout = QHBoxLayout(reference_widget)
+        reference_layout.setContentsMargins(0, 0, 0, 0)
         reference_layout.addWidget(self.reference_input)
         reference_layout.addWidget(self.reference_browse)
-
-        # Reference Dataset Path Info Icon
-        self.reference_info = QLabel()
-        self.reference_info.setPixmap(info_icon)
-        self.reference_info.setToolTip("Specify the path to the reference dataset used as a template for simulation.")
-        reference_layout.addWidget(self.reference_info)
-        layout.addLayout(reference_layout)
+        self.add_setting_with_info(
+            layout,
+            "Reference Dataset Path:",
+            reference_widget,
+            "Specify the path to the reference dataset used as a template for simulation."
+        )
 
         # FASTA File Path
-        fasta_layout = QHBoxLayout()
-        self.fasta_label = QLabel("FASTA File Path:")
         self.fasta_input = QLineEdit()
         self.fasta_browse = QPushButton("Browse")
         self.fasta_browse.clicked.connect(self.browse_fasta_path)
-        fasta_layout.addWidget(self.fasta_label)
+        fasta_widget = QWidget()
+        fasta_layout = QHBoxLayout(fasta_widget)
+        fasta_layout.setContentsMargins(0, 0, 0, 0)
         fasta_layout.addWidget(self.fasta_input)
         fasta_layout.addWidget(self.fasta_browse)
-
-        # FASTA File Path Info Icon
-        self.fasta_info = QLabel()
-        self.fasta_info.setPixmap(info_icon)
-        self.fasta_info.setToolTip("Provide the path to the FASTA file containing protein sequences for digestion.")
-        fasta_layout.addWidget(self.fasta_info)
-        layout.addLayout(fasta_layout)
+        self.add_setting_with_info(
+            layout,
+            "FASTA File Path:",
+            fasta_widget,
+            "Provide the path to the FASTA file containing protein sequences for digestion."
+        )
 
         # Experiment Name
-        name_layout = QHBoxLayout()
-        self.name_label = QLabel("Experiment Name:")
         self.name_input = QLineEdit(f"TIMSIM-{int(time.time())}")
-        name_layout.addWidget(self.name_label)
-        name_layout.addWidget(self.name_input)
-
-        # Experiment Name Info Icon
-        self.name_info = QLabel()
-        self.name_info.setPixmap(info_icon)
-        self.name_info.setToolTip("Name your experiment to identify it in saved outputs and reports.")
-        name_layout.addWidget(self.name_info)
-        layout.addLayout(name_layout)
+        self.add_setting_with_info(
+            layout,
+            "Experiment Name:",
+            self.name_input,
+            "Name your experiment to identify it in saved outputs and reports."
+        )
 
         # Acquisition Type
-        acquisition_layout = QHBoxLayout()
-        self.acquisition_label = QLabel("Acquisition Type:")
         self.acquisition_combo = QComboBox()
         self.acquisition_combo.addItems(["DIA", "SYNCHRO", "SLICE", "MIDIA"])
-        acquisition_layout.addWidget(self.acquisition_label)
-        acquisition_layout.addWidget(self.acquisition_combo)
-
-        # Acquisition Type Info Icon
-        self.acquisition_info = QLabel()
-        self.acquisition_info.setPixmap(info_icon)
-        self.acquisition_info.setToolTip("Select the acquisition method used to simulate data.")
-        acquisition_layout.addWidget(self.acquisition_info)
-        layout.addLayout(acquisition_layout)
+        self.add_setting_with_info(
+            layout,
+            "Acquisition Type:",
+            self.acquisition_combo,
+            "Select the acquisition method used to simulate data."
+        )
 
         # Options with checkboxes and icons to the right
         options_layout = QVBoxLayout()
 
         # Use Reference Layout
-        reference_layout_checkbox = QHBoxLayout()
         self.use_reference_layout_checkbox = QCheckBox("Use Reference Layout")
         self.use_reference_layout_checkbox.setChecked(True)
-        self.use_reference_layout_info = QLabel()
-        self.use_reference_layout_info.setPixmap(info_icon)
-        self.use_reference_layout_info.setToolTip(
-            "Use the layout of the reference dataset as a template for simulation.")
-        reference_layout_checkbox.addWidget(self.use_reference_layout_checkbox)
-        reference_layout_checkbox.addWidget(self.use_reference_layout_info)
-        options_layout.addLayout(reference_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.use_reference_layout_checkbox,
+            "Use the layout of the reference dataset as a template for simulation."
+        )
 
         # Load Reference into Memory
-        memory_layout_checkbox = QHBoxLayout()
         self.reference_in_memory_checkbox = QCheckBox("Load Reference into Memory")
         self.reference_in_memory_checkbox.setChecked(False)
-        self.reference_in_memory_info = QLabel()
-        self.reference_in_memory_info.setPixmap(info_icon)
-        self.reference_in_memory_info.setToolTip("Load the reference dataset entirely into memory to speed up access.")
-        memory_layout_checkbox.addWidget(self.reference_in_memory_checkbox)
-        memory_layout_checkbox.addWidget(self.reference_in_memory_info)
-        options_layout.addLayout(memory_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.reference_in_memory_checkbox,
+            "Load the reference dataset entirely into memory to speed up access."
+        )
 
         # Sample Peptides
-        sample_layout_checkbox = QHBoxLayout()
         self.sample_peptides_checkbox = QCheckBox("Sample Peptides")
         self.sample_peptides_checkbox.setChecked(True)
-        self.sample_peptides_info = QLabel()
-        self.sample_peptides_info.setPixmap(info_icon)
-        self.sample_peptides_info.setToolTip("Enable to randomly sample peptides for a subset of the dataset.")
-        sample_layout_checkbox.addWidget(self.sample_peptides_checkbox)
-        sample_layout_checkbox.addWidget(self.sample_peptides_info)
-        options_layout.addLayout(sample_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.sample_peptides_checkbox,
+            "Enable to randomly sample peptides for a subset of the dataset."
+        )
 
-        # Sample Peptides Seed numeric
-        sample_seed_layout = QHBoxLayout()
-        self.sample_seed_label = QLabel("Sample Seed:")
+        # Sample Seed
         self.sample_seed_spin = QSpinBox()
         self.sample_seed_spin.setRange(0, 1000000)
         self.sample_seed_spin.setValue(41)
-        self.sample_seed_info = QLabel()
-        self.sample_seed_info.setPixmap(info_icon)
-        self.sample_seed_info.setToolTip("Set the seed for the random peptide sampling.")
-
-        sample_seed_layout.addWidget(self.sample_seed_label)
-        sample_seed_layout.addWidget(self.sample_seed_spin)
-        sample_seed_layout.addWidget(self.sample_seed_info)
-        options_layout.addLayout(sample_seed_layout)
+        self.add_setting_with_info(
+            options_layout,
+            "Sample Seed:",
+            self.sample_seed_spin,
+            "Set the seed for the random peptide sampling."
+        )
 
         # Generate Decoys
-        decoys_layout_checkbox = QHBoxLayout()
         self.add_decoys_checkbox = QCheckBox("Generate Decoys")
         self.add_decoys_checkbox.setChecked(False)
-        self.add_decoys_info = QLabel()
-        self.add_decoys_info.setPixmap(info_icon)
-        self.add_decoys_info.setToolTip("Also simulate inverted decoy peptides (non-biological).")
-        decoys_layout_checkbox.addWidget(self.add_decoys_checkbox)
-        decoys_layout_checkbox.addWidget(self.add_decoys_info)
-        options_layout.addLayout(decoys_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.add_decoys_checkbox,
+            "Also simulate inverted decoy peptides (non-biological)."
+        )
 
         # Silent Mode
-        silent_layout_checkbox = QHBoxLayout()
         self.silent_checkbox = QCheckBox("Silent Mode")
         self.silent_checkbox.setChecked(False)
-        self.silent_info = QLabel()
-        self.silent_info.setPixmap(info_icon)
-        self.silent_info.setToolTip("Run the simulation in silent mode, suppressing most output messages.")
-        silent_layout_checkbox.addWidget(self.silent_checkbox)
-        silent_layout_checkbox.addWidget(self.silent_info)
-        options_layout.addLayout(silent_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.silent_checkbox,
+            "Run the simulation in silent mode, suppressing most output messages."
+        )
 
-        # Apply fragmentation to Ions
-        apply_fragmenation_layout_checkbox = QHBoxLayout()
+        # Apply Fragmentation to Ions
         self.apply_fragmentation_checkbox = QCheckBox("Apply Fragmentation to Ions")
         self.apply_fragmentation_checkbox.setChecked(True)
-        self.apply_fragmentation_info = QLabel()
-        self.apply_fragmentation_info.setPixmap(info_icon)
-        self.apply_fragmentation_info.setToolTip(
-            "If disabled, quadrupole selection will still be applied but fragmentation will be skipped.")
-        apply_fragmenation_layout_checkbox.addWidget(self.apply_fragmentation_checkbox)
-        apply_fragmenation_layout_checkbox.addWidget(self.apply_fragmentation_info)
-        options_layout.addLayout(apply_fragmenation_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.apply_fragmentation_checkbox,
+            "If disabled, quadrupole selection will still be applied but fragmentation will be skipped."
+        )
 
         # Use Existing Data as Template
-        existing_layout_checkbox = QHBoxLayout()
         self.from_existing_checkbox = QCheckBox("Use existing simulated data as template")
         self.from_existing_checkbox.setChecked(False)
-        self.from_existing_info = QLabel()
-        self.from_existing_info.setPixmap(info_icon)
-        self.from_existing_info.setToolTip("Use existing simulated data as template for the current simulation.")
-        existing_layout_checkbox.addWidget(self.from_existing_checkbox)
-        existing_layout_checkbox.addWidget(self.from_existing_info)
-        options_layout.addLayout(existing_layout_checkbox)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.from_existing_checkbox,
+            "Use existing simulated data as template for the current simulation."
+        )
 
-        # Add the options layout to the main layout
+        # Proteome Mixture
+        self.proteome_mix_checkbox = QCheckBox("Proteome Mixture")
+        self.proteome_mix_checkbox.setChecked(False)
+        self.add_checkbox_with_info(
+            options_layout,
+            self.proteome_mix_checkbox,
+            "Use a mixture of proteomes to simulate a more complex sample."
+        )
+
         layout.addLayout(options_layout)
 
-        # Container for "Existing simulated experiment" path selection, initially hidden
-        self.existing_path_container = QWidget()
-        existing_path_layout = QHBoxLayout()
-        self.existing_path_label = QLabel("Existing simulated Experiment:")
+        # Existing simulated Experiment path (visible based on checkbox)
         self.existing_path_input = QLineEdit()
         self.existing_path_browse = QPushButton("Browse")
         self.existing_path_browse.clicked.connect(self.browse_existing_save_path)
-        existing_path_layout.addWidget(self.existing_path_label)
+        existing_path_widget = QWidget()
+        existing_path_layout = QHBoxLayout(existing_path_widget)
+        existing_path_layout.setContentsMargins(0, 0, 0, 0)
         existing_path_layout.addWidget(self.existing_path_input)
         existing_path_layout.addWidget(self.existing_path_browse)
+        existing_setting_widget = self.add_setting_with_info(
+            layout,
+            "Existing simulated Experiment:",
+            existing_path_widget,
+            "Select the directory where the existing simulated data is saved."
+        )
+        # Hide the entire setting initially
+        existing_setting_widget.setVisible(False)
+        self.from_existing_checkbox.toggled.connect(existing_setting_widget.setVisible)
 
-        # Existing Path Info Icon
-        self.existing_path_info = QLabel()
-        self.existing_path_info.setPixmap(info_icon)
-        self.existing_path_info.setToolTip("Select the directory where the existing simulated data is saved.")
-        existing_path_layout.addWidget(self.existing_path_info)
-
-        # Set layout for the container and hide it initially
-        self.existing_path_container.setLayout(existing_path_layout)
-        self.existing_path_container.setVisible(False)
-
-        # Toggle visibility of existing path container when checkbox is checked/unchecked
-        self.from_existing_checkbox.toggled.connect(self.existing_path_container.setVisible)
-
-        # Add the existing_path_container after the checkboxes
-        layout.addWidget(self.existing_path_container)
-
-        # Set layout for the group box
-        self.main_settings_group.setLayout(layout)
-        self.main_layout.addWidget(self.main_settings_group)
-
-        # Proteome Mixture
-        proteome_layout_checkbox = QHBoxLayout()
-        self.proteome_mix_checkbox = QCheckBox("Proteome Mixture")
-        self.proteome_mix_checkbox.setChecked(False)
-        self.proteome_mix_info = QLabel()
-        self.proteome_mix_info.setPixmap(info_icon)
-        self.proteome_mix_info.setToolTip("Use a mixture of proteomes to simulate a more complex sample.")
-        proteome_layout_checkbox.addWidget(self.proteome_mix_checkbox)
-        proteome_layout_checkbox.addWidget(self.proteome_mix_info)
-        options_layout.addLayout(proteome_layout_checkbox)
-
-        # Container for multi-Fasta input, initially hidden
-        self.multi_fasta_container = QWidget()
-        multi_fasta_layout = QHBoxLayout()
-        self.multi_fasta_label = QLabel("Multi-Fasta Path:")
+        # Multi-Fasta Path (visible based on checkbox)
         self.multi_fasta_input = QLineEdit()
         self.multi_fasta_browse = QPushButton("Browse")
         self.multi_fasta_browse.clicked.connect(self.browse_multi_fasta_path)
-        multi_fasta_layout.addWidget(self.multi_fasta_label)
+        multi_fasta_widget = QWidget()
+        multi_fasta_layout = QHBoxLayout(multi_fasta_widget)
+        multi_fasta_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_layout.addWidget(self.multi_fasta_input)
         multi_fasta_layout.addWidget(self.multi_fasta_browse)
+        multi_fasta_setting_widget = self.add_setting_with_info(
+            layout,
+            "Multi-Fasta Path:",
+            multi_fasta_widget,
+            "Select the directory containing multiple FASTA files for the proteome mixture."
+        )
+        # Hide the entire setting initially
+        multi_fasta_setting_widget.setVisible(False)
 
-        # Multi-Fasta Info Icon
-        self.multi_fasta_info = QLabel()
-        self.multi_fasta_info.setPixmap(info_icon)
-        self.multi_fasta_info.setToolTip("Select the directory containing multiple FASTA files for the proteome mixture.")
-        multi_fasta_layout.addWidget(self.multi_fasta_info)
-
-        # Set layout for the container and hide it initially
-        self.multi_fasta_container.setLayout(multi_fasta_layout)
-        self.multi_fasta_container.setVisible(False)
-
-        # Toggle visibility of multi-fasta container when checkbox is checked/unchecked
-        self.proteome_mix_checkbox.toggled.connect(self.multi_fasta_container.setVisible)
-
-        # Add the multi_fasta_container after the checkboxes
-        layout.addWidget(self.multi_fasta_container)
-
-        # Add the updated group box to the main layout
-        self.main_layout.addWidget(self.main_settings_group)
-
-        # Container for multi-Fasta dilution factor csv input, initially hidden
-        self.multi_fasta_dilution_container = QWidget()
-        multi_fasta_dilution_layout = QHBoxLayout()
-        self.multi_fasta_dilution_label = QLabel("Multi-Fasta Dilution Factor Path:")
+        # Multi-Fasta Dilution Factor Path (visible based on checkbox)
         self.multi_fasta_dilution_input = QLineEdit()
         self.multi_fasta_dilution_browse = QPushButton("Browse")
         self.multi_fasta_dilution_browse.clicked.connect(self.browse_multi_fasta_dilution_path)
-        multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_label)
+        multi_fasta_dilution_widget = QWidget()
+        multi_fasta_dilution_layout = QHBoxLayout(multi_fasta_dilution_widget)
+        multi_fasta_dilution_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_input)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_browse)
+        multi_fasta_dilution_setting_widget = self.add_setting_with_info(
+            layout,
+            "Multi-Fasta Dilution Factor Path:",
+            multi_fasta_dilution_widget,
+            "Select the CSV file containing the dilution factors for the proteome mixture."
+        )
+        # Hide the entire setting initially
+        multi_fasta_dilution_setting_widget.setVisible(False)
 
-        # Multi-Fasta Dilution Factor Info Icon
-        self.multi_fasta_dilution_info = QLabel()
-        self.multi_fasta_dilution_info.setPixmap(info_icon)
-        self.multi_fasta_dilution_info.setToolTip("Select the csv file containing the dilution factors for the proteome mixture.")
-        multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_info)
+        # Connect the visibility of multi-fasta widgets to the proteome_mix_checkbox
+        self.proteome_mix_checkbox.toggled.connect(multi_fasta_setting_widget.setVisible)
+        self.proteome_mix_checkbox.toggled.connect(multi_fasta_dilution_setting_widget.setVisible)
 
-        # Set layout for the container and hide it initially
-        self.multi_fasta_dilution_container.setLayout(multi_fasta_dilution_layout)
-        self.multi_fasta_dilution_container.setVisible(False)
-
-        # Toggle visibility of multi-fasta dilution container when checkbox is checked/unchecked
-        self.proteome_mix_checkbox.toggled.connect(self.multi_fasta_dilution_container.setVisible)
-
-        # Add the multi_fasta_dilution_container after the checkboxes
-        layout.addWidget(self.multi_fasta_dilution_container)
-
-        # Add the updated group box to the main layout
+        # Set layout for the group box
+        self.main_settings_group.setLayout(layout)
         self.main_layout.addWidget(self.main_settings_group)
 
     def init_peptide_digestion_settings(self):
@@ -731,31 +656,12 @@ class MainWindow(QMainWindow):
         self.peptide_digestion_group = CollapsibleBox("Peptide Digestion Settings", info_text)
         layout = self.peptide_digestion_group.content_layout
 
-        # Load info icon image for local tooltips
-        info_icon = QPixmap(str(self.script_dir / "info_icon.png"))
-
-        # Helper function to add a setting with an info icon
-        def add_setting_with_info(label_text, widget, tooltip_text):
-            setting_layout = QHBoxLayout()
-
-            # Add the label and widget to the setting layout
-            setting_layout.addWidget(QLabel(label_text))
-            setting_layout.addWidget(widget)
-
-            # Add the info icon
-            info_label = QLabel()
-            info_label.setPixmap(info_icon.scaled(19, 19))
-            info_label.setToolTip(tooltip_text)
-            setting_layout.addWidget(info_label)
-
-            # Add the completed layout to the main content layout
-            layout.addLayout(setting_layout)
-
         # Number of Sampled Peptides
         self.num_sample_peptides_spin = QSpinBox()
         self.num_sample_peptides_spin.setRange(1, 1000000)
         self.num_sample_peptides_spin.setValue(25000)
-        add_setting_with_info(
+        self.add_setting_with_info(
+            layout,
             "Number of Sampled Peptides:",
             self.num_sample_peptides_spin,
             "Total number of peptides to sample in the simulation."
@@ -765,7 +671,8 @@ class MainWindow(QMainWindow):
         self.missed_cleavages_spin = QSpinBox()
         self.missed_cleavages_spin.setRange(0, 10)
         self.missed_cleavages_spin.setValue(2)
-        add_setting_with_info(
+        self.add_setting_with_info(
+            layout,
             "Missed Cleavages:",
             self.missed_cleavages_spin,
             "The number of allowed missed cleavages in peptides during digestion."
@@ -775,7 +682,8 @@ class MainWindow(QMainWindow):
         self.min_len_spin = QSpinBox()
         self.min_len_spin.setRange(1, 100)
         self.min_len_spin.setValue(7)
-        add_setting_with_info(
+        self.add_setting_with_info(
+            layout,
             "Minimum Peptide Length:",
             self.min_len_spin,
             "Specifies the minimum length of peptides in amino acids."
@@ -785,7 +693,8 @@ class MainWindow(QMainWindow):
         self.max_len_spin = QSpinBox()
         self.max_len_spin.setRange(1, 100)
         self.max_len_spin.setValue(30)
-        add_setting_with_info(
+        self.add_setting_with_info(
+            layout,
             "Maximum Peptide Length:",
             self.max_len_spin,
             "Specifies the maximum length of peptides in amino acids."
@@ -793,7 +702,8 @@ class MainWindow(QMainWindow):
 
         # Cleave At
         self.cleave_at_input = QLineEdit("KR")
-        add_setting_with_info(
+        self.add_setting_with_info(
+            layout,
             "Cleave At:",
             self.cleave_at_input,
             "Residues at which cleavage occurs, e.g., 'KR' for trypsin digestion."
@@ -801,29 +711,28 @@ class MainWindow(QMainWindow):
 
         # Restrict
         self.restrict_input = QLineEdit("P")
-        add_setting_with_info(
+        self.add_setting_with_info(
+            layout,
             "Restrict:",
             self.restrict_input,
             "Residues where cleavage is restricted, e.g., 'P' to prevent cleavage after proline."
         )
 
-        # Specify toml config file for Amino Acid modifications, needs to be a PATH that can be chosen by the user, and the path needs to be displayed in the GUI
-        # Reference Dataset Path
-        mods_layout = QHBoxLayout()
-        self.mods_label = QLabel("Amino Acid Modifications:")
+        # Modifications
         self.mods_input = QLineEdit()
         self.mods_browse = QPushButton("Browse")
         self.mods_browse.clicked.connect(self.load_modifications)
-        mods_layout.addWidget(self.mods_label)
+        mods_widget = QWidget()
+        mods_layout = QHBoxLayout(mods_widget)
+        mods_layout.setContentsMargins(0, 0, 0, 0)
         mods_layout.addWidget(self.mods_input)
         mods_layout.addWidget(self.mods_browse)
-
-        # Reference Dataset Path Info Icon
-        self.mods_info = QLabel()
-        self.mods_info.setPixmap(info_icon)
-        self.mods_info.setToolTip("Specify the path to the modifications toml file, containing fixed and variable modifications.")
-        mods_layout.addWidget(self.reference_info)
-        layout.addLayout(mods_layout)
+        self.add_setting_with_info(
+            layout,
+            "Amino Acid Modifications:",
+            mods_widget,
+            "Specify the path to the modifications TOML file, containing fixed and variable modifications."
+        )
 
         # Add the updated collapsible group to the main layout
         self.main_layout.addWidget(self.peptide_digestion_group)
@@ -1003,170 +912,113 @@ class MainWindow(QMainWindow):
         # Right vertical layout for the plot
         plot_layout = QVBoxLayout()
 
-        # Load info icon image
-        info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
+        # Define your settings in a list of dictionaries
+        settings = [
+            {
+                'attribute_name': 'gradient_length_spin',
+                'label_text': 'Gradient Length (seconds):',
+                'tooltip_text': 'Defines the total length of the simulated chromatographic gradient in seconds.',
+                'min_value': 1,
+                'max_value': 1e5,
+                'default_value': 3600,
+                'decimals': 0
+            },
+            {
+                'attribute_name': 'mean_std_rt_spin',
+                'label_text': 'Mean Std RT:',
+                'tooltip_text': 'The mean standard deviation for retention time, affecting peak widths.',
+                'min_value': 0.1,
+                'max_value': 10,
+                'default_value': 1.0,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'variance_std_rt_spin',
+                'label_text': 'Variance Std RT:',
+                'tooltip_text': 'Variance of the standard deviation of retention time, affecting variance of distribution spread.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 0.1,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'mean_skewness_spin',
+                'label_text': 'Mean Skewness:',
+                'tooltip_text': 'Average skewness for retention time distribution, impacting peak asymmetry.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 1.5,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'variance_skewness_spin',
+                'label_text': 'Variance Skewness:',
+                'tooltip_text': 'Variance in skewness of retention time distribution, altering peak shapes.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 0.1,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'std_im_spin',
+                'label_text': 'Standard Deviation IM:',
+                'tooltip_text': 'Standard deviation in ion mobility, which affects peak width in the mobility dimension.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.01,
+                'decimals': 4
+            },
+            {
+                'attribute_name': 'variance_std_im_spin',
+                'label_text': 'Variance Std IM:',
+                'tooltip_text': 'Variance of the standard deviation of ion mobility, affecting distribution spread.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.001,
+                'decimals': 4
+            },
+            {
+                'attribute_name': 'z_score_spin',
+                'label_text': 'Z-Score:',
+                'tooltip_text': 'Defines the z-score threshold for filtering data, removing low-signal regions.',
+                'min_value': 0,
+                'max_value': 5,
+                'default_value': 0.99,
+                'decimals': 2
+            },
+            {
+                'attribute_name': 'target_p_spin',
+                'label_text': 'Target Percentile:',
+                'tooltip_text': 'Specifies the target percentile for retention time, capturing high-density regions.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.999,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'sampling_step_size_spin',
+                'label_text': 'Sampling Step Size:',
+                'tooltip_text': 'Sets the step size for data sampling, adjusting resolution and computation time.',
+                'min_value': 0,
+                'max_value': 1,
+                'default_value': 0.001,
+                'decimals': 4
+            },
+        ]
 
-        # Gradient Length
-        gradient_length_layout = QHBoxLayout()
-        self.gradient_length_label = QLabel("Gradient Length (seconds):")
-        self.gradient_length_spin = QDoubleSpinBox()
-        self.gradient_length_spin.setRange(1, 1e5)
-        self.gradient_length_spin.setValue(3600)
-        gradient_length_layout.addWidget(self.gradient_length_label)
-        gradient_length_layout.addWidget(self.gradient_length_spin)
-
-        self.gradient_length_info = QLabel()
-        self.gradient_length_info.setPixmap(info_icon)
-        self.gradient_length_info.setToolTip(
-            "Defines the total length of the simulated chromatographic gradient in seconds.")
-        gradient_length_layout.addWidget(self.gradient_length_info)
-        settings_layout.addLayout(gradient_length_layout)
-
-        # Mean Std RT
-        mean_std_rt_layout = QHBoxLayout()
-        self.mean_std_rt_label = QLabel("Mean Std RT:")
-        self.mean_std_rt_spin = QDoubleSpinBox()
-        self.mean_std_rt_spin.setRange(0.1, 10)
-        self.mean_std_rt_spin.setValue(1.0)
-        mean_std_rt_layout.addWidget(self.mean_std_rt_label)
-        mean_std_rt_layout.addWidget(self.mean_std_rt_spin)
-
-        self.mean_std_rt_info = QLabel()
-        self.mean_std_rt_info.setPixmap(info_icon)
-        self.mean_std_rt_info.setToolTip("The mean standard deviation for retention time, affecting peak widths.")
-        mean_std_rt_layout.addWidget(self.mean_std_rt_info)
-        settings_layout.addLayout(mean_std_rt_layout)
-
-        # Variance Std RT
-        variance_std_rt_layout = QHBoxLayout()
-        self.variance_std_rt_label = QLabel("Variance Std RT:")
-        self.variance_std_rt_spin = QDoubleSpinBox()
-        self.variance_std_rt_spin.setRange(0, 5)
-        self.variance_std_rt_spin.setValue(0.1)
-        variance_std_rt_layout.addWidget(self.variance_std_rt_label)
-        variance_std_rt_layout.addWidget(self.variance_std_rt_spin)
-
-        self.variance_std_rt_info = QLabel()
-        self.variance_std_rt_info.setPixmap(info_icon)
-        self.variance_std_rt_info.setToolTip(
-            "Variance of the standard deviation of retention time, affecting variance of distribution spread.")
-        variance_std_rt_layout.addWidget(self.variance_std_rt_info)
-        settings_layout.addLayout(variance_std_rt_layout)
-
-        # Mean Skewness
-        mean_skewness_layout = QHBoxLayout()
-        self.mean_skewness_label = QLabel("Mean Skewness:")
-        self.mean_skewness_spin = QDoubleSpinBox()
-        self.mean_skewness_spin.setRange(0, 5)
-        self.mean_skewness_spin.setValue(1.5)
-        mean_skewness_layout.addWidget(self.mean_skewness_label)
-        mean_skewness_layout.addWidget(self.mean_skewness_spin)
-
-        self.mean_skewness_info = QLabel()
-        self.mean_skewness_info.setPixmap(info_icon)
-        self.mean_skewness_info.setToolTip(
-            "Average skewness for retention time distribution, impacting peak asymmetry.")
-        mean_skewness_layout.addWidget(self.mean_skewness_info)
-        settings_layout.addLayout(mean_skewness_layout)
-
-        # Variance Skewness
-        variance_skewness_layout = QHBoxLayout()
-        self.variance_skewness_label = QLabel("Variance Skewness:")
-        self.variance_skewness_spin = QDoubleSpinBox()
-        self.variance_skewness_spin.setRange(0, 5)
-        self.variance_skewness_spin.setValue(0.1)
-        variance_skewness_layout.addWidget(self.variance_skewness_label)
-        variance_skewness_layout.addWidget(self.variance_skewness_spin)
-
-        self.variance_skewness_info = QLabel()
-        self.variance_skewness_info.setPixmap(info_icon)
-        self.variance_skewness_info.setToolTip(
-            "Variance in skewness of retention time distribution, altering peak shapes.")
-        variance_skewness_layout.addWidget(self.variance_skewness_info)
-        settings_layout.addLayout(variance_skewness_layout)
-
-        # Standard Deviation IM
-        std_im_layout = QHBoxLayout()
-        self.std_im_label = QLabel("Standard Deviation IM:")
-        self.std_im_spin = QDoubleSpinBox()
-        self.std_im_spin.setRange(0, 1)
-        self.std_im_spin.setDecimals(4)
-        self.std_im_spin.setValue(0.01)
-        std_im_layout.addWidget(self.std_im_label)
-        std_im_layout.addWidget(self.std_im_spin)
-
-        self.std_im_info = QLabel()
-        self.std_im_info.setPixmap(info_icon)
-        self.std_im_info.setToolTip(
-            "Standard deviation in ion mobility, which affects peak width in the mobility dimension.")
-        std_im_layout.addWidget(self.std_im_info)
-        settings_layout.addLayout(std_im_layout)
-
-        # Variance Std IM
-        variance_std_im_layout = QHBoxLayout()
-        self.variance_std_im_label = QLabel("Variance Std IM:")
-        self.variance_std_im_spin = QDoubleSpinBox()
-        self.variance_std_im_spin.setRange(0, 1)
-        self.variance_std_im_spin.setDecimals(4)
-        self.variance_std_im_spin.setValue(0.001)
-        variance_std_im_layout.addWidget(self.variance_std_im_label)
-        variance_std_im_layout.addWidget(self.variance_std_im_spin)
-
-        self.variance_std_im_info = QLabel()
-        self.variance_std_im_info.setPixmap(info_icon)
-        self.variance_std_im_info.setToolTip(
-            "Variance of the standard deviation of ion mobility, affecting distribution spread.")
-        variance_std_im_layout.addWidget(self.variance_std_im_info)
-        settings_layout.addLayout(variance_std_im_layout)
-
-        # Z-Score
-        z_score_layout = QHBoxLayout()
-        self.z_score_label = QLabel("Z-Score:")
-        self.z_score_spin = QDoubleSpinBox()
-        self.z_score_spin.setRange(0, 5)
-        self.z_score_spin.setValue(0.99)
-        z_score_layout.addWidget(self.z_score_label)
-        z_score_layout.addWidget(self.z_score_spin)
-
-        self.z_score_info = QLabel()
-        self.z_score_info.setPixmap(info_icon)
-        self.z_score_info.setToolTip("Defines the z-score threshold for filtering data, removing low-signal regions.")
-        z_score_layout.addWidget(self.z_score_info)
-        settings_layout.addLayout(z_score_layout)
-
-        # Target Percentile
-        target_p_layout = QHBoxLayout()
-        self.target_p_label = QLabel("Target Percentile:")
-        self.target_p_spin = QDoubleSpinBox()
-        self.target_p_spin.setRange(0, 1)
-        self.target_p_spin.setDecimals(3)
-        self.target_p_spin.setValue(0.999)
-        target_p_layout.addWidget(self.target_p_label)
-        target_p_layout.addWidget(self.target_p_spin)
-
-        self.target_p_info = QLabel()
-        self.target_p_info.setPixmap(info_icon)
-        self.target_p_info.setToolTip(
-            "Specifies the target percentile for retention time, capturing high-density regions.")
-        target_p_layout.addWidget(self.target_p_info)
-        settings_layout.addLayout(target_p_layout)
-
-        # Sampling Step Size
-        sampling_step_size_layout = QHBoxLayout()
-        self.sampling_step_size_label = QLabel("Sampling Step Size:")
-        self.sampling_step_size_spin = QDoubleSpinBox()
-        self.sampling_step_size_spin.setRange(0, 1)
-        self.sampling_step_size_spin.setDecimals(4)
-        self.sampling_step_size_spin.setValue(0.001)
-        sampling_step_size_layout.addWidget(self.sampling_step_size_label)
-        sampling_step_size_layout.addWidget(self.sampling_step_size_spin)
-
-        self.sampling_step_size_info = QLabel()
-        self.sampling_step_size_info.setPixmap(info_icon)
-        self.sampling_step_size_info.setToolTip(
-            "Sets the step size for data sampling, adjusting resolution and computation time.")
-        sampling_step_size_layout.addWidget(self.sampling_step_size_info)
-        settings_layout.addLayout(sampling_step_size_layout)
+        # Loop over the settings and add them to the layout
+        for setting in settings:
+            self.add_spinbox_with_info(
+                layout=settings_layout,
+                attribute_name=setting['attribute_name'],
+                label_text=setting['label_text'],
+                tooltip_text=setting['tooltip_text'],
+                min_value=setting['min_value'],
+                max_value=setting['max_value'],
+                default_value=setting['default_value'],
+                decimals=setting.get('decimals', 2),
+                step=setting.get('step', None)
+            )
 
         # Add the EMG visualization to the plot layout
         self.emg_plot = EMGPlot()
@@ -1466,7 +1318,7 @@ class MainWindow(QMainWindow):
         # Collect all parameters and run the simulation
         # This function will map GUI inputs to command-line arguments
 
-        # Example of collecting parameters from Main Settings
+        # Collect parameters from Main Settings
         save_path = self.path_input.text()
         reference_path = self.reference_input.text()
         fasta_path = self.fasta_input.text()
@@ -1479,6 +1331,7 @@ class MainWindow(QMainWindow):
         add_decoys = self.add_decoys_checkbox.isChecked()
         proteome_mix = self.proteome_mix_checkbox.isChecked()
         silent_mode = self.silent_checkbox.isChecked()
+        apply_fragmentation = self.apply_fragmentation_checkbox.isChecked()
 
         # Collect other parameters
         num_sample_peptides = self.num_sample_peptides_spin.value()
@@ -1538,12 +1391,10 @@ class MainWindow(QMainWindow):
         use_existing = self.from_existing_checkbox.isChecked()
         use_existing_path = self.existing_path_input.text()
 
-        apply_fragmentation = self.apply_fragmentation_checkbox.isChecked()
-
         multi_fasta_dilution_path = None
 
-        # check if multi-fasta is enabled, if so, get the path and replace the fasta path
-        if self.proteome_mix_checkbox.isChecked():
+        # Check if proteome mix is enabled
+        if proteome_mix:
             fasta_path = self.multi_fasta_input.text()
             multi_fasta_dilution_path = self.multi_fasta_dilution_input.text()
 
@@ -1553,7 +1404,7 @@ class MainWindow(QMainWindow):
             save_path,
             reference_path,
             fasta_path,
-            "--name", experiment_name,
+            "--experiment_name", experiment_name,
             "--acquisition_type", acquisition_type,
             "--num_sample_peptides", str(num_sample_peptides),
             "--sample_seed", str(sample_seed),
@@ -1571,8 +1422,8 @@ class MainWindow(QMainWindow):
             "--gradient_length", str(gradient_length),
             "--mean_std_rt", str(mean_std_rt),
             "--variance_std_rt", str(variance_std_rt),
-            "--mean_scewness", str(mean_skewness),
-            "--variance_scewness", str(variance_skewness),
+            "--mean_skewness", str(mean_skewness),
+            "--variance_skewness", str(variance_skewness),
             "--std_im", str(std_im),
             "--variance_std_im", str(variance_std_im),
             "--z_score", str(z_score),
@@ -1586,12 +1437,12 @@ class MainWindow(QMainWindow):
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
-            "--existing_simulation_df_path", str(use_existing_path),
+            "--existing_path", str(use_existing_path),
         ]
 
         # Check for dilution path
-        if multi_fasta_dilution_path is not None and proteome_mix:
-            args.extend(["--multi_fasta_dilution_path", multi_fasta_dilution_path])
+        if multi_fasta_dilution_path and proteome_mix:
+            args.extend(["--multi_fasta_dilution", multi_fasta_dilution_path])
 
         # Add boolean flags
         if not use_reference_layout:
@@ -1601,14 +1452,14 @@ class MainWindow(QMainWindow):
         if not sample_peptides:
             args.append("--no_peptide_sampling")
         if add_decoys:
-            args.append("--add_decoys")
+            args.append("--decoys")
         if proteome_mix:
             args.append("--proteome_mix")
         if silent_mode:
-            args.append("--silent")
+            args.append("--silent_mode")
         if not sample_occurrences:
             args.append("--no_sample_occurrences")
-        if isotope_centroid:
+        if not isotope_centroid:
             args.append("--no_isotope_centroid")
         if add_noise_to_signals:
             args.append("--add_noise_to_signals")
@@ -1625,9 +1476,9 @@ class MainWindow(QMainWindow):
         if not apply_fragmentation:
             args.append("--no_fragmentation")
 
-        # check if modifications are provided by checking if the input string is empty
+        # Include modifications if provided
         if modifications:
-            args.extend(["--modifications_config", modifications])
+            args.extend(["--modifications", modifications])
 
         # Convert the list to strings
         args = [str(arg) for arg in args]
