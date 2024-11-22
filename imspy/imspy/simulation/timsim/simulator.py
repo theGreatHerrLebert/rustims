@@ -62,7 +62,7 @@ def main():
         'use_reference_layout': True,
         'sample_peptides': True,
         'sample_seed': 41,
-        'fragment': True,
+        'apply_fragmentation': False,
         'num_sample_peptides': 25000,
         'missed_cleavages': 2,
         'min_len': 7,
@@ -146,9 +146,9 @@ def main():
     parser.set_defaults(sample_peptides=True)
     parser.add_argument("--sample_seed", type=int, help="Seed for peptide sampling (default: 41)")
 
-    parser.add_argument("--no_fragmentation", dest="fragment", action="store_false",
-                        help="Do not perform fragmentation (default: True)")
-    parser.set_defaults(fragment=True)
+    parser.add_argument("--apply_fragmentation", dest="apply_fragmentation", action="store_true",
+                        help="Do not perform fragmentation (default: False)")
+    parser.set_defaults(apply_fragmentation=False)
 
     # Peptide digestion arguments
     parser.add_argument(
