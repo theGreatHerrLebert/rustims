@@ -53,62 +53,6 @@ def load_config(config_path):
     return config
 
 def main():
-    # Default configuration values
-    defaults = {
-        'reference_in_memory': False,
-        'silent_mode': False,
-        'acquisition_type': 'DIA',
-        'experiment_name': f'TIMSIM-[PLACEHOLDER]-{int(time.time())}',
-        'use_reference_layout': True,
-        'sample_peptides': True,
-        'sample_seed': 41,
-        'apply_fragmentation': False,
-        'num_sample_peptides': 25000,
-        'missed_cleavages': 2,
-        'min_len': 7,
-        'max_len': 30,
-        'cleave_at': 'KR',
-        'restrict': 'P',
-        'decoys': False,
-        'modifications': None,
-        'intensity_mean': 1e7,
-        'intensity_min': 1e5,
-        'intensity_max': 1e9,
-        'isotope_k': 8,
-        'isotope_min_intensity': 1,
-        'isotope_centroid': True,
-        'sample_occurrences': True,
-        'intensity_value': 1e6,
-        'gradient_length': 3600,
-        'z_score': 0.99,
-        'mean_std_rt': 1.5,
-        'variance_std_rt': 0.3,
-        'mean_skewness': 0.3,
-        'variance_skewness': 0.1,
-        'std_im': 0.01,
-        'variance_std_im': 0.003,
-        'target_p': 0.999,
-        'sampling_step_size': 0.001,
-        'num_threads': -1,
-        'batch_size': 256,
-        'p_charge': 0.5,
-        'min_charge_contrib': 0.25,
-        'add_noise_to_signals': False,
-        'mz_noise_precursor': False,
-        'precursor_noise_ppm': 5.0,
-        'mz_noise_fragment': False,
-        'fragment_noise_ppm': 5.0,
-        'mz_noise_uniform': False,
-        'add_real_data_noise': False,
-        'reference_noise_intensity_max': 30,
-        'down_sample_factor': 0.5,
-        'proteome_mix': False,
-        'multi_fasta_dilution': None,
-        'debug_mode': False,
-        'from_existing': False,
-        'existing_path': None,
-        'use_bruker_sdk': True,
-    }
 
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation '
@@ -341,8 +285,65 @@ def main():
     )
     parser.set_defaults(use_bruker_sdk=True)
 
-    # Parse known arguments to get config file
-    args, remaining_argv = parser.parse_known_args()
+    # Default configuration values
+    defaults = {
+        'reference_in_memory': False,
+        'silent_mode': False,
+        'acquisition_type': 'DIA',
+        'experiment_name': f'TIMSIM-[PLACEHOLDER]-{int(time.time())}',
+        'use_reference_layout': True,
+        'sample_peptides': True,
+        'sample_seed': 41,
+        'apply_fragmentation': False,
+        'num_sample_peptides': 25000,
+        'missed_cleavages': 2,
+        'min_len': 7,
+        'max_len': 30,
+        'cleave_at': 'KR',
+        'restrict': 'P',
+        'decoys': False,
+        'modifications': None,
+        'intensity_mean': 1e7,
+        'intensity_min': 1e5,
+        'intensity_max': 1e9,
+        'isotope_k': 8,
+        'isotope_min_intensity': 1,
+        'isotope_centroid': True,
+        'sample_occurrences': True,
+        'intensity_value': 1e6,
+        'gradient_length': 3600,
+        'z_score': 0.99,
+        'mean_std_rt': 1.5,
+        'variance_std_rt': 0.3,
+        'mean_skewness': 0.3,
+        'variance_skewness': 0.1,
+        'std_im': 0.01,
+        'variance_std_im': 0.003,
+        'target_p': 0.999,
+        'sampling_step_size': 0.001,
+        'num_threads': -1,
+        'batch_size': 256,
+        'p_charge': 0.5,
+        'min_charge_contrib': 0.25,
+        'add_noise_to_signals': False,
+        'mz_noise_precursor': False,
+        'precursor_noise_ppm': 5.0,
+        'mz_noise_fragment': False,
+        'fragment_noise_ppm': 5.0,
+        'mz_noise_uniform': False,
+        'add_real_data_noise': False,
+        'reference_noise_intensity_max': 30,
+        'down_sample_factor': 0.5,
+        'proteome_mix': False,
+        'multi_fasta_dilution': None,
+        'debug_mode': False,
+        'from_existing': False,
+        'existing_path': None,
+        'use_bruker_sdk': True,
+    }
+
+    # Parse known arguments to get config file path
+    args, remaining_args = parser.parse_known_args()
 
     # Load configuration from file if provided
     if args.config:
@@ -350,20 +351,18 @@ def main():
         for section in config:
             params = config[section]
             defaults.update(params)
-
         # Update defaults with positional arguments if they exist in config
         defaults['save_path'] = config.get('save_path', defaults.get('save_path'))
         defaults['reference_path'] = config.get('reference_path', defaults.get('reference_path'))
         defaults['fasta_path'] = config.get('fasta_path', defaults.get('fasta_path'))
 
-        print(defaults)
-
-    # Set defaults in parser
+    # Set defaults in parser before parsing arguments
     parser.set_defaults(**defaults)
 
-    # Parse arguments with defaults from config
+    # Now parse all arguments with updated defaults
     args = parser.parse_args()
 
+    # Ensure required arguments are present
     if args.save_path is None:
         parser.error("the following argument is required: save_path")
     if args.reference_path is None:
