@@ -404,7 +404,7 @@ def main():
     std_im = None
 
     if args.from_existing:
-        existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_simulation_df_path)
+        existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
         peptides = existing_sim_handle.get_table('peptides')
         proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
@@ -421,7 +421,7 @@ def main():
                   f"This might result in distorted frame distributions and missing ions.")
 
         if not args.silent_mode:
-            print(f"Using existing simulation from {args.existing_simulation_df_path}")
+            print(f"Using existing simulation from {args.existing_path}")
             print(f"Peptides: {peptides.shape[0]}")
             print(f"Ions: {ions.shape[0]}")
 
