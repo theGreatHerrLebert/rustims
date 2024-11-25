@@ -30,31 +30,19 @@ def predict_retention_time(
         None, retention times are set in the peptide-spectrum matches
     """
 
-    psm_list = []
-
-    if isinstance(psm_collection, dict):
-        for key in psm_collection.keys():
-            psm_list.extend(psm_collection[key])
-    else:
-        psm_list = psm_collection
-
     rt_predictor = DeepChromatographyApex(load_deep_retention_time_predictor(),
                                               load_tokenizer_from_resources("tokenizer-ptm"),
                                               verbose=verbose)
 
-    rt_min = np.min([x.retention_time for x in psm_list])
-    rt_max = np.max([x.retention_time for x in psm_list])
+    rt_min = np.min([x.retention_time for x in psm_collection])
+    rt_max = np.max([x.retention_time for x in psm_collection])
 
-    for psm in psm_list:
+    for psm in psm_collection:
         psm.retention_time_projected = linear_map(psm.retention_time, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
-
-    for key, values in psm_collection.items():
-        for psm in values:
-            psm.retention_time_projected = linear_map(psm.retention_time, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
 
     if refine_model:
         rt_predictor.fine_tune_model(
-            psm_collection_to_pandas(generate_balanced_rt_dataset(psm_list)),
+            psm_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose
@@ -62,7 +50,7 @@ def predict_retention_time(
 
     # predict retention times
     rt_predicted = rt_predictor.simulate_separation_times(
-        sequences=[x.sequence for x in psm_list],
+        sequences=[x.sequence for x in psm_collection],
     )
 
     # set the predicted retention times
@@ -199,7 +187,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         assert 'retention_time_projected' in data.columns, 'Data must contain a column named "retention_time_projected"'
 
         sequences = data.sequence.values
-        rts = data.projected_rt.values
+        rts = data.retention_time_projected.values
         ds = self.generate_tf_ds_train(sequences, rt_target=rts).shuffle(len(sequences))
 
         # split data into training and validation

@@ -619,12 +619,12 @@ def main():
 
         # map PSMs rt domain to [0, 60]
         for p in psm:
-            p.projected_rt = linear_map(p.retention_time_observed, rt_min, rt_max, 0.0, 60.0)
+            p.retention_time_projected = linear_map(p.retention_time, rt_min, rt_max, 0.0, 60.0)
 
         if args.verbose:
             print(f"generated {len(psm)} PSMs ...")
 
-        sample = list(sorted(psm, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
+        sample = list(sorted(psm, key=lambda x: x.hyperscore, reverse=True))[:int(2 ** 11)]
 
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
             list(filter(lambda match: match.decoy is not True, sample)),

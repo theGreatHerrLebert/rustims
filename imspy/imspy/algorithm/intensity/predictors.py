@@ -67,20 +67,13 @@ def predict_intensities_prosit(
     )
 
     psm_collection_intensity = associate_fragment_ions_with_prosit_predicted_intensities(
-        psm_collection, intensity_pred, num_threads=num_threads)
+        psm_collection, intensity_pred, num_threads=num_threads
+    )
 
     # calculate the spectral similarity metrics
-    for psm, psm_intensity, prosit_intensity in tqdm(zip(psm_collection, psm_collection_intensity, intensity_pred),
+    for psm, psm_intensity in tqdm(zip(psm_collection, psm_collection_intensity),
                                                       desc='Calc spectral similarity metrics', ncols=100, disable=not verbose):
-
-        psm.fragments_predicted = psm_intensity.fragments_predicted
-        psm.cosine_similarity = psm_intensity.cosine_similarity
-        psm.prosit_intensities = prosit_intensity
-
-        psm.spectral_correlation_similarity_pearson = psm_intensity.spectral_correlation_similarity_pearson
-        psm.spectral_correlation_similarity_spearman = psm_intensity.spectral_correlation_similarity_spearman
-        psm.spectral_entropy_similarity = psm_intensity.spectral_entropy_similarity
-        psm.beta_score = beta_score(psm.fragments_observed, psm.fragments_predicted)
+        psm.prosit_predicted_intensities = psm_intensity.prosit_predicted_intensities
 
 
 def get_collision_energy_calibration_factor(
@@ -100,7 +93,7 @@ def get_collision_energy_calibration_factor(
         verbose: whether to print progress
 
     Returns:
-        Tuple[float, List[float]]: the collision energy calibration factor and the cosine similarities
+        Tuple[float, List[float]]: the collision energy calibration factor and the angle similarities
     """
     cos_target, cos_decoy = [], []
 
@@ -120,8 +113,8 @@ def get_collision_energy_calibration_factor(
         target = list(filter(lambda x: not x.decoy, psm_i))
         decoy = list(filter(lambda x: x.decoy, psm_i))
 
-        cos_target.append((i, np.mean([x.cosine_similarity for x in target])))
-        cos_decoy.append((i, np.mean([x.cosine_similarity for x in decoy])))
+        cos_target.append((i, np.mean([x.spectral_angle_similarity for x in target])))
+        cos_decoy.append((i, np.mean([x.spectral_angle_similarity for x in decoy])))
 
     return cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
 
