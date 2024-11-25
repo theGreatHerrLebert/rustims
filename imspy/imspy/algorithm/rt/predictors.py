@@ -5,8 +5,8 @@ import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
-from sagepy.core import PeptideSpectrumMatch
-from sagepy.utility import peptide_spectrum_match_collection_to_pandas
+from sagepy.core.scoring import Psm
+from sagepy.utility import psm_collection_to_pandas
 
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint, load_tokenizer_from_resources
 from imspy.timstof.dbsearch.utility import linear_map, generate_balanced_rt_dataset
@@ -16,7 +16,7 @@ from tensorflow.keras.models import load_model
 
 
 def predict_retention_time(
-        psm_collection: List[PeptideSpectrumMatch],
+        psm_collection: List[Psm],
         refine_model: bool = True,
         verbose: bool = False) -> None:
     """
@@ -34,15 +34,15 @@ def predict_retention_time(
                                               load_tokenizer_from_resources("tokenizer-ptm"),
                                               verbose=verbose)
 
-    rt_min = np.min([x.retention_time_observed for x in psm_collection])
-    rt_max = np.max([x.retention_time_observed for x in psm_collection])
+    rt_min = np.min([x.retention_time for x in psm_collection])
+    rt_max = np.max([x.retention_time for x in psm_collection])
 
     for psm in psm_collection:
-        psm.projected_rt = linear_map(psm.retention_time_observed, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
+        psm.retention_time_projected = linear_map(psm.retention_time, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
 
     if refine_model:
         rt_predictor.fine_tune_model(
-            peptide_spectrum_match_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
+            psm_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose

@@ -8,7 +8,7 @@ import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
 
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, PeptideSpectrumMatch
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, Psm
 from tqdm import tqdm
 
 from imspy.algorithm.utility import get_model_path
@@ -17,10 +17,9 @@ from .utility import (generate_prosit_intensity_prediction_dataset, unpack_dict,
 
 from imspy.data.peptide import PeptideProductIonSeriesCollection, PeptideSequence
 from imspy.simulation.utility import flatten_prosit_array
-from sagepy.rescore.utility import dict_to_dense_array, spectral_entropy_similarity, spectral_correlation
 
 def predict_intensities_prosit(
-        psm_collection: List[PeptideSpectrumMatch],
+        psm_collection: List[Psm],
         calibrate_collision_energy: bool = True,
         verbose: bool = False,
         num_threads: int = -1,
@@ -85,7 +84,7 @@ def predict_intensities_prosit(
 
 
 def get_collision_energy_calibration_factor(
-        sample: List[PeptideSpectrumMatch],
+        sample: List[Psm],
         model: 'Prosit2023TimsTofWrapper',
         lower: int = -30,
         upper: int = 30,

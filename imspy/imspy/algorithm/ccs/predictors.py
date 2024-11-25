@@ -3,9 +3,9 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from sagepy.core import PeptideSpectrumMatch
+from sagepy.core.scoring import Psm
 
-from sagepy.utility import peptide_spectrum_match_collection_to_pandas
+from sagepy.utility import psm_collection_to_pandas
 from tensorflow.keras.models import load_model
 
 from abc import ABC, abstractmethod
@@ -21,7 +21,7 @@ from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
 
 
 def predict_inverse_ion_mobility(
-        psm_collection: List[PeptideSpectrumMatch],
+        psm_collection: List[Psm],
         refine_model: bool = True,
         verbose: bool = False) -> None:
     """
@@ -41,7 +41,7 @@ def predict_inverse_ion_mobility(
                                               verbose=verbose)
     if refine_model:
         im_predictor.fine_tune_model(
-            peptide_spectrum_match_collection_to_pandas(generate_balanced_im_dataset(psm_collection)),
+            psm_collection_to_pandas(generate_balanced_im_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose
@@ -293,7 +293,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         mz = data.mono_mz_calculated.values
         charges = data.charge.values
         sequences = data.sequence.values
-        inv_mob = data.inverse_mobility_observed.values
+        inv_mob = data.inverse_mobility.values
 
         ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
 
