@@ -8,7 +8,7 @@ from tqdm import tqdm
 import numpy as np
 from typing import Optional
 from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation, Tolerance
-from sagepy.core.scoring import PeptideSpectrumMatch
+from sagepy.core.scoring import Psm
 
 from imspy.timstof import TimsDatasetDDA
 from imspy.timstof.frame import TimsFrame
@@ -18,7 +18,7 @@ from sagepy.qfdr.tdc import target_decoy_competition_pandas
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.preprocessing import StandardScaler
 
-from sagepy.utility import peptide_spectrum_match_collection_to_pandas
+from sagepy.utility import psm_collection_to_pandas
 from numpy.typing import NDArray
 
 from sagepy.core.scoring import merge_psm_dicts
@@ -210,7 +210,7 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool 
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01,
+def generate_training_data(psms: List[Psm], method: str = "psm", q_max: float = 0.01,
                            balance: bool = True) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
@@ -223,11 +223,11 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
         Tuple[NDArray, NDArray]: X_train and Y_train
     """
     # create pandas table from psms
-    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms)
+    PSM_pandas = psm_collection_to_pandas(psms)
 
     # calculate q-values to get inital "good" hits
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method=method)
-    PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = PSM_pandas.drop(columns=["q_value", "hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
@@ -254,7 +254,7 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
     return X_train, Y_train
 
 
-def split_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10) -> List[List[PeptideSpectrumMatch]]:
+def split_psms(psms: List[Psm], num_splits: int = 10) -> List[List[Psm]]:
     """ Split PSMs into multiple splits.
 
     Args:
@@ -279,12 +279,12 @@ def split_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10) -> List[L
 
 
 def re_score_psms(
-        psms: List[PeptideSpectrumMatch],
-        num_splits: int = 10,
+        psms: List[Psm],
+        num_splits: int = 5,
         verbose: bool = True,
         balance: bool = True,
         score: str = "hyper_score",
-) -> List[PeptideSpectrumMatch]:
+) -> List[Psm]:
     """ Re-score PSMs using LDA.
     Args:
         psms: List of PeptideSpectrumMatch objects
@@ -298,7 +298,7 @@ def re_score_psms(
     """
 
     scaler = StandardScaler()
-    X_all, _ = get_features(peptide_spectrum_match_collection_to_pandas(psms), score=score)
+    X_all, _ = get_features(psm_collection_to_pandas(psms), score=score)
 
     # replace NaN values with 0
     X_all = np.nan_to_num(X_all)
@@ -318,7 +318,7 @@ def re_score_psms(
 
         X_train, Y_train = generate_training_data(features, balance=balance)
         X_train = np.nan_to_num(X_train)
-        X, _ = get_features(peptide_spectrum_match_collection_to_pandas(target))
+        X, _ = get_features(psm_collection_to_pandas(target))
         X = np.nan_to_num(X)
 
         lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
@@ -341,7 +341,7 @@ def re_score_psms(
 
 def generate_balanced_rt_dataset(psms):
     # generate good hits
-    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms, re_score=False)
+    PSM_pandas = psm_collection_to_pandas(psms, score="hyperscore")
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
 
@@ -359,7 +359,7 @@ def generate_balanced_rt_dataset(psms):
 
 def generate_balanced_im_dataset(psms):
     # generate good hits
-    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms, re_score=False)
+    PSM_pandas = psm_collection_to_pandas(psms, score="hyperscore")
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
 
