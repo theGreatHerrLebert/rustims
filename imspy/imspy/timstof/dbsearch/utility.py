@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Union, Dict
 
 import pandas as pd
 from tqdm import tqdm
@@ -227,7 +227,7 @@ def generate_training_data(psms: List[Psm], method: str = "psm", q_max: float = 
 
     # calculate q-values to get inital "good" hits
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method=method)
-    PSM_pandas = PSM_pandas.drop(columns=["q_value", "hyperscore"])
+    PSM_pandas = PSM_pandas.drop(columns=["hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
@@ -339,11 +339,19 @@ def re_score_psms(
     return psms
 
 
-def generate_balanced_rt_dataset(psms):
+def generate_balanced_rt_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -> List[Psm]:
+
+    psm_list = []
+    if isinstance(psms, dict):
+        for key in psms:
+            psm_list.extend(psms[key])
+    else:
+        psm_list = psms
+
     # generate good hits
-    PSM_pandas = psm_collection_to_pandas(psms, score="hyperscore")
-    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
-    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = psm_collection_to_pandas(psm_list)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm", score="hyperscore")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
@@ -352,16 +360,25 @@ def generate_balanced_rt_dataset(psms):
 
     id_set = set(TDC.spec_idx.values)
 
-    r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
+    r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psm_list))
 
     return r_list
 
 
-def generate_balanced_im_dataset(psms):
+def generate_balanced_im_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -> List[Psm]:
+
+    psm_list = []
+    if isinstance(psms, dict):
+        for key in psms:
+            psm_list.extend(psms[key])
+
+    else:
+        psm_list = psms
+
     # generate good hits
-    PSM_pandas = psm_collection_to_pandas(psms, score="hyperscore")
-    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
-    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = psm_collection_to_pandas(psm_list)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm", score="hyperscore")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
@@ -369,7 +386,7 @@ def generate_balanced_im_dataset(psms):
     TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset=["sequence", "charge"])
     id_set = set(TDC.spec_idx.values)
 
-    im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
+    im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psm_list))
 
     return im_list
 
