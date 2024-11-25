@@ -293,7 +293,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         mz = data.mono_mz_calculated.values
         charges = data.charge.values
         sequences = data.sequence.values
-        inv_mob = data.inverse_mobility.values
+        inv_mob = data.inverse_ion_mobility.values
 
         ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
 
