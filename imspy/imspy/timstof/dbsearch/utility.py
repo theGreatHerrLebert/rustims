@@ -327,7 +327,7 @@ def re_score_psms(
         try:
             # check for flip sign of LDA classification return to be compatible with good score ascending
             score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(scaler.transform(X_train))))] == 1.0 else -1.0
-        except:
+        except Exception as e:
             score_flip = 1.0
 
         Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip

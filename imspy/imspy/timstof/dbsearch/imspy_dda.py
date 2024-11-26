@@ -189,7 +189,7 @@ def main():
         help="Annotate matches (default: True)")
     parser.set_defaults(annotate_matches=True)
 
-    parser.add_argument("--score_type", type=str, default="openms", help="Score type (default: openms)")
+    parser.add_argument("--score_type", type=str, default="openmshyperscore", help="Score type (default: openms)")
 
     # SAGE Preprocessing settings
     parser.add_argument("--take_top_n", type=int, default=150, help="Take top n peaks (default: 150)")
@@ -300,8 +300,6 @@ def main():
     parser.add_argument("--refinement_verbose", dest="refinement_verbose", action="store_true", help="Refinement verbose")
     parser.set_defaults(refinement_verbose=False)
 
-    parser.add_argument("--rescore_score", type=str, default="hyper_score", help="Score type to be used for re-scoring (default: hyper_score)")
-
     args = parser.parse_args()
 
     # Load the configuration from the specified file
@@ -361,9 +359,6 @@ def main():
 
     # get time
     start_time = time.time()
-
-    scores = ["hyper_score", "beta_score"]
-    assert args.rescore_score in scores, f"Score type {args.rescore_score} not supported. Supported score types are: {scores}"
 
     if args.verbose:
         print(f"found {len(paths)} RAW data folders in {args.path} ...")
@@ -624,7 +619,7 @@ def main():
         if args.verbose:
             print(f"generated {len(psm)} PSMs ...")
 
-        sample = list(sorted(psm, key=lambda x: x.hyperscore, reverse=True))[:int(2 ** 11)]
+        sample = list(sorted(psm, key=lambda x: x.hyperscore, reverse=True))[:int(2 ** 8)]
 
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
             list(filter(lambda match: match.decoy is not True, sample)),
@@ -648,9 +643,6 @@ def main():
 
         psm = associate_fragment_ions_with_prosit_predicted_intensities(psm, intensity_pred,
                                                                         num_threads=args.num_threads)
-
-        for ps in tqdm(psm, desc="calculating beta scores", ncols=100, disable=(not args.verbose)):
-            ps.beta_score = beta_score(ps.fragments_observed, ps.fragments_predicted)
 
         if args.verbose:
             print("predicting ion mobilities ...")
@@ -684,7 +676,11 @@ def main():
         if not args.refine_im:
             # calculate calibration factor
             inv_mob_calibration_factor = np.mean(
-                [x.inverse_mobility_observed - x.inverse_mobility_predicted for x in psm])
+                [x.inverse_ion_mobility - x.inverse_ion_mobility_predicted for x in psm]
+            )
+
+            if args.verbose:
+                print(f"calibrated ion mobilities with factor: {np.round(inv_mob_calibration_factor, 4)} ...")
 
             # set calibrated ion mobilities
             for p in psm:
@@ -720,7 +716,7 @@ def main():
 
         # set retention times
         for rt, p in zip(rt_pred, psm):
-            p.retention_time_predicted = rt
+            p.predicted_rt = rt
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
@@ -753,7 +749,7 @@ def main():
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
     psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=args.re_score_num_splits,
-                         balance=args.balanced_re_score, score=args.rescore_score)
+                         balance=args.balanced_re_score, score="hyperscore")
 
     # serialize all PSMs to JSON binary
     bts = psms_to_json_bin(psms)
@@ -780,7 +776,7 @@ def main():
 
         results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/")
 
-    PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = PSM_pandas.drop(columns=["q_value", "re_score"])
 
     if args.verbose:
         print(f"FDR calculation ...")
@@ -795,7 +791,7 @@ def main():
     psms_rescored = psms_rescored[(psms_rescored.q_value <= 0.01)]
 
     TDC = pd.merge(psms_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
-                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
+                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="re_score", ascending=False)
 
     TDC.to_csv(f"{write_folder_path}" + "/imspy/PSMs.csv", index=False)
 
@@ -809,7 +805,7 @@ def main():
     peptides_rescored = peptides_rescored[(peptides_rescored.q_value <= 0.01)]
 
     TDC = pd.merge(peptides_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
-                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="score", ascending=False)
+                   right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="re_score", ascending=False)
 
     TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
 

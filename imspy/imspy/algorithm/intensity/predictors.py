@@ -116,7 +116,12 @@ def get_collision_energy_calibration_factor(
         cos_target.append((i, np.mean([x.spectral_angle_similarity for x in target])))
         cos_decoy.append((i, np.mean([x.spectral_angle_similarity for x in decoy])))
 
-    return cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
+    calibration_factor, similarities = cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
+
+    if verbose:
+        print(f"Best calibration factor: {calibration_factor}, with similarity: {np.max(np.round(similarities, 2))}")
+
+    return calibration_factor, similarities
 
 
 
