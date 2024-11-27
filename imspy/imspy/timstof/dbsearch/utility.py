@@ -473,9 +473,8 @@ def transform_psm_to_pin(psm_df):
         'decoy': 'Label',
         'charge': 'Charge',
         'sequence': 'Peptide',
-        'proteins': 'Proteins',
         # feature mapping for re-scoring
-        'hyper_score': 'Feature1',
+        'hyperscore': 'Feature1',
         'isotope_error': 'Feature2',
         'delta_mass': 'Feature3',
         'delta_rt': 'Feature4',

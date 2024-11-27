@@ -15,6 +15,7 @@ from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.chemistry.mobility import ccs_to_one_over_k0, one_over_k0_to_ccs
 from scipy.optimize import curve_fit
 
+from imspy.chemistry.utility import calculate_mz
 from imspy.timstof.dbsearch.utility import generate_balanced_im_dataset
 from imspy.utility import tokenize_unimod_sequence
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
@@ -287,13 +288,13 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                         ):
         assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
         assert 'charge' in data.columns, 'Data must contain column named "charge"'
-        assert 'mono_mz_calculated' in data.columns, 'Data must contain column named "mono_mz_calculated"'
-        assert 'inverse_mobility_observed' in data.columns, 'Data must contain column named "inverse_mobility_observed"'
+        assert 'calcmass' in data.columns, 'Data must contain column named "calcmass"'
+        assert 'ims' in data.columns, 'Data must contain column named "ims"'
 
-        mz = data.mono_mz_calculated.values
-        charges = data.charge.values
+        mz = [calculate_mz(m, z) for m, z in zip(data.calcmass.values, data.charge.values.astype(np.int32))]
+        charges = data.charge.values.astype(np.int32)
         sequences = data.sequence.values
-        inv_mob = data.inverse_ion_mobility.values
+        inv_mob = data.ims.values
 
         ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
 
@@ -340,7 +341,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         # prepare masses, charges, sequences
         m = np.expand_dims(data.mz.values, 1)
-        charges_one_hot = tf.one_hot(np.array(data.charge.values) - 1, 4)
+        charges_one_hot = tf.one_hot(np.array(data.charge.values.astype(np.int32)) - 1, 4)
 
         ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences),
                                                  np.zeros_like(m))).batch(batch_size)
@@ -349,7 +350,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         if not return_ccs:
             data[f'inv_mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
-                                                          for c, m, z in zip(ccs, m, data.charge.values)])
+                                                          for c, m, z in zip(ccs, m, data.charge.values.astype(np.int32))])
         else:
             data[f'ccs_{self.name}'] = ccs
 

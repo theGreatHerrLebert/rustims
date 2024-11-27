@@ -13,14 +13,10 @@ import numpy as np
 from pathlib import Path
 
 from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SageSearchConfiguration
-
 from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, ScoreType
-
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
-from tqdm import tqdm
 
 from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
-from imspy.algorithm.intensity.utility import beta_score
 from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
@@ -671,7 +667,7 @@ def main():
 
         # set ion mobilities
         for mob, ps in zip(inv_mob, psm):
-            ps.inverse_mobility_predicted = mob
+            ps.inverse_ion_mobility_predicted = mob
 
         if not args.refine_im:
             # calculate calibration factor
@@ -716,7 +712,7 @@ def main():
 
         # set retention times
         for rt, p in zip(rt_pred, psm):
-            p.predicted_rt = rt
+            p.retention_time_predicted = rt
 
         # serialize PSMs to JSON binary
         bts = psms_to_json_bin(psm)
