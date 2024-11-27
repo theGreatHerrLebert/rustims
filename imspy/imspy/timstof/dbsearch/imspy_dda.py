@@ -773,7 +773,7 @@ def main():
 
         results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/")
 
-    PSM_pandas = PSM_pandas.drop(columns=["q_value", "re_score"])
+    PSM_pandas = PSM_pandas.drop(columns=["re_score"])
 
     if args.verbose:
         print(f"FDR calculation ...")
