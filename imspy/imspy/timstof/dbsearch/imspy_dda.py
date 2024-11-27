@@ -680,7 +680,7 @@ def main():
 
             # set calibrated ion mobilities
             for p in psm:
-                p.inverse_mobility_predicted += inv_mob_calibration_factor
+                p.inverse_ion_mobility_predicted += inv_mob_calibration_factor
 
         if args.verbose:
             print("predicting retention times ...")
