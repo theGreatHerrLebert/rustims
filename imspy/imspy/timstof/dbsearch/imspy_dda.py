@@ -25,8 +25,9 @@ from imspy.timstof import TimsDatasetDDA
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     write_psms_binary, re_score_psms, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, \
-    transform_psm_to_pin
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
+
+from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 
 from imspy.algorithm.intensity.predictors import get_collision_energy_calibration_factor
 
@@ -764,7 +765,7 @@ def main():
             os.makedirs(write_folder_path + "/imspy/mokapot")
 
         # create a PIN file from the PSMs
-        PSM_pin = transform_psm_to_pin(PSM_pandas)
+        PSM_pin = transform_psm_to_mokapot_pin(PSM_pandas)
         PSM_pin.to_csv(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin", index=False, sep="\t")
 
         psms_moka = mokapot.read_pin(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin")
