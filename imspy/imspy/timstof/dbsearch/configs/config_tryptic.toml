@@ -6,9 +6,10 @@ M = ["[UNIMOD:35]"] # Oxidation of methionine
 "[" = ["[UNIMOD:1]"] # Acetylation of the peptide N-terminus of proteins
 
 [static_modifications]
+C = "[UNIMOD:4]" # Carbamidomethylation of cysteine
 
 [scoring]
-score_type = "openmshyperscore"
+score_type = "hyperscore"
 report_psms = 5
 min_matched_peaks = 5
 annotate_matches = true
@@ -16,8 +17,8 @@ max_fragment_charge = 2
 
 [precursor_tolerance]
 use_da = false
-lower = -25.0
-upper = 25.0
+lower = -15.0
+upper = 15.0
 
 [fragment_tolerance]
 use_da = false
@@ -34,9 +35,9 @@ take_top_n = 150
 [enzyme]
 missed_cleavages = 2
 min_len = 7
-max_len = 25
-cleave_at = ""
-restrict = ""
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
 c_terminal = true
 
 [database]
@@ -65,8 +66,8 @@ fdr_score = "re_score"
 num_threads = -1
 
 [refinement]
-refine_rt = false
-refine_im = false
+refine_rt = true
+refine_im = true
 refinement_verbose = false
 
 [batch_sizes]
@@ -75,9 +76,9 @@ model_fine_tune_batch_size = 1024
 sample_size_collision_energy_calibration = 256
 
 [other]
-calibrate_mz = false
+calibrate_mz = true
 in_memory = false
 bruker_sdk = true
 randomize_fasta_split = false
 verbose = true
-fasta_batch_size = 10
+fasta_batch_size = 1
