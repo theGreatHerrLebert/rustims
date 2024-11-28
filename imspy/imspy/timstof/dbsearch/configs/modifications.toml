@@ -7,3 +7,78 @@ M = ["[UNIMOD:35]"] # Oxidation of methionine
 
 [static_modifications]
 C = "[UNIMOD:4]" # Carbamidomethylation of cysteine
+
+[scoring]
+score_type = "hyperscore"
+report_psms = 5
+min_matched_peaks = 5
+annotate_matches = true
+max_fragment_charge = 2
+
+[precursor_tolerance]
+use_da = false
+lower = -15.0
+upper = 15.0
+
+[fragment_tolerance]
+use_da = false
+lower = -20.0
+upper = 20.0
+
+[isolation_window]
+lower = -3.0
+upper = 3.0
+
+[preprocessing]
+take_top_n = 150
+
+[enzyme]
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
+c_terminal = true
+
+[database]
+generate_decoys = true
+shuffle_decoys = false
+keep_ends = true
+bucket_size = 16384
+
+[search]
+fragment_max_mz = 1700.0
+
+[re_scoring]
+re_score_num_splits = 5
+balanced_re_score = true
+re_score_metric = "hyperscore"
+re_score_mokapot = true
+
+[fdr]
+fdr_threshold = 0.01
+remove_decoys = true
+fdr_psm_method = "psm"
+fdr_peptide_method = "peptide_psm_peptide"
+fdr_score = "re_score"
+
+[parallelization]
+num_threads = -1
+
+[refinement]
+refine_rt = false
+refine_im = false
+refinement_verbose = false
+
+[batch_sizes]
+intensity_prediction_batch_size = 2048
+model_fine_tune_batch_size = 1024
+sample_size_collision_energy_calibration = 256
+
+[other]
+calibrate_mz = false
+in_memory = false
+bruker_sdk = true
+randomize_fasta_split = false
+verbose = true
+fasta_batch_size = 1
