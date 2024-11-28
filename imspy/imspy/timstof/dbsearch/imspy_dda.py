@@ -222,14 +222,6 @@ def main():
                         help="Do not keep decoy generated decoy start/end amino acids the same (default: True)")
     parser.set_defaults(keep_ends=None)
 
-    parser.add_argument(
-        "--not_c_terminal",
-        dest="c_terminal",
-        action="store_false",
-        help="Not C terminal (default: True)"
-    )
-    parser.set_defaults(c_terminal=None)
-
     # sage search configuration
     parser.add_argument("--fragment_max_mz", type=float, default=None, help="Fragment max mz (default: 1700.0)")
     parser.add_argument("--bucket_size", type=int, default=None, help="Bucket size (default: 16384)")
