@@ -607,7 +607,7 @@ def main():
         psm = []
 
         for _, values in merged_dict.items():
-            psm.extend(values)
+            psm.extend(list(filter(values, lambda p: p.sage_feature.rank <= 5)))
 
         # map PSMs rt domain to [0, 60]
         for p in psm:
