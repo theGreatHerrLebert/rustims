@@ -284,7 +284,8 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                         data: pd.DataFrame,
                         batch_size: int = 64,
                         re_compile=False,
-                        verbose=False
+                        verbose=False,
+                        decoys_separate: bool = True,
                         ):
         assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
         assert 'charge' in data.columns, 'Data must contain column named "charge"'
@@ -293,7 +294,18 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         mz = [calculate_mz(m, z) for m, z in zip(data.calcmass.values, data.charge.values.astype(np.int32))]
         charges = data.charge.values.astype(np.int32)
-        sequences = data.sequence.values
+
+        sequences = []
+
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    sequences.append(row.sequence)
+                else:
+                    sequences.append(row.sequence_decoy)
+        else:
+            sequences = data.sequence.values
+
         inv_mob = data.ims.values
 
         ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
@@ -336,8 +348,19 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
 
-    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024, return_ccs: bool = False) -> pd.DataFrame:
-        tokenized_sequences = self._preprocess_sequences(data.sequence.values)
+    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024, return_ccs: bool = False, decoys_separate: bool = True) -> pd.DataFrame:
+
+        sequences = []
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    sequences.append(row.sequence)
+                else:
+                    sequences.append(row.sequence_decoy)
+        else:
+            sequences = data.sequence.values
+
+        tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences
         m = np.expand_dims(data.mz.values, 1)

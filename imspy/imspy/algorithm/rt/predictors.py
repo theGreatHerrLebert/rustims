@@ -181,12 +181,23 @@ class DeepChromatographyApex(PeptideChromatographyApex):
                         data: pd.DataFrame,
                         batch_size: int = 64,
                         re_compile=False,
-                        verbose=False
+                        verbose=False,
+                        decoys_separate=True,
                         ):
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
         assert 'retention_time_projected' in data.columns, 'Data must contain a column named "retention_time_projected"'
 
-        sequences = data.sequence.values
+        sequences = []
+
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    sequences.append(row.sequence)
+                else:
+                    sequences.append(row.sequence_decoy)
+        else:
+            sequences = data.sequence.values
+
         rts = data.retention_time_projected.values
         ds = self.generate_tf_ds_train(sequences, rt_target=rts).shuffle(len(sequences))
 
@@ -211,11 +222,22 @@ class DeepChromatographyApex(PeptideChromatographyApex):
     def simulate_separation_times_pandas(self,
                                          data: pd.DataFrame,
                                          batch_size: int = 1024,
-                                         gradient_length: Union[None, float] = None
+                                         gradient_length: Union[None, float] = None,
+                                         decoys_separate=True,
                                          ) -> pd.DataFrame:
 
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
-        sequences = data.sequence.values
+
+        sequences = []
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    sequences.append(row.sequence)
+                else:
+                    sequences.append(row.sequence_decoy)
+        else:
+            sequences = data.sequence.values
+
         tf_ds = self.generate_tf_ds_inference(sequences).batch(batch_size)
 
         rts = self.model.predict(tf_ds, verbose=self.verbose)
