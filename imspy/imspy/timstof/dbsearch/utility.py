@@ -278,67 +278,6 @@ def split_psms(psms: List[Psm], num_splits: int = 10) -> List[List[Psm]]:
     return splits
 
 
-def re_score_psms(
-        psms: List[Psm],
-        num_splits: int = 5,
-        verbose: bool = True,
-        balance: bool = True,
-        score: str = "hyper_score",
-) -> List[Psm]:
-    """ Re-score PSMs using LDA.
-    Args:
-        psms: List of PeptideSpectrumMatch objects
-        num_splits: Number of splits
-        verbose: Whether to print progress
-        balance: Whether to balance the dataset
-        score: Score to use for re-scoring
-
-    Returns:
-        List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
-    """
-
-    scaler = StandardScaler()
-    X_all, _ = get_features(psm_collection_to_pandas(psms), score=score)
-
-    # replace NaN values with 0
-    X_all = np.nan_to_num(X_all)
-    scaler.fit(X_all)
-
-    splits = split_psms(psms=psms, num_splits=num_splits)
-    predictions = []
-
-    for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):
-
-        target = splits[i]
-        features = []
-
-        for j in range(num_splits):
-            if j != i:
-                features.extend(splits[j])
-
-        X_train, Y_train = generate_training_data(features, balance=balance)
-        X_train = np.nan_to_num(X_train)
-        X, _ = get_features(psm_collection_to_pandas(target))
-        X = np.nan_to_num(X)
-
-        lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
-        lda.fit(scaler.transform(X_train), Y_train)
-
-        try:
-            # check for flip sign of LDA classification return to be compatible with good score ascending
-            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(scaler.transform(X_train))))] == 1.0 else -1.0
-        except Exception as e:
-            score_flip = 1.0
-
-        Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
-        predictions.extend(Y_pred)
-
-    for score, match in zip(predictions, psms):
-        match.re_score = score
-
-    return psms
-
-
 def generate_balanced_rt_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -> List[Psm]:
 
     psm_list = []

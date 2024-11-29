@@ -23,8 +23,11 @@ from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
 
 from imspy.timstof import TimsDatasetDDA
 
+from sklearn.svm import SVC
+from sagepy.rescore.rescore import rescore_psms
+
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
-    write_psms_binary, re_score_psms, \
+    write_psms_binary, \
     merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
 
 from sagepy.rescore.utility import transform_psm_to_mokapot_pin
@@ -815,8 +818,15 @@ def main():
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
-    psms = re_score_psms(psms=psms, verbose=args.verbose, num_splits=params['re_score_num_splits'],
-                         balance=params['balanced_re_score'], score=params['re_score_metric'])
+    psms = rescore_psms(
+        psm_collection=psms,
+        verbose=args.verbose,
+        model=SVC(probability=True),
+        num_splits=params['re_score_num_splits'],
+        balance=params['balanced_re_score'],
+        score=params['re_score_metric'],
+        num_threads=params['num_threads'],
+    )
 
     # serialize all PSMs to JSON binary
     bts = psms_to_json_bin(psms)
