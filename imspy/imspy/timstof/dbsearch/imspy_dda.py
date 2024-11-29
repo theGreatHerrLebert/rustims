@@ -101,14 +101,14 @@ def main():
     script_dir = Path(__file__).parent
 
     # Default configs modification configs path
-    default_config_path = script_dir / "configs" / "config.toml"
+    default_config_path = script_dir / "configs" / "config_tryptic.toml"
 
     # Optional argument for path to the configuration file
     parser.add_argument(
         "--config",
         type=str,
         default=default_config_path,
-        help="Path to the configuration file (TOML format). Default: configs/config.toml"
+        help="Path to the configuration file (TOML format). Default: configs/config_tryptic.toml"
     )
 
     # Optional verbosity flag
