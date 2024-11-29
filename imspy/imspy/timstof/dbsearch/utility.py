@@ -350,7 +350,6 @@ def generate_balanced_rt_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -
 
     # generate good hits
     PSM_pandas = psm_collection_to_pandas(psm_list)
-    PSM_pandas["match_identity_candidates"] = PSM_pandas.proteins
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm", score="hyperscore")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["hyperscore"])
 
@@ -378,7 +377,6 @@ def generate_balanced_im_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -
 
     # generate good hits
     PSM_pandas = psm_collection_to_pandas(psm_list)
-    PSM_pandas["match_identity_candidates"] = PSM_pandas.proteins
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm", score="hyperscore")
     PSM_pandas_dropped = PSM_pandas.drop(columns=["hyperscore"])
 
