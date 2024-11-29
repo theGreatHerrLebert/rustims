@@ -702,7 +702,7 @@ def main():
             print("predicting ion intensities ...")
 
         intensity_pred = prosit_model.predict_intensities(
-            [p.sequence for p in psm],
+            [p.sequence_modified if p.decoy == False else p.sequence_decoy for p in psm],
             np.array([p.charge for p in psm]),
             [p.collision_energy_calibrated for p in psm],
             batch_size=params['intensity_prediction_batch_size'],
@@ -732,7 +732,7 @@ def main():
 
         # predict ion mobilities
         inv_mob = im_predictor.simulate_ion_mobilities(
-            sequences=[x.sequence for x in psm],
+            sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy for x in psm],
             charges=[x.charge for x in psm],
             mz=[x.mono_mz_calculated for x in psm]
         )
@@ -779,7 +779,7 @@ def main():
 
         # predict retention times
         rt_pred = rt_predictor.simulate_separation_times(
-            sequences=[x.sequence for x in psm],
+            sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy for x in psm],
         )
 
         # set retention times

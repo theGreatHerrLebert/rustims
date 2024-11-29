@@ -50,7 +50,7 @@ def predict_retention_time(
 
     # predict retention times
     rt_predicted = rt_predictor.simulate_separation_times(
-        sequences=[x.sequence for x in psm_collection],
+        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy for x in psm_collection],
     )
 
     # set the predicted retention times
