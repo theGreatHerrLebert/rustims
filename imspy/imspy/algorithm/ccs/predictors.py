@@ -50,7 +50,7 @@ def predict_inverse_ion_mobility(
 
     # predict ion mobilities
     inv_mob = im_predictor.simulate_ion_mobilities(
-        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy for x in psm_collection],
+        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy_modified for x in psm_collection],
         charges=[x.charge for x in psm_collection],
         mz=[x.mono_mz_calculated for x in psm_collection]
     )
@@ -302,7 +302,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                 if not row.decoy:
                     sequences.append(row.sequence_modified)
                 else:
-                    sequences.append(row.sequence_decoy)
+                    sequences.append(row.sequence_decoy_modified)
         else:
             sequences = data.sequence_modified.values
 
@@ -356,7 +356,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                 if not row.decoy:
                     sequences.append(row.sequence_modified)
                 else:
-                    sequences.append(row.sequence_decoy)
+                    sequences.append(row.sequence_decoy_modified)
         else:
             sequences = data.sequence_modified.values
 

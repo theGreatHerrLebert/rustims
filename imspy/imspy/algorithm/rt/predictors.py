@@ -50,7 +50,7 @@ def predict_retention_time(
 
     # predict retention times
     rt_predicted = rt_predictor.simulate_separation_times(
-        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy for x in psm_collection],
+        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy_modified for x in psm_collection],
     )
 
     # set the predicted retention times
@@ -194,7 +194,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
                 if not row.decoy:
                     sequences.append(row.sequence)
                 else:
-                    sequences.append(row.sequence_decoy)
+                    sequences.append(row.sequence_decoy_modified)
         else:
             sequences = data.sequence.values
 
@@ -234,7 +234,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
                 if not row.decoy:
                     sequences.append(row.sequence)
                 else:
-                    sequences.append(row.sequence_decoy)
+                    sequences.append(row.sequence_decoy_modified)
         else:
             sequences = data.sequence.values
 
