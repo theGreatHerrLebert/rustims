@@ -1,4 +1,4 @@
-from typing import Union, List, Dict
+from typing import Union, List
 
 import pandas as pd
 import numpy as np
@@ -16,7 +16,7 @@ from tensorflow.keras.models import load_model
 
 
 def predict_retention_time(
-        psm_collection: Union[List[Psm], Dict[str, List[Psm]]],
+        psm_collection: List[Psm],
         refine_model: bool = True,
         verbose: bool = False) -> None:
     """

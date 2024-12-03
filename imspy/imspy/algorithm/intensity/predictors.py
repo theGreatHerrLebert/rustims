@@ -59,7 +59,7 @@ def predict_intensities_prosit(
         ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
 
     intensity_pred = prosit_model.predict_intensities(
-        [p.sequence for p in psm_collection],
+        [p.sequence_modified for p in psm_collection],
         np.array([p.charge for p in psm_collection]),
         [p.collision_energy_calibrated for p in psm_collection],
         batch_size=2048,

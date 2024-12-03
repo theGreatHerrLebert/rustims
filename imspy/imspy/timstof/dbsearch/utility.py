@@ -3,7 +3,6 @@ import re
 from typing import List, Tuple, Union, Dict
 
 import pandas as pd
-from tqdm import tqdm
 
 import numpy as np
 from typing import Optional
@@ -15,8 +14,6 @@ from imspy.timstof.frame import TimsFrame
 
 from sagepy.utility import get_features
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.preprocessing import StandardScaler
 
 from sagepy.utility import psm_collection_to_pandas
 from numpy.typing import NDArray
