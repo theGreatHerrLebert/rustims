@@ -43,7 +43,7 @@ def predict_intensities_prosit(
     prosit_model = Prosit2023TimsTofWrapper(verbose=False)
 
     # sample for collision energy calibration
-    sample = list(sorted(psm_collection, key=lambda x: x.hyper_score, reverse=True))[:int(2 ** 11)]
+    sample = list(sorted(psm_collection, key=lambda x: x.hyperscore, reverse=True))[:int(2 ** 11)]
 
     if calibrate_collision_energy:
         collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
