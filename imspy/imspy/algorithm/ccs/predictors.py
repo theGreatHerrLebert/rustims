@@ -57,7 +57,7 @@ def predict_inverse_ion_mobility(
 
     # set ion mobilities
     for mob, ps in zip(inv_mob, psm_collection):
-        ps.inverse_mobility_predicted = mob
+        ps.inverse_ion_mobility_predicted = mob
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:
