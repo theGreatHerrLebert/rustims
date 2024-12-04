@@ -8,6 +8,7 @@ use rand::Rng;
 use crate::timstof::spectrum::TimsSpectrum;
 use crate::data::spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, Vectorized, ToResolution};
 use crate::simulation::annotation::{PeakAnnotation, TimsFrameAnnotated};
+use crate::timstof::vec_utils::{filter_with_mask, find_sparse_local_maxima_mask};
 
 #[derive(Clone)]
 pub struct RawTimsFrame {
@@ -17,6 +18,42 @@ pub struct RawTimsFrame {
     pub scan: Vec<u32>,
     pub tof: Vec<u32>,
     pub intensity: Vec<f64>,
+}
+
+impl RawTimsFrame {
+    pub fn smooth(mut self, window: u32) -> Self {
+        let mut smooth_intensities: Vec<f64> = self.intensity.clone();
+        for (current_index, current_tof) in self.tof.iter().enumerate()
+        {
+            let current_intensity: f64 = self.intensity[current_index];
+            for (_next_index, next_tof) in
+                self.tof[current_index + 1..].iter().enumerate()
+            {
+                let next_index: usize = _next_index + current_index + 1;
+                let next_intensity: f64 = self.intensity[next_index];
+                if (next_tof - current_tof) <= window {
+                    smooth_intensities[current_index] += next_intensity;
+                    smooth_intensities[next_index] += current_intensity;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.intensity = smooth_intensities;
+
+        self
+    }
+    pub fn centroid(mut self, window: u32) -> Self {
+        let local_maxima: Vec<bool> = find_sparse_local_maxima_mask(
+            &self.tof,
+            &self.intensity,
+            window,
+        );
+        self.tof = filter_with_mask(&self.tof, &local_maxima);
+        self.intensity = filter_with_mask(&self.intensity, &local_maxima);
+        self.scan = filter_with_mask(&self.scan, &local_maxima);
+        self
+    }
 }
 
 #[derive(Clone, Debug)]

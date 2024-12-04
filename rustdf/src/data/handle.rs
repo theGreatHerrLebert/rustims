@@ -416,6 +416,11 @@ impl TimsData for TimsInMemoryLoader {
 
         let raw_frame = self.get_raw_frame(frame_id);
 
+        let raw_frame = match raw_frame.ms_type {
+            MsType::FragmentDda => raw_frame.smooth(1).centroid(1),
+            _ => raw_frame,
+        };
+
         // if raw frame is empty, return an empty frame
         if raw_frame.scan.is_empty() {
             return TimsFrame {
