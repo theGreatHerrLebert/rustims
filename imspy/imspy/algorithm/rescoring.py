@@ -6,6 +6,7 @@ from sagepy.rescore.rescore import rescore_psms
 from sagepy.qfdr.tdc import assign_sage_spectrum_q, assign_sage_peptide_q, assign_sage_protein_q
 
 from sagepy.core.scoring import Psm
+from sagepy.utility import psm_collection_to_pandas
 from typing import List
 from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.algorithm.ccs.predictors import load_deep_ccs_predictor, DeepPeptideIonMobilityApex
