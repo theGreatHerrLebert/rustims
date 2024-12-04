@@ -12,6 +12,7 @@ from imspy.algorithm.ccs.predictors import load_deep_ccs_predictor, DeepPeptideI
 from imspy.algorithm.rt.predictors import load_deep_retention_time_predictor, DeepChromatographyApex
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper, get_collision_energy_calibration_factor
+from imspy.algorithm.intensity.predictors import associate_fragment_ions_with_prosit_predicted_intensities
 from imspy.algorithm.rt.predictors import linear_map
 
 from imspy.timstof.dbsearch.utility import generate_balanced_rt_dataset
