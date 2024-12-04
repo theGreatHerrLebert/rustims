@@ -61,6 +61,12 @@ impl MsType {
     }
 }
 
+impl Default for MsType {
+    fn default() -> Self {
+        MsType::Unknown
+    }
+}
+
 impl Display for MsType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {

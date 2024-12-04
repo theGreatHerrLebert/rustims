@@ -423,13 +423,7 @@ impl TimsData for TimsInMemoryLoader {
 
         // if raw frame is empty, return an empty frame
         if raw_frame.scan.is_empty() {
-            return TimsFrame {
-                frame_id: frame_id as i32,
-                ms_type: MsType::Unknown,
-                scan: Vec::new(),
-                tof: Vec::new(),
-                ims_frame: ImsFrame { retention_time: raw_frame.retention_time, mobility: Vec::new(), mz: Vec::new(), intensity: Vec::new() }
-            };
+            return TimsFrame::default();
         }
 
         let tof_i32 = raw_frame.tof.iter().map(|&x| x as i32).collect();

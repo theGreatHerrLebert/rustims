@@ -56,7 +56,7 @@ impl RawTimsFrame {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -108,6 +108,18 @@ pub struct TimsFrame {
     pub scan: Vec<i32>,
     pub tof: Vec<i32>,
     pub ims_frame: ImsFrame,
+}
+
+impl Default for TimsFrame {
+    fn default() -> Self {
+        TimsFrame {
+            frame_id: 0, // Replace with a suitable default value
+            ms_type: MsType::Unknown,
+            scan: Vec::new(),
+            tof: Vec::new(),
+            ims_frame: ImsFrame::default(), // Uses the default implementation for `ImsFrame`
+        }
+    }
 }
 
 impl TimsFrame {
