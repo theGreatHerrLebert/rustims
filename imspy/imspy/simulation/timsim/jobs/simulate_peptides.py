@@ -126,6 +126,9 @@ def simulate_peptides(
             verbose=False
         )
 
+        # rename column for compatibility
+        peptide_table.rename(columns={"decoys": "decoy"}, inplace=True)
+
         peptide_rt = RTColumn.simulate_separation_times_pandas(
             data=peptide_table.copy(),
             gradient_length=gradient_length,

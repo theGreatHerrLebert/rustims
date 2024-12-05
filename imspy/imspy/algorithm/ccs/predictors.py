@@ -350,13 +350,21 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
     def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024, return_ccs: bool = False, decoys_separate: bool = True) -> pd.DataFrame:
 
+        assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
+
         sequences = []
         if decoys_separate:
             for index, row in data.iterrows():
                 if not row.decoy:
-                    sequences.append(row.sequence_modified)
+                    try:
+                        sequences.append(row.sequence_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence)
                 else:
-                    sequences.append(row.sequence_decoy_modified)
+                    try:
+                        sequences.append(row.sequence_decoy_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence)
         else:
             sequences = data.sequence_modified.values
 

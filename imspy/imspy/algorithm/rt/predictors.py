@@ -232,9 +232,15 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         if decoys_separate:
             for index, row in data.iterrows():
                 if not row.decoy:
-                    sequences.append(row.sequence)
+                    try:
+                        sequences.append(row.sequence_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence)
                 else:
-                    sequences.append(row.sequence_decoy_modified)
+                    try:
+                        sequences.append(row.sequence_decoy_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence_decoy)
         else:
             sequences = data.sequence.values
 
