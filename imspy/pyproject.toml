@@ -20,7 +20,6 @@ tensorflow = "2.15.*"
 tensorflow-probability = ">=0.22.1"
 wandb = ">=0.12.1"
 
-pyopenms = ">=2.6.0"
 mokapot = ">=0.10.0"
 
 sagepy = ">=0.2.23"
@@ -32,6 +31,7 @@ pyarrow =">=13.0"
 mendeleev = ">=0.7.0"
 dlomix = ">=0.0.6"
 toml = ">=0.10.2"
+vtk = ">=9.4.0"
 
 [tool.poetry.group.dev.dependencies]
 sphinx = "^8.1.0"
