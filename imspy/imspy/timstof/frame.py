@@ -1,6 +1,6 @@
 import pandas as pd
 
-from typing import List
+from typing import List, Tuple
 from numpy.typing import NDArray
 
 from tensorflow import sparse as sp
@@ -516,3 +516,14 @@ class TimsFrameVectorized(RustWrapperObject):
 
     def get_py_ptr(self):
         return self.__frame_ptr
+
+    def get_arrays_at_index(self, index: int) -> Tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float32]]:
+        """Get the arrays at a given index.
+
+        Args:
+            index (int): Index.
+
+        Returns:
+            NDArray[np.float64]: Arrays at the index.
+        """
+        return self.__frame_ptr.get_arrays_at_index(index)

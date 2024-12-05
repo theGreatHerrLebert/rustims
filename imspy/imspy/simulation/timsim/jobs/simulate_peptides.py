@@ -7,9 +7,15 @@ from imspy.data.peptide import PeptideSequence
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.utility import load_tokenizer_from_resources
 
-def sample_peptides_from_proteins(table, num_peptides_total=100_000):
-    indices = np.concatenate([np.repeat(x, y) for x, y in zip(range(len(table)), table.num_peptides)])
-    indices_chosen = np.random.choice(indices, size=num_peptides_total, replace=True)
+def sample_peptides_from_proteins(table, num_peptides_total=100_000, down_sample: bool = True):
+
+    # Sample peptides from proteins, otherwise take all
+    if down_sample:
+        indices = np.concatenate([np.repeat(x, y) for x, y in zip(range(len(table)), table.num_peptides)])
+        indices_chosen = np.random.choice(indices, size=num_peptides_total, replace=True)
+
+    else:
+        indices_chosen = np.concatenate([np.repeat(x, y) for x, y in zip(range(len(table)), table.num_peptides)])
 
     peptide_samples = []
     index_counts = Counter(indices_chosen)
@@ -60,8 +66,9 @@ def simulate_peptides(
         exclude_accumulated_gradient_start: bool = True,
         min_rt_percent: float = 2.0,
         gradient_length: float = 60 * 60,
+        down_sample: bool = True,
 ) -> pd.DataFrame:
-    protein_table["peptides_sampled"] = sample_peptides_from_proteins(protein_table, num_peptides_total)
+    protein_table["peptides_sampled"] = sample_peptides_from_proteins(protein_table, num_peptides_total, down_sample)
     protein_table = protein_table[[len(l) > 0 for l in protein_table.peptides_sampled]]
 
     peptide_id, names, events, sequences, decoys, missed_cleavages, n_term, c_term, masses, protein_id = [], [], [], [], [], [], [], [], [], []

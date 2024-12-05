@@ -515,6 +515,7 @@ def main():
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,
                 gradient_length=acquisition_builder.gradient_length,
+                down_sample=args.sample_peptides,
             )
 
             # If the proteome is mixed, scale the number of peptides
