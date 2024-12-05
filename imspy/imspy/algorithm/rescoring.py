@@ -20,12 +20,11 @@ from imspy.timstof.dbsearch.utility import generate_balanced_rt_dataset
 from imspy.timstof.dbsearch.utility import generate_balanced_im_dataset
 
 
-def re_score_psms(psms: List[Psm], verbose: bool = True, use_logreg: bool = True) -> List[Psm]:
+def re_score_psms(psms: List[Psm], use_logreg: bool = True) -> List[Psm]:
     """ Re-score the PSMs
 
     Args:
         psms: The PSMs
-        verbose: Whether to print information
         use_logreg: Whether to use logistic regression
 
     Returns:
@@ -54,8 +53,6 @@ def re_score_psms(psms: List[Psm], verbose: bool = True, use_logreg: bool = True
 
 def create_feature_space(
         psms: List[Psm],
-        rt_min: float,
-        rt_max: float,
         fine_tune_im: bool = True,
         fine_tune_rt: bool = True,
         verbose: bool = False) -> List[Psm]:
@@ -63,8 +60,6 @@ def create_feature_space(
 
     Args:
         psms: The PSMs
-        rt_min: The minimum retention time
-        rt_max: The maximum retention time
         fine_tune_im: Whether to fine-tune the ion mobility predictor
         fine_tune_rt: Whether to fine-tune the retention time predictor
         verbose: Whether to print information
@@ -130,6 +125,9 @@ def create_feature_space(
     # set ion mobilities
     for mob, p in zip(inv_mob, psms):
         p.inverse_ion_mobility_predicted = mob
+
+    rt_min = min([p.retention_time for p in psms])
+    rt_max = max([p.retention_time for p in psms])
 
     # map the observed retention time into the domain [0, 60]
     for value in psms:

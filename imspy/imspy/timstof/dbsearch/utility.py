@@ -329,26 +329,30 @@ def generate_balanced_im_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -
 
 def extract_timstof_dda_data(path: str,
                              in_memory: bool = False,
+                             use_bruker_sdk: bool = False,
                              isolation_window_lower: float = -3.0,
                              isolation_window_upper: float = 3.0,
                              take_top_n: int = 100,
+                             num_threads: int = 16,
                              ) -> pd.DataFrame:
     """
     Extract TIMSTOF DDA data from bruker timsTOF TDF file.
     Args:
         path: Path to TIMSTOF DDA data
         in_memory: Whether to load data in memory
+        use_bruker_sdk: Whether to use bruker SDK for data extraction
         isolation_window_lower: Lower bound for isolation window (Da)
         isolation_window_upper: Upper bound for isolation window (Da)
         take_top_n: Number of top peaks to take
+        num_threads: Number of threads to use
 
     Returns:
         pd.DataFrame: DataFrame containing timsTOF DDA data
     """
     ds_name = os.path.basename(path)
 
-    dataset = TimsDatasetDDA(path, in_memory=in_memory)
-    fragments = dataset.get_pasef_fragments(num_threads=1)
+    dataset = TimsDatasetDDA(path, in_memory=in_memory, use_bruker_sdk=use_bruker_sdk)
+    fragments = dataset.get_pasef_fragments(num_threads=num_threads)
 
     fragments = fragments.groupby('precursor_id').agg({
         'frame_id': 'first',
