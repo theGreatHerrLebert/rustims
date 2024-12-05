@@ -67,6 +67,8 @@ def simulate_peptides(
         min_rt_percent: float = 2.0,
         gradient_length: float = 60 * 60,
         down_sample: bool = True,
+        min_length: int = 7,
+        max_length: int = 30,
 ) -> pd.DataFrame:
     protein_table["peptides_sampled"] = sample_peptides_from_proteins(protein_table, num_peptides_total, down_sample)
     protein_table = protein_table[[len(l) > 0 for l in protein_table.peptides_sampled]]
@@ -77,6 +79,10 @@ def simulate_peptides(
 
     for (index, row) in protein_table.iterrows():
         for peptide in row.peptides_sampled:
+
+            if len(peptide) < min_length or len(peptide) > max_length:
+                continue
+
             masses.append(PeptideSequence(peptide).mono_isotopic_mass)
             missed_cleavages.append(0)
             decoys.append(0)
