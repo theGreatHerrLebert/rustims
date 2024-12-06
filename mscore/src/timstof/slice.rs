@@ -155,7 +155,9 @@ impl TimsSlice {
             result
         });
 
-        TimsSliceVectorized { frames: result_frames }
+        let frame_map = get_index_map(&result_frames);
+
+        TimsSliceVectorized { frames: result_frames, frame_map }
     }
 
     pub fn from_flat_slice(frame_ids: Vec<i32>,
@@ -317,6 +319,7 @@ impl TimsSlice {
 #[derive(Clone)]
 pub struct TimsSliceVectorized {
     pub frames: Vec<TimsFrameVectorized>,
+    pub frame_map: BTreeMap<u32, (Vec<u32>, Vec<u32>, Vec<f32>)>
 }
 
 impl TimsSliceVectorized {
@@ -333,7 +336,13 @@ impl TimsSliceVectorized {
             result
         });
 
-        TimsSliceVectorized { frames: filtered_frames }
+        let frame_map = get_index_map(&filtered_frames);
+
+        TimsSliceVectorized { frames: filtered_frames, frame_map }
+    }
+
+    pub fn get_vectors_at_index(&self, index: u32) -> Option<(Vec<u32>, Vec<u32>, Vec<f32>)> {
+        self.frame_map.get(&index).cloned()
     }
 
     pub fn flatten(&self) -> TimsSliceVectorizedFlat {
@@ -366,6 +375,30 @@ impl TimsSliceVectorized {
             intensities,
         }
     }
+}
+
+fn get_index_map(frames: &Vec<TimsFrameVectorized>) -> BTreeMap<u32, (Vec<u32>, Vec<u32>, Vec<f32>)> {
+    let mut index_map: BTreeMap<u32, Vec<(u32, u32, f32)>> = BTreeMap::new();
+
+    for frame in frames {
+        for (i, index) in frame.ims_frame.indices.iter().enumerate() {
+            let entry = index_map.entry(*index as u32).or_insert_with(|| vec![]);
+            entry.push((frame.frame_id as u32, frame.scan[i] as u32, frame.ims_frame.values[i] as f32));
+        }
+    }
+
+    let mut result_map: BTreeMap<u32, (Vec<u32>, Vec<u32>, Vec<f32>)> = BTreeMap::new();
+
+    for (index, values) in index_map {
+        for (frame_id, scan, intensity) in values {
+            let entry = result_map.entry(index).or_insert_with(|| (vec![], vec![], vec![]));
+            entry.0.push(frame_id);
+            entry.1.push(scan);
+            entry.2.push(intensity);
+        }
+    }
+
+    result_map
 }
 
 #[derive(Clone)]

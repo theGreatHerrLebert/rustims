@@ -67,8 +67,8 @@ impl TimsDatasetDDA {
                 let filtered_frame = frame.filter_ranged(
                     0.0,
                     2000.0,
-                    pasef_info.scan_num_begin as i32,
-                    pasef_info.scan_num_end as i32,
+                    (pasef_info.scan_num_begin - 10) as i32,
+                    (pasef_info.scan_num_end + 10) as i32,
                     0.0,
                     5.0,
                     0.0,

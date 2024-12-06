@@ -302,6 +302,14 @@ class TimsFrame(RustWrapperObject):
         """
         return self.__frame_ptr.get_inverse_mobility_along_scan_marginal()
 
+    def get_mobility_mean_and_variance(self) -> Tuple[float, float]:
+        """Get the mean and variance of the inverse mobility.
+
+        Returns:
+            Tuple[float, float]: Mean and variance of the inverse mobility.
+        """
+        return self.__frame_ptr.get_mobility_mean_and_variance()
+
     def get_py_ptr(self):
         return self.__frame_ptr
 

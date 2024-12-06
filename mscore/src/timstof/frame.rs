@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::fmt::{Formatter};
 use itertools;
 use itertools::izip;
+use ordered_float::OrderedFloat;
 use rand::Rng;
 
 use crate::timstof::spectrum::TimsSpectrum;
@@ -482,6 +483,36 @@ impl TimsFrame {
         let (_, max_inv_mob) = marginal_map.iter().max_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or((&0, &(0.0, 0.0))).1;
 
         *max_inv_mob
+    }
+
+    /// Calculate the weighted mean and variance of `inv_mob` values based on their intensities.
+    pub fn get_mobility_mean_and_variance(&self) -> (f64, f64) {
+        let mut mobility_map: BTreeMap<OrderedFloat<f64>, f64> = BTreeMap::new();
+
+        // Aggregate intensity values for each `inv_mob`
+        for (inv_mob, intensity) in izip!(&self.ims_frame.mobility, &self.ims_frame.intensity) {
+            let entry = mobility_map.entry(OrderedFloat(*inv_mob)).or_insert(0.0);
+            *entry += *intensity;
+        }
+
+        // Calculate weighted mean
+        let mut total_weight = 0.0;
+        let mut weighted_sum = 0.0;
+        for (&inv_mob, &intensity) in &mobility_map {
+            total_weight += intensity;
+            weighted_sum += inv_mob.into_inner() * intensity;
+        }
+        let mean = weighted_sum / total_weight;
+
+        // Calculate weighted variance
+        let mut weighted_squared_diff_sum = 0.0;
+        for (&inv_mob, &intensity) in &mobility_map {
+            let diff = inv_mob.into_inner() - mean;
+            weighted_squared_diff_sum += intensity * diff * diff;
+        }
+        let variance = weighted_squared_diff_sum / total_weight;
+
+        (mean, variance)
     }
 }
 
