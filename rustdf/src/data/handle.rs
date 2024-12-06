@@ -13,6 +13,54 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::data::acquisition::AcquisitionMode;
 
+use std::error::Error;
+
+fn lzf_decompress(data: &[u8], max_output_size: usize) -> Result<Vec<u8>, Box<dyn Error>> {
+    let decompressed_data = lzf::decompress(data, max_output_size)
+        .map_err(|e| format!("LZF decompression failed: {}", e))?;
+    Ok(decompressed_data)
+}
+
+fn parse_decompressed_bruker_binary_type1(
+    decompressed_bytes: &[u8],
+    scan_indices: &mut [i64],
+    tof_indices: &mut [u32],
+    intensities: &mut [u16],
+    scan_start: usize,
+    scan_index: usize,
+) -> usize {
+    // Interpret decompressed_bytes as a slice of i32
+    let int_count = decompressed_bytes.len() / 4;
+    let buffer = unsafe {
+        std::slice::from_raw_parts(decompressed_bytes.as_ptr() as *const i32, int_count)
+    };
+
+    let mut tof_index = 0i32;
+    let mut previous_was_intensity = true;
+    let mut current_index = scan_start;
+
+    for &value in buffer {
+        if value >= 0 {
+            // positive value => intensity
+            if previous_was_intensity {
+                tof_index += 1;
+            }
+            tof_indices[current_index] = tof_index as u32;
+            intensities[current_index] = value as u16;
+            previous_was_intensity = true;
+            current_index += 1;
+        } else {
+            // negative value => indicates a jump in tof_index
+            tof_index -= value; // value is negative, so this adds |value| to tof_index
+            previous_was_intensity = false;
+        }
+    }
+
+    let scan_size = current_index - scan_start;
+    scan_indices[scan_index] = scan_size as i64;
+    scan_size
+}
+
 pub struct TimsRawDataLayout {
     pub raw_data_path: String,
     pub global_meta_data: GlobalMetaData,
@@ -262,13 +310,102 @@ impl TimsData for TimsLazyLoder {
         infile.read_exact(&mut bin_buffer).unwrap();
 
         match self.raw_data_layout.global_meta_data.tims_compression_type {
-            _ if self.raw_data_layout.global_meta_data.tims_compression_type == 1 => {
-                panic!("Decompression Type1 not implemented.");
+            1 => {
+                let scan_count = self.raw_data_layout.frame_meta_data[frame_index].num_scans as usize;
+                let num_peaks = num_peaks as usize;
+                let compression_offset = 8 + (scan_count + 1) * 4;
+
+                let mut scan_offsets_buffer = vec![0u8; (scan_count + 1) * 4];
+                infile.read_exact(&mut scan_offsets_buffer).unwrap();
+
+                let mut scan_offsets = Vec::with_capacity(scan_count + 1);
+                {
+                    let mut rdr = Cursor::new(&scan_offsets_buffer);
+                    for _ in 0..(scan_count + 1) {
+                        scan_offsets.push(rdr.read_i32::<LittleEndian>().unwrap());
+                    }
+                }
+
+                for offs in &mut scan_offsets {
+                    *offs -= compression_offset as i32;
+                }
+
+                let remaining_size = (bin_size as usize - compression_offset) as usize;
+                let mut compressed_data = vec![0u8; remaining_size];
+                infile.read_exact(&mut compressed_data).unwrap();
+
+                let mut scan_indices_ = vec![0i64; scan_count];
+                let mut tof_indices_ = vec![0u32; num_peaks];
+                let mut intensities_ = vec![0u16; num_peaks];
+
+                let mut scan_start = 0usize;
+
+                for scan_index in 0..scan_count {
+                    let start = scan_offsets[scan_index] as usize;
+                    let end = scan_offsets[scan_index + 1] as usize;
+
+                    if start == end {
+                        continue;
+                    }
+
+                    let max_output_size = num_peaks * 8;
+                    let decompressed_bytes = lzf_decompress(&compressed_data[start..end], max_output_size)
+                        .expect("LZF decompression failed.");
+
+                    scan_start += parse_decompressed_bruker_binary_type1(
+                        &decompressed_bytes,
+                        &mut scan_indices_,
+                        &mut tof_indices_,
+                        &mut intensities_,
+                        scan_start,
+                        scan_index
+                    );
+                }
+
+                // Create a flat scan vector to match what flatten_scan_values expects
+                let mut scan = Vec::with_capacity(num_peaks);
+                {
+                    let mut current_scan_index = 0u32;
+                    for &size in &scan_indices_ {
+                        let sz = size as usize;
+                        for _ in 0..sz {
+                            scan.push(current_scan_index);
+                        }
+                        current_scan_index += 1;
+                    }
+                }
+
+                let intensity_dbl = intensities_.iter().map(|&x| x as f64).collect::<Vec<f64>>();
+                let tof_i32 = tof_indices_.iter().map(|&x| x as i32).collect::<Vec<i32>>();
+                let scan = flatten_scan_values(&scan, true);
+
+                let mz = self.index_converter.tof_to_mz(frame_id, &tof_indices_);
+                let inv_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &scan);
+
+                let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+                let ms_type = match ms_type_raw {
+                    0 => MsType::Precursor,
+                    8 => MsType::FragmentDda,
+                    9 => MsType::FragmentDia,
+                    _ => MsType::Unknown,
+                };
+
+                TimsFrame {
+                    frame_id: frame_id as i32,
+                    ms_type,
+                    scan: scan.iter().map(|&x| x as i32).collect(),
+                    tof: tof_i32,
+                    ims_frame: ImsFrame {
+                        retention_time: self.raw_data_layout.frame_meta_data[frame_index].time,
+                        mobility: inv_mobility,
+                        mz,
+                        intensity: intensity_dbl
+                    }
+                }
             },
 
-            // Extract from ZSTD compressed binary
-            _ if self.raw_data_layout.global_meta_data.tims_compression_type == 2 => {
-
+            // Existing handling of Type 2
+            2 => {
                 let mut compressed_data = vec![0u8; bin_size as usize - 8];
                 infile.read_exact(&mut compressed_data).unwrap();
 
@@ -291,18 +428,20 @@ impl TimsData for TimsLazyLoder {
                     _ => MsType::Unknown,
                 };
 
-                let frame = TimsFrame {
+                TimsFrame {
                     frame_id: frame_id as i32,
                     ms_type,
                     scan: scan.iter().map(|&x| x as i32).collect(),
                     tof: tof_i32,
-                    ims_frame: ImsFrame { retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time, mobility: inv_mobility, mz, intensity: intensity_dbl }
-                };
-
-                return frame;
+                    ims_frame: ImsFrame {
+                        retention_time: self.raw_data_layout.frame_meta_data[frame_index].time,
+                        mobility: inv_mobility,
+                        mz,
+                        intensity: intensity_dbl
+                    }
+                }
             },
 
-            // Error on unknown compression algorithm
             _ => {
                 panic!("TimsCompressionType is not 1 or 2.")
             }
