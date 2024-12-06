@@ -9,6 +9,7 @@ serde_json = "1.0.116"
 regex = "1.10.4"
 rayon = "1.10.0"
 itertools = "0.12.1"
+bincode = "2.0.0-rc.3"
 
 [lib]
 name = "rustms"
