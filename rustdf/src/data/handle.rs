@@ -377,7 +377,7 @@ impl TimsData for TimsLazyLoder {
 
                 let intensity_dbl = intensities_.iter().map(|&x| x as f64).collect::<Vec<f64>>();
                 let tof_i32 = tof_indices_.iter().map(|&x| x as i32).collect::<Vec<i32>>();
-                let scan = flatten_scan_values(&scan, true);
+                // let scan = flatten_scan_values(&scan, true);
 
                 let mz = self.index_converter.tof_to_mz(frame_id, &tof_indices_);
                 let inv_mobility = self.index_converter.scan_to_inverse_mobility(frame_id, &scan);
