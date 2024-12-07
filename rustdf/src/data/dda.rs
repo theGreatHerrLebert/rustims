@@ -63,12 +63,15 @@ impl TimsDatasetDDA {
                 // get the frame
                 let frame = self.loader.get_frame(pasef_info.frame_id as u32);
 
+                // get five percent of the scan range
+                let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
+
                 // get the fragment spectrum by scan range
                 let filtered_frame = frame.filter_ranged(
                     0.0,
                     2000.0,
-                    (pasef_info.scan_num_begin - 10) as i32,
-                    (pasef_info.scan_num_end + 10) as i32,
+                    (pasef_info.scan_num_begin - scan_margin) as i32,
+                    (pasef_info.scan_num_end + scan_margin) as i32,
                     0.0,
                     5.0,
                     0.0,

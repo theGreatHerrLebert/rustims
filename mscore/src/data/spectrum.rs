@@ -27,7 +27,7 @@ pub trait Vectorized<T> {
 ///
 /// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
 ///
-#[derive(Clone, PartialEq, Debug, Encode, Decode)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Encode, Decode)]
 pub enum MsType {
     Precursor,
     FragmentDda,

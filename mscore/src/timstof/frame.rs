@@ -6,7 +6,7 @@ use itertools;
 use itertools::izip;
 use ordered_float::OrderedFloat;
 use rand::Rng;
-
+use serde::{Deserialize, Serialize};
 use crate::timstof::spectrum::TimsSpectrum;
 use crate::data::spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, Vectorized, ToResolution};
 use crate::simulation::annotation::{PeakAnnotation, TimsFrameAnnotated};
@@ -58,7 +58,7 @@ impl RawTimsFrame {
     }
 }
 
-#[derive(Clone, Debug, Default, Encode, Decode)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Encode, Decode)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -103,7 +103,7 @@ pub struct ImsFrameVectorized {
     pub resolution: i32,
 }
 
-#[derive(Clone, Debug, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,
