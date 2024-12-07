@@ -2,6 +2,7 @@ use std::fmt;
 use std::collections::BTreeMap;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
+use bincode::{Decode, Encode};
 use serde::{Serialize, Deserialize};
 
 extern crate rand;
@@ -26,7 +27,7 @@ pub trait Vectorized<T> {
 ///
 /// The `SpecType` enum is used to distinguish between precursor and fragment spectra.
 ///
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Encode, Decode)]
 pub enum MsType {
     Precursor,
     FragmentDda,
@@ -79,7 +80,7 @@ impl Display for MsType {
 }
 
 /// Represents a mass spectrum with associated m/z values and intensities.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub struct MzSpectrum {
     pub mz: Vec<f64>,
     pub intensity: Vec<f64>,

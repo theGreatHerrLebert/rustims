@@ -1,6 +1,7 @@
 use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Formatter};
+use bincode::{Decode, Encode};
 use itertools;
 use itertools::izip;
 use ordered_float::OrderedFloat;
@@ -57,7 +58,7 @@ impl RawTimsFrame {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Encode, Decode)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -102,7 +103,7 @@ pub struct ImsFrameVectorized {
     pub resolution: i32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Encode, Decode)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,

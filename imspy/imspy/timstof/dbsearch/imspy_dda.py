@@ -13,7 +13,7 @@ import numpy as np
 from pathlib import Path
 
 from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SageSearchConfiguration
-from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, json_bin_to_psms, ScoreType
+from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, ScoreType
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
 from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
@@ -34,9 +34,9 @@ from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 
 from imspy.algorithm.intensity.predictors import get_collision_energy_calibration_factor
 
-from sagepy.core.scoring import psms_to_json_bin
 from sagepy.utility import psm_collection_to_pandas
 from sagepy.utility import apply_mz_calibration
+from sagepy.utility import decompress_psms, compress_psms
 
 # suppress tensorflow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -789,8 +789,8 @@ def main():
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
 
-        # serialize PSMs to JSON binary
-        bts = psms_to_json_bin(psm)
+        # serialize PSMs to bincode binary
+        bts = compress_psms(psm)
 
         if args.verbose:
             print("writing PSMs to temp file ...")
@@ -813,7 +813,7 @@ def main():
             f = open(os.path.join(write_folder_path + "/imspy/psm/", file), 'rb')
             data = f.read()
             f.close()
-            psms.extend(json_bin_to_psms(data))
+            psms.extend(decompress_psms(data))
 
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
@@ -829,7 +829,7 @@ def main():
     )
 
     # serialize all PSMs to JSON binary
-    bts = psms_to_json_bin(psms)
+    bts = compress_psms(psms)
 
     # write all PSMs to binary file
     write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms", total=True)
