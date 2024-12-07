@@ -805,6 +805,10 @@ def main():
             minutes, seconds = divmod(time_end_tmp - start_time, 60)
             print(f"file {ds_name} processed after {minutes} minutes and {seconds:.2f} seconds.")
 
+
+    if args.verbose:
+        print("loading all PSMs ...")
+
     psms = []
 
     # read PSMs from binary files
@@ -830,6 +834,9 @@ def main():
 
     # serialize all PSMs to JSON binary
     bts = compress_psms(psms)
+
+    if args.verbose:
+        print("writing all re-scored PSMs to temp file ...")
 
     # write all PSMs to binary file
     write_psms_binary(byte_array=bts, folder_path=write_folder_path, file_name="total_psms", total=True)
