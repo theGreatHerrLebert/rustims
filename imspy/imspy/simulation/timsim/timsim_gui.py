@@ -322,7 +322,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(documentation_tab)
 
         # Markdown file path
-        doc_path = Path(__file__).parent / "docs" / "documentation.md"
+        doc_path = Path(__file__).parent.parent / "resources/docs/documentation.md"
 
         if doc_path.exists():
             try:
