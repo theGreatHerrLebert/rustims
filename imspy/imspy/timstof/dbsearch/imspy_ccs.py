@@ -38,7 +38,7 @@ def main():
     parser.add_argument("dataset_path", type=str, help="Path to the dataset.")
     parser.add_argument("fasta_path", type=str, help="Path to the FASTA file.")
     parser.add_argument("--output_dir", type=str, default=".", help="Directory to save outputs.")
-    parser.add_argument("--num_threads", type=int, default=16, help="Number of threads for processing.")
+    parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads for processing.")
     parser.add_argument("--cleave_at", type=str, default="K", help="Residue to cleave at.")
     parser.add_argument("--restrict", type=str, default="U", help="Restriction residues.")
     parser.add_argument("--c_terminal", action="store_true", help="If true, cleave at C-terminal.")
@@ -50,6 +50,10 @@ def main():
     parser.add_argument("--silent", action="store_false", dest="verbose", help="Silent mode.")
 
     args = parser.parse_args()  # Parse arguments here
+
+    # check for number of threads
+    if args.num_threads == -1:
+        args.num_threads = os.cpu_count()
 
     if args.dataset_path.endswith("/"):
         dataset_name = args.dataset_path.split("/")[-2]
