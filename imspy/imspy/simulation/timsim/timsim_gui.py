@@ -1,6 +1,8 @@
 import sys
 import time
 from pathlib import Path
+
+import markdown
 import qdarkstyle
 
 import toml
@@ -309,9 +311,38 @@ class MainWindow(QMainWindow):
 
         # Create tabs
         self.create_main_tab()
+        self.create_documentation_tab()
 
         # Initialize the process variable
         self.process = None
+
+    def create_documentation_tab(self):
+        """Create a tab to display the manual."""
+        documentation_tab = QWidget()
+        layout = QVBoxLayout(documentation_tab)
+
+        # Markdown file path
+        doc_path = Path(__file__).parent / "docs" / "documentation.md"
+
+        if doc_path.exists():
+            try:
+                # Read and convert Markdown to HTML
+                with open(doc_path, "r", encoding="utf-8") as f:
+                    markdown_text = f.read()
+                html_content = markdown.markdown(markdown_text)
+            except Exception as e:
+                html_content = f"<p>Error loading documentation: {str(e)}</p>"
+        else:
+            html_content = "<p>Documentation file not found.</p>"
+
+        # Render Markdown as HTML in a QTextEdit (basic support)
+        self.documentation_viewer = QTextEdit()
+        self.documentation_viewer.setHtml(html_content)
+        self.documentation_viewer.setReadOnly(True)
+
+        # Add to layout
+        layout.addWidget(self.documentation_viewer)
+        self.tab_widget.addTab(documentation_tab, "Documentation")
 
     def create_main_tab(self):
         # Create the main tab widget
