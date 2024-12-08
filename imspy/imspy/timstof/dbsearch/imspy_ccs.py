@@ -2,17 +2,27 @@ import argparse
 import numpy as np
 
 import mokapot
+from docutils.nodes import target
+
 from imspy.timstof.dda import TimsDatasetDDA
 from imspy.chemistry.mobility import one_over_k0_to_ccs
 from sagepy.utility import create_sage_database
 from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 from sagepy.core import Precursor, Tolerance, Scorer, SpectrumProcessor
-from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec
+from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec
 from imspy.algorithm.rescoring import create_feature_space, re_score_psms
 from sagepy.utility import psm_collection_to_pandas
 
 
+def sanitize_charge(charge):
+    """Sanitize charge"""
+    try:
+        return int(charge)
+    except:
+        return 2
+
 def group_by_mobility(mobility, intensity):
+    """Group by mobility"""
     r_dict = {}
     for mob, i in zip(mobility, intensity):
         r_dict[mob] = r_dict.get(mob, 0) + i
@@ -25,7 +35,6 @@ def main():
         description="🚀 Extract CCS from TIMS-TOF DDA data to create training examples for machine learning 🧬📊")
     parser.add_argument("dataset_path", type=str, help="Path to the dataset.")
     parser.add_argument("fasta_path", type=str, help="Path to the FASTA file.")
-    parser.add_argument("--dataset_name", type=str, default="dataset", help="Name of the dataset.")
     parser.add_argument("--output_dir", type=str, default=".", help="Directory to save outputs.")
     parser.add_argument("--num_threads", type=int, default=16, help="Number of threads for processing.")
     parser.add_argument("--cleave_at", type=str, default="K", help="Residue to cleave at.")
@@ -35,11 +44,22 @@ def main():
     parser.add_argument("--variable_modifications", type=dict, default={"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
                         help="Variable modifications.")
 
-    args = parser.parse_args()  # Parse arguments here
+    parser.set_defaults(verbose=True)
+    parser.add_argument("--silent", action="store_false", dest="verbose", help="Silent mode.")
 
-    # Processing logic follows
+    args = parser.parse_args()  # Parse arguments here
+    dataset_name = args.dataset_path.split("/")[-1]
+
+    if args.verbose:
+        print("Processing dataset:", dataset_name)
+
     dataset = TimsDatasetDDA(args.dataset_path)
     fragments = dataset.get_pasef_fragments(num_threads=args.num_threads)
+
+    # Group by mobility
+    if args.verbose:
+        print("Grouping by mobility ...")
+
     fragments = fragments.groupby('precursor_id').agg({
         'frame_id': 'first',
         'time': 'first',
@@ -63,7 +83,7 @@ def main():
     fragments['mobility'] = mobility
 
     fragments['spec_id'] = fragments.apply(
-        lambda r: f"{r['frame_id']}-{r['precursor_id']}-{args.dataset_name}", axis=1
+        lambda r: f"{r['frame_id']}-{r['precursor_id']}-{dataset_name}", axis=1
     )
 
     fragments['gaussian_fit'] = fragments.raw_data.apply(lambda r: r.get_mobility_mean_and_variance())
@@ -75,6 +95,9 @@ def main():
         lambda r: one_over_k0_to_ccs(r.gaussian_fit[1], r.monoisotopic_mz, sanitize_charge(r.charge)), axis=1
     )
 
+    if args.verbose:
+        print("Extracting precursors ...")
+
     fragments['sage_precursor'] = fragments.apply(lambda r: Precursor(
         mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
         intensity=r['intensity'],
@@ -83,6 +106,9 @@ def main():
         collision_energy=r.collision_energy,
         inverse_ion_mobility=r.mobility,
     ), axis=1)
+
+    if args.verbose:
+        print("Extracting fragment spectra ...")
 
     fragments['processed_spec'] = fragments.apply(
         lambda r: get_searchable_spec(
@@ -93,6 +119,9 @@ def main():
             time=r['time'],
         ), axis=1
     )
+
+    if args.verbose:
+        print("Creating SAGE database ...")
 
     indexed_db = create_sage_database(
         fasta_path=args.fasta_path,
@@ -113,6 +142,9 @@ def main():
         variable_mods=args.variable_modifications,
     )
 
+    if args.verbose:
+        print("Scoring precursors ...")
+
     psm_collection = scorer.score_collection_psm(
         db=indexed_db,
         spectrum_collection=fragments['processed_spec'].values,
@@ -120,7 +152,15 @@ def main():
     )
 
     psm_list = [psm for values in psm_collection.values() for psm in values]
+
+    if args.verbose:
+        print("Rescoring PSMs ...")
+
     psm_list = create_feature_space(psms=psm_list)
+
+    if args.verbose:
+        print("Rescoring PSMs ...")
+
     psm_list_rescored = re_score_psms(psm_list)
     PSM_pandas = psm_collection_to_pandas(psm_list_rescored)
 
@@ -135,8 +175,13 @@ def main():
     results, _ = mokapot.brew(psms_moka)
     results.to_txt(dest_dir=args.output_dir)
 
-    fragments.to_parquet(f"{args.output_dir}/{args.dataset_name}.parquet", index=False)
+    if args.verbose:
+        print("Saving results ...")
 
+    fragments.to_parquet(f"{args.output_dir}/{dataset_name}.parquet", index=False)
+
+    if args.verbose:
+        print("Done!")
 
 if __name__ == "__main__":
     main()
