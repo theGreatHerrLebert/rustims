@@ -42,7 +42,7 @@ def re_score_psms(psms: List[Psm], use_logreg: bool = True) -> List[Psm]:
         verbose=True
     )
 
-    psms_rescored = list(filter(lambda x: x.rank == 1, psms))
+    psms_rescored = list(filter(lambda x: x.rank == 1, psms_rescored))
 
     assign_sage_spectrum_q(psms_rescored, use_hyper_score=False)
     assign_sage_peptide_q(psms_rescored, use_hyper_score=False)
