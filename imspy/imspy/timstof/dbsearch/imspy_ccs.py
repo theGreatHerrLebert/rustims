@@ -1,4 +1,6 @@
 import argparse
+import os
+
 import numpy as np
 
 import mokapot
@@ -10,7 +12,7 @@ from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 from sagepy.core import Precursor, Tolerance, Scorer, SpectrumProcessor
 from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec
 from imspy.algorithm.rescoring import create_feature_space, re_score_psms
-from sagepy.utility import psm_collection_to_pandas
+from sagepy.utility import psm_collection_to_pandas, apply_mz_calibration
 
 
 def sanitize_charge(charge):
@@ -154,12 +156,22 @@ def main():
         num_threads=args.num_threads
     )
 
+    # mz calibration is applied by moving all mz values by the mean or median mass error given by the db search
+    # the function will extract statistically certain hits (q-value 0.01) to estimate a global ppm error for the experiment
+    ppm_error = apply_mz_calibration(psm_collection, fragments)
+
+    # add global ppm error to psms
+    for _, values in psm_collection.items():
+        for value in values:
+            value.file_name = dataset_name
+            value.mz_calibration_ppm = ppm_error
+
     psm_list = [psm for values in psm_collection.values() for psm in values]
 
     if args.verbose:
-        print("Rescoring PSMs ...")
+        print("Creating re-scoring feature space ...")
 
-    psm_list = create_feature_space(psms=psm_list)
+    psm_list = create_feature_space(psms=psm_list, verbose=args.verbose)
 
     if args.verbose:
         print("Rescoring PSMs ...")
@@ -170,6 +182,13 @@ def main():
     # if output_dir is not specified, save the results into the dataset directory in a "imspy_ccs" folder
     if args.output_dir == ".":
         args.output_dir = f"{args.dataset_path}/imspy_ccs"
+
+    # create the output directory if it does not exist
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+
+    if args.verbose:
+        print("Creating mokapot pin ...")
 
     PSM_pin = transform_psm_to_mokapot_pin(PSM_pandas)
     PSM_pin.to_csv(f"{args.output_dir}/PSMs.pin", index=False, sep="\t")
