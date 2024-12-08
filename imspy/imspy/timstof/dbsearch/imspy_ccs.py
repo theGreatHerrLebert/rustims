@@ -4,6 +4,7 @@ import os
 import numpy as np
 
 import mokapot
+import pandas as pd
 
 from imspy.timstof.dda import TimsDatasetDDA
 from imspy.chemistry.mobility import one_over_k0_to_ccs
@@ -171,7 +172,7 @@ def main():
     if args.verbose:
         print("Creating re-scoring feature space ...")
 
-    psm_list = create_feature_space(psms=psm_list, verbose=args.verbose)
+    psm_list = create_feature_space(psms=psm_list)
 
     if args.verbose:
         print("Rescoring PSMs ...")
@@ -197,10 +198,33 @@ def main():
     results, _ = mokapot.brew(psms_moka)
     results.to_txt(dest_dir=args.output_dir)
 
+    # read mokapot psms
+    moka_peptides = pd.read_table(f"{args.output_dir}/mokapot.psms.txt")
+    moka_peptides = moka_peptides[(moka_peptides["mokapot q-value"] <= 0.01)]
+    moka_peptides = moka_peptides[(moka_peptides["mokapot PEP"] <= 0.01)]
+
+    PSM_pandas = psm_collection_to_pandas(psm_list_rescored)
+    results_filtered = pd.merge(PSM_pandas, moka_peptides, right_on=["SpecId"], left_on=["spec_idx"])
+
+    B = pd.merge(fragments, results_filtered, left_on="spec_id", right_on="spec_idx")
+    I = B.apply(lambda r: group_by_mobility(r.raw_data.mobility, r.raw_data.intensity), axis=1)
+
+    inv_mob, intensity = [x[0] for x in I], [x[1] for x in I]
+
+    B["inverse_ion_mobility"] = inv_mob
+    B["intenisty"] = intensity
+
+    IONS_OUT = B[["frame_id", "time", "ims", "expmass", "calcmass", "collision_energy_x",
+                  "collision_energy_calibrated", "spectral_angle_similarity", "scan_begin",
+                  "scan_end", "largest_peak_mz", "average_mz", "monoisotopic_mz", "sequence",
+                  "sequence_modified", "ccs_mean", "ccs_std", "charge_x", "hyperscore", "re_score",
+                  "mokapot q-value", "spectrum_q", "peptide_q", "protein_q", "inverse_ion_mobility", "intenisty"
+                  ]].rename(columns={"charge_x": "charge", "collision_energy_x": "collision_energy"})
+
+    IONS_OUT.to_parquet(f"{args.output_dir}/{dataset_name}.parquet", index=False)
+
     if args.verbose:
         print("Saving results ...")
-
-    fragments.to_parquet(f"{args.output_dir}/{dataset_name}.parquet", index=False)
 
     # save all configurations to a file
     with open(f"{args.output_dir}/config.txt", "w") as f:
