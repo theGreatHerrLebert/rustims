@@ -1,0 +1,142 @@
+import argparse
+import numpy as np
+
+import mokapot
+from imspy.timstof.dda import TimsDatasetDDA
+from imspy.chemistry.mobility import one_over_k0_to_ccs
+from sagepy.utility import create_sage_database
+from sagepy.rescore.utility import transform_psm_to_mokapot_pin
+from sagepy.core import Precursor, Tolerance, Scorer, SpectrumProcessor
+from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec
+from imspy.algorithm.rescoring import create_feature_space, re_score_psms
+from sagepy.utility import psm_collection_to_pandas
+
+
+def group_by_mobility(mobility, intensity):
+    r_dict = {}
+    for mob, i in zip(mobility, intensity):
+        r_dict[mob] = r_dict.get(mob, 0) + i
+    return np.array(list(r_dict.keys())), np.array(list(r_dict.values()))
+
+
+def main():
+    # Argument parsing at the top of main
+    parser = argparse.ArgumentParser(
+        description="🚀 Extract CCS from TIMS-TOF DDA data to create training examples for machine learning 🧬📊")
+    parser.add_argument("dataset_path", type=str, help="Path to the dataset.")
+    parser.add_argument("fasta_path", type=str, help="Path to the FASTA file.")
+    parser.add_argument("--dataset_name", type=str, default="dataset", help="Name of the dataset.")
+    parser.add_argument("--output_dir", type=str, default=".", help="Directory to save outputs.")
+    parser.add_argument("--num_threads", type=int, default=16, help="Number of threads for processing.")
+    parser.add_argument("--cleave_at", type=str, default="K", help="Residue to cleave at.")
+    parser.add_argument("--restrict", type=str, default="U", help="Restriction residues.")
+    parser.add_argument("--c_terminal", action="store_true", help="If true, cleave at C-terminal.")
+    parser.add_argument("--static_modifications", type=dict, default={"C": "[UNIMOD:4]"}, help="Static modifications.")
+    parser.add_argument("--variable_modifications", type=dict, default={"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
+                        help="Variable modifications.")
+
+    args = parser.parse_args()  # Parse arguments here
+
+    # Processing logic follows
+    dataset = TimsDatasetDDA(args.dataset_path)
+    fragments = dataset.get_pasef_fragments(num_threads=args.num_threads)
+    fragments = fragments.groupby('precursor_id').agg({
+        'frame_id': 'first',
+        'time': 'first',
+        'precursor_id': 'first',
+        'raw_data': 'sum',
+        'scan_begin': 'first',
+        'scan_end': 'first',
+        'isolation_mz': 'first',
+        'isolation_width': 'first',
+        'collision_energy': 'first',
+        'largest_peak_mz': 'first',
+        'average_mz': 'first',
+        'monoisotopic_mz': 'first',
+        'charge': 'first',
+        'average_scan': 'first',
+        'intensity': 'first',
+        'parent_id': 'first',
+    })
+
+    mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
+    fragments['mobility'] = mobility
+
+    fragments['spec_id'] = fragments.apply(
+        lambda r: f"{r['frame_id']}-{r['precursor_id']}-{args.dataset_name}", axis=1
+    )
+
+    fragments['gaussian_fit'] = fragments.raw_data.apply(lambda r: r.get_mobility_mean_and_variance())
+
+    fragments["ccs_mean"] = fragments.apply(
+        lambda r: one_over_k0_to_ccs(r.gaussian_fit[0], r.monoisotopic_mz, sanitize_charge(r.charge)), axis=1
+    )
+    fragments["ccs_std"] = fragments.apply(
+        lambda r: one_over_k0_to_ccs(r.gaussian_fit[1], r.monoisotopic_mz, sanitize_charge(r.charge)), axis=1
+    )
+
+    fragments['sage_precursor'] = fragments.apply(lambda r: Precursor(
+        mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
+        intensity=r['intensity'],
+        charge=sanitize_charge(r['charge']),
+        isolation_window=Tolerance(da=(-3, 3)),
+        collision_energy=r.collision_energy,
+        inverse_ion_mobility=r.mobility,
+    ), axis=1)
+
+    fragments['processed_spec'] = fragments.apply(
+        lambda r: get_searchable_spec(
+            precursor=r.sage_precursor,
+            raw_fragment_data=r.raw_data,
+            spec_processor=SpectrumProcessor(take_top_n=150),
+            spec_id=r.spec_id,
+            time=r['time'],
+        ), axis=1
+    )
+
+    indexed_db = create_sage_database(
+        fasta_path=args.fasta_path,
+        cleave_at=args.cleave_at,
+        restrict=args.restrict,
+        static_mods=args.static_modifications,
+        variable_mods=args.variable_modifications,
+        c_terminal=args.c_terminal
+    )
+
+    scorer = Scorer(
+        precursor_tolerance=Tolerance(ppm=(-25.0, 25.0)),
+        fragment_tolerance=Tolerance(ppm=(-20.0, 20.0)),
+        report_psms=5,
+        min_matched_peaks=5,
+        annotate_matches=True,
+        static_mods=args.static_modifications,
+        variable_mods=args.variable_modifications,
+    )
+
+    psm_collection = scorer.score_collection_psm(
+        db=indexed_db,
+        spectrum_collection=fragments['processed_spec'].values,
+        num_threads=args.num_threads
+    )
+
+    psm_list = [psm for values in psm_collection.values() for psm in values]
+    psm_list = create_feature_space(psms=psm_list)
+    psm_list_rescored = re_score_psms(psm_list)
+    PSM_pandas = psm_collection_to_pandas(psm_list_rescored)
+
+    # if output_dir is not specified, save the results into the dataset directory in a "imspy_ccs" folder
+    if args.output_dir == ".":
+        args.output_dir = f"{args.dataset_path}/imspy_ccs"
+
+    PSM_pin = transform_psm_to_mokapot_pin(PSM_pandas)
+    PSM_pin.to_csv(f"{args.output_dir}/PSMs.pin", index=False, sep="\t")
+
+    psms_moka = mokapot.read_pin(f"{args.output_dir}/PSMs.pin")
+    results, _ = mokapot.brew(psms_moka)
+    results.to_txt(dest_dir=args.output_dir)
+
+    fragments.to_parquet(f"{args.output_dir}/{args.dataset_name}.parquet", index=False)
+
+
+if __name__ == "__main__":
+    main()
