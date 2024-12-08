@@ -2,7 +2,6 @@ import argparse
 import numpy as np
 
 import mokapot
-from docutils.nodes import target
 
 from imspy.timstof.dda import TimsDatasetDDA
 from imspy.chemistry.mobility import one_over_k0_to_ccs
@@ -48,7 +47,11 @@ def main():
     parser.add_argument("--silent", action="store_false", dest="verbose", help="Silent mode.")
 
     args = parser.parse_args()  # Parse arguments here
-    dataset_name = args.dataset_path.split("/")[-1]
+
+    if args.dataset_path.endswith("/"):
+        dataset_name = args.dataset_path.split("/")[-2]
+    else:
+        dataset_name = args.dataset_path.split("/")[-1]
 
     if args.verbose:
         print("Processing dataset:", dataset_name)
@@ -179,6 +182,19 @@ def main():
         print("Saving results ...")
 
     fragments.to_parquet(f"{args.output_dir}/{dataset_name}.parquet", index=False)
+
+    # save all configurations to a file
+    with open(f"{args.output_dir}/config.txt", "w") as f:
+        f.write(f"dataset_path: {args.dataset_path}\n")
+        f.write(f"fasta_path: {args.fasta_path}\n")
+        f.write(f"output_dir: {args.output_dir}\n")
+        f.write(f"num_threads: {args.num_threads}\n")
+        f.write(f"cleave_at: {args.cleave_at}\n")
+        f.write(f"restrict: {args.restrict}\n")
+        f.write(f"c_terminal: {args.c_terminal}\n")
+        f.write(f"static_modifications: {args.static_modifications}\n")
+        f.write(f"variable_modifications: {args.variable_modifications}\n")
+        f.write(f"verbose: {args.verbose}\n")
 
     if args.verbose:
         print("Done!")
