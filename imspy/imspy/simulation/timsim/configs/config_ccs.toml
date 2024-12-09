@@ -1,7 +1,7 @@
 dataset_path = "/path/to/your/dataset"
 fasta_path = "/path/to/your/fasta.fasta"
 output_dir = "./results"
-num_threads = 16
+num_threads = -1
 cleave_at = "K"
 restrict = "U"
 c_terminal = true
