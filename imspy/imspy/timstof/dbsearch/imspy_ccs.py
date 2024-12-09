@@ -216,7 +216,7 @@ def main():
     PSM_pin.to_csv(f"{args.output_dir}/PSMs.pin", index=False, sep="\t")
 
     psms_moka = mokapot.read_pin(f"{args.output_dir}/PSMs.pin")
-    results, _ = mokapot.brew(psms_moka)
+    results, _ = mokapot.brew(psms_moka, max_workers=args.num_threads)
     results.to_txt(dest_dir=args.output_dir)
 
     # read mokapot psms

@@ -856,7 +856,7 @@ def main():
         PSM_pin.to_csv(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin", index=False, sep="\t")
 
         psms_moka = mokapot.read_pin(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin")
-        results, models = mokapot.brew(psms_moka)
+        results, models = mokapot.brew(psms_moka, max_workers=params['num_threads'])
 
         results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/")
 
