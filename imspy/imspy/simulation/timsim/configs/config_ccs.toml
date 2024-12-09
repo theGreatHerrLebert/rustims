@@ -1,0 +1,15 @@
+dataset_path = "/path/to/your/dataset"
+fasta_path = "/path/to/your/fasta.fasta"
+output_dir = "./results"
+num_threads = 8
+cleave_at = "K"
+restrict = "U"
+c_terminal = true
+verbose = true
+
+[static_modifications]
+C = "[UNIMOD:4]"
+
+[variable_modifications]
+M = ["[UNIMOD:35]"]
+"[" = ["[UNIMOD:1]"]

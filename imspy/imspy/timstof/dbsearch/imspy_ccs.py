@@ -1,6 +1,6 @@
 import argparse
 import os
-
+import toml
 import numpy as np
 
 import mokapot
@@ -34,22 +34,70 @@ def group_by_mobility(mobility, intensity):
 def main():
     # Argument parsing at the top of main
     parser = argparse.ArgumentParser(
-        description="🚀 Extract CCS from TIMS-TOF DDA data to create training examples for machine learning 🧬📊")
-    parser.add_argument("dataset_path", type=str, help="Path to the dataset.")
-    parser.add_argument("fasta_path", type=str, help="Path to the FASTA file.")
-    parser.add_argument("--output_dir", type=str, default=".", help="Directory to save outputs.")
-    parser.add_argument("--num_threads", type=int, default=-1, help="Number of threads for processing.")
-    parser.add_argument("--cleave_at", type=str, default="K", help="Residue to cleave at.")
-    parser.add_argument("--restrict", type=str, default="U", help="Restriction residues.")
+        description="🚀 Extract CCS from TIMS-TOF DDA data to create training examples for machine learning 🧬📊"
+    )
+    parser.add_argument("dataset_path", type=str, nargs="?", help="Path to the dataset.")
+    parser.add_argument("fasta_path", type=str, nargs="?", help="Path to the FASTA file.")
+    parser.add_argument("--config", type=str, help="Path to a TOML configuration file.")
+    parser.add_argument("--output_dir", type=str, help="Directory to save outputs.")
+    parser.add_argument("--num_threads", type=int, help="Number of threads for processing.")
+    parser.add_argument("--cleave_at", type=str, help="Residue to cleave at.")
+    parser.add_argument("--restrict", type=str, help="Restriction residues.")
     parser.add_argument("--c_terminal", action="store_true", help="If true, cleave at C-terminal.")
-    parser.add_argument("--static_modifications", type=dict, default={"C": "[UNIMOD:4]"}, help="Static modifications.")
-    parser.add_argument("--variable_modifications", type=dict, default={"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
-                        help="Variable modifications.")
+    parser.add_argument("--no_c_terminal", action="store_true", help="If provided, then c_terminal = False.")
+    parser.add_argument("--static_modifications", type=str, help="Static modifications in TOML-compatible string form.")
+    parser.add_argument("--variable_modifications", type=str, help="Variable modifications in TOML-compatible string form.")
+    parser.add_argument("--silent", action="store_true", help="Silent mode.")
 
-    parser.set_defaults(verbose=True)
-    parser.add_argument("--silent", action="store_false", dest="verbose", help="Silent mode.")
+    # Initially parse just to get config
+    temp_args, _ = parser.parse_known_args()
 
-    args = parser.parse_args()  # Parse arguments here
+    # Load config from TOML if provided
+    config = {}
+    if temp_args.config and os.path.exists(temp_args.config):
+        with open(temp_args.config, "r") as f:
+            config = toml.load(f)
+
+    # Set defaults, using config where available
+    defaults = {
+        "dataset_path": config.get("dataset_path", None),
+        "fasta_path": config.get("fasta_path", None),
+        "output_dir": config.get("output_dir", "."),
+        "num_threads": config.get("num_threads", -1),
+        "cleave_at": config.get("cleave_at", "K"),
+        "restrict": config.get("restrict", "U"),
+        "c_terminal": config.get("c_terminal", False),
+        "static_modifications": config.get("static_modifications", {"C": "[UNIMOD:4]"}),
+        "variable_modifications": config.get("variable_modifications", {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]}),
+        "verbose": config.get("verbose", True)
+    }
+
+    # Re-parse arguments with defaults applied where command line not provided
+    parser.set_defaults(**defaults)
+    args = parser.parse_args()
+
+    # Handle silent mode
+    # If --silent is passed, we set verbose to False.
+    if args.silent:
+        args.verbose = False
+
+    # If --no_c_terminal is passed, explicitly set c_terminal to False
+    if args.no_c_terminal:
+        args.c_terminal = False
+
+    # If static_modifications or variable_modifications are provided as strings, try to parse them as TOML
+    # This allows passing e.g. --static_modifications='{"C":"[UNIMOD:4]"}'
+    # safely from the command line.
+    if isinstance(args.static_modifications, str):
+        args.static_modifications = toml.loads(f"data = {args.static_modifications}")["data"]
+    if isinstance(args.variable_modifications, str):
+        args.variable_modifications = toml.loads(f"data = {args.variable_modifications}")["data"]
+
+    # Check required arguments
+    if args.dataset_path is None:
+        parser.error("dataset_path is required (either via command line or config)")
+    if args.fasta_path is None:
+        parser.error("fasta_path is required (either via command line or config)")
 
     # check for number of threads
     if args.num_threads == -1:
@@ -161,11 +209,9 @@ def main():
         num_threads=args.num_threads
     )
 
-    # mz calibration is applied by moving all mz values by the mean or median mass error given by the db search
-    # the function will extract statistically certain hits (q-value 0.01) to estimate a global ppm error for the experiment
+    # mz calibration
     ppm_error = apply_mz_calibration(psm_collection, fragments)
 
-    # add global ppm error to psms
     for _, values in psm_collection.items():
         for value in values:
             value.file_name = dataset_name
@@ -183,7 +229,7 @@ def main():
 
     psm_list_rescored = re_score_psms(psm_list)
 
-    # serialize PSMs to bincode binary
+    # serialize PSMs to binary
     bts = compress_psms(psm_list_rescored)
 
     if args.verbose:
@@ -191,7 +237,7 @@ def main():
 
     PSM_pandas = psm_collection_to_pandas(psm_list_rescored)
 
-    # if output_dir is not specified, save the results into the dataset directory in a "imspy_ccs" folder
+    # If output_dir is not specified, save into dataset directory in "imspy_ccs"
     if args.output_dir == ".":
         args.output_dir = f"{args.dataset_path}/imspy_ccs"
 
@@ -243,9 +289,8 @@ def main():
     IONS_OUT.to_parquet(f"{args.output_dir}/{dataset_name}.parquet", index=False)
 
     if args.verbose:
-        print("Saving results ...")
+        print("Saving configuration ...")
 
-    # save all configurations to a file
     with open(f"{args.output_dir}/config.txt", "w") as f:
         f.write(f"dataset_path: {args.dataset_path}\n")
         f.write(f"fasta_path: {args.fasta_path}\n")
@@ -260,6 +305,7 @@ def main():
 
     if args.verbose:
         print("Done!")
+
 
 if __name__ == "__main__":
     main()
