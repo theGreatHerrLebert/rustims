@@ -8,10 +8,10 @@ import pandas as pd
 
 from imspy.timstof.dda import TimsDatasetDDA
 from imspy.chemistry.mobility import one_over_k0_to_ccs
-from sagepy.utility import create_sage_database
+from sagepy.utility import create_sage_database, compress_psms
 from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 from sagepy.core import Precursor, Tolerance, Scorer, SpectrumProcessor
-from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec
+from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec, write_psms_binary
 from imspy.algorithm.rescoring import create_feature_space, re_score_psms
 from sagepy.utility import psm_collection_to_pandas, apply_mz_calibration
 
@@ -182,6 +182,13 @@ def main():
         print("Rescoring PSMs ...")
 
     psm_list_rescored = re_score_psms(psm_list)
+
+    # serialize PSMs to bincode binary
+    bts = compress_psms(psm_list_rescored)
+
+    if args.verbose:
+        print("writing PSMs to temp file ...")
+
     PSM_pandas = psm_collection_to_pandas(psm_list_rescored)
 
     # if output_dir is not specified, save the results into the dataset directory in a "imspy_ccs" folder
@@ -191,6 +198,16 @@ def main():
     # create the output directory if it does not exist
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+
+    if args.verbose:
+        print("Saving results ...")
+
+    # write PSMs to binary file
+    write_psms_binary(
+        byte_array=bts,
+        folder_path=args.output_dir,
+        file_name=f"{dataset_name}"
+    )
 
     if args.verbose:
         print("Creating mokapot pin ...")
@@ -204,9 +221,6 @@ def main():
 
     # read mokapot psms
     moka_peptides = pd.read_table(f"{args.output_dir}/mokapot.psms.txt")
-    moka_peptides = moka_peptides[(moka_peptides["mokapot q-value"] <= 0.01)]
-    moka_peptides = moka_peptides[(moka_peptides["mokapot PEP"] <= 0.01)]
-
     PSM_pandas = psm_collection_to_pandas(psm_list_rescored)
     results_filtered = pd.merge(PSM_pandas, moka_peptides, right_on=["SpecId"], left_on=["spec_idx"])
 
