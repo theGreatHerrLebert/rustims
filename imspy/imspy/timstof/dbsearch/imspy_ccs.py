@@ -216,13 +216,14 @@ def main():
     inv_mob, intensity = [x[0] for x in I], [x[1] for x in I]
 
     B["inverse_ion_mobility"] = inv_mob
-    B["intenisty"] = intensity
+    B["intensity"] = intensity
 
     IONS_OUT = B[["frame_id", "time", "ims", "expmass", "calcmass", "collision_energy_x",
                   "collision_energy_calibrated", "spectral_angle_similarity", "scan_begin",
                   "scan_end", "largest_peak_mz", "average_mz", "monoisotopic_mz", "sequence",
-                  "sequence_modified", "ccs_mean", "ccs_std", "charge_x", "hyperscore", "re_score",
-                  "mokapot q-value", "spectrum_q", "peptide_q", "protein_q", "inverse_ion_mobility", "intenisty"
+                  "sequence_modified", "ccs_mean", "ccs_std", "charge_x", "hyperscore", "re_score", "mokapot score",
+                  "mokapot q-value", "mokapot PEP", "spectrum_q", "peptide_q", "protein_q",
+                  "inverse_ion_mobility", "intensity"
                   ]].rename(columns={"charge_x": "charge", "collision_energy_x": "collision_energy"})
 
     IONS_OUT.to_parquet(f"{args.output_dir}/{dataset_name}.parquet", index=False)
