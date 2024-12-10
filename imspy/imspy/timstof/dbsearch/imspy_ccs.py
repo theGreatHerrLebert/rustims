@@ -43,8 +43,7 @@ def main():
     parser.add_argument("--num_threads", type=int, help="Number of threads for processing.")
     parser.add_argument("--cleave_at", type=str, help="Residue to cleave at.")
     parser.add_argument("--restrict", type=str, help="Restriction residues.")
-    parser.add_argument("--c_terminal", action="store_true", help="If true, cleave at C-terminal.")
-    parser.add_argument("--no_c_terminal", action="store_true", help="If provided, then c_terminal = False.")
+    parser.add_argument("--n_terminal", action="store_true", help="If provided, then c_terminal = False.")
     parser.add_argument("--static_modifications", type=str, help="Static modifications in TOML-compatible string form.")
     parser.add_argument("--variable_modifications", type=str, help="Variable modifications in TOML-compatible string form.")
     parser.add_argument("--silent", action="store_true", help="Silent mode.")
@@ -64,9 +63,10 @@ def main():
         "fasta_path": config.get("fasta_path", None),
         "output_dir": config.get("output_dir", "."),
         "num_threads": config.get("num_threads", -1),
-        "cleave_at": config.get("cleave_at", "K"),
-        "restrict": config.get("restrict", "U"),
-        "c_terminal": config.get("c_terminal", False),
+        "cleave_at": config.get("cleave_at", "KR"),
+        "restrict": config.get("restrict", "P"),
+        "c_terminal": config.get("c_terminal", True),
+        "n_terminal": config.get("n_terminal", False),
         "static_modifications": config.get("static_modifications", {"C": "[UNIMOD:4]"}),
         "variable_modifications": config.get("variable_modifications", {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]}),
         "verbose": config.get("verbose", True)
@@ -81,8 +81,7 @@ def main():
     if args.silent:
         args.verbose = False
 
-    # If --no_c_terminal is passed, explicitly set c_terminal to False
-    if args.no_c_terminal:
+    if args.n_terminal:
         args.c_terminal = False
 
     # If static_modifications or variable_modifications are provided as strings, try to parse them as TOML
