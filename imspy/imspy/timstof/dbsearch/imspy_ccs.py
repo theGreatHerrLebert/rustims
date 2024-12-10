@@ -37,8 +37,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="🚀 Extract CCS from TIMS-TOF DDA data to create training examples for machine learning 🧬📊"
     )
-    parser.add_argument("raw_data_path", type=str, nargs="?", help="Path to the dataset.")
-    parser.add_argument("fasta_path", type=str, nargs="?", help="Path to the FASTA file.")
+    parser.add_argument("--raw_data_path", type=str, help="Path to the dataset.")
+    parser.add_argument("--fasta_path", type=str, help="Path to the FASTA file.")
     parser.add_argument("--config", type=str, help="Path to a TOML configuration file.")
     parser.add_argument("--num_threads", type=int, help="Number of threads for processing.")
     parser.add_argument("--cleave_at", type=str, help="Residue to cleave at.")
@@ -78,7 +78,6 @@ def main():
     args = parser.parse_args()
 
     # Handle silent mode
-    # If --silent is passed, we set verbose to False.
     if args.silent:
         args.verbose = False
 
@@ -86,8 +85,6 @@ def main():
         args.c_terminal = False
 
     # If static_modifications or variable_modifications are provided as strings, try to parse them as TOML
-    # This allows passing e.g. --static_modifications='{"C":"[UNIMOD:4]"}'
-    # safely from the command line.
     if isinstance(args.static_modifications, str):
         args.static_modifications = toml.loads(f"data = {args.static_modifications}")["data"]
     if isinstance(args.variable_modifications, str):
