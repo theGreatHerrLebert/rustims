@@ -1,9 +1,9 @@
-raw_data_path = "/media/hd02/data/raw/dda/ccs/Raw_Yeast_LysC/"
+raw_data_path = "/media/hd02/data/raw/dda/ccs/Raw_Yeast_LysN/"
 fasta_path = "/media/hd02/data/fasta/yeast/yeast_proteome.fasta"
 num_threads = -1
 cleave_at = "K"
 restrict = "P"
-n_terminal = false
+n_terminal = true
 verbose = true
 
 [static_modifications]
