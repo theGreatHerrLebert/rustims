@@ -104,6 +104,11 @@ def main():
         args.num_threads = os.cpu_count()
 
     if args.verbose:
+        # Print the arguments
+        print("Arguments:")
+        for arg, value in vars(args).items():
+            print(f"  {arg}: {value}")
+
         print("Creating SAGE database ...")
 
     indexed_db = create_sage_database(

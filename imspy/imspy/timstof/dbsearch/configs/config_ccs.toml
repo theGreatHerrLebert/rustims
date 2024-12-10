@@ -1,7 +1,7 @@
-dataset_path = "/path/to/your/dataset"
-fasta_path = "/path/to/your/fasta.fasta"
+dataset_path = "/media/hd02/data/raw/dda/ccs/Raw_Yeast_LysC/"
+fasta_path = "/media/hd02/data/fasta/yeast/yeast_proteome.fasta"
 num_threads = -1
-cleave_at = "KR"
+cleave_at = "K"
 restrict = "P"
 n_terminal = false
 verbose = true
