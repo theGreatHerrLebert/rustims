@@ -268,7 +268,7 @@ def main():
         print("Loading PSMs ...")
 
     # now, go over all created binary PSMs and load them, re-score them and save them
-    for file in os.listdir(args.raw_data_path):
+    for i, file in enumerate(os.listdir(args.raw_data_path)):
         if file.endswith(".d"):
             dataset_name = file.split(".")[0]
             psm_bin_path = os.path.join(args.raw_data_path, file, "imspy", "psm", f"{dataset_name}.bin")
@@ -277,6 +277,10 @@ def main():
             bts = np.fromfile(psm_bin_path, dtype=np.uint8)
             psm_list = decompress_psms(bts)
             total_psms.extend(psm_list)
+
+            if args.verbose:
+                # print the progress
+                print(f"Loaded {dataset_name} ({i + 1}/{count})")
 
     PSM_pandas = psm_collection_to_pandas(total_psms)
 
