@@ -1,4 +1,4 @@
-dataset_path = "/media/hd02/data/raw/dda/ccs/Raw_Yeast_LysC/"
+raw_data_path = "/media/hd02/data/raw/dda/ccs/Raw_Yeast_LysC/"
 fasta_path = "/media/hd02/data/fasta/yeast/yeast_proteome.fasta"
 num_threads = -1
 cleave_at = "K"
