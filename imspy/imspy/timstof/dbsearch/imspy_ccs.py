@@ -182,16 +182,6 @@ def main():
                 lambda r: f"{r['frame_id']}-{r['precursor_id']}-{dataset_name}", axis=1
             )
 
-            fragments['gaussian_fit'] = fragments.raw_data.apply(lambda r: r.get_mobility_mean_and_variance())
-
-            fragments["ccs_mean"] = fragments.apply(
-                lambda r: one_over_k0_to_ccs(r.gaussian_fit[0], r.monoisotopic_mz, sanitize_charge(r.charge)), axis=1
-            )
-
-            fragments["ccs_std"] = fragments.apply(
-                lambda r: one_over_k0_to_ccs(r.gaussian_fit[1], r.monoisotopic_mz, sanitize_charge(r.charge)), axis=1
-            )
-
             if args.verbose:
                 print("Extracting precursors ...")
 
@@ -254,8 +244,7 @@ def main():
             fragments["inverse_ion_mobility"] = inv_mob
             fragments["intensity"] = intensity
 
-            F = fragments[["spec_id","frame_id", "precursor_id", "parent_id",
-                           "ccs_mean", "ccs_std", "inverse_ion_mobility", "intensity"]]
+            F = fragments[["spec_id", "inverse_ion_mobility", "intensity"]]
 
             F.to_parquet(f"{ds_path}/imspy/{dataset_name}.parquet", index=False)
 
