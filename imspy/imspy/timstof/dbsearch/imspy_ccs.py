@@ -241,7 +241,7 @@ def main():
             fragments["inverse_ion_mobility"] = inv_mob
             fragments["intensity"] = intensity
 
-            F = fragments[["spec_id", "inverse_ion_mobility", "intensity"]]
+            F = fragments[["spec_id", "monoisotopic_mz", "charge", "inverse_ion_mobility", "intensity"]]
 
             F.to_parquet(f"{ds_path}/imspy/{dataset_name}.parquet", index=False)
 
