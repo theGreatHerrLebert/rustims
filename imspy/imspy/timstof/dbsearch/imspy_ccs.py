@@ -4,16 +4,13 @@ import toml
 import numpy as np
 
 import mokapot
-import pandas as pd
-from oauthlib.uri_validate import fragment
 
 from imspy.timstof.dda import TimsDatasetDDA
-from imspy.chemistry.mobility import one_over_k0_to_ccs
 from sagepy.utility import create_sage_database, compress_psms, decompress_psms
 from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 from sagepy.core import Precursor, Tolerance, Scorer, SpectrumProcessor
 from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec, write_psms_binary
-from imspy.algorithm.rescoring import create_feature_space, re_score_psms
+from imspy.algorithm.rescoring import create_feature_space
 from sagepy.utility import psm_collection_to_pandas, apply_mz_calibration
 
 
