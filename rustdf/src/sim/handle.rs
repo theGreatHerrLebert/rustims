@@ -68,11 +68,7 @@ impl TimsTofSyntheticsDataHandle {
 
             let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
                 Ok(value) => value,
-                Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    16,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )),
+                Err(_e) =>  vec![0.0; frame_occurrence.len()],
             };
 
             let frame_distribution = SignalDistribution::new(
