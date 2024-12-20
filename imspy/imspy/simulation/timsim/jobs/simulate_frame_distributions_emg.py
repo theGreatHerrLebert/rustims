@@ -130,7 +130,7 @@ def simulate_frame_distributions_emg(
     )
 
     # remove empty lists, that are now cast to strings, for frame_abundance
-    peptide_rt_filtered = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 0]
+    peptide_rt_filtered = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 2]
 
     peptide_rt_filtered = peptide_rt_filtered.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
 
