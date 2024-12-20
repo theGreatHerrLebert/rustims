@@ -110,7 +110,7 @@ def simulate_frame_distributions_emg(
     peptide_rt['frame_occurrence_start'] = first_occurrence
     peptide_rt['frame_occurrence_end'] = last_occurrence
 
-    peptide_rt['frame_occurrence'] = [list(x) for x in occurrences]
+    peptide_rt['frame_occurrence'] = occurrences
 
     if add_noise:
         noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
@@ -121,13 +121,6 @@ def simulate_frame_distributions_emg(
 
     peptide_rt['frame_abundance'] = [list(x) for x in abundances]
 
-    # remove entries where frame_abundance is empty
-    peptide_rt = peptide_rt[peptide_rt['frame_abundance'].apply(lambda l: len(l) > 0)]
-
-    # print type of frame_occurrence and frame_abundance BEFORE applying the lambda functions
-    print(type(peptide_rt['frame_occurrence']))
-    print(type(peptide_rt['frame_abundance']))
-
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
         lambda r: python_list_to_json_string(r, as_float=False)
     )
@@ -136,10 +129,9 @@ def simulate_frame_distributions_emg(
         lambda r: python_list_to_json_string(r, as_float=True)
     )
 
-    # print type of frame_occurrence and frame_abundance AFTER applying the lambda functions
-    print(type(peptide_rt['frame_occurrence']))
-    print(type(peptide_rt['frame_abundance']))
+    # remove empty lists, that are now cast to strings, for frame_abundance
+    peptide_rt_filtered = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 0]
 
-    peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
+    peptide_rt_filtered = peptide_rt_filtered.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
 
-    return peptide_rt
+    return peptide_rt_filtered
