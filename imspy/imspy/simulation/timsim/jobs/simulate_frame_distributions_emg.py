@@ -134,7 +134,9 @@ def simulate_frame_distributions_emg(
 
     peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
 
-   # print out the types of the columns
-    print(peptide_rt.dtypes)
+   # go over the table and print all frame occurrences and abundances
+    for index, row in peptide_rt.iterrows():
+        print(f"Frame occurrences: {row.frame_occurrence}")
+        print(f"Frame abundances: {row.frame_abundance}")
 
     return peptide_rt
