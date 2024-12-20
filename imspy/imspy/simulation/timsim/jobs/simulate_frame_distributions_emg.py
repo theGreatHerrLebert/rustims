@@ -110,7 +110,7 @@ def simulate_frame_distributions_emg(
     peptide_rt['frame_occurrence_start'] = first_occurrence
     peptide_rt['frame_occurrence_end'] = last_occurrence
 
-    peptide_rt['frame_occurrence'] = occurrences
+    peptide_rt['frame_occurrence'] = [list(x) for x in occurrences]
 
     if add_noise:
         noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
