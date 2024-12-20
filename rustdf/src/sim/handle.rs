@@ -66,6 +66,7 @@ impl TimsTofSyntheticsDataHandle {
                 )),
             };
 
+            // if the frame abundance is not available, set it to 0
             let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
                 Ok(value) => value,
                 Err(_e) =>  vec![0.0; frame_occurrence.len()],
