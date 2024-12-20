@@ -94,10 +94,10 @@ def simulate_scan_distributions(
     ions['scan_occurrence'] = [list(x) for x in im_scans]
     ions['scan_abundance'] = [list(x) for x in im_contributions]
 
-    # remove rows where scan_abundance is empty
-    ions = ions[ions['scan_abundance'].apply(len) > 0]
-
     ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: python_list_to_json_string(x, as_float=False))
     ions['scan_abundance'] = ions['scan_abundance'].apply(python_list_to_json_string)
+
+    # remove rows where scan_abundance is empty
+    ions = ions[ions['scan_abundance'].apply(lambda x: len(x) > 2)]
 
     return ions
