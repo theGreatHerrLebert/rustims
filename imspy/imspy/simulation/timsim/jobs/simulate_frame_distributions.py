@@ -85,13 +85,13 @@ def simulate_frame_distributions(
     peptide_rt['frame_occurrence'] = [list(x) for x in total_list_frames]
     peptide_rt['frame_abundance'] = [list(x) for x in total_list_frame_contributions]
 
-    # remove entries where frame_occurrence is empty
-    peptide_rt = peptide_rt[peptide_rt['frame_occurrence'].apply(len) > 0]
-
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
         lambda x: python_list_to_json_string(x, as_float=False))
 
     peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(python_list_to_json_string)
     peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
+
+    # remove entries where frame_occurrence is empty
+    peptide_rt = peptide_rt[peptide_rt['frame_occurrence'].apply(len) > 0]
 
     return peptide_rt
