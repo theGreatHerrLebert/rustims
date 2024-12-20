@@ -134,4 +134,7 @@ def simulate_frame_distributions_emg(
 
     peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
 
+   # print out the types of the columns
+    print(peptide_rt.dtypes)
+
     return peptide_rt
