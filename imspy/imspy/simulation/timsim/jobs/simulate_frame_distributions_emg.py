@@ -124,6 +124,10 @@ def simulate_frame_distributions_emg(
     # remove entries where frame_abundance is empty
     peptide_rt = peptide_rt[peptide_rt['frame_abundance'].apply(lambda l: len(l) > 0)]
 
+    # print type of frame_occurrence and frame_abundance BEFORE applying the lambda functions
+    print(type(peptide_rt['frame_occurrence']))
+    print(type(peptide_rt['frame_abundance']))
+
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
         lambda r: python_list_to_json_string(r, as_float=False)
     )
@@ -132,11 +136,10 @@ def simulate_frame_distributions_emg(
         lambda r: python_list_to_json_string(r, as_float=True)
     )
 
-    peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
+    # print type of frame_occurrence and frame_abundance AFTER applying the lambda functions
+    print(type(peptide_rt['frame_occurrence']))
+    print(type(peptide_rt['frame_abundance']))
 
-   # go over the table and print all frame occurrences and abundances
-    for index, row in peptide_rt.iterrows():
-        print(f"Frame occurrences: {row.frame_occurrence}")
-        print(f"Frame abundances: {row.frame_abundance}")
+    peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
 
     return peptide_rt
