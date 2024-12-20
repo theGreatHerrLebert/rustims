@@ -122,7 +122,7 @@ def simulate_frame_distributions_emg(
     peptide_rt['frame_abundance'] = [list(x) for x in abundances]
 
     # remove entries where frame_abundance is empty
-    peptide_rt = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 0]
+    peptide_rt = peptide_rt[peptide_rt['frame_abundance'].apply(lambda l: len(l) > 0)]
 
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
         lambda r: python_list_to_json_string(r, as_float=False)
