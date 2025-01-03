@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `mscore/src/timstof/slice.rs`."><title>slice.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `mscore/src/timstof/slice.rs`."><title>slice.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b0742ba02757f159.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.83.0 (90b35a623 2024-11-26)" data-channel="1.83.0" data-search-js="search-f0d225181b97f9a4.js" data-settings-js="settings-805db61a62df4bd2.js" ><script src="../../../static.files/storage-1d39b6787ed640ff.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-f070b9041d14864c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-0111fcff984fae8f.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">mscore/timstof/</div>slice.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -452,7 +453,39 @@
 <a href="#452" id="452">452</a>
 <a href="#453" id="453">453</a>
 <a href="#454" id="454">454</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a></pre></div><pre class="rust"><code><span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
 
 <span class="kw">use </span>std::collections::BTreeMap;
@@ -609,7 +642,9 @@
             result
         });
 
-        TimsSliceVectorized { frames: result_frames }
+        <span class="kw">let </span>frame_map = get_index_map(<span class="kw-2">&amp;</span>result_frames);
+
+        TimsSliceVectorized { frames: result_frames, frame_map }
     }
 
     <span class="kw">pub fn </span>from_flat_slice(frame_ids: Vec&lt;i32&gt;,
@@ -771,6 +806,7 @@
 <span class="attr">#[derive(Clone)]
 </span><span class="kw">pub struct </span>TimsSliceVectorized {
     <span class="kw">pub </span>frames: Vec&lt;TimsFrameVectorized&gt;,
+    <span class="kw">pub </span>frame_map: BTreeMap&lt;u32, (Vec&lt;u32&gt;, Vec&lt;u32&gt;, Vec&lt;f32&gt;)&gt;
 }
 
 <span class="kw">impl </span>TimsSliceVectorized {
@@ -787,7 +823,13 @@
             result
         });
 
-        TimsSliceVectorized { frames: filtered_frames }
+        <span class="kw">let </span>frame_map = get_index_map(<span class="kw-2">&amp;</span>filtered_frames);
+
+        TimsSliceVectorized { frames: filtered_frames, frame_map }
+    }
+
+    <span class="kw">pub fn </span>get_vectors_at_index(<span class="kw-2">&amp;</span><span class="self">self</span>, index: u32) -&gt; <span class="prelude-ty">Option</span>&lt;(Vec&lt;u32&gt;, Vec&lt;u32&gt;, Vec&lt;f32&gt;)&gt; {
+        <span class="self">self</span>.frame_map.get(<span class="kw-2">&amp;</span>index).cloned()
     }
 
     <span class="kw">pub fn </span>flatten(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; TimsSliceVectorizedFlat {
@@ -820,6 +862,30 @@
             intensities,
         }
     }
+}
+
+<span class="kw">fn </span>get_index_map(frames: <span class="kw-2">&amp;</span>Vec&lt;TimsFrameVectorized&gt;) -&gt; BTreeMap&lt;u32, (Vec&lt;u32&gt;, Vec&lt;u32&gt;, Vec&lt;f32&gt;)&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>index_map: BTreeMap&lt;u32, Vec&lt;(u32, u32, f32)&gt;&gt; = BTreeMap::new();
+
+    <span class="kw">for </span>frame <span class="kw">in </span>frames {
+        <span class="kw">for </span>(i, index) <span class="kw">in </span>frame.ims_frame.indices.iter().enumerate() {
+            <span class="kw">let </span>entry = index_map.entry(<span class="kw-2">*</span>index <span class="kw">as </span>u32).or_insert_with(|| <span class="macro">vec!</span>[]);
+            entry.push((frame.frame_id <span class="kw">as </span>u32, frame.scan[i] <span class="kw">as </span>u32, frame.ims_frame.values[i] <span class="kw">as </span>f32));
+        }
+    }
+
+    <span class="kw">let </span><span class="kw-2">mut </span>result_map: BTreeMap&lt;u32, (Vec&lt;u32&gt;, Vec&lt;u32&gt;, Vec&lt;f32&gt;)&gt; = BTreeMap::new();
+
+    <span class="kw">for </span>(index, values) <span class="kw">in </span>index_map {
+        <span class="kw">for </span>(frame_id, scan, intensity) <span class="kw">in </span>values {
+            <span class="kw">let </span>entry = result_map.entry(index).or_insert_with(|| (<span class="macro">vec!</span>[], <span class="macro">vec!</span>[], <span class="macro">vec!</span>[]));
+            entry.<span class="number">0</span>.push(frame_id);
+            entry.<span class="number">1</span>.push(scan);
+            entry.<span class="number">2</span>.push(intensity);
+        }
+    }
+
+    result_map
 }
 
 <span class="attr">#[derive(Clone)]

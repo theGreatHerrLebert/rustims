@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["mscore",[["impl <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.0-rc.3/bincode/de/trait.Decode.html\" title=\"trait bincode::de::Decode\">Decode</a> for <a class=\"enum\" href=\"mscore/data/spectrum/enum.MsType.html\" title=\"enum mscore::data::spectrum::MsType\">MsType</a>"],["impl <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.0-rc.3/bincode/de/trait.Decode.html\" title=\"trait bincode::de::Decode\">Decode</a> for <a class=\"struct\" href=\"mscore/data/spectrum/struct.MzSpectrum.html\" title=\"struct mscore::data::spectrum::MzSpectrum\">MzSpectrum</a>"],["impl <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.0-rc.3/bincode/de/trait.Decode.html\" title=\"trait bincode::de::Decode\">Decode</a> for <a class=\"struct\" href=\"mscore/timstof/frame/struct.ImsFrame.html\" title=\"struct mscore::timstof::frame::ImsFrame\">ImsFrame</a>"],["impl <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.0-rc.3/bincode/de/trait.Decode.html\" title=\"trait bincode::de::Decode\">Decode</a> for <a class=\"struct\" href=\"mscore/timstof/frame/struct.TimsFrame.html\" title=\"struct mscore::timstof::frame::TimsFrame\">TimsFrame</a>"]]],["rustms",[["impl <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.0-rc.3/bincode/de/trait.Decode.html\" title=\"trait bincode::de::Decode\">Decode</a> for <a class=\"struct\" href=\"rustms/proteomics/peptide/struct.PeptideSequence.html\" title=\"struct rustms::proteomics::peptide::PeptideSequence\">PeptideSequence</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[1153,330]}

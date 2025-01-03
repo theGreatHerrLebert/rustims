@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/data/dda.rs`."><title>dda.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/data/dda.rs`."><title>dda.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b0742ba02757f159.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.83.0 (90b35a623 2024-11-26)" data-channel="1.83.0" data-search-js="search-f0d225181b97f9a4.js" data-settings-js="settings-805db61a62df4bd2.js" ><script src="../../../static.files/storage-1d39b6787ed640ff.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-f070b9041d14864c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-0111fcff984fae8f.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdf/data/</div>dda.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -121,13 +122,28 @@
 <a href="#121" id="121">121</a>
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>mscore::timstof::frame::{RawTimsFrame, TimsFrame};
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a></pre></div><pre class="rust"><code><span class="kw">use </span>mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 <span class="kw">use </span>mscore::timstof::slice::TimsSlice;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
 <span class="kw">use </span><span class="kw">crate</span>::data::acquisition::AcquisitionMode;
 <span class="kw">use </span><span class="kw">crate</span>::data::handle::{IndexConverter, TimsData, TimsDataLoader};
-<span class="kw">use </span><span class="kw">crate</span>::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta, read_pasef_frame_ms_ms_info};
+<span class="kw">use </span><span class="kw">crate</span>::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta, read_pasef_frame_ms_ms_info, read_global_meta_sql, read_meta_data_sql};
 
 <span class="attr">#[derive(Clone)]
 </span><span class="kw">pub struct </span>PASEFDDAFragment {
@@ -143,10 +159,23 @@
 
 <span class="kw">impl </span>TimsDatasetDDA {
 
-    <span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, in_memory: bool) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, in_memory: bool, use_bruker_sdk: bool) -&gt; <span class="self">Self </span>{
+
+        <span class="comment">// TODO: error handling
+        </span><span class="kw">let </span>global_meta_data = read_global_meta_sql(data_path).unwrap();
+        <span class="kw">let </span>meta_data = read_meta_data_sql(data_path).unwrap();
+
+        <span class="kw">let </span>scan_max_index = meta_data.iter().map(|x| x.num_scans).max().unwrap() <span class="kw">as </span>u32;
+        <span class="kw">let </span>im_lower = global_meta_data.one_over_k0_range_lower;
+        <span class="kw">let </span>im_upper = global_meta_data.one_over_k0_range_upper;
+
+        <span class="kw">let </span>tof_max_index = global_meta_data.tof_max_index;
+        <span class="kw">let </span>mz_lower = global_meta_data.mz_acquisition_range_lower;
+        <span class="kw">let </span>mz_upper = global_meta_data.mz_acquisition_range_upper;
+        
         <span class="kw">let </span>loader = <span class="kw">match </span>in_memory {
-            <span class="bool-val">true </span>=&gt; TimsDataLoader::new_in_memory(bruker_lib_path, data_path),
-            <span class="bool-val">false </span>=&gt; TimsDataLoader::new_lazy(bruker_lib_path, data_path),
+            <span class="bool-val">true </span>=&gt; TimsDataLoader::new_in_memory(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
+            <span class="bool-val">false </span>=&gt; TimsDataLoader::new_lazy(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
         };
         TimsDatasetDDA { loader }
     }
@@ -173,12 +202,15 @@
                 <span class="comment">// get the frame
                 </span><span class="kw">let </span>frame = <span class="self">self</span>.loader.get_frame(pasef_info.frame_id <span class="kw">as </span>u32);
 
+                <span class="comment">// get five percent of the scan range
+                </span><span class="kw">let </span>scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / <span class="number">20</span>;
+
                 <span class="comment">// get the fragment spectrum by scan range
                 </span><span class="kw">let </span>filtered_frame = frame.filter_ranged(
                     <span class="number">0.0</span>,
                     <span class="number">2000.0</span>,
-                    pasef_info.scan_num_begin <span class="kw">as </span>i32,
-                    pasef_info.scan_num_end <span class="kw">as </span>i32,
+                    (pasef_info.scan_num_begin - scan_margin) <span class="kw">as </span>i32,
+                    (pasef_info.scan_num_end + scan_margin) <span class="kw">as </span>i32,
                     <span class="number">0.0</span>,
                     <span class="number">5.0</span>,
                     <span class="number">0.0</span>,

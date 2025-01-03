@@ -1,4 +1,5 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/data/dia.rs`."><title>dia.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-492a78a4a87dcc01.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.82.0 (f6e511eec 2024-10-15)" data-channel="1.82.0" data-search-js="search-a99f1315e7cc5121.js" data-settings-js="settings-4313503d2e1961c2.js" ><script src="../../../static.files/storage-118b08c4c78b968e.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-921df33f47b8780c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-3b12f09e550e0385.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers"><a href="#1" id="1">1</a>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/data/dia.rs`."><title>dia.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b0742ba02757f159.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.83.0 (90b35a623 2024-11-26)" data-channel="1.83.0" data-search-js="search-f0d225181b97f9a4.js" data-settings-js="settings-805db61a62df4bd2.js" ><script src="../../../static.files/storage-1d39b6787ed640ff.js"></script><script defer src="../../../static.files/src-script-e66d777a5a92e9b2.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-f070b9041d14864c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-0111fcff984fae8f.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdf/data/</div>dia.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
 <a href="#4" id="4">4</a>
@@ -59,22 +60,167 @@
 <a href="#59" id="59">59</a>
 <a href="#60" id="60">60</a>
 <a href="#61" id="61">61</a>
-</pre></div><pre class="rust"><code><span class="kw">use </span>mscore::timstof::frame::{RawTimsFrame, TimsFrame};
+<a href="#62" id="62">62</a>
+<a href="#63" id="63">63</a>
+<a href="#64" id="64">64</a>
+<a href="#65" id="65">65</a>
+<a href="#66" id="66">66</a>
+<a href="#67" id="67">67</a>
+<a href="#68" id="68">68</a>
+<a href="#69" id="69">69</a>
+<a href="#70" id="70">70</a>
+<a href="#71" id="71">71</a>
+<a href="#72" id="72">72</a>
+<a href="#73" id="73">73</a>
+<a href="#74" id="74">74</a>
+<a href="#75" id="75">75</a>
+<a href="#76" id="76">76</a>
+<a href="#77" id="77">77</a>
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a>
+<a href="#115" id="115">115</a>
+<a href="#116" id="116">116</a>
+<a href="#117" id="117">117</a>
+<a href="#118" id="118">118</a>
+<a href="#119" id="119">119</a>
+<a href="#120" id="120">120</a>
+<a href="#121" id="121">121</a>
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a></pre></div><pre class="rust"><code><span class="kw">use </span>rand::prelude::IteratorRandom;
+<span class="kw">use </span>mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 <span class="kw">use </span>mscore::timstof::slice::TimsSlice;
 <span class="kw">use </span><span class="kw">crate</span>::data::acquisition::AcquisitionMode;
 <span class="kw">use </span><span class="kw">crate</span>::data::handle::{IndexConverter, TimsData, TimsDataLoader};
+<span class="kw">use </span><span class="kw">crate</span>::data::meta::{read_dia_ms_ms_info, read_dia_ms_ms_windows, read_global_meta_sql, read_meta_data_sql, DiaMsMisInfo, DiaMsMsWindow, FrameMeta, GlobalMetaData};
 
 <span class="kw">pub struct </span>TimsDatasetDIA {
     <span class="kw">pub </span>loader: TimsDataLoader,
+    <span class="kw">pub </span>global_meta_data: GlobalMetaData,
+    <span class="kw">pub </span>meta_data: Vec&lt;FrameMeta&gt;,
+    <span class="kw">pub </span>dia_ms_mis_info: Vec&lt;DiaMsMisInfo&gt;,
+    <span class="kw">pub </span>dia_ms_ms_windows: Vec&lt;DiaMsMsWindow&gt;
 }
 
 <span class="kw">impl </span>TimsDatasetDIA {
-    <span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, in_memory: bool) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, in_memory: bool, use_bruker_sdk: bool) -&gt; <span class="self">Self </span>{
+
+        <span class="comment">// TODO: error handling
+        </span><span class="kw">let </span>global_meta_data = read_global_meta_sql(data_path).unwrap();
+        <span class="kw">let </span>meta_data = read_meta_data_sql(data_path).unwrap();
+        <span class="kw">let </span>dia_ms_mis_info = read_dia_ms_ms_info(data_path).unwrap();
+        <span class="kw">let </span>dia_ms_ms_windows = read_dia_ms_ms_windows(data_path).unwrap();
+
+        <span class="kw">let </span>scan_max_index = meta_data.iter().map(|x| x.num_scans).max().unwrap() <span class="kw">as </span>u32;
+        <span class="kw">let </span>im_lower = global_meta_data.one_over_k0_range_lower;
+        <span class="kw">let </span>im_upper = global_meta_data.one_over_k0_range_upper;
+
+        <span class="kw">let </span>tof_max_index = global_meta_data.tof_max_index;
+        <span class="kw">let </span>mz_lower = global_meta_data.mz_acquisition_range_lower;
+        <span class="kw">let </span>mz_upper = global_meta_data.mz_acquisition_range_upper;
+        
        <span class="kw">let </span>loader = <span class="kw">match </span>in_memory {
-            <span class="bool-val">true </span>=&gt; TimsDataLoader::new_in_memory(bruker_lib_path, data_path),
-            <span class="bool-val">false </span>=&gt; TimsDataLoader::new_lazy(bruker_lib_path, data_path),
+            <span class="bool-val">true </span>=&gt; TimsDataLoader::new_in_memory(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
+            <span class="bool-val">false </span>=&gt; TimsDataLoader::new_lazy(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
         };
-        TimsDatasetDIA { loader }
+        
+        TimsDatasetDIA { loader, global_meta_data, meta_data, dia_ms_mis_info, dia_ms_ms_windows }
+    }
+    
+    <span class="kw">pub fn </span>sample_precursor_signal(<span class="kw-2">&amp;</span><span class="self">self</span>, num_frames: usize, max_intensity: f64, take_probability: f64) -&gt; TimsFrame {
+        <span class="comment">// get all precursor frames
+        </span><span class="kw">let </span>precursor_frames = <span class="self">self</span>.meta_data.iter().filter(|x| x.ms_ms_type == <span class="number">0</span>);
+        
+        <span class="comment">// randomly sample num_frames
+        </span><span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
+        <span class="kw">let </span><span class="kw-2">mut </span>sampled_frames: Vec&lt;TimsFrame&gt; = Vec::new();
+        
+        <span class="comment">// go through each frame and sample the data
+        </span><span class="kw">for </span>frame <span class="kw">in </span>precursor_frames.choose_multiple(<span class="kw-2">&amp;mut </span>rng, num_frames) {
+            <span class="kw">let </span>frame_id = frame.id;
+            <span class="kw">let </span>frame_data = <span class="self">self</span>.loader.get_frame(frame_id <span class="kw">as </span>u32).filter_ranged(<span class="number">0.0</span>, <span class="number">2000.0</span>, <span class="number">0</span>, <span class="number">1000</span>, <span class="number">0.0</span>, <span class="number">5.0</span>, <span class="number">1.0</span>, max_intensity).generate_random_sample(take_probability);
+            sampled_frames.push(frame_data);
+        }
+
+        <span class="comment">// get the first frame
+        </span><span class="kw">let </span><span class="kw-2">mut </span>sampled_frame = sampled_frames.remove(<span class="number">0</span>);
+        
+        <span class="comment">// sum all the other frames to the first frame
+        </span><span class="kw">for </span>frame <span class="kw">in </span>sampled_frames {
+            sampled_frame = sampled_frame + frame;
+        }
+        
+        sampled_frame
+    }
+    
+    <span class="kw">pub fn </span>sample_fragment_signal(<span class="kw-2">&amp;</span><span class="self">self</span>, num_frames: usize, window_group: u32, max_intensity: f64, take_probability: f64) -&gt; TimsFrame {
+        <span class="comment">// get all fragment frames, filter by window_group
+        </span><span class="kw">let </span>fragment_frames: Vec&lt;u32&gt; = <span class="self">self</span>.dia_ms_mis_info.iter().filter(|x| x.window_group == window_group).map(|x| x.frame_id).collect();
+        
+        <span class="comment">// randomly sample num_frames
+        </span><span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
+        <span class="kw">let </span><span class="kw-2">mut </span>sampled_frames: Vec&lt;TimsFrame&gt; = Vec::new();
+        
+        <span class="comment">// go through each frame and sample the data
+        </span><span class="kw">for </span>frame_id <span class="kw">in </span>fragment_frames.into_iter().choose_multiple(<span class="kw-2">&amp;mut </span>rng, num_frames) {
+            <span class="kw">let </span>frame_data = <span class="self">self</span>.loader.get_frame(frame_id).filter_ranged(<span class="number">0.0</span>, <span class="number">2000.0</span>, <span class="number">0</span>, <span class="number">1000</span>, <span class="number">0.0</span>, <span class="number">5.0</span>, <span class="number">1.0</span>, max_intensity).generate_random_sample(take_probability);
+            sampled_frames.push(frame_data);
+        }
+
+        <span class="comment">// get the first frame
+        </span><span class="kw">let </span><span class="kw-2">mut </span>sampled_frame = sampled_frames.remove(<span class="number">0</span>);
+        
+        <span class="comment">// sum all the other frames to the first frame
+        </span><span class="kw">for </span>frame <span class="kw">in </span>sampled_frames {
+            sampled_frame = sampled_frame + frame;
+        }
+        
+        sampled_frame
     }
 }
 
