@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pandas as pd
 import sqlite3
@@ -15,6 +17,7 @@ from imspy.timstof.slice import TimsSlice
 
 import imspy_connector
 ims = imspy_connector.py_dataset
+import warnings
 
 
 class AcquisitionMode(RustWrapperObject):
@@ -59,7 +62,7 @@ class AcquisitionMode(RustWrapperObject):
 
 
 class TimsDataset(ABC):
-    def __init__(self, data_path: str, in_memory: bool = False):
+    def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):
         """TimsDataHandle class.
 
         Args:
@@ -67,6 +70,11 @@ class TimsDataset(ABC):
         """
         self.__dataset = None
         self.binary_path = None
+        if not use_bruker_sdk:
+            warnings.warn("Warning: SDK free data read is still experimental, expect higher mass errors and inverse "
+                            "mobility errors.")
+
+        self.use_bruker_sdk = use_bruker_sdk
 
         self.data_path = data_path
         if data_path[-1] == "/":
@@ -83,18 +91,32 @@ class TimsDataset(ABC):
         self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
         self.__current_index = 1
 
-        # Try to load the data with the first binary found
-        appropriate_found = False
-        for so_path in obb.get_so_paths():
-            try:
-                self.__dataset = ims.PyTimsDataset(self.data_path, so_path, in_memory)
-                self.binary_path = so_path
-                appropriate_found = True
-                break
-            except Exception:
-                continue
-        assert appropriate_found is True, ("No appropriate bruker binary could be found, please check if your "
-                                           "operating system is supported by open-tims-bruker-bridge.")
+        # if we are on macOS, we only can use the bruker SDK False option, start by getting the OS we are on, use python's os module
+        current_os = os.uname().sysname
+
+        # if use_bruker_sdk is True on MacOS, warn the user and set it to False
+        if current_os == "Darwin" and use_bruker_sdk:
+            warnings.warn("Warning: MacOS does not support bruker SDK, setting use_bruker_sdk to False.")
+            use_bruker_sdk = False
+            self.use_bruker_sdk = False
+
+        if not use_bruker_sdk:
+            self.__dataset = ims.PyTimsDataset(self.data_path, "NO_SDK", in_memory, use_bruker_sdk)
+            self.binary_path = "NO_SDK"
+
+        else:
+            # Try to load the data with the first binary found
+            appropriate_found = False
+            for so_path in obb.get_so_paths():
+                try:
+                    self.__dataset = ims.PyTimsDataset(self.data_path, so_path, in_memory, use_bruker_sdk)
+                    self.binary_path = so_path
+                    appropriate_found = True
+                    break
+                except Exception:
+                    continue
+            assert appropriate_found is True, ("No appropriate bruker binary could be found, please check if your "
+                                               "operating system is supported by open-tims-bruker-bridge.")
 
     @property
     def acquisition_mode(self) -> str:

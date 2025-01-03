@@ -4,6 +4,22 @@ use rusqlite::{Connection, Result};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
+pub struct DiaMsMisInfo {
+    pub frame_id: u32,
+    pub window_group: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiaMsMsWindow {
+    pub window_group: u32,
+    pub scan_num_begin: u32,
+    pub scan_num_end: u32,
+    pub isolation_mz: f64,
+    pub isolation_width: f64,
+    pub collision_energy: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct PasefMsMsMeta {
     pub frame_id: i64,
     pub scan_num_begin: i64,
@@ -143,7 +159,7 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
     let conn = Connection::open(db_path)?;
 
     // execute the query
-    let frames_rows: Result<Vec<GlobalMetaInternal>, _> = conn.prepare("SELECT * FROM GlobalMetaData")?.query_map([], |row| {
+    let frames_rows: Result<Vec<GlobalMetaInternal>, _> = conn.prepare("SELECT * FROM GlobalMetadata")?.query_map([], |row| {
         Ok(GlobalMetaInternal {
             key: row.get(0)?,
             value: row.get(1)?,
@@ -220,6 +236,52 @@ pub fn read_meta_data_sql(bruker_d_folder_name: &str) -> Result<Vec<FrameMeta>, 
         property_group: row.get(14)?,
         accumulation_time: row.get(15)?,
         ramp_time: row.get(16)?,
+        })
+    })?.collect();
+
+    // return the frames
+    Ok(frames_rows?)
+}
+
+pub fn read_dia_ms_ms_info(bruker_d_folder_name: &str) -> Result<Vec<DiaMsMisInfo>, Box<dyn std::error::Error>> {
+    // Connect to the database
+    let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
+    let conn = Connection::open(db_path)?;
+
+    // prepare the query
+    let rows: Vec<&str> = vec!["Frame", "WindowGroup"];
+    let query = format!("SELECT {} FROM DiaFrameMsMsInfo", rows.join(", "));
+
+    // execute the query
+    let frames_rows: Result<Vec<DiaMsMisInfo>, _> = conn.prepare(&query)?.query_map([], |row| {
+        Ok(DiaMsMisInfo {
+            frame_id: row.get(0)?,
+            window_group: row.get(1)?,
+        })
+    })?.collect();
+
+    // return the frames
+    Ok(frames_rows?)
+}
+
+pub fn read_dia_ms_ms_windows(bruker_d_folder_name: &str) -> Result<Vec<DiaMsMsWindow>, Box<dyn std::error::Error>> {
+    // Connect to the database
+    let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
+    let conn = Connection::open(db_path)?;
+
+    // prepare the query
+    let rows: Vec<&str> = vec!["WindowGroup", "ScanNumBegin", "ScanNumEnd", "IsolationMz", "IsolationWidth", "CollisionEnergy"];
+    let query = format!("SELECT {} FROM DiaFrameMsMsWindows", rows.join(", "));
+
+    // execute the query
+    let frames_rows: Result<Vec<DiaMsMsWindow>, _> = conn.prepare(&query)?.query_map([], |row| {
+        Ok(DiaMsMsWindow {
+            window_group: row.get(0)?,
+            scan_num_begin: row.get(1)?,
+            scan_num_end: row.get(2)?,
+            isolation_mz: row.get(3)?,
+            isolation_width: row.get(4)?,
+            collision_energy: row.get(5)?,
         })
     })?.collect();
 

@@ -3,9 +3,9 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from sagepy.core import PeptideSpectrumMatch
+from sagepy.core.scoring import Psm
 
-from sagepy.utility import peptide_spectrum_match_collection_to_pandas
+from sagepy.utility import psm_collection_to_pandas
 from tensorflow.keras.models import load_model
 
 from abc import ABC, abstractmethod
@@ -15,13 +15,14 @@ from imspy.algorithm.utility import load_tokenizer_from_resources
 from imspy.chemistry.mobility import ccs_to_one_over_k0, one_over_k0_to_ccs
 from scipy.optimize import curve_fit
 
+from imspy.chemistry.utility import calculate_mz
 from imspy.timstof.dbsearch.utility import generate_balanced_im_dataset
 from imspy.utility import tokenize_unimod_sequence
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint
 
 
 def predict_inverse_ion_mobility(
-        psm_collection: List[PeptideSpectrumMatch],
+        psm_collection: List[Psm],
         refine_model: bool = True,
         verbose: bool = False) -> None:
     """
@@ -41,7 +42,7 @@ def predict_inverse_ion_mobility(
                                               verbose=verbose)
     if refine_model:
         im_predictor.fine_tune_model(
-            peptide_spectrum_match_collection_to_pandas(generate_balanced_im_dataset(psm_collection)),
+            psm_collection_to_pandas(generate_balanced_im_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose
@@ -49,14 +50,14 @@ def predict_inverse_ion_mobility(
 
     # predict ion mobilities
     inv_mob = im_predictor.simulate_ion_mobilities(
-        sequences=[x.sequence for x in psm_collection],
+        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy_modified for x in psm_collection],
         charges=[x.charge for x in psm_collection],
         mz=[x.mono_mz_calculated for x in psm_collection]
     )
 
     # set ion mobilities
     for mob, ps in zip(inv_mob, psm_collection):
-        ps.inverse_mobility_predicted = mob
+        ps.inverse_ion_mobility_predicted = mob
 
 
 def load_deep_ccs_predictor() -> tf.keras.models.Model:
@@ -283,17 +284,29 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                         data: pd.DataFrame,
                         batch_size: int = 64,
                         re_compile=False,
-                        verbose=False
+                        verbose=False,
+                        decoys_separate: bool = True,
                         ):
         assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
         assert 'charge' in data.columns, 'Data must contain column named "charge"'
-        assert 'mono_mz_calculated' in data.columns, 'Data must contain column named "mono_mz_calculated"'
-        assert 'inverse_mobility_observed' in data.columns, 'Data must contain column named "inverse_mobility_observed"'
+        assert 'calcmass' in data.columns, 'Data must contain column named "calcmass"'
+        assert 'ims' in data.columns, 'Data must contain column named "ims"'
 
-        mz = data.mono_mz_calculated.values
-        charges = data.charge.values
-        sequences = data.sequence.values
-        inv_mob = data.inverse_mobility_observed.values
+        mz = [calculate_mz(m, z) for m, z in zip(data.calcmass.values, data.charge.values.astype(np.int32))]
+        charges = data.charge.values.astype(np.int32)
+
+        sequences = []
+
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    sequences.append(row.sequence_modified)
+                else:
+                    sequences.append(row.sequence_decoy_modified)
+        else:
+            sequences = data.sequence_modified.values
+
+        inv_mob = data.ims.values
 
         ccs = np.expand_dims(np.array([one_over_k0_to_ccs(i, m, z) for i, m, z in zip(inv_mob, mz, charges)]), 1)
 
@@ -335,12 +348,31 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         return np.array([ccs_to_one_over_k0(c, m, z) for c, m, z in zip(ccs, mz, charges)])
 
-    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024, return_ccs: bool = False) -> pd.DataFrame:
-        tokenized_sequences = self._preprocess_sequences(data.sequence.values)
+    def simulate_ion_mobilities_pandas(self, data: pd.DataFrame, batch_size: int = 1024, return_ccs: bool = False, decoys_separate: bool = True) -> pd.DataFrame:
+
+        assert 'sequence' in data.columns, 'Data must contain column named "sequence"'
+
+        sequences = []
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    try:
+                        sequences.append(row.sequence_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence)
+                else:
+                    try:
+                        sequences.append(row.sequence_decoy_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence)
+        else:
+            sequences = data.sequence_modified.values
+
+        tokenized_sequences = self._preprocess_sequences(sequences)
 
         # prepare masses, charges, sequences
         m = np.expand_dims(data.mz.values, 1)
-        charges_one_hot = tf.one_hot(np.array(data.charge.values) - 1, 4)
+        charges_one_hot = tf.one_hot(np.array(data.charge.values.astype(np.int32)) - 1, 4)
 
         ds = tf.data.Dataset.from_tensor_slices(((m, charges_one_hot, tokenized_sequences),
                                                  np.zeros_like(m))).batch(batch_size)
@@ -349,7 +381,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         if not return_ccs:
             data[f'inv_mobility_{self.name}'] = np.array([ccs_to_one_over_k0(c, m, z)
-                                                          for c, m, z in zip(ccs, m, data.charge.values)])
+                                                          for c, m, z in zip(ccs, m, data.charge.values.astype(np.int32))])
         else:
             data[f'ccs_{self.name}'] = ccs
 

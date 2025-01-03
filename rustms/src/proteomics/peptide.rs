@@ -7,6 +7,7 @@ use crate::chemistry::formula::calculate_mz;
 use crate::chemistry::utility::{find_unimod_patterns, reshape_prosit_array, unimod_sequence_to_tokens};
 use crate::ms::spectrum::MzSpectrum;
 use crate::proteomics::amino_acid::amino_acid_masses;
+use bincode::{Encode, Decode};
 
 // helper types for easier reading
 type Mass = f64;
@@ -170,7 +171,7 @@ impl PeptideProductIon {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PeptideSequence {
     pub sequence: String,
     pub peptide_id: Option<i32>,

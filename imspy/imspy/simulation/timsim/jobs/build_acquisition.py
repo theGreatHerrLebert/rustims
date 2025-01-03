@@ -14,6 +14,7 @@ def build_acquisition(
         reference_in_memory: bool = True,
         round_collision_energy: bool = True,
         collision_energy_decimals: int = 0,
+        use_bruker_sdk: bool = True,
 ) -> TimsTofAcquisitionBuilderDIA:
     """Build acquisition object from reference path.
 
@@ -28,6 +29,7 @@ def build_acquisition(
         reference_in_memory: Load reference dataset into memory.
         round_collision_energy: Round collision energy.
         collision_energy_decimals: Number of decimals for collision energy (controls coarseness).
+        use_bruker_sdk: Use Bruker SDK for reading reference dataset.
 
     Returns:
         TimsTofAcquisitionBuilderDIA: Acquisition object.
@@ -47,7 +49,7 @@ def build_acquisition(
         print(f"Using acquisition type: {acquisition_type}")
         print(config)
 
-    ref_ds = TimsDatasetDIA(reference_path, in_memory=reference_in_memory)
+    ref_ds = TimsDatasetDIA(reference_path, in_memory=reference_in_memory, use_bruker_sdk=use_bruker_sdk)
 
     return TimsTofAcquisitionBuilderDIA.from_config(
         path=path,

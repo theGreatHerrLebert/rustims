@@ -5,8 +5,8 @@ import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
-from sagepy.core import PeptideSpectrumMatch
-from sagepy.utility import peptide_spectrum_match_collection_to_pandas
+from sagepy.core.scoring import Psm
+from sagepy.utility import psm_collection_to_pandas
 
 from imspy.algorithm.utility import get_model_path, InMemoryCheckpoint, load_tokenizer_from_resources
 from imspy.timstof.dbsearch.utility import linear_map, generate_balanced_rt_dataset
@@ -16,7 +16,7 @@ from tensorflow.keras.models import load_model
 
 
 def predict_retention_time(
-        psm_collection: List[PeptideSpectrumMatch],
+        psm_collection: List[Psm],
         refine_model: bool = True,
         verbose: bool = False) -> None:
     """
@@ -34,15 +34,15 @@ def predict_retention_time(
                                               load_tokenizer_from_resources("tokenizer-ptm"),
                                               verbose=verbose)
 
-    rt_min = np.min([x.retention_time_observed for x in psm_collection])
-    rt_max = np.max([x.retention_time_observed for x in psm_collection])
+    rt_min = np.min([x.retention_time for x in psm_collection])
+    rt_max = np.max([x.retention_time for x in psm_collection])
 
     for psm in psm_collection:
-        psm.projected_rt = linear_map(psm.retention_time_observed, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
+        psm.retention_time_projected = linear_map(psm.retention_time, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60)
 
     if refine_model:
         rt_predictor.fine_tune_model(
-            peptide_spectrum_match_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
+            psm_collection_to_pandas(generate_balanced_rt_dataset(psm_collection)),
             batch_size=128,
             re_compile=True,
             verbose=verbose
@@ -50,7 +50,7 @@ def predict_retention_time(
 
     # predict retention times
     rt_predicted = rt_predictor.simulate_separation_times(
-        sequences=[x.sequence for x in psm_collection],
+        sequences=[x.sequence_modified if x.decoy == False else x.sequence_decoy_modified for x in psm_collection],
     )
 
     # set the predicted retention times
@@ -181,13 +181,24 @@ class DeepChromatographyApex(PeptideChromatographyApex):
                         data: pd.DataFrame,
                         batch_size: int = 64,
                         re_compile=False,
-                        verbose=False
+                        verbose=False,
+                        decoys_separate=True,
                         ):
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
-        assert 'projected_rt' in data.columns, 'Data must contain a column named "projected_rt"'
+        assert 'retention_time_projected' in data.columns, 'Data must contain a column named "retention_time_projected"'
 
-        sequences = data.sequence.values
-        rts = data.projected_rt.values
+        sequences = []
+
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    sequences.append(row.sequence)
+                else:
+                    sequences.append(row.sequence_decoy_modified)
+        else:
+            sequences = data.sequence.values
+
+        rts = data.retention_time_projected.values
         ds = self.generate_tf_ds_train(sequences, rt_target=rts).shuffle(len(sequences))
 
         # split data into training and validation
@@ -211,11 +222,28 @@ class DeepChromatographyApex(PeptideChromatographyApex):
     def simulate_separation_times_pandas(self,
                                          data: pd.DataFrame,
                                          batch_size: int = 1024,
-                                         gradient_length: Union[None, float] = None
+                                         gradient_length: Union[None, float] = None,
+                                         decoys_separate=True,
                                          ) -> pd.DataFrame:
 
         assert 'sequence' in data.columns, 'Data must contain a column named "sequence"'
-        sequences = data.sequence.values
+
+        sequences = []
+        if decoys_separate:
+            for index, row in data.iterrows():
+                if not row.decoy:
+                    try:
+                        sequences.append(row.sequence_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence)
+                else:
+                    try:
+                        sequences.append(row.sequence_decoy_modified)
+                    except AttributeError:
+                        sequences.append(row.sequence_decoy)
+        else:
+            sequences = data.sequence.values
+
         tf_ds = self.generate_tf_ds_inference(sequences).batch(batch_size)
 
         rts = self.model.predict(tf_ds, verbose=self.verbose)

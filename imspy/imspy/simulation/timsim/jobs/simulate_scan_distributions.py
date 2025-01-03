@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.typing import NDArray
 import pandas as pd
 from tqdm import tqdm
 
@@ -10,10 +11,13 @@ def simulate_scan_distributions(
         ions: pd.DataFrame,
         scans: pd.DataFrame,
         z_score: float,
-        std_im: float,
+        mean_std_im: float = 0.01,
+        variance_std_im: float = 0.0,
         verbose: bool = False,
         add_noise: bool = False,
-        normalize: bool = False
+        normalize: bool = False,
+        from_existing: bool = False,
+        std_means: NDArray = None,
 ) -> pd.DataFrame:
     """Simulate scan distributions for ions.
 
@@ -21,10 +25,13 @@ def simulate_scan_distributions(
         ions: Ions DataFrame.
         scans: Scan DataFrame.
         z_score: Z-score.
-        std_im: Standard deviation of ion mobility.
+        mean_std_im: Standard deviation of ion mobility.
+        variance_std_im: Variance of standard deviation of ion mobility.
         verbose: Verbosity.
         add_noise: Add noise.
         normalize: Normalize scan abundance.
+        from_existing: Use existing parameters.
+        std_means: Standard deviations.
 
     Returns:
         pd.DataFrame: Ions DataFrame with scan distributions.
@@ -42,19 +49,31 @@ def simulate_scan_distributions(
     im_scans = []
     im_contributions = []
 
+    # Generate random standard deviations for ion mobility, if not from_existing
+    if not from_existing:
+        std_im = np.abs(np.random.normal(loc=mean_std_im, scale=np.sqrt(variance_std_im), size=ions.shape[0]))
+    else:
+        std_im = std_means
+
+    # Add standard deviation deviations to ions DataFrame
+    ions['std_im'] = std_im
+
+    # DEBUG, TODO: NEED TO RE-IMPLEMENT TO MAKE THIS WORK WITHOUT HARD-CODING
+    std_im = np.repeat(0.01, ions.shape[0])
+
     if verbose:
         print("Calculating scan distributions...")
 
-    for _, row in tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100):
+    for index, (_, row) in enumerate(tqdm(ions.iterrows(), total=ions.shape[0], desc='scan distribution', ncols=100)):
         scan_occurrence, scan_abundance = [], []
 
         im_value = row.inv_mobility_gru_predictor
-        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im, z_score)
+        contributing_scans = get_scans_numba(im_value, mobility_np, scans_np, std_im[index], z_score)
 
         for scan in contributing_scans:
             im = im_dict[scan]
             start = im - im_cycle_length
-            i = accumulated_intensity_cdf_numba(start, im, im_value, std_im)
+            i = accumulated_intensity_cdf_numba(start, im, im_value, std_im[index])
             scan_occurrence.append(scan)
             scan_abundance.append(i)
 
@@ -77,5 +96,8 @@ def simulate_scan_distributions(
 
     ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: python_list_to_json_string(x, as_float=False))
     ions['scan_abundance'] = ions['scan_abundance'].apply(python_list_to_json_string)
+
+    # remove rows where scan_abundance is empty
+    ions = ions[ions['scan_abundance'].apply(lambda x: len(x) > 2)]
 
     return ions

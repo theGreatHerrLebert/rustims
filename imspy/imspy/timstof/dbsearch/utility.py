@@ -1,24 +1,21 @@
 import os
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Union, Dict
 
 import pandas as pd
-from tqdm import tqdm
 
 import numpy as np
 from typing import Optional
 from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation, Tolerance
-from sagepy.core.scoring import PeptideSpectrumMatch
+from sagepy.core.scoring import Psm
 
 from imspy.timstof import TimsDatasetDDA
 from imspy.timstof.frame import TimsFrame
 
 from sagepy.utility import get_features
 from sagepy.qfdr.tdc import target_decoy_competition_pandas
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.preprocessing import StandardScaler
 
-from sagepy.utility import peptide_spectrum_match_collection_to_pandas
+from sagepy.utility import psm_collection_to_pandas
 from numpy.typing import NDArray
 
 from sagepy.core.scoring import merge_psm_dicts
@@ -210,7 +207,7 @@ def write_psms_binary(byte_array, folder_path: str, file_name: str, total: bool 
         file.close()
 
 
-def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm", q_max: float = 0.01,
+def generate_training_data(psms: List[Psm], method: str = "psm", q_max: float = 0.01,
                            balance: bool = True) -> Tuple[NDArray, NDArray]:
     """ Generate training data.
     Args:
@@ -223,11 +220,11 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
         Tuple[NDArray, NDArray]: X_train and Y_train
     """
     # create pandas table from psms
-    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms)
+    PSM_pandas = psm_collection_to_pandas(psms)
 
     # calculate q-values to get inital "good" hits
     PSM_q = target_decoy_competition_pandas(PSM_pandas, method=method)
-    PSM_pandas = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = PSM_pandas.drop(columns=["hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
@@ -254,7 +251,7 @@ def generate_training_data(psms: List[PeptideSpectrumMatch], method: str = "psm"
     return X_train, Y_train
 
 
-def split_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10) -> List[List[PeptideSpectrumMatch]]:
+def split_psms(psms: List[Psm], num_splits: int = 10) -> List[List[Psm]]:
     """ Split PSMs into multiple splits.
 
     Args:
@@ -278,72 +275,19 @@ def split_psms(psms: List[PeptideSpectrumMatch], num_splits: int = 10) -> List[L
     return splits
 
 
-def re_score_psms(
-        psms: List[PeptideSpectrumMatch],
-        num_splits: int = 10,
-        verbose: bool = True,
-        balance: bool = True,
-        score: str = "hyper_score",
-) -> List[PeptideSpectrumMatch]:
-    """ Re-score PSMs using LDA.
-    Args:
-        psms: List of PeptideSpectrumMatch objects
-        num_splits: Number of splits
-        verbose: Whether to print progress
-        balance: Whether to balance the dataset
-        score: Score to use for re-scoring
+def generate_balanced_rt_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -> List[Psm]:
 
-    Returns:
-        List[PeptideSpectrumMatch]: List of PeptideSpectrumMatch objects
-    """
+    psm_list = []
+    if isinstance(psms, dict):
+        for key in psms:
+            psm_list.extend(psms[key])
+    else:
+        psm_list = psms
 
-    scaler = StandardScaler()
-    X_all, _ = get_features(peptide_spectrum_match_collection_to_pandas(psms), score=score)
-
-    # replace NaN values with 0
-    X_all = np.nan_to_num(X_all)
-    scaler.fit(X_all)
-
-    splits = split_psms(psms=psms, num_splits=num_splits)
-    predictions = []
-
-    for i in tqdm(range(num_splits), disable=not verbose, desc='Re-scoring PSMs', ncols=100):
-
-        target = splits[i]
-        features = []
-
-        for j in range(num_splits):
-            if j != i:
-                features.extend(splits[j])
-
-        X_train, Y_train = generate_training_data(features, balance=balance)
-        X_train = np.nan_to_num(X_train)
-        X, _ = get_features(peptide_spectrum_match_collection_to_pandas(target))
-        X = np.nan_to_num(X)
-
-        lda = LinearDiscriminantAnalysis(solver="eigen", shrinkage="auto")
-        lda.fit(scaler.transform(X_train), Y_train)
-
-        try:
-            # check for flip sign of LDA classification return to be compatible with good score ascending
-            score_flip = 1.0 if Y_train[np.argmax(np.squeeze(lda.transform(scaler.transform(X_train))))] == 1.0 else -1.0
-        except:
-            score_flip = 1.0
-
-        Y_pred = np.squeeze(lda.transform(scaler.transform(X))) * score_flip
-        predictions.extend(Y_pred)
-
-    for score, match in zip(predictions, psms):
-        match.re_score = score
-
-    return psms
-
-
-def generate_balanced_rt_dataset(psms):
     # generate good hits
-    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms, re_score=False)
-    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
-    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = psm_collection_to_pandas(psm_list)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm", score="hyperscore")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
@@ -352,16 +296,25 @@ def generate_balanced_rt_dataset(psms):
 
     id_set = set(TDC.spec_idx.values)
 
-    r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
+    r_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psm_list))
 
     return r_list
 
 
-def generate_balanced_im_dataset(psms):
+def generate_balanced_im_dataset(psms: Union[List[Psm], Dict[str, List[Psm]]]) -> List[Psm]:
+
+    psm_list = []
+    if isinstance(psms, dict):
+        for key in psms:
+            psm_list.extend(psms[key])
+
+    else:
+        psm_list = psms
+
     # generate good hits
-    PSM_pandas = peptide_spectrum_match_collection_to_pandas(psms, re_score=False)
-    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm")
-    PSM_pandas_dropped = PSM_pandas.drop(columns=["q_value", "score"])
+    PSM_pandas = psm_collection_to_pandas(psm_list)
+    PSM_q = target_decoy_competition_pandas(PSM_pandas, method="psm", score="hyperscore")
+    PSM_pandas_dropped = PSM_pandas.drop(columns=["hyperscore"])
 
     # merge data with q-values
     TDC = pd.merge(PSM_q, PSM_pandas_dropped, left_on=["spec_idx", "match_idx", "decoy"],
@@ -369,33 +322,37 @@ def generate_balanced_im_dataset(psms):
     TDC = TDC[(TDC.decoy == False) & (TDC.q_value <= 0.01)].drop_duplicates(subset=["sequence", "charge"])
     id_set = set(TDC.spec_idx.values)
 
-    im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psms))
+    im_list = list(filter(lambda p: p.spec_idx in id_set and p.rank == 1, psm_list))
 
     return im_list
 
 
 def extract_timstof_dda_data(path: str,
                              in_memory: bool = False,
+                             use_bruker_sdk: bool = False,
                              isolation_window_lower: float = -3.0,
                              isolation_window_upper: float = 3.0,
                              take_top_n: int = 100,
+                             num_threads: int = 16,
                              ) -> pd.DataFrame:
     """
     Extract TIMSTOF DDA data from bruker timsTOF TDF file.
     Args:
         path: Path to TIMSTOF DDA data
         in_memory: Whether to load data in memory
+        use_bruker_sdk: Whether to use bruker SDK for data extraction
         isolation_window_lower: Lower bound for isolation window (Da)
         isolation_window_upper: Upper bound for isolation window (Da)
         take_top_n: Number of top peaks to take
+        num_threads: Number of threads to use
 
     Returns:
         pd.DataFrame: DataFrame containing timsTOF DDA data
     """
     ds_name = os.path.basename(path)
 
-    dataset = TimsDatasetDDA(path, in_memory=in_memory)
-    fragments = dataset.get_pasef_fragments(num_threads=1)
+    dataset = TimsDatasetDDA(path, in_memory=in_memory, use_bruker_sdk=use_bruker_sdk)
+    fragments = dataset.get_pasef_fragments(num_threads=num_threads)
 
     fragments = fragments.groupby('precursor_id').agg({
         'frame_id': 'first',
@@ -456,9 +413,8 @@ def transform_psm_to_pin(psm_df):
         'decoy': 'Label',
         'charge': 'Charge',
         'sequence': 'Peptide',
-        'proteins': 'Proteins',
         # feature mapping for re-scoring
-        'hyper_score': 'Feature1',
+        'hyperscore': 'Feature1',
         'isotope_error': 'Feature2',
         'delta_mass': 'Feature3',
         'delta_rt': 'Feature4',

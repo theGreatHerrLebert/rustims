@@ -12,9 +12,9 @@ def sample_parameters_rejection(sigma_mean, sigma_variance, lambda_mean, lambda_
     # Re-sample any negative values
     while any(sigmas < 0):
         sigmas[sigmas < 0] = np.random.normal(loc=sigma_mean, scale=np.sqrt(sigma_variance), size=np.sum(sigmas < 0))
-    while any(lambdas <= 0.05):
-        lambdas[lambdas <= 0.05] = np.random.normal(loc=lambda_mean, scale=np.sqrt(lambda_variance),
-                                                    size=np.sum(lambdas < 0.05))
+    while any(lambdas <= 0.01):
+        lambdas[lambdas <= 0.01] = np.random.normal(loc=lambda_mean, scale=np.sqrt(lambda_variance),
+                                                    size=np.sum(lambdas < 0.01))
 
     return sigmas, lambdas
 
@@ -34,6 +34,9 @@ def simulate_frame_distributions_emg(
         normalize: bool = False,
         n_steps: int = 1000,
         num_threads: int = 4,
+        from_existing: bool = False,
+        sigmas: np.ndarray = None,
+        lambdas: np.ndarray = None,
 ) -> pd.DataFrame:
     """Simulate frame distributions for peptides.
 
@@ -52,6 +55,9 @@ def simulate_frame_distributions_emg(
         normalize: Normalize frame abundance.
         n_steps: number of steps.
         num_threads: number of threads.
+        from_existing: Use existing parameters.
+        sigmas: sigmas.
+        lambdas: lambdas.
 
     Returns:
         pd.DataFrame: Peptide DataFrame with frame distributions.
@@ -66,7 +72,11 @@ def simulate_frame_distributions_emg(
 
     n = peptides.shape[0]
 
-    sigmas, lambdas = sample_parameters_rejection(mean_std_rt, variance_std_rt, mean_scewness, variance_scewness, n)
+    if not from_existing:
+        sigmas, lambdas = sample_parameters_rejection(mean_std_rt, variance_std_rt, mean_scewness, variance_scewness, n)
+
+    peptide_rt['rt_sigma'] = sigmas
+    peptide_rt['rt_lambda'] = lambdas
 
     occurrences = ims.calculate_frame_occurrences_emg_par(
         times_np,
@@ -119,6 +129,9 @@ def simulate_frame_distributions_emg(
         lambda r: python_list_to_json_string(r, as_float=True)
     )
 
-    peptide_rt = peptides.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
+    # remove empty lists, that are now cast to strings, for frame_abundance
+    peptide_rt_filtered = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 2]
 
-    return peptide_rt
+    peptide_rt_filtered = peptide_rt_filtered.sort_values(by=['frame_occurrence_start', 'frame_occurrence_end'])
+
+    return peptide_rt_filtered

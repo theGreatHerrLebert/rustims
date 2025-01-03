@@ -189,11 +189,15 @@ impl PyTimsFrame {
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsFrame {
-        return PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
+        PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
     }
 
     pub fn get_inverse_mobility_along_scan_marginal(&self) -> f64 {
-        return self.inner.get_inverse_mobility_along_scan_marginal();
+        self.inner.get_inverse_mobility_along_scan_marginal()
+    }
+
+    pub fn get_mobility_mean_and_variance(&self) -> (f64, f64) {
+        self.inner.get_mobility_mean_and_variance()
     }
 
     #[staticmethod]

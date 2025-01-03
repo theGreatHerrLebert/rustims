@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "imspy"
-version = "0.2.35"
+version = "0.3.0"
 description = ""
 authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
 readme = "README.md"
@@ -12,16 +12,18 @@ numpy = ">=1.21"
 numba = ">=0.53"
 zstd = ">=1.5.0"
 tabulate = ">=0.9.0"
+pyqt5 = ">=5.15.11"
+qdarkstyle = ">=3.2.3"
+
 
 tensorflow = "2.15.*"
 tensorflow-probability = ">=0.22.1"
 wandb = ">=0.12.1"
 
-pyopenms = ">=2.6.0"
 mokapot = ">=0.10.0"
 
-sagepy = ">=0.2.23"
-imspy-connector = ">=0.2.35"
+sagepy = ">=0.3.0"
+imspy-connector = ">=0.3.0"
 
 scipy = ">=1.7.1"
 tqdm = ">=4.66"
@@ -29,6 +31,7 @@ pyarrow =">=13.0"
 mendeleev = ">=0.7.0"
 dlomix = ">=0.0.6"
 toml = ">=0.10.2"
+vtk = ">=9.4.0"
 
 [tool.poetry.group.dev.dependencies]
 sphinx = "^8.1.0"
@@ -41,5 +44,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
+"imspy_ccs" = "imspy.timstof.dbsearch.imspy_ccs:main"
 timsim = "imspy.simulation.timsim.simulator:main"
+timsim-gui = "imspy.simulation.timsim.timsim_gui:main"
 imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"

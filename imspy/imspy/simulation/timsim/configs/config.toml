@@ -1,0 +1,70 @@
+[main_settings]
+save_path = "/scratch/timsim/midia/no-noise"
+reference_path = "/media/hd02/data/raw/midia/hela/G8602.d"
+fasta_path = "/media/hd02/data/fasta/hela/plain/uniprotkb_proteome_UP000005640_AND_revi_2024_05_21.fasta"
+experiment_name = "TIMSIM-MIDIA-NO-NOISE-P75K"
+acquisition_type = "MIDIA"
+use_reference_layout = true
+reference_in_memory = false
+sample_peptides = true
+sample_seed = 41
+add_decoys = false
+proteome_mix = false
+silent_mode = false
+from_existing = false
+existing_path = ""
+apply_fragmentation = true
+multi_fasta = ""
+multi_fasta_dilution = ""
+
+[peptide_digestion]
+num_sample_peptides = 75000
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
+modifications = "/scratch/timsim/midia/modifications.toml"
+
+[peptide_intensity]
+intensity_mean = 7
+intensity_min = 5
+intensity_max = 9
+sample_occurrences = true
+intensity_value = 6
+
+[isotopic_pattern]
+isotope_k = 8
+isotope_min_intensity = 1
+isotope_centroid = true
+
+[distribution_settings]
+gradient_length = 3600.0
+mean_std_rt = 1.0
+variance_std_rt = 0.1
+mean_skewness = 1.5
+variance_skewness = 0.1
+std_im = 0.01
+variance_std_im = 0.001
+z_score = 0.99
+target_p = 0.999
+sampling_step_size = 0.001
+
+[noise_settings]
+add_noise_to_signals = true
+mz_noise_precursor = true
+precursor_noise_ppm = 5.0
+mz_noise_fragment = true
+fragment_noise_ppm = 5.0
+mz_noise_uniform = false
+add_real_data_noise = true
+reference_noise_intensity_max = 25.0
+down_sample_factor = 0.6
+
+[charge_state_probabilities]
+p_charge = 0.5
+min_charge_contrib = 0.25
+
+[performance_settings]
+num_threads = -1
+batch_size = 256

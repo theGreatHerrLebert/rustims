@@ -54,43 +54,41 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_peptides(&self) -> rusqlite::Result<Vec<PeptidesSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
         let peptides_iter = stmt.query_map([], |row| {
-            let frame_occurrence_str: String = row.get(12)?;
-            let frame_abundance_str: String = row.get(13)?;
+            let frame_occurrence_str: String = row.get(15)?;
+            let frame_abundance_str: String = row.get(16)?;
 
             let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    10,
+                    15,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
             };
 
+            // if the frame abundance is not available, set it to 0
             let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
                 Ok(value) => value,
-                Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    11,
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )),
+                Err(_e) =>  vec![0.0; frame_occurrence.len()],
             };
 
             let frame_distribution = SignalDistribution::new(
                 0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
 
             Ok(PeptidesSim {
-                peptide_id: row.get(0)?,
-                sequence: PeptideSequence::new(row.get(1)?, row.get(0)?),
-                proteins: row.get(2)?,
-                decoy: row.get(3)?,
-                missed_cleavages: row.get(4)?,
-                n_term: row.get(5)?,
-                c_term: row.get(6)?,
-                mono_isotopic_mass: row.get(7)?,
-                retention_time: row.get(8)?,
-                events: row.get(9)?,
-                frame_start: row.get(10)?,
-                frame_end: row.get(11)?,
+                protein_id: row.get(0)?,
+                peptide_id: row.get(1)?,
+                sequence: PeptideSequence::new(row.get(2)?, row.get(1)?),
+                proteins: row.get(3)?,
+                decoy: row.get(4)?,
+                missed_cleavages: row.get(5)?,
+                n_term: row.get(6)?,
+                c_term: row.get(7)?,
+                mono_isotopic_mass: row.get(8)?,
+                retention_time: row.get(9)?,
+                events: row.get(10)?,
+                frame_start: row.get(13)?,
+                frame_end: row.get(14)?,
                 frame_distribution,
             })
         })?;
@@ -105,8 +103,8 @@ impl TimsTofSyntheticsDataHandle {
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
         let ions_iter = stmt.query_map([], |row| {
             let simulated_spectrum_str: String = row.get(6)?;
-            let scan_occurrence_str: String = row.get(7)?;
-            let scan_abundance_str: String = row.get(8)?;
+            let scan_occurrence_str: String = row.get(8)?;
+            let scan_abundance_str: String = row.get(9)?;
 
             let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
                 Ok(value) => value,
@@ -120,7 +118,7 @@ impl TimsTofSyntheticsDataHandle {
             let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    7,
+                    8,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),
@@ -129,7 +127,7 @@ impl TimsTofSyntheticsDataHandle {
             let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
                 Ok(value) => value,
                 Err(e) => return Err(rusqlite::Error::FromSqlConversionFailure(
-                    8,
+                    9,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )),

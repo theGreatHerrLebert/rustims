@@ -1,13 +1,16 @@
 use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Formatter};
+use bincode::{Decode, Encode};
 use itertools;
 use itertools::izip;
+use ordered_float::OrderedFloat;
 use rand::Rng;
-
+use serde::{Deserialize, Serialize};
 use crate::timstof::spectrum::TimsSpectrum;
 use crate::data::spectrum::{MsType, MzSpectrum, IndexedMzSpectrum, Vectorized, ToResolution};
 use crate::simulation::annotation::{PeakAnnotation, TimsFrameAnnotated};
+use crate::timstof::vec_utils::{filter_with_mask, find_sparse_local_maxima_mask};
 
 #[derive(Clone)]
 pub struct RawTimsFrame {
@@ -19,7 +22,43 @@ pub struct RawTimsFrame {
     pub intensity: Vec<f64>,
 }
 
-#[derive(Clone, Debug)]
+impl RawTimsFrame {
+    pub fn smooth(mut self, window: u32) -> Self {
+        let mut smooth_intensities: Vec<f64> = self.intensity.clone();
+        for (current_index, current_tof) in self.tof.iter().enumerate()
+        {
+            let current_intensity: f64 = self.intensity[current_index];
+            for (_next_index, next_tof) in
+                self.tof[current_index + 1..].iter().enumerate()
+            {
+                let next_index: usize = _next_index + current_index + 1;
+                let next_intensity: f64 = self.intensity[next_index];
+                if (next_tof - current_tof) <= window {
+                    smooth_intensities[current_index] += next_intensity;
+                    smooth_intensities[next_index] += current_intensity;
+                } else {
+                    break;
+                }
+            }
+        }
+        self.intensity = smooth_intensities;
+
+        self
+    }
+    pub fn centroid(mut self, window: u32) -> Self {
+        let local_maxima: Vec<bool> = find_sparse_local_maxima_mask(
+            &self.tof,
+            &self.intensity,
+            window,
+        );
+        self.tof = filter_with_mask(&self.tof, &local_maxima);
+        self.intensity = filter_with_mask(&self.intensity, &local_maxima);
+        self.scan = filter_with_mask(&self.scan, &local_maxima);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Encode, Decode)]
 pub struct ImsFrame {
     pub retention_time: f64,
     pub mobility: Vec<f64>,
@@ -64,13 +103,25 @@ pub struct ImsFrameVectorized {
     pub resolution: i32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,
     pub scan: Vec<i32>,
     pub tof: Vec<i32>,
     pub ims_frame: ImsFrame,
+}
+
+impl Default for TimsFrame {
+    fn default() -> Self {
+        TimsFrame {
+            frame_id: 0, // Replace with a suitable default value
+            ms_type: MsType::Unknown,
+            scan: Vec::new(),
+            tof: Vec::new(),
+            ims_frame: ImsFrame::default(), // Uses the default implementation for `ImsFrame`
+        }
+    }
 }
 
 impl TimsFrame {
@@ -262,9 +313,21 @@ impl TimsFrame {
         };
 
         // Step 1: Get frame coordinates
-        let frame_id = spectra.first().unwrap().frame_id;
-        let ms_type = spectra.first().unwrap().ms_type.clone();
-        let retention_time = spectra.first().unwrap().retention_time;
+        let first_spec = spectra.first();
+        let frame_id = match first_spec {
+            Some(first_spec) => first_spec.frame_id,
+            _ => 1
+        };
+        
+        let ms_type = match first_spec {
+            Some(first_spec) => first_spec.ms_type.clone(),
+            _ => MsType::Unknown,
+        };
+        
+        let retention_time = match first_spec { 
+            Some(first_spec) => first_spec.retention_time,
+            _ => 0.0
+        };
 
         let mut frame_map: BTreeMap<i32, (f64, BTreeMap<i64, (i32, f64)>)> = BTreeMap::new();
         let mut capacity_count = 0;
@@ -421,6 +484,36 @@ impl TimsFrame {
         let (_, max_inv_mob) = marginal_map.iter().max_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or((&0, &(0.0, 0.0))).1;
 
         *max_inv_mob
+    }
+
+    /// Calculate the weighted mean and variance of `inv_mob` values based on their intensities.
+    pub fn get_mobility_mean_and_variance(&self) -> (f64, f64) {
+        let mut mobility_map: BTreeMap<OrderedFloat<f64>, f64> = BTreeMap::new();
+
+        // Aggregate intensity values for each `inv_mob`
+        for (inv_mob, intensity) in izip!(&self.ims_frame.mobility, &self.ims_frame.intensity) {
+            let entry = mobility_map.entry(OrderedFloat(*inv_mob)).or_insert(0.0);
+            *entry += *intensity;
+        }
+
+        // Calculate weighted mean
+        let mut total_weight = 0.0;
+        let mut weighted_sum = 0.0;
+        for (&inv_mob, &intensity) in &mobility_map {
+            total_weight += intensity;
+            weighted_sum += inv_mob.into_inner() * intensity;
+        }
+        let mean = weighted_sum / total_weight;
+
+        // Calculate weighted variance
+        let mut weighted_squared_diff_sum = 0.0;
+        for (&inv_mob, &intensity) in &mobility_map {
+            let diff = inv_mob.into_inner() - mean;
+            weighted_squared_diff_sum += intensity * diff * diff;
+        }
+        let variance = weighted_squared_diff_sum / total_weight;
+
+        (mean, variance)
     }
 }
 

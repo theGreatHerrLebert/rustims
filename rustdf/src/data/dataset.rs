@@ -2,17 +2,30 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use crate::data::acquisition::AcquisitionMode;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
+use crate::data::meta::{read_global_meta_sql, read_meta_data_sql};
 
 pub struct TimsDataset {
     pub loader: TimsDataLoader,
 }
 
 impl TimsDataset {
-    pub fn new(bruker_lib_path: &str, data_path: &str, in_memory: bool) -> Self {
+    pub fn new(bruker_lib_path: &str, data_path: &str, in_memory: bool, use_bruker_sdk: bool) -> Self {
+            
+        // TODO: error handling
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+        let meta_data = read_meta_data_sql(data_path).unwrap();
+        
+        let scan_max_index = meta_data.iter().map(|x| x.num_scans).max().unwrap() as u32;
+        let im_lower = global_meta_data.one_over_k0_range_lower;
+        let im_upper = global_meta_data.one_over_k0_range_upper;
+        
+        let tof_max_index = global_meta_data.tof_max_index;
+        let mz_lower = global_meta_data.mz_acquisition_range_lower;
+        let mz_upper = global_meta_data.mz_acquisition_range_upper;
 
         let loader = match in_memory {
-            true => TimsDataLoader::new_in_memory(bruker_lib_path, data_path),
-            false => TimsDataLoader::new_lazy(bruker_lib_path, data_path),
+            true => TimsDataLoader::new_in_memory(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
+            false => TimsDataLoader::new_lazy(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
         };
 
         TimsDataset { loader }
