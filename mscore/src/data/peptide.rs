@@ -1,4 +1,5 @@
 use std::collections::{HashMap};
+use bincode::{Decode, Encode};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -212,7 +213,7 @@ impl PeptideProductIon {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PeptideSequence {
     pub sequence: String,
     pub peptide_id: Option<i32>,
