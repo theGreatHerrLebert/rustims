@@ -599,7 +599,9 @@
 <a href="#598" id="598">598</a>
 <a href="#599" id="599">599</a>
 <a href="#600" id="600">600</a>
-<a href="#601" id="601">601</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap};
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap};
+<span class="kw">use </span>bincode::{Decode, Encode};
 <span class="kw">use </span>itertools::Itertools;
 <span class="kw">use </span>regex::Regex;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
@@ -813,7 +815,7 @@
     }
 }
 
-<span class="attr">#[derive(Debug, Clone, Serialize, Deserialize)]
+<span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 </span><span class="kw">pub struct </span>PeptideSequence {
     <span class="kw">pub </span>sequence: String,
     <span class="kw">pub </span>peptide_id: <span class="prelude-ty">Option</span>&lt;i32&gt;,
