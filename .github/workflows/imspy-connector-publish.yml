@@ -48,6 +48,11 @@ jobs:
       - name: Change to imspy-connector directory
         run: cd imspy_connector
 
+      - name: Clean Cargo Artifacts
+        run: |
+          cd imspy_connector
+          cargo clean
+
       - name: Build with Maturin
         run: |
           cd imspy_connector
