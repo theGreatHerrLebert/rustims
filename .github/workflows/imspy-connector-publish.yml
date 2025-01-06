@@ -61,7 +61,11 @@ jobs:
       - name: Build with Maturin
         run: |
           cd imspy_connector
-          maturin build --release --target ${{ matrix.target || '' }}
+          if [ -n "${{ matrix.target }}" ]; then
+            maturin build --release --target ${{ matrix.target }}
+          else
+            maturin build --release
+          fi
 
       - name: Publish
         if: matrix.publish
