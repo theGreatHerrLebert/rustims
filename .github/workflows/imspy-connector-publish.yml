@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13]
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
         python-version: ['3.11']
         include:
           - os: ubuntu-latest
@@ -24,6 +24,10 @@ jobs:
           - os: macos-13
             python-version: '3.11'
             publish: true
+          - os: macos-14
+            python-version: '3.11'
+            publish: true
+            target: aarch64-apple-darwin
 
     steps:
       - uses: actions/checkout@v3
@@ -44,14 +48,25 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          target: ${{ matrix.target || '' }}
 
       - name: Change to imspy-connector directory
         run: cd imspy_connector
 
-      - name: Build with Maturin
+      - name: Clean Cargo Artifacts
         run: |
           cd imspy_connector
-          maturin build --release
+          cargo clean
+
+      - name: Build with Maturin (Cross-Platform)
+        shell: bash
+        run: |
+          cd imspy_connector
+          if [ -n "${{ matrix.target }}" ]; then
+            maturin build --release --target ${{ matrix.target }}
+          else
+            maturin build --release
+          fi
 
       - name: Publish
         if: matrix.publish
