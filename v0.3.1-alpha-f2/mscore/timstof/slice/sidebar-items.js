@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["TimsPlane","TimsSlice","TimsSliceFlat","TimsSliceVectorized","TimsSliceVectorizedFlat"]};
