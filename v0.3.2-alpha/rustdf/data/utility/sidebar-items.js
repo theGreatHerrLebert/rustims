@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["compress_collection","flatten_scan_values","get_data_for_compression","get_data_for_compression_par","get_peak_cnts","get_realdata","get_realdata_loop","modify_tofs","parse_decompressed_bruker_binary_data","reconstruct_compressed_data","zstd_compress","zstd_decompress"]};
