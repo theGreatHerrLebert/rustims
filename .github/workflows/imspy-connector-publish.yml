@@ -58,7 +58,8 @@ jobs:
           cd imspy_connector
           cargo clean
 
-      - name: Build with Maturin
+      - name: Build with Maturin (Cross-Platform)
+        shell: bash
         run: |
           cd imspy_connector
           if [ -n "${{ matrix.target }}" ]; then
