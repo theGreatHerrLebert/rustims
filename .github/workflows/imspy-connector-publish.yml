@@ -18,6 +18,10 @@ jobs:
           - os: ubuntu-latest
             python-version: '3.11'
             publish: true
+          - os: ubuntu-latest
+            python-version: '3.11'
+            target: aarch64-unknown-linux-gnu
+            publish: true
           - os: windows-latest
             python-version: '3.11'
             publish: true
@@ -49,6 +53,11 @@ jobs:
           toolchain: stable
           override: true
           target: ${{ matrix.target || '' }}
+
+      - name: Install Cross Compilation Tools (Linux ARM64 Only)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Change to imspy-connector directory
         run: cd imspy_connector
