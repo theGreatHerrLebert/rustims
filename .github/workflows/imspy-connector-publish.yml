@@ -18,7 +18,6 @@ jobs:
           - os: ubuntu-latest
             python-version: '3.11'
             publish: true
-            target: aarch64-unknown-linux-gnu
           - os: windows-latest
             python-version: '3.11'
             publish: true
@@ -31,18 +30,10 @@ jobs:
             target: aarch64-apple-darwin
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
-      - name: Set up Python on Ubuntu
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo add-apt-repository ppa:deadsnakes/ppa
-          sudo apt-get update
-          sudo apt-get install -y python3.11 python3.11-venv python3.11-dev python3-pip
+      - uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v3
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -59,13 +50,7 @@ jobs:
           override: true
           target: ${{ matrix.target || '' }}
 
-      - name: Install Cross-Compilation Tools (Linux ARM64 Only)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update && sudo apt-get install -y \
-          gcc-aarch64-linux-gnu
-
-      - name: Change to imspy-connector Directory
+      - name: Change to imspy-connector directory
         run: cd imspy_connector
 
       - name: Clean Cargo Artifacts
@@ -78,9 +63,9 @@ jobs:
         run: |
           cd imspy_connector
           if [ -n "${{ matrix.target }}" ]; then
-            maturin build --release --target ${{ matrix.target }} -i python3.11
+            maturin build --release --target ${{ matrix.target }}
           else
-            maturin build --release -i python3.11
+            maturin build --release
           fi
 
       - name: Publish
