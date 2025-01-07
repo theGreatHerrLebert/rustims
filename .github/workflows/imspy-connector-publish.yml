@@ -57,7 +57,7 @@ jobs:
       - name: Install Cross Compilation Tools (Linux ARM64 Only)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu python3.11 python3-pip python3-venv
 
       - name: Change to imspy-connector directory
         run: cd imspy_connector
@@ -72,9 +72,9 @@ jobs:
         run: |
           cd imspy_connector
           if [ -n "${{ matrix.target }}" ]; then
-            maturin build --release --target ${{ matrix.target }}
+            maturin build --release --target ${{ matrix.target }} -i python3.11
           else
-            maturin build --release
+            maturin build --release -i python3.11
           fi
 
       - name: Publish
