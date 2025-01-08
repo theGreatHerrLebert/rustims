@@ -14,6 +14,7 @@ pub struct PyTimsTransmissionDIA {
 #[pymethods]
 impl PyTimsTransmissionDIA {
     #[new]
+    #[pyo3(signature = (frame, frame_window_group, window_group, scan_start, scan_end, isolation_mz, isolation_width, k=None))]
     pub fn new(frame: Vec<i32>,
                frame_window_group: Vec<i32>,
                window_group: Vec<i32>,
@@ -39,14 +40,17 @@ impl PyTimsTransmissionDIA {
         self.inner.apply_transmission(frame_id, scan_id, &mz)
     }
 
+    #[pyo3(signature = (frame_id, scan_id, spectrum, min_probability=None))]
     pub fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: PyMzSpectrum, min_probability: Option<f64>) -> PyMzSpectrum {
         PyMzSpectrum { inner: self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability) }
     }
 
+    #[pyo3(signature = (frame, min_probability=None))]
     pub fn transmit_tims_frame(&self, frame: PyTimsFrame, min_probability: Option<f64>) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.transmit_tims_frame(&frame.inner, min_probability) }
     }
 
+    #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
     pub fn transmit_ion(&self, frames: Vec<i32>, scans: Vec<i32>, spectrum: PyMzSpectrum, min_proba: Option<f64>) -> Vec<Vec<PyMzSpectrum>> {
         let transmission_profile = self.inner.transmit_ion(frames, scans, spectrum.inner, min_proba);
         transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum { inner: y.clone() }).collect::<Vec<_>>()).collect::<Vec<_>>()
@@ -64,18 +68,22 @@ impl PyTimsTransmissionDIA {
         self.inner.frame_to_window_group(frame_id)
     }
 
+    #[pyo3(signature = (frame_id, scan_id, mz, min_proba=None))]
     pub fn is_transmitted(&self, frame_id: i32, scan_id: i32, mz: f64, min_proba: Option<f64>) -> bool {
         self.inner.is_transmitted(frame_id, scan_id, mz, min_proba)
     }
 
+    #[pyo3(signature = (frame_id, scan_id, mz, min_proba=None))]
     pub fn any_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
         self.inner.any_transmitted(frame_id, scan_id, &mz, min_proba)
     }
 
+    #[pyo3(signature = (frame_id, scan_id, mz, min_proba=None))]
     pub fn all_transmitted(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> bool {
         self.inner.all_transmitted(frame_id, scan_id, &mz, min_proba)
     }
 
+    #[pyo3(signature = (frame_id, scan_id, mz, min_proba=None))]
     pub fn get_transmission_set(&self, frame_id: i32, scan_id: i32, mz: Vec<f64>, min_proba: Option<f64>) -> HashSet<usize> {
         self.inner.get_transmission_set(frame_id, scan_id, &mz, min_proba)
     }
@@ -84,6 +92,7 @@ impl PyTimsTransmissionDIA {
         self.inner.is_precursor(frame_id)
     }
 
+    #[pyo3(signature = (frame_id, scan_id, mz_mono, mz, min_proba=None))]
     pub fn isotopes_transmitted(&self, frame_id: i32, scan_id: i32, mz_mono: f64, mz: Vec<f64>, min_proba: Option<f64>) -> (f64, Vec<(f64, f64)>) {
         self.inner.isotopes_transmitted(frame_id, scan_id, mz_mono, &mz, min_proba)
     }
@@ -128,6 +137,7 @@ impl PyTimsTofCollisionEnergyDIA {
 }
 
 #[pyfunction]
+#[pyo3(signature = (midpoint, window_length, mz, k=None))]
 pub fn apply_transmission(midpoint: f64, window_length: f64, mz: Vec<f64>, k: Option<f64>) -> Vec<f64> {
     mscore::timstof::quadrupole::apply_transmission(midpoint, window_length, k.unwrap_or(15.0), mz)
 }

@@ -1,7 +1,7 @@
 use mscore::data::spectrum::MsType;
 use pyo3::prelude::*;
 use mscore::simulation::annotation::{SourceType, SignalAttributes, ContributionSource, MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated, TimsSpectrumAnnotated};
-use numpy::{IntoPyArray, PyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 
 #[pyclass]
 #[derive(Clone)]
@@ -17,9 +17,9 @@ impl PyTimsSpectrumAnnotated {
                       scan_id: u32,
                       inv_mobility: f64,
                       ms_type: i32,
-                      tof: &PyArray1<u32>,
-                      mz: &PyArray1<f64>,
-                      intensity: &PyArray1<f64>,
+                      tof: &Bound<'_, PyArray1<u32>>,
+                      mz: &Bound<'_, PyArray1<f64>>,
+                      intensity: &Bound<'_, PyArray1<f64>>,
                       annotations: Vec<PyPeakAnnotation>) -> PyResult<Self> {
 
         let ms_type = MsType::new(ms_type);
@@ -61,7 +61,7 @@ impl PyTimsSpectrumAnnotated {
         PyMzSpectrumAnnotated { inner: self.inner.spectrum.clone() }
     }
     #[setter]
-    pub unsafe fn set_tof(&mut self, tof: &PyArray1<u32>) {
+    pub unsafe fn set_tof(&mut self, tof: &Bound<'_, PyArray1<u32>>) {
         self.inner.tof = tof.as_slice().unwrap().to_vec();
     }
 
@@ -86,14 +86,14 @@ impl PyTimsFrameAnnotated {
     pub unsafe fn new(frame_id: i32,
                       retention_time: f64,
                       ms_type: i32,
-                      tof: &PyArray1<u32>,
-                      mz: &PyArray1<f64>,
-                      scan: &PyArray1<u32>,
-                      inv_mobility: &PyArray1<f64>,
-                      intensity: &PyArray1<f64>,
+                      tof: &Bound<'_, PyArray1<u32>>,
+                      mz: &Bound<'_, PyArray1<f64>>,
+                      scan: &Bound<'_, PyArray1<u32>>,
+                      inv_mobility: &Bound<'_, PyArray1<f64>>,
+                      intensity: &Bound<'_, PyArray1<f64>>,
                       annotations: Vec<PyPeakAnnotation>) -> PyResult<Self> {
 
-        assert!(tof.len() == mz.len() && mz.len() == scan.len() && scan.len() == inv_mobility.len() && inv_mobility.len() == intensity.len() && intensity.len() == annotations.len());
+        assert!(tof.len()? == mz.len()? && mz.len()? == scan.len()? && scan.len()? == inv_mobility.len()? && inv_mobility.len()? == intensity.len()? && intensity.len()? == annotations.len());
 
         let ms_type = MsType::new(ms_type);
         let annotations = annotations.iter().map(|x| PeakAnnotation {
@@ -176,7 +176,7 @@ impl PyTimsFrameAnnotated {
     }
 
     #[setter]
-    pub unsafe fn set_tof(&mut self, tof: &PyArray1<u32>) {
+    pub unsafe fn set_tof(&mut self, tof: &Bound<'_, PyArray1<u32>>) {
         self.inner.tof = tof.as_slice().unwrap().to_vec();
     }
 
@@ -203,8 +203,8 @@ pub struct PyMzSpectrumAnnotated {
 #[pymethods]
 impl PyMzSpectrumAnnotated {
     #[new]
-    pub unsafe fn new(mz: &PyArray1<f64>, intensity: &PyArray1<f64>, annotations: Vec<PyPeakAnnotation>) -> PyResult<Self> {
-        assert!(mz.len() == intensity.len() && intensity.len() == annotations.len());
+    pub unsafe fn new(mz: &Bound<'_, PyArray1<f64>>, intensity:&Bound<'_, PyArray1<f64>>, annotations: Vec<PyPeakAnnotation>) -> PyResult<Self> {
+        assert!(mz.len()? == intensity.len()? && intensity.len()? == annotations.len());
         let annotations = annotations.iter().map(|x| PeakAnnotation {
             contributions: x.inner.clone()
         }).collect();
@@ -285,6 +285,7 @@ pub struct PySignalAttributes {
 #[pymethods]
 impl PySignalAttributes {
     #[new]
+    #[pyo3(signature = (charge_state, peptide_id, isotope_peak, description=None))]
     pub fn new(charge_state: i32, peptide_id: i32, isotope_peak: i32, description: Option<String>) -> PyResult<Self> {
         Ok(PySignalAttributes {
             inner: SignalAttributes {
@@ -314,6 +315,7 @@ pub struct PyContributionSource {
 #[pymethods]
 impl PyContributionSource {
     #[new]
+    #[pyo3(signature = (intensity_contribution, source_type, signal_attributes=None))]
     pub fn new(intensity_contribution: f64, source_type: PySourceType, signal_attributes: Option<PySignalAttributes>) -> Self {
         PyContributionSource {
             inner: ContributionSource {
@@ -337,7 +339,7 @@ impl PyContributionSource {
 }
 
 #[pymodule]
-pub fn py_annotation(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_annotation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySourceType>()?;
     m.add_class::<PySignalAttributes>()?;
     m.add_class::<PyContributionSource>()?;

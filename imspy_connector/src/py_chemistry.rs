@@ -31,11 +31,13 @@ pub fn calculate_monoisotopic_mass(peptide_sequence: PyPeptideSequence) -> f64 {
 }
 
 #[pyfunction]
+#[pyo3(signature = (sequence, max_charge=None, charge_probability=None))]
 pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<f64> {
     mscore::algorithm::peptide::simulate_charge_state_for_sequence(sequence, max_charge, charge_probability)
 }
 
 #[pyfunction]
+#[pyo3(signature = (sequences, num_threads, max_charge=None, charge_probability=None))]
 pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
     mscore::algorithm::peptide::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
 }
@@ -45,6 +47,7 @@ pub fn find_unimod_annotations(sequence: &str) -> (String, Vec<f64>) {
     mscore::chemistry::utility::find_unimod_patterns(sequence)
 }
 #[pyfunction]
+#[pyo3(signature = (sequence, charge, intensities, normalize, half_charge_one, peptide_id=None))]
 pub fn sequence_to_all_ions_ims(sequence: &str, charge: i32, intensities: Vec<f64>, normalize: bool, half_charge_one: bool, peptide_id: Option<i32>) -> String {
     rustdf::sim::utility::sequence_to_all_ions(sequence, charge, &intensities, normalize, half_charge_one, peptide_id)
 }
@@ -86,6 +89,7 @@ pub fn calculate_mz(mono_isotopic_mass: f64, charge: i32) -> f64 {
 }
 
 #[pyfunction]
+#[pyo3(signature = (sequence, charge, peptide_id=None))]
 pub fn simulate_precursor_spectrum(sequence: &str, charge: i32, peptide_id: Option<i32>) -> PyMzSpectrum {
     PyMzSpectrum { inner: mscore::algorithm::isotope::generate_precursor_spectrum(&sequence, charge, peptide_id) }
 }

@@ -20,6 +20,7 @@ impl PyTimsTofSyntheticsDataHandle {
         PyTimsTofSyntheticsDataHandle { inner: TimsTofSyntheticsDataHandle::new(path).unwrap() }
     }
 
+    #[pyo3(signature = (num_threads=None))]
     pub fn get_transmitted_ions(&self, num_threads: Option<usize>) -> (Vec<i32>, Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
         let threads = num_threads.unwrap_or(4);
         self.inner.get_transmitted_ions(threads)
@@ -109,7 +110,7 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
 
     pub fn count_number_transmissions(&self, py: Python, peptide_id: u32, charge: i8) -> PyResult<PyObject> {
         let (frame_count, scan_count) = self.inner.count_number_transmissions(peptide_id, charge);
-        let tuple = PyTuple::new(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py)]);
+        let tuple = PyTuple::new_bound(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py)]);
         Ok(tuple.into())
     }
 
