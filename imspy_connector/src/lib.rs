@@ -29,7 +29,7 @@ fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pymodule!(py_dda::py_dda))?;
     m.add_wrapped(wrap_pymodule!(py_dia::py_dia))?;
     m.add_wrapped(wrap_pymodule!(py_elements::py_elements))?;
-    m.add_wrapped(wrap_pymodule!(py_mz_spectrum::py_mz_spectrum))?;
+    m.add_wrapped(wrap_pymodule!(py_mz_spectrum::py_spectrum))?;
     m.add_wrapped(wrap_pymodule!(py_quadrupole::py_quadrupole))?;
     m.add_wrapped(wrap_pymodule!(py_peptide::py_peptide))?;
     m.add_wrapped(wrap_pymodule!(py_simulation::py_simulation))?;
