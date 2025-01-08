@@ -133,7 +133,7 @@ pub fn apply_transmission(midpoint: f64, window_length: f64, mz: Vec<f64>, k: Op
 }
 
 #[pymodule]
-pub fn quadrupole(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_quadrupole(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsTransmissionDIA>()?;
     m.add_class::<PyTimsTofCollisionEnergyDIA>()?;
     m.add_function(wrap_pyfunction!(apply_transmission, m)?)?;

@@ -112,7 +112,7 @@ pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(target
 }
 
 #[pymodule]
-pub fn chemistry(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_chemistry(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(generate_precursor_spectra, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_monoisotopic_mass, m)?)?;

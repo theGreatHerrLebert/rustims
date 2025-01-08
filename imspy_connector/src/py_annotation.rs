@@ -337,7 +337,7 @@ impl PyContributionSource {
 }
 
 #[pymodule]
-pub fn annotation(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_annotation(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PySourceType>()?;
     m.add_class::<PySignalAttributes>()?;
     m.add_class::<PyContributionSource>()?;

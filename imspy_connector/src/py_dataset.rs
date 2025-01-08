@@ -123,8 +123,8 @@ impl PyTimsDataset {
             frame.inner.ims_frame.intensity.clone().iter().map(|x| *x as u32).collect::<Vec<_>>(),
             total_scans, compression_level).unwrap();
 
-        let py_array: &PyArray1<u8> = compressed_frame.into_pyarray(py);
-        Ok(py_array.to_owned().into())
+        let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray_bound(py);
+        Ok(py_array.unbind().into())
     }
 
     pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
@@ -244,7 +244,7 @@ pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, i
 }
 
 #[pymodule]
-pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_dataset(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyAcquisitionMode>()?;
     m.add_function(wrap_pyfunction!(get_peak_cnts, m)?)?;

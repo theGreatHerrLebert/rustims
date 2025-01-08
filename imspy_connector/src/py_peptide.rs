@@ -341,7 +341,7 @@ impl PyPeptideProductIon {
 }
 
 #[pymodule]
-pub fn peptides(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_peptide(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
     m.add_class::<PyPeptideIon>()?;
     m.add_class::<PyPeptideProductIon>()?;

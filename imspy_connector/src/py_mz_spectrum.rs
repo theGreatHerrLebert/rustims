@@ -83,7 +83,7 @@ impl PyMzSpectrum {
             py_list.as_ref(py).append(py_spec)?;
         }
 
-        let numpy_indices = indices.into_pyarray(py);
+        let numpy_indices = indices.into_pyarray_bound(py).unbind();
 
         Ok(PyTuple::new(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
     }
@@ -308,7 +308,7 @@ impl PyTimsSpectrum {
 }
 
 #[pymodule]
-pub fn mz_spectrum(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_mz_spectrum(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMsType>()?;
     m.add_class::<PyMzSpectrum>()?;
     m.add_class::<PyMzSpectrumVectorized>()?;

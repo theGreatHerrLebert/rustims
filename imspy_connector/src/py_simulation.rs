@@ -119,7 +119,7 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
 }
 
 #[pymodule]
-pub fn simulation(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_simulation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
     m.add_class::<PyTimsTofSyntheticsPrecursorFrameBuilder>()?;
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;

@@ -55,7 +55,7 @@ pub fn calculate_frame_abundances_emg_par(frame_ids: Vec<i32>, retention_times: 
 
 
 #[pymodule]
-pub fn utility(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_utility(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(emg_cdf, m)?)?;
     m.add_function(wrap_pyfunction!(accumulated_cdf_emg, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_bounds_emg, m)?)?;

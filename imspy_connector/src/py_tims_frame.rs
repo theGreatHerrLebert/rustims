@@ -219,9 +219,14 @@ impl PyTimsFrame {
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
 
         let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
-        let py_array: &PyArray1<f64> = data.into_pyarray(py);
-        let py_scans: &PyArray1<i32> = scans.into_pyarray(py);
-        let py_window_indices: &PyArray1<i32> = window_indices.into_pyarray(py);
+        let py_array: Bound<'_, PyArray1<f64>> = data.into_pyarray_bound(py);
+        let py_scans: Bound<'_, PyArray1<i32>> = scans.into_pyarray_bound(py);
+        let py_window_indices: Bound<'_, PyArray1<i32>> = window_indices.into_pyarray_bound(py);
+
+        // If you need them outside the GIL context, unbind them:
+        let py_array = py_array.unbind();
+        let py_scans = py_scans.unbind();
+        let py_window_indices = py_window_indices.unbind();
         let tuple = PyTuple::new(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py), py_array.into_py(py), py_scans.into_py(py), py_window_indices.into_py(py)]);
 
         Ok(tuple.into())
@@ -335,7 +340,7 @@ impl  PyTimsFrameVectorized {
 }
 
 #[pymodule]
-pub fn tims_frame(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_tims_frame(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsFrame>()?;
     m.add_class::<PyTimsFrameVectorized>()?;
     m.add_class::<PyRawTimsFrame>()?;
