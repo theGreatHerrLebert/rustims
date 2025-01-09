@@ -527,10 +527,10 @@ def main():
                                           load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
     # go over RAW data one file at a time
-    for p, path in enumerate(paths):
+    for file_id, path in enumerate(paths):
         if args.verbose:
             print(f"processing {path} ...")
-            print(f"processing {p + 1} of {len(paths)} ...")
+            print(f"processing {file_id + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=params['in_memory'], use_bruker_sdk=params['bruker_sdk'])
@@ -789,6 +789,10 @@ def main():
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
 
+
+        for p in psm:
+            p.sage_feature.file_id = file_id
+
         # serialize PSMs to bincode binary
         bts = compress_psms(psm)
 
@@ -811,8 +815,6 @@ def main():
 
     psms = []
 
-    file_counter = 0
-
     # read PSMs from binary files
     for file in os.listdir(write_folder_path + "/imspy/psm/"):
         if file.endswith(".bin"):
@@ -820,10 +822,6 @@ def main():
             data = f.read()
             f.close()
             psms.extend(decompress_psms(data))
-
-            for psm in psms:
-                psm.sage_feature.file_id = file_counter
-            file_counter += 1
 
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
