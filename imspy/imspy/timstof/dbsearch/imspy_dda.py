@@ -839,6 +839,8 @@ def main():
 
     # if we have only one fasta file, we can use sage core fdr calculation
     if len(fastas) == 1:
+        if args.verbose:
+            print("calculating q-values using SAGE internal functions...")
         sage_fdr_psm(psms, indexed_db, use_hyper_score=False)
 
     # serialize all PSMs to JSON binary
