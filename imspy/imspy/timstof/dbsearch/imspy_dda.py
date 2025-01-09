@@ -811,6 +811,8 @@ def main():
 
     psms = []
 
+    file_counter = 0
+
     # read PSMs from binary files
     for file in os.listdir(write_folder_path + "/imspy/psm/"):
         if file.endswith(".bin"):
@@ -818,6 +820,10 @@ def main():
             data = f.read()
             f.close()
             psms.extend(decompress_psms(data))
+
+            for psm in psms:
+                psm.sage_feature.file_id = file_counter
+            file_counter += 1
 
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
