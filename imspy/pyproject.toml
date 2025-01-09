@@ -1,50 +1,53 @@
-[tool.poetry]
+[project]
 name = "imspy"
-version = "0.3.4"
+version = "0.3.5"
 description = ""
-authors = ["theGreatHerrLebert <davidteschner@googlemail.com>"]
+authors = [
+    { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
+]
 readme = "README.md"
+requires-python = ">=3.11,<3.13"
 
-[tool.poetry.dependencies]
-python = ">=3.11,<3.12"
-pandas = ">=2.1"
-numpy = ">=1.21"
-numba = ">=0.53"
-zstd = ">=1.5.6.1"
-tabulate = ">=0.9.0"
-pyqt5 = ">=5.15.11"
-qdarkstyle = ">=3.2.3"
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.21",
+    "numba>=0.53",
+    "zstd>=1.5.6.1",
+    "tabulate>=0.9.0",
+    "tensorflow==2.15.*",
+    "tensorflow-probability>=0.22.1",
+    "wandb>=0.12.1",
+    "mokapot>=0.10.0",
+    "sagepy>=0.3.0",
+    "imspy-connector>=0.3.5",
+    "scipy>=1.7.1",
+    "tqdm>=4.66",
+    "pyarrow>=13.0",
+    "mendeleev>=0.7.0",
+    "dlomix>=0.0.6",
+    "toml>=0.10.2",
+    "poetry (>=2.0.0,<3.0.0)"
+]
 
+[project.optional-dependencies]
+gui = [
+    "pyqt5>=5.15.11",
+    "qdarkstyle>=3.2.3",
+    "vtk>=9.4.0"
+]
 
-tensorflow = "2.15.*"
-tensorflow-probability = ">=0.22.1"
-wandb = ">=0.12.1"
+[project.scripts]
+imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
+imspy_ccs = "imspy.timstof.dbsearch.imspy_ccs:main"
+timsim = "imspy.simulation.timsim.simulator:main"
+timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
+imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
 
-mokapot = ">=0.10.0"
-
-sagepy = ">=0.3.0"
-imspy-connector = ">=0.3.4"
-
-scipy = ">=1.7.1"
-tqdm = ">=4.66"
-pyarrow =">=13.0"
-mendeleev = ">=0.7.0"
-dlomix = ">=0.0.6"
-toml = ">=0.10.2"
-vtk = ">=9.4.0"
-
-[tool.poetry.group.dev.dependencies]
-sphinx = "^8.1.0"
-
-myst-parser = "^4.0.0"
-sphinx-autodoc-typehints = "^2.5.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-[tool.poetry.scripts]
-imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
-"imspy_ccs" = "imspy.timstof.dbsearch.imspy_ccs:main"
-timsim = "imspy.simulation.timsim.simulator:main"
-timsim-gui = "imspy.simulation.timsim.timsim_gui:main"
-imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
+[tool.poetry.group.dev.dependencies]
+sphinx = "^8.1.0"
+myst-parser = "^4.0.0"
+sphinx-autodoc-typehints = "^2.5.0"

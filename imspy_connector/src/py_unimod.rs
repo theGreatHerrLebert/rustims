@@ -21,7 +21,7 @@ pub fn get_unimod_atomic_compositions() -> HashMap<String, HashMap<String, i32>>
 }
 
 #[pymodule]
-pub fn unimod(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_unimod(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_unimod_masses, m)?)?;
     m.add_function(wrap_pyfunction!(get_unimod_atomic_compositions, m)?)?;
     Ok(())

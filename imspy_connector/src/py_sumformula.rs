@@ -37,7 +37,7 @@ impl PySumFormula {
 
 
 #[pymodule]
-pub fn sum_formula(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_sum_formula(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySumFormula>()?;
     Ok(())
 }

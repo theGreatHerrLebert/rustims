@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use mscore::data::spectrum::{MsType};
 use mscore::timstof::slice::{TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
-use numpy::{IntoPyArray, PyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 use crate::py_mz_spectrum::{PyTimsSpectrum};
 
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
@@ -19,13 +19,13 @@ impl PyTimsSlice {
     #[new]
     pub unsafe fn new(
         _py: Python,
-        frame_ids: &PyArray1<i32>,
-        scans: &PyArray1<i32>,
-        tofs: &PyArray1<i32>,
-        retention_times: &PyArray1<f64>,
-        mobilities: &PyArray1<f64>,
-        mzs: &PyArray1<f64>,
-        intensities: &PyArray1<f64>,
+        frame_ids: &Bound<'_, PyArray1<i32>>,
+        scans: &Bound<'_, PyArray1<i32>>,
+        tofs: &Bound<'_, PyArray1<i32>>,
+        retention_times: &Bound<'_, PyArray1<f64>>,
+        mobilities: &Bound<'_, PyArray1<f64>>,
+        mzs: &Bound<'_, PyArray1<f64>>,
+        intensities: &Bound<'_, PyArray1<f64>>,
     ) -> PyResult<Self> {
         let frame_ids_vec = frame_ids.as_slice()?.to_vec();
         let scans_vec = scans.as_slice()?.to_vec();
@@ -87,11 +87,11 @@ impl PyTimsSlice {
 
     pub fn get_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
-        let list: Py<PyList> = PyList::empty(py).into();
+        let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for frame in frames {
             let py_tims_frame = Py::new(py, PyTimsFrame { inner: frame.clone() })?;
-            list.as_ref(py).append(py_tims_frame)?;
+            list.bind(py).append(py_tims_frame)?;
         }
 
         Ok(list.into())
@@ -112,11 +112,11 @@ impl PyTimsSlice {
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> PyResult<Py<PyList>> {
 
         let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity, num_threads);
-        let list: Py<PyList> = PyList::empty(py).into();
+        let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for window in windows {
             let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
-            list.as_ref(py).append(py_mz_spectrum)?;
+            list.bind(py).append(py_mz_spectrum)?;
         }
 
         Ok(list.into())
@@ -154,11 +154,11 @@ impl PyTimsSlice {
     pub fn to_tims_planes(&self, py: Python, tof_max_value: i32, num_chunks: i32, num_threads: i32) -> PyResult<Py<PyList>> {
 
         let planes = self.inner.to_tims_planes(tof_max_value, num_chunks, num_threads as usize);
-        let list: Py<PyList> = PyList::empty(py).into();
+        let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for plane in planes {
             let py_plane = Py::new(py, PyTimsPlane { inner: plane })?;
-            list.as_ref(py).append(py_plane)?;
+            list.bind(py).append(py_plane)?;
         }
 
         Ok(list.into())
@@ -189,11 +189,11 @@ impl PyTimsSliceVectorized {
     #[getter]
     pub fn get_vectorized_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
-        let list: Py<PyList> = PyList::empty(py).into();
+        let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for frame in frames {
             let py_tims_frame = Py::new(py, PyTimsFrameVectorized { inner: frame.clone() })?;
-            list.as_ref(py).append(py_tims_frame)?;
+            list.bind(py).append(py_tims_frame)?;
         }
 
         Ok(list.into())
@@ -299,7 +299,7 @@ impl PyTimsPlane {
 }
 
 #[pymodule]
-pub fn tims_slice(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_tims_slice(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsSlice>()?;
     m.add_class::<PyTimsSliceVectorized>()?;
     m.add_class::<PyTimsPlane>()?;

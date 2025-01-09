@@ -28,7 +28,7 @@ pub fn get_amino_acid_atomic_compositions() -> HashMap<String, HashMap<String, i
 }
 
 #[pymodule]
-pub fn amino_acids(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_amino_acids(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_amino_acids, m)?)?;
     m.add_function(wrap_pyfunction!(get_amino_acid_mono_isotopic_masses, m)?)?;
     m.add_function(wrap_pyfunction!(get_amino_acid_atomic_compositions, m)?)?;

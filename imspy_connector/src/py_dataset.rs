@@ -102,6 +102,7 @@ impl PyTimsDataset {
         ))
     }
 
+    #[pyo3(signature = (frame, total_scans, use_frame_id=None, compression_level=None))]
     pub fn compress_frame(&self, py: Python<'_>, frame: PyTimsFrame, total_scans: u32, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
 
         let compression_level = compression_level.unwrap_or(0);
@@ -123,10 +124,11 @@ impl PyTimsDataset {
             frame.inner.ims_frame.intensity.clone().iter().map(|x| *x as u32).collect::<Vec<_>>(),
             total_scans, compression_level).unwrap();
 
-        let py_array: &PyArray1<u8> = compressed_frame.into_pyarray(py);
-        Ok(py_array.to_owned().into())
+        let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray_bound(py);
+        Ok(py_array.unbind().into())
     }
 
+    #[pyo3(signature = (frames, total_scans, num_threads, use_frame_id=None, compression_level=None))]
     pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
 
         let mut filled_tims_frames = Vec::with_capacity(frames.len());
@@ -163,7 +165,7 @@ impl PyTimsDataset {
         let compressed_frames = compress_collection(filled_tims_frames, total_scans, compression_level, num_threads);
 
         // convert the compressed frames to a python list of numpy arrays
-        let py_list = PyList::empty(py);
+        let py_list = PyList::empty_bound(py);
 
         for frame in compressed_frames {
             let np_array = frame.into_pyarray_bound(py).unbind();
@@ -244,7 +246,7 @@ pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, i
 }
 
 #[pymodule]
-pub fn dataset(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_dataset(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
     m.add_class::<PyAcquisitionMode>()?;
     m.add_function(wrap_pyfunction!(get_peak_cnts, m)?)?;
