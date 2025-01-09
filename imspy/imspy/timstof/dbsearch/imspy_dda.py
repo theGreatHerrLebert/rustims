@@ -25,6 +25,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from sklearn.svm import SVC
 from sagepy.rescore.rescore import rescore_psms
+from sagepy.core.fdr import sage_fdr_psm
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     write_psms_binary, \
@@ -822,6 +823,10 @@ def main():
             data = f.read()
             f.close()
             psms.extend(decompress_psms(data))
+
+    # if we have only one fasta file, we can use sage core fdr calculation
+    if len(fastas) == 1:
+        sage_fdr_psm(psms, indexed_db, use_hyper_score=True)
 
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
