@@ -405,7 +405,7 @@ def main():
                 paths.append(os.path.join(root, file))
 
     # Get the write folder path
-    write_folder_path = str(Path(args.path).parent)
+    write_folder_path = str(Path(args.path))
 
     # create imspy folder if it does not exist
     if not os.path.exists(write_folder_path + "/imspy"):
