@@ -789,9 +789,9 @@ def main():
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
 
-
+        # add file id to PSMs
         for p in psm:
-            p.sage_feature.file_id = file_id
+            p.sage_feature_file_id = file_id
 
         # serialize PSMs to bincode binary
         bts = compress_psms(psm)
