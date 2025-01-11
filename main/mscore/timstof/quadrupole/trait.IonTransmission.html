@@ -1,91 +1,91 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `IonTransmission` trait in crate `mscore`."><title>IonTransmission in mscore::timstof::quadrupole - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-46f98efaafac5295.ttf.woff2,FiraSans-Regular-018c141bf0843ffd.woff2,FiraSans-Medium-8f9a781e4970d388.woff2,SourceCodePro-Regular-562dcc5011b6de7d.ttf.woff2,SourceCodePro-Semibold-d899c5a5c4aeb14a.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-76eba96aa4d2e634.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b0742ba02757f159.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.83.0 (90b35a623 2024-11-26)" data-channel="1.83.0" data-search-js="search-f0d225181b97f9a4.js" data-settings-js="settings-805db61a62df4bd2.js" ><script src="../../../static.files/storage-1d39b6787ed640ff.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-f070b9041d14864c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-0111fcff984fae8f.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-422f7d1d52889060.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-2c020d218678b618.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../mscore/index.html">mscore</a><span class="version">0.2.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">IonTransmission</a></h2><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.apply_transmission" title="apply_transmission">apply_transmission</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.all_transmitted" title="all_transmitted">all_transmitted</a></li><li><a href="#method.any_transmitted" title="any_transmitted">any_transmitted</a></li><li><a href="#method.get_transmission_set" title="get_transmission_set">get_transmission_set</a></li><li><a href="#method.is_transmitted" title="is_transmitted">is_transmitted</a></li><li><a href="#method.isotopes_transmitted" title="isotopes_transmitted">isotopes_transmitted</a></li><li><a href="#method.transmit_annotated_spectrum" title="transmit_annotated_spectrum">transmit_annotated_spectrum</a></li><li><a href="#method.transmit_ion" title="transmit_ion">transmit_ion</a></li><li><a href="#method.transmit_spectrum" title="transmit_spectrum">transmit_spectrum</a></li><li><a href="#method.transmit_tims_frame" title="transmit_tims_frame">transmit_tims_frame</a></li><li><a href="#method.transmit_tims_frame_annotated" title="transmit_tims_frame_annotated">transmit_tims_frame_annotated</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In mscore::<wbr>timstof::<wbr>quadrupole</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">mscore</a>::<wbr><a href="../index.html">timstof</a>::<wbr><a href="index.html">quadrupole</a></span><h1>Trait <span class="trait">IonTransmission</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/mscore/timstof/quadrupole.rs.html#132-382">source</a> </span></div><pre class="rust item-decl"><code>pub trait IonTransmission {
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="API documentation for the Rust `IonTransmission` trait in crate `mscore`."><title>IonTransmission in mscore::timstof::quadrupole - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-42caa33d.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.84.0 (9fc6b4312 2025-01-07)" data-channel="1.84.0" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="sidebar-items.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc trait"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../mscore/index.html">mscore</a><span class="version">0.2.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">IonTransmission</a></h2><h3><a href="#required-methods">Required Methods</a></h3><ul class="block"><li><a href="#tymethod.apply_transmission" title="apply_transmission">apply_transmission</a></li></ul><h3><a href="#provided-methods">Provided Methods</a></h3><ul class="block"><li><a href="#method.all_transmitted" title="all_transmitted">all_transmitted</a></li><li><a href="#method.any_transmitted" title="any_transmitted">any_transmitted</a></li><li><a href="#method.get_transmission_set" title="get_transmission_set">get_transmission_set</a></li><li><a href="#method.is_transmitted" title="is_transmitted">is_transmitted</a></li><li><a href="#method.isotopes_transmitted" title="isotopes_transmitted">isotopes_transmitted</a></li><li><a href="#method.transmit_annotated_spectrum" title="transmit_annotated_spectrum">transmit_annotated_spectrum</a></li><li><a href="#method.transmit_ion" title="transmit_ion">transmit_ion</a></li><li><a href="#method.transmit_spectrum" title="transmit_spectrum">transmit_spectrum</a></li><li><a href="#method.transmit_tims_frame" title="transmit_tims_frame">transmit_tims_frame</a></li><li><a href="#method.transmit_tims_frame_annotated" title="transmit_tims_frame_annotated">transmit_tims_frame_annotated</a></li></ul><h3><a href="#implementors">Implementors</a></h3></section><div id="rustdoc-modnav"><h2><a href="index.html">In mscore::<wbr>timstof::<wbr>quadrupole</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><span class="rustdoc-breadcrumbs"><a href="../../index.html">mscore</a>::<wbr><a href="../index.html">timstof</a>::<wbr><a href="index.html">quadrupole</a></span><h1>Trait <span class="trait">IonTransmission</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/mscore/timstof/quadrupole.rs.html#132-382">Source</a> </span></div><pre class="rust item-decl"><code>pub trait IonTransmission {
     // Required method
     fn <a href="#tymethod.apply_transmission" class="fn">apply_transmission</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;;
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;;
 
     // Provided methods
     fn <a href="#method.transmit_spectrum" class="fn">transmit_spectrum</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
         spectrum: <a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>,
-        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
     ) -&gt; <a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.transmit_annotated_spectrum" class="fn">transmit_annotated_spectrum</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
         spectrum: <a class="struct" href="../../simulation/annotation/struct.MzSpectrumAnnotated.html" title="struct mscore::simulation::annotation::MzSpectrumAnnotated">MzSpectrumAnnotated</a>,
-        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
     ) -&gt; <a class="struct" href="../../simulation/annotation/struct.MzSpectrumAnnotated.html" title="struct mscore::simulation::annotation::MzSpectrumAnnotated">MzSpectrumAnnotated</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.transmit_ion" class="fn">transmit_ion</a>(
         &amp;self,
-        frame_ids: <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>&gt;,
-        scan_ids: <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>&gt;,
+        frame_ids: <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>&gt;,
+        scan_ids: <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>&gt;,
         spec: <a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>,
-        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>&gt;&gt; { ... }
+        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>&gt;&gt; { ... }
 <span class="item-spacer"></span>    fn <a href="#method.get_transmission_set" class="fn">get_transmission_set</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.83.0/std/collections/hash/set/struct.HashSet.html" title="struct std::collections::hash::set::HashSet">HashSet</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.usize.html">usize</a>&gt; { ... }
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.84.0/std/collections/hash/set/struct.HashSet.html" title="struct std::collections::hash::set::HashSet">HashSet</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.usize.html">usize</a>&gt; { ... }
 <span class="item-spacer"></span>    fn <a href="#method.all_transmitted" class="fn">all_transmitted</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.bool.html">bool</a> { ... }
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.bool.html">bool</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.is_transmitted" class="fn">is_transmitted</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        mz: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>,
-        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.bool.html">bool</a> { ... }
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        mz: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>,
+        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.bool.html">bool</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.any_transmitted" class="fn">any_transmitted</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.bool.html">bool</a> { ... }
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+        min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.bool.html">bool</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.transmit_tims_frame" class="fn">transmit_tims_frame</a>(
         &amp;self,
         frame: &amp;<a class="struct" href="../frame/struct.TimsFrame.html" title="struct mscore::timstof::frame::TimsFrame">TimsFrame</a>,
-        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
     ) -&gt; <a class="struct" href="../frame/struct.TimsFrame.html" title="struct mscore::timstof::frame::TimsFrame">TimsFrame</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.transmit_tims_frame_annotated" class="fn">transmit_tims_frame_annotated</a>(
         &amp;self,
         frame: &amp;<a class="struct" href="../../simulation/annotation/struct.TimsFrameAnnotated.html" title="struct mscore::simulation::annotation::TimsFrameAnnotated">TimsFrameAnnotated</a>,
-        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
     ) -&gt; <a class="struct" href="../../simulation/annotation/struct.TimsFrameAnnotated.html" title="struct mscore::simulation::annotation::TimsFrameAnnotated">TimsFrameAnnotated</a> { ... }
 <span class="item-spacer"></span>    fn <a href="#method.isotopes_transmitted" class="fn">isotopes_transmitted</a>(
         &amp;self,
-        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-        mz_mono: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>,
-        isotopic_envelope: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    ) -&gt; (<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>, <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;(<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>, <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>)&gt;) { ... }
-}</code></pre><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><section id="tymethod.apply_transmission" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#133">source</a><h4 class="code-header">fn <a href="#tymethod.apply_transmission" class="fn">apply_transmission</a>(
+        frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+        mz_mono: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>,
+        isotopic_envelope: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+        min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    ) -&gt; (<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>, <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;(<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>, <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>)&gt;) { ... }
+}</code></pre><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><section id="tymethod.apply_transmission" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#133">Source</a><h4 class="code-header">fn <a href="#tymethod.apply_transmission" class="fn">apply_transmission</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;</h4></section></div><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.transmit_spectrum" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#148-168">source</a><h4 class="code-header">fn <a href="#method.transmit_spectrum" class="fn">transmit_spectrum</a>(
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;</h4></section></div><h2 id="provided-methods" class="section-header">Provided Methods<a href="#provided-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="method.transmit_spectrum" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#148-168">Source</a><h4 class="code-header">fn <a href="#method.transmit_spectrum" class="fn">transmit_spectrum</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
     spectrum: <a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>,
-    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
 ) -&gt; <a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a></h4></section></summary><div class="docblock"><p>Transmit a spectrum given a frame id and scan id</p>
 <p>Arguments:</p>
 <ul>
@@ -98,12 +98,12 @@
 <ul>
 <li><code>MzSpectrum</code> - transmitted spectrum</li>
 </ul>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.transmit_annotated_spectrum" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#183-205">source</a><h4 class="code-header">fn <a href="#method.transmit_annotated_spectrum" class="fn">transmit_annotated_spectrum</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.transmit_annotated_spectrum" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#183-205">Source</a><h4 class="code-header">fn <a href="#method.transmit_annotated_spectrum" class="fn">transmit_annotated_spectrum</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
     spectrum: <a class="struct" href="../../simulation/annotation/struct.MzSpectrumAnnotated.html" title="struct mscore::simulation::annotation::MzSpectrumAnnotated">MzSpectrumAnnotated</a>,
-    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
 ) -&gt; <a class="struct" href="../../simulation/annotation/struct.MzSpectrumAnnotated.html" title="struct mscore::simulation::annotation::MzSpectrumAnnotated">MzSpectrumAnnotated</a></h4></section></summary><div class="docblock"><p>Transmit an annotated spectrum given a frame id and scan id</p>
 <p>Arguments:</p>
 <ul>
@@ -116,19 +116,19 @@
 <ul>
 <li><code>MzSpectrumAnnotated</code> - transmitted spectrum</li>
 </ul>
-</div></details><section id="method.transmit_ion" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#207-220">source</a><h4 class="code-header">fn <a href="#method.transmit_ion" class="fn">transmit_ion</a>(
+</div></details><section id="method.transmit_ion" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#207-220">Source</a><h4 class="code-header">fn <a href="#method.transmit_ion" class="fn">transmit_ion</a>(
     &amp;self,
-    frame_ids: <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>&gt;,
-    scan_ids: <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>&gt;,
+    frame_ids: <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>&gt;,
+    scan_ids: <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>&gt;,
     spec: <a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>,
-    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>&gt;&gt;</h4></section><details class="toggle method-toggle" open><summary><section id="method.get_transmission_set" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#235-240">source</a><h4 class="code-header">fn <a href="#method.get_transmission_set" class="fn">get_transmission_set</a>(
+    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="struct" href="../../data/spectrum/struct.MzSpectrum.html" title="struct mscore::data::spectrum::MzSpectrum">MzSpectrum</a>&gt;&gt;</h4></section><details class="toggle method-toggle" open><summary><section id="method.get_transmission_set" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#235-240">Source</a><h4 class="code-header">fn <a href="#method.get_transmission_set" class="fn">get_transmission_set</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.83.0/std/collections/hash/set/struct.HashSet.html" title="struct std::collections::hash::set::HashSet">HashSet</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.usize.html">usize</a>&gt;</h4></section></summary><div class="docblock"><p>Get all ions in a frame that are transmitted</p>
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; <a class="struct" href="https://doc.rust-lang.org/1.84.0/std/collections/hash/set/struct.HashSet.html" title="struct std::collections::hash::set::HashSet">HashSet</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.usize.html">usize</a>&gt;</h4></section></summary><div class="docblock"><p>Get all ions in a frame that are transmitted</p>
 <p>Arguments:</p>
 <ul>
 <li><code>frame_id</code> - frame id</li>
@@ -140,13 +140,13 @@
 <ul>
 <li><code>HashSet&lt;usize&gt;</code> - indices of transmitted mz values</li>
 </ul>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.all_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#255-259">source</a><h4 class="code-header">fn <a href="#method.all_transmitted" class="fn">all_transmitted</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.all_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#255-259">Source</a><h4 class="code-header">fn <a href="#method.all_transmitted" class="fn">all_transmitted</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if all mz values in a given collection are transmitted</p>
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if all mz values in a given collection are transmitted</p>
 <p>Arguments:</p>
 <ul>
 <li><code>frame_id</code> - frame id</li>
@@ -158,13 +158,13 @@
 <ul>
 <li><code>bool</code> - true if all mz values are transmitted</li>
 </ul>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.is_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#274-278">source</a><h4 class="code-header">fn <a href="#method.is_transmitted" class="fn">is_transmitted</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.is_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#274-278">Source</a><h4 class="code-header">fn <a href="#method.is_transmitted" class="fn">is_transmitted</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    mz: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>,
-    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if a single mz value is transmitted</p>
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    mz: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>,
+    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if a single mz value is transmitted</p>
 <p>Arguments:</p>
 <ul>
 <li><code>frame_id</code> - frame id</li>
@@ -176,13 +176,13 @@
 <ul>
 <li><code>bool</code> - true if mz value is transmitted</li>
 </ul>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.any_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#293-297">source</a><h4 class="code-header">fn <a href="#method.any_transmitted" class="fn">any_transmitted</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.any_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#293-297">Source</a><h4 class="code-header">fn <a href="#method.any_transmitted" class="fn">any_transmitted</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if any mz value is transmitted, can be used to check if one peak of isotopic envelope is transmitted</p>
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    mz: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    min_proba: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.bool.html">bool</a></h4></section></summary><div class="docblock"><p>Check if any mz value is transmitted, can be used to check if one peak of isotopic envelope is transmitted</p>
 <p>Arguments:</p>
 <ul>
 <li><code>frame_id</code> - frame id</li>
@@ -194,15 +194,15 @@
 <ul>
 <li><code>bool</code> - true if any mz value is transmitted</li>
 </ul>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.transmit_tims_frame" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#300-326">source</a><h4 class="code-header">fn <a href="#method.transmit_tims_frame" class="fn">transmit_tims_frame</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.transmit_tims_frame" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#300-326">Source</a><h4 class="code-header">fn <a href="#method.transmit_tims_frame" class="fn">transmit_tims_frame</a>(
     &amp;self,
     frame: &amp;<a class="struct" href="../frame/struct.TimsFrame.html" title="struct mscore::timstof::frame::TimsFrame">TimsFrame</a>,
-    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
 ) -&gt; <a class="struct" href="../frame/struct.TimsFrame.html" title="struct mscore::timstof::frame::TimsFrame">TimsFrame</a></h4></section></summary><div class="docblock"><p>Transmit a frame given a diaPASEF transmission layout</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.transmit_tims_frame_annotated" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#339-366">source</a><h4 class="code-header">fn <a href="#method.transmit_tims_frame_annotated" class="fn">transmit_tims_frame_annotated</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.transmit_tims_frame_annotated" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#339-366">Source</a><h4 class="code-header">fn <a href="#method.transmit_tims_frame_annotated" class="fn">transmit_tims_frame_annotated</a>(
     &amp;self,
     frame: &amp;<a class="struct" href="../../simulation/annotation/struct.TimsFrameAnnotated.html" title="struct mscore::simulation::annotation::TimsFrameAnnotated">TimsFrameAnnotated</a>,
-    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
+    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
 ) -&gt; <a class="struct" href="../../simulation/annotation/struct.TimsFrameAnnotated.html" title="struct mscore::simulation::annotation::TimsFrameAnnotated">TimsFrameAnnotated</a></h4></section></summary><div class="docblock"><p>Transmit a frame given a diaPASEF transmission layout with annotations</p>
 <p>Arguments:</p>
 <ul>
@@ -213,11 +213,11 @@
 <ul>
 <li><code>TimsFrameAnnotated</code> - transmitted frame</li>
 </ul>
-</div></details><section id="method.isotopes_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#368-381">source</a><h4 class="code-header">fn <a href="#method.isotopes_transmitted" class="fn">isotopes_transmitted</a>(
+</div></details><section id="method.isotopes_transmitted" class="method"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#368-381">Source</a><h4 class="code-header">fn <a href="#method.isotopes_transmitted" class="fn">isotopes_transmitted</a>(
     &amp;self,
-    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.i32.html">i32</a>,
-    mz_mono: <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>,
-    isotopic_envelope: &amp;<a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.83.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>&gt;,
-) -&gt; (<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>, <a class="struct" href="https://doc.rust-lang.org/1.83.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;(<a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>, <a class="primitive" href="https://doc.rust-lang.org/1.83.0/std/primitive.f64.html">f64</a>)&gt;)</h4></section></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-IonTransmission-for-TimsTransmissionDIA" class="impl"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#454-470">source</a><a href="#impl-IonTransmission-for-TimsTransmissionDIA" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.IonTransmission.html" title="trait mscore::timstof::quadrupole::IonTransmission">IonTransmission</a> for <a class="struct" href="struct.TimsTransmissionDIA.html" title="struct mscore::timstof::quadrupole::TimsTransmissionDIA">TimsTransmissionDIA</a></h3></section></div><script src="../../../trait.impl/mscore/timstof/quadrupole/trait.IonTransmission.js" async></script></section></div></main></body></html>
+    frame_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    scan_id: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.i32.html">i32</a>,
+    mz_mono: <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>,
+    isotopic_envelope: &amp;<a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+    min_probability: <a class="enum" href="https://doc.rust-lang.org/1.84.0/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>&gt;,
+) -&gt; (<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>, <a class="struct" href="https://doc.rust-lang.org/1.84.0/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;(<a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>, <a class="primitive" href="https://doc.rust-lang.org/1.84.0/std/primitive.f64.html">f64</a>)&gt;)</h4></section></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"><section id="impl-IonTransmission-for-TimsTransmissionDIA" class="impl"><a class="src rightside" href="../../../src/mscore/timstof/quadrupole.rs.html#454-470">Source</a><a href="#impl-IonTransmission-for-TimsTransmissionDIA" class="anchor">§</a><h3 class="code-header">impl <a class="trait" href="trait.IonTransmission.html" title="trait mscore::timstof::quadrupole::IonTransmission">IonTransmission</a> for <a class="struct" href="struct.TimsTransmissionDIA.html" title="struct mscore::timstof::quadrupole::TimsTransmissionDIA">TimsTransmissionDIA</a></h3></section></div><script src="../../../trait.impl/mscore/timstof/quadrupole/trait.IonTransmission.js" async></script></section></div></main></body></html>
