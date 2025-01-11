@@ -25,6 +25,7 @@ from imspy.timstof import TimsDatasetDDA
 
 from sklearn.svm import SVC
 from sagepy.rescore.rescore import rescore_psms
+from sagepy.core.fdr import sage_fdr_psm
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     write_psms_binary, \
@@ -405,7 +406,7 @@ def main():
                 paths.append(os.path.join(root, file))
 
     # Get the write folder path
-    write_folder_path = str(Path(args.path).parent)
+    write_folder_path = str(Path(args.path))
 
     # create imspy folder if it does not exist
     if not os.path.exists(write_folder_path + "/imspy"):
@@ -527,10 +528,10 @@ def main():
                                           load_tokenizer_from_resources("tokenizer-ptm"), verbose=True)
 
     # go over RAW data one file at a time
-    for p, path in enumerate(paths):
+    for file_id, path in enumerate(paths):
         if args.verbose:
             print(f"processing {path} ...")
-            print(f"processing {p + 1} of {len(paths)} ...")
+            print(f"processing {file_id + 1} of {len(paths)} ...")
 
         ds_name = os.path.basename(path).split(".")[0]
         dataset = TimsDatasetDDA(str(path), in_memory=params['in_memory'], use_bruker_sdk=params['bruker_sdk'])
@@ -789,6 +790,10 @@ def main():
         for rt, p in zip(rt_pred, psm):
             p.retention_time_predicted = rt
 
+        # add file id to PSMs
+        for p in psm:
+            p.sage_feature_file_id = file_id
+
         # serialize PSMs to bincode binary
         bts = compress_psms(psm)
 
@@ -831,6 +836,12 @@ def main():
         score=params['re_score_metric'],
         num_threads=params['num_threads'],
     )
+
+    # if we have only one fasta file, we can use sage core fdr calculation
+    if len(fastas) == 1:
+        if args.verbose:
+            print("calculating q-values using SAGE internal functions...")
+        sage_fdr_psm(psms, indexed_db, use_hyper_score=False)
 
     # serialize all PSMs to JSON binary
     bts = compress_psms(psms)

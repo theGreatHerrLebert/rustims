@@ -4,14 +4,14 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-statrs = "0.16.0"
-itertools = "0.13.0"
+statrs = "0.18.0"
+itertools = "0.14.0"
 rayon = "1.10.0"
-nalgebra = "0.32.5"
-serde = { version = "1.0.198", features = ["derive"] }
-regex = "1.10.4"
+nalgebra = "0.33.2"
+serde = { version = "1.0.217", features = ["derive"] }
+regex = "1.11.1"
 rand = "0.8.5"
-ordered-float = "4.5.0"
+ordered-float = "4.6.0"
 bincode = "2.0.0-rc.3"
 
 [lib]
