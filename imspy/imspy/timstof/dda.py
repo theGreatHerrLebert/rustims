@@ -4,7 +4,6 @@ from typing import List
 import numpy as np
 import pandas as pd
 
-from examples.imspy_dda import sage_precursor
 from sagepy.core.spectrum import Peak
 
 from imspy.simulation.annotation import RustWrapperObject
