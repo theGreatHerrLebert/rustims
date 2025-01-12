@@ -172,6 +172,14 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         precursor_frames = [TimsFrame.from_py_ptr(frame) for frame in self.__dataset.get_precursor_frames(min_intensity, max_peaks, num_threads)]
         return precursor_frames
 
+    def get_selected_precursors_meta(self) -> List[PrecursorDDA]:
+        """
+        Get meta data for all selected precursors
+        Returns:
+            List[PrecursorDDA]: List of all selected precursors
+        """
+        return [PrecursorDDA.from_py_ptr(precursor) for precursor in self.__dataset.get_selected_precursors_meta()]
+
     def __repr__(self):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "
                 f"fragmented_precursors={self.fragmented_precursors.shape[0]})")
