@@ -79,7 +79,6 @@ class PrecursorDDA(RustWrapperObject):
         else:
             inverse_ion_mobility = self.precursor_average_scan_number
 
-
         return Precursor(
             mz=mz,
             intensity=self.precursor_total_intensity,
@@ -210,17 +209,20 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
                             "setting num_threads to 1.")
             num_threads = 1
 
+        # get all selected precursors
         precursor_meta = self.get_selected_precursors_meta()
 
+        # create a dictionary with frame_id as key and a list of precursors as value
         precursor_dict = {}
-
         for precursor in precursor_meta:
             if precursor.precursor_frame_id not in precursor_dict:
                 precursor_dict[precursor.precursor_frame_id] = []
             precursor_dict[precursor.precursor_frame_id].append(precursor)
 
+        # get all precursor frames
         precursor_frames = self.get_precursor_frames(min_intensity, max_peaks, num_threads)
 
+        # process all precursor frames
         processed_spectra = []
 
         spectrum_processor = SpectrumProcessor(
@@ -229,6 +231,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
             deisotope=False,
         )
 
+        # associate precursors with frames, precursor will be associated with the frame with the same frame_id
         for frame in precursor_frames:
             if frame.frame_id in precursor_dict:
                 precursors = [p.to_sage_precursor(handle=self) for p in precursor_dict[frame.frame_id]]
@@ -245,6 +248,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
                     ms_level=1,
                 )
 
+                # process the spectrum
                 processed_spectrum = spectrum_processor.process(raw_spectrum)
                 processed_spectra.append(processed_spectrum)
 
