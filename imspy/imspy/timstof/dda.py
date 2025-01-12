@@ -10,7 +10,7 @@ from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 from imspy.timstof.frame import TimsFrame
 
-from sagepy.core import Precursor, Tolerance, ProcessedSpectrum
+from sagepy.core import Precursor, Tolerance, ProcessedSpectrum, RawSpectrum, Representation, SpectrumProcessor
 
 import imspy_connector
 ims = imspy_connector.py_dda
@@ -214,6 +214,12 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
         processed_spectra = []
 
+        spectrum_processor = SpectrumProcessor(
+            take_top_n=max_peaks,
+            min_deisotope_mz=0.0,
+            deisotope=False,
+        )
+
         for frame in precursor_frames:
             if frame.frame_id in precursor_dict:
 
@@ -221,16 +227,20 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
                 precursors = [p.to_sage_precursor() for p in precursor_dict[frame.frame_id]]
 
-                processed_spectrum = ProcessedSpectrum(
-                    id = str(frame.frame_id),
-                    level=1,
+                raw_spectrum = RawSpectrum(
                     file_id=file_id,
+                    spec_id=str(frame.frame_id),
+                    total_ion_current=np.sum(frame.intensity),
+                    precursors=precursors,
+                    mz=frame.mz,
+                    intensity=frame.intensity,
+                    representation=Representation(representation="centroid"),
                     scan_start_time=frame.retention_time,
                     ion_injection_time=frame.retention_time,
-                    precursors=precursors,
-                    total_ion_current=np.sum(frame.intensity),
-                    peaks=peaks
+                    ms_level=1,
                 )
+
+                processed_spectrum = spectrum_processor.process(raw_spectrum)
                 processed_spectra.append(processed_spectrum)
 
         # delete precursor_frames to free memory
