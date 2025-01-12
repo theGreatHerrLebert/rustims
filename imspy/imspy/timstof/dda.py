@@ -7,6 +7,8 @@ from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 from imspy.timstof.frame import TimsFrame
 
+from sagepy.core import Precursor, Tolerance
+
 import imspy_connector
 ims = imspy_connector.py_dda
 import warnings
@@ -57,6 +59,16 @@ class PrecursorDDA(RustWrapperObject):
     @property
     def precursor_frame_id(self) -> int:
         return self._precursor_ptr.precursor_frame_id
+
+    def to_sage_precursor(self, isolation_window: Tolerance = Tolerance(-3.0, 3.0,)) -> Precursor:
+        return Precursor(
+            mz=self.precursor_mz_monoisotopic,
+            intensity=self.precursor_total_intensity,
+            charge=self.precursor_charge,
+            spectrum_ref=str(self.precursor_frame_id),
+            inverse_ion_mobility=self.precursor_average_scan_number,
+            isolation_window=isolation_window,
+        )
 
     def get_py_ptr(self):
         return self._precursor_ptr
