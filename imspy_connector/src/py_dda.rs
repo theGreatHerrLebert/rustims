@@ -139,5 +139,6 @@ impl PyTimsFragmentDDA {
 pub fn py_dda(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDDA>()?;
     m.add_class::<PyTimsFragmentDDA>()?;
+    m.add_class::<PyDDAPrecursorMeta>()?;
     Ok(())
 }
