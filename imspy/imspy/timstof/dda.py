@@ -1,10 +1,8 @@
 import sqlite3
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
-
-from sagepy.core.spectrum import Peak
 
 from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
@@ -63,7 +61,9 @@ class PrecursorDDA(RustWrapperObject):
     def precursor_frame_id(self) -> int:
         return self._precursor_ptr.precursor_frame_id
 
-    def to_sage_precursor(self, isolation_window: Tolerance = Tolerance(da=(-3.0, 3.0,))) -> Precursor:
+    def to_sage_precursor(self,
+                          isolation_window: Tolerance = Tolerance(da=(-3.0, 3.0,)),
+                          handle: Optional['TimsDatasetDDA'] = None) -> Precursor:
 
         # check if mz precursor_mz_monoisotopic is not None, if it is, use precursor_mz_average
         if self.precursor_mz_monoisotopic is None:
@@ -71,12 +71,21 @@ class PrecursorDDA(RustWrapperObject):
         else:
             mz = self.precursor_mz_monoisotopic
 
+        if handle is not None:
+            inverse_ion_mobility = handle.scan_to_inverse_mobility(
+                frame_id=self.precursor_frame_id,
+                scan_values=np.array([int(self.precursor_average_scan_number)])
+            )
+        else:
+            inverse_ion_mobility = self.precursor_average_scan_number
+
+
         return Precursor(
             mz=mz,
             intensity=self.precursor_total_intensity,
             charge=self.precursor_charge,
             spectrum_ref=str(self.precursor_frame_id),
-            inverse_ion_mobility=self.precursor_average_scan_number,
+            inverse_ion_mobility=inverse_ion_mobility,
             isolation_window=isolation_window,
         )
 
@@ -222,7 +231,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
         for frame in precursor_frames:
             if frame.frame_id in precursor_dict:
-                precursors = [p.to_sage_precursor() for p in precursor_dict[frame.frame_id]]
+                precursors = [p.to_sage_precursor(self) for p in precursor_dict[frame.frame_id]]
                 raw_spectrum = RawSpectrum(
                     file_id=file_id,
                     spec_id=str(frame.frame_id),
