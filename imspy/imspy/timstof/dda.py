@@ -60,7 +60,7 @@ class PrecursorDDA(RustWrapperObject):
     def precursor_frame_id(self) -> int:
         return self._precursor_ptr.precursor_frame_id
 
-    def to_sage_precursor(self, isolation_window: Tolerance = Tolerance(-3.0, 3.0,)) -> Precursor:
+    def to_sage_precursor(self, isolation_window: Tolerance = Tolerance(da=(-3.0, 3.0,))) -> Precursor:
         return Precursor(
             mz=self.precursor_mz_monoisotopic,
             intensity=self.precursor_total_intensity,
