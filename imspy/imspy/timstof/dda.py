@@ -64,8 +64,15 @@ class PrecursorDDA(RustWrapperObject):
         return self._precursor_ptr.precursor_frame_id
 
     def to_sage_precursor(self, isolation_window: Tolerance = Tolerance(da=(-3.0, 3.0,))) -> Precursor:
+
+        # check if mz precursor_mz_monoisotopic is not None, if it is, use precursor_mz_average
+        if self.precursor_mz_monoisotopic is None:
+            mz = self.precursor_mz_average
+        else:
+            mz = self.precursor_mz_monoisotopic
+
         return Precursor(
-            mz=self.precursor_mz_monoisotopic,
+            mz=mz,
             intensity=self.precursor_total_intensity,
             charge=self.precursor_charge,
             spectrum_ref=str(self.precursor_frame_id),
