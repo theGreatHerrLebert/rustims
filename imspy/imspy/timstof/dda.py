@@ -194,7 +194,13 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         precursor_frames = [TimsFrame.from_py_ptr(frame) for frame in self.__dataset.get_precursor_frames(min_intensity, max_peaks, num_threads)]
         return precursor_frames
 
-    def get_sage_processed_precursors(self, min_intensity: float = 75, max_peaks: int = 500, file_id: int = 0, num_threads: int = 4) -> List[ProcessedSpectrum]:
+    def get_sage_processed_precursors(self, min_intensity: float = 75, max_peaks: int = 500, file_id: int = 0, num_threads: int = 16) -> List[ProcessedSpectrum]:
+
+        if self.use_bruker_sdk:
+            warnings.warn("Using multiple threads is currently not supported when using Bruker SDK, "
+                            "setting num_threads to 1.")
+            num_threads = 1
+
         precursor_meta = self.get_selected_precursors_meta()
 
         precursor_dict = {}
