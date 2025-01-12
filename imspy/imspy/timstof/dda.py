@@ -201,8 +201,10 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
                             "setting num_threads to 1.")
             num_threads = 1
 
+        # get selected precursors meta
         precursor_meta = self.get_selected_precursors_meta()
 
+        # create a dictionary with frame_id as key and a list of precursors as value
         precursor_dict = {}
 
         for precursor in precursor_meta:
@@ -210,9 +212,8 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
                 precursor_dict[precursor.precursor_frame_id] = []
             precursor_dict[precursor.precursor_frame_id].append(precursor)
 
+        # get precursor frames, filtered by min_intensity and max_peaks
         precursor_frames = self.get_precursor_frames(min_intensity, max_peaks, num_threads)
-
-        processed_spectra = []
 
         spectrum_processor = SpectrumProcessor(
             take_top_n=max_peaks,
@@ -220,28 +221,33 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
             deisotope=False,
         )
 
+        processed_spectra = []
+
+        # for each precursor frame, get the corresponding precursors and process the spectrum
         for frame in precursor_frames:
             if frame.frame_id in precursor_dict:
-
-                peaks = [Peak(mz, i) for mz, i in zip(frame.mz, frame.intensity)]
-
                 precursors = [p.to_sage_precursor() for p in precursor_dict[frame.frame_id]]
 
-                raw_spectrum = RawSpectrum(
-                    file_id=file_id,
-                    spec_id=str(frame.frame_id),
-                    total_ion_current=np.sum(frame.intensity),
-                    precursors=precursors,
-                    mz=frame.mz.astype(np.float32),
-                    intensity=frame.intensity.astype(np.float32),
-                    representation=Representation(representation="centroid"),
-                    scan_start_time=frame.retention_time,
-                    ion_injection_time=frame.retention_time,
-                    ms_level=1,
-                )
+                # currently, need to emit one spectrum per precursor
+                for p in precursors:
 
-                processed_spectrum = spectrum_processor.process(raw_spectrum)
-                processed_spectra.append(processed_spectrum)
+                    # TODO: this could also be done in the outer loop, but would require a change in the Sage API
+                    raw_spectrum = RawSpectrum(
+                        file_id=file_id,
+                        spec_id=str(frame.frame_id),
+                        total_ion_current=0.0,
+                        precursors=[p],
+                        mz=frame.mz.astype(np.float32),
+                        intensity=frame.intensity.astype(np.float32),
+                        representation=Representation(representation="centroid"),
+                        scan_start_time=frame.retention_time / 60,
+                        ion_injection_time=frame.retention_time / 60,
+                        ms_level=1,
+                    )
+
+                    # process the spectrum
+                    processed_spectrum = spectrum_processor.process(raw_spectrum)
+                    processed_spectra.append(processed_spectrum)
 
         # delete precursor_frames to free memory
         del precursor_frames
