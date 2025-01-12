@@ -194,7 +194,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         precursor_frames = [TimsFrame.from_py_ptr(frame) for frame in self.__dataset.get_precursor_frames(min_intensity, max_peaks, num_threads)]
         return precursor_frames
 
-    def get_sage_processed_precursors(self, file_id: int = 0) -> List[ProcessedSpectrum]:
+    def get_sage_processed_precursors(self, min_intensity: float = 75, max_peaks: int = 500, file_id: int = 0, num_threads: int = 4) -> List[ProcessedSpectrum]:
         precursor_meta = self.get_selected_precursors_meta()
 
         precursor_dict = {}
@@ -204,7 +204,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
                 precursor_dict[precursor.precursor_frame_id] = []
             precursor_dict[precursor.precursor_frame_id].append(precursor)
 
-        precursor_frames = self.get_precursor_frames()
+        precursor_frames = self.get_precursor_frames(min_intensity, max_peaks, num_threads)
 
         processed_spectra = []
 
@@ -225,8 +225,10 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
                     total_ion_current=np.sum(frame.intensity),
                     peaks=peaks
                 )
-
                 processed_spectra.append(processed_spectrum)
+
+        # delete precursor_frames to free memory
+        del precursor_frames
 
         return processed_spectra
 
