@@ -158,7 +158,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         
         return pd.merge(time, B, left_on=['frame_id'], right_on=['frame_id'], how='inner')
 
-    def get_precursor_frames(self, min_intensity: float, max_peaks: int, num_threads: int) -> List[TimsFrame]:
+    def get_precursor_frames(self, min_intensity: float = 75, max_peaks: int = 500, num_threads: int = 4) -> List[TimsFrame]:
         """
         Get precursor frames.
         Args:
