@@ -42,6 +42,22 @@ pub struct DDAPrecursorMeta {
     pub precursor_frame_id: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct DDAPrecursor {
+    pub frame_id: i64,
+    pub precursor_id: i64,
+    pub mono_mz: f64,
+    pub highest_intensity_mz: f64,
+    pub average_mz: f64,
+    pub charge: Option<i64>,
+    pub inverse_ion_mobility: f64,
+    pub collision_energy: f64,
+    pub precuror_total_intensity: f64,
+    pub isolation_mz: f64,
+    pub isolation_width: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct DDAFragmentInfo {
     pub frame_id: i64,
     pub scan_begin: i64,
@@ -138,14 +154,14 @@ pub fn read_pasef_frame_ms_ms_info(bruker_d_folder_name: &str) -> Result<Vec<Pas
     // execute the query
     let frames_rows: Result<Vec<PasefMsMsMeta>, _> = conn.prepare(&query)?.query_map([], |row| {
         Ok(PasefMsMsMeta {
-        frame_id: row.get(0)?,
-        scan_num_begin: row.get(1)?,
-        scan_num_end: row.get(2)?,
-        isolation_mz: row.get(3)?,
-        isolation_width: row.get(4)?,
-        collision_energy: row.get(5)?,
-        precursor_id: row.get(6)?, })
-        })?.collect();
+            frame_id: row.get(0)?,
+            scan_num_begin: row.get(1)?,
+            scan_num_end: row.get(2)?,
+            isolation_mz: row.get(3)?,
+            isolation_width: row.get(4)?,
+            collision_energy: row.get(5)?,
+            precursor_id: row.get(6)?, })
+    })?.collect();
 
     // return the frames
     Ok(frames_rows?)
@@ -163,8 +179,8 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
         Ok(GlobalMetaInternal {
             key: row.get(0)?,
             value: row.get(1)?,
-            })
-        })?.collect();
+        })
+    })?.collect();
 
     let mut global_meta = GlobalMetaData {
         schema_type: String::new(),
@@ -202,7 +218,7 @@ pub fn read_global_meta_sql(bruker_d_folder_name: &str) -> Result<GlobalMetaData
         }
     }
     // return global_meta
-    Ok(global_meta)   
+    Ok(global_meta)
 }
 
 // Read the frame meta data from the analysis.tdf file
@@ -212,30 +228,30 @@ pub fn read_meta_data_sql(bruker_d_folder_name: &str) -> Result<Vec<FrameMeta>, 
     let conn = Connection::open(db_path)?;
 
     // prepare the query
-    let rows: Vec<&str> = vec!["Id", "Time", "ScanMode", "Polarity", "MsMsType", "TimsId", "MaxIntensity", "SummedIntensities", 
-    "NumScans", "NumPeaks", "MzCalibration", "T1", "T2", "TimsCalibration", "PropertyGroup", "AccumulationTime", "RampTime"];
+    let rows: Vec<&str> = vec!["Id", "Time", "ScanMode", "Polarity", "MsMsType", "TimsId", "MaxIntensity", "SummedIntensities",
+                               "NumScans", "NumPeaks", "MzCalibration", "T1", "T2", "TimsCalibration", "PropertyGroup", "AccumulationTime", "RampTime"];
     let query = format!("SELECT {} FROM Frames", rows.join(", "));
 
     // execute the query
     let frames_rows: Result<Vec<FrameMeta>, _> = conn.prepare(&query)?.query_map([], |row| {
-    Ok(FrameMeta {
-        id: row.get(0)?,
-        time: row.get(1)?,
-        scan_mode: row.get(2)?,
-        polarity: row.get(3)?,
-        ms_ms_type: row.get(4)?,
-        tims_id: row.get(5)?,
-        max_intensity: row.get(6)?,
-        sum_intensity: row.get(7)?,
-        num_scans: row.get(8)?,
-        num_peaks: row.get(9)?,
-        mz_calibration: row.get(10)?,
-        t_1: row.get(11)?,
-        t_2: row.get(12)?,
-        tims_calibration: row.get(13)?,
-        property_group: row.get(14)?,
-        accumulation_time: row.get(15)?,
-        ramp_time: row.get(16)?,
+        Ok(FrameMeta {
+            id: row.get(0)?,
+            time: row.get(1)?,
+            scan_mode: row.get(2)?,
+            polarity: row.get(3)?,
+            ms_ms_type: row.get(4)?,
+            tims_id: row.get(5)?,
+            max_intensity: row.get(6)?,
+            sum_intensity: row.get(7)?,
+            num_scans: row.get(8)?,
+            num_peaks: row.get(9)?,
+            mz_calibration: row.get(10)?,
+            t_1: row.get(11)?,
+            t_2: row.get(12)?,
+            tims_calibration: row.get(13)?,
+            property_group: row.get(14)?,
+            accumulation_time: row.get(15)?,
+            ramp_time: row.get(16)?,
         })
     })?.collect();
 
