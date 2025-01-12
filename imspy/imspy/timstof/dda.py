@@ -178,7 +178,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         Returns:
             List[PrecursorDDA]: List of all selected precursors
         """
-        return [PrecursorDDA.from_py_ptr(precursor) for precursor in self.__dataset.get_selected_precursors_meta()]
+        return [PrecursorDDA.from_py_ptr(precursor) for precursor in self.__dataset.get_selected_precursors()]
 
     def __repr__(self):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "
