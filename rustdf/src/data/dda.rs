@@ -55,7 +55,7 @@ impl TimsDatasetDDA {
         let tims_silce = self.get_slice(precursor_frames.map(|x| x.id as u32).collect(), num_threads);
 
         let result: Vec<_> = tims_silce.frames.par_iter().map(|frame| {
-            frame.filter_ranged(0.0, 2000.0, 0, 2000, 0.0, 5.0, 1.0, min_intensity).top_n(max_num_peaks)
+            frame.filter_ranged(0.0, 2000.0, 0, 2000, 0.0, 5.0, min_intensity, 1e9).top_n(max_num_peaks)
         }).collect();
 
         result
