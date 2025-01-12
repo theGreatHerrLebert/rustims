@@ -231,7 +231,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
         for frame in precursor_frames:
             if frame.frame_id in precursor_dict:
-                precursors = [p.to_sage_precursor(self) for p in precursor_dict[frame.frame_id]]
+                precursors = [p.to_sage_precursor(handle=self) for p in precursor_dict[frame.frame_id]]
                 raw_spectrum = RawSpectrum(
                     file_id=file_id,
                     spec_id=str(frame.frame_id),
