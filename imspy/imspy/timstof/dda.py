@@ -1,4 +1,6 @@
 import sqlite3
+from typing import List
+
 import pandas as pd
 
 from imspy.simulation.annotation import RustWrapperObject
@@ -8,6 +10,62 @@ from imspy.timstof.frame import TimsFrame
 import imspy_connector
 ims = imspy_connector.py_dda
 import warnings
+
+
+class PrecursorDDA(RustWrapperObject):
+    def __init__(self, precursor_id: int, precursor_mz_highest_intensity: float, precursor_mz_average: float,
+                 precursor_mz_monoisotopic: float, precursor_average_scan_number: int, precursor_total_intensity: float,
+                 precursor_frame_id: int, precursor_charge: int):
+        self._precursor_ptr = ims.PyDDAPrecursorMeta(precursor_id, precursor_mz_highest_intensity, precursor_mz_average,
+                                                     precursor_mz_monoisotopic, precursor_average_scan_number,
+                                                     precursor_total_intensity, precursor_frame_id, precursor_charge)
+
+    @classmethod
+    def from_py_ptr(cls, precursor: ims.PyDDAPrecursorMeta):
+        instance = cls.__new__(cls)
+        instance._precursor_ptr = precursor
+        return instance
+
+    @property
+    def precursor_id(self) -> int:
+        return self._precursor_ptr.precursor_id
+
+    @property
+    def precursor_mz_highest_intensity(self) -> float:
+        return self._precursor_ptr.precursor_mz_highest_intensity
+
+    @property
+    def precursor_mz_average(self) -> float:
+        return self._precursor_ptr.precursor_mz_average
+
+    @property
+    def precursor_mz_monoisotopic(self) -> float:
+        return self._precursor_ptr.precursor_mz_monoisotopic
+
+    @property
+    def precursor_charge(self) -> int:
+        return self._precursor_ptr.precursor_charge
+
+    @property
+    def precursor_average_scan_number(self) -> int:
+        return self._precursor_ptr.precursor_average_scan_number
+
+    @property
+    def precursor_total_intensity(self) -> float:
+        return self._precursor_ptr.precursor_total_intensity
+
+    @property
+    def precursor_frame_id(self) -> int:
+        return self._precursor_ptr.precursor_frame_id
+
+    def get_py_ptr(self):
+        return self._precursor_ptr
+
+    def __repr__(self):
+        return f"PrecursorDDA(precursor_id={self.precursor_id}, precursor_mz_highest_intensity={self.precursor_mz_highest_intensity}, " \
+               f"precursor_mz_average={self.precursor_mz_average}, precursor_mz_monoisotopic={self.precursor_mz_monoisotopic}, " \
+               f"precursor_charge={self.precursor_charge}, precursor_average_scan_number={self.precursor_average_scan_number}, " \
+               f"precursor_total_intensity={self.precursor_total_intensity}, precursor_frame_id={self.precursor_frame_id})"
 
 
 class TimsDatasetDDA(TimsDataset, RustWrapperObject):
@@ -99,6 +157,20 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         time.insert(time.shape[1], "time", self.meta_data['Time'] / 60)
         
         return pd.merge(time, B, left_on=['frame_id'], right_on=['frame_id'], how='inner')
+
+    def get_precursor_frames(self, min_intensity: float, max_peaks: int, num_threads: int) -> List[TimsFrame]:
+        """
+        Get precursor frames.
+        Args:
+            min_intensity: minimum intensity a peak must have to be considered
+            max_peaks: maximum number of peaks to consider, frames will be sorted by intensity and only the top max_peaks will be considered
+            num_threads: number of threads to use for processing
+
+        Returns:
+            List[TimsFrame]: List of all precursor frames
+        """
+        precursor_frames = [TimsFrame.from_py_ptr(frame) for frame in self.__dataset.get_precursor_frames(min_intensity, max_peaks, num_threads)]
+        return precursor_frames
 
     def __repr__(self):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "

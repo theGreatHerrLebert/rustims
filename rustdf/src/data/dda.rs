@@ -45,6 +45,22 @@ impl TimsDatasetDDA {
         read_dda_precursor_meta(&self.loader.get_data_path()).unwrap()
     }
 
+    pub fn get_precursor_frames(&self, min_intensity: f64, max_num_peaks: usize, num_threads: usize) -> Vec<TimsFrame> {
+        // get all precursor frames
+        let meta_data = read_meta_data_sql(&self.loader.get_data_path()).unwrap();
+
+        // get the precursor frames
+        let precursor_frames = meta_data.iter().filter(|x| x.ms_ms_type == 0);
+
+        let tims_silce = self.get_slice(precursor_frames.map(|x| x.id as u32).collect(), num_threads);
+
+        let result: Vec<_> = tims_silce.frames.par_iter().map(|frame| {
+            frame.filter_ranged(0.0, 2000.0, 0, 2000, 0.0, 5.0, 1.0, min_intensity).top_n(max_num_peaks)
+        }).collect();
+
+        result
+    }
+
     pub fn get_pasef_frame_ms_ms_info(&self) -> Vec<PasefMsMsMeta> {
         read_pasef_frame_ms_ms_info(&self.loader.get_data_path()).unwrap()
     }
