@@ -1,13 +1,17 @@
 import sqlite3
 from typing import List
 
+import numpy as np
 import pandas as pd
+
+from examples.imspy_dda import sage_precursor
+from sagepy.core.spectrum import Peak
 
 from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 from imspy.timstof.frame import TimsFrame
 
-from sagepy.core import Precursor, Tolerance
+from sagepy.core import Precursor, Tolerance, ProcessedSpectrum
 
 import imspy_connector
 ims = imspy_connector.py_dda
@@ -183,6 +187,43 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         """
         precursor_frames = [TimsFrame.from_py_ptr(frame) for frame in self.__dataset.get_precursor_frames(min_intensity, max_peaks, num_threads)]
         return precursor_frames
+
+    def get_sage_processed_precursors(self, file_id: int = 0) -> List[ProcessedSpectrum]:
+        precursor_meta = self.get_selected_precursors_meta()
+
+        precursor_dict = {}
+
+        for precursor in precursor_meta:
+            if precursor.precursor_frame_id not in precursor_dict:
+                precursor_dict[precursor.precursor_frame_id] = []
+            precursor_dict[precursor.precursor_frame_id].append(precursor)
+
+        precursor_frames = self.get_precursor_frames()
+
+        processed_spectra = []
+
+        for frame in precursor_frames:
+            if frame.frame_id in precursor_dict:
+
+                peaks = [Peak(mz, i) for mz, i in zip(frame.mz, frame.intensity)]
+
+                precursors = [p.to_sage_precursor() for p in precursor_dict[frame.frame_id]]
+
+                processed_spectrum = ProcessedSpectrum(
+                    id = str(frame.frame_id),
+                    level=1,
+                    file_id=file_id,
+                    scan_start_time=frame.retention_time,
+                    ion_injection_time=frame.retention_time,
+                    precursors=precursors,
+                    total_ion_current=np.sum(frame.intensity),
+                    peaks=peaks
+                )
+
+                processed_spectra.append(processed_spectrum)
+
+        return processed_spectra
+
 
     def get_selected_precursors_meta(self) -> List[PrecursorDDA]:
         """
