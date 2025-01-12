@@ -75,7 +75,7 @@ class PrecursorDDA(RustWrapperObject):
             inverse_ion_mobility = handle.scan_to_inverse_mobility(
                 frame_id=self.precursor_frame_id,
                 scan_values=np.array([int(self.precursor_average_scan_number)])
-            )
+            )[0]
         else:
             inverse_ion_mobility = self.precursor_average_scan_number
 
