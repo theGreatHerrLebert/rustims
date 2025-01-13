@@ -32,26 +32,24 @@ impl BrukerTimsDataLibrary {
     // let data_path = "path/to/data.d";
     // let tims_data = BrukerTimsDataLibrary::new(bruker_lib_path, data_path);
     // ```
-    pub fn new(bruker_lib_path: &str, data_path: &str) -> Result<BrukerTimsDataLibrary, Box<dyn std::error::Error>> {
-        
+    pub fn new(
+        bruker_lib_path: &str,
+        data_path: &str,
+    ) -> Result<BrukerTimsDataLibrary, Box<dyn std::error::Error>> {
         // Load the library
-        let lib = unsafe {
-            Library::new(bruker_lib_path)?
-        };
-        
+        let lib = unsafe { Library::new(bruker_lib_path)? };
+
         // create a handle to the raw data
         let handle = unsafe {
-            let func: Symbol<unsafe extern fn(*const c_char, u32) -> u64> = lib.get(b"tims_open")?;
+            let func: Symbol<unsafe extern "C" fn(*const c_char, u32) -> u64> =
+                lib.get(b"tims_open")?;
             let path = std::ffi::CString::new(data_path)?;
             let handle = func(path.as_ptr(), 0);
             handle
         };
 
         // return the BrukerTimsDataLibrary struct
-        Ok(BrukerTimsDataLibrary {
-            lib,
-            handle,
-        })
+        Ok(BrukerTimsDataLibrary { lib, handle })
     }
 
     //
@@ -68,7 +66,7 @@ impl BrukerTimsDataLibrary {
     // ```
     pub fn tims_close(&self) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
-            let func: Symbol<unsafe extern fn(u64) -> ()> = self.lib.get(b"tims_close")?;
+            let func: Symbol<unsafe extern "C" fn(u64) -> ()> = self.lib.get(b"tims_close")?;
             func(self.handle);
         }
         Ok(())
@@ -87,10 +85,22 @@ impl BrukerTimsDataLibrary {
     //     Err(e) => println!("error: {}", e),
     // };
     // ```
-    pub fn tims_index_to_mz(&self, frame_id: u32, dbl_tofs: &[c_double], mzs: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tims_index_to_mz(
+        &self,
+        frame_id: u32,
+        dbl_tofs: &[c_double],
+        mzs: &mut [c_double],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
-            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_index_to_mz")?;
-            func(self.handle, frame_id, dbl_tofs.as_ptr(), mzs.as_mut_ptr(), dbl_tofs.len() as u32);
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> =
+                self.lib.get(b"tims_index_to_mz")?;
+            func(
+                self.handle,
+                frame_id,
+                dbl_tofs.as_ptr(),
+                mzs.as_mut_ptr(),
+                dbl_tofs.len() as u32,
+            );
         }
         Ok(())
     }
@@ -108,10 +118,22 @@ impl BrukerTimsDataLibrary {
     //     Err(e) => println!("error: {}", e),
     // };
     // ```
-    pub fn tims_mz_to_index(&self, frame_id: u32, mzs: &[c_double], indices: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tims_mz_to_index(
+        &self,
+        frame_id: u32,
+        mzs: &[c_double],
+        indices: &mut [c_double],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
-            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_mz_to_index")?;
-            func(self.handle, frame_id, mzs.as_ptr(), indices.as_mut_ptr(), mzs.len() as u32);
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> =
+                self.lib.get(b"tims_mz_to_index")?;
+            func(
+                self.handle,
+                frame_id,
+                mzs.as_ptr(),
+                indices.as_mut_ptr(),
+                mzs.len() as u32,
+            );
         }
         Ok(())
     }
@@ -129,10 +151,22 @@ impl BrukerTimsDataLibrary {
     //     Err(e) => println!("error: {}", e),
     // };
     // ```
-    pub fn tims_scan_to_inv_mob(&self, frame_id: u32, dbl_scans: &[c_double], inv_mob: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tims_scan_to_inv_mob(
+        &self,
+        frame_id: u32,
+        dbl_scans: &[c_double],
+        inv_mob: &mut [c_double],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
-            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_scannum_to_oneoverk0")?;
-            func(self.handle, frame_id, dbl_scans.as_ptr(), inv_mob.as_mut_ptr(), dbl_scans.len() as u32);
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> =
+                self.lib.get(b"tims_scannum_to_oneoverk0")?;
+            func(
+                self.handle,
+                frame_id,
+                dbl_scans.as_ptr(),
+                inv_mob.as_mut_ptr(),
+                dbl_scans.len() as u32,
+            );
         }
         Ok(())
     }
@@ -150,10 +184,22 @@ impl BrukerTimsDataLibrary {
     //     Err(e) => println!("error: {}", e),
     // };
     // ```
-    pub fn inv_mob_to_tims_scan(&self, frame_id: u32, inv_mob: &[c_double], scans: &mut [c_double]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn inv_mob_to_tims_scan(
+        &self,
+        frame_id: u32,
+        inv_mob: &[c_double],
+        scans: &mut [c_double],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
-            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> = self.lib.get(b"tims_oneoverk0_to_scannum")?;
-            func(self.handle, frame_id, inv_mob.as_ptr(), scans.as_mut_ptr(), inv_mob.len() as u32);
+            let func: Symbol<unsafe extern "C" fn(u64, u32, *const c_double, *mut c_double, u32)> =
+                self.lib.get(b"tims_oneoverk0_to_scannum")?;
+            func(
+                self.handle,
+                frame_id,
+                inv_mob.as_ptr(),
+                scans.as_mut_ptr(),
+                inv_mob.len() as u32,
+            );
         }
         Ok(())
     }
