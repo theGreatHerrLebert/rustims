@@ -9,7 +9,7 @@ repository = "https://github.com/theGreatHerrLebert/rustims"
 documentation = "https://docs.rs/mscore"
 readme = "README.md"
 keywords = ["statistics", "matrix", "scoring", "parallel"]
-categories = ["math", "science", "data-structures"]
+categories = ["mathematics", "science", "data-structures"]
 rust-version = "1.84"
 
 [lib]
