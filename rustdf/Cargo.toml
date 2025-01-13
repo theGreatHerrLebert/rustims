@@ -9,7 +9,7 @@ repository = "https://github.com/theGreatHerrLebert/rustims"
 documentation = "https://docs.rs/rustdf" 
 readme = "README.md" 
 keywords = ["dataframe", "sql", "compression", "parallel"]
-categories = ["data-structures", "science", "utilities"]
+categories = ["data-structures", "science"]
 rust-version = "1.84"
 
 [lib]
