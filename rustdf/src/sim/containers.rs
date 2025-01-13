@@ -1,7 +1,7 @@
-use mscore::data::peptide::{PeptideSequence};
-use mscore::data::spectrum::{MzSpectrum, MsType};
-use serde::{Serialize, Deserialize};
+use mscore::data::peptide::PeptideSequence;
+use mscore::data::spectrum::{MsType, MzSpectrum};
 use rand::distributions::{Distribution, Uniform};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalDistribution {
@@ -13,25 +13,53 @@ pub struct SignalDistribution {
 }
 
 impl SignalDistribution {
-    pub fn new(mean: f32, variance: f32, error: f32, occurrence: Vec<u32>, abundance: Vec<f32>) -> Self {
-        SignalDistribution { mean, variance, error, occurrence, abundance, }
+    pub fn new(
+        mean: f32,
+        variance: f32,
+        error: f32,
+        occurrence: Vec<u32>,
+        abundance: Vec<f32>,
+    ) -> Self {
+        SignalDistribution {
+            mean,
+            variance,
+            error,
+            occurrence,
+            abundance,
+        }
     }
 
     pub fn add_noise(&self, noise_level: f32) -> Vec<f32> {
         let mut rng = rand::thread_rng();
         let noise_dist = Uniform::new(0.0, noise_level);
 
-        let noise: Vec<f32> = self.abundance.iter().map(|_| noise_dist.sample(&mut rng)).collect();
-        let noise_relative: Vec<f32> = self.abundance.iter().zip(noise.iter()).map(|(&abu, &noise)| abu * noise).collect();
-        let noised_signal: Vec<f32> = self.abundance.iter().zip(noise_relative.iter()).map(|(&abu, &noise_rel)| abu + noise_rel).collect();
+        let noise: Vec<f32> = self
+            .abundance
+            .iter()
+            .map(|_| noise_dist.sample(&mut rng))
+            .collect();
+        let noise_relative: Vec<f32> = self
+            .abundance
+            .iter()
+            .zip(noise.iter())
+            .map(|(&abu, &noise)| abu * noise)
+            .collect();
+        let noised_signal: Vec<f32> = self
+            .abundance
+            .iter()
+            .zip(noise_relative.iter())
+            .map(|(&abu, &noise_rel)| abu + noise_rel)
+            .collect();
 
         let sum_noised_signal: f32 = noised_signal.iter().sum();
         let sum_rt_abu: f32 = self.abundance.iter().sum();
 
-        noised_signal.iter().map(|&x| (x / sum_noised_signal) * sum_rt_abu).collect()
+        noised_signal
+            .iter()
+            .map(|&x| (x / sum_noised_signal) * sum_rt_abu)
+            .collect()
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PeptidesSim {
@@ -41,8 +69,8 @@ pub struct PeptidesSim {
     pub proteins: String,
     pub decoy: bool,
     pub missed_cleavages: i8,
-    pub n_term : Option<bool>,
-    pub c_term : Option<bool>,
+    pub n_term: Option<bool>,
+    pub c_term: Option<bool>,
     pub mono_isotopic_mass: f32,
     pub retention_time: f32,
     pub events: f32,
@@ -84,7 +112,12 @@ impl PeptidesSim {
             frame_start,
             frame_end,
             frame_distribution: SignalDistribution::new(
-                0.0, 0.0, 0.0, frame_occurrence, frame_abundance),
+                0.0,
+                0.0,
+                0.0,
+                frame_occurrence,
+                frame_abundance,
+            ),
         }
     }
 }
@@ -122,7 +155,7 @@ impl WindowGroupSettingsSim {
 #[derive(Debug, Clone)]
 pub struct FrameToWindowGroupSim {
     pub frame_id: u32,
-    pub window_group:u32,
+    pub window_group: u32,
 }
 
 impl FrameToWindowGroupSim {
@@ -167,11 +200,15 @@ impl IonSim {
             mobility,
             simulated_spectrum,
             scan_distribution: SignalDistribution::new(
-                0.0, 0.0, 0.0, scan_occurrence, scan_abundance),
+                0.0,
+                0.0,
+                0.0,
+                scan_occurrence,
+                scan_abundance,
+            ),
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ScansSim {
@@ -207,7 +244,6 @@ impl FramesSim {
             9 => MsType::FragmentDia,
             _ => MsType::Unknown,
         }
-
     }
 }
 

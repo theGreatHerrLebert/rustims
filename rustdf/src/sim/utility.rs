@@ -59,14 +59,13 @@ pub fn sequence_to_all_ions(
     half_charge_one: bool,
     peptide_id: Option<i32>,
 ) -> String {
-
     let peptide_sequence = PeptideSequence::new(sequence.to_string(), peptide_id);
     let fragments = peptide_sequence.associate_with_predicted_intensities(
         charge,
         FragmentType::B,
         intensity_pred_flat.clone(),
         normalize,
-        half_charge_one
+        half_charge_one,
     );
     to_string(&fragments).unwrap()
 }
@@ -78,13 +77,29 @@ pub fn sequence_to_all_ions_par(
     normalize: bool,
     half_charge_one: bool,
     num_threads: usize,
-    peptide_ids: Vec<Option<i32>>
+    peptide_ids: Vec<Option<i32>>,
 ) -> Vec<String> {
-    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     let result = thread_pool.install(|| {
-        sequences.par_iter().zip(charges.par_iter()).zip(intensities_pred_flat.par_iter()).zip(peptide_ids.par_iter())
-            .map(|(((seq, charge), intensities), peptide_id)| sequence_to_all_ions(seq, *charge, intensities, normalize, half_charge_one, *peptide_id))
+        sequences
+            .par_iter()
+            .zip(charges.par_iter())
+            .zip(intensities_pred_flat.par_iter())
+            .zip(peptide_ids.par_iter())
+            .map(|(((seq, charge), intensities), peptide_id)| {
+                sequence_to_all_ions(
+                    seq,
+                    *charge,
+                    intensities,
+                    normalize,
+                    half_charge_one,
+                    *peptide_id,
+                )
+            })
             .collect()
     });
 

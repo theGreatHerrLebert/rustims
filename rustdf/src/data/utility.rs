@@ -1,11 +1,10 @@
-use std::io;
-use std::io::{Read, Write};
 use byteorder::{ByteOrder, LittleEndian};
 use mscore::timstof::frame::TimsFrame;
+use rayon::iter::IntoParallelRefIterator;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use rayon::iter::IntoParallelRefIterator;
-
+use std::io;
+use std::io::{Read, Write};
 
 /// Decompresses a ZSTD compressed byte array
 ///
@@ -86,21 +85,37 @@ pub fn reconstruct_compressed_data(
     Ok(final_data)
 }
 
-pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, compression_level: i32, num_threads: usize) -> Vec<Vec<u8>> {
-
-    let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+pub fn compress_collection(
+    frames: Vec<TimsFrame>,
+    max_scan_count: u32,
+    compression_level: i32,
+    num_threads: usize,
+) -> Vec<Vec<u8>> {
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     let result = pool.install(|| {
-        frames.par_iter().map(|frame| {
-            let compressed_data = reconstruct_compressed_data(
-                frame.scan.iter().map(|&x| x as u32).collect(),
-                frame.tof.iter().map(|&x| x as u32).collect(),
-                frame.ims_frame.intensity.iter().map(|&x| x as u32).collect(),
-                max_scan_count,
-                compression_level,
-            ).unwrap();
-            compressed_data
-        }).collect()
+        frames
+            .par_iter()
+            .map(|frame| {
+                let compressed_data = reconstruct_compressed_data(
+                    frame.scan.iter().map(|&x| x as u32).collect(),
+                    frame.tof.iter().map(|&x| x as u32).collect(),
+                    frame
+                        .ims_frame
+                        .intensity
+                        .iter()
+                        .map(|&x| x as u32)
+                        .collect(),
+                    max_scan_count,
+                    compression_level,
+                )
+                .unwrap();
+                compressed_data
+            })
+            .collect()
     });
     result
 }
@@ -117,8 +132,9 @@ pub fn compress_collection(frames: Vec<TimsFrame>, max_scan_count: u32, compress
 /// * `tof_indices` - A vector of u32 that holds the tof indices
 /// * `intensities` - A vector of u32 that holds the intensities
 ///
-pub fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
-
+pub fn parse_decompressed_bruker_binary_data(
+    decompressed_bytes: &[u8],
+) -> Result<(Vec<u32>, Vec<u32>, Vec<u32>), Box<dyn std::error::Error>> {
     let mut buffer_u32 = Vec::new();
 
     for i in 0..(decompressed_bytes.len() / 4) {
@@ -126,7 +142,7 @@ pub fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Resul
             decompressed_bytes[i],
             decompressed_bytes[i + (decompressed_bytes.len() / 4)],
             decompressed_bytes[i + (2 * decompressed_bytes.len() / 4)],
-            decompressed_bytes[i + (3 * decompressed_bytes.len() / 4)]
+            decompressed_bytes[i + (3 * decompressed_bytes.len() / 4)],
         ]);
         buffer_u32.push(value);
     }
@@ -144,10 +160,20 @@ pub fn parse_decompressed_bruker_binary_data(decompressed_bytes: &[u8]) -> Resul
     scan_indices[0] = 0;
 
     // get the tof indices, which are the first half of the buffer after the scan indices
-    let mut tof_indices: Vec<u32> = buffer_u32.iter().skip(scan_count).step_by(2).cloned().collect();
+    let mut tof_indices: Vec<u32> = buffer_u32
+        .iter()
+        .skip(scan_count)
+        .step_by(2)
+        .cloned()
+        .collect();
 
     // get the intensities, which are the second half of the buffer
-    let intensities: Vec<u32> = buffer_u32.iter().skip(scan_count + 1).step_by(2).cloned().collect();
+    let intensities: Vec<u32> = buffer_u32
+        .iter()
+        .skip(scan_count + 1)
+        .step_by(2)
+        .cloned()
+        .collect();
 
     // calculate the last scan before moving scan indices
     let last_scan = intensities.len() as u32 - scan_indices[1..].iter().sum::<u32>();
@@ -237,23 +263,44 @@ pub fn get_realdata_loop(back_data: &[u8]) -> Vec<u8> {
     real_data
 }
 
-pub fn get_data_for_compression(tofs: &Vec<u32>, scans: &Vec<u32>, intensities: &Vec<u32>, max_scans: u32) -> Vec<u8> {
+pub fn get_data_for_compression(
+    tofs: &Vec<u32>,
+    scans: &Vec<u32>,
+    intensities: &Vec<u32>,
+    max_scans: u32,
+) -> Vec<u8> {
     let mut tof_copy = tofs.clone();
     modify_tofs(&mut tof_copy, &scans);
     let peak_cnts = get_peak_cnts(max_scans, &scans);
-    let interleaved: Vec<u32> = tofs.iter().zip(intensities.iter()).flat_map(|(tof, intensity)| vec![*tof, *intensity]).collect();
+    let interleaved: Vec<u32> = tofs
+        .iter()
+        .zip(intensities.iter())
+        .flat_map(|(tof, intensity)| vec![*tof, *intensity])
+        .collect();
 
     get_realdata(&peak_cnts, &interleaved)
 }
 
-
-pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, intensities: Vec<Vec<u32>>, max_scans: u32, num_threads: usize) -> Vec<Vec<u8>> {
-    let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+pub fn get_data_for_compression_par(
+    tofs: Vec<Vec<u32>>,
+    scans: Vec<Vec<u32>>,
+    intensities: Vec<Vec<u32>>,
+    max_scans: u32,
+    num_threads: usize,
+) -> Vec<Vec<u8>> {
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     let result = pool.install(|| {
-        tofs.par_iter().zip(scans.par_iter()).zip(intensities.par_iter()).map(|((tof, scan), intensity)| {
-            get_data_for_compression(tof, scan, intensity, max_scans)
-        }).collect()
+        tofs.par_iter()
+            .zip(scans.par_iter())
+            .zip(intensities.par_iter())
+            .map(|((tof, scan), intensity)| {
+                get_data_for_compression(tof, scan, intensity, max_scans)
+            })
+            .collect()
     });
 
     result
@@ -261,7 +308,8 @@ pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, i
 
 pub fn flatten_scan_values(scan: &Vec<u32>, zero_indexed: bool) -> Vec<u32> {
     let add = if zero_indexed { 0 } else { 1 };
-    scan.iter().enumerate()
-        .flat_map(|(index, &count)| vec![(index + add) as u32; count as usize]
-            .into_iter()).collect()
+    scan.iter()
+        .enumerate()
+        .flat_map(|(index, &count)| vec![(index + add) as u32; count as usize].into_iter())
+        .collect()
 }

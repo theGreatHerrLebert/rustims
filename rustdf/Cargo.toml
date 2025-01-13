@@ -2,22 +2,46 @@
 name = "rustdf"
 version = "0.3.0"
 edition = "2021"
+authors = ["David Teschner <davidteschner@googlemail.com>"] # Add your name and email
+description = "A Rust library for interacting with Bruker TDF formatted Raw Data."
+license = "MIT" 
+repository = "https://github.com/theGreatHerrLebert/rustims" 
+documentation = "https://docs.rs/rustdf" 
+readme = "README.md" 
+keywords = ["dataframe", "sql", "compression", "parallel"]
+categories = ["data-structures", "science"]
+rust-version = "1.84"
 
 [lib]
 path = "src/lib.rs"
 
-[profile.release]
-debug = true
-
 [dependencies]
-clap = { version = "4.5.24", features = ["derive"] }
+# Command-line argument parsing
+clap = { version = "4.5.26", features = ["derive"] }
+# Dynamic library loading
 libloading = "0.8.6"
+# SQLite with bundled binaries
 rusqlite = { version = "0.32.1", features = ["bundled"] }
+# Compression libraries
 lzf = "1.0.0"
 zstd = "0.13.2"
+# Byte order utilities
 byteorder = "1.5.0"
-mscore = {path = "../mscore"}
+# Core library for computational proteomics
+mscore = { version = "0.2.0" }
+# Parallelism
 rayon = "1.10.0"
+# Serialization
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.135"
+# Random number generation
 rand = "0.8.5"
+
+[profile.release]
+debug = true
+overflow-checks = true
+lto = "thin" 
+panic = "abort" 
+
+[package.metadata.docs.rs]
+features = ["all"] 

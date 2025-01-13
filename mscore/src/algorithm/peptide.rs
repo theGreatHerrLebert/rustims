@@ -1,14 +1,16 @@
-use std::collections::HashMap;
+use crate::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
+use crate::chemistry::constants::{MASS_CO, MASS_NH3, MASS_PROTON, MASS_WATER};
+use crate::chemistry::formulas::calculate_mz;
+use crate::chemistry::unimod::{
+    modification_atomic_composition, unimod_modifications_mass_numerical,
+};
+use crate::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
+use crate::data::peptide::{FragmentType, PeptideProductIon, PeptideSequence};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use regex::Regex;
 use statrs::distribution::{Binomial, Discrete};
-use crate::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
-use crate::chemistry::constants::{MASS_CO, MASS_NH3, MASS_PROTON, MASS_WATER};
-use crate::chemistry::formulas::calculate_mz;
-use crate::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
-use crate::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
-use crate::data::peptide::{FragmentType, PeptideProductIon, PeptideSequence};
+use std::collections::HashMap;
 
 /// calculate the monoisotopic mass of a peptide sequence
 ///
@@ -54,8 +56,16 @@ pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) 
     }
 
     // Mass of amino acids and modifications
-    let mass_sequence: f64 = aa_counts.iter().map(|(aa, &count)| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64).sum();
-    let mass_modifications: f64 = modifications.iter().map(|&mod_id| modifications_mz_numerical.get(&mod_id).unwrap_or(&0.0)).sum();
+    let mass_sequence: f64 = aa_counts
+        .iter()
+        .map(|(aa, &count)| {
+            amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64
+        })
+        .sum();
+    let mass_modifications: f64 = modifications
+        .iter()
+        .map(|&mod_id| modifications_mz_numerical.get(&mod_id).unwrap_or(&0.0))
+        .sum();
 
     mass_sequence + mass_modifications + MASS_WATER
 }
@@ -80,7 +90,6 @@ pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) 
 /// assert_eq!(mass, 936.4188766862999);
 /// ```
 pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: FragmentType) -> f64 {
-
     let (sequence, modifications) = find_unimod_patterns(sequence);
 
     // Return mz of empty sequence
@@ -91,7 +100,8 @@ pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: Fr
     let amino_acid_masses = amino_acid_masses();
 
     // Add up raw amino acid masses and potential modifications
-    let mass_sequence: f64 = sequence.chars()
+    let mass_sequence: f64 = sequence
+        .chars()
         .map(|aa| amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0))
         .sum();
 
@@ -171,8 +181,9 @@ pub fn calculate_amino_acid_composition(sequence: &str) -> HashMap<String, i32> 
 }
 
 /// calculate the atomic composition of a peptide sequence
-pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence) -> HashMap<&'static str, i32> {
-
+pub fn peptide_sequence_to_atomic_composition(
+    peptide_sequence: &PeptideSequence,
+) -> HashMap<&'static str, i32> {
     let token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), false);
     let mut collection: HashMap<&'static str, i32> = HashMap::new();
 
@@ -217,7 +228,6 @@ pub fn peptide_sequence_to_atomic_composition(peptide_sequence: &PeptideSequence
 ///
 /// * `Vec<(&str, i32)>` - a vector of tuples representing the atomic composition of the product ion
 pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&str, i32)> {
-
     let mut composition = peptide_sequence_to_atomic_composition(&product_ion.ion.sequence);
 
     match product_ion.kind {
@@ -226,31 +236,29 @@ pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&
             *composition.entry("H").or_insert(0) -= 2;
             *composition.entry("O").or_insert(0) -= 2;
             *composition.entry("C").or_insert(0) -= 1;
-        },
+        }
         FragmentType::B => {
             // B: peptide_mass - Water
             *composition.entry("H").or_insert(0) -= 2;
             *composition.entry("O").or_insert(0) -= 1;
-        },
+        }
         FragmentType::C => {
             // C: peptide_mass + NH3 - Water
             *composition.entry("H").or_insert(0) += 1;
             *composition.entry("N").or_insert(0) += 1;
             *composition.entry("O").or_insert(0) -= 1;
-        },
+        }
         FragmentType::X => {
             // X: peptide_mass + CO
             *composition.entry("C").or_insert(0) += 1; // Add 1 for CO
             *composition.entry("O").or_insert(0) += 1; // Add 1 for CO
             *composition.entry("H").or_insert(0) -= 2; // Subtract 2 for 2 protons
-        },
-        FragmentType::Y => {
-            ()
-        },
+        }
+        FragmentType::Y => (),
         FragmentType::Z => {
             *composition.entry("H").or_insert(0) -= 3;
             *composition.entry("N").or_insert(0) -= 1;
-        },
+        }
     }
 
     composition.iter().map(|(k, v)| (*k, *v)).collect()
@@ -265,12 +273,25 @@ pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&
 ///
 /// * `Vec<Vec<(String, i32)>>` - a vector of vectors of tuples representing the atomic composition of each product ion
 ///
-pub fn fragments_to_composition(product_ions: Vec<PeptideProductIon>, num_threads: usize) -> Vec<Vec<(String, i32)>> {
-    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+pub fn fragments_to_composition(
+    product_ions: Vec<PeptideProductIon>,
+    num_threads: usize,
+) -> Vec<Vec<(String, i32)>> {
+    let thread_pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
     let result = thread_pool.install(|| {
-        product_ions.par_iter().map(|ion| atomic_product_ion_composition(ion)).map(|composition| {
-            composition.iter().map(|(k, v)| (k.to_string(), *v)).collect()
-        }).collect()
+        product_ions
+            .par_iter()
+            .map(|ion| atomic_product_ion_composition(ion))
+            .map(|composition| {
+                composition
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), *v))
+                    .collect()
+            })
+            .collect()
     });
     result
 }
@@ -325,7 +346,11 @@ pub fn get_num_protonizable_sites(sequence: &str) -> usize {
 /// let sequence = "PEPTIDEH";
 /// let charge_state_probs = simulate_charge_state_for_sequence(sequence, None, None);
 /// assert_eq!(charge_state_probs, vec![0.25, 0.5, 0.25, 0.0, 0.0]);
-pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usize>, charged_probability: Option<f64>) -> Vec<f64> {
+pub fn simulate_charge_state_for_sequence(
+    sequence: &str,
+    max_charge: Option<usize>,
+    charged_probability: Option<f64>,
+) -> Vec<f64> {
     let charged_prob = charged_probability.unwrap_or(0.5);
     let max_charge = max_charge.unwrap_or(5);
     let num_protonizable_sites = get_num_protonizable_sites(sequence);
@@ -363,11 +388,22 @@ pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usi
 /// let charge_state_probs = simulate_charge_states_for_sequences(sequences, 4, None, None);
 /// assert_eq!(charge_state_probs, vec![vec![0.25, 0.5, 0.25, 0.0, 0.0], vec![0.25, 0.5, 0.25, 0.0, 0.0], vec![0.25, 0.5, 0.25, 0.0, 0.0]]);
 /// ```
-pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>,  num_threads: usize, max_charge: Option<usize>, charged_probability: Option<f64>) -> Vec<Vec<f64>> {
-    let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+pub fn simulate_charge_states_for_sequences(
+    sequences: Vec<&str>,
+    num_threads: usize,
+    max_charge: Option<usize>,
+    charged_probability: Option<f64>,
+) -> Vec<Vec<f64>> {
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
     pool.install(|| {
-        sequences.par_iter()
-            .map(|sequence| simulate_charge_state_for_sequence(sequence, max_charge, charged_probability))
+        sequences
+            .par_iter()
+            .map(|sequence| {
+                simulate_charge_state_for_sequence(sequence, max_charge, charged_probability)
+            })
             .collect()
     })
 }
