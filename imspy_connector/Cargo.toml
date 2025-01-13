@@ -13,4 +13,4 @@ numpy = "0.22.1"
 mscore = { version = "0.2.0" }
 rustdf = { version = "0.3.0" }
 serde = "1.0.202"
-serde_json = "1.0.117"
+serde_json = "1.0.135"
