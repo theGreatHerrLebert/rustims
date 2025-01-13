@@ -46,7 +46,7 @@ pub struct DDAPrecursorMeta {
 pub struct DDAPrecursor {
     pub frame_id: i64,
     pub precursor_id: i64,
-    pub mono_mz: f64,
+    pub mono_mz: Option<f64>,
     pub highest_intensity_mz: f64,
     pub average_mz: f64,
     pub charge: Option<i64>,

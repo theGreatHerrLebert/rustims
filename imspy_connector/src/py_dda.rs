@@ -2,56 +2,80 @@ use pyo3::prelude::*;
 
 use rustdf::data::dda::{PASEFDDAFragment, TimsDatasetDDA};
 use rustdf::data::handle::TimsData;
-use rustdf::data::meta::DDAPrecursorMeta;
+use rustdf::data::meta::{DDAPrecursor};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
 #[pyclass]
-pub struct PyDDAPrecursorMeta {
-    inner: DDAPrecursorMeta,
+pub struct PyDDAPrecursor {
+    inner: DDAPrecursor,
 }
 
 #[pymethods]
-impl PyDDAPrecursorMeta {
+impl PyDDAPrecursor {
     #[new]
-    #[pyo3(signature = (precursor_id, precursor_mz_highest_intensity, precursor_mz_average, precursor_mz_monoisotopic, precursor_average_scan_number, precursor_total_intensity, precursor_frame_id, precursor_charge=None))]
-    pub fn new(precursor_id: i64, precursor_mz_highest_intensity: f64, precursor_mz_average: f64, precursor_mz_monoisotopic: Option<f64>, precursor_average_scan_number: f64, precursor_total_intensity: f64, precursor_frame_id: i64, precursor_charge: Option<i64>) -> Self {
-        let precursor_meta = DDAPrecursorMeta {
+    #[pyo3(signature = (frame_id, precursor_id, highest_intensity_mz, average_mz, inverse_ion_mobility, collision_energy, precuror_total_intensity, isolation_mz, isolation_width, mono_mz=None, charge=None))]
+    pub fn new(
+        frame_id: i64,
+        precursor_id: i64,
+        highest_intensity_mz: f64,
+        average_mz: f64,
+        inverse_ion_mobility: f64,
+        collision_energy: f64,
+        precuror_total_intensity: f64,
+        isolation_mz: f64,
+        isolation_width: f64,
+        mono_mz: Option<f64>,
+        charge: Option<i64>,
+    ) -> Self {
+        let precursor = DDAPrecursor {
+            frame_id,
             precursor_id,
-            precursor_mz_highest_intensity,
-            precursor_mz_average,
-            precursor_mz_monoisotopic,
-            precursor_charge,
-            precursor_average_scan_number,
-            precursor_total_intensity,
-            precursor_frame_id,
+            mono_mz,
+            highest_intensity_mz,
+            average_mz,
+            charge,
+            inverse_ion_mobility,
+            collision_energy,
+            precuror_total_intensity,
+            isolation_mz,
+            isolation_width,
         };
-        PyDDAPrecursorMeta { inner: precursor_meta }
+        PyDDAPrecursor { inner: precursor }
     }
+
+    #[getter]
+    pub fn frame_id(&self) -> i64 { self.inner.frame_id }
 
     #[getter]
     pub fn precursor_id(&self) -> i64 { self.inner.precursor_id }
 
     #[getter]
-    pub fn precursor_mz_highest_intensity(&self) -> f64 { self.inner.precursor_mz_highest_intensity }
+    pub fn mono_mz(&self) -> Option<f64> { self.inner.mono_mz }
 
     #[getter]
-    pub fn precursor_mz_average(&self) -> f64 { self.inner.precursor_mz_average }
+    pub fn highest_intensity_mz(&self) -> f64 { self.inner.highest_intensity_mz }
 
     #[getter]
-    pub fn precursor_mz_monoisotopic(&self) -> Option<f64> { self.inner.precursor_mz_monoisotopic }
+    pub fn average_mz(&self) -> f64 { self.inner.average_mz }
 
     #[getter]
-    pub fn precursor_charge(&self) -> Option<i64> { self.inner.precursor_charge }
+    pub fn charge(&self) -> Option<i64> { self.inner.charge }
 
     #[getter]
-    pub fn precursor_average_scan_number(&self) -> f64 { self.inner.precursor_average_scan_number }
+    pub fn inverse_ion_mobility(&self) -> f64 { self.inner.inverse_ion_mobility }
 
     #[getter]
-    pub fn precursor_total_intensity(&self) -> f64 { self.inner.precursor_total_intensity }
+    pub fn collision_energy(&self) -> f64 { self.inner.collision_energy }
 
     #[getter]
-    pub fn precursor_frame_id(&self) -> i64 { self.inner.precursor_frame_id }
+    pub fn precuror_total_intensity(&self) -> f64 { self.inner.precuror_total_intensity }
+
+    #[getter]
+    pub fn isolation_mz(&self) -> f64 { self.inner.isolation_mz }
+
+    #[getter]
+    pub fn isolation_width(&self) -> f64 { self.inner.isolation_width }
 }
 
 #[pyclass]
@@ -91,9 +115,9 @@ impl PyTimsDatasetDDA {
         pasef_fragments.iter().map(|pasef_fragment| PyTimsFragmentDDA { inner: pasef_fragment.clone() }).collect()
     }
 
-    pub fn get_selected_precursors(&self) -> Vec<PyDDAPrecursorMeta> {
+    pub fn get_selected_precursors(&self) -> Vec<PyDDAPrecursor> {
         let pasef_precursor_meta = self.inner.get_selected_precursors();
-        pasef_precursor_meta.iter().map(|precursor_meta| PyDDAPrecursorMeta { inner: precursor_meta.clone() }).collect()
+        pasef_precursor_meta.iter().map(|precursor_meta| PyDDAPrecursor { inner: precursor_meta.clone() }).collect()
     }
 
     pub fn get_precursor_frames(&self, min_intensity: f64, max_peaks: usize, num_threads: usize) -> Vec<PyTimsFrame> {
@@ -139,6 +163,6 @@ impl PyTimsFragmentDDA {
 pub fn py_dda(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDDA>()?;
     m.add_class::<PyTimsFragmentDDA>()?;
-    m.add_class::<PyDDAPrecursorMeta>()?;
+    m.add_class::<PyDDAPrecursor>()?;
     Ok(())
 }

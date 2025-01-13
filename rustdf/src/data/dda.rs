@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::data::acquisition::AcquisitionMode;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
-use crate::data::meta::{DDAPrecursorMeta, PasefMsMsMeta, read_dda_precursor_meta, read_pasef_frame_ms_ms_info, read_global_meta_sql, read_meta_data_sql};
+use crate::data::meta::{PasefMsMsMeta, read_dda_precursor_meta, read_pasef_frame_ms_ms_info, read_global_meta_sql, read_meta_data_sql, DDAPrecursor};
 
 #[derive(Clone)]
 pub struct PASEFDDAFragment {
@@ -41,8 +42,50 @@ impl TimsDatasetDDA {
         TimsDatasetDDA { loader }
     }
 
-    pub fn get_selected_precursors(&self) -> Vec<DDAPrecursorMeta> {
-        read_dda_precursor_meta(&self.loader.get_data_path()).unwrap()
+    /*
+    #[derive(Debug, Clone)]
+pub struct DDAPrecursor {
+    pub frame_id: i64,
+    pub precursor_id: i64,
+    pub mono_mz: f64,
+    pub highest_intensity_mz: f64,
+    pub average_mz: f64,
+    pub charge: Option<i64>,
+    pub inverse_ion_mobility: f64,
+    pub collision_energy: f64,
+    pub precuror_total_intensity: f64,
+    pub isolation_mz: f64,
+    pub isolation_width: f64,
+}
+     */
+
+
+
+    pub fn get_selected_precursors(&self) -> Vec<DDAPrecursor> {
+        let precursor_meta = read_dda_precursor_meta(&self.loader.get_data_path()).unwrap();
+        let pasef_meta = self.get_pasef_frame_ms_ms_info();
+
+        let precursor_id_to_pasef_meta: BTreeMap<i64, &PasefMsMsMeta> = pasef_meta.iter().map(|x| (x.precursor_id as i64, x)).collect();
+
+        // go over all precursors and get the precursor meta data
+        let result: Vec<_> = precursor_meta.iter().map(|precursor| {
+            let pasef_meta = precursor_id_to_pasef_meta.get(&precursor.precursor_id).unwrap();
+            DDAPrecursor {
+                frame_id: precursor.precursor_frame_id,
+                precursor_id: precursor.precursor_id,
+                mono_mz: precursor.precursor_mz_monoisotopic,
+                highest_intensity_mz: precursor.precursor_mz_highest_intensity,
+                average_mz: precursor.precursor_mz_average,
+                charge: precursor.precursor_charge,
+                inverse_ion_mobility: self.scan_to_inverse_mobility(precursor.precursor_frame_id as u32, &vec![precursor.precursor_average_scan_number as u32])[0],
+                collision_energy: pasef_meta.collision_energy,
+                precuror_total_intensity: precursor.precursor_total_intensity,
+                isolation_mz: pasef_meta.isolation_mz,
+                isolation_width: pasef_meta.isolation_width,
+            }
+        }).collect();
+
+        result
     }
 
     pub fn get_precursor_frames(&self, min_intensity: f64, max_num_peaks: usize, num_threads: usize) -> Vec<TimsFrame> {

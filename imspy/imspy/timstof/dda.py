@@ -15,87 +15,89 @@ ims = imspy_connector.py_dda
 import warnings
 
 
+
 class PrecursorDDA(RustWrapperObject):
-    def __init__(self, precursor_id: int, precursor_mz_highest_intensity: float, precursor_mz_average: float,
-                 precursor_mz_monoisotopic: float, precursor_average_scan_number: int, precursor_total_intensity: float,
-                 precursor_frame_id: int, precursor_charge: int):
-        self._precursor_ptr = ims.PyDDAPrecursorMeta(precursor_id, precursor_mz_highest_intensity, precursor_mz_average,
-                                                     precursor_mz_monoisotopic, precursor_average_scan_number,
-                                                     precursor_total_intensity, precursor_frame_id, precursor_charge)
+    def __init__(self, frame_id: int, precursor_id: int, highest_intensity_mz: float, average_mz: float,
+                 inverse_ion_mobility: float, collision_energy: float, precuror_total_intensity: float,
+                 isolation_mz: float, isolation_width: float, mono_mz: Optional[float] = None, charge: Optional[int] = None):
+        self._precursor_ptr = ims.PyDDAPrecursor(
+            frame_id, precursor_id, highest_intensity_mz, average_mz, inverse_ion_mobility, collision_energy,
+            precuror_total_intensity, isolation_mz, isolation_width, mono_mz, charge
+        )
 
     @classmethod
-    def from_py_ptr(cls, precursor: ims.PyDDAPrecursorMeta):
+    def from_py_ptr(cls, precursor: ims.PyDDAPrecursor):
         instance = cls.__new__(cls)
         instance._precursor_ptr = precursor
         return instance
+
+    @property
+    def frame_id(self) -> int:
+        return self._precursor_ptr.frame_id
 
     @property
     def precursor_id(self) -> int:
         return self._precursor_ptr.precursor_id
 
     @property
-    def precursor_mz_highest_intensity(self) -> float:
-        return self._precursor_ptr.precursor_mz_highest_intensity
+    def mono_mz(self) -> Optional[float]:
+        return self._precursor_ptr.mono_mz
 
     @property
-    def precursor_mz_average(self) -> float:
-        return self._precursor_ptr.precursor_mz_average
+    def highest_intensity_mz(self) -> float:
+        return self._precursor_ptr.highest_intensity_mz
 
     @property
-    def precursor_mz_monoisotopic(self) -> float:
-        return self._precursor_ptr.precursor_mz_monoisotopic
+    def average_mz(self) -> float:
+        return self._precursor_ptr.average_mz
 
     @property
-    def precursor_charge(self) -> int:
-        return self._precursor_ptr.precursor_charge
+    def charge(self) -> Optional[int]:
+        return self._precursor_ptr.charge
 
     @property
-    def precursor_average_scan_number(self) -> int:
-        return self._precursor_ptr.precursor_average_scan_number
+    def inverse_ion_mobility(self) -> float:
+        return self._precursor_ptr.inverse_ion_mobility
 
     @property
-    def precursor_total_intensity(self) -> float:
-        return self._precursor_ptr.precursor_total_intensity
+    def collision_energy(self) -> float:
+        return self._precursor_ptr.collision_energy
 
     @property
-    def precursor_frame_id(self) -> int:
-        return self._precursor_ptr.precursor_frame_id
+    def precuror_total_intensity(self) -> float:
+        return self._precursor_ptr.precuror_total_intensity
 
-    def to_sage_precursor(self,
-                          isolation_window: Tolerance = Tolerance(da=(-3.0, 3.0,)),
-                          handle: Optional['TimsDatasetDDA'] = None) -> Precursor:
+    @property
+    def isolation_mz(self) -> float:
+        return self._precursor_ptr.isolation_mz
 
-        # check if mz precursor_mz_monoisotopic is not None, if it is, use precursor_mz_average
-        if self.precursor_mz_monoisotopic is None:
-            mz = self.precursor_mz_average
-        else:
-            mz = self.precursor_mz_monoisotopic
+    @property
+    def isolation_width(self) -> float:
+        return self._precursor_ptr.isolation_width
 
-        if handle is not None:
-            inverse_ion_mobility = handle.scan_to_inverse_mobility(
-                frame_id=self.precursor_frame_id,
-                scan_values=np.array([int(self.precursor_average_scan_number)])
-            )[0]
-        else:
-            inverse_ion_mobility = self.precursor_average_scan_number
-
-        return Precursor(
-            mz=mz,
-            intensity=self.precursor_total_intensity,
-            charge=self.precursor_charge,
-            spectrum_ref=str(self.precursor_frame_id),
-            inverse_ion_mobility=inverse_ion_mobility,
-            isolation_window=isolation_window,
-        )
+    def __repr__(self):
+        return (f"DDAPrecursor(frame_id={self.frame_id}, precursor_id={self.precursor_id}, "
+                f"highest_intensity_mz={self.highest_intensity_mz}, average_mz={self.average_mz}, "
+                f"inverse_ion_mobility={self.inverse_ion_mobility}, collision_energy={self.collision_energy}, "
+                f"precuror_total_intensity={self.precuror_total_intensity}, isolation_mz={self.isolation_mz}, "
+                f"isolation_width={self.isolation_width}, mono_mz={self.mono_mz}, charge={self.charge})")
 
     def get_py_ptr(self):
         return self._precursor_ptr
 
-    def __repr__(self):
-        return f"PrecursorDDA(precursor_id={self.precursor_id}, precursor_mz_highest_intensity={self.precursor_mz_highest_intensity}, " \
-               f"precursor_mz_average={self.precursor_mz_average}, precursor_mz_monoisotopic={self.precursor_mz_monoisotopic}, " \
-               f"precursor_charge={self.precursor_charge}, precursor_average_scan_number={self.precursor_average_scan_number}, " \
-               f"precursor_total_intensity={self.precursor_total_intensity}, precursor_frame_id={self.precursor_frame_id})"
+    def to_sage_precursor(self) -> Precursor:
+
+        mz = self.mono_mz if self.mono_mz is not None else self.average_mz
+
+        return Precursor(
+            mz=mz,
+            intensity=self.precuror_total_intensity,
+            charge=self.charge,
+            spectrum_ref=str(self.frame_id),
+            isolation_window=Tolerance(da=(-self.isolation_width / 2, self.isolation_width / 2)),
+            inverse_ion_mobility=self.inverse_ion_mobility,
+            collision_energy=self.collision_energy,
+        )
 
 
 class TimsDatasetDDA(TimsDataset, RustWrapperObject):
@@ -210,14 +212,14 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
             num_threads = 1
 
         # get all selected precursors
-        precursor_meta = self.get_selected_precursors_meta()
+        precursor_meta = self.get_selected_precursors()
 
         # create a dictionary with frame_id as key and a list of precursors as value
         precursor_dict = {}
         for precursor in precursor_meta:
-            if precursor.precursor_frame_id not in precursor_dict:
-                precursor_dict[precursor.precursor_frame_id] = []
-            precursor_dict[precursor.precursor_frame_id].append(precursor)
+            if precursor.frame_id not in precursor_dict:
+                precursor_dict[precursor.frame_id] = []
+            precursor_dict[precursor.frame_id].append(precursor)
 
         # get all precursor frames
         precursor_frames = self.get_precursor_frames(min_intensity, max_peaks, num_threads)
@@ -234,7 +236,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         # associate precursors with frames, precursor will be associated with the frame with the same frame_id
         for frame in precursor_frames:
             if frame.frame_id in precursor_dict:
-                precursors = [p.to_sage_precursor(handle=self) for p in precursor_dict[frame.frame_id]]
+                precursors = [p.to_sage_precursor() for p in precursor_dict[frame.frame_id]]
                 raw_spectrum = RawSpectrum(
                     file_id=file_id,
                     spec_id=str(frame.frame_id),
@@ -258,7 +260,7 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         return processed_spectra
 
 
-    def get_selected_precursors_meta(self) -> List[PrecursorDDA]:
+    def get_selected_precursors(self) -> List[PrecursorDDA]:
         """
         Get meta data for all selected precursors
         Returns:
