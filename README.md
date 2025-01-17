@@ -134,3 +134,6 @@ The Python library is installed via [Poetry](https://github.com/python-poetry/po
     ```shell
     poetry install
     ```
+## Docker image
+For ease of use and reproducable running of our software, we are now providing a docker image for the AMD64 architecture.
+It can be also used on macOS ARM64 via virtualization. To get the image, download the here linked [release.zip](https://github.com/MatteoLacki/rustims_docker/blob/main/release.zip), unzip it and follow the installation instructions provided inside the readme.md file.
