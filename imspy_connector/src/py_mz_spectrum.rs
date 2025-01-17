@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use numpy::{PyArray1, IntoPyArray};
+use numpy::{PyArray1, IntoPyArray, PyArrayMethods};
 use mscore::data::spectrum::{ToResolution, Vectorized};
 use mscore::data::spectrum::{MzSpectrum, IndexedMzSpectrum, MsType, MzSpectrumVectorized};
 use mscore::timstof::spectrum::{TimsSpectrum};
@@ -36,7 +36,7 @@ pub struct PyMzSpectrum {
 
 impl PyMzSpectrum {
     #[new]
-    pub unsafe fn new(mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(mz: &Bound<'_, PyArray1<f64>>, intensity: &Bound<'_, PyArray1<f64>>) -> PyResult<Self> {
         Ok(PyMzSpectrum {
             inner: MzSpectrum {
                 mz: mz.as_slice()?.to_vec(),
@@ -75,17 +75,17 @@ impl PyMzSpectrum {
         let spectra = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
 
         let mut indices: Vec<i32> = Vec::new();
-        let py_list: Py<PyList> = PyList::empty(py).into();
+        let py_list: Py<PyList> = PyList::empty_bound(py).into();
 
         for (index, spec) in spectra {
             indices.push(index);
             let py_spec = Py::new(py, PyMzSpectrum { inner: spec })?;
-            py_list.as_ref(py).append(py_spec)?;
+            py_list.bind(py).append(py_spec)?;
         }
 
-        let numpy_indices = indices.into_pyarray(py);
+        let numpy_indices = indices.into_pyarray_bound(py).unbind();
 
-        Ok(PyTuple::new(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
+        Ok(PyTuple::new_bound(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
     }
 
     pub fn to_resolution(&self, resolution: i32) -> PyMzSpectrum {
@@ -139,7 +139,7 @@ pub struct PyMzSpectrumVectorized {
 #[pymethods]
 impl PyMzSpectrumVectorized {
     #[new]
-    pub unsafe fn new(indices: &PyArray1<i32>, values: &PyArray1<f64>, resolution: i32) -> PyResult<Self> {
+    pub unsafe fn new(indices: &Bound<'_, PyArray1<i32>>, values: &Bound<'_, PyArray1<f64>>, resolution: i32) -> PyResult<Self> {
         Ok(PyMzSpectrumVectorized {
             inner: MzSpectrumVectorized {
                 resolution,
@@ -149,6 +149,7 @@ impl PyMzSpectrumVectorized {
         })
     }
 
+    #[pyo3(signature = (max_index=None))]
     pub fn to_dense_spectrum(&self, max_index: Option<usize>) -> PyMzSpectrumVectorized {
         PyMzSpectrumVectorized { inner: self.inner.to_dense_spectrum(max_index) }
     }
@@ -177,7 +178,7 @@ pub struct PyIndexedMzSpectrum {
 #[pymethods]
 impl PyIndexedMzSpectrum {
     #[new]
-    pub unsafe fn new(index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+    pub unsafe fn new(index:&Bound<'_, PyArray1<i32>>, mz: &Bound<'_, PyArray1<f64>>, intensity: &Bound<'_, PyArray1<f64>>) -> PyResult<Self> {
         Ok(PyIndexedMzSpectrum {
             inner: IndexedMzSpectrum {
                 index: index.as_slice()?.to_vec(),
@@ -220,7 +221,7 @@ pub struct PyTimsSpectrum {
 impl PyTimsSpectrum {
     #[new]
     pub unsafe fn new(frame_id: i32, scan: i32, retention_time: f64, mobility: f64,
-                      ms_type: i32, index: &PyArray1<i32>, mz: &PyArray1<f64>, intensity: &PyArray1<f64>) -> PyResult<Self> {
+                      ms_type: i32, index: &Bound<'_, PyArray1<i32>>, mz: &Bound<'_, PyArray1<f64>>, intensity: &Bound<'_, PyArray1<f64>>) -> PyResult<Self> {
         Ok(PyTimsSpectrum {
             inner: TimsSpectrum {
                 frame_id,
@@ -308,7 +309,7 @@ impl PyTimsSpectrum {
 }
 
 #[pymodule]
-pub fn mz_spectrum(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_spectrum(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMsType>()?;
     m.add_class::<PyMzSpectrum>()?;
     m.add_class::<PyMzSpectrumVectorized>()?;

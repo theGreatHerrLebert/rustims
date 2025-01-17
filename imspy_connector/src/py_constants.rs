@@ -40,7 +40,7 @@ pub fn avogadro() -> f64 {
 }
 
 #[pymodule]
-pub fn constants(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_constants(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(mass_proton, m)?)?;
     m.add_function(wrap_pyfunction!(mass_neutron, m)?)?;
     m.add_function(wrap_pyfunction!(mass_electron, m)?)?;

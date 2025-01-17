@@ -2,18 +2,45 @@
 name = "mscore"
 version = "0.2.0"
 edition = "2021"
-
-[dependencies]
-statrs = "0.16.0"
-itertools = "0.13.0"
-rayon = "1.10.0"
-nalgebra = "0.32.5"
-serde = { version = "1.0.198", features = ["derive"] }
-regex = "1.10.4"
-rand = "0.8.5"
-ordered-float = "4.5.0"
-bincode = "2.0.0-rc.3"
+authors = ["David Teschner <davidteschner@googlemail.com>"]
+description = "A Rust library providing core operations for computational mass spectrometry proteomics."
+license = "MIT" 
+repository = "https://github.com/theGreatHerrLebert/rustims" 
+documentation = "https://docs.rs/mscore"
+readme = "README.md"
+keywords = ["statistics", "matrix", "scoring", "parallel"]
+categories = ["mathematics", "science", "data-structures"]
+rust-version = "1.84"
 
 [lib]
 name = "mscore"
 path = "src/lib.rs"
+
+[dependencies]
+# Statistical functions
+statrs = "0.18.0"
+# Iterator utilities
+itertools = "0.14.0"
+# Parallelism
+rayon = "1.10.0"
+# Matrix operations
+nalgebra = "0.33.2"
+# Serialization
+serde = { version = "1.0.217", features = ["derive"] }
+# Regular expressions
+regex = "1.11.1"
+# Random number generation
+rand = "0.8.5"
+# Ordered floats
+ordered-float = "4.6.0"
+# Binary serialization
+bincode = "2.0.0-rc.3"
+
+[profile.release]
+debug = true
+overflow-checks = true
+lto = "thin"
+panic = "abort"
+
+[package.metadata.docs.rs]
+features = ["all"]

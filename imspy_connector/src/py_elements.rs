@@ -20,7 +20,7 @@ pub fn get_elemental_mono_isotopic_weight_map() -> HashMap<String, f64> {
 }
 
 #[pymodule]
-pub fn elements(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_elements(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_elemental_isotope_abundance_map, m)?)?;
     m.add_function(wrap_pyfunction!(get_elemental_isotope_weight_map, m)?)?;
     m.add_function(wrap_pyfunction!(get_elemental_mono_isotopic_weight_map, m)?)?;

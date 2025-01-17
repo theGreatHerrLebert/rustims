@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::types::PyTuple;
-use numpy::{PyArray1, IntoPyArray};
+use numpy::{PyArray1, IntoPyArray, PyArrayMethods};
 use mscore::timstof::spectrum::{TimsSpectrum};
 use mscore::data::spectrum::{MsType, ToResolution, Vectorized, };
 use mscore::timstof::frame::{TimsFrame, ImsFrame, TimsFrameVectorized, ImsFrameVectorized, RawTimsFrame};
@@ -22,9 +22,9 @@ impl PyRawTimsFrame {
     pub unsafe fn new(frame_id: i32,
                       ms_type: i32,
                       retention_time: f64,
-                      scan: &PyArray1<u32>,
-                      tof: &PyArray1<u32>,
-                      intensity: &PyArray1<f64>) -> PyResult<Self> {
+                      scan: &Bound<'_, PyArray1<u32>>,
+                      tof: &Bound<'_, PyArray1<u32>>,
+                      intensity: &Bound<'_, PyArray1<f64>>) -> PyResult<Self> {
         Ok(PyRawTimsFrame {
             inner: RawTimsFrame {
                 frame_id,
@@ -85,11 +85,11 @@ impl PyTimsFrame {
     pub unsafe fn new(frame_id: i32,
                       ms_type: i32,
                       retention_time: f64,
-                      scan: &PyArray1<i32>,
-                      mobility: &PyArray1<f64>,
-                      tof: &PyArray1<i32>,
-                      mz: &PyArray1<f64>,
-                      intensity: &PyArray1<f64>) -> PyResult<Self> {
+                      scan:&Bound<'_, PyArray1<i32>>,
+                      mobility: &Bound<'_, PyArray1<f64>>,
+                      tof: &Bound<'_, PyArray1<i32>>,
+                      mz: &Bound<'_, PyArray1<f64>>,
+                      intensity: &Bound<'_, PyArray1<f64>>) -> PyResult<Self> {
         Ok(PyTimsFrame {
             inner: TimsFrame {
                 frame_id,
@@ -126,7 +126,7 @@ impl PyTimsFrame {
         self.inner.tof.clone().into_pyarray_bound(py).unbind()
     }
     #[setter]
-    pub unsafe fn set_tof(&mut self, tof: &PyArray1<i32>) {
+    pub unsafe fn set_tof(&mut self, tof: &Bound<'_, PyArray1<i32>>) {
         self.inner.tof = tof.as_slice().unwrap().to_vec();
     }
 
@@ -153,11 +153,11 @@ impl PyTimsFrame {
 
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
         let spectra = self.inner.to_tims_spectra();
-        let list: Py<PyList> = PyList::empty(py).into();
+        let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for spec in spectra {
             let py_tims_spectrum = Py::new(py, PyTimsSpectrum { inner: spec })?;
-            list.as_ref(py).append(py_tims_spectrum)?;
+            list.bind(py).append(py_tims_spectrum)?;
         }
 
         Ok(list.into())
@@ -166,11 +166,11 @@ impl PyTimsFrame {
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<Py<PyList>> {
 
         let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
-        let list: Py<PyList> = PyList::empty(py).into();
+        let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for window in windows {
             let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
-            list.as_ref(py).append(py_mz_spectrum)?;
+            list.bind(py).append(py_mz_spectrum)?;
         }
 
         Ok(list.into())
@@ -201,7 +201,7 @@ impl PyTimsFrame {
     }
 
     #[staticmethod]
-    pub fn from_windows(_py: Python, windows: &PyList) -> PyResult<Self> {
+    pub fn from_windows(_py: Python, windows: &Bound<'_, PyList>) -> PyResult<Self> {
         let mut spectra: Vec<TimsSpectrum> = Vec::new();
         for window in windows.iter() {
             let window: PyRef<PyTimsSpectrum> = window.extract()?;
@@ -219,10 +219,15 @@ impl PyTimsFrame {
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
 
         let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
-        let py_array: &PyArray1<f64> = data.into_pyarray(py);
-        let py_scans: &PyArray1<i32> = scans.into_pyarray(py);
-        let py_window_indices: &PyArray1<i32> = window_indices.into_pyarray(py);
-        let tuple = PyTuple::new(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py), py_array.into_py(py), py_scans.into_py(py), py_window_indices.into_py(py)]);
+        let py_array: Bound<'_, PyArray1<f64>> = data.into_pyarray_bound(py);
+        let py_scans: Bound<'_, PyArray1<i32>> = scans.into_pyarray_bound(py);
+        let py_window_indices: Bound<'_, PyArray1<i32>> = window_indices.into_pyarray_bound(py);
+
+        // If you need them outside the GIL context, unbind them:
+        let py_array = py_array.unbind();
+        let py_scans = py_scans.unbind();
+        let py_window_indices = py_window_indices.unbind();
+        let tuple = PyTuple::new_bound(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py), py_array.into_py(py), py_scans.into_py(py), py_window_indices.into_py(py)]);
 
         Ok(tuple.into())
     }
@@ -255,11 +260,11 @@ impl  PyTimsFrameVectorized {
    pub unsafe fn new(frame_id: i32,
                      ms_type: i32,
                      retention_time: f64,
-                     scan: &PyArray1<i32>,
-                     mobility: &PyArray1<f64>,
-                     tof: &PyArray1<i32>,
-                     indices: &PyArray1<i32>,
-                     intensity: &PyArray1<f64>,
+                     scan: &Bound<'_, PyArray1<i32>>,
+                     mobility: &Bound<'_, PyArray1<f64>>,
+                     tof: &Bound<'_, PyArray1<i32>>,
+                     indices: &Bound<'_, PyArray1<i32>>,
+                     intensity: &Bound<'_, PyArray1<f64>>,
                     resolution: i32,
                     ) -> PyResult<Self> {
        Ok(PyTimsFrameVectorized {
@@ -335,7 +340,7 @@ impl  PyTimsFrameVectorized {
 }
 
 #[pymodule]
-pub fn tims_frame(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_tims_frame(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsFrame>()?;
     m.add_class::<PyTimsFrameVectorized>()?;
     m.add_class::<PyRawTimsFrame>()?;

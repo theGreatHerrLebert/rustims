@@ -15,6 +15,7 @@ pub struct PyPeptideIon {
 #[pymethods]
 impl PyPeptideIon {
     #[new]
+    #[pyo3(signature = (sequence, charge, intensity, peptide_id=None))]
     pub fn new(sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
         PyPeptideIon { inner: PeptideIon::new(sequence, charge, intensity, peptide_id) }
     }
@@ -139,6 +140,7 @@ pub struct PyPeptideSequence {
 #[pymethods]
 impl PyPeptideSequence {
     #[new]
+    #[pyo3(signature = (sequence, peptide_id=None))]
     pub fn new(sequence: String, peptide_id: Option<i32>) -> Self {
         PyPeptideSequence { inner: PeptideSequence::new(sequence, peptide_id) }
     }
@@ -281,6 +283,7 @@ pub struct PyPeptideProductIon {
 #[pymethods]
 impl PyPeptideProductIon {
     #[new]
+    #[pyo3(signature = (kind, sequence, charge, intensity, peptide_id=None))]
     pub fn new(kind: &str, sequence: String, charge: i32, intensity: f64, peptide_id: Option<i32>) -> Self {
 
         let kind = match kind {
@@ -341,7 +344,7 @@ impl PyPeptideProductIon {
 }
 
 #[pymodule]
-pub fn peptides(_py: Python, m: &PyModule) -> PyResult<()> {
+pub fn py_peptide(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
     m.add_class::<PyPeptideIon>()?;
     m.add_class::<PyPeptideProductIon>()?;

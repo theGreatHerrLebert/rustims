@@ -248,6 +248,20 @@ impl TimsFrame {
         TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
     }
 
+    pub fn top_n(&self, n: usize) -> TimsFrame {
+        let mut indices: Vec<usize> = (0..self.ims_frame.intensity.len()).collect();
+        indices.sort_by(|a, b| self.ims_frame.intensity[*b].partial_cmp(&self.ims_frame.intensity[*a]).unwrap());
+        indices.truncate(n);
+
+        let scan = indices.iter().map(|&i| self.scan[i]).collect();
+        let mobility = indices.iter().map(|&i| self.ims_frame.mobility[i]).collect();
+        let tof = indices.iter().map(|&i| self.tof[i]).collect();
+        let mz = indices.iter().map(|&i| self.ims_frame.mz[i]).collect();
+        let intensity = indices.iter().map(|&i| self.ims_frame.intensity[i]).collect();
+
+        TimsFrame::new(self.frame_id, self.ms_type.clone(), self.ims_frame.retention_time, scan, mobility, tof, mz, intensity)
+    }
+
     pub fn to_windows_indexed(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> (Vec<i32>, Vec<i32>, Vec<TimsSpectrum>) {
         // split by scan (ion mobility)
         let spectra = self.to_tims_spectra();
