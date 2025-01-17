@@ -39,23 +39,195 @@
 <section id="submodules">
 <h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">¶</a></h2>
 </section>
-<section id="imspy-simulation-timsim-jobs-add-noise-from-real-data-module">
-<h2>imspy.simulation.timsim.jobs.add_noise_from_real_data module<a class="headerlink" href="#imspy-simulation-timsim-jobs-add-noise-from-real-data-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.add_noise_from_real_data">
+<span id="imspy-simulation-timsim-jobs-add-noise-from-real-data-module"></span><h2>imspy.simulation.timsim.jobs.add_noise_from_real_data module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.add_noise_from_real_data" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.add_noise_from_real_data.add_real_data_noise_to_frames">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.add_noise_from_real_data.</span></span><span class="sig-name descname"><span class="pre">add_real_data_noise_to_frames</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">acquisition_builder</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">frames</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">intensity_max_precursor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">30</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">intensity_max_fragment</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">30</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">precursor_sample_fraction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fragment_sample_fraction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_precursor_frames</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_fragment_frames</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.add_noise_from_real_data.add_real_data_noise_to_frames" title="Link to this definition">¶</a></dt>
+<dd><p>Add noise to frame.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>acquisition_builder</strong> (<span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="imspy.simulation.html#imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA" title="imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA"><code class="xref py py-class docutils literal notranslate"><span class="pre">TimsTofAcquisitionBuilderDIA</span></code></a></span>) – Acquisition builder.</p></li>
+<li><p><strong>frames</strong> (<em>List</em><em>[</em><a class="reference internal" href="imspy.timstof.html#imspy.timstof.frame.TimsFrame" title="imspy.timstof.frame.TimsFrame"><em>TimsFrame</em></a><em>]</em>) – Frames.</p></li>
+<li><p><strong>intensity_max_precursor</strong> (<em>float</em>) – Maximum intensity for precursor.</p></li>
+<li><p><strong>intensity_max_fragment</strong> (<em>float</em>) – Maximum intensity for fragment.</p></li>
+<li><p><strong>precursor_sample_fraction</strong> (<em>float</em>) – Sample fraction for precursor.</p></li>
+<li><p><strong>fragment_sample_fraction</strong> (<em>float</em>) – Sample fraction for fragment.</p></li>
+<li><p><strong>num_precursor_frames</strong> (<em>int</em>) – Number of precursor frames.</p></li>
+<li><p><strong>num_fragment_frames</strong> (<em>int</em>) – Number of fragment frames.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Frames.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List[<a class="reference internal" href="imspy.timstof.html#imspy.timstof.frame.TimsFrame" title="imspy.timstof.frame.TimsFrame">TimsFrame</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
-<section id="imspy-simulation-timsim-jobs-assemble-frames-module">
-<h2>imspy.simulation.timsim.jobs.assemble_frames module<a class="headerlink" href="#imspy-simulation-timsim-jobs-assemble-frames-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.assemble_frames">
+<span id="imspy-simulation-timsim-jobs-assemble-frames-module"></span><h2>imspy.simulation.timsim.jobs.assemble_frames module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.assemble_frames" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.assemble_frames.assemble_frames">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.assemble_frames.</span></span><span class="sig-name descname"><span class="pre">assemble_frames</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">acquisition_builder</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">frames</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_noise_precursor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_noise_uniform</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">precursor_noise_ppm</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_noise_fragment</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fragment_noise_ppm</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_threads</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">add_real_data_noise</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">intensity_max_precursor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">150</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">intensity_max_fragment</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">75</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">precursor_sample_fraction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.01</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fragment_sample_fraction</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.05</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_precursor_frames</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_fragment_frames</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fragment</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.assemble_frames.assemble_frames" title="Link to this definition">¶</a></dt>
+<dd><p>Assemble frames from frame ids and write them to the database.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>acquisition_builder</strong> (<span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="imspy.simulation.html#imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA" title="imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA"><code class="xref py py-class docutils literal notranslate"><span class="pre">TimsTofAcquisitionBuilderDIA</span></code></a></span>) – Acquisition builder object.</p></li>
+<li><p><strong>frames</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataFrame</span></code></span>) – DataFrame containing frame ids.</p></li>
+<li><p><strong>batch_size</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Batch size for frame assembly, i.e. how many frames are assembled at once.</p></li>
+<li><p><strong>verbose</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Verbosity.</p></li>
+<li><p><strong>mz_noise_precursor</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Add noise to precursor m/z values.</p></li>
+<li><p><strong>mz_noise_uniform</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Add uniform noise to m/z values.</p></li>
+<li><p><strong>precursor_noise_ppm</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – PPM value for precursor noise.</p></li>
+<li><p><strong>mz_noise_fragment</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Add noise to fragment m/z values.</p></li>
+<li><p><strong>fragment_noise_ppm</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – PPM value for fragment noise.</p></li>
+<li><p><strong>num_threads</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Number of threads for frame assembly.</p></li>
+<li><p><strong>add_real_data_noise</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Add real data noise to the frames.</p></li>
+<li><p><strong>intensity_max_precursor</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Maximum intensity for precursor noise.</p></li>
+<li><p><strong>intensity_max_fragment</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Maximum intensity for fragment noise.</p></li>
+<li><p><strong>precursor_sample_fraction</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Sample fraction for precursor noise.</p></li>
+<li><p><strong>fragment_sample_fraction</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Sample fraction for fragment noise.</p></li>
+<li><p><strong>num_precursor_frames</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Number of precursor frames.</p></li>
+<li><p><strong>num_fragment_frames</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Number of fragment frames.</p></li>
+<li><p><strong>fragment</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – if False, Quadrupole isolation will still be used, but no fragmentation will be performed.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-obj docutils literal notranslate"><span class="pre">None</span></code></span></p>
+</dd>
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None, writes frames to disk and metadata to database.</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
-<section id="imspy-simulation-timsim-jobs-build-acquisition-module">
-<h2>imspy.simulation.timsim.jobs.build_acquisition module<a class="headerlink" href="#imspy-simulation-timsim-jobs-build-acquisition-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.build_acquisition">
+<span id="imspy-simulation-timsim-jobs-build-acquisition-module"></span><h2>imspy.simulation.timsim.jobs.build_acquisition module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.build_acquisition" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.build_acquisition.build_acquisition">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.build_acquisition.</span></span><span class="sig-name descname"><span class="pre">build_acquisition</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exp_name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">acquisition_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'dia'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gradient_length</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_reference_ds_layout</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_in_memory</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">round_collision_energy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">collision_energy_decimals</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_bruker_sdk</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.build_acquisition.build_acquisition" title="Link to this definition">¶</a></dt>
+<dd><p>Build acquisition object from reference path.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>path</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Path where the acquisition will be saved.</p></li>
+<li><p><strong>reference_path</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Path to the reference dataset.</p></li>
+<li><p><strong>exp_name</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Experiment name.</p></li>
+<li><p><strong>acquisition_type</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Acquisition type, must be ‘dia’, ‘midia’, ‘slice’ or ‘synchro’.</p></li>
+<li><p><strong>verbose</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Verbosity.</p></li>
+<li><p><strong>gradient_length</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Gradient length.</p></li>
+<li><p><strong>use_reference_ds_layout</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Use reference dataset layout for synthetic dataset.</p></li>
+<li><p><strong>reference_in_memory</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Load reference dataset into memory.</p></li>
+<li><p><strong>round_collision_energy</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Round collision energy.</p></li>
+<li><p><strong>collision_energy_decimals</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Number of decimals for collision energy (controls coarseness).</p></li>
+<li><p><strong>use_bruker_sdk</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Use Bruker SDK for reading reference dataset.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Acquisition object.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="imspy.simulation.html#imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA" title="imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA">TimsTofAcquisitionBuilderDIA</a></p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
-<section id="imspy-simulation-timsim-jobs-digest-fasta-module">
-<h2>imspy.simulation.timsim.jobs.digest_fasta module<a class="headerlink" href="#imspy-simulation-timsim-jobs-digest-fasta-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.digest_fasta">
+<span id="imspy-simulation-timsim-jobs-digest-fasta-module"></span><h2>imspy.simulation.timsim.jobs.digest_fasta module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.digest_fasta" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.digest_fasta.digest_fasta">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.digest_fasta.</span></span><span class="sig-name descname"><span class="pre">digest_fasta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">fasta_file_path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">missed_cleavages</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_len</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">6</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_len</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">30</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cleave_at</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'KR'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">restrict</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">decoys</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">job_name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'digest_fasta'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">static_mods</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">{'C':</span> <span class="pre">'[UNIMOD:4]'}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">variable_mods</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">{'M':</span> <span class="pre">['[UNIMOD:35]'],</span> <span class="pre">'[':</span> <span class="pre">['[UNIMOD:1]']}</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">exclude_accumulated_gradient_start</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_rt_percent</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gradient_length</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">3600</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.digest_fasta.digest_fasta" title="Link to this definition">¶</a></dt>
+<dd><p>Digest a fasta file.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>fasta_file_path</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Path to the fasta file.</p></li>
+<li><p><strong>missed_cleavages</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Number of missed cleavages.</p></li>
+<li><p><strong>min_len</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Minimum peptide length.</p></li>
+<li><p><strong>max_len</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Maximum peptide length.</p></li>
+<li><p><strong>cleave_at</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Cleavage sites.</p></li>
+<li><p><strong>restrict</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Restrict to specific proteins.</p></li>
+<li><p><strong>decoys</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Generate decoys.</p></li>
+<li><p><strong>verbose</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Verbosity.</p></li>
+<li><p><strong>job_name</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Job name.</p></li>
+<li><p><strong>static_mods</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">dict</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>]</span>) – Static modifications.</p></li>
+<li><p><strong>variable_mods</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">dict</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">list</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>]]</span>) – Variable modifications.</p></li>
+<li><p><strong>exclude_accumulated_gradient_start</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Exclude low retention times.</p></li>
+<li><p><strong>min_rt_percent</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Minimum retention time in percent.</p></li>
+<li><p><strong>gradient_length</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Gradient length in seconds (in seconds).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Peptide digest object.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="imspy.simulation.html#imspy.simulation.proteome.PeptideDigest" title="imspy.simulation.proteome.PeptideDigest">PeptideDigest</a></p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
-<section id="imspy-simulation-timsim-jobs-simulate-charge-states-module">
-<h2>imspy.simulation.timsim.jobs.simulate_charge_states module<a class="headerlink" href="#imspy-simulation-timsim-jobs-simulate-charge-states-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.simulate_charge_states">
+<span id="imspy-simulation-timsim-jobs-simulate-charge-states-module"></span><h2>imspy.simulation.timsim.jobs.simulate_charge_states module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_charge_states" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.simulate_charge_states.simulate_charge_states">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.simulate_charge_states.</span></span><span class="sig-name descname"><span class="pre">simulate_charge_states</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">peptides</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_lower</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_upper</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">p_charge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge_state_one_probability</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_charge_contrib</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.15</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.simulate_charge_states.simulate_charge_states" title="Link to this definition">¶</a></dt>
+<dd><p>Simulate charge states for peptides.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>peptides</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataFrame</span></code></span>) – Peptides DataFrame.</p></li>
+<li><p><strong>mz_lower</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Lower m/z value.</p></li>
+<li><p><strong>mz_upper</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Upper m/z value.</p></li>
+<li><p><strong>p_charge</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Probability of charge.</p></li>
+<li><p><strong>charge_state_one_probability</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Probability of charge state one.</p></li>
+<li><p><strong>min_charge_contrib</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Minimum charge contribution.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Ions DataFrame.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>pd.DataFrame</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
-<section id="imspy-simulation-timsim-jobs-simulate-fragment-intensities-module">
-<h2>imspy.simulation.timsim.jobs.simulate_fragment_intensities module<a class="headerlink" href="#imspy-simulation-timsim-jobs-simulate-fragment-intensities-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.simulate_fragment_intensities">
+<span id="imspy-simulation-timsim-jobs-simulate-fragment-intensities-module"></span><h2>imspy.simulation.timsim.jobs.simulate_fragment_intensities module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_fragment_intensities" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.simulate_fragment_intensities.simulate_fragment_intensities">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.simulate_fragment_intensities.</span></span><span class="sig-name descname"><span class="pre">simulate_fragment_intensities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">acquisition_builder</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_size</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_threads</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">down_sample_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.simulate_fragment_intensities.simulate_fragment_intensities" title="Link to this definition">¶</a></dt>
+<dd><p>Simulate fragment ion intensity distributions.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>path</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Path to the synthetic data.</p></li>
+<li><p><strong>name</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>) – Name of the synthetic data.</p></li>
+<li><p><strong>acquisition_builder</strong> (<span class="sphinx_autodoc_typehints-type"><a class="reference internal" href="imspy.simulation.html#imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA" title="imspy.simulation.acquisition.TimsTofAcquisitionBuilderDIA"><code class="xref py py-class docutils literal notranslate"><span class="pre">TimsTofAcquisitionBuilderDIA</span></code></a></span>) – Acquisition builder object.</p></li>
+<li><p><strong>batch_size</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Batch size for frame assembly, i.e. how many frames are assembled at once.</p></li>
+<li><p><strong>verbose</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Verbosity.</p></li>
+<li><p><strong>num_threads</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Number of threads for frame assembly.</p></li>
+<li><p><strong>down_sample_factor</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Down sample factor for fragment ion intensity distributions.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-obj docutils literal notranslate"><span class="pre">None</span></code></span></p>
+</dd>
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None, writes frames to disk and metadata to database.</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
 <section id="module-imspy.simulation.timsim.jobs.simulate_frame_distributions">
 <span id="imspy-simulation-timsim-jobs-simulate-frame-distributions-module"></span><h2>imspy.simulation.timsim.jobs.simulate_frame_distributions module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_frame_distributions" title="Link to this heading">¶</a></h2>
@@ -129,8 +301,30 @@
 </dd></dl>
 
 </section>
-<section id="imspy-simulation-timsim-jobs-simulate-ion-mobilities-module">
-<h2>imspy.simulation.timsim.jobs.simulate_ion_mobilities module<a class="headerlink" href="#imspy-simulation-timsim-jobs-simulate-ion-mobilities-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.simulate_ion_mobilities">
+<span id="imspy-simulation-timsim-jobs-simulate-ion-mobilities-module"></span><h2>imspy.simulation.timsim.jobs.simulate_ion_mobilities module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_ion_mobilities" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.simulate_ion_mobilities.simulate_ion_mobilities">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.simulate_ion_mobilities.</span></span><span class="sig-name descname"><span class="pre">simulate_ion_mobilities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">im_lower</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">im_upper</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.simulate_ion_mobilities.simulate_ion_mobilities" title="Link to this definition">¶</a></dt>
+<dd><p>Simulate ion mobilities.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ions</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataFrame</span></code></span>) – Ions DataFrame.</p></li>
+<li><p><strong>im_lower</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Lower ion mobility.</p></li>
+<li><p><strong>im_upper</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Upper ion mobility.</p></li>
+<li><p><strong>verbose</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Verbosity.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Ions DataFrame.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>pd.DataFrame</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
 <section id="module-imspy.simulation.timsim.jobs.simulate_occurrences">
 <span id="imspy-simulation-timsim-jobs-simulate-occurrences-module"></span><h2>imspy.simulation.timsim.jobs.simulate_occurrences module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_occurrences" title="Link to this heading">¶</a></h2>
@@ -164,8 +358,29 @@
 <section id="imspy-simulation-timsim-jobs-simulate-precursor-spectra-module">
 <h2>imspy.simulation.timsim.jobs.simulate_precursor_spectra module<a class="headerlink" href="#imspy-simulation-timsim-jobs-simulate-precursor-spectra-module" title="Link to this heading">¶</a></h2>
 </section>
-<section id="imspy-simulation-timsim-jobs-simulate-retention-time-module">
-<h2>imspy.simulation.timsim.jobs.simulate_retention_time module<a class="headerlink" href="#imspy-simulation-timsim-jobs-simulate-retention-time-module" title="Link to this heading">¶</a></h2>
+<section id="module-imspy.simulation.timsim.jobs.simulate_retention_time">
+<span id="imspy-simulation-timsim-jobs-simulate-retention-time-module"></span><h2>imspy.simulation.timsim.jobs.simulate_retention_time module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_retention_time" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.simulate_retention_time.simulate_retention_times">
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.simulate_retention_time.</span></span><span class="sig-name descname"><span class="pre">simulate_retention_times</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">peptides</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gradient_length</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">3600</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.simulate_retention_time.simulate_retention_times" title="Link to this definition">¶</a></dt>
+<dd><p>Simulate retention times.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>peptides</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataFrame</span></code></span>) – Peptides DataFrame.</p></li>
+<li><p><strong>verbose</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Verbosity.</p></li>
+<li><p><strong>gradient_length</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Gradient length in seconds.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Peptides DataFrame.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>pd.DataFrame</p>
+</dd>
+</dl>
+</dd></dl>
+
 </section>
 <section id="module-imspy.simulation.timsim.jobs.simulate_scan_distributions">
 <span id="imspy-simulation-timsim-jobs-simulate-scan-distributions-module"></span><h2>imspy.simulation.timsim.jobs.simulate_scan_distributions module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_scan_distributions" title="Link to this heading">¶</a></h2>
