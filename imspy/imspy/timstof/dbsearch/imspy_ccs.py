@@ -297,7 +297,7 @@ def main():
     if args.verbose:
         print("Creating mokapot pin ...")
 
-    PSM_pin = transform_psm_to_mokapot_pin(PSM_pandas)
+    PSM_pin = transform_psm_to_mokapot_pin(PSM_pandas, seq_modified=True)
     PSM_pin.to_csv(f"{args.raw_data_path}/PSMs.pin", index=False, sep="\t")
 
     psms_moka = mokapot.read_pin(f"{args.raw_data_path}/PSMs.pin")
