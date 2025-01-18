@@ -9,7 +9,8 @@ from imspy.timstof.dda import TimsDatasetDDA
 from sagepy.utility import create_sage_database, compress_psms, decompress_psms
 from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 from sagepy.core import Precursor, Tolerance, Scorer, SpectrumProcessor
-from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec, write_psms_binary
+from imspy.timstof.dbsearch.utility import sanitize_mz, get_searchable_spec, write_psms_binary, split_fasta, \
+    merge_dicts_with_merge_dict
 from imspy.algorithm.rescoring import create_feature_space
 from sagepy.utility import psm_collection_to_pandas, apply_mz_calibration
 
@@ -45,6 +46,7 @@ def main():
     parser.add_argument("--variable_modifications", type=str, help="Variable modifications in TOML-compatible string form.")
     parser.add_argument("--silent", action="store_true", help="Silent mode.")
     parser.add_argument("--no_bruker_sdk", action="store_true", help="Do not use Bruker SDK.")
+    parser.add_argument("--fasta_batch_size", type=int, help="Batch size for FASTA processing.")
 
     # Initially parse just to get config
     temp_args, _ = parser.parse_known_args()
@@ -67,7 +69,8 @@ def main():
         "static_modifications": config.get("static_modifications", {"C": "[UNIMOD:4]"}),
         "variable_modifications": config.get("variable_modifications", {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]}),
         "verbose": config.get("verbose", True),
-        "no_bruker_sdk": config.get("no_bruker_sdk", False)
+        "no_bruker_sdk": config.get("no_bruker_sdk", False),
+        "fasta_batch_size": config.get("fasta_batch_size", 1),
     }
 
     # Re-parse arguments with defaults applied where command line not provided
@@ -105,24 +108,17 @@ def main():
 
         print("Creating SAGE database ...")
 
-    indexed_db = create_sage_database(
-        fasta_path=args.fasta_path,
-        cleave_at=args.cleave_at,
-        restrict=args.restrict,
-        static_mods=args.static_modifications,
-        variable_mods=args.variable_modifications,
-        c_terminal=args.c_terminal
-    )
-
     scorer = Scorer(
         precursor_tolerance=Tolerance(ppm=(-25.0, 25.0)),
         fragment_tolerance=Tolerance(ppm=(-20.0, 20.0)),
-        report_psms=3,
+        report_psms=5,
         min_matched_peaks=5,
         annotate_matches=True,
         static_mods=args.static_modifications,
         variable_mods=args.variable_modifications,
     )
+
+    fastas = split_fasta(args.fasta_path, args.fasta_batch_size)
 
     # get the count of files in the directory
     count = 0
@@ -207,11 +203,34 @@ def main():
             if args.verbose:
                 print("Scoring spectra ...")
 
-            psm_collection = scorer.score_collection_psm(
-                db=indexed_db,
-                spectrum_collection=fragments['processed_spec'].values,
-                num_threads=args.num_threads
-            )
+            psm_dicts = []
+
+            for i, fasta in enumerate(fastas):
+
+                if args.verbose:
+                    print(f"Processing FASTA {i+1}/{len(fastas)} ...")
+
+                indexed_db = create_sage_database(
+                    fasta=fasta,
+                    cleave_at=args.cleave_at,
+                    restrict=args.restrict,
+                    static_mods=args.static_modifications,
+                    variable_mods=args.variable_modifications,
+                    c_terminal=args.c_terminal
+                )
+
+                psm_collection = scorer.score_collection_psm(
+                    db=indexed_db,
+                    spectrum_collection=fragments['processed_spec'].values,
+                    num_threads=args.num_threads
+                )
+
+                psm_dicts.append(psm_collection)
+
+            if len(psm_dicts) > 1:
+                psm_collection = merge_dicts_with_merge_dict(psm_dicts)
+            else:
+                psm_collection = psm_dicts[0]
 
             # mz calibration
             ppm_error = apply_mz_calibration(psm_collection, fragments)
