@@ -106,8 +106,6 @@ def main():
         for arg, value in vars(args).items():
             print(f"  {arg}: {value}")
 
-        print("Creating SAGE database ...")
-
     scorer = Scorer(
         precursor_tolerance=Tolerance(ppm=(-25.0, 25.0)),
         fragment_tolerance=Tolerance(ppm=(-20.0, 20.0)),
@@ -118,7 +116,11 @@ def main():
         variable_mods=args.variable_modifications,
     )
 
-    fastas = split_fasta(args.fasta_path, args.fasta_batch_size)
+    # read in the fasta file
+    with open(args.fasta_path, "r") as f:
+        raw_fasta = f.read()
+
+    fastas = split_fasta(fasta=raw_fasta, num_splits=args.fasta_batch_size, randomize=True)
 
     # get the count of files in the directory
     count = 0
@@ -228,6 +230,8 @@ def main():
                 psm_dicts.append(psm_collection)
 
             if len(psm_dicts) > 1:
+                if args.verbose:
+                    print("Merging PSMs ...")
                 psm_collection = merge_dicts_with_merge_dict(psm_dicts)
             else:
                 psm_collection = psm_dicts[0]
