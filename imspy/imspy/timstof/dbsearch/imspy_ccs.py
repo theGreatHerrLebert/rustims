@@ -134,139 +134,143 @@ def main():
     current_count = 0
 
     for file in os.listdir(args.raw_data_path):
-        if file.endswith(".d"):
-            current_count += 1
-
-            if args.verbose:
-                print(f"Processing {file} ({current_count}/{count}) ...")
-
-            dataset_name = file.split(".")[0]
-            ds_path = os.path.join(args.raw_data_path, file)
-
-            # Load the dataset
-            dataset = TimsDatasetDDA(ds_path, use_bruker_sdk=not args.no_bruker_sdk)
-            fragments = dataset.get_pasef_fragments(args.num_threads)
-
-            # Group by mobility
-            if args.verbose:
-                print("Assembling re-fragmented precursors ...")
-
-            fragments = fragments.groupby('precursor_id').agg({
-                'frame_id': 'first',
-                'time': 'first',
-                'precursor_id': 'first',
-                'raw_data': 'sum',
-                'scan_begin': 'first',
-                'scan_end': 'first',
-                'isolation_mz': 'first',
-                'isolation_width': 'first',
-                'collision_energy': 'first',
-                'largest_peak_mz': 'first',
-                'average_mz': 'first',
-                'monoisotopic_mz': 'first',
-                'charge': 'first',
-                'average_scan': 'first',
-                'intensity': 'first',
-                'parent_id': 'first',
-            })
-
-            mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
-            fragments['mobility'] = mobility
-
-            fragments['spec_id'] = fragments.apply(
-                lambda r: f"{r['frame_id']}-{r['precursor_id']}-{dataset_name}", axis=1
-            )
-
-            if args.verbose:
-                print("Extracting precursors ...")
-
-            fragments['sage_precursor'] = fragments.apply(lambda r: Precursor(
-                mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
-                intensity=r['intensity'],
-                charge=sanitize_charge(r['charge']),
-                isolation_window=Tolerance(da=(-3, 3)),
-                collision_energy=r.collision_energy,
-                inverse_ion_mobility=r.mobility,
-            ), axis=1)
-
-            if args.verbose:
-                print("Extracting fragment spectra ...")
-
-            fragments['processed_spec'] = fragments.apply(
-                lambda r: get_searchable_spec(
-                    precursor=r.sage_precursor,
-                    raw_fragment_data=r.raw_data,
-                    spec_processor=SpectrumProcessor(take_top_n=150),
-                    spec_id=r.spec_id,
-                    time=r['time'],
-                ), axis=1
-            )
-
-            if args.verbose:
-                print("Scoring spectra ...")
-
-            psm_dicts = []
-
-            for i, fasta in enumerate(fastas):
+        try:
+            if file.endswith(".d"):
+                current_count += 1
 
                 if args.verbose:
-                    print(f"Processing FASTA {i+1}/{len(fastas)} ...")
+                    print(f"Processing {file} ({current_count}/{count}) ...")
 
-                indexed_db = create_sage_database(
-                    fasta=fasta,
-                    cleave_at=args.cleave_at,
-                    restrict=args.restrict,
-                    static_mods=args.static_modifications,
-                    variable_mods=args.variable_modifications,
-                    c_terminal=args.c_terminal
-                )
+                dataset_name = file.split(".")[0]
+                ds_path = os.path.join(args.raw_data_path, file)
 
-                psm_collection = scorer.score_collection_psm(
-                    db=indexed_db,
-                    spectrum_collection=fragments['processed_spec'].values,
-                    num_threads=args.num_threads
-                )
+                # Load the dataset
+                dataset = TimsDatasetDDA(ds_path, use_bruker_sdk=not args.no_bruker_sdk)
+                fragments = dataset.get_pasef_fragments(args.num_threads)
 
-                psm_dicts.append(psm_collection)
-
-            if len(psm_dicts) > 1:
+                # Group by mobility
                 if args.verbose:
-                    print("Merging PSMs ...")
-                psm_collection = merge_dicts_with_merge_dict(psm_dicts)
-            else:
-                psm_collection = psm_dicts[0]
+                    print("Assembling re-fragmented precursors ...")
 
-            # mz calibration
-            ppm_error = apply_mz_calibration(psm_collection, fragments)
+                fragments = fragments.groupby('precursor_id').agg({
+                    'frame_id': 'first',
+                    'time': 'first',
+                    'precursor_id': 'first',
+                    'raw_data': 'sum',
+                    'scan_begin': 'first',
+                    'scan_end': 'first',
+                    'isolation_mz': 'first',
+                    'isolation_width': 'first',
+                    'collision_energy': 'first',
+                    'largest_peak_mz': 'first',
+                    'average_mz': 'first',
+                    'monoisotopic_mz': 'first',
+                    'charge': 'first',
+                    'average_scan': 'first',
+                    'intensity': 'first',
+                    'parent_id': 'first',
+                })
 
-            for _, values in psm_collection.items():
-                for value in values:
-                    value.file_name = dataset_name
-                    value.mz_calibration_ppm = ppm_error
+                mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
+                fragments['mobility'] = mobility
 
-            psm_list = [psm for values in psm_collection.values() for psm in values]
+                fragments['spec_id'] = fragments.apply(
+                    lambda r: f"{r['frame_id']}-{r['precursor_id']}-{dataset_name}", axis=1
+                )
 
-            if args.verbose:
-                print("Creating re-scoring feature space ...")
+                if args.verbose:
+                    print("Extracting precursors ...")
 
-            psm_list = create_feature_space(psms=psm_list)
-            bts = compress_psms(psm_list)
+                fragments['sage_precursor'] = fragments.apply(lambda r: Precursor(
+                    mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
+                    intensity=r['intensity'],
+                    charge=sanitize_charge(r['charge']),
+                    isolation_window=Tolerance(da=(-3, 3)),
+                    collision_energy=r.collision_energy,
+                    inverse_ion_mobility=r.mobility,
+                ), axis=1)
 
-            write_psms_binary(
-                byte_array=bts,
-                folder_path=ds_path,
-                file_name=f"{dataset_name}"
-            )
+                if args.verbose:
+                    print("Extracting fragment spectra ...")
 
-            I = fragments.apply(lambda r: group_by_mobility(r.raw_data.mobility, r.raw_data.intensity), axis=1)
-            inv_mob, intensity = [x[0] for x in I], [x[1] for x in I]
+                fragments['processed_spec'] = fragments.apply(
+                    lambda r: get_searchable_spec(
+                        precursor=r.sage_precursor,
+                        raw_fragment_data=r.raw_data,
+                        spec_processor=SpectrumProcessor(take_top_n=150),
+                        spec_id=r.spec_id,
+                        time=r['time'],
+                    ), axis=1
+                )
 
-            fragments["inverse_ion_mobility"] = inv_mob
-            fragments["intensity"] = intensity
+                if args.verbose:
+                    print("Scoring spectra ...")
 
-            F = fragments[["spec_id", "monoisotopic_mz", "charge", "inverse_ion_mobility", "intensity"]]
+                psm_dicts = []
 
-            F.to_parquet(f"{ds_path}/imspy/{dataset_name}.parquet", index=False)
+                for i, fasta in enumerate(fastas):
+
+                    if args.verbose:
+                        print(f"Processing FASTA {i+1}/{len(fastas)} ...")
+
+                    indexed_db = create_sage_database(
+                        fasta=fasta,
+                        cleave_at=args.cleave_at,
+                        restrict=args.restrict,
+                        static_mods=args.static_modifications,
+                        variable_mods=args.variable_modifications,
+                        c_terminal=args.c_terminal
+                    )
+
+                    psm_collection = scorer.score_collection_psm(
+                        db=indexed_db,
+                        spectrum_collection=fragments['processed_spec'].values,
+                        num_threads=args.num_threads
+                    )
+
+                    psm_dicts.append(psm_collection)
+
+                if len(psm_dicts) > 1:
+                    if args.verbose:
+                        print("Merging PSMs ...")
+                    psm_collection = merge_dicts_with_merge_dict(psm_dicts)
+                else:
+                    psm_collection = psm_dicts[0]
+
+                # mz calibration
+                ppm_error = apply_mz_calibration(psm_collection, fragments)
+
+                for _, values in psm_collection.items():
+                    for value in values:
+                        value.file_name = dataset_name
+                        value.mz_calibration_ppm = ppm_error
+
+                psm_list = [psm for values in psm_collection.values() for psm in values]
+
+                if args.verbose:
+                    print("Creating re-scoring feature space ...")
+
+                psm_list = create_feature_space(psms=psm_list)
+                bts = compress_psms(psm_list)
+
+                write_psms_binary(
+                    byte_array=bts,
+                    folder_path=ds_path,
+                    file_name=f"{dataset_name}"
+                )
+
+                I = fragments.apply(lambda r: group_by_mobility(r.raw_data.mobility, r.raw_data.intensity), axis=1)
+                inv_mob, intensity = [x[0] for x in I], [x[1] for x in I]
+
+                fragments["inverse_ion_mobility"] = inv_mob
+                fragments["intensity"] = intensity
+
+                F = fragments[["spec_id", "monoisotopic_mz", "charge", "inverse_ion_mobility", "intensity"]]
+
+                F.to_parquet(f"{ds_path}/imspy/{dataset_name}.parquet", index=False)
+
+        except Exception as e:
+            print(f"Error processing {file}: {e}")
 
     total_psms = []
 
@@ -280,17 +284,22 @@ def main():
     for file in os.listdir(args.raw_data_path):
         if file.endswith(".d"):
             tmp_count += 1
-            dataset_name = file.split(".")[0]
-            psm_bin_path = os.path.join(args.raw_data_path, file, "imspy", "psm", f"{dataset_name}.bin")
 
-            # load binary array and decompress
-            bts = np.fromfile(psm_bin_path, dtype=np.uint8)
-            psm_list = decompress_psms(bts)
-            total_psms.extend(psm_list)
+            try:
+                dataset_name = file.split(".")[0]
+                psm_bin_path = os.path.join(args.raw_data_path, file, "imspy", "psm", f"{dataset_name}.bin")
 
-            if args.verbose:
-                # print the progress
-                print(f"Loaded {dataset_name} ({tmp_count}/{count})")
+                # load binary array and decompress
+                bts = np.fromfile(psm_bin_path, dtype=np.uint8)
+                psm_list = decompress_psms(bts)
+                total_psms.extend(psm_list)
+
+                if args.verbose:
+                    # print the progress
+                    print(f"Loaded {dataset_name} ({tmp_count}/{count})")
+
+            except Exception as e:
+                print(f"Error loading {file}: {e}")
 
     PSM_pandas = psm_collection_to_pandas(total_psms)
 
