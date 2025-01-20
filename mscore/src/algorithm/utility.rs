@@ -293,42 +293,94 @@ pub fn calculate_bounds_gaussian(
     (search_space[lower_cutoff_index], search_space[upper_cutoff_index])
 }
 
-/// Returns all frame indices (1-based) that fall into the range where Normal(mean, sigma)
+/// Returns all scan indices (0-based) that fall into the range where Normal(mean, sigma)
 /// has at least `target_p` coverage.
-pub fn calculate_occurrence_gaussian(
-    times: &[f64],
+///
+/// For timsTOF data, `inverse_ion_mobility` runs backward (highest to lowest values correspond to scans).
+///
+/// # Arguments
+///
+/// - `inverse_ion_mobility`: The inverse ion mobility values for all scans (descending order).
+/// - `mean`: The mean of the Gaussian distribution.
+/// - `sigma`: The standard deviation of the Gaussian distribution.
+/// - `target_p`: The target probability to capture.
+/// - `step_size`: Step size for searching bounds.
+/// - `n_lower_start`: Initial lower bound factor (relative to sigma).
+/// - `n_upper_start`: Initial upper bound factor (relative to sigma).
+///
+/// # Returns
+///
+/// A `Vec<usize>` containing all scan indices (0-based) within the computed range.
+///
+/// # Example
+///
+/// ```rust
+/// use mscore::algorithm::utility::calculate_scan_occurrence_gaussian;
+///
+/// let inverse_ion_mobility = vec![1.5, 1.4, 1.3, 1.2, 1.1];
+/// let scans = calculate_scan_occurrence_gaussian(
+///     &inverse_ion_mobility,
+///     1.3,  // mean
+///     0.1,  // sigma
+///     0.68, // target probability
+///     0.01, // step size
+///     5.0,  // n_lower_start
+///     5.0   // n_upper_start
+/// );
+///
+/// assert_eq!(scans, vec![2, 3]); // Scans corresponding to 1.3 ± 1σ
+/// ```
+pub fn calculate_scan_occurrence_gaussian(
+    inverse_ion_mobility: &[f64],
     mean: f64,
     sigma: f64,
     target_p: f64,
     step_size: f64,
     n_lower_start: f64,
-    n_upper_start: f64
+    n_upper_start: f64,
 ) -> Vec<i32> {
-    let (rt_min, rt_max) = calculate_bounds_gaussian(mean, sigma, step_size, target_p, n_lower_start, n_upper_start);
+    // Calculate bounds for the Gaussian
+    let (ims_lower, ims_upper) = calculate_bounds_gaussian(mean, sigma, step_size, target_p, n_lower_start, n_upper_start);
 
-    // closest frame to rt_min
-    let first = times
+    // Create a list of tuples (inverse_ion_mobility_value, index) in reverse order
+    let indexed_values: Vec<(f64, usize)> = inverse_ion_mobility
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &val)| (val, i))
+        .collect();
+
+    // Find the closest index to ims_lower
+    let upper_idx = indexed_values
         .iter()
         .enumerate()
-        .min_by(|(_, &a), (_, &b)| {
-            (a - rt_min).abs().partial_cmp(&(b - rt_min).abs()).unwrap()
+        .min_by(|(_, (val_a, _)), (_, (val_b, _))| {
+            (val_a - ims_lower).abs().partial_cmp(&(val_b - ims_lower).abs()).unwrap()
         })
-        .map(|(idx, _)| (idx + 1) as i32)   // 1-based indexing
+        .map(|(idx, _)| idx)
         .unwrap_or(0);
 
-    // closest frame to rt_max
-    let last = times
+    // Find the closest index to ims_upper
+    let lower_idx = indexed_values
         .iter()
         .enumerate()
-        .min_by(|(_, &a), (_, &b)| {
-            (a - rt_max).abs().partial_cmp(&(b - rt_max).abs()).unwrap()
+        .min_by(|(_, (val_a, _)), (_, (val_b, _))| {
+            (val_a - ims_upper).abs().partial_cmp(&(val_b - ims_upper).abs()).unwrap()
         })
-        .map(|(idx, _)| (idx + 1) as i32)   // 1-based indexing
-        .unwrap_or(0);
+        .map(|(idx, _)| idx)
+        .unwrap_or(indexed_values.len() - 1);
 
-    // Output the range [first_frame, last_frame]
-    (first..=last).collect()
+    // Extract the indices of the scans in the found range
+    if lower_idx <= upper_idx {
+        indexed_values[lower_idx..=upper_idx]
+            .iter()
+            .map(|&(_, idx)| idx as i32)
+            .collect()
+    } else {
+        Vec::new()
+    }
 }
+
 
 /// Compute the abundance in each occurrence frame by looking at
 /// the probability of Normal(mean, sigma) within `[time - rt_cycle_length, time]`.
@@ -352,7 +404,7 @@ pub fn calculate_abundance_gaussian(
     frame_abundance
 }
 
-pub fn calculate_occurrences_gaussian_par(
+pub fn calculate_scan_occurrences_gaussian_par(
     times: &[f64],
     means: Vec<f64>,
     sigmas: Vec<f64>,
@@ -371,7 +423,7 @@ pub fn calculate_occurrences_gaussian_par(
         means.into_par_iter()
             .zip(sigmas.into_par_iter())
             .map(|(m, s)| {
-                calculate_occurrence_gaussian(
+                calculate_scan_occurrence_gaussian(
                     times,
                     m,
                     s,
@@ -386,7 +438,7 @@ pub fn calculate_occurrences_gaussian_par(
 }
 
 /// Parallel version for multiple (mean, sigma) pairs to get abundance
-pub fn calculate_abundances_gaussian_par(
+pub fn calculate_scan_abundances_gaussian_par(
     time_map: &HashMap<i32, f64>,
     occurrences: Vec<Vec<i32>>,
     means: Vec<f64>,
@@ -470,7 +522,7 @@ mod tests {
 
         // This should capture frames near t=5.0, about ±1.0 in the "most probable" sense.
         // "lower_start" and "upper_start" here are up to you; let's do 5.0 each side
-        let frames = calculate_occurrence_gaussian(
+        let frames = calculate_scan_occurrence_gaussian(
             &retention_times,
             mean,
             sigma,
@@ -540,7 +592,7 @@ mod tests {
         let step_size = 0.1;
         let num_threads = 2;
 
-        let res_occurrences = calculate_occurrences_gaussian_par(
+        let res_occurrences = calculate_scan_occurrences_gaussian_par(
             &retention_times,
             means.clone(),
             sigmas.clone(),
@@ -558,7 +610,7 @@ mod tests {
             time_map.insert(i, i as f64);
         }
 
-        let res_abundances = calculate_abundances_gaussian_par(
+        let res_abundances = calculate_scan_abundances_gaussian_par(
             &time_map,
             res_occurrences,
             means,

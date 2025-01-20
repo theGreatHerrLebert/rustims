@@ -60,8 +60,8 @@ pub fn calculate_frame_abundances_emg_par(frame_ids: Vec<i32>, retention_times: 
 }
 
 #[pyfunction]
-pub fn calculate_occurence_gaussian(times: Vec<f64>, mean: f64, sigma: f64, target_p: f64, step_size: f64, n_lower_start: f64, n_upper_start: f64) -> Vec<i32> {
-    mscore::algorithm::utility::calculate_occurrence_gaussian(&times, mean, sigma, target_p, step_size, n_lower_start, n_upper_start)
+pub fn calculate_scan_occurrence_gaussian(times: Vec<f64>, mean: f64, sigma: f64, target_p: f64, step_size: f64, n_lower_start: f64, n_upper_start: f64) -> Vec<i32> {
+    mscore::algorithm::utility::calculate_scan_occurrence_gaussian(&times, mean, sigma, target_p, step_size, n_lower_start, n_upper_start)
 }
 
 #[pyfunction]
@@ -71,14 +71,14 @@ pub fn calculate_abundance_gaussian(indices: Vec<i32>, times: Vec<f64>, occurren
 }
 
 #[pyfunction]
-pub fn calculate_occurrences_gaussian_par(times: Vec<f64>, means: Vec<f64>, sigmas: Vec<f64>, target_p: f64, step_size: f64, n_lower_start: f64, n_upper_start: f64, num_threads: usize) -> Vec<Vec<i32>> {
-    mscore::algorithm::utility::calculate_occurrences_gaussian_par(&times, means, sigmas, target_p, step_size, n_lower_start, n_upper_start, num_threads)
+pub fn calculate_scan_occurrences_gaussian_par(times: Vec<f64>, means: Vec<f64>, sigmas: Vec<f64>, target_p: f64, step_size: f64, n_lower_start: f64, n_upper_start: f64, num_threads: usize) -> Vec<Vec<i32>> {
+    mscore::algorithm::utility::calculate_scan_occurrences_gaussian_par(&times, means, sigmas, target_p, step_size, n_lower_start, n_upper_start, num_threads)
 }
 
 #[pyfunction]
-pub fn calculate_abundances_gaussian_par(indices: Vec<i32>, times: Vec<f64>, occurrences: Vec<Vec<i32>>, means: Vec<f64>, sigmas: Vec<f64>, cycle_length: f64, num_threads: usize) -> Vec<Vec<f64>> {
+pub fn calculate_scan_abundances_gaussian_par(indices: Vec<i32>, times: Vec<f64>, occurrences: Vec<Vec<i32>>, means: Vec<f64>, sigmas: Vec<f64>, cycle_length: f64, num_threads: usize) -> Vec<Vec<f64>> {
     let time_map: HashMap<i32, f64> = indices.iter().zip(times.iter()).map(|(id, t)| (*id, *t)).collect();
-    mscore::algorithm::utility::calculate_abundances_gaussian_par(&time_map, occurrences, means, sigmas, cycle_length, num_threads)
+    mscore::algorithm::utility::calculate_scan_abundances_gaussian_par(&time_map, occurrences, means, sigmas, cycle_length, num_threads)
 }
 
 #[pymodule]
@@ -93,9 +93,9 @@ pub fn py_utility(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(calculate_frame_abundance_emg, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_frame_occurrences_emg_par, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_frame_abundances_emg_par, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_occurence_gaussian, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_scan_occurrence_gaussian, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_abundance_gaussian, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_occurrences_gaussian_par, m)?)?;
-    m.add_function(wrap_pyfunction!(calculate_abundances_gaussian_par, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_scan_abundances_gaussian_par, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_scan_occurrences_gaussian_par, m)?)?;
     Ok(())
 }
