@@ -4,6 +4,8 @@ import importlib.resources as resources
 
 from typing import List, Dict
 
+import numpy as np
+
 from imspy.algorithm.ccs.model_std import GRUCCSPredictorStd
 from imspy.algorithm.ccs.predictors import SquareRootProjectionLayer
 from imspy.algorithm.utility import get_model_path
@@ -112,3 +114,63 @@ def load_deep_ccs_std_predictor() -> tf.keras.models.Model:
     }
 
     return load_model(path, custom_objects=custom_objects)
+
+
+def to_tf_dataset_with_variance(
+        mz: np.ndarray,
+        charge: np.ndarray,
+        sequences: np.ndarray,
+        ccs: np.ndarray = None,
+        ccs_std: np.ndarray = None,
+        tokenizer: Dict[str, int] = load_tokenizer_from_resources(),
+        batch: bool = True,
+        batch_size: int = 2048,
+        shuffle: bool = True
+):
+    """
+    Create a TensorFlow dataset from input data, including CCS standard deviation
+    Args:
+        mz: a numpy array of m/z values
+        charge: a numpy array of charge values
+        sequences: a numpy array of peptide sequences
+        ccs: a numpy array of CCS values, if available
+        ccs_std: a numpy array of CCS standard deviation values, if available
+        tokenizer: a dictionary mapping tokens to their indices, default is the UniMod vocabulary
+        batch: if True, return a batched dataset
+        batch_size: the batch size for the dataset
+        shuffle: if True, shuffle the dataset
+
+    Returns:
+        A TensorFlow dataset, when ccs and ccs_std are available, the dataset will include both CCS and CCS standard deviation for training,
+        otherwise, dataset will only be for prediction
+    """
+    # prepare masses, charges, sequences
+    masses = np.expand_dims(mz, 1)
+    charges_one_hot = tf.one_hot(charge - 1, 4)
+
+    seq_padded = []
+
+    for seq in sequences:
+        seq_padded.append(tokenize_and_pad(token_list_from_sequence(seq), tokenizer))
+
+    # prepare ccs
+    if ccs is not None:
+        ccs = np.expand_dims(ccs, 1)
+    else:
+        ccs = np.zeros_like(masses)
+
+    # prepare ccs_std
+    if ccs_std is not None:
+        ccs_std = np.expand_dims(ccs_std, 1)
+    else:
+        ccs_std = np.zeros_like(ccs)
+
+    # generate dataset
+    ds = tf.data.Dataset.from_tensor_slices(((masses, charges_one_hot, np.array(seq_padded)), (ccs, ccs_std, ccs_std)))
+
+    if shuffle:
+        ds = ds.shuffle(len(sequences))
+
+    if batch:
+        return ds.batch(batch_size)
+    return ds
