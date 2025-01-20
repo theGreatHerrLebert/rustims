@@ -296,7 +296,7 @@ pub fn calculate_bounds_gaussian(
 /// Returns all frame indices (1-based) that fall into the range where Normal(mean, sigma)
 /// has at least `target_p` coverage.
 pub fn calculate_occurrence_gaussian(
-    retention_times: &[f64],
+    times: &[f64],
     mean: f64,
     sigma: f64,
     target_p: f64,
@@ -307,7 +307,7 @@ pub fn calculate_occurrence_gaussian(
     let (rt_min, rt_max) = calculate_bounds_gaussian(mean, sigma, step_size, target_p, n_lower_start, n_upper_start);
 
     // closest frame to rt_min
-    let first_frame = retention_times
+    let first = times
         .iter()
         .enumerate()
         .min_by(|(_, &a), (_, &b)| {
@@ -317,7 +317,7 @@ pub fn calculate_occurrence_gaussian(
         .unwrap_or(0);
 
     // closest frame to rt_max
-    let last_frame = retention_times
+    let last = times
         .iter()
         .enumerate()
         .min_by(|(_, &a), (_, &b)| {
@@ -327,7 +327,7 @@ pub fn calculate_occurrence_gaussian(
         .unwrap_or(0);
 
     // Output the range [first_frame, last_frame]
-    (first_frame..=last_frame).collect()
+    (first..=last).collect()
 }
 
 /// Compute the abundance in each occurrence frame by looking at
@@ -337,13 +337,13 @@ pub fn calculate_abundance_gaussian(
     occurrences: &[i32],
     mean: f64,
     sigma: f64,
-    rt_cycle_length: f64,
+    cycle_length: f64,
 ) -> Vec<f64> {
     let mut frame_abundance = Vec::new();
 
     for &occurrence in occurrences {
         if let Some(&time) = time_map.get(&occurrence) {
-            let start = time - rt_cycle_length;
+            let start = time - cycle_length;
             let val = normal_cdf_range(start, time, mean, sigma);
             frame_abundance.push(val);
         }
@@ -353,7 +353,7 @@ pub fn calculate_abundance_gaussian(
 }
 
 pub fn calculate_occurrences_gaussian_par(
-    retention_times: &[f64],
+    times: &[f64],
     means: Vec<f64>,
     sigmas: Vec<f64>,
     target_p: f64,
@@ -372,7 +372,7 @@ pub fn calculate_occurrences_gaussian_par(
             .zip(sigmas.into_par_iter())
             .map(|(m, s)| {
                 calculate_occurrence_gaussian(
-                    retention_times,
+                    times,
                     m,
                     s,
                     target_p,
@@ -391,7 +391,7 @@ pub fn calculate_abundances_gaussian_par(
     occurrences: Vec<Vec<i32>>,
     means: Vec<f64>,
     sigmas: Vec<f64>,
-    rt_cycle_length: f64,
+    cycle_length: f64,
     num_threads: usize
 ) -> Vec<Vec<f64>> {
     let thread_pool = ThreadPoolBuilder::new()
@@ -409,7 +409,7 @@ pub fn calculate_abundances_gaussian_par(
                     &occ,
                     m,
                     s,
-                    rt_cycle_length
+                    cycle_length
                 )
             })
             .collect()
