@@ -79,6 +79,7 @@ def main():
         "verbose": config.get("verbose", True),
         "no_bruker_sdk": config.get("no_bruker_sdk", False),
         "fasta_batch_size": config.get("fasta_batch_size", 1),
+        "lazy": config.get("lazy", False),
     }
 
     # Re-parse arguments with defaults applied where command line not provided
