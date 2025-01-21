@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from imspy.algorithm.ccs.utility import load_deep_ccs_std_predictor, to_tf_dataset_with_variance
@@ -42,8 +43,10 @@ def simulate_ion_mobilities_and_variance(
 
     ccs, ccs_std, _ = model.predict(tf_ds)
 
-    inverse_mobility = [ccs_to_one_over_k0(ccs, mz, charge) for ccs, mz, charge in zip(ccs, ions.mz.values, ions.charge.values)]
-    inverse_mobility_std = [ccs_to_one_over_k0(std, mz, charge) for std, mz, charge in zip(ccs_std, ions.mz.values, ions.charge.values)]
+    inverse_mobility = np.array([ccs_to_one_over_k0(ccs, mz, charge) for ccs, mz, charge
+                                 in zip(ccs, ions.mz.values, ions.charge.values)]).astype(np.float32)
+    inverse_mobility_std = np.array([ccs_to_one_over_k0(std, mz, charge) for std, mz, charge
+                                     in zip(ccs_std, ions.mz.values, ions.charge.values)]).astype(np.float32)
 
     dp = ions.copy()
     dp["inv_mobility_gru_predictor"] = inverse_mobility

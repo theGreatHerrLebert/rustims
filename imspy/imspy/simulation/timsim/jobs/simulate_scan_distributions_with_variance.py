@@ -66,4 +66,7 @@ def simulate_scan_distributions_with_variance(
     # remove rows where scan_abundance is empty
     ions = ions[ions['scan_abundance'].apply(lambda x: len(x) > 2)]
 
+    ions = ions[['peptide_id', 'sequence', 'charge', 'mz', 'relative_abundance', 'inv_mobility_gru_predictor',
+                 'inv_mobility_gru_predictor_std', 'simulated_spectrum', 'scan_occurrence', 'scan_abundance']]
+
     return ions

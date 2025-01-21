@@ -7,8 +7,11 @@ import toml
 from pathlib import Path
 
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
+from imspy.simulation.timsim.jobs.simulate_ion_mobilities_and_variance import simulate_ion_mobilities_and_variance
 from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
 from imspy.simulation.timsim.jobs.simulate_proteins import simulate_proteins
+from imspy.simulation.timsim.jobs.simulate_scan_distributions_with_variance import \
+    simulate_scan_distributions_with_variance
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
@@ -603,7 +606,7 @@ def main():
         )
 
         # JOB 6: Simulate ion mobilities
-        ions = simulate_ion_mobilities(
+        ions = simulate_ion_mobilities_and_variance(
             ions=ions,
             im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
@@ -619,16 +622,12 @@ def main():
 
     # JOB 8: Simulate scan distributions
     # TODO: sample standard deviation of ion mobility from a distribution (e.g., normal?)
-    ions = simulate_scan_distributions(
+    ions = simulate_scan_distributions_with_variance(
         ions=ions,
         scans=acquisition_builder.scan_table,
-        z_score=args.z_score,
-        mean_std_im=args.std_im,
-        variance_std_im=args.variance_std_im,
         verbose=not args.silent_mode,
-        add_noise=args.add_noise_to_signals,
-        from_existing=args.from_existing,
-        std_means=std_im,
+        p_target=args.target_p,
+        num_threads=args.num_threads,
     )
 
     if not args.from_existing:
