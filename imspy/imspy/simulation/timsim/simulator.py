@@ -9,6 +9,7 @@ from pathlib import Path
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
 from imspy.simulation.timsim.jobs.simulate_ion_mobilities_and_variance import simulate_ion_mobilities_and_variance
 from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
+from imspy.simulation.timsim.jobs.simulate_phosphorylation import simulate_phosphorylation
 from imspy.simulation.timsim.jobs.simulate_proteins import simulate_proteins
 from imspy.simulation.timsim.jobs.simulate_scan_distributions_with_variance import \
     simulate_scan_distributions_with_variance
@@ -167,10 +168,6 @@ def main():
                         help="Mean scewness for retention time distribution (default: 0.3)")
     parser.add_argument("--variance_skewness", type=float,
                         help="Variance scewness for retention time distribution (default: 0.1)")
-    parser.add_argument("--std_im", type=float,
-                        help="Standard deviation for mobility distribution (default: 0.01)")
-    parser.add_argument("--variance_std_im", type=float,
-                        help="Variance standard deviation for mobility distribution (default: 0.003)")
     parser.add_argument("--target_p", type=float,
                         help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float,
@@ -288,6 +285,16 @@ def main():
     )
     parser.set_defaults(use_bruker_sdk=True)
 
+
+    parser.add_argument(
+        "--phospho_mode",
+        action="store_true",
+        dest="phospho_mode",
+        help="Enable phospho mode, generating a phospho enriched dataset for testing of "
+             "phospho site localization algorithms (default: False)"
+    )
+    parser.set_defaults(phospho_mode=False)
+
     # Default configuration values
     defaults = {
         'reference_in_memory': False,
@@ -320,8 +327,6 @@ def main():
         'variance_std_rt': 0.3,
         'mean_skewness': 0.3,
         'variance_skewness': 0.1,
-        'std_im': 0.01,
-        'variance_std_im': 0.003,
         'target_p': 0.999,
         'sampling_step_size': 0.001,
         'num_threads': -1,
@@ -343,6 +348,7 @@ def main():
         'from_existing': False,
         'existing_path': None,
         'use_bruker_sdk': True,
+        'phospho_mode': False,
     }
 
     # Parse known arguments to get config file path
@@ -404,7 +410,6 @@ def main():
 
     rt_sigma = None
     rt_lambda = None
-    std_im = None
 
     if args.from_existing:
         existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
@@ -413,7 +418,6 @@ def main():
         ions = existing_sim_handle.get_table('ions')
         rt_sigma = peptides['rt_sigma'].values
         rt_lambda = peptides['rt_lambda'].values
-        std_im = ions['std_im'].values
 
         # Warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more than 5 percent
         rt_max = peptides['retention_time_gru_predictor'].max()
@@ -533,6 +537,15 @@ def main():
             proteins = proteins[["protein_id", "protein", "sequence", "events"]]
             peptides = pd.concat(peptide_list)
 
+        if args.phospho_mode:
+
+            if not args.silent_mode:
+                print("Simulating phosphorylation...")
+
+            peptides = simulate_phosphorylation(peptides=peptides,
+                                                pick_phospho_sites=2,
+                                                template=not args.from_existing, verbose=not args.silent_mode)
+
     if args.sample_peptides and not args.from_existing:
         try:
             peptides = peptides.sample(n=args.num_sample_peptides, random_state=args.sample_seed)
@@ -589,6 +602,18 @@ def main():
         table=proteins,
     )
 
+    # if phospho mode is enabled, we need to re-order the columns to avoid issues with the rust read-out of the database
+    # TODO: this is a temporary fix, the rust code should be able to handle the columns in any order
+    if args.phospho_mode:
+        columns_order = [
+            'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
+            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
+            'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
+            'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
+            'frame_abundance', 'phospho_site_a', 'phospho_site_b', 'sequence_original'
+        ]
+        peptides = peptides[columns_order]
+
     # Save peptides to database
     acquisition_builder.synthetics_handle.create_table(
         table_name='peptides',
@@ -629,10 +654,6 @@ def main():
         p_target=args.target_p,
         num_threads=args.num_threads,
     )
-
-    if not args.from_existing:
-        ion_id = ions.index
-        ions.insert(0, 'ion_id', ion_id)
 
     acquisition_builder.synthetics_handle.create_table(
         table_name='ions',
