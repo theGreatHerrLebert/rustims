@@ -69,4 +69,7 @@ def simulate_scan_distributions_with_variance(
     ions = ions[['peptide_id', 'sequence', 'charge', 'mz', 'relative_abundance', 'inv_mobility_gru_predictor',
                  'inv_mobility_gru_predictor_std', 'simulated_spectrum', 'scan_occurrence', 'scan_abundance']]
 
+    ion_id = ions.index
+    ions.insert(0, 'ion_id', ion_id)
+
     return ions
