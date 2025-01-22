@@ -98,23 +98,12 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_ions(&self) -> rusqlite::Result<Vec<IonSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
         let ions_iter = stmt.query_map([], |row| {
-            let simulated_spectrum_str: String = row.get(6)?;
-            let scan_occurrence_str: String = row.get(8)?;
-            let scan_abundance_str: String = row.get(9)?;
+            let simulated_spectrum_str: String = row.get(8)?;
+            let scan_occurrence_str: String = row.get(9)?;
+            let scan_abundance_str: String = row.get(10)?;
 
             let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str)
             {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        6,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => {
                     return Err(rusqlite::Error::FromSqlConversionFailure(
@@ -125,11 +114,22 @@ impl TimsTofSyntheticsDataHandle {
                 }
             };
 
-            let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
+            let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
                 Ok(value) => value,
                 Err(e) => {
                     return Err(rusqlite::Error::FromSqlConversionFailure(
                         9,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    ))
+                }
+            };
+
+            let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
+                Ok(value) => value,
+                Err(e) => {
+                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                        10,
                         rusqlite::types::Type::Text,
                         Box::new(e),
                     ))
@@ -141,8 +141,8 @@ impl TimsTofSyntheticsDataHandle {
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3)?,
-                row.get(4)?,
                 row.get(5)?,
+                row.get(6)?,
                 simulated_spectrum,
                 scan_occurrence,
                 scan_abundance,
