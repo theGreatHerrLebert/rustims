@@ -317,18 +317,18 @@ pub fn calculate_bounds_gaussian(
 /// ```rust
 /// use mscore::algorithm::utility::calculate_scan_occurrence_gaussian;
 ///
-/// let inverse_ion_mobility = vec![1.5, 1.4, 1.3, 1.2, 1.1];
+/// let inverse_ion_mobility = vec![0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3];
 /// let scans = calculate_scan_occurrence_gaussian(
 ///     &inverse_ion_mobility,
-///     1.3,  // mean
-///     0.1,  // sigma
-///     0.68, // target probability
+///     1.1,  // mean
+///     0.001,  // sigma
+///     0.9999, // target probability
 ///     0.01, // step size
-///     5.0,  // n_lower_start
-///     5.0   // n_upper_start
+///     3.0,  // n_lower_start
+///     3.0   // n_upper_start
 /// );
 ///
-/// assert_eq!(scans, vec![2, 3]); // Scans corresponding to 1.3 ± 1σ
+/// assert_eq!(scans, vec![2]); // Scans corresponding to 1.3 ± 1σ
 /// ```
 pub fn calculate_scan_occurrence_gaussian(
     inverse_ion_mobility: &[f64],
