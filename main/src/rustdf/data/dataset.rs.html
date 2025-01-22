@@ -76,34 +76,94 @@
 <a href="#75" id="75">75</a>
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
-<a href="#78" id="78">78</a></pre></div><pre class="rust"><code><span class="kw">use </span>mscore::timstof::frame::{RawTimsFrame, TimsFrame};
-<span class="kw">use </span>mscore::timstof::slice::TimsSlice;
-<span class="kw">use </span><span class="kw">crate</span>::data::acquisition::AcquisitionMode;
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a>
+<a href="#82" id="82">82</a>
+<a href="#83" id="83">83</a>
+<a href="#84" id="84">84</a>
+<a href="#85" id="85">85</a>
+<a href="#86" id="86">86</a>
+<a href="#87" id="87">87</a>
+<a href="#88" id="88">88</a>
+<a href="#89" id="89">89</a>
+<a href="#90" id="90">90</a>
+<a href="#91" id="91">91</a>
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a>
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a>
+<a href="#112" id="112">112</a>
+<a href="#113" id="113">113</a>
+<a href="#114" id="114">114</a></pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::acquisition::AcquisitionMode;
 <span class="kw">use </span><span class="kw">crate</span>::data::handle::{IndexConverter, TimsData, TimsDataLoader};
 <span class="kw">use </span><span class="kw">crate</span>::data::meta::{read_global_meta_sql, read_meta_data_sql};
+<span class="kw">use </span>mscore::timstof::frame::{RawTimsFrame, TimsFrame};
+<span class="kw">use </span>mscore::timstof::slice::TimsSlice;
 
 <span class="kw">pub struct </span>TimsDataset {
     <span class="kw">pub </span>loader: TimsDataLoader,
 }
 
 <span class="kw">impl </span>TimsDataset {
-    <span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, in_memory: bool, use_bruker_sdk: bool) -&gt; <span class="self">Self </span>{
-            
+    <span class="kw">pub fn </span>new(
+        bruker_lib_path: <span class="kw-2">&amp;</span>str,
+        data_path: <span class="kw-2">&amp;</span>str,
+        in_memory: bool,
+        use_bruker_sdk: bool,
+    ) -&gt; <span class="self">Self </span>{
         <span class="comment">// TODO: error handling
         </span><span class="kw">let </span>global_meta_data = read_global_meta_sql(data_path).unwrap();
         <span class="kw">let </span>meta_data = read_meta_data_sql(data_path).unwrap();
-        
+
         <span class="kw">let </span>scan_max_index = meta_data.iter().map(|x| x.num_scans).max().unwrap() <span class="kw">as </span>u32;
         <span class="kw">let </span>im_lower = global_meta_data.one_over_k0_range_lower;
         <span class="kw">let </span>im_upper = global_meta_data.one_over_k0_range_upper;
-        
+
         <span class="kw">let </span>tof_max_index = global_meta_data.tof_max_index;
         <span class="kw">let </span>mz_lower = global_meta_data.mz_acquisition_range_lower;
         <span class="kw">let </span>mz_upper = global_meta_data.mz_acquisition_range_upper;
 
         <span class="kw">let </span>loader = <span class="kw">match </span>in_memory {
-            <span class="bool-val">true </span>=&gt; TimsDataLoader::new_in_memory(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
-            <span class="bool-val">false </span>=&gt; TimsDataLoader::new_lazy(bruker_lib_path, data_path, use_bruker_sdk, scan_max_index, im_lower, im_upper, tof_max_index, mz_lower, mz_upper),
+            <span class="bool-val">true </span>=&gt; TimsDataLoader::new_in_memory(
+                bruker_lib_path,
+                data_path,
+                use_bruker_sdk,
+                scan_max_index,
+                im_lower,
+                im_upper,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+            ),
+            <span class="bool-val">false </span>=&gt; TimsDataLoader::new_lazy(
+                bruker_lib_path,
+                data_path,
+                use_bruker_sdk,
+                scan_max_index,
+                im_lower,
+                im_upper,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+            ),
         };
 
         TimsDataset { loader }
@@ -139,18 +199,31 @@
 
 <span class="kw">impl </span>IndexConverter <span class="kw">for </span>TimsDataset {
     <span class="kw">fn </span>tof_to_mz(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, tof_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt; {
-        <span class="self">self</span>.loader.get_index_converter().tof_to_mz(frame_id, tof_values)
+        <span class="self">self</span>.loader
+            .get_index_converter()
+            .tof_to_mz(frame_id, tof_values)
     }
     <span class="comment">// convert m/z values to TOF values given a valid data handle and frame id
     </span><span class="kw">fn </span>mz_to_tof(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, mz_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt; {
-        <span class="self">self</span>.loader.get_index_converter().mz_to_tof(frame_id, mz_values)
+        <span class="self">self</span>.loader
+            .get_index_converter()
+            .mz_to_tof(frame_id, mz_values)
     }
     <span class="comment">// convert inverse mobility values to scan values given a valid data handle and frame id
     </span><span class="kw">fn </span>scan_to_inverse_mobility(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, scan_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt; {
-        <span class="self">self</span>.loader.get_index_converter().scan_to_inverse_mobility(frame_id, scan_values)
+        <span class="self">self</span>.loader
+            .get_index_converter()
+            .scan_to_inverse_mobility(frame_id, scan_values)
     }
     <span class="comment">// convert scan values to inverse mobility values given a valid data handle and frame id
-    </span><span class="kw">fn </span>inverse_mobility_to_scan(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt; {
-        <span class="self">self</span>.loader.get_index_converter().inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+    </span><span class="kw">fn </span>inverse_mobility_to_scan(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    ) -&gt; Vec&lt;u32&gt; {
+        <span class="self">self</span>.loader
+            .get_index_converter()
+            .inverse_mobility_to_scan(frame_id, inverse_mobility_values)
     }
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>

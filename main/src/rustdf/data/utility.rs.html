@@ -265,14 +265,61 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::io;
-<span class="kw">use </span>std::io::{Read, Write};
-<span class="kw">use </span>byteorder::{ByteOrder, LittleEndian};
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a></pre></div><pre class="rust"><code><span class="kw">use </span>byteorder::{ByteOrder, LittleEndian};
 <span class="kw">use </span>mscore::timstof::frame::TimsFrame;
+<span class="kw">use </span>rayon::iter::IntoParallelRefIterator;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
-<span class="kw">use </span>rayon::iter::IntoParallelRefIterator;
-
+<span class="kw">use </span>std::io;
+<span class="kw">use </span>std::io::{Read, Write};
 
 <span class="doccomment">/// Decompresses a ZSTD compressed byte array
 ///
@@ -353,21 +400,37 @@
     <span class="prelude-val">Ok</span>(final_data)
 }
 
-<span class="kw">pub fn </span>compress_collection(frames: Vec&lt;TimsFrame&gt;, max_scan_count: u32, compression_level: i32, num_threads: usize) -&gt; Vec&lt;Vec&lt;u8&gt;&gt; {
-
-    <span class="kw">let </span>pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+<span class="kw">pub fn </span>compress_collection(
+    frames: Vec&lt;TimsFrame&gt;,
+    max_scan_count: u32,
+    compression_level: i32,
+    num_threads: usize,
+) -&gt; Vec&lt;Vec&lt;u8&gt;&gt; {
+    <span class="kw">let </span>pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     <span class="kw">let </span>result = pool.install(|| {
-        frames.par_iter().map(|frame| {
-            <span class="kw">let </span>compressed_data = reconstruct_compressed_data(
-                frame.scan.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32).collect(),
-                frame.tof.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32).collect(),
-                frame.ims_frame.intensity.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32).collect(),
-                max_scan_count,
-                compression_level,
-            ).unwrap();
-            compressed_data
-        }).collect()
+        frames
+            .par_iter()
+            .map(|frame| {
+                <span class="kw">let </span>compressed_data = reconstruct_compressed_data(
+                    frame.scan.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32).collect(),
+                    frame.tof.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32).collect(),
+                    frame
+                        .ims_frame
+                        .intensity
+                        .iter()
+                        .map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32)
+                        .collect(),
+                    max_scan_count,
+                    compression_level,
+                )
+                .unwrap();
+                compressed_data
+            })
+            .collect()
     });
     result
 }
@@ -384,8 +447,9 @@
 /// * `tof_indices` - A vector of u32 that holds the tof indices
 /// * `intensities` - A vector of u32 that holds the intensities
 ///
-</span><span class="kw">pub fn </span>parse_decompressed_bruker_binary_data(decompressed_bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;u32&gt;, Vec&lt;u32&gt;, Vec&lt;u32&gt;), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
-
+</span><span class="kw">pub fn </span>parse_decompressed_bruker_binary_data(
+    decompressed_bytes: <span class="kw-2">&amp;</span>[u8],
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;u32&gt;, Vec&lt;u32&gt;, Vec&lt;u32&gt;), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>buffer_u32 = Vec::new();
 
     <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..(decompressed_bytes.len() / <span class="number">4</span>) {
@@ -393,7 +457,7 @@
             decompressed_bytes[i],
             decompressed_bytes[i + (decompressed_bytes.len() / <span class="number">4</span>)],
             decompressed_bytes[i + (<span class="number">2 </span>* decompressed_bytes.len() / <span class="number">4</span>)],
-            decompressed_bytes[i + (<span class="number">3 </span>* decompressed_bytes.len() / <span class="number">4</span>)]
+            decompressed_bytes[i + (<span class="number">3 </span>* decompressed_bytes.len() / <span class="number">4</span>)],
         ]);
         buffer_u32.push(value);
     }
@@ -411,10 +475,20 @@
     </span>scan_indices[<span class="number">0</span>] = <span class="number">0</span>;
 
     <span class="comment">// get the tof indices, which are the first half of the buffer after the scan indices
-    </span><span class="kw">let </span><span class="kw-2">mut </span>tof_indices: Vec&lt;u32&gt; = buffer_u32.iter().skip(scan_count).step_by(<span class="number">2</span>).cloned().collect();
+    </span><span class="kw">let </span><span class="kw-2">mut </span>tof_indices: Vec&lt;u32&gt; = buffer_u32
+        .iter()
+        .skip(scan_count)
+        .step_by(<span class="number">2</span>)
+        .cloned()
+        .collect();
 
     <span class="comment">// get the intensities, which are the second half of the buffer
-    </span><span class="kw">let </span>intensities: Vec&lt;u32&gt; = buffer_u32.iter().skip(scan_count + <span class="number">1</span>).step_by(<span class="number">2</span>).cloned().collect();
+    </span><span class="kw">let </span>intensities: Vec&lt;u32&gt; = buffer_u32
+        .iter()
+        .skip(scan_count + <span class="number">1</span>)
+        .step_by(<span class="number">2</span>)
+        .cloned()
+        .collect();
 
     <span class="comment">// calculate the last scan before moving scan indices
     </span><span class="kw">let </span>last_scan = intensities.len() <span class="kw">as </span>u32 - scan_indices[<span class="number">1</span>..].iter().sum::&lt;u32&gt;();
@@ -504,23 +578,44 @@
     real_data
 }
 
-<span class="kw">pub fn </span>get_data_for_compression(tofs: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;, scans: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;, intensities: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;, max_scans: u32) -&gt; Vec&lt;u8&gt; {
+<span class="kw">pub fn </span>get_data_for_compression(
+    tofs: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;,
+    scans: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;,
+    intensities: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;,
+    max_scans: u32,
+) -&gt; Vec&lt;u8&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>tof_copy = tofs.clone();
     modify_tofs(<span class="kw-2">&amp;mut </span>tof_copy, <span class="kw-2">&amp;</span>scans);
     <span class="kw">let </span>peak_cnts = get_peak_cnts(max_scans, <span class="kw-2">&amp;</span>scans);
-    <span class="kw">let </span>interleaved: Vec&lt;u32&gt; = tofs.iter().zip(intensities.iter()).flat_map(|(tof, intensity)| <span class="macro">vec!</span>[<span class="kw-2">*</span>tof, <span class="kw-2">*</span>intensity]).collect();
+    <span class="kw">let </span>interleaved: Vec&lt;u32&gt; = tofs
+        .iter()
+        .zip(intensities.iter())
+        .flat_map(|(tof, intensity)| <span class="macro">vec!</span>[<span class="kw-2">*</span>tof, <span class="kw-2">*</span>intensity])
+        .collect();
 
     get_realdata(<span class="kw-2">&amp;</span>peak_cnts, <span class="kw-2">&amp;</span>interleaved)
 }
 
-
-<span class="kw">pub fn </span>get_data_for_compression_par(tofs: Vec&lt;Vec&lt;u32&gt;&gt;, scans: Vec&lt;Vec&lt;u32&gt;&gt;, intensities: Vec&lt;Vec&lt;u32&gt;&gt;, max_scans: u32, num_threads: usize) -&gt; Vec&lt;Vec&lt;u8&gt;&gt; {
-    <span class="kw">let </span>pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+<span class="kw">pub fn </span>get_data_for_compression_par(
+    tofs: Vec&lt;Vec&lt;u32&gt;&gt;,
+    scans: Vec&lt;Vec&lt;u32&gt;&gt;,
+    intensities: Vec&lt;Vec&lt;u32&gt;&gt;,
+    max_scans: u32,
+    num_threads: usize,
+) -&gt; Vec&lt;Vec&lt;u8&gt;&gt; {
+    <span class="kw">let </span>pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     <span class="kw">let </span>result = pool.install(|| {
-        tofs.par_iter().zip(scans.par_iter()).zip(intensities.par_iter()).map(|((tof, scan), intensity)| {
-            get_data_for_compression(tof, scan, intensity, max_scans)
-        }).collect()
+        tofs.par_iter()
+            .zip(scans.par_iter())
+            .zip(intensities.par_iter())
+            .map(|((tof, scan), intensity)| {
+                get_data_for_compression(tof, scan, intensity, max_scans)
+            })
+            .collect()
     });
 
     result
@@ -528,7 +623,9 @@
 
 <span class="kw">pub fn </span>flatten_scan_values(scan: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;, zero_indexed: bool) -&gt; Vec&lt;u32&gt; {
     <span class="kw">let </span>add = <span class="kw">if </span>zero_indexed { <span class="number">0 </span>} <span class="kw">else </span>{ <span class="number">1 </span>};
-    scan.iter().enumerate()
-        .flat_map(|(index, <span class="kw-2">&amp;</span>count)| <span class="macro">vec!</span>[(index + add) <span class="kw">as </span>u32; count <span class="kw">as </span>usize]
-            .into_iter()).collect()
-}</code></pre></div></section></main></body></html>
+    scan.iter()
+        .enumerate()
+        .flat_map(|(index, <span class="kw-2">&amp;</span>count)| <span class="macro">vec!</span>[(index + add) <span class="kw">as </span>u32; count <span class="kw">as </span>usize].into_iter())
+        .collect()
+}
+</code></pre></div></section></main></body></html>

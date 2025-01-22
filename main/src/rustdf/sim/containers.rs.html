@@ -247,10 +247,46 @@
 <a href="#246" id="246">246</a>
 <a href="#247" id="247">247</a>
 <a href="#248" id="248">248</a>
-<a href="#249" id="249">249</a></pre></div><pre class="rust"><code><span class="kw">use </span>mscore::data::peptide::{PeptideSequence};
-<span class="kw">use </span>mscore::data::spectrum::{MzSpectrum, MsType};
-<span class="kw">use </span>serde::{Serialize, Deserialize};
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a></pre></div><pre class="rust"><code><span class="kw">use </span>mscore::data::peptide::PeptideSequence;
+<span class="kw">use </span>mscore::data::spectrum::{MsType, MzSpectrum};
 <span class="kw">use </span>rand::distributions::{Distribution, Uniform};
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="attr">#[derive(Serialize, Deserialize, Debug, Clone)]
 </span><span class="kw">pub struct </span>SignalDistribution {
@@ -262,25 +298,53 @@
 }
 
 <span class="kw">impl </span>SignalDistribution {
-    <span class="kw">pub fn </span>new(mean: f32, variance: f32, error: f32, occurrence: Vec&lt;u32&gt;, abundance: Vec&lt;f32&gt;) -&gt; <span class="self">Self </span>{
-        SignalDistribution { mean, variance, error, occurrence, abundance, }
+    <span class="kw">pub fn </span>new(
+        mean: f32,
+        variance: f32,
+        error: f32,
+        occurrence: Vec&lt;u32&gt;,
+        abundance: Vec&lt;f32&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        SignalDistribution {
+            mean,
+            variance,
+            error,
+            occurrence,
+            abundance,
+        }
     }
 
     <span class="kw">pub fn </span>add_noise(<span class="kw-2">&amp;</span><span class="self">self</span>, noise_level: f32) -&gt; Vec&lt;f32&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
         <span class="kw">let </span>noise_dist = Uniform::new(<span class="number">0.0</span>, noise_level);
 
-        <span class="kw">let </span>noise: Vec&lt;f32&gt; = <span class="self">self</span>.abundance.iter().map(|<span class="kw">_</span>| noise_dist.sample(<span class="kw-2">&amp;mut </span>rng)).collect();
-        <span class="kw">let </span>noise_relative: Vec&lt;f32&gt; = <span class="self">self</span>.abundance.iter().zip(noise.iter()).map(|(<span class="kw-2">&amp;</span>abu, <span class="kw-2">&amp;</span>noise)| abu * noise).collect();
-        <span class="kw">let </span>noised_signal: Vec&lt;f32&gt; = <span class="self">self</span>.abundance.iter().zip(noise_relative.iter()).map(|(<span class="kw-2">&amp;</span>abu, <span class="kw-2">&amp;</span>noise_rel)| abu + noise_rel).collect();
+        <span class="kw">let </span>noise: Vec&lt;f32&gt; = <span class="self">self
+            </span>.abundance
+            .iter()
+            .map(|<span class="kw">_</span>| noise_dist.sample(<span class="kw-2">&amp;mut </span>rng))
+            .collect();
+        <span class="kw">let </span>noise_relative: Vec&lt;f32&gt; = <span class="self">self
+            </span>.abundance
+            .iter()
+            .zip(noise.iter())
+            .map(|(<span class="kw-2">&amp;</span>abu, <span class="kw-2">&amp;</span>noise)| abu * noise)
+            .collect();
+        <span class="kw">let </span>noised_signal: Vec&lt;f32&gt; = <span class="self">self
+            </span>.abundance
+            .iter()
+            .zip(noise_relative.iter())
+            .map(|(<span class="kw-2">&amp;</span>abu, <span class="kw-2">&amp;</span>noise_rel)| abu + noise_rel)
+            .collect();
 
         <span class="kw">let </span>sum_noised_signal: f32 = noised_signal.iter().sum();
         <span class="kw">let </span>sum_rt_abu: f32 = <span class="self">self</span>.abundance.iter().sum();
 
-        noised_signal.iter().map(|<span class="kw-2">&amp;</span>x| (x / sum_noised_signal) * sum_rt_abu).collect()
+        noised_signal
+            .iter()
+            .map(|<span class="kw-2">&amp;</span>x| (x / sum_noised_signal) * sum_rt_abu)
+            .collect()
     }
 }
-
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>PeptidesSim {
@@ -290,8 +354,8 @@
     <span class="kw">pub </span>proteins: String,
     <span class="kw">pub </span>decoy: bool,
     <span class="kw">pub </span>missed_cleavages: i8,
-    <span class="kw">pub </span>n_term : <span class="prelude-ty">Option</span>&lt;bool&gt;,
-    <span class="kw">pub </span>c_term : <span class="prelude-ty">Option</span>&lt;bool&gt;,
+    <span class="kw">pub </span>n_term: <span class="prelude-ty">Option</span>&lt;bool&gt;,
+    <span class="kw">pub </span>c_term: <span class="prelude-ty">Option</span>&lt;bool&gt;,
     <span class="kw">pub </span>mono_isotopic_mass: f32,
     <span class="kw">pub </span>retention_time: f32,
     <span class="kw">pub </span>events: f32,
@@ -333,7 +397,12 @@
             frame_start,
             frame_end,
             frame_distribution: SignalDistribution::new(
-                <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, frame_occurrence, frame_abundance),
+                <span class="number">0.0</span>,
+                <span class="number">0.0</span>,
+                <span class="number">0.0</span>,
+                frame_occurrence,
+                frame_abundance,
+            ),
         }
     }
 }
@@ -371,7 +440,7 @@
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>FrameToWindowGroupSim {
     <span class="kw">pub </span>frame_id: u32,
-    <span class="kw">pub </span>window_group:u32,
+    <span class="kw">pub </span>window_group: u32,
 }
 
 <span class="kw">impl </span>FrameToWindowGroupSim {
@@ -416,11 +485,15 @@
             mobility,
             simulated_spectrum,
             scan_distribution: SignalDistribution::new(
-                <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, scan_occurrence, scan_abundance),
+                <span class="number">0.0</span>,
+                <span class="number">0.0</span>,
+                <span class="number">0.0</span>,
+                scan_occurrence,
+                scan_abundance,
+            ),
         }
     }
 }
-
 
 <span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>ScansSim {
@@ -456,7 +529,6 @@
             <span class="number">9 </span>=&gt; MsType::FragmentDia,
             <span class="kw">_ </span>=&gt; MsType::Unknown,
         }
-
     }
 }
 
@@ -495,4 +567,5 @@
         }
         dense
     }
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>

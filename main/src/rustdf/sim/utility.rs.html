@@ -90,7 +90,22 @@
 <a href="#89" id="89">89</a>
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a></pre></div><pre class="rust"><code><span class="kw">use </span>mscore::data::peptide::{FragmentType, PeptideSequence};
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a>
+<a href="#104" id="104">104</a>
+<a href="#105" id="105">105</a>
+<a href="#106" id="106">106</a>
+<a href="#107" id="107">107</a></pre></div><pre class="rust"><code><span class="kw">use </span>mscore::data::peptide::{FragmentType, PeptideSequence};
 
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
@@ -151,14 +166,13 @@
     half_charge_one: bool,
     peptide_id: <span class="prelude-ty">Option</span>&lt;i32&gt;,
 ) -&gt; String {
-
     <span class="kw">let </span>peptide_sequence = PeptideSequence::new(sequence.to_string(), peptide_id);
     <span class="kw">let </span>fragments = peptide_sequence.associate_with_predicted_intensities(
         charge,
         FragmentType::B,
         intensity_pred_flat.clone(),
         normalize,
-        half_charge_one
+        half_charge_one,
     );
     to_string(<span class="kw-2">&amp;</span>fragments).unwrap()
 }
@@ -170,13 +184,29 @@
     normalize: bool,
     half_charge_one: bool,
     num_threads: usize,
-    peptide_ids: Vec&lt;<span class="prelude-ty">Option</span>&lt;i32&gt;&gt;
+    peptide_ids: Vec&lt;<span class="prelude-ty">Option</span>&lt;i32&gt;&gt;,
 ) -&gt; Vec&lt;String&gt; {
-    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     <span class="kw">let </span>result = thread_pool.install(|| {
-        sequences.par_iter().zip(charges.par_iter()).zip(intensities_pred_flat.par_iter()).zip(peptide_ids.par_iter())
-            .map(|(((seq, charge), intensities), peptide_id)| sequence_to_all_ions(seq, <span class="kw-2">*</span>charge, intensities, normalize, half_charge_one, <span class="kw-2">*</span>peptide_id))
+        sequences
+            .par_iter()
+            .zip(charges.par_iter())
+            .zip(intensities_pred_flat.par_iter())
+            .zip(peptide_ids.par_iter())
+            .map(|(((seq, charge), intensities), peptide_id)| {
+                sequence_to_all_ions(
+                    seq,
+                    <span class="kw-2">*</span>charge,
+                    intensities,
+                    normalize,
+                    half_charge_one,
+                    <span class="kw-2">*</span>peptide_id,
+                )
+            })
             .collect()
     });
 

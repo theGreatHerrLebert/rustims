@@ -814,20 +814,106 @@
 <a href="#813" id="813">813</a>
 <a href="#814" id="814">814</a>
 <a href="#815" id="815">815</a>
-<a href="#816" id="816">816</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::fs::File;
-<span class="kw">use </span>std::io::{Read, Cursor, SeekFrom, Seek};
-<span class="kw">use </span>std::path::PathBuf;
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a>
+<a href="#897" id="897">897</a>
+<a href="#898" id="898">898</a>
+<a href="#899" id="899">899</a>
+<a href="#900" id="900">900</a></pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
+<span class="kw">use </span><span class="kw">crate</span>::data::raw::BrukerTimsDataLibrary;
+<span class="kw">use </span><span class="kw">crate</span>::data::utility::{
+    flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress,
+};
 <span class="kw">use </span>byteorder::{LittleEndian, ReadBytesExt};
 <span class="kw">use </span>mscore::data::spectrum::MsType;
 <span class="kw">use </span>mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 <span class="kw">use </span>mscore::timstof::slice::TimsSlice;
-<span class="kw">use </span><span class="kw">crate</span>::data::meta::{FrameMeta, GlobalMetaData, read_global_meta_sql, read_meta_data_sql};
-<span class="kw">use </span><span class="kw">crate</span>::data::raw::BrukerTimsDataLibrary;
-<span class="kw">use </span><span class="kw">crate</span>::data::utility::{flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress};
+<span class="kw">use </span>std::fs::File;
+<span class="kw">use </span>std::io::{Cursor, Read, Seek, SeekFrom};
+<span class="kw">use </span>std::path::PathBuf;
 
+<span class="kw">use </span><span class="kw">crate</span>::data::acquisition::AcquisitionMode;
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
-<span class="kw">use </span><span class="kw">crate</span>::data::acquisition::AcquisitionMode;
 
 <span class="kw">use </span>std::error::Error;
 
@@ -847,9 +933,8 @@
 ) -&gt; usize {
     <span class="comment">// Interpret decompressed_bytes as a slice of i32
     </span><span class="kw">let </span>int_count = decompressed_bytes.len() / <span class="number">4</span>;
-    <span class="kw">let </span>buffer = <span class="kw">unsafe </span>{
-        std::slice::from_raw_parts(decompressed_bytes.as_ptr() <span class="kw">as </span><span class="kw-2">*const </span>i32, int_count)
-    };
+    <span class="kw">let </span>buffer =
+        <span class="kw">unsafe </span>{ std::slice::from_raw_parts(decompressed_bytes.as_ptr() <span class="kw">as </span><span class="kw-2">*const </span>i32, int_count) };
 
     <span class="kw">let </span><span class="kw-2">mut </span>tof_index = <span class="number">0i32</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>previous_was_intensity = <span class="bool-val">true</span>;
@@ -905,7 +990,10 @@
         }
 
         <span class="comment">// get the tims offset values
-        </span><span class="kw">let </span>tims_offset_values = frame_meta_data.iter().map(|x| x.tims_id).collect::&lt;Vec&lt;i64&gt;&gt;();
+        </span><span class="kw">let </span>tims_offset_values = frame_meta_data
+            .iter()
+            .map(|x| x.tims_id)
+            .collect::&lt;Vec&lt;i64&gt;&gt;();
 
         <span class="comment">// get the acquisition mode
         </span><span class="kw">let </span>acquisition_mode = <span class="kw">match </span>frame_meta_data[<span class="number">0</span>].scan_mode {
@@ -921,7 +1009,7 @@
             max_scan_count,
             frame_id_ptr,
             tims_offset_values,
-            acquisition_mode
+            acquisition_mode,
         }
     }
 }
@@ -939,7 +1027,11 @@
     <span class="kw">fn </span>tof_to_mz(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, tof_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt;;
     <span class="kw">fn </span>mz_to_tof(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, mz_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt;;
     <span class="kw">fn </span>scan_to_inverse_mobility(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, scan_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt;;
-    <span class="kw">fn </span>inverse_mobility_to_scan(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt;;
+    <span class="kw">fn </span>inverse_mobility_to_scan(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    ) -&gt; Vec&lt;u32&gt;;
 }
 
 <span class="kw">pub struct </span>BrukerLibTimsDataConverter {
@@ -949,9 +1041,7 @@
 <span class="kw">impl </span>BrukerLibTimsDataConverter {
     <span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path).unwrap();
-        BrukerLibTimsDataConverter {
-            bruker_lib,
-        }
+        BrukerLibTimsDataConverter { bruker_lib }
     }
 }
 <span class="kw">impl </span>IndexConverter <span class="kw">for </span>BrukerLibTimsDataConverter {
@@ -975,9 +1065,11 @@
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>mz_values: Vec&lt;f64&gt; = Vec::new();
-        mz_values.resize(tof.len(),  <span class="number">0.0</span>);
+        mz_values.resize(tof.len(), <span class="number">0.0</span>);
 
-        <span class="self">self</span>.bruker_lib.tims_index_to_mz(frame_id, <span class="kw-2">&amp;</span>dbl_tofs, <span class="kw-2">&amp;mut </span>mz_values).expect(<span class="string">"Bruker binary call failed at: tims_index_to_mz;"</span>);
+        <span class="self">self</span>.bruker_lib
+            .tims_index_to_mz(frame_id, <span class="kw-2">&amp;</span>dbl_tofs, <span class="kw-2">&amp;mut </span>mz_values)
+            .expect(<span class="string">"Bruker binary call failed at: tims_index_to_mz;"</span>);
 
         mz_values
     }
@@ -991,9 +1083,11 @@
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>tof_values: Vec&lt;f64&gt; = Vec::new();
-        tof_values.resize(mz.len(),  <span class="number">0.0</span>);
+        tof_values.resize(mz.len(), <span class="number">0.0</span>);
 
-        <span class="self">self</span>.bruker_lib.tims_mz_to_index(frame_id, <span class="kw-2">&amp;</span>dbl_mz, <span class="kw-2">&amp;mut </span>tof_values).expect(<span class="string">"Bruker binary call failed at: tims_mz_to_index;"</span>);
+        <span class="self">self</span>.bruker_lib
+            .tims_mz_to_index(frame_id, <span class="kw-2">&amp;</span>dbl_mz, <span class="kw-2">&amp;mut </span>tof_values)
+            .expect(<span class="string">"Bruker binary call failed at: tims_mz_to_index;"</span>);
 
         tof_values.iter().map(|<span class="kw-2">&amp;</span>x| x.round() <span class="kw">as </span>u32).collect()
     }
@@ -1020,7 +1114,9 @@
         <span class="kw">let </span><span class="kw-2">mut </span>inv_mob: Vec&lt;f64&gt; = Vec::new();
         inv_mob.resize(scan.len(), <span class="number">0.0</span>);
 
-        <span class="self">self</span>.bruker_lib.tims_scan_to_inv_mob(frame_id, <span class="kw-2">&amp;</span>dbl_scans, <span class="kw-2">&amp;mut </span>inv_mob).expect(<span class="string">"Bruker binary call failed at: tims_scannum_to_oneoverk0;"</span>);
+        <span class="self">self</span>.bruker_lib
+            .tims_scan_to_inv_mob(frame_id, <span class="kw-2">&amp;</span>dbl_scans, <span class="kw-2">&amp;mut </span>inv_mob)
+            .expect(<span class="string">"Bruker binary call failed at: tims_scannum_to_oneoverk0;"</span>);
 
         inv_mob
     }
@@ -1045,9 +1141,11 @@
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>scan_values: Vec&lt;f64&gt; = Vec::new();
-        scan_values.resize(inv_mob.len(),  <span class="number">0.0</span>);
+        scan_values.resize(inv_mob.len(), <span class="number">0.0</span>);
 
-        <span class="self">self</span>.bruker_lib.inv_mob_to_tims_scan(frame_id, <span class="kw-2">&amp;</span>dbl_inv_mob, <span class="kw-2">&amp;mut </span>scan_values).expect(<span class="string">"Bruker binary call failed at: tims_oneoverk0_to_scannum;"</span>);
+        <span class="self">self</span>.bruker_lib
+            .inv_mob_to_tims_scan(frame_id, <span class="kw-2">&amp;</span>dbl_inv_mob, <span class="kw-2">&amp;mut </span>scan_values)
+            .expect(<span class="string">"Bruker binary call failed at: tims_oneoverk0_to_scannum;"</span>);
 
         scan_values.iter().map(|<span class="kw-2">&amp;</span>x| x.round() <span class="kw">as </span>u32).collect()
     }
@@ -1055,39 +1153,50 @@
 
 <span class="kw">pub enum </span>TimsIndexConverter {
     Simple(SimpleIndexConverter),
-    BrukerLib(BrukerLibTimsDataConverter)
+    BrukerLib(BrukerLibTimsDataConverter),
 }
 
 <span class="kw">impl </span>IndexConverter <span class="kw">for </span>TimsIndexConverter {
     <span class="kw">fn </span>tof_to_mz(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, tof_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             TimsIndexConverter::Simple(converter) =&gt; converter.tof_to_mz(frame_id, tof_values),
-            TimsIndexConverter::BrukerLib(converter) =&gt; converter.tof_to_mz(frame_id, tof_values)
+            TimsIndexConverter::BrukerLib(converter) =&gt; converter.tof_to_mz(frame_id, tof_values),
         }
     }
 
     <span class="kw">fn </span>mz_to_tof(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, mz_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             TimsIndexConverter::Simple(converter) =&gt; converter.mz_to_tof(frame_id, mz_values),
-            TimsIndexConverter::BrukerLib(converter) =&gt; converter.mz_to_tof(frame_id, mz_values)
+            TimsIndexConverter::BrukerLib(converter) =&gt; converter.mz_to_tof(frame_id, mz_values),
         }
     }
 
     <span class="kw">fn </span>scan_to_inverse_mobility(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, scan_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt; {
         <span class="kw">match </span><span class="self">self </span>{
-            TimsIndexConverter::Simple(converter) =&gt; converter.scan_to_inverse_mobility(frame_id, scan_values),
-            TimsIndexConverter::BrukerLib(converter) =&gt; converter.scan_to_inverse_mobility(frame_id, scan_values)
+            TimsIndexConverter::Simple(converter) =&gt; {
+                converter.scan_to_inverse_mobility(frame_id, scan_values)
+            }
+            TimsIndexConverter::BrukerLib(converter) =&gt; {
+                converter.scan_to_inverse_mobility(frame_id, scan_values)
+            }
         }
     }
 
-    <span class="kw">fn </span>inverse_mobility_to_scan(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt; {
+    <span class="kw">fn </span>inverse_mobility_to_scan(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    ) -&gt; Vec&lt;u32&gt; {
         <span class="kw">match </span><span class="self">self </span>{
-            TimsIndexConverter::Simple(converter) =&gt; converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values),
-            TimsIndexConverter::BrukerLib(converter) =&gt; converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+            TimsIndexConverter::Simple(converter) =&gt; {
+                converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+            }
+            TimsIndexConverter::BrukerLib(converter) =&gt; {
+                converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+            }
         }
     }
 }
-
 
 <span class="kw">pub struct </span>TimsLazyLoder {
     <span class="kw">pub </span>raw_data_layout: TimsRawDataLayout,
@@ -1107,7 +1216,13 @@
                 ms_type: MsType::Unknown,
                 scan: Vec::new(),
                 tof: Vec::new(),
-                ims_frame: ImsFrame { retention_time: <span class="self">self</span>.raw_data_layout.frame_meta_data[(frame_id - <span class="number">1</span>) <span class="kw">as </span>usize].time, mobility: Vec::new(), mz: Vec::new(), intensity: Vec::new() }
+                ims_frame: ImsFrame {
+                    retention_time: <span class="self">self</span>.raw_data_layout.frame_meta_data[(frame_id - <span class="number">1</span>) <span class="kw">as </span>usize]
+                        .time,
+                    mobility: Vec::new(),
+                    mz: Vec::new(),
+                    intensity: Vec::new(),
+                },
             };
         }
 
@@ -1127,7 +1242,8 @@
 
         <span class="kw">match </span><span class="self">self</span>.raw_data_layout.global_meta_data.tims_compression_type {
             <span class="number">1 </span>=&gt; {
-                <span class="kw">let </span>scan_count = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].num_scans <span class="kw">as </span>usize;
+                <span class="kw">let </span>scan_count =
+                    <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].num_scans <span class="kw">as </span>usize;
                 <span class="kw">let </span>num_peaks = num_peaks <span class="kw">as </span>usize;
                 <span class="kw">let </span>compression_offset = <span class="number">8 </span>+ (scan_count + <span class="number">1</span>) * <span class="number">4</span>;
 
@@ -1165,8 +1281,9 @@
                     }
 
                     <span class="kw">let </span>max_output_size = num_peaks * <span class="number">8</span>;
-                    <span class="kw">let </span>decompressed_bytes = lzf_decompress(<span class="kw-2">&amp;</span>compressed_data[start..end], max_output_size)
-                        .expect(<span class="string">"LZF decompression failed."</span>);
+                    <span class="kw">let </span>decompressed_bytes =
+                        lzf_decompress(<span class="kw-2">&amp;</span>compressed_data[start..end], max_output_size)
+                            .expect(<span class="string">"LZF decompression failed."</span>);
 
                     scan_start += parse_decompressed_bruker_binary_type1(
                         <span class="kw-2">&amp;</span>decompressed_bytes,
@@ -1174,7 +1291,7 @@
                         <span class="kw-2">&amp;mut </span>tof_indices_,
                         <span class="kw-2">&amp;mut </span>intensities_,
                         scan_start,
-                        scan_index
+                        scan_index,
                     );
                 }
 
@@ -1195,7 +1312,9 @@
                 <span class="kw">let </span>tof_i32 = tof_indices_.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>i32).collect::&lt;Vec&lt;i32&gt;&gt;();
 
                 <span class="kw">let </span>mz = <span class="self">self</span>.index_converter.tof_to_mz(frame_id, <span class="kw-2">&amp;</span>tof_indices_);
-                <span class="kw">let </span>inv_mobility = <span class="self">self</span>.index_converter.scan_to_inverse_mobility(frame_id, <span class="kw-2">&amp;</span>scan);
+                <span class="kw">let </span>inv_mobility = <span class="self">self
+                    </span>.index_converter
+                    .scan_to_inverse_mobility(frame_id, <span class="kw-2">&amp;</span>scan);
 
                 <span class="kw">let </span>ms_type_raw = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
                 <span class="kw">let </span>ms_type = <span class="kw">match </span>ms_type_raw {
@@ -1214,10 +1333,10 @@
                         retention_time: <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].time,
                         mobility: inv_mobility,
                         mz,
-                        intensity: intensity_dbl
-                    }
+                        intensity: intensity_dbl,
+                    },
                 }
-            },
+            }
 
             <span class="comment">// Existing handling of Type 2
             </span><span class="number">2 </span>=&gt; {
@@ -1226,13 +1345,16 @@
 
                 <span class="kw">let </span>decompressed_bytes = zstd_decompress(<span class="kw-2">&amp;</span>compressed_data).unwrap();
 
-                <span class="kw">let </span>(scan, tof, intensity) = parse_decompressed_bruker_binary_data(<span class="kw-2">&amp;</span>decompressed_bytes).unwrap();
+                <span class="kw">let </span>(scan, tof, intensity) =
+                    parse_decompressed_bruker_binary_data(<span class="kw-2">&amp;</span>decompressed_bytes).unwrap();
                 <span class="kw">let </span>intensity_dbl = intensity.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>f64).collect();
                 <span class="kw">let </span>tof_i32 = tof.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>i32).collect();
                 <span class="kw">let </span>scan = flatten_scan_values(<span class="kw-2">&amp;</span>scan, <span class="bool-val">true</span>);
 
                 <span class="kw">let </span>mz = <span class="self">self</span>.index_converter.tof_to_mz(frame_id, <span class="kw-2">&amp;</span>tof);
-                <span class="kw">let </span>inv_mobility = <span class="self">self</span>.index_converter.scan_to_inverse_mobility(frame_id, <span class="kw-2">&amp;</span>scan);
+                <span class="kw">let </span>inv_mobility = <span class="self">self
+                    </span>.index_converter
+                    .scan_to_inverse_mobility(frame_id, <span class="kw-2">&amp;</span>scan);
 
                 <span class="kw">let </span>ms_type_raw = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
 
@@ -1252,10 +1374,10 @@
                         retention_time: <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].time,
                         mobility: inv_mobility,
                         mz,
-                        intensity: intensity_dbl
-                    }
+                        intensity: intensity_dbl,
+                    },
                 }
-            },
+            }
 
             <span class="kw">_ </span>=&gt; {
                 <span class="macro">panic!</span>(<span class="string">"TimsCompressionType is not 1 or 2."</span>)
@@ -1264,7 +1386,6 @@
     }
 
     <span class="kw">fn </span>get_raw_frame(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32) -&gt; RawTimsFrame {
-
         <span class="kw">let </span>frame_index = (frame_id - <span class="number">1</span>) <span class="kw">as </span>usize;
         <span class="kw">let </span>offset = <span class="self">self</span>.raw_data_layout.tims_offset_values[frame_index] <span class="kw">as </span>u64;
 
@@ -1282,7 +1403,6 @@
             };
         }
 
-
         <span class="kw">let </span><span class="kw-2">mut </span>file_path = PathBuf::from(<span class="kw-2">&amp;</span><span class="self">self</span>.raw_data_layout.raw_data_path);
         file_path.push(<span class="string">"analysis.tdf_bin"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>infile = File::open(<span class="kw-2">&amp;</span>file_path).unwrap();
@@ -1298,17 +1418,17 @@
         <span class="kw">match </span><span class="self">self</span>.raw_data_layout.global_meta_data.tims_compression_type {
             <span class="kw">_ if </span><span class="self">self</span>.raw_data_layout.global_meta_data.tims_compression_type == <span class="number">1 </span>=&gt; {
                 <span class="macro">panic!</span>(<span class="string">"Decompression Type1 not implemented."</span>);
-            },
+            }
 
             <span class="comment">// Extract from ZSTD compressed binary
             </span><span class="kw">_ if </span><span class="self">self</span>.raw_data_layout.global_meta_data.tims_compression_type == <span class="number">2 </span>=&gt; {
-
                 <span class="kw">let </span><span class="kw-2">mut </span>compressed_data = <span class="macro">vec!</span>[<span class="number">0u8</span>; bin_size <span class="kw">as </span>usize - <span class="number">8</span>];
                 infile.read_exact(<span class="kw-2">&amp;mut </span>compressed_data).unwrap();
 
                 <span class="kw">let </span>decompressed_bytes = zstd_decompress(<span class="kw-2">&amp;</span>compressed_data).unwrap();
 
-                <span class="kw">let </span>(scan, tof, intensity) = parse_decompressed_bruker_binary_data(<span class="kw-2">&amp;</span>decompressed_bytes).unwrap();
+                <span class="kw">let </span>(scan, tof, intensity) =
+                    parse_decompressed_bruker_binary_data(<span class="kw-2">&amp;</span>decompressed_bytes).unwrap();
 
                 <span class="kw">let </span>ms_type_raw = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
 
@@ -1321,7 +1441,8 @@
 
                 <span class="kw">let </span>frame = RawTimsFrame {
                     frame_id: frame_id <span class="kw">as </span>i32,
-                    retention_time: <span class="self">self</span>.raw_data_layout.frame_meta_data[(frame_id - <span class="number">1</span>) <span class="kw">as </span>usize].time,
+                    retention_time: <span class="self">self</span>.raw_data_layout.frame_meta_data[(frame_id - <span class="number">1</span>) <span class="kw">as </span>usize]
+                        .time,
                     ms_type,
                     scan,
                     tof,
@@ -1329,7 +1450,7 @@
                 };
 
                 <span class="kw">return </span>frame;
-            },
+            }
 
             <span class="comment">// Error on unknown compression algorithm
             </span><span class="kw">_ </span>=&gt; {
@@ -1339,9 +1460,7 @@
     }
 
     <span class="kw">fn </span>get_slice(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_ids: Vec&lt;u32&gt;, _num_threads: usize) -&gt; TimsSlice {
-        <span class="kw">let </span>result: Vec&lt;TimsFrame&gt; = frame_ids
-            .into_iter()
-            .map(|f| { <span class="self">self</span>.get_frame(f) }).collect();
+        <span class="kw">let </span>result: Vec&lt;TimsFrame&gt; = frame_ids.into_iter().map(|f| <span class="self">self</span>.get_frame(f)).collect();
 
         TimsSlice { frames: result }
     }
@@ -1362,12 +1481,11 @@
 <span class="kw">pub struct </span>TimsInMemoryLoader {
     <span class="kw">pub </span>raw_data_layout: TimsRawDataLayout,
     <span class="kw">pub </span>index_converter: TimsIndexConverter,
-    compressed_data: Vec&lt;u8&gt;
+    compressed_data: Vec&lt;u8&gt;,
 }
 
 <span class="kw">impl </span>TimsData <span class="kw">for </span>TimsInMemoryLoader {
     <span class="kw">fn </span>get_frame(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32) -&gt; TimsFrame {
-
         <span class="kw">let </span>raw_frame = <span class="self">self</span>.get_raw_frame(frame_id);
 
         <span class="kw">let </span>raw_frame = <span class="kw">match </span>raw_frame.ms_type {
@@ -1384,7 +1502,9 @@
         <span class="kw">let </span>scan = flatten_scan_values(<span class="kw-2">&amp;</span>raw_frame.scan, <span class="bool-val">true</span>);
 
         <span class="kw">let </span>mz = <span class="self">self</span>.index_converter.tof_to_mz(frame_id, <span class="kw-2">&amp;</span>raw_frame.tof);
-        <span class="kw">let </span>inverse_mobility = <span class="self">self</span>.index_converter.scan_to_inverse_mobility(frame_id, <span class="kw-2">&amp;</span>scan);
+        <span class="kw">let </span>inverse_mobility = <span class="self">self
+            </span>.index_converter
+            .scan_to_inverse_mobility(frame_id, <span class="kw-2">&amp;</span>scan);
 
         <span class="kw">let </span>ims_frame = ImsFrame {
             retention_time: raw_frame.retention_time,
@@ -1407,14 +1527,17 @@
         <span class="kw">let </span>offset = <span class="self">self</span>.raw_data_layout.tims_offset_values[frame_index] <span class="kw">as </span>usize;
 
         <span class="kw">let </span>bin_size_offset = offset + <span class="number">4</span>; <span class="comment">// Assuming the size is stored immediately before the frame data
-        </span><span class="kw">let </span>bin_size = Cursor::new(<span class="kw-2">&amp;</span><span class="self">self</span>.compressed_data[offset..bin_size_offset]).read_i32::&lt;LittleEndian&gt;().unwrap();
+        </span><span class="kw">let </span>bin_size = Cursor::new(<span class="kw-2">&amp;</span><span class="self">self</span>.compressed_data[offset..bin_size_offset])
+            .read_i32::&lt;LittleEndian&gt;()
+            .unwrap();
 
         <span class="kw">let </span>data_offset = bin_size_offset + <span class="number">4</span>; <span class="comment">// Adjust based on actual structure
         </span><span class="kw">let </span>frame_data = <span class="kw-2">&amp;</span><span class="self">self</span>.compressed_data[data_offset..data_offset + bin_size <span class="kw">as </span>usize - <span class="number">8</span>];
 
         <span class="kw">let </span>decompressed_bytes = zstd_decompress(<span class="kw-2">&amp;</span>frame_data).unwrap();
 
-        <span class="kw">let </span>(scan, tof, intensity) = parse_decompressed_bruker_binary_data(<span class="kw-2">&amp;</span>decompressed_bytes).unwrap();
+        <span class="kw">let </span>(scan, tof, intensity) =
+            parse_decompressed_bruker_binary_data(<span class="kw-2">&amp;</span>decompressed_bytes).unwrap();
 
         <span class="kw">let </span>ms_type_raw = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
 
@@ -1438,16 +1561,18 @@
     }
 
     <span class="kw">fn </span>get_slice(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_ids: Vec&lt;u32&gt;, num_threads: usize) -&gt; TimsSlice {
-        <span class="kw">let </span>pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        <span class="kw">let </span>pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
         <span class="kw">let </span>frames = pool.install(|| {
-            frame_ids.par_iter().map(|<span class="kw-2">&amp;</span>frame_id| {
-                <span class="self">self</span>.get_frame(frame_id)
-            }).collect()
+            frame_ids
+                .par_iter()
+                .map(|<span class="kw-2">&amp;</span>frame_id| <span class="self">self</span>.get_frame(frame_id))
+                .collect()
         });
 
-        TimsSlice {
-            frames
-        }
+        TimsSlice { frames }
     }
 
     <span class="kw">fn </span>get_acquisition_mode(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; AcquisitionMode {
@@ -1465,30 +1590,70 @@
 
 <span class="kw">pub enum </span>TimsDataLoader {
     InMemory(TimsInMemoryLoader),
-    Lazy(TimsLazyLoder)
+    Lazy(TimsLazyLoder),
 }
 
 <span class="kw">impl </span>TimsDataLoader {
-    <span class="kw">pub fn </span>new_lazy(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, use_bruker_sdk: bool, scan_max_index: u32, im_lower: f64, im_upper: f64, tof_max_index: u32, mz_lower: f64, mz_upper: f64) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new_lazy(
+        bruker_lib_path: <span class="kw-2">&amp;</span>str,
+        data_path: <span class="kw-2">&amp;</span>str,
+        use_bruker_sdk: bool,
+        scan_max_index: u32,
+        im_lower: f64,
+        im_upper: f64,
+        tof_max_index: u32,
+        mz_lower: f64,
+        mz_upper: f64,
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>raw_data_layout = TimsRawDataLayout::new(data_path);
-        
+
         <span class="kw">let </span>index_converter = <span class="kw">match </span>use_bruker_sdk {
-            <span class="bool-val">true </span>=&gt; TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)),
-            <span class="bool-val">false </span>=&gt; TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(mz_lower, mz_upper, tof_max_index, im_lower, im_upper, scan_max_index))
+            <span class="bool-val">true </span>=&gt; TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(
+                bruker_lib_path,
+                data_path,
+            )),
+            <span class="bool-val">false </span>=&gt; TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
+                mz_lower,
+                mz_upper,
+                tof_max_index,
+                im_lower,
+                im_upper,
+                scan_max_index,
+            )),
         };
-        
+
         TimsDataLoader::Lazy(TimsLazyLoder {
             raw_data_layout,
-            index_converter
+            index_converter,
         })
     }
 
-    <span class="kw">pub fn </span>new_in_memory(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str, use_bruker_sdk: bool, scan_max_index: u32, im_lower: f64, im_upper: f64, tof_max_index: u32, mz_lower: f64, mz_upper: f64) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new_in_memory(
+        bruker_lib_path: <span class="kw-2">&amp;</span>str,
+        data_path: <span class="kw-2">&amp;</span>str,
+        use_bruker_sdk: bool,
+        scan_max_index: u32,
+        im_lower: f64,
+        im_upper: f64,
+        tof_max_index: u32,
+        mz_lower: f64,
+        mz_upper: f64,
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>raw_data_layout = TimsRawDataLayout::new(data_path);
-        
+
         <span class="kw">let </span>index_converter = <span class="kw">match </span>use_bruker_sdk {
-            <span class="bool-val">true </span>=&gt; TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)),
-            <span class="bool-val">false </span>=&gt; TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(mz_lower, mz_upper, tof_max_index, im_lower, im_upper, scan_max_index))
+            <span class="bool-val">true </span>=&gt; TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(
+                bruker_lib_path,
+                data_path,
+            )),
+            <span class="bool-val">false </span>=&gt; TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
+                mz_lower,
+                mz_upper,
+                tof_max_index,
+                im_lower,
+                im_upper,
+                scan_max_index,
+            )),
         };
 
         <span class="kw">let </span><span class="kw-2">mut </span>file_path = PathBuf::from(data_path);
@@ -1500,13 +1665,13 @@
         TimsDataLoader::InMemory(TimsInMemoryLoader {
             raw_data_layout,
             index_converter,
-            compressed_data: data
+            compressed_data: data,
         })
     }
     <span class="kw">pub fn </span>get_index_converter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="kw">dyn </span>IndexConverter {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; <span class="kw-2">&amp;</span>loader.index_converter,
-            TimsDataLoader::Lazy(loader) =&gt; <span class="kw-2">&amp;</span>loader.index_converter
+            TimsDataLoader::Lazy(loader) =&gt; <span class="kw-2">&amp;</span>loader.index_converter,
         }
     }
 }
@@ -1515,41 +1680,41 @@
     <span class="kw">fn </span>get_frame(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32) -&gt; TimsFrame {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; loader.get_frame(frame_id),
-            TimsDataLoader::Lazy(loader) =&gt; loader.get_frame(frame_id)
+            TimsDataLoader::Lazy(loader) =&gt; loader.get_frame(frame_id),
         }
     }
     <span class="kw">fn </span>get_raw_frame(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32) -&gt; RawTimsFrame {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; loader.get_raw_frame(frame_id),
-            TimsDataLoader::Lazy(loader) =&gt; loader.get_raw_frame(frame_id)
+            TimsDataLoader::Lazy(loader) =&gt; loader.get_raw_frame(frame_id),
         }
     }
 
     <span class="kw">fn </span>get_slice(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_ids: Vec&lt;u32&gt;, num_threads: usize) -&gt; TimsSlice {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; loader.get_slice(frame_ids, num_threads),
-            TimsDataLoader::Lazy(loader) =&gt; loader.get_slice(frame_ids, num_threads)
+            TimsDataLoader::Lazy(loader) =&gt; loader.get_slice(frame_ids, num_threads),
         }
     }
 
     <span class="kw">fn </span>get_acquisition_mode(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; AcquisitionMode {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; loader.get_acquisition_mode(),
-            TimsDataLoader::Lazy(loader) =&gt; loader.get_acquisition_mode()
+            TimsDataLoader::Lazy(loader) =&gt; loader.get_acquisition_mode(),
         }
     }
 
     <span class="kw">fn </span>get_frame_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; i32 {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; loader.get_frame_count(),
-            TimsDataLoader::Lazy(loader) =&gt; loader.get_frame_count()
+            TimsDataLoader::Lazy(loader) =&gt; loader.get_frame_count(),
         }
     }
 
     <span class="kw">fn </span>get_data_path(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
         <span class="kw">match </span><span class="self">self </span>{
             TimsDataLoader::InMemory(loader) =&gt; loader.get_data_path(),
-            TimsDataLoader::Lazy(loader) =&gt; loader.get_data_path()
+            TimsDataLoader::Lazy(loader) =&gt; loader.get_data_path(),
         }
     }
 }
@@ -1558,7 +1723,7 @@
     <span class="kw">pub </span>tof_intercept: f64,
     <span class="kw">pub </span>tof_slope: f64,
     <span class="kw">pub </span>scan_intercept: f64,
-    <span class="kw">pub </span>scan_slope: f64,  
+    <span class="kw">pub </span>scan_slope: f64,
 }
 
 <span class="kw">impl </span>SimpleIndexConverter {
@@ -1571,9 +1736,8 @@
         scan_max_index: u32,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>tof_intercept: f64 = mz_min.sqrt();
-        <span class="kw">let </span>tof_slope: f64 =
-            (mz_max.sqrt() - tof_intercept) / tof_max_index <span class="kw">as </span>f64;
-        
+        <span class="kw">let </span>tof_slope: f64 = (mz_max.sqrt() - tof_intercept) / tof_max_index <span class="kw">as </span>f64;
+
         <span class="kw">let </span>scan_intercept: f64 = im_max;
         <span class="kw">let </span>scan_slope: f64 = (im_min - scan_intercept) / scan_max_index <span class="kw">as </span>f64;
         <span class="self">Self </span>{
@@ -1589,44 +1753,48 @@
     <span class="kw">fn </span>tof_to_mz(<span class="kw-2">&amp;</span><span class="self">self</span>, _frame_id: u32, _tof_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>mz_values: Vec&lt;f64&gt; = Vec::new();
         mz_values.resize(_tof_values.len(), <span class="number">0.0</span>);
-        
+
         <span class="kw">for </span>(i, <span class="kw-2">&amp;</span>val) <span class="kw">in </span>_tof_values.iter().enumerate() {
             mz_values[i] = (<span class="self">self</span>.tof_intercept + <span class="self">self</span>.tof_slope * val <span class="kw">as </span>f64).powi(<span class="number">2</span>);
         }
-        
+
         mz_values
     }
 
     <span class="kw">fn </span>mz_to_tof(<span class="kw-2">&amp;</span><span class="self">self</span>, _frame_id: u32, _mz_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>tof_values: Vec&lt;u32&gt; = Vec::new();
         tof_values.resize(_mz_values.len(), <span class="number">0</span>);
-        
+
         <span class="kw">for </span>(i, <span class="kw-2">&amp;</span>val) <span class="kw">in </span>_mz_values.iter().enumerate() {
             tof_values[i] = ((val.sqrt() - <span class="self">self</span>.tof_intercept) / <span class="self">self</span>.tof_slope) <span class="kw">as </span>u32;
         }
-        
+
         tof_values
     }
 
     <span class="kw">fn </span>scan_to_inverse_mobility(<span class="kw-2">&amp;</span><span class="self">self</span>, _frame_id: u32, _scan_values: <span class="kw-2">&amp;</span>Vec&lt;u32&gt;) -&gt; Vec&lt;f64&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>inv_mobility_values: Vec&lt;f64&gt; = Vec::new();
         inv_mobility_values.resize(_scan_values.len(), <span class="number">0.0</span>);
-        
+
         <span class="kw">for </span>(i, <span class="kw-2">&amp;</span>val) <span class="kw">in </span>_scan_values.iter().enumerate() {
             inv_mobility_values[i] = <span class="self">self</span>.scan_intercept + <span class="self">self</span>.scan_slope * val <span class="kw">as </span>f64;
         }
-        
+
         inv_mobility_values
     }
 
-    <span class="kw">fn </span>inverse_mobility_to_scan(<span class="kw-2">&amp;</span><span class="self">self</span>, _frame_id: u32, _inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;u32&gt; {
+    <span class="kw">fn </span>inverse_mobility_to_scan(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _frame_id: u32,
+        _inverse_mobility_values: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    ) -&gt; Vec&lt;u32&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>scan_values: Vec&lt;u32&gt; = Vec::new();
         scan_values.resize(_inverse_mobility_values.len(), <span class="number">0</span>);
-        
+
         <span class="kw">for </span>(i, <span class="kw-2">&amp;</span>val) <span class="kw">in </span>_inverse_mobility_values.iter().enumerate() {
             scan_values[i] = ((val - <span class="self">self</span>.scan_intercept) / <span class="self">self</span>.scan_slope) <span class="kw">as </span>u32;
         }
-        
+
         scan_values
     }
 }

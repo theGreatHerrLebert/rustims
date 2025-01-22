@@ -288,7 +288,112 @@
 <a href="#287" id="287">287</a>
 <a href="#288" id="288">288</a>
 <a href="#289" id="289">289</a>
-<a href="#290" id="290">290</a></pre></div><pre class="rust"><code><span class="kw">extern crate </span>rusqlite;
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a></pre></div><pre class="rust"><code><span class="kw">extern crate </span>rusqlite;
 
 <span class="kw">use </span>rusqlite::{Connection, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>std::path::Path;
@@ -332,7 +437,23 @@
     <span class="kw">pub </span>precursor_frame_id: i64,
 }
 
-<span class="kw">pub struct </span>DDAFragmentInfo {
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>DDAPrecursor {
+    <span class="kw">pub </span>frame_id: i64,
+    <span class="kw">pub </span>precursor_id: i64,
+    <span class="kw">pub </span>mono_mz: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+    <span class="kw">pub </span>highest_intensity_mz: f64,
+    <span class="kw">pub </span>average_mz: f64,
+    <span class="kw">pub </span>charge: <span class="prelude-ty">Option</span>&lt;i64&gt;,
+    <span class="kw">pub </span>inverse_ion_mobility: f64,
+    <span class="kw">pub </span>collision_energy: f64,
+    <span class="kw">pub </span>precuror_total_intensity: f64,
+    <span class="kw">pub </span>isolation_mz: f64,
+    <span class="kw">pub </span>isolation_width: f64,
+}
+
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>DDAFragmentInfo {
     <span class="kw">pub </span>frame_id: i64,
     <span class="kw">pub </span>scan_begin: i64,
     <span class="kw">pub </span>scan_end: i64,
@@ -389,72 +510,104 @@
     value: String,
 }
 
-<span class="kw">pub fn </span>read_dda_precursor_meta(bruker_d_folder_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;DDAPrecursorMeta&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+<span class="kw">pub fn </span>read_dda_precursor_meta(
+    bruker_d_folder_name: <span class="kw-2">&amp;</span>str,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;DDAPrecursorMeta&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="comment">// Connect to the database
     </span><span class="kw">let </span>db_path = Path::new(bruker_d_folder_name).join(<span class="string">"analysis.tdf"</span>);
     <span class="kw">let </span>conn = Connection::open(db_path)<span class="question-mark">?</span>;
 
     <span class="comment">// prepare the query
-    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[<span class="string">"Id"</span>, <span class="string">"LargestPeakMz"</span>, <span class="string">"AverageMz"</span>, <span class="string">"MonoisotopicMz"</span>, <span class="string">"Charge"</span>, <span class="string">"ScanNumber"</span>, <span class="string">"Intensity"</span>, <span class="string">"Parent"</span>];
+    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[
+        <span class="string">"Id"</span>,
+        <span class="string">"LargestPeakMz"</span>,
+        <span class="string">"AverageMz"</span>,
+        <span class="string">"MonoisotopicMz"</span>,
+        <span class="string">"Charge"</span>,
+        <span class="string">"ScanNumber"</span>,
+        <span class="string">"Intensity"</span>,
+        <span class="string">"Parent"</span>,
+    ];
     <span class="kw">let </span>query = <span class="macro">format!</span>(<span class="string">"SELECT {} FROM Precursors"</span>, rows.join(<span class="string">", "</span>));
 
     <span class="comment">// execute the query
-    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;DDAPrecursorMeta&gt;, <span class="kw">_</span>&gt; = conn.prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?</span>.query_map([], |row| {
-        <span class="prelude-val">Ok</span>(DDAPrecursorMeta {
-            precursor_id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-            precursor_mz_highest_intensity: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-            precursor_mz_average: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-            precursor_mz_monoisotopic: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,  <span class="comment">// Now using Option&lt;f64&gt;
-            </span>precursor_charge: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,           <span class="comment">// Now using Option&lt;i64&gt;
-            </span>precursor_average_scan_number: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
-            precursor_total_intensity: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
-            precursor_frame_id: row.get(<span class="number">7</span>)<span class="question-mark">?</span>,
-        })
-    })<span class="question-mark">?</span>.collect();
+    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;DDAPrecursorMeta&gt;, <span class="kw">_</span>&gt; = conn
+        .prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?
+        </span>.query_map([], |row| {
+            <span class="prelude-val">Ok</span>(DDAPrecursorMeta {
+                precursor_id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+                precursor_mz_highest_intensity: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+                precursor_mz_average: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+                precursor_mz_monoisotopic: row.get(<span class="number">3</span>)<span class="question-mark">?</span>, <span class="comment">// Now using Option&lt;f64&gt;
+                </span>precursor_charge: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,          <span class="comment">// Now using Option&lt;i64&gt;
+                </span>precursor_average_scan_number: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
+                precursor_total_intensity: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
+                precursor_frame_id: row.get(<span class="number">7</span>)<span class="question-mark">?</span>,
+            })
+        })<span class="question-mark">?
+        </span>.collect();
 
     <span class="comment">// return the frames
     </span><span class="prelude-val">Ok</span>(frames_rows<span class="question-mark">?</span>)
 }
 
-<span class="kw">pub fn </span>read_pasef_frame_ms_ms_info(bruker_d_folder_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PasefMsMsMeta&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+<span class="kw">pub fn </span>read_pasef_frame_ms_ms_info(
+    bruker_d_folder_name: <span class="kw-2">&amp;</span>str,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PasefMsMsMeta&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="comment">// Connect to the database
     </span><span class="kw">let </span>db_path = Path::new(bruker_d_folder_name).join(<span class="string">"analysis.tdf"</span>);
     <span class="kw">let </span>conn = Connection::open(db_path)<span class="question-mark">?</span>;
 
     <span class="comment">// prepare the query
-    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[<span class="string">"Frame"</span>, <span class="string">"ScanNumBegin"</span>, <span class="string">"ScanNumEnd"</span>, <span class="string">"IsolationMz"</span>, <span class="string">"IsolationWidth"</span>, <span class="string">"CollisionEnergy"</span>, <span class="string">"Precursor"</span>];
+    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[
+        <span class="string">"Frame"</span>,
+        <span class="string">"ScanNumBegin"</span>,
+        <span class="string">"ScanNumEnd"</span>,
+        <span class="string">"IsolationMz"</span>,
+        <span class="string">"IsolationWidth"</span>,
+        <span class="string">"CollisionEnergy"</span>,
+        <span class="string">"Precursor"</span>,
+    ];
     <span class="kw">let </span>query = <span class="macro">format!</span>(<span class="string">"SELECT {} FROM PasefFrameMsMsInfo"</span>, rows.join(<span class="string">", "</span>));
 
     <span class="comment">// execute the query
-    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;PasefMsMsMeta&gt;, <span class="kw">_</span>&gt; = conn.prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?</span>.query_map([], |row| {
-        <span class="prelude-val">Ok</span>(PasefMsMsMeta {
-        frame_id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-        scan_num_begin: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-        scan_num_end: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-        isolation_mz: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-        isolation_width: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
-        collision_energy: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
-        precursor_id: row.get(<span class="number">6</span>)<span class="question-mark">?</span>, })
-        })<span class="question-mark">?</span>.collect();
+    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;PasefMsMsMeta&gt;, <span class="kw">_</span>&gt; = conn
+        .prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?
+        </span>.query_map([], |row| {
+            <span class="prelude-val">Ok</span>(PasefMsMsMeta {
+                frame_id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+                scan_num_begin: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+                scan_num_end: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+                isolation_mz: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+                isolation_width: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
+                collision_energy: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
+                precursor_id: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
+            })
+        })<span class="question-mark">?
+        </span>.collect();
 
     <span class="comment">// return the frames
     </span><span class="prelude-val">Ok</span>(frames_rows<span class="question-mark">?</span>)
 }
 
 <span class="comment">// Read the global meta data from the analysis.tdf file
-</span><span class="kw">pub fn </span>read_global_meta_sql(bruker_d_folder_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;GlobalMetaData, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
-
+</span><span class="kw">pub fn </span>read_global_meta_sql(
+    bruker_d_folder_name: <span class="kw-2">&amp;</span>str,
+) -&gt; <span class="prelude-ty">Result</span>&lt;GlobalMetaData, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="comment">// Connect to the database
     </span><span class="kw">let </span>db_path = Path::new(bruker_d_folder_name).join(<span class="string">"analysis.tdf"</span>);
     <span class="kw">let </span>conn = Connection::open(db_path)<span class="question-mark">?</span>;
 
     <span class="comment">// execute the query
-    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;GlobalMetaInternal&gt;, <span class="kw">_</span>&gt; = conn.prepare(<span class="string">"SELECT * FROM GlobalMetadata"</span>)<span class="question-mark">?</span>.query_map([], |row| {
-        <span class="prelude-val">Ok</span>(GlobalMetaInternal {
-            key: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-            value: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;GlobalMetaInternal&gt;, <span class="kw">_</span>&gt; = conn
+        .prepare(<span class="string">"SELECT * FROM GlobalMetadata"</span>)<span class="question-mark">?
+        </span>.query_map([], |row| {
+            <span class="prelude-val">Ok</span>(GlobalMetaInternal {
+                key: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+                value: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
             })
-        })<span class="question-mark">?</span>.collect();
+        })<span class="question-mark">?
+        </span>.collect();
 
     <span class="kw">let </span><span class="kw-2">mut </span>global_meta = GlobalMetaData {
         schema_type: String::new(),
@@ -476,64 +629,106 @@
     </span><span class="kw">for </span>row <span class="kw">in </span>frames_rows<span class="question-mark">? </span>{
         <span class="kw">match </span>row.key.as_str() {
             <span class="string">"SchemaType" </span>=&gt; global_meta.schema_type = row.value,
-            <span class="string">"SchemaVersionMajor" </span>=&gt; global_meta.schema_version_major = row.value.parse::&lt;i64&gt;().unwrap(),
-            <span class="string">"SchemaVersionMinor" </span>=&gt; global_meta.schema_version_minor = row.value.parse::&lt;i64&gt;().unwrap(),
+            <span class="string">"SchemaVersionMajor" </span>=&gt; {
+                global_meta.schema_version_major = row.value.parse::&lt;i64&gt;().unwrap()
+            }
+            <span class="string">"SchemaVersionMinor" </span>=&gt; {
+                global_meta.schema_version_minor = row.value.parse::&lt;i64&gt;().unwrap()
+            }
             <span class="string">"AcquisitionSoftwareVendor" </span>=&gt; global_meta.acquisition_software_vendor = row.value,
             <span class="string">"InstrumentVendor" </span>=&gt; global_meta.instrument_vendor = row.value,
             <span class="string">"ClosedProperly" </span>=&gt; global_meta.closed_property = row.value.parse::&lt;i64&gt;().unwrap(),
-            <span class="string">"TimsCompressionType" </span>=&gt; global_meta.tims_compression_type = row.value.parse::&lt;i64&gt;().unwrap(),
-            <span class="string">"MaxNumPeaksPerScan" </span>=&gt; global_meta.max_num_peaks_per_scan = row.value.parse::&lt;i64&gt;().unwrap(),
-            <span class="string">"MzAcqRangeLower" </span>=&gt; global_meta.mz_acquisition_range_lower = row.value.parse::&lt;f64&gt;().unwrap(),
-            <span class="string">"MzAcqRangeUpper" </span>=&gt; global_meta.mz_acquisition_range_upper = row.value.parse::&lt;f64&gt;().unwrap(),
-            <span class="string">"OneOverK0AcqRangeLower" </span>=&gt; global_meta.one_over_k0_range_lower = row.value.parse::&lt;f64&gt;().unwrap(),
-            <span class="string">"OneOverK0AcqRangeUpper" </span>=&gt; global_meta.one_over_k0_range_upper = row.value.parse::&lt;f64&gt;().unwrap(),
-            <span class="string">"DigitizerNumSamples" </span>=&gt; global_meta.tof_max_index = (row.value.parse::&lt;i64&gt;().unwrap() + <span class="number">1</span>) <span class="kw">as </span>u32,
+            <span class="string">"TimsCompressionType" </span>=&gt; {
+                global_meta.tims_compression_type = row.value.parse::&lt;i64&gt;().unwrap()
+            }
+            <span class="string">"MaxNumPeaksPerScan" </span>=&gt; {
+                global_meta.max_num_peaks_per_scan = row.value.parse::&lt;i64&gt;().unwrap()
+            }
+            <span class="string">"MzAcqRangeLower" </span>=&gt; {
+                global_meta.mz_acquisition_range_lower = row.value.parse::&lt;f64&gt;().unwrap()
+            }
+            <span class="string">"MzAcqRangeUpper" </span>=&gt; {
+                global_meta.mz_acquisition_range_upper = row.value.parse::&lt;f64&gt;().unwrap()
+            }
+            <span class="string">"OneOverK0AcqRangeLower" </span>=&gt; {
+                global_meta.one_over_k0_range_lower = row.value.parse::&lt;f64&gt;().unwrap()
+            }
+            <span class="string">"OneOverK0AcqRangeUpper" </span>=&gt; {
+                global_meta.one_over_k0_range_upper = row.value.parse::&lt;f64&gt;().unwrap()
+            }
+            <span class="string">"DigitizerNumSamples" </span>=&gt; {
+                global_meta.tof_max_index = (row.value.parse::&lt;i64&gt;().unwrap() + <span class="number">1</span>) <span class="kw">as </span>u32
+            }
             <span class="kw">_ </span>=&gt; (),
         }
     }
     <span class="comment">// return global_meta
-    </span><span class="prelude-val">Ok</span>(global_meta)   
+    </span><span class="prelude-val">Ok</span>(global_meta)
 }
 
 <span class="comment">// Read the frame meta data from the analysis.tdf file
-</span><span class="kw">pub fn </span>read_meta_data_sql(bruker_d_folder_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;FrameMeta&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+</span><span class="kw">pub fn </span>read_meta_data_sql(
+    bruker_d_folder_name: <span class="kw-2">&amp;</span>str,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;FrameMeta&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="comment">// Connect to the database
     </span><span class="kw">let </span>db_path = Path::new(bruker_d_folder_name).join(<span class="string">"analysis.tdf"</span>);
     <span class="kw">let </span>conn = Connection::open(db_path)<span class="question-mark">?</span>;
 
     <span class="comment">// prepare the query
-    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[<span class="string">"Id"</span>, <span class="string">"Time"</span>, <span class="string">"ScanMode"</span>, <span class="string">"Polarity"</span>, <span class="string">"MsMsType"</span>, <span class="string">"TimsId"</span>, <span class="string">"MaxIntensity"</span>, <span class="string">"SummedIntensities"</span>, 
-    <span class="string">"NumScans"</span>, <span class="string">"NumPeaks"</span>, <span class="string">"MzCalibration"</span>, <span class="string">"T1"</span>, <span class="string">"T2"</span>, <span class="string">"TimsCalibration"</span>, <span class="string">"PropertyGroup"</span>, <span class="string">"AccumulationTime"</span>, <span class="string">"RampTime"</span>];
+    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[
+        <span class="string">"Id"</span>,
+        <span class="string">"Time"</span>,
+        <span class="string">"ScanMode"</span>,
+        <span class="string">"Polarity"</span>,
+        <span class="string">"MsMsType"</span>,
+        <span class="string">"TimsId"</span>,
+        <span class="string">"MaxIntensity"</span>,
+        <span class="string">"SummedIntensities"</span>,
+        <span class="string">"NumScans"</span>,
+        <span class="string">"NumPeaks"</span>,
+        <span class="string">"MzCalibration"</span>,
+        <span class="string">"T1"</span>,
+        <span class="string">"T2"</span>,
+        <span class="string">"TimsCalibration"</span>,
+        <span class="string">"PropertyGroup"</span>,
+        <span class="string">"AccumulationTime"</span>,
+        <span class="string">"RampTime"</span>,
+    ];
     <span class="kw">let </span>query = <span class="macro">format!</span>(<span class="string">"SELECT {} FROM Frames"</span>, rows.join(<span class="string">", "</span>));
 
     <span class="comment">// execute the query
-    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;FrameMeta&gt;, <span class="kw">_</span>&gt; = conn.prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?</span>.query_map([], |row| {
-    <span class="prelude-val">Ok</span>(FrameMeta {
-        id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-        time: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-        scan_mode: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-        polarity: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-        ms_ms_type: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
-        tims_id: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
-        max_intensity: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
-        sum_intensity: row.get(<span class="number">7</span>)<span class="question-mark">?</span>,
-        num_scans: row.get(<span class="number">8</span>)<span class="question-mark">?</span>,
-        num_peaks: row.get(<span class="number">9</span>)<span class="question-mark">?</span>,
-        mz_calibration: row.get(<span class="number">10</span>)<span class="question-mark">?</span>,
-        t_1: row.get(<span class="number">11</span>)<span class="question-mark">?</span>,
-        t_2: row.get(<span class="number">12</span>)<span class="question-mark">?</span>,
-        tims_calibration: row.get(<span class="number">13</span>)<span class="question-mark">?</span>,
-        property_group: row.get(<span class="number">14</span>)<span class="question-mark">?</span>,
-        accumulation_time: row.get(<span class="number">15</span>)<span class="question-mark">?</span>,
-        ramp_time: row.get(<span class="number">16</span>)<span class="question-mark">?</span>,
-        })
-    })<span class="question-mark">?</span>.collect();
+    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;FrameMeta&gt;, <span class="kw">_</span>&gt; = conn
+        .prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?
+        </span>.query_map([], |row| {
+            <span class="prelude-val">Ok</span>(FrameMeta {
+                id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+                time: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+                scan_mode: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+                polarity: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+                ms_ms_type: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
+                tims_id: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
+                max_intensity: row.get(<span class="number">6</span>)<span class="question-mark">?</span>,
+                sum_intensity: row.get(<span class="number">7</span>)<span class="question-mark">?</span>,
+                num_scans: row.get(<span class="number">8</span>)<span class="question-mark">?</span>,
+                num_peaks: row.get(<span class="number">9</span>)<span class="question-mark">?</span>,
+                mz_calibration: row.get(<span class="number">10</span>)<span class="question-mark">?</span>,
+                t_1: row.get(<span class="number">11</span>)<span class="question-mark">?</span>,
+                t_2: row.get(<span class="number">12</span>)<span class="question-mark">?</span>,
+                tims_calibration: row.get(<span class="number">13</span>)<span class="question-mark">?</span>,
+                property_group: row.get(<span class="number">14</span>)<span class="question-mark">?</span>,
+                accumulation_time: row.get(<span class="number">15</span>)<span class="question-mark">?</span>,
+                ramp_time: row.get(<span class="number">16</span>)<span class="question-mark">?</span>,
+            })
+        })<span class="question-mark">?
+        </span>.collect();
 
     <span class="comment">// return the frames
     </span><span class="prelude-val">Ok</span>(frames_rows<span class="question-mark">?</span>)
 }
 
-<span class="kw">pub fn </span>read_dia_ms_ms_info(bruker_d_folder_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMisInfo&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+<span class="kw">pub fn </span>read_dia_ms_ms_info(
+    bruker_d_folder_name: <span class="kw-2">&amp;</span>str,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMisInfo&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="comment">// Connect to the database
     </span><span class="kw">let </span>db_path = Path::new(bruker_d_folder_name).join(<span class="string">"analysis.tdf"</span>);
     <span class="kw">let </span>conn = Connection::open(db_path)<span class="question-mark">?</span>;
@@ -543,38 +738,54 @@
     <span class="kw">let </span>query = <span class="macro">format!</span>(<span class="string">"SELECT {} FROM DiaFrameMsMsInfo"</span>, rows.join(<span class="string">", "</span>));
 
     <span class="comment">// execute the query
-    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMisInfo&gt;, <span class="kw">_</span>&gt; = conn.prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?</span>.query_map([], |row| {
-        <span class="prelude-val">Ok</span>(DiaMsMisInfo {
-            frame_id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-            window_group: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-        })
-    })<span class="question-mark">?</span>.collect();
+    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMisInfo&gt;, <span class="kw">_</span>&gt; = conn
+        .prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?
+        </span>.query_map([], |row| {
+            <span class="prelude-val">Ok</span>(DiaMsMisInfo {
+                frame_id: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+                window_group: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+            })
+        })<span class="question-mark">?
+        </span>.collect();
 
     <span class="comment">// return the frames
     </span><span class="prelude-val">Ok</span>(frames_rows<span class="question-mark">?</span>)
 }
 
-<span class="kw">pub fn </span>read_dia_ms_ms_windows(bruker_d_folder_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMsWindow&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+<span class="kw">pub fn </span>read_dia_ms_ms_windows(
+    bruker_d_folder_name: <span class="kw-2">&amp;</span>str,
+) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMsWindow&gt;, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
     <span class="comment">// Connect to the database
     </span><span class="kw">let </span>db_path = Path::new(bruker_d_folder_name).join(<span class="string">"analysis.tdf"</span>);
     <span class="kw">let </span>conn = Connection::open(db_path)<span class="question-mark">?</span>;
 
     <span class="comment">// prepare the query
-    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[<span class="string">"WindowGroup"</span>, <span class="string">"ScanNumBegin"</span>, <span class="string">"ScanNumEnd"</span>, <span class="string">"IsolationMz"</span>, <span class="string">"IsolationWidth"</span>, <span class="string">"CollisionEnergy"</span>];
+    </span><span class="kw">let </span>rows: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = <span class="macro">vec!</span>[
+        <span class="string">"WindowGroup"</span>,
+        <span class="string">"ScanNumBegin"</span>,
+        <span class="string">"ScanNumEnd"</span>,
+        <span class="string">"IsolationMz"</span>,
+        <span class="string">"IsolationWidth"</span>,
+        <span class="string">"CollisionEnergy"</span>,
+    ];
     <span class="kw">let </span>query = <span class="macro">format!</span>(<span class="string">"SELECT {} FROM DiaFrameMsMsWindows"</span>, rows.join(<span class="string">", "</span>));
 
     <span class="comment">// execute the query
-    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMsWindow&gt;, <span class="kw">_</span>&gt; = conn.prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?</span>.query_map([], |row| {
-        <span class="prelude-val">Ok</span>(DiaMsMsWindow {
-            window_group: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
-            scan_num_begin: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
-            scan_num_end: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
-            isolation_mz: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
-            isolation_width: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
-            collision_energy: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
-        })
-    })<span class="question-mark">?</span>.collect();
+    </span><span class="kw">let </span>frames_rows: <span class="prelude-ty">Result</span>&lt;Vec&lt;DiaMsMsWindow&gt;, <span class="kw">_</span>&gt; = conn
+        .prepare(<span class="kw-2">&amp;</span>query)<span class="question-mark">?
+        </span>.query_map([], |row| {
+            <span class="prelude-val">Ok</span>(DiaMsMsWindow {
+                window_group: row.get(<span class="number">0</span>)<span class="question-mark">?</span>,
+                scan_num_begin: row.get(<span class="number">1</span>)<span class="question-mark">?</span>,
+                scan_num_end: row.get(<span class="number">2</span>)<span class="question-mark">?</span>,
+                isolation_mz: row.get(<span class="number">3</span>)<span class="question-mark">?</span>,
+                isolation_width: row.get(<span class="number">4</span>)<span class="question-mark">?</span>,
+                collision_energy: row.get(<span class="number">5</span>)<span class="question-mark">?</span>,
+            })
+        })<span class="question-mark">?
+        </span>.collect();
 
     <span class="comment">// return the frames
     </span><span class="prelude-val">Ok</span>(frames_rows<span class="question-mark">?</span>)
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>

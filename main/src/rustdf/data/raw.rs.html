@@ -168,7 +168,53 @@
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a></pre></div><pre class="rust"><code><span class="kw">use </span>libloading::{Library, Symbol};
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a>
+<a href="#213" id="213">213</a>
+<a href="#214" id="214">214</a>
+<a href="#215" id="215">215</a>
+<a href="#216" id="216">216</a></pre></div><pre class="rust"><code><span class="kw">use </span>libloading::{Library, Symbol};
 <span class="kw">use </span>std::os::raw::{c_char, c_double};
 
 <span class="comment">//
@@ -202,26 +248,24 @@
     // let data_path = "path/to/data.d";
     // let tims_data = BrukerTimsDataLibrary::new(bruker_lib_path, data_path);
     // ```
-    </span><span class="kw">pub fn </span>new(bruker_lib_path: <span class="kw-2">&amp;</span>str, data_path: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;BrukerTimsDataLibrary, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
-        
+    </span><span class="kw">pub fn </span>new(
+        bruker_lib_path: <span class="kw-2">&amp;</span>str,
+        data_path: <span class="kw-2">&amp;</span>str,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;BrukerTimsDataLibrary, Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="comment">// Load the library
-        </span><span class="kw">let </span>lib = <span class="kw">unsafe </span>{
-            Library::new(bruker_lib_path)<span class="question-mark">?
-        </span>};
-        
+        </span><span class="kw">let </span>lib = <span class="kw">unsafe </span>{ Library::new(bruker_lib_path)<span class="question-mark">? </span>};
+
         <span class="comment">// create a handle to the raw data
         </span><span class="kw">let </span>handle = <span class="kw">unsafe </span>{
-            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern fn</span>(<span class="kw-2">*const </span>c_char, u32) -&gt; u64&gt; = lib.get(<span class="string">b"tims_open"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(<span class="kw-2">*const </span>c_char, u32) -&gt; u64&gt; =
+                lib.get(<span class="string">b"tims_open"</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span>path = std::ffi::CString::new(data_path)<span class="question-mark">?</span>;
             <span class="kw">let </span>handle = func(path.as_ptr(), <span class="number">0</span>);
             handle
         };
 
         <span class="comment">// return the BrukerTimsDataLibrary struct
-        </span><span class="prelude-val">Ok</span>(BrukerTimsDataLibrary {
-            lib,
-            handle,
-        })
+        </span><span class="prelude-val">Ok</span>(BrukerTimsDataLibrary { lib, handle })
     }
 
     <span class="comment">//
@@ -238,7 +282,7 @@
     // ```
     </span><span class="kw">pub fn </span>tims_close(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="kw">unsafe </span>{
-            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern fn</span>(u64) -&gt; ()&gt; = <span class="self">self</span>.lib.get(<span class="string">b"tims_close"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64) -&gt; ()&gt; = <span class="self">self</span>.lib.get(<span class="string">b"tims_close"</span>)<span class="question-mark">?</span>;
             func(<span class="self">self</span>.handle);
         }
         <span class="prelude-val">Ok</span>(())
@@ -257,10 +301,22 @@
     //     Err(e) =&gt; println!("error: {}", e),
     // };
     // ```
-    </span><span class="kw">pub fn </span>tims_index_to_mz(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, dbl_tofs: <span class="kw-2">&amp;</span>[c_double], mzs: <span class="kw-2">&amp;mut </span>[c_double]) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    </span><span class="kw">pub fn </span>tims_index_to_mz(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        dbl_tofs: <span class="kw-2">&amp;</span>[c_double],
+        mzs: <span class="kw-2">&amp;mut </span>[c_double],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="kw">unsafe </span>{
-            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; = <span class="self">self</span>.lib.get(<span class="string">b"tims_index_to_mz"</span>)<span class="question-mark">?</span>;
-            func(<span class="self">self</span>.handle, frame_id, dbl_tofs.as_ptr(), mzs.as_mut_ptr(), dbl_tofs.len() <span class="kw">as </span>u32);
+            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; =
+                <span class="self">self</span>.lib.get(<span class="string">b"tims_index_to_mz"</span>)<span class="question-mark">?</span>;
+            func(
+                <span class="self">self</span>.handle,
+                frame_id,
+                dbl_tofs.as_ptr(),
+                mzs.as_mut_ptr(),
+                dbl_tofs.len() <span class="kw">as </span>u32,
+            );
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -278,10 +334,22 @@
     //     Err(e) =&gt; println!("error: {}", e),
     // };
     // ```
-    </span><span class="kw">pub fn </span>tims_mz_to_index(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, mzs: <span class="kw-2">&amp;</span>[c_double], indices: <span class="kw-2">&amp;mut </span>[c_double]) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    </span><span class="kw">pub fn </span>tims_mz_to_index(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        mzs: <span class="kw-2">&amp;</span>[c_double],
+        indices: <span class="kw-2">&amp;mut </span>[c_double],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="kw">unsafe </span>{
-            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; = <span class="self">self</span>.lib.get(<span class="string">b"tims_mz_to_index"</span>)<span class="question-mark">?</span>;
-            func(<span class="self">self</span>.handle, frame_id, mzs.as_ptr(), indices.as_mut_ptr(), mzs.len() <span class="kw">as </span>u32);
+            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; =
+                <span class="self">self</span>.lib.get(<span class="string">b"tims_mz_to_index"</span>)<span class="question-mark">?</span>;
+            func(
+                <span class="self">self</span>.handle,
+                frame_id,
+                mzs.as_ptr(),
+                indices.as_mut_ptr(),
+                mzs.len() <span class="kw">as </span>u32,
+            );
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -299,10 +367,22 @@
     //     Err(e) =&gt; println!("error: {}", e),
     // };
     // ```
-    </span><span class="kw">pub fn </span>tims_scan_to_inv_mob(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, dbl_scans: <span class="kw-2">&amp;</span>[c_double], inv_mob: <span class="kw-2">&amp;mut </span>[c_double]) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    </span><span class="kw">pub fn </span>tims_scan_to_inv_mob(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        dbl_scans: <span class="kw-2">&amp;</span>[c_double],
+        inv_mob: <span class="kw-2">&amp;mut </span>[c_double],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="kw">unsafe </span>{
-            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; = <span class="self">self</span>.lib.get(<span class="string">b"tims_scannum_to_oneoverk0"</span>)<span class="question-mark">?</span>;
-            func(<span class="self">self</span>.handle, frame_id, dbl_scans.as_ptr(), inv_mob.as_mut_ptr(), dbl_scans.len() <span class="kw">as </span>u32);
+            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; =
+                <span class="self">self</span>.lib.get(<span class="string">b"tims_scannum_to_oneoverk0"</span>)<span class="question-mark">?</span>;
+            func(
+                <span class="self">self</span>.handle,
+                frame_id,
+                dbl_scans.as_ptr(),
+                inv_mob.as_mut_ptr(),
+                dbl_scans.len() <span class="kw">as </span>u32,
+            );
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -320,10 +400,22 @@
     //     Err(e) =&gt; println!("error: {}", e),
     // };
     // ```
-    </span><span class="kw">pub fn </span>inv_mob_to_tims_scan(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: u32, inv_mob: <span class="kw-2">&amp;</span>[c_double], scans: <span class="kw-2">&amp;mut </span>[c_double]) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+    </span><span class="kw">pub fn </span>inv_mob_to_tims_scan(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        frame_id: u32,
+        inv_mob: <span class="kw-2">&amp;</span>[c_double],
+        scans: <span class="kw-2">&amp;mut </span>[c_double],
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
         <span class="kw">unsafe </span>{
-            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; = <span class="self">self</span>.lib.get(<span class="string">b"tims_oneoverk0_to_scannum"</span>)<span class="question-mark">?</span>;
-            func(<span class="self">self</span>.handle, frame_id, inv_mob.as_ptr(), scans.as_mut_ptr(), inv_mob.len() <span class="kw">as </span>u32);
+            <span class="kw">let </span>func: Symbol&lt;<span class="kw">unsafe extern </span><span class="string">"C" </span><span class="kw">fn</span>(u64, u32, <span class="kw-2">*const </span>c_double, <span class="kw-2">*mut </span>c_double, u32)&gt; =
+                <span class="self">self</span>.lib.get(<span class="string">b"tims_oneoverk0_to_scannum"</span>)<span class="question-mark">?</span>;
+            func(
+                <span class="self">self</span>.handle,
+                frame_id,
+                inv_mob.as_ptr(),
+                scans.as_mut_ptr(),
+                inv_mob.len() <span class="kw">as </span>u32,
+            );
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -337,4 +429,5 @@
             <span class="prelude-val">Err</span>(e) =&gt; <span class="macro">println!</span>(<span class="string">"error: {}"</span>, e),
         };
     }
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>

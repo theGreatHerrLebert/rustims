@@ -743,7 +743,21 @@
 <a href="#742" id="742">742</a>
 <a href="#743" id="743">743</a>
 <a href="#744" id="744">744</a>
-<a href="#745" id="745">745</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt;
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::fmt;
 <span class="kw">use </span>std::collections::BTreeMap;
 <span class="kw">use </span>std::fmt::{Formatter};
 <span class="kw">use </span>bincode::{Decode, Encode};
@@ -991,6 +1005,20 @@
         }
 
         TimsFrame::new(<span class="self">self</span>.frame_id, <span class="self">self</span>.ms_type.clone(), <span class="self">self</span>.ims_frame.retention_time, scan_vec, mobility_vec, tof_vec, mz_vec, intensity_vec)
+    }
+
+    <span class="kw">pub fn </span>top_n(<span class="kw-2">&amp;</span><span class="self">self</span>, n: usize) -&gt; TimsFrame {
+        <span class="kw">let </span><span class="kw-2">mut </span>indices: Vec&lt;usize&gt; = (<span class="number">0</span>..<span class="self">self</span>.ims_frame.intensity.len()).collect();
+        indices.sort_by(|a, b| <span class="self">self</span>.ims_frame.intensity[<span class="kw-2">*</span>b].partial_cmp(<span class="kw-2">&amp;</span><span class="self">self</span>.ims_frame.intensity[<span class="kw-2">*</span>a]).unwrap());
+        indices.truncate(n);
+
+        <span class="kw">let </span>scan = indices.iter().map(|<span class="kw-2">&amp;</span>i| <span class="self">self</span>.scan[i]).collect();
+        <span class="kw">let </span>mobility = indices.iter().map(|<span class="kw-2">&amp;</span>i| <span class="self">self</span>.ims_frame.mobility[i]).collect();
+        <span class="kw">let </span>tof = indices.iter().map(|<span class="kw-2">&amp;</span>i| <span class="self">self</span>.tof[i]).collect();
+        <span class="kw">let </span>mz = indices.iter().map(|<span class="kw-2">&amp;</span>i| <span class="self">self</span>.ims_frame.mz[i]).collect();
+        <span class="kw">let </span>intensity = indices.iter().map(|<span class="kw-2">&amp;</span>i| <span class="self">self</span>.ims_frame.intensity[i]).collect();
+
+        TimsFrame::new(<span class="self">self</span>.frame_id, <span class="self">self</span>.ms_type.clone(), <span class="self">self</span>.ims_frame.retention_time, scan, mobility, tof, mz, intensity)
     }
 
     <span class="kw">pub fn </span>to_windows_indexed(<span class="kw-2">&amp;</span><span class="self">self</span>, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -&gt; (Vec&lt;i32&gt;, Vec&lt;i32&gt;, Vec&lt;TimsSpectrum&gt;) {

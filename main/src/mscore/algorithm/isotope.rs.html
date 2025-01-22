@@ -517,18 +517,148 @@
 <a href="#516" id="516">516</a>
 <a href="#517" id="517">517</a>
 <a href="#518" id="518">518</a>
-<a href="#519" id="519">519</a></pre></div><pre class="rust"><code><span class="kw">extern crate </span>statrs;
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a></pre></div><pre class="rust"><code><span class="kw">extern crate </span>statrs;
 
-<span class="kw">use </span>std::collections::{BTreeMap, HashMap, HashSet};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
+<span class="kw">use </span>std::collections::{BTreeMap, HashMap, HashSet};
 
-<span class="kw">use </span>statrs::distribution::{Continuous, Normal};
 <span class="kw">use </span><span class="kw">crate</span>::chemistry::constants::{MASS_NEUTRON, MASS_PROTON};
 <span class="kw">use </span><span class="kw">crate</span>::chemistry::elements::{atoms_isotopic_weights, isotopic_abundance};
 <span class="kw">use </span><span class="kw">crate</span>::data::peptide::PeptideIon;
 <span class="kw">use </span><span class="kw">crate</span>::data::spectrum::MzSpectrum;
 <span class="kw">use </span><span class="kw">crate</span>::data::spectrum::ToResolution;
+<span class="kw">use </span>statrs::distribution::{Continuous, Normal};
 
 <span class="doccomment">/// convolve two distributions of masses and abundances
 ///
@@ -554,8 +684,13 @@
 /// let result = convolve(&amp;dist_a, &amp;dist_b, 1e-6, 1e-12, 200);
 /// assert_eq!(result, vec![(200.0, 0.25), (201.0, 0.5), (202.0, 0.25)]);
 /// ```
-</span><span class="kw">pub fn </span>convolve(dist_a: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;, dist_b: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;, mass_tolerance: f64, abundance_threshold: f64, max_results: usize) -&gt; Vec&lt;(f64, f64)&gt; {
-
+</span><span class="kw">pub fn </span>convolve(
+    dist_a: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;,
+    dist_b: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;,
+    mass_tolerance: f64,
+    abundance_threshold: f64,
+    max_results: usize,
+) -&gt; Vec&lt;(f64, f64)&gt; {
     <span class="kw">let </span><span class="kw-2">mut </span>result: Vec&lt;(f64, f64)&gt; = Vec::new();
 
     <span class="kw">for </span>(mass_a, abundance_a) <span class="kw">in </span>dist_a {
@@ -569,7 +704,10 @@
             }
 
             <span class="comment">// Insert or update the combined mass in the result distribution
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(entry) = result.iter_mut().find(|(m, <span class="kw">_</span>)| (<span class="kw-2">*</span>m - combined_mass).abs() &lt; mass_tolerance) {
+            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(entry) = result
+                .iter_mut()
+                .find(|(m, <span class="kw">_</span>)| (<span class="kw-2">*</span>m - combined_mass).abs() &lt; mass_tolerance)
+            {
                 entry.<span class="number">1 </span>+= combined_abundance;
             } <span class="kw">else </span>{
                 result.push((combined_mass, combined_abundance));
@@ -629,7 +767,13 @@
 
     <span class="comment">// If n is not a power of 2, recursively fill in the remainder
     </span><span class="kw">if </span>power / <span class="number">2 </span>&lt; n {
-        result = convolve(<span class="kw-2">&amp;</span>result, <span class="kw-2">&amp;</span>convolve_pow(dist, n - power / <span class="number">2</span>, ), <span class="number">1e-6</span>, <span class="number">1e-12</span>, <span class="number">200</span>);
+        result = convolve(
+            <span class="kw-2">&amp;</span>result,
+            <span class="kw-2">&amp;</span>convolve_pow(dist, n - power / <span class="number">2</span>),
+            <span class="number">1e-6</span>,
+            <span class="number">1e-12</span>,
+            <span class="number">200</span>,
+        );
     }
 
     result
@@ -665,19 +809,33 @@
     atomic_composition: <span class="kw-2">&amp;</span>HashMap&lt;String, i32&gt;,
     mass_tolerance: f64,
     abundance_threshold: f64,
-    max_result: i32
+    max_result: i32,
 ) -&gt; Vec&lt;(f64, f64)&gt; {
-
     <span class="kw">let </span><span class="kw-2">mut </span>cumulative_distribution: <span class="prelude-ty">Option</span>&lt;Vec&lt;(f64, f64)&gt;&gt; = <span class="prelude-val">None</span>;
-    <span class="kw">let </span>atoms_isotopic_weights: HashMap&lt;String, Vec&lt;f64&gt;&gt; = atoms_isotopic_weights().iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
-    <span class="kw">let </span>atomic_isotope_abundance: HashMap&lt;String, Vec&lt;f64&gt;&gt; = isotopic_abundance().iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
+    <span class="kw">let </span>atoms_isotopic_weights: HashMap&lt;String, Vec&lt;f64&gt;&gt; = atoms_isotopic_weights()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
+    <span class="kw">let </span>atomic_isotope_abundance: HashMap&lt;String, Vec&lt;f64&gt;&gt; = isotopic_abundance()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.clone()))
+        .collect();
 
     <span class="kw">for </span>(element, <span class="kw-2">&amp;</span>count) <span class="kw">in </span>atomic_composition.iter() {
-        <span class="kw">let </span>elemental_isotope_weights = atoms_isotopic_weights.get(element).expect(<span class="string">"Element not found in isotopic weights table"</span>).clone();
-        <span class="kw">let </span>elemental_isotope_abundance = atomic_isotope_abundance.get(element).expect(<span class="string">"Element not found in isotopic abundance table"</span>).clone();
+        <span class="kw">let </span>elemental_isotope_weights = atoms_isotopic_weights
+            .get(element)
+            .expect(<span class="string">"Element not found in isotopic weights table"</span>)
+            .clone();
+        <span class="kw">let </span>elemental_isotope_abundance = atomic_isotope_abundance
+            .get(element)
+            .expect(<span class="string">"Element not found in isotopic abundance table"</span>)
+            .clone();
 
-        <span class="kw">let </span>element_distribution: Vec&lt;(f64, f64)&gt; = elemental_isotope_weights.iter().zip(elemental_isotope_abundance.iter()).map(|(<span class="kw-2">&amp;</span>mass, <span class="kw-2">&amp;</span>abundance
-                                                                                                                                  )| (mass, abundance)).collect();
+        <span class="kw">let </span>element_distribution: Vec&lt;(f64, f64)&gt; = elemental_isotope_weights
+            .iter()
+            .zip(elemental_isotope_abundance.iter())
+            .map(|(<span class="kw-2">&amp;</span>mass, <span class="kw-2">&amp;</span>abundance)| (mass, abundance))
+            .collect();
 
         <span class="kw">let </span>element_power_distribution = <span class="kw">if </span>count &gt; <span class="number">1 </span>{
             convolve_pow(<span class="kw-2">&amp;</span>element_distribution, count)
@@ -686,29 +844,49 @@
         };
 
         cumulative_distribution = <span class="kw">match </span>cumulative_distribution {
-            <span class="prelude-val">Some</span>(cum_dist) =&gt; <span class="prelude-val">Some</span>(convolve(<span class="kw-2">&amp;</span>cum_dist, <span class="kw-2">&amp;</span>element_power_distribution, mass_tolerance, abundance_threshold, max_result <span class="kw">as </span>usize)),
+            <span class="prelude-val">Some</span>(cum_dist) =&gt; <span class="prelude-val">Some</span>(convolve(
+                <span class="kw-2">&amp;</span>cum_dist,
+                <span class="kw-2">&amp;</span>element_power_distribution,
+                mass_tolerance,
+                abundance_threshold,
+                max_result <span class="kw">as </span>usize,
+            )),
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Some</span>(element_power_distribution),
         };
     }
 
     <span class="kw">let </span>final_distribution = cumulative_distribution.expect(<span class="string">"Peptide has no elements"</span>);
     <span class="comment">// Normalize the distribution
-    </span><span class="kw">let </span>total_abundance: f64 = final_distribution.iter().map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, abundance)| abundance).sum();
-    <span class="kw">let </span>result: Vec&lt;<span class="kw">_</span>&gt; = final_distribution.into_iter().map(|(mass, abundance)| (mass, abundance / total_abundance)).collect();
+    </span><span class="kw">let </span>total_abundance: f64 = final_distribution
+        .iter()
+        .map(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, abundance)| abundance)
+        .sum();
+    <span class="kw">let </span>result: Vec&lt;<span class="kw">_</span>&gt; = final_distribution
+        .into_iter()
+        .map(|(mass, abundance)| (mass, abundance / total_abundance))
+        .collect();
 
     <span class="kw">let </span><span class="kw-2">mut </span>sort_map: BTreeMap&lt;i64, f64&gt; = BTreeMap::new();
     <span class="kw">let </span>quantize = |mz: f64| -&gt; i64 { (mz * <span class="number">1_000_000.0</span>).round() <span class="kw">as </span>i64 };
 
     <span class="kw">for </span>(mz, intensity) <span class="kw">in </span>result {
         <span class="kw">let </span>key = quantize(mz);
-        sort_map.entry(key).and_modify(|e| <span class="kw-2">*</span>e += intensity).or_insert(intensity);
+        sort_map
+            .entry(key)
+            .and_modify(|e| <span class="kw-2">*</span>e += intensity)
+            .or_insert(intensity);
     }
 
-    <span class="kw">let </span>mz: Vec&lt;f64&gt; = sort_map.keys().map(|<span class="kw-2">&amp;</span>key| key <span class="kw">as </span>f64 / <span class="number">1_000_000.0</span>).collect();
+    <span class="kw">let </span>mz: Vec&lt;f64&gt; = sort_map
+        .keys()
+        .map(|<span class="kw-2">&amp;</span>key| key <span class="kw">as </span>f64 / <span class="number">1_000_000.0</span>)
+        .collect();
     <span class="kw">let </span>intensity: Vec&lt;f64&gt; = sort_map.values().map(|<span class="kw-2">&amp;</span>intensity| intensity).collect();
-    mz.iter().zip(intensity.iter()).map(|(<span class="kw-2">&amp;</span>mz, <span class="kw-2">&amp;</span>intensity)| (mz, intensity)).collect()
+    mz.iter()
+        .zip(intensity.iter())
+        .map(|(<span class="kw-2">&amp;</span>mz, <span class="kw-2">&amp;</span>intensity)| (mz, intensity))
+        .collect()
 }
-
 
 <span class="doccomment">/// calculate the normal probability density function
 ///
@@ -760,11 +938,14 @@
 <span class="kw">pub fn </span>weight(mass: f64, peak_nums: Vec&lt;i32&gt;, normalize: bool) -&gt; Vec&lt;f64&gt; {
     <span class="kw">let </span>lam_val = lam(mass, <span class="number">0.000594</span>, -<span class="number">0.03091</span>);
     <span class="kw">let </span>factorials: Vec&lt;f64&gt; = peak_nums.iter().map(|<span class="kw-2">&amp;</span>k| factorial(k)).collect();
-    <span class="kw">let </span><span class="kw-2">mut </span>weights: Vec&lt;f64&gt; = peak_nums.iter().map(|<span class="kw-2">&amp;</span>k| {
-        <span class="kw">let </span>pow = lam_val.powi(k);
-        <span class="kw">let </span>exp = (-lam_val).exp();
-        exp * pow / factorials[k <span class="kw">as </span>usize]
-    }).collect();
+    <span class="kw">let </span><span class="kw-2">mut </span>weights: Vec&lt;f64&gt; = peak_nums
+        .iter()
+        .map(|<span class="kw-2">&amp;</span>k| {
+            <span class="kw">let </span>pow = lam_val.powi(k);
+            <span class="kw">let </span>exp = (-lam_val).exp();
+            exp * pow / factorials[k <span class="kw">as </span>usize]
+        })
+        .collect();
 
     <span class="kw">if </span>normalize {
         <span class="kw">let </span>sum: f64 = weights.iter().sum();
@@ -814,10 +995,28 @@
 ///
 /// * `Vec&lt;f64&gt;` - isotope pattern
 ///
-</span><span class="kw">pub fn </span>iso(x: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;, mass: f64, charge: f64, sigma: f64, amp: f64, k: usize, step_size: f64) -&gt; Vec&lt;f64&gt; {
+</span><span class="kw">pub fn </span>iso(
+    x: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;,
+    mass: f64,
+    charge: f64,
+    sigma: f64,
+    amp: f64,
+    k: usize,
+    step_size: f64,
+) -&gt; Vec&lt;f64&gt; {
     <span class="kw">let </span>k_range: Vec&lt;usize&gt; = (<span class="number">0</span>..k).collect();
-    <span class="kw">let </span>means: Vec&lt;f64&gt; = k_range.iter().map(|<span class="kw-2">&amp;</span>k_val| (mass + MASS_NEUTRON * k_val <span class="kw">as </span>f64) / charge).collect();
-    <span class="kw">let </span>weights = weight(mass, k_range.iter().map(|<span class="kw-2">&amp;</span>k_val| k_val <span class="kw">as </span>i32).collect::&lt;Vec&lt;i32&gt;&gt;(), <span class="bool-val">true</span>);
+    <span class="kw">let </span>means: Vec&lt;f64&gt; = k_range
+        .iter()
+        .map(|<span class="kw-2">&amp;</span>k_val| (mass + MASS_NEUTRON * k_val <span class="kw">as </span>f64) / charge)
+        .collect();
+    <span class="kw">let </span>weights = weight(
+        mass,
+        k_range
+            .iter()
+            .map(|<span class="kw-2">&amp;</span>k_val| k_val <span class="kw">as </span>i32)
+            .collect::&lt;Vec&lt;i32&gt;&gt;(),
+        <span class="bool-val">true</span>,
+    );
 
     <span class="kw">let </span><span class="kw-2">mut </span>intensities = <span class="macro">vec!</span>[<span class="number">0.0</span>; x.len()];
     <span class="kw">for </span>(i, x_val) <span class="kw">in </span>x.iter().enumerate() {
@@ -826,7 +1025,10 @@
         }
         intensities[i] <span class="kw-2">*</span>= step_size;
     }
-    intensities.iter().map(|<span class="kw-2">&amp;</span>intensity| intensity * amp).collect()
+    intensities
+        .iter()
+        .map(|<span class="kw-2">&amp;</span>intensity| intensity * amp)
+        .collect()
 }
 
 <span class="doccomment">/// generate the isotope pattern for a given mass and charge
@@ -853,13 +1055,27 @@
 ///
 /// let (mzs, intensities) = generate_isotope_pattern(1500.0, 1510.0, 3000.0, 2.0, 1e4, 10, 1.0, 3);
 /// ```
-</span><span class="kw">pub fn </span>generate_isotope_pattern(lower_bound: f64, upper_bound: f64, mass: f64, charge: f64, amp: f64, k: usize, sigma: f64, resolution: i32) -&gt; (Vec&lt;f64&gt;, Vec&lt;f64&gt;) {
+</span><span class="kw">pub fn </span>generate_isotope_pattern(
+    lower_bound: f64,
+    upper_bound: f64,
+    mass: f64,
+    charge: f64,
+    amp: f64,
+    k: usize,
+    sigma: f64,
+    resolution: i32,
+) -&gt; (Vec&lt;f64&gt;, Vec&lt;f64&gt;) {
     <span class="kw">let </span>step_size = f64::min(sigma / <span class="number">10.0</span>, <span class="number">1.0 </span>/ <span class="number">10f64</span>.powi(resolution));
     <span class="kw">let </span>size = ((upper_bound - lower_bound) / step_size).ceil() <span class="kw">as </span>usize;
-    <span class="kw">let </span>mzs: Vec&lt;f64&gt; = (<span class="number">0</span>..size).map(|i| lower_bound + step_size * i <span class="kw">as </span>f64).collect();
+    <span class="kw">let </span>mzs: Vec&lt;f64&gt; = (<span class="number">0</span>..size)
+        .map(|i| lower_bound + step_size * i <span class="kw">as </span>f64)
+        .collect();
     <span class="kw">let </span>intensities = iso(<span class="kw-2">&amp;</span>mzs, mass, charge, sigma, amp, k, step_size);
 
-    (mzs.iter().map(|<span class="kw-2">&amp;</span>mz| mz + MASS_PROTON).collect(), intensities)
+    (
+        mzs.iter().map(|<span class="kw-2">&amp;</span>mz| mz + MASS_PROTON).collect(),
+        intensities,
+    )
 }
 
 <span class="doccomment">/// generate the averagine spectrum for a given mass and charge
@@ -892,7 +1108,7 @@
     k: i32,
     resolution: i32,
     centroid: bool,
-    amp: <span class="prelude-ty">Option</span>&lt;f64&gt;
+    amp: <span class="prelude-ty">Option</span>&lt;f64&gt;,
 ) -&gt; MzSpectrum {
     <span class="kw">let </span>amp = amp.unwrap_or(<span class="number">1e4</span>);
     <span class="kw">let </span>lb = mass / charge <span class="kw">as </span>f64 - <span class="number">0.2</span>;
@@ -909,10 +1125,16 @@
         resolution,
     );
 
-    <span class="kw">let </span>spectrum = MzSpectrum::new(mz, intensities).to_resolution(resolution).filter_ranged(lb, ub, min_intensity <span class="kw">as </span>f64, <span class="number">1e9</span>);
+    <span class="kw">let </span>spectrum = MzSpectrum::new(mz, intensities)
+        .to_resolution(resolution)
+        .filter_ranged(lb, ub, min_intensity <span class="kw">as </span>f64, <span class="number">1e9</span>);
 
     <span class="kw">if </span>centroid {
-        spectrum.to_centroid(std::cmp::max(min_intensity, <span class="number">1</span>), <span class="number">1.0 </span>/ <span class="number">10f64</span>.powi(resolution - <span class="number">1</span>), <span class="bool-val">true</span>)
+        spectrum.to_centroid(
+            std::cmp::max(min_intensity, <span class="number">1</span>),
+            <span class="number">1.0 </span>/ <span class="number">10f64</span>.powi(resolution - <span class="number">1</span>),
+            <span class="bool-val">true</span>,
+        )
     } <span class="kw">else </span>{
         spectrum
     }
@@ -953,16 +1175,31 @@
     resolution: i32,
     centroid: bool,
     num_threads: usize,
-    amp: <span class="prelude-ty">Option</span>&lt;f64&gt;
+    amp: <span class="prelude-ty">Option</span>&lt;f64&gt;,
 ) -&gt; Vec&lt;MzSpectrum&gt; {
     <span class="kw">let </span>amp = amp.unwrap_or(<span class="number">1e5</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>spectra: Vec&lt;MzSpectrum&gt; = Vec::new();
-    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
 
     thread_pool.install(|| {
-        spectra = masses.par_iter().zip(charges.par_iter()).map(|(<span class="kw-2">&amp;</span>mass, <span class="kw-2">&amp;</span>charge)| {
-            generate_averagine_spectrum(mass, charge, min_intensity, k, resolution, centroid, <span class="prelude-val">Some</span>(amp))
-        }).collect();
+        spectra = masses
+            .par_iter()
+            .zip(charges.par_iter())
+            .map(|(<span class="kw-2">&amp;</span>mass, <span class="kw-2">&amp;</span>charge)| {
+                generate_averagine_spectrum(
+                    mass,
+                    charge,
+                    min_intensity,
+                    k,
+                    resolution,
+                    centroid,
+                    <span class="prelude-val">Some</span>(amp),
+                )
+            })
+            .collect();
     });
 
     spectra
@@ -980,7 +1217,11 @@
 ///
 /// * `MzSpectrum` - precursor spectrum
 ///
-</span><span class="kw">pub fn </span>generate_precursor_spectrum(sequence: <span class="kw-2">&amp;</span>str, charge: i32, peptide_id: <span class="prelude-ty">Option</span>&lt;i32&gt;) -&gt; MzSpectrum {
+</span><span class="kw">pub fn </span>generate_precursor_spectrum(
+    sequence: <span class="kw-2">&amp;</span>str,
+    charge: i32,
+    peptide_id: <span class="prelude-ty">Option</span>&lt;i32&gt;,
+) -&gt; MzSpectrum {
     <span class="kw">let </span>peptide_ion = PeptideIon::new(sequence.to_string(), charge, <span class="number">1.0</span>, peptide_id);
     peptide_ion.calculate_isotopic_spectrum(<span class="number">1e-3</span>, <span class="number">1e-9</span>, <span class="number">200</span>, <span class="number">1e-6</span>)
 }
@@ -997,21 +1238,38 @@
 ///
 /// * `Vec&lt;MzSpectrum&gt;` - list of precursor spectra
 ///
-</span><span class="kw">pub fn </span>generate_precursor_spectra(sequences: <span class="kw-2">&amp;</span>Vec&lt;<span class="kw-2">&amp;</span>str&gt;, charges: <span class="kw-2">&amp;</span>Vec&lt;i32&gt;, num_threads: usize, peptide_ids: Vec&lt;<span class="prelude-ty">Option</span>&lt;i32&gt;&gt;) -&gt; Vec&lt;MzSpectrum&gt; {
-    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+</span><span class="kw">pub fn </span>generate_precursor_spectra(
+    sequences: <span class="kw-2">&amp;</span>Vec&lt;<span class="kw-2">&amp;</span>str&gt;,
+    charges: <span class="kw-2">&amp;</span>Vec&lt;i32&gt;,
+    num_threads: usize,
+    peptide_ids: Vec&lt;<span class="prelude-ty">Option</span>&lt;i32&gt;&gt;,
+) -&gt; Vec&lt;MzSpectrum&gt; {
+    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
     <span class="comment">// need to zip sequences and charges and peptide_ids
     </span><span class="kw">let </span>result = thread_pool.install(|| {
-        sequences.par_iter().zip(charges.par_iter()).zip(peptide_ids.par_iter()).map(|((<span class="kw-2">&amp;</span>sequence, <span class="kw-2">&amp;</span>charge), <span class="kw-2">&amp;</span>peptide_id)| {
-            generate_precursor_spectrum(sequence, charge, peptide_id)
-        }).collect()
+        sequences
+            .par_iter()
+            .zip(charges.par_iter())
+            .zip(peptide_ids.par_iter())
+            .map(|((<span class="kw-2">&amp;</span>sequence, <span class="kw-2">&amp;</span>charge), <span class="kw-2">&amp;</span>peptide_id)| {
+                generate_precursor_spectrum(sequence, charge, peptide_id)
+            })
+            .collect()
     });
     result
 }
 
 <span class="comment">// Calculates the isotope distribution for a fragment given the isotope distribution of the fragment, the isotope distribution of the complementary fragment, and the transmitted precursor isotopes
 // implemented based on OpenMS: "https://github.com/OpenMS/OpenMS/blob/079143800f7ed036a7c68ea6e124fe4f5cfc9569/src/openms/source/CHEMISTRY/ISOTOPEDISTRIBUTION/CoarseIsotopePatternGenerator.cpp#L415"
-</span><span class="kw">pub fn </span>calculate_transmission_dependent_fragment_ion_isotope_distribution(fragment_isotope_dist: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;, comp_fragment_isotope_dist: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;, precursor_isotopes: <span class="kw-2">&amp;</span>HashSet&lt;usize&gt;, max_isotope: usize) -&gt; Vec&lt;(f64, f64)&gt; {
-
+</span><span class="kw">pub fn </span>calculate_transmission_dependent_fragment_ion_isotope_distribution(
+    fragment_isotope_dist: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;,
+    comp_fragment_isotope_dist: <span class="kw-2">&amp;</span>Vec&lt;(f64, f64)&gt;,
+    precursor_isotopes: <span class="kw-2">&amp;</span>HashSet&lt;usize&gt;,
+    max_isotope: usize,
+) -&gt; Vec&lt;(f64, f64)&gt; {
     <span class="kw">if </span>fragment_isotope_dist.is_empty() || comp_fragment_isotope_dist.is_empty() {
         <span class="kw">return </span>Vec::new();
     }
@@ -1021,7 +1279,9 @@
         r_max = max_isotope;
     }
 
-    <span class="kw">let </span><span class="kw-2">mut </span>result = (<span class="number">0</span>..r_max).map(|i| (fragment_isotope_dist[<span class="number">0</span>].<span class="number">0 </span>+ i <span class="kw">as </span>f64, <span class="number">0.0</span>)).collect::&lt;Vec&lt;(f64, f64)&gt;&gt;();
+    <span class="kw">let </span><span class="kw-2">mut </span>result = (<span class="number">0</span>..r_max)
+        .map(|i| (fragment_isotope_dist[<span class="number">0</span>].<span class="number">0 </span>+ i <span class="kw">as </span>f64, <span class="number">0.0</span>))
+        .collect::&lt;Vec&lt;(f64, f64)&gt;&gt;();
 
     <span class="comment">// Calculation of dependent isotope distribution
     </span><span class="kw">for </span>(i, <span class="kw-2">&amp;</span>(_mz, intensity)) <span class="kw">in </span>fragment_isotope_dist.iter().enumerate().take(r_max) {
@@ -1035,4 +1295,5 @@
     }
 
     result
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>

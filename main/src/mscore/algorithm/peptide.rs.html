@@ -371,17 +371,55 @@
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
 <a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::HashMap;
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
+<span class="kw">use </span><span class="kw">crate</span>::chemistry::constants::{MASS_CO, MASS_NH3, MASS_PROTON, MASS_WATER};
+<span class="kw">use </span><span class="kw">crate</span>::chemistry::formulas::calculate_mz;
+<span class="kw">use </span><span class="kw">crate</span>::chemistry::unimod::{
+    modification_atomic_composition, unimod_modifications_mass_numerical,
+};
+<span class="kw">use </span><span class="kw">crate</span>::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
+<span class="kw">use </span><span class="kw">crate</span>::data::peptide::{FragmentType, PeptideProductIon, PeptideSequence};
 <span class="kw">use </span>rayon::prelude::<span class="kw-2">*</span>;
 <span class="kw">use </span>rayon::ThreadPoolBuilder;
 <span class="kw">use </span>regex::Regex;
 <span class="kw">use </span>statrs::distribution::{Binomial, Discrete};
-<span class="kw">use </span><span class="kw">crate</span>::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
-<span class="kw">use </span><span class="kw">crate</span>::chemistry::constants::{MASS_CO, MASS_NH3, MASS_PROTON, MASS_WATER};
-<span class="kw">use </span><span class="kw">crate</span>::chemistry::formulas::calculate_mz;
-<span class="kw">use </span><span class="kw">crate</span>::chemistry::unimod::{modification_atomic_composition, unimod_modifications_mass_numerical};
-<span class="kw">use </span><span class="kw">crate</span>::chemistry::utility::{find_unimod_patterns, unimod_sequence_to_tokens};
-<span class="kw">use </span><span class="kw">crate</span>::data::peptide::{FragmentType, PeptideProductIon, PeptideSequence};
+<span class="kw">use </span>std::collections::HashMap;
 
 <span class="doccomment">/// calculate the monoisotopic mass of a peptide sequence
 ///
@@ -427,8 +465,16 @@
     }
 
     <span class="comment">// Mass of amino acids and modifications
-    </span><span class="kw">let </span>mass_sequence: f64 = aa_counts.iter().map(|(aa, <span class="kw-2">&amp;</span>count)| amino_acid_masses.get(<span class="kw-2">&amp;</span>aa.to_string()[..]).unwrap_or(<span class="kw-2">&amp;</span><span class="number">0.0</span>) * count <span class="kw">as </span>f64).sum();
-    <span class="kw">let </span>mass_modifications: f64 = modifications.iter().map(|<span class="kw-2">&amp;</span>mod_id| modifications_mz_numerical.get(<span class="kw-2">&amp;</span>mod_id).unwrap_or(<span class="kw-2">&amp;</span><span class="number">0.0</span>)).sum();
+    </span><span class="kw">let </span>mass_sequence: f64 = aa_counts
+        .iter()
+        .map(|(aa, <span class="kw-2">&amp;</span>count)| {
+            amino_acid_masses.get(<span class="kw-2">&amp;</span>aa.to_string()[..]).unwrap_or(<span class="kw-2">&amp;</span><span class="number">0.0</span>) * count <span class="kw">as </span>f64
+        })
+        .sum();
+    <span class="kw">let </span>mass_modifications: f64 = modifications
+        .iter()
+        .map(|<span class="kw-2">&amp;</span>mod_id| modifications_mz_numerical.get(<span class="kw-2">&amp;</span>mod_id).unwrap_or(<span class="kw-2">&amp;</span><span class="number">0.0</span>))
+        .sum();
 
     mass_sequence + mass_modifications + MASS_WATER
 }
@@ -453,7 +499,6 @@
 /// assert_eq!(mass, 936.4188766862999);
 /// ```
 </span><span class="kw">pub fn </span>calculate_peptide_product_ion_mono_isotopic_mass(sequence: <span class="kw-2">&amp;</span>str, kind: FragmentType) -&gt; f64 {
-
     <span class="kw">let </span>(sequence, modifications) = find_unimod_patterns(sequence);
 
     <span class="comment">// Return mz of empty sequence
@@ -464,7 +509,8 @@
     <span class="kw">let </span>amino_acid_masses = amino_acid_masses();
 
     <span class="comment">// Add up raw amino acid masses and potential modifications
-    </span><span class="kw">let </span>mass_sequence: f64 = sequence.chars()
+    </span><span class="kw">let </span>mass_sequence: f64 = sequence
+        .chars()
         .map(|aa| amino_acid_masses.get(<span class="kw-2">&amp;</span>aa.to_string()[..]).unwrap_or(<span class="kw-2">&amp;</span><span class="number">0.0</span>))
         .sum();
 
@@ -544,8 +590,9 @@
 }
 
 <span class="doccomment">/// calculate the atomic composition of a peptide sequence
-</span><span class="kw">pub fn </span>peptide_sequence_to_atomic_composition(peptide_sequence: <span class="kw-2">&amp;</span>PeptideSequence) -&gt; HashMap&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, i32&gt; {
-
+</span><span class="kw">pub fn </span>peptide_sequence_to_atomic_composition(
+    peptide_sequence: <span class="kw-2">&amp;</span>PeptideSequence,
+) -&gt; HashMap&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, i32&gt; {
     <span class="kw">let </span>token_sequence = unimod_sequence_to_tokens(peptide_sequence.sequence.as_str(), <span class="bool-val">false</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>collection: HashMap&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, i32&gt; = HashMap::new();
 
@@ -590,7 +637,6 @@
 ///
 /// * `Vec&lt;(&amp;str, i32)&gt;` - a vector of tuples representing the atomic composition of the product ion
 </span><span class="kw">pub fn </span>atomic_product_ion_composition(product_ion: <span class="kw-2">&amp;</span>PeptideProductIon) -&gt; Vec&lt;(<span class="kw-2">&amp;</span>str, i32)&gt; {
-
     <span class="kw">let </span><span class="kw-2">mut </span>composition = peptide_sequence_to_atomic_composition(<span class="kw-2">&amp;</span>product_ion.ion.sequence);
 
     <span class="kw">match </span>product_ion.kind {
@@ -599,31 +645,29 @@
             </span><span class="kw-2">*</span>composition.entry(<span class="string">"H"</span>).or_insert(<span class="number">0</span>) -= <span class="number">2</span>;
             <span class="kw-2">*</span>composition.entry(<span class="string">"O"</span>).or_insert(<span class="number">0</span>) -= <span class="number">2</span>;
             <span class="kw-2">*</span>composition.entry(<span class="string">"C"</span>).or_insert(<span class="number">0</span>) -= <span class="number">1</span>;
-        },
+        }
         FragmentType::B =&gt; {
             <span class="comment">// B: peptide_mass - Water
             </span><span class="kw-2">*</span>composition.entry(<span class="string">"H"</span>).or_insert(<span class="number">0</span>) -= <span class="number">2</span>;
             <span class="kw-2">*</span>composition.entry(<span class="string">"O"</span>).or_insert(<span class="number">0</span>) -= <span class="number">1</span>;
-        },
+        }
         FragmentType::C =&gt; {
             <span class="comment">// C: peptide_mass + NH3 - Water
             </span><span class="kw-2">*</span>composition.entry(<span class="string">"H"</span>).or_insert(<span class="number">0</span>) += <span class="number">1</span>;
             <span class="kw-2">*</span>composition.entry(<span class="string">"N"</span>).or_insert(<span class="number">0</span>) += <span class="number">1</span>;
             <span class="kw-2">*</span>composition.entry(<span class="string">"O"</span>).or_insert(<span class="number">0</span>) -= <span class="number">1</span>;
-        },
+        }
         FragmentType::X =&gt; {
             <span class="comment">// X: peptide_mass + CO
             </span><span class="kw-2">*</span>composition.entry(<span class="string">"C"</span>).or_insert(<span class="number">0</span>) += <span class="number">1</span>; <span class="comment">// Add 1 for CO
             </span><span class="kw-2">*</span>composition.entry(<span class="string">"O"</span>).or_insert(<span class="number">0</span>) += <span class="number">1</span>; <span class="comment">// Add 1 for CO
             </span><span class="kw-2">*</span>composition.entry(<span class="string">"H"</span>).or_insert(<span class="number">0</span>) -= <span class="number">2</span>; <span class="comment">// Subtract 2 for 2 protons
-        </span>},
-        FragmentType::Y =&gt; {
-            ()
-        },
+        </span>}
+        FragmentType::Y =&gt; (),
         FragmentType::Z =&gt; {
             <span class="kw-2">*</span>composition.entry(<span class="string">"H"</span>).or_insert(<span class="number">0</span>) -= <span class="number">3</span>;
             <span class="kw-2">*</span>composition.entry(<span class="string">"N"</span>).or_insert(<span class="number">0</span>) -= <span class="number">1</span>;
-        },
+        }
     }
 
     composition.iter().map(|(k, v)| (<span class="kw-2">*</span>k, <span class="kw-2">*</span>v)).collect()
@@ -638,12 +682,25 @@
 ///
 /// * `Vec&lt;Vec&lt;(String, i32)&gt;&gt;` - a vector of vectors of tuples representing the atomic composition of each product ion
 ///
-</span><span class="kw">pub fn </span>fragments_to_composition(product_ions: Vec&lt;PeptideProductIon&gt;, num_threads: usize) -&gt; Vec&lt;Vec&lt;(String, i32)&gt;&gt; {
-    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+</span><span class="kw">pub fn </span>fragments_to_composition(
+    product_ions: Vec&lt;PeptideProductIon&gt;,
+    num_threads: usize,
+) -&gt; Vec&lt;Vec&lt;(String, i32)&gt;&gt; {
+    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
     <span class="kw">let </span>result = thread_pool.install(|| {
-        product_ions.par_iter().map(|ion| atomic_product_ion_composition(ion)).map(|composition| {
-            composition.iter().map(|(k, v)| (k.to_string(), <span class="kw-2">*</span>v)).collect()
-        }).collect()
+        product_ions
+            .par_iter()
+            .map(|ion| atomic_product_ion_composition(ion))
+            .map(|composition| {
+                composition
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), <span class="kw-2">*</span>v))
+                    .collect()
+            })
+            .collect()
     });
     result
 }
@@ -698,7 +755,11 @@
 /// let sequence = "PEPTIDEH";
 /// let charge_state_probs = simulate_charge_state_for_sequence(sequence, None, None);
 /// assert_eq!(charge_state_probs, vec![0.25, 0.5, 0.25, 0.0, 0.0]);
-</span><span class="kw">pub fn </span>simulate_charge_state_for_sequence(sequence: <span class="kw-2">&amp;</span>str, max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;, charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;) -&gt; Vec&lt;f64&gt; {
+</span><span class="kw">pub fn </span>simulate_charge_state_for_sequence(
+    sequence: <span class="kw-2">&amp;</span>str,
+    max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+    charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+) -&gt; Vec&lt;f64&gt; {
     <span class="kw">let </span>charged_prob = charged_probability.unwrap_or(<span class="number">0.5</span>);
     <span class="kw">let </span>max_charge = max_charge.unwrap_or(<span class="number">5</span>);
     <span class="kw">let </span>num_protonizable_sites = get_num_protonizable_sites(sequence);
@@ -736,11 +797,23 @@
 /// let charge_state_probs = simulate_charge_states_for_sequences(sequences, 4, None, None);
 /// assert_eq!(charge_state_probs, vec![vec![0.25, 0.5, 0.25, 0.0, 0.0], vec![0.25, 0.5, 0.25, 0.0, 0.0], vec![0.25, 0.5, 0.25, 0.0, 0.0]]);
 /// ```
-</span><span class="kw">pub fn </span>simulate_charge_states_for_sequences(sequences: Vec&lt;<span class="kw-2">&amp;</span>str&gt;,  num_threads: usize, max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;, charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;) -&gt; Vec&lt;Vec&lt;f64&gt;&gt; {
-    <span class="kw">let </span>pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+</span><span class="kw">pub fn </span>simulate_charge_states_for_sequences(
+    sequences: Vec&lt;<span class="kw-2">&amp;</span>str&gt;,
+    num_threads: usize,
+    max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+    charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+) -&gt; Vec&lt;Vec&lt;f64&gt;&gt; {
+    <span class="kw">let </span>pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
     pool.install(|| {
-        sequences.par_iter()
-            .map(|sequence| simulate_charge_state_for_sequence(sequence, max_charge, charged_probability))
+        sequences
+            .par_iter()
+            .map(|sequence| {
+                simulate_charge_state_for_sequence(sequence, max_charge, charged_probability)
+            })
             .collect()
     })
-}</code></pre></div></section></main></body></html>
+}
+</code></pre></div></section></main></body></html>
