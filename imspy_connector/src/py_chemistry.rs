@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::collections::HashSet;
 use pyo3::prelude::*;
 
@@ -79,8 +80,28 @@ pub fn one_over_reduced_mobility_to_ccs(one_over_k0: f64, mz: f64, charge: u32, 
 }
 
 #[pyfunction]
+pub fn one_over_reduced_mobility_to_ccs_par(one_over_k0: Vec<f64>, mz: Vec<f64>, charge: Vec<u32>, mass_gas: f64, temp: f64, t_diff: f64, num_threads: usize) -> Vec<f64> {
+    let thread_pool = rayon::ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    thread_pool.install(|| {
+        one_over_k0.par_iter().zip(mz.par_iter()).zip(charge.par_iter()).map(|((k0, mz), charge)| {
+            mscore::chemistry::formulas::one_over_reduced_mobility_to_ccs(*k0, *mz, *charge, mass_gas, temp, t_diff)
+        }).collect()
+    })
+}
+
+#[pyfunction]
 pub fn ccs_to_one_over_reduced_mobility(ccs: f64, mz: f64, charge: u32, mass_gas: f64, temp: f64, t_diff: f64) -> f64 {
     mscore::chemistry::formulas::ccs_to_one_over_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
+}
+
+#[pyfunction]
+pub fn ccs_to_one_over_reduced_mobility_par(ccs: Vec<f64>, mz: Vec<f64>, charge: Vec<u32>, mass_gas: f64, temp: f64, t_diff: f64, num_threads: usize) -> Vec<f64> {
+    let thread_pool = rayon::ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    thread_pool.install(|| {
+        ccs.par_iter().zip(mz.par_iter()).zip(charge.par_iter()).map(|((ccs, mz), charge)| {
+            mscore::chemistry::formulas::ccs_to_one_over_reduced_mobility(*ccs, *mz, *charge, mass_gas, temp, t_diff)
+        }).collect()
+    })
 }
 
 #[pyfunction]
@@ -129,7 +150,9 @@ pub fn py_chemistry(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(unimod_sequence_to_tokens, m)?)?;
     m.add_function(wrap_pyfunction!(generate_isotope_distribution, m)?)?;
     m.add_function(wrap_pyfunction!(one_over_reduced_mobility_to_ccs, m)?)?;
+    m.add_function(wrap_pyfunction!(one_over_reduced_mobility_to_ccs_par, m)?)?;
     m.add_function(wrap_pyfunction!(ccs_to_one_over_reduced_mobility, m)?)?;
+    m.add_function(wrap_pyfunction!(ccs_to_one_over_reduced_mobility_par, m)?)?;
     m.add_function(wrap_pyfunction!(calculate_mz, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_precursor_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(simulate_precursor_spectra, m)?)?;
