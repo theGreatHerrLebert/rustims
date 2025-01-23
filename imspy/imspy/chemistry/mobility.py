@@ -38,7 +38,7 @@ def ccs_to_one_over_k0(ccs, mz, charge, mass_gas=28.013, temp=31.85, t_diff=273.
     """
     return ims.ccs_to_one_over_reduced_mobility(ccs, mz, charge, mass_gas, temp, t_diff)
 
-def cs_to_one_over_k0_par(ccs: NDArray, mz: NDArray, charge: NDArray, mass_gas: float = 28.013, temp: float = 31.85,
+def ccs_to_one_over_k0_par(ccs: NDArray, mz: NDArray, charge: NDArray, mass_gas: float = 28.013, temp: float = 31.85,
                           t_diff: float = 273.15, num_threads: int = -1) -> NDArray:
     """Convert CCS to reduced ion mobility (1/k0) in parallel.
 
