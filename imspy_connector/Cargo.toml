@@ -16,3 +16,4 @@ rustdf = { version = "0.3.1" }
 # rustdf = { path = "../rustdf" }
 serde = "1.0.217"
 serde_json = "1.0.137"
+rayon = "1.10.0"
