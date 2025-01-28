@@ -409,6 +409,9 @@ def main():
     rt_sigma = None
     rt_lambda = None
 
+    if args.proteome_mix:
+        factors = get_dilution_factors(args.multi_fasta_dilution)
+
     if args.from_existing:
         existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
         peptides = existing_sim_handle.get_table('peptides')
@@ -416,6 +419,11 @@ def main():
         ions = existing_sim_handle.get_table('ions')
         rt_sigma = peptides['rt_sigma'].values
         rt_lambda = peptides['rt_lambda'].values
+
+        if args.proteome_mix:
+            for fasta, dilution_factor in factors.items():
+                peptides.loc[peptides['fasta'] == fasta, 'events'] = peptides.loc[peptides['fasta'] == fasta, 'events'] * dilution_factor
+                peptides.loc[peptides['fasta'] == fasta, 'fasta'] = fasta
 
         # Warn if the absolute difference between the gradient length of the existing simulation and the new one is off by more than 5 percent
         rt_max = peptides['retention_time_gru_predictor'].max()
@@ -445,9 +453,6 @@ def main():
     # Save the arguments to a file, should go into the database folder
     with open(os.path.join(path, f'arguments-{name}.txt'), 'w') as f:
         f.write(tabulate(table, headers=["Argument", "Value"], tablefmt="grid"))
-
-    if args.proteome_mix:
-        factors = get_dilution_factors(args.multi_fasta_dilution)
 
     fastas = get_fasta_file_paths(args.fasta_path)
 
@@ -526,6 +531,7 @@ def main():
             # If the proteome is mixed, scale the number of peptides
             if args.proteome_mix:
                 peptides['events'] = peptides['events'] * mixture_factor
+                peptides['fasta'] = fasta_name
 
             protein_list.append(proteins)
             peptide_list.append(peptides)
