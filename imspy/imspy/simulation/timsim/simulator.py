@@ -618,6 +618,15 @@ def main():
         ]
         peptides = peptides[columns_order]
 
+    elif args.proteome_mix:
+        # Reorder the columns by excluding 'total_events' and 'fasta', then appending them at the end
+        columns = ['protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
+                   'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass', 'events',
+                   'retention_time_gru_predictor', 'rt_sigma', 'rt_lambda',
+                   'frame_occurrence_start', 'frame_occurrence_end',
+                   'frame_occurrence', 'frame_abundance', 'total_events', 'fasta']
+        peptides = peptides[columns]
+
     # Save peptides to database
     acquisition_builder.synthetics_handle.create_table(
         table_name='peptides',
