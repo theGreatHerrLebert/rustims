@@ -423,7 +423,7 @@ def main():
         if args.proteome_mix:
             for fasta, dilution_factor in factors.items():
 
-                if args.verbose:
+                if not args.silent_mode:
                     print(f"Applying dilution factor {dilution_factor} to {fasta}")
 
                 peptides.loc[peptides['fasta'] == fasta, 'events'] = peptides.loc[peptides['fasta'] == fasta, 'events'] * dilution_factor
