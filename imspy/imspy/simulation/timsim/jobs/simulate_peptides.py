@@ -118,6 +118,7 @@ def simulate_peptides(
     )
 
     peptide_table["events"] = (peptide_table.events * efficiency).astype(np.int32)
+    peptide_table["total_events"] = peptide_table["events"]
 
     # Retention time filtering (optional)
     if exclude_accumulated_gradient_start:
