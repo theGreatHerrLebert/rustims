@@ -579,7 +579,8 @@ def main():
             'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
             'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
             'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
-            'frame_abundance', 'phospho_site_a', 'phospho_site_b', 'sequence_original'
+            'frame_abundance',
+            'phospho_site_a', 'phospho_site_b', 'sequence_original'
         ]
         peptides = peptides[columns_phospho]
     elif args.proteome_mix:
@@ -587,8 +588,9 @@ def main():
             'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
             'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
             'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
-            'frame_occurrence_start', 'frame_occurrence_end',
-            'frame_occurrence', 'frame_abundance', 'total_events', 'fasta'
+            'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
+            'frame_abundance',
+            'total_events', 'fasta'
         ]
         # Ensure columns exist in the DataFrame
         peptides = peptides[[col for col in columns_mixed if col in peptides.columns]]
