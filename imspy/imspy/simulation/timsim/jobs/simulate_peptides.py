@@ -69,6 +69,7 @@ def simulate_peptides(
         down_sample: bool = True,
         min_length: int = 7,
         max_length: int = 30,
+        proteome_mix: bool = False,
 ) -> pd.DataFrame:
     protein_table["peptides_sampled"] = sample_peptides_from_proteins(protein_table, num_peptides_total, down_sample)
     protein_table = protein_table[[len(l) > 0 for l in protein_table.peptides_sampled]]
@@ -118,7 +119,9 @@ def simulate_peptides(
     )
 
     peptide_table["events"] = (peptide_table.events * efficiency).astype(np.int32)
-    peptide_table["total_events"] = peptide_table["events"]
+
+    if proteome_mix:
+        peptide_table["total_events"] = peptide_table["events"]
 
     # Retention time filtering (optional)
     if exclude_accumulated_gradient_start:
