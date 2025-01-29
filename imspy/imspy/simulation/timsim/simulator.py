@@ -250,7 +250,7 @@ def get_default_settings() -> dict:
         'sample_peptides': True,
         'sample_seed': 41,
         'apply_fragmentation': False,
-        'num_sample_peptides': 25000,
+        'num_sample_peptides': 250_000,
         'missed_cleavages': 2,
         'min_len': 7,
         'max_len': 30,
