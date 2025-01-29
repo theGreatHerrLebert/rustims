@@ -585,8 +585,8 @@ def main():
     elif args.proteome_mix:
         columns_mixed = [
             'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
-            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass', 'events',
-            'retention_time_gru_predictor', 'rt_sigma', 'rt_lambda',
+            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
+            'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
             'frame_occurrence_start', 'frame_occurrence_end',
             'frame_occurrence', 'frame_abundance', 'total_events', 'fasta'
         ]
