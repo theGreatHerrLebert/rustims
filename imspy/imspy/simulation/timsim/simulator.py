@@ -155,7 +155,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
-    parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .99)")
+    parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .999)")
     parser.add_argument("--mean_std_rt", type=float, help="Mean standard deviation for RT distribution (default: 1.5)")
     parser.add_argument("--variance_std_rt", type=float, help="Variance std for RT distribution (default: 0.3)")
     parser.add_argument("--mean_skewness", type=float, help="Mean skewness for RT distribution (default: 0.3)")
@@ -267,7 +267,7 @@ def get_default_settings() -> dict:
         'sample_occurrences': True,
         'intensity_value': 1e6,
         'gradient_length': 3600,
-        'z_score': 0.99,
+        'z_score': 0.999,
         'mean_std_rt': 1.5,
         'variance_std_rt': 0.3,
         'mean_skewness': 0.3,
