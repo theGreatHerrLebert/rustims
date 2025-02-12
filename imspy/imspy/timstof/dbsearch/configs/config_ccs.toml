@@ -5,6 +5,7 @@ cleave_at = "KR"
 restrict = "P"
 n_terminal = false
 verbose = true
+fasta_batch_size = 1
 
 [static_modifications]
 C = "[UNIMOD:4]"
