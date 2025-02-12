@@ -63,15 +63,40 @@ The codbease of all native rust crates and python packages is now available:
 * [rustms](https://thegreatherrlebert.github.io/rustims/main/rustms/)
 * [imspy](https://thegreatherrlebert.github.io/rustims/main/imspy/)
 
-## Generating a synthetic PASEF-like dataset with timsim
-You can also generate a synthetic PASEF-like dataset using the following command (timsim currently requires a reference.tdf file of a real dataset):
-```shell
-timsim path/to/output.tdf path/to/reference.tdf path/to/proteome.fasta
+## Generating Synthetic PASEF-like Datasets with TimSim
+
+**TimSim** is a versatile simulation tool designed for generating synthetic PASEF-like datasets for proteomics experiments on Bruker TimsTOF instruments. It offers two complementary modes of operation:
+
+### Command-Line Mode
+
+TimSim can be run directly from the terminal. You have two convenient options:
+
+1. **Direct Parameter Specification:**  
+   Provide the required positional arguments along with any desired options:
+   ```bash
+   timsim path/to/output.tdf path/to/reference.tdf path/to/proteome.fasta [--option value ...]
+   ```
+2. **Configuration File Mode:**  
+   To simplify repetitive runs, supply all simulation parameters via a TOML configuration file using the `--config` option:
+   ```bash
+   timsim --config path/to/config.toml
+   ```
+   This approach lets you store and reuse complete simulation setups without having to specify each parameter on the command line.
+
+### Graphical User Interface (GUI) Mode
+
+For an interactive, user-friendly experience, launch the TimSim GUI. The GUI allows you to:
+- Adjust simulation parameters via intuitive controls.
+- Visualize real-time logs and plots.
+- Experiment with settings before executing a full simulation.
+
+You can start the GUI with:
+```bash
+imspy_gui
 ```
-The tool has a lot of options, which you can explore by running:
-```shell
-timsim --help
-```
+### Example Data and Configuration
+
+To help you get started, example datasets and sample configuration files are available on our [Zenodo repository](https://zenodo.org/record/XXXXXX) (link coming soon). These examples demonstrate common workflows and parameter settings for both the command-line and GUI modes.
 
 ## Rust backend: mscore and rustdf
 There are two Rrust projects: `mscore` and `rustdf`. The former is a library that contains implementations of in-memory data structures and algorithms for raw-data processing. The latter contains a Rust-native reader and writer of TDF, the serialization format written by [Bruker timsTOF](https://www.bruker.com/en/products-and-solutions/mass-spectrometry/timstof.html) devices. It also contains the implementation of the I/O logic needed for synthetic timsTOF PASEF-like in-silico dataset generation.
