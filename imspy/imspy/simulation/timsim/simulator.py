@@ -67,11 +67,11 @@ def main():
     # Required arguments
     # --------------------------
     required = parser.add_argument_group("Required Arguments")
-    required.add_argument("save_path", type=str,
+    required.add_argument("save_path", type=str, nargs='?', default=None,
                           help="Path to save the experiment to")
-    required.add_argument("reference_path", type=str,
+    required.add_argument("reference_path", type=str, nargs='?', default=None,
                           help="Path to a real TDF reference dataset")
-    required.add_argument("fasta_path", type=str,
+    required.add_argument("fasta_path", type=str, nargs='?', default=None,
                           help="Path to the fasta file of proteins to be digested")
 
     # --------------------------
