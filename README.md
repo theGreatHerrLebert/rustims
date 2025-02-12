@@ -92,7 +92,7 @@ For an interactive, user-friendly experience, launch the TimSim GUI. The GUI all
 
 You can start the GUI with:
 ```bash
-imspy_gui
+timsim_gui
 ```
 ### Example Data and Configuration
 
