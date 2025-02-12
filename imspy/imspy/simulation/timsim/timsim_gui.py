@@ -1,13 +1,12 @@
 import sys
 import time
 from pathlib import Path
-
 import markdown
 import qdarkstyle
-
 import toml
 import numpy as np
 from scipy.special import erfc
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QVBoxLayout, QHBoxLayout, QFileDialog, QCheckBox, QSpinBox, QToolButton,
@@ -16,23 +15,21 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QProcess, QSize
 from PyQt5.QtGui import QFont, QIcon, QPixmap
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
-import matplotlib.pyplot as plt
 
-from imspy.timstof import TimsDatasetDIA
-from imspy.timstof.data import TimsFrame, TimsSlice
-
-# **VTKVisualizer Class**
+# =============================================================================
+# VTK Visualizer (unchanged)
+# =============================================================================
 class VTKVisualizer(QWidget):
     def __init__(self, data_path, parent=None):
         super(VTKVisualizer, self).__init__(parent)
         self.data_path = data_path
-
         self.layout = QVBoxLayout(self)
 
         # VTK Widget
@@ -47,162 +44,115 @@ class VTKVisualizer(QWidget):
         self.load_and_visualize_data()
 
     def load_and_visualize_data(self):
-        # Clear the renderer
         self.renderer.RemoveAllViewProps()
-
-        # **Load data using TimsDatasetDIA**
         try:
-            dia_data = TimsDatasetDIA("/media/hd02/data/sim/dia/timsim-gui/plain/TIMSIM-HeLa-G3600-25KP-PLAIN-DIA-FRAGT/TIMSIM-HeLa-G3600-25KP-PLAIN-DIA-FRAGT.d")
+            # Example data loading – adjust the path as needed
+            from imspy.timstof import TimsDatasetDIA
+            dia_data = TimsDatasetDIA("/media/hd02/data/sim/dia/timsim-gui/plain/example.d")
             t_slice = dia_data.get_tims_slice(dia_data.precursor_frames[500:1000]).filter(
                 mz_min=500, mz_max=800, intensity_min=5, mobility_min=0.5, mobility_max=1.1)
             mz = t_slice.df.mz.values
             rt = t_slice.df.retention_time.values
             intensity = t_slice.df.intensity.values
             im = t_slice.df.mobility.values
-
-            # Proceed with visualization
             self.visualize_data(rt, im, mz, intensity)
         except Exception as e:
-            # Handle exceptions (e.g., invalid data path)
             QMessageBox.warning(self, "Error", f"Failed to load data:\n{e}")
 
     def visualize_data(self, rt, im, mz, intensity):
-        # Store original min and max values for real axis labeling
         rt_min, rt_max = rt.min(), rt.max()
         im_min, im_max = im.min(), im.max()
         mz_min, mz_max = mz.min(), mz.max()
 
-        # Normalize the dimensions to create a more cubic aspect ratio
+        # Normalize for a cubic aspect ratio
         rt_norm = (rt - rt_min) / (rt_max - rt_min)
         im_norm = (im - im_min) / (im_max - im_min)
         mz_norm = (mz - mz_min) / (mz_max - mz_min)
 
-        # Log scale the intensity for visualization
+        # Log scale intensity
         log_intensity = np.log10(intensity)
-
-        # Map the intensity values to an inferno color gradient
         cmap = plt.get_cmap("inferno")
         norm_log_intensity = (log_intensity - log_intensity.min()) / (log_intensity.max() - log_intensity.min())
         colors_inferno = (cmap(norm_log_intensity)[:, :3] * 255).astype(np.uint8)
 
-        # Create VTK point cloud
         mapper = self.create_vtk_point_cloud(rt_norm, im_norm, mz_norm, colors_inferno)
         actor = vtk.vtkActor()
         actor.SetMapper(mapper)
-        actor.GetProperty().SetOpacity(0.6)  # Set point opacity to 60%
-
-        # Add the point cloud actor to the renderer
+        actor.GetProperty().SetOpacity(0.6)
         self.renderer.AddActor(actor)
 
-        # Define bounds for the cube axes (using normalized range)
         bounds = [0, 1, 0, 1, 0, 1]
-
-        # Add cube axes around the data points
         cube_axes_actor = self.create_cube_axes(bounds, rt_min, rt_max, im_min, im_max, mz_min, mz_max)
         self.renderer.AddActor(cube_axes_actor)
 
-        # Set light gray background
         self.renderer.SetBackground(0.9, 0.9, 0.9)
-
-        # Center the camera on the data
         self.renderer.ResetCamera()
-
-        # Initialize the interactor
         self.vtkWidget.GetRenderWindow().Render()
 
     def create_vtk_point_cloud(self, rt, im, mz, colors_inferno):
-        # Create a VTK Points object
         points = vtk.vtkPoints()
         vtk_points_array = numpy_to_vtk(np.column_stack((rt, im, mz)).astype(np.float32), deep=True)
         points.SetData(vtk_points_array)
-
-        # Convert the inferno colors to VTK array and add as colors
         vtk_colors = numpy_to_vtk(colors_inferno, deep=True, array_type=vtk.VTK_UNSIGNED_CHAR)
         vtk_colors.SetName("Colors")
-
-        # Create a PolyData object to hold points and colors
         point_cloud = vtk.vtkPolyData()
         point_cloud.SetPoints(points)
-        point_cloud.GetPointData().SetScalars(vtk_colors)  # Set the colors array for the mapper to use
-
-        # Set up the mapper for rendering points
+        point_cloud.GetPointData().SetScalars(vtk_colors)
         mapper = vtk.vtkGlyph3DMapper()
         mapper.SetInputData(point_cloud)
-        mapper.ScalarVisibilityOn()  # Enable scalar coloring
-        mapper.SetColorModeToDefault()  # Use the colors from the data
-
-        # Define the glyph shape (e.g., spheres)
+        mapper.ScalarVisibilityOn()
+        mapper.SetColorModeToDefault()
         glyph = vtk.vtkSphereSource()
-        glyph.SetRadius(0.001)  # Reduced size for less overplotting
+        glyph.SetRadius(0.001)
         mapper.SetSourceConnection(glyph.GetOutputPort())
-
         return mapper
 
     def create_cube_axes(self, bounds, rt_min, rt_max, im_min, im_max, mz_min, mz_max):
         axes = vtk.vtkCubeAxesActor()
         axes.SetBounds(bounds)
         axes.SetCamera(self.renderer.GetActiveCamera())
-
-        # Set axis labels with real values
         axes.SetXTitle("Retention Time (s)")
         axes.SetYTitle("Ion Mobility (1/K0)")
         axes.SetZTitle("m/z")
         axes.SetXUnits(f"[{rt_min:.1f} - {rt_max:.1f}]")
         axes.SetYUnits(f"[{im_min:.1f} - {im_max:.1f}]")
         axes.SetZUnits(f"[{mz_min:.1f} - {mz_max:.1f}]")
-
-        # Configure properties
-        axes.GetTitleTextProperty(0).SetColor(0, 0, 0)  # X-axis title color
-        axes.GetTitleTextProperty(1).SetColor(0, 0, 0)  # Y-axis title color
-        axes.GetTitleTextProperty(2).SetColor(0, 0, 0)  # Z-axis title color
-        axes.GetLabelTextProperty(0).SetColor(0, 0, 0)  # X-axis labels color
-        axes.GetLabelTextProperty(1).SetColor(0, 0, 0)  # Y-axis labels color
-        axes.GetLabelTextProperty(2).SetColor(0, 0, 0)  # Z-axis labels color
-
-        # Enable grid lines for visual reference
+        for i in range(3):
+            axes.GetTitleTextProperty(i).SetColor(0, 0, 0)
+            axes.GetLabelTextProperty(i).SetColor(0, 0, 0)
         axes.DrawXGridlinesOn()
         axes.DrawYGridlinesOn()
         axes.DrawZGridlinesOn()
         axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
-
         return axes
 
-
-# CollapsibleBox class definition
+# =============================================================================
+# Collapsible Box for Grouping Settings
+# =============================================================================
 class CollapsibleBox(QWidget):
     def __init__(self, title="", info_text="", parent=None):
         super().__init__(parent)
-
-        # Toggle button for expanding/collapsing
         self.toggle_button = QToolButton(text=title, checkable=True, checked=False)
         self.toggle_button.setStyleSheet("QToolButton { border: none; }")
         self.toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.toggle_button.setArrowType(Qt.RightArrow)
         self.toggle_button.pressed.connect(self.on_pressed)
-
-        # Info icon as a QLabel with hover tooltip
         self.info_label = QLabel()
         icon_path = Path(__file__).parent.parent / "resources/icons/info_icon.png"
         if icon_path.exists():
             self.info_label.setPixmap(QPixmap(str(icon_path)).scaled(19, 19, Qt.KeepAspectRatio))
-            self.info_label.setToolTip(info_text)  # Set tooltip text for hover
-
-        # Header layout with toggle button and info icon
+            self.info_label.setToolTip(info_text)
         self.header_layout = QHBoxLayout()
         self.header_layout.addWidget(self.toggle_button)
         self.header_layout.addWidget(self.info_label)
         self.header_layout.addStretch()
-
-        # Content area for collapsible content
         self.content_area = QWidget()
         self.content_area.setMaximumHeight(0)
         self.content_area.setMinimumHeight(0)
         self.content_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.content_layout = QVBoxLayout()
-        self.content_layout.setContentsMargins(25, 0, 0, 0)  # Indent content
+        self.content_layout.setContentsMargins(25, 0, 0, 0)
         self.content_area.setLayout(self.content_layout)
-
-        # Main layout to hold header and collapsible content
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addLayout(self.header_layout)
@@ -212,9 +162,8 @@ class CollapsibleBox(QWidget):
     def on_pressed(self):
         checked = self.toggle_button.isChecked()
         self.toggle_button.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
-        # Expand or collapse content area
         if checked:
-            self.content_area.setMaximumHeight(16777215)  # Arbitrary high max to expand fully
+            self.content_area.setMaximumHeight(16777215)
             self.content_area.setMinimumHeight(0)
         else:
             self.content_area.setMaximumHeight(0)
@@ -223,33 +172,26 @@ class CollapsibleBox(QWidget):
     def add_widget(self, widget):
         self.content_layout.addWidget(widget)
 
-
-# EMGPlot class definition
+# =============================================================================
+# EMGPlot for Distribution Visualization (unchanged)
+# =============================================================================
 class EMGPlot(FigureCanvas):
     def __init__(self):
         self.fig, self.ax = plt.subplots()
         super().__init__(self.fig)
-        # Fixed mean value at 0
         self.mean = 0
-        # Default values for parameters (match with your spin boxes)
-        self.std = 1.5  # Corresponds to Mean Std RT
-        self.skewness = 0.3  # Corresponds to Mean Skewness
-        # Variance values for randomness
-        self.std_variance = 0.3  # Corresponds to Variance Std RT
-        self.skewness_variance = 0.1  # Corresponds to Variance Skewness
-        # Number of curves
+        self.std = 1.5
+        self.skewness = 0.3
+        self.std_variance = 0.3
+        self.skewness_variance = 0.1
         self.N = 25
         self.x = np.linspace(-20, 20, 1000)
         self.update_plot()
 
     def emg_pdf(self, x, mean, std, skewness):
-        lambda_ = 1 / skewness if skewness != 0 else 1e6  # Avoid division by zero
-        exp_component = lambda_ / 2 * np.exp(
-            lambda_ / 2 * (2 * mean + lambda_ * std ** 2 - 2 * x)
-        )
-        erfc_component = erfc(
-            (mean + lambda_ * std ** 2 - x) / (np.sqrt(2) * std)
-        )
+        lambda_ = 1 / skewness if skewness != 0 else 1e6
+        exp_component = lambda_ / 2 * np.exp(lambda_ / 2 * (2 * mean + lambda_ * std ** 2 - 2 * x))
+        erfc_component = erfc((mean + lambda_ * std ** 2 - x) / (np.sqrt(2) * std))
         return exp_component * erfc_component
 
     def update_plot(self):
@@ -257,9 +199,7 @@ class EMGPlot(FigureCanvas):
         self.ax.set_xlim(-10, 10)
         for _ in range(self.N):
             sampled_std = max(np.random.normal(self.std, self.std_variance), 0.01)
-            sampled_skewness = max(
-                np.random.normal(self.skewness, self.skewness_variance), 0.01
-            )
+            sampled_skewness = max(np.random.normal(self.skewness, self.skewness_variance), 0.01)
             y = self.emg_pdf(self.x, self.mean, sampled_std, sampled_skewness)
             self.ax.plot(self.x, y, alpha=0.5)
         self.ax.set_title("Exponentially Modified Gaussian Distribution")
@@ -267,7 +207,6 @@ class EMGPlot(FigureCanvas):
         self.ax.set_ylabel("Intensity")
         self.draw()
 
-    # Methods to update parameters
     def set_std(self, value):
         self.std = value
         self.update_plot()
@@ -284,49 +223,30 @@ class EMGPlot(FigureCanvas):
         self.skewness_variance = value
         self.update_plot()
 
-
-# MainWindow class
+# =============================================================================
+# MainWindow – The Main GUI
+# =============================================================================
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-
-        # Path to the script directory
         self.script_dir = Path(__file__).parent.parent / "resources/icons/"
-
         self.setWindowTitle("🦀💻 TimSim 🔬🐍 - Proteomics Experiment Simulation on timsTOF")
         self.setGeometry(100, 100, 800, 600)
-
-        # Set the app logo
         self.setWindowIcon(QIcon(str(self.script_dir / "logo_2.png")))
-
-        # Load the info icon image once
         self.info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-
-        # Initialize the menu bar
         self.init_menu_bar()
-
-        # Create the tab widget
         self.tab_widget = QTabWidget()
         self.setCentralWidget(self.tab_widget)
-
-        # Create tabs
         self.create_main_tab()
         self.create_documentation_tab()
-
-        # Initialize the process variable
         self.process = None
 
     def create_documentation_tab(self):
-        """Create a tab to display the manual."""
         documentation_tab = QWidget()
         layout = QVBoxLayout(documentation_tab)
-
-        # Markdown file path
         doc_path = Path(__file__).parent.parent / "resources/docs/documentation.md"
-
         if doc_path.exists():
             try:
-                # Read and convert Markdown to HTML
                 with open(doc_path, "r", encoding="utf-8") as f:
                     markdown_text = f.read()
                 html_content = markdown.markdown(markdown_text)
@@ -334,36 +254,27 @@ class MainWindow(QMainWindow):
                 html_content = f"<p>Error loading documentation: {str(e)}</p>"
         else:
             html_content = "<p>Documentation file not found.</p>"
-
-        # Render Markdown as HTML in a QTextEdit (basic support)
         self.documentation_viewer = QTextEdit()
         self.documentation_viewer.setHtml(html_content)
         self.documentation_viewer.setReadOnly(True)
-
-        # Add to layout
         layout.addWidget(self.documentation_viewer)
         self.tab_widget.addTab(documentation_tab, "Documentation")
 
     def create_main_tab(self):
-        # Create the main tab widget
         main_tab = QWidget()
         self.main_layout = QVBoxLayout(main_tab)
-
-        # Initialize sections
         self.init_main_settings()
         self.init_peptide_digestion_settings()
-        self.init_peptide_intensity_settings()  # Add this line
+        self.init_peptide_intensity_settings()
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
         self.init_charge_state_probabilities()
         self.init_performance_settings()
         self.init_console()
-
-        # Add all sections to the main layout
         self.main_layout.addWidget(self.main_settings_group)
         self.main_layout.addWidget(self.peptide_digestion_group)
-        self.main_layout.addWidget(self.peptide_intensity_group)  # Add this line
+        self.main_layout.addWidget(self.peptide_intensity_group)
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
         self.main_layout.addWidget(self.noise_settings_group)
@@ -372,46 +283,28 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.console)
         self.main_layout.addWidget(self.run_button)
         self.main_layout.addWidget(self.cancel_button)
-
-        # Add spacing
         self.main_layout.addStretch()
-
-        # Add logo at the bottom
         self.logo_label = QLabel()
         pixmap = QPixmap(str(self.script_dir / "rustims_logo.png"))
         scaled_pixmap = pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.logo_label.setPixmap(scaled_pixmap)
         self.logo_label.setFixedSize(200, 200)
-
-        # Create a horizontal layout to center the logo label
         logo_layout = QHBoxLayout()
         logo_layout.addStretch()
         logo_layout.addWidget(self.logo_label)
         logo_layout.addStretch()
-
-        # Add the centered logo layout to the main layout
         self.main_layout.addLayout(logo_layout)
-
-        # Add scroll area if needed
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(main_tab)
-
-        # Add the scroll area to the first tab
         self.tab_widget.addTab(scroll, "Main Settings")
 
     def init_menu_bar(self):
         menubar = self.menuBar()
-
-        # Create 'File' menu
         file_menu = menubar.addMenu('File')
-
-        # Add 'Save Config' action
         save_action = QAction('Save Config', self)
         save_action.triggered.connect(self.save_config)
         file_menu.addAction(save_action)
-
-        # Add 'Load Config' action
         load_action = QAction('Load Config', self)
         load_action.triggered.connect(self.load_config)
         file_menu.addAction(load_action)
@@ -428,7 +321,7 @@ class MainWindow(QMainWindow):
         setting_layout.addWidget(widget)
         setting_layout.addWidget(info_label)
         layout.addWidget(setting_widget)
-        return setting_widget  # Return the setting widget to control its visibility
+        return setting_widget
 
     def add_spinbox_with_info(self, layout, attribute_name, label_text, tooltip_text, min_value, max_value,
                               default_value, decimals=2, step=None):
@@ -449,7 +342,7 @@ class MainWindow(QMainWindow):
         setting_layout.addWidget(spinbox)
         setting_layout.addWidget(info_label)
         layout.addWidget(setting_widget)
-        setattr(self, attribute_name, spinbox)  # Assign spinbox to self.attribute_name
+        setattr(self, attribute_name, spinbox)
 
     def add_checkbox_with_info(self, layout, checkbox, tooltip_text):
         checkbox_layout = QHBoxLayout()
@@ -463,7 +356,6 @@ class MainWindow(QMainWindow):
     def init_main_settings(self):
         self.main_settings_group = QGroupBox("Main Settings")
         layout = QVBoxLayout()
-
         # Save Path
         self.path_input = QLineEdit()
         self.path_browse = QPushButton("Browse")
@@ -473,13 +365,8 @@ class MainWindow(QMainWindow):
         path_layout.setContentsMargins(0, 0, 0, 0)
         path_layout.addWidget(self.path_input)
         path_layout.addWidget(self.path_browse)
-        self.add_setting_with_info(
-            layout,
-            "Save Path:",
-            path_widget,
-            "Select the directory to save simulation outputs."
-        )
-
+        self.add_setting_with_info(layout, "Save Path:", path_widget,
+                                   "Select the directory to save simulation outputs.")
         # Reference Dataset Path
         self.reference_input = QLineEdit()
         self.reference_browse = QPushButton("Browse")
@@ -489,13 +376,8 @@ class MainWindow(QMainWindow):
         reference_layout.setContentsMargins(0, 0, 0, 0)
         reference_layout.addWidget(self.reference_input)
         reference_layout.addWidget(self.reference_browse)
-        self.add_setting_with_info(
-            layout,
-            "Reference Dataset Path:",
-            reference_widget,
-            "Specify the path to the reference dataset used as a template for simulation."
-        )
-
+        self.add_setting_with_info(layout, "Reference Dataset Path:", reference_widget,
+                                   "Specify the path to the reference dataset used as a template for simulation.")
         # FASTA File Path
         self.fasta_input = QLineEdit()
         self.fasta_browse = QPushButton("Browse")
@@ -505,121 +387,64 @@ class MainWindow(QMainWindow):
         fasta_layout.setContentsMargins(0, 0, 0, 0)
         fasta_layout.addWidget(self.fasta_input)
         fasta_layout.addWidget(self.fasta_browse)
-        self.add_setting_with_info(
-            layout,
-            "FASTA File Path:",
-            fasta_widget,
-            "Provide the path to the FASTA file containing protein sequences for digestion."
-        )
-
+        self.add_setting_with_info(layout, "FASTA File Path:", fasta_widget,
+                                   "Provide the path to the FASTA file containing protein sequences for digestion.")
         # Experiment Name
         self.name_input = QLineEdit(f"TIMSIM-{int(time.time())}")
-        self.add_setting_with_info(
-            layout,
-            "Experiment Name:",
-            self.name_input,
-            "Name your experiment to identify it in saved outputs and reports."
-        )
-
+        self.add_setting_with_info(layout, "Experiment Name:", self.name_input,
+                                   "Name your experiment to identify it in saved outputs and reports.")
         # Acquisition Type
         self.acquisition_combo = QComboBox()
         self.acquisition_combo.addItems(["DIA", "SYNCHRO", "SLICE", "MIDIA"])
-        self.add_setting_with_info(
-            layout,
-            "Acquisition Type:",
-            self.acquisition_combo,
-            "Select the acquisition method used to simulate data."
-        )
-
-        # Options with checkboxes and icons to the right
+        self.add_setting_with_info(layout, "Acquisition Type:", self.acquisition_combo,
+                                   "Select the acquisition method used to simulate data.")
+        # Options (checkboxes)
         options_layout = QVBoxLayout()
-
-        # Use Reference Layout
         self.use_reference_layout_checkbox = QCheckBox("Use Reference Layout")
         self.use_reference_layout_checkbox.setChecked(True)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.use_reference_layout_checkbox,
-            "Use the layout of the reference dataset as a template for simulation."
-        )
-
-        # Load Reference into Memory
+        self.add_checkbox_with_info(options_layout, self.use_reference_layout_checkbox,
+                                    "Use the layout of the reference dataset as a template for simulation.")
         self.reference_in_memory_checkbox = QCheckBox("Load Reference into Memory")
         self.reference_in_memory_checkbox.setChecked(False)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.reference_in_memory_checkbox,
-            "Load the reference dataset entirely into memory to speed up access."
-        )
-
-        # Sample Peptides
+        self.add_checkbox_with_info(options_layout, self.reference_in_memory_checkbox,
+                                    "Load the reference dataset entirely into memory to speed up access.")
         self.sample_peptides_checkbox = QCheckBox("Sample Peptides")
         self.sample_peptides_checkbox.setChecked(True)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.sample_peptides_checkbox,
-            "Enable to randomly sample peptides for a subset of the dataset."
-        )
-
-        # Sample Seed
+        self.add_checkbox_with_info(options_layout, self.sample_peptides_checkbox,
+                                    "Enable to randomly sample peptides for a subset of the dataset.")
         self.sample_seed_spin = QSpinBox()
         self.sample_seed_spin.setRange(0, 1000000)
         self.sample_seed_spin.setValue(41)
-        self.add_setting_with_info(
-            options_layout,
-            "Sample Seed:",
-            self.sample_seed_spin,
-            "Set the seed for the random peptide sampling."
-        )
-
-        # Generate Decoys
+        self.add_setting_with_info(options_layout, "Sample Seed:", self.sample_seed_spin,
+                                   "Set the seed for the random peptide sampling.")
         self.add_decoys_checkbox = QCheckBox("Generate Decoys")
         self.add_decoys_checkbox.setChecked(False)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.add_decoys_checkbox,
-            "Also simulate inverted decoy peptides (non-biological)."
-        )
-
-        # Silent Mode
+        self.add_checkbox_with_info(options_layout, self.add_decoys_checkbox,
+                                    "Also simulate inverted decoy peptides (non-biological).")
         self.silent_checkbox = QCheckBox("Silent Mode")
         self.silent_checkbox.setChecked(False)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.silent_checkbox,
-            "Run the simulation in silent mode, suppressing most output messages."
-        )
-
-        # Apply Fragmentation to Ions
+        self.add_checkbox_with_info(options_layout, self.silent_checkbox,
+                                    "Run the simulation in silent mode, suppressing most output messages.")
+        # Note: Changed default to unchecked to match new CLI tool
         self.apply_fragmentation_checkbox = QCheckBox("Apply Fragmentation to Ions")
         self.apply_fragmentation_checkbox.setChecked(True)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.apply_fragmentation_checkbox,
-            "If disabled, quadrupole selection will still be applied but fragmentation will be skipped."
-        )
-
-        # Use Existing Data as Template
-        self.from_existing_checkbox = QCheckBox("Use existing simulated data as template")
+        self.add_checkbox_with_info(options_layout, self.apply_fragmentation_checkbox,
+                                    "Enable to perform fragmentation on the ions. (Default is off)")
+        self.from_existing_checkbox = QCheckBox("Use Existing Simulation Data as Template")
         self.from_existing_checkbox.setChecked(False)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.from_existing_checkbox,
-            "Use existing simulated data as template for the current simulation."
-        )
-
-        # Proteome Mixture
+        self.add_checkbox_with_info(options_layout, self.from_existing_checkbox,
+                                    "Use existing simulated data as a template for the current simulation.")
         self.proteome_mix_checkbox = QCheckBox("Proteome Mixture")
         self.proteome_mix_checkbox.setChecked(False)
-        self.add_checkbox_with_info(
-            options_layout,
-            self.proteome_mix_checkbox,
-            "Use a mixture of proteomes to simulate a more complex sample."
-        )
-
+        self.add_checkbox_with_info(options_layout, self.proteome_mix_checkbox,
+                                    "Simulate a mixture of proteomes for a more complex sample.")
+        # NEW: Phospho Mode Checkbox
+        self.phospho_mode_checkbox = QCheckBox("Phospho Mode")
+        self.phospho_mode_checkbox.setChecked(False)
+        self.add_checkbox_with_info(options_layout, self.phospho_mode_checkbox,
+                                    "Enable phospho mode to generate a phospho-enriched dataset for testing localization algorithms.")
         layout.addLayout(options_layout)
-
-        # Existing simulated Experiment path (visible based on checkbox)
+        # Existing simulation path (visible if from_existing is checked)
         self.existing_path_input = QLineEdit()
         self.existing_path_browse = QPushButton("Browse")
         self.existing_path_browse.clicked.connect(self.browse_existing_save_path)
@@ -628,17 +453,11 @@ class MainWindow(QMainWindow):
         existing_path_layout.setContentsMargins(0, 0, 0, 0)
         existing_path_layout.addWidget(self.existing_path_input)
         existing_path_layout.addWidget(self.existing_path_browse)
-        existing_setting_widget = self.add_setting_with_info(
-            layout,
-            "Existing simulated Experiment:",
-            existing_path_widget,
-            "Select the directory where the existing simulated data is saved."
-        )
-        # Hide the entire setting initially
+        existing_setting_widget = self.add_setting_with_info(layout, "Existing Simulation Path:", existing_path_widget,
+                                                               "Select the directory with existing simulated data.")
         existing_setting_widget.setVisible(False)
         self.from_existing_checkbox.toggled.connect(existing_setting_widget.setVisible)
-
-        # Multi-Fasta Path (visible based on checkbox)
+        # Multi-FASTA options (visible if proteome_mix is checked)
         self.multi_fasta_input = QLineEdit()
         self.multi_fasta_browse = QPushButton("Browse")
         self.multi_fasta_browse.clicked.connect(self.browse_multi_fasta_path)
@@ -647,16 +466,9 @@ class MainWindow(QMainWindow):
         multi_fasta_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_layout.addWidget(self.multi_fasta_input)
         multi_fasta_layout.addWidget(self.multi_fasta_browse)
-        multi_fasta_setting_widget = self.add_setting_with_info(
-            layout,
-            "Multi-Fasta Path:",
-            multi_fasta_widget,
-            "Select the directory containing multiple FASTA files for the proteome mixture."
-        )
-        # Hide the entire setting initially
+        multi_fasta_setting_widget = self.add_setting_with_info(layout, "Multi-FASTA Path:", multi_fasta_widget,
+                                                                "Select the folder containing multiple FASTA files for the proteome mixture.")
         multi_fasta_setting_widget.setVisible(False)
-
-        # Multi-Fasta Dilution Factor Path (visible based on checkbox)
         self.multi_fasta_dilution_input = QLineEdit()
         self.multi_fasta_dilution_browse = QPushButton("Browse")
         self.multi_fasta_dilution_browse.clicked.connect(self.browse_multi_fasta_dilution_path)
@@ -665,91 +477,44 @@ class MainWindow(QMainWindow):
         multi_fasta_dilution_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_input)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_browse)
-        multi_fasta_dilution_setting_widget = self.add_setting_with_info(
-            layout,
-            "Multi-Fasta Dilution Factor Path:",
-            multi_fasta_dilution_widget,
-            "Select the CSV file containing the dilution factors for the proteome mixture."
-        )
-        # Hide the entire setting initially
+        multi_fasta_dilution_setting_widget = self.add_setting_with_info(layout, "Multi-FASTA Dilution File:", multi_fasta_dilution_widget,
+                                                                         "Select the CSV file with dilution factors for the proteome mixture.")
         multi_fasta_dilution_setting_widget.setVisible(False)
-
-        # Connect the visibility of multi-fasta widgets to the proteome_mix_checkbox
         self.proteome_mix_checkbox.toggled.connect(multi_fasta_setting_widget.setVisible)
         self.proteome_mix_checkbox.toggled.connect(multi_fasta_dilution_setting_widget.setVisible)
-
-        # Set layout for the group box
         self.main_settings_group.setLayout(layout)
         self.main_layout.addWidget(self.main_settings_group)
 
     def init_peptide_digestion_settings(self):
-        info_text = "Configure how peptides are generated from protein sequences, including cleavage rules and peptide length constraints."
+        info_text = "Configure peptide generation from protein sequences, including cleavage rules and peptide length constraints."
         self.peptide_digestion_group = CollapsibleBox("Peptide Digestion Settings", info_text)
         layout = self.peptide_digestion_group.content_layout
-
-        # Number of Sampled Peptides
         self.num_sample_peptides_spin = QSpinBox()
         self.num_sample_peptides_spin.setRange(1, 1000000)
         self.num_sample_peptides_spin.setValue(25000)
-        self.add_setting_with_info(
-            layout,
-            "Number of Sampled Peptides:",
-            self.num_sample_peptides_spin,
-            "Total number of peptides to sample in the simulation."
-        )
-
-        # Missed Cleavages
+        self.add_setting_with_info(layout, "Number of Sampled Peptides:", self.num_sample_peptides_spin,
+                                   "Total number of peptides to sample from the digested FASTA.")
         self.missed_cleavages_spin = QSpinBox()
         self.missed_cleavages_spin.setRange(0, 10)
         self.missed_cleavages_spin.setValue(2)
-        self.add_setting_with_info(
-            layout,
-            "Missed Cleavages:",
-            self.missed_cleavages_spin,
-            "The number of allowed missed cleavages in peptides during digestion."
-        )
-
-        # Minimum Peptide Length
+        self.add_setting_with_info(layout, "Missed Cleavages:", self.missed_cleavages_spin,
+                                   "Number of allowed missed cleavages during digestion.")
         self.min_len_spin = QSpinBox()
         self.min_len_spin.setRange(1, 100)
         self.min_len_spin.setValue(7)
-        self.add_setting_with_info(
-            layout,
-            "Minimum Peptide Length:",
-            self.min_len_spin,
-            "Specifies the minimum length of peptides in amino acids."
-        )
-
-        # Maximum Peptide Length
+        self.add_setting_with_info(layout, "Minimum Peptide Length:", self.min_len_spin,
+                                   "Minimum length (in amino acids) for peptides.")
         self.max_len_spin = QSpinBox()
         self.max_len_spin.setRange(1, 100)
         self.max_len_spin.setValue(30)
-        self.add_setting_with_info(
-            layout,
-            "Maximum Peptide Length:",
-            self.max_len_spin,
-            "Specifies the maximum length of peptides in amino acids."
-        )
-
-        # Cleave At
+        self.add_setting_with_info(layout, "Maximum Peptide Length:", self.max_len_spin,
+                                   "Maximum length (in amino acids) for peptides.")
         self.cleave_at_input = QLineEdit("KR")
-        self.add_setting_with_info(
-            layout,
-            "Cleave At:",
-            self.cleave_at_input,
-            "Residues at which cleavage occurs, e.g., 'KR' for trypsin digestion."
-        )
-
-        # Restrict
+        self.add_setting_with_info(layout, "Cleave At:", self.cleave_at_input,
+                                   "Residues at which cleavage occurs (e.g., 'KR').")
         self.restrict_input = QLineEdit("P")
-        self.add_setting_with_info(
-            layout,
-            "Restrict:",
-            self.restrict_input,
-            "Residues where cleavage is restricted, e.g., 'P' to prevent cleavage after proline."
-        )
-
-        # Modifications
+        self.add_setting_with_info(layout, "Restrict:", self.restrict_input,
+                                   "Residues that restrict cleavage (e.g., 'P').")
         self.mods_input = QLineEdit()
         self.mods_browse = QPushButton("Browse")
         self.mods_browse.clicked.connect(self.load_modifications)
@@ -758,25 +523,15 @@ class MainWindow(QMainWindow):
         mods_layout.setContentsMargins(0, 0, 0, 0)
         mods_layout.addWidget(self.mods_input)
         mods_layout.addWidget(self.mods_browse)
-        self.add_setting_with_info(
-            layout,
-            "Amino Acid Modifications:",
-            mods_widget,
-            "Specify the path to the modifications TOML file, containing fixed and variable modifications."
-        )
-
-        # Add the updated collapsible group to the main layout
+        self.add_setting_with_info(layout, "Amino Acid Modifications:", mods_widget,
+                                   "Path to the modifications TOML file (fixed and variable modifications).")
         self.main_layout.addWidget(self.peptide_digestion_group)
 
     def init_peptide_intensity_settings(self):
-        info_text = "Set the intensity distribution parameters for peptides, including mean, min, max intensities."
+        info_text = "Set peptide intensity parameters (mean, min, max) and sampling options."
         self.peptide_intensity_group = CollapsibleBox("Peptide Intensity Settings", info_text)
         layout = self.peptide_intensity_group.content_layout
 
-        # Load info icon image
-        info_icon = self.info_icon
-
-        # Function to format slider value as 10^power
         def update_label_from_slider(slider, label):
             power = slider.value()
             label.setText(f"10^{power} ({10 ** power:.1e})")
@@ -784,171 +539,123 @@ class MainWindow(QMainWindow):
         # Mean Intensity
         self.intensity_mean_label = QLabel()
         self.intensity_mean_slider = QSlider(Qt.Horizontal)
-        self.intensity_mean_slider.setRange(0, 10)  # Range from 10^0 to 10^10
-        self.intensity_mean_slider.setValue(7)  # Default to 10^7
-        update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)  # Initialize label
-
+        self.intensity_mean_slider.setRange(0, 10)
+        self.intensity_mean_slider.setValue(7)
+        update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)
         self.intensity_mean_slider.valueChanged.connect(
             lambda: update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)
         )
         layout.addWidget(QLabel("Mean Intensity:"))
         layout.addWidget(self.intensity_mean_label)
         layout.addWidget(self.intensity_mean_slider)
-
-        # Mean Intensity Info Icon
-        self.intensity_mean_info = QLabel()
-        self.intensity_mean_info.setPixmap(info_icon.scaled(19, 19))
-        self.intensity_mean_info.setToolTip(
-            "The Mean Intensity represents the average intensity (1/lambda) for the simulated peptides, expressed as a power of 10.")
-        layout.addWidget(self.intensity_mean_info)
-
+        mean_info = QLabel()
+        mean_info.setPixmap(self.info_icon.scaled(19, 19))
+        mean_info.setToolTip("Average peptide intensity (as a power of 10).")
+        layout.addWidget(mean_info)
         # Minimum Intensity
         self.intensity_min_label = QLabel()
         self.intensity_min_slider = QSlider(Qt.Horizontal)
         self.intensity_min_slider.setRange(0, 10)
-        self.intensity_min_slider.setValue(5)  # Default to 10^5
+        self.intensity_min_slider.setValue(5)
         update_label_from_slider(self.intensity_min_slider, self.intensity_min_label)
-
         self.intensity_min_slider.valueChanged.connect(
             lambda: update_label_from_slider(self.intensity_min_slider, self.intensity_min_label)
         )
         layout.addWidget(QLabel("Minimum Intensity:"))
         layout.addWidget(self.intensity_min_label)
         layout.addWidget(self.intensity_min_slider)
-
-        # Minimum Intensity Info Icon
-        self.intensity_min_info = QLabel()
-        self.intensity_min_info.setPixmap(info_icon.scaled(19, 19))
-        self.intensity_min_info.setToolTip(
-            "The Minimum Intensity is the lowest sampled amount of total peptide intensity, also expressed as a power of 10.")
-        layout.addWidget(self.intensity_min_info)
-
+        min_info = QLabel()
+        min_info.setPixmap(self.info_icon.scaled(19, 19))
+        min_info.setToolTip("Minimum peptide intensity (as a power of 10).")
+        layout.addWidget(min_info)
         # Maximum Intensity
         self.intensity_max_label = QLabel()
         self.intensity_max_slider = QSlider(Qt.Horizontal)
         self.intensity_max_slider.setRange(0, 10)
-        self.intensity_max_slider.setValue(9)  # Default to 10^9
+        self.intensity_max_slider.setValue(9)
         update_label_from_slider(self.intensity_max_slider, self.intensity_max_label)
-
         self.intensity_max_slider.valueChanged.connect(
             lambda: update_label_from_slider(self.intensity_max_slider, self.intensity_max_label)
         )
         layout.addWidget(QLabel("Maximum Intensity:"))
         layout.addWidget(self.intensity_max_label)
         layout.addWidget(self.intensity_max_slider)
-
-        # Maximum Intensity Info Icon
-        self.intensity_max_info = QLabel()
-        self.intensity_max_info.setPixmap(info_icon.scaled(19, 19))
-        self.intensity_max_info.setToolTip(
-            "The Maximum Intensity defines the highest possible intensity for peptides in the dataset, expressed as a power of 10.")
-        layout.addWidget(self.intensity_max_info)
-
-        # Sample Occurrences Randomly
+        max_info = QLabel()
+        max_info.setPixmap(self.info_icon.scaled(19, 19))
+        max_info.setToolTip("Maximum peptide intensity (as a power of 10).")
+        layout.addWidget(max_info)
+        # Sample Occurrences
         self.sample_occurrences_checkbox = QCheckBox("Sample Occurrences Randomly")
         self.sample_occurrences_checkbox.setChecked(True)
         layout.addWidget(self.sample_occurrences_checkbox)
-
-        # Sample Occurrences Info Icon
-        self.sample_occurrences_info = QLabel()
-        self.sample_occurrences_info.setPixmap(info_icon.scaled(19, 19))
-        self.sample_occurrences_info.setToolTip(
-            "If checked, peptide occurrences will be sampled randomly from a clipped exponential distribution with above specified intensity properties.")
-        layout.addWidget(self.sample_occurrences_info)
-
+        occ_info = QLabel()
+        occ_info.setPixmap(self.info_icon.scaled(19, 19))
+        occ_info.setToolTip("If enabled, peptide occurrences will be randomly sampled.")
+        layout.addWidget(occ_info)
         # Fixed Intensity Value
         self.intensity_value_label = QLabel()
         self.intensity_value_slider = QSlider(Qt.Horizontal)
         self.intensity_value_slider.setRange(0, 10)
-        self.intensity_value_slider.setValue(6)  # Default to 10^6
+        self.intensity_value_slider.setValue(6)
         update_label_from_slider(self.intensity_value_slider, self.intensity_value_label)
-
         self.intensity_value_slider.valueChanged.connect(
             lambda: update_label_from_slider(self.intensity_value_slider, self.intensity_value_label)
         )
         layout.addWidget(QLabel("Fixed Intensity Value:"))
         layout.addWidget(self.intensity_value_label)
         layout.addWidget(self.intensity_value_slider)
-
-        # Fixed Intensity Info Icon
-        self.intensity_value_info = QLabel()
-        self.intensity_value_info.setPixmap(info_icon.scaled(19, 19))
-        self.intensity_value_info.setToolTip(
-            "Set a fixed intensity value (as a power of 10) for all peptides when random sampling is disabled.")
-        layout.addWidget(self.intensity_value_info)
+        fix_info = QLabel()
+        fix_info.setPixmap(self.info_icon.scaled(19, 19))
+        fix_info.setToolTip("Fixed intensity (as a power of 10) used if random sampling is disabled.")
+        layout.addWidget(fix_info)
+        self.peptide_intensity_group.setLayout(layout)
+        self.main_layout.addWidget(self.peptide_intensity_group)
 
     def init_isotopic_pattern_settings(self):
-        info_text = "Configure the isotopic pattern generation parameters, including the number of isotopes and intensity thresholds."
+        info_text = "Configure isotopic pattern generation (number of isotopes, intensity thresholds, centroiding)."
         self.isotopic_pattern_group = CollapsibleBox("Isotopic Pattern Settings", info_text)
         layout = self.isotopic_pattern_group.content_layout
-
-        # Load info icon image
-        info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-
-        # Number of Isotopes
-        self.isotope_k_label = QLabel("Maximum number of Isotopes:")
+        isotope_k_label = QLabel("Maximum number of Isotopes:")
         self.isotope_k_spin = QSpinBox()
         self.isotope_k_spin.setRange(1, 20)
         self.isotope_k_spin.setValue(8)
-        layout.addWidget(self.isotope_k_label)
+        layout.addWidget(isotope_k_label)
         layout.addWidget(self.isotope_k_spin)
-
-        # Number of Isotopes Info Icon
-        self.isotope_k_info = QLabel()
-        self.isotope_k_info.setPixmap(info_icon)
-        self.isotope_k_info.setToolTip(
-            "Specify the maximum number of isotopes to simulate for each peptide. Higher numbers increase simulation complexity.")
-        layout.addWidget(self.isotope_k_info)
-
-        # Minimum Isotope Intensity
-        self.isotope_min_intensity_label = QLabel("Minimum Isotope Intensity:")
+        k_info = QLabel()
+        k_info.setPixmap(self.info_icon)
+        k_info.setToolTip("Maximum isotopes to simulate for each peptide.")
+        layout.addWidget(k_info)
+        isotope_min_intensity_label = QLabel("Minimum Isotope Intensity:")
         self.isotope_min_intensity_spin = QSpinBox()
         self.isotope_min_intensity_spin.setRange(0, 1000)
         self.isotope_min_intensity_spin.setValue(1)
-        layout.addWidget(self.isotope_min_intensity_label)
+        layout.addWidget(isotope_min_intensity_label)
         layout.addWidget(self.isotope_min_intensity_spin)
-
-        # Minimum Isotope Intensity Info Icon
-        self.isotope_min_intensity_info = QLabel()
-        self.isotope_min_intensity_info.setPixmap(info_icon)
-        self.isotope_min_intensity_info.setToolTip(
-            "Set the threshold intensity for the smallest isotope in the pattern to still be considered in the simulation.")
-        layout.addWidget(self.isotope_min_intensity_info)
-
-        # Centroid Isotopes
+        min_info = QLabel()
+        min_info.setPixmap(self.info_icon)
+        min_info.setToolTip("Threshold intensity for the smallest isotope.")
+        layout.addWidget(min_info)
         self.isotope_centroid_checkbox = QCheckBox("Centroid Isotopes")
         self.isotope_centroid_checkbox.setChecked(True)
         layout.addWidget(self.isotope_centroid_checkbox)
-
-        # Centroid Isotopes Info Icon
-        self.isotope_centroid_info = QLabel()
-        self.isotope_centroid_info.setPixmap(info_icon)
-        self.isotope_centroid_info.setToolTip(
-            "Enable to centroid isotopes, averaging peak positions for a simplified pattern (should be kept True since timsTOF centroids peaks).")
-        layout.addWidget(self.isotope_centroid_info)
-
-        # Add isotopic pattern group to main layout
+        centroid_info = QLabel()
+        centroid_info.setPixmap(self.info_icon)
+        centroid_info.setToolTip("Enable to centroid isotopic peaks.")
+        layout.addWidget(centroid_info)
         self.main_layout.addWidget(self.isotopic_pattern_group)
 
     def init_distribution_settings(self):
-        info_text = "Adjust the parameters for signal distribution in the simulation, including gradient length and skewness."
+        info_text = "Adjust signal distribution parameters including gradient length, retention time spread, and ion mobility spread."
         self.distribution_settings_group = CollapsibleBox("Signal Distribution Settings", info_text)
-
-        # Create a horizontal layout to hold settings and plot side by side
         main_layout = QHBoxLayout()
-
-        # Left vertical layout for settings
         settings_layout = QVBoxLayout()
-
-        # Right vertical layout for the plot
         plot_layout = QVBoxLayout()
-
-        # Define your settings in a list of dictionaries
+        # List of settings – note the two new ones for ion mobility
         settings = [
             {
                 'attribute_name': 'gradient_length_spin',
                 'label_text': 'Gradient Length (seconds):',
-                'tooltip_text': 'Defines the total length of the simulated chromatographic gradient in seconds.',
+                'tooltip_text': 'Total length of the simulated chromatographic gradient in seconds.',
                 'min_value': 1,
                 'max_value': 1e5,
                 'default_value': 3600,
@@ -957,7 +664,7 @@ class MainWindow(QMainWindow):
             {
                 'attribute_name': 'mean_std_rt_spin',
                 'label_text': 'Mean Std RT:',
-                'tooltip_text': 'The mean standard deviation for retention time, affecting peak widths.',
+                'tooltip_text': 'Mean standard deviation for retention time (affects peak widths).',
                 'min_value': 0.1,
                 'max_value': 10,
                 'default_value': 1.0,
@@ -966,7 +673,7 @@ class MainWindow(QMainWindow):
             {
                 'attribute_name': 'variance_std_rt_spin',
                 'label_text': 'Variance Std RT:',
-                'tooltip_text': 'Variance of the standard deviation of retention time, affecting variance of distribution spread.',
+                'tooltip_text': 'Variance of the retention time standard deviation.',
                 'min_value': 0,
                 'max_value': 5,
                 'default_value': 0.1,
@@ -975,7 +682,7 @@ class MainWindow(QMainWindow):
             {
                 'attribute_name': 'mean_skewness_spin',
                 'label_text': 'Mean Skewness:',
-                'tooltip_text': 'Average skewness for retention time distribution, impacting peak asymmetry.',
+                'tooltip_text': 'Average skewness of the retention time distribution.',
                 'min_value': 0,
                 'max_value': 5,
                 'default_value': 1.5,
@@ -984,34 +691,16 @@ class MainWindow(QMainWindow):
             {
                 'attribute_name': 'variance_skewness_spin',
                 'label_text': 'Variance Skewness:',
-                'tooltip_text': 'Variance in skewness of retention time distribution, altering peak shapes.',
+                'tooltip_text': 'Variance in the skewness of retention time.',
                 'min_value': 0,
                 'max_value': 5,
                 'default_value': 0.1,
                 'decimals': 2
             },
             {
-                'attribute_name': 'std_im_spin',
-                'label_text': 'Standard Deviation IM:',
-                'tooltip_text': 'Standard deviation in ion mobility, which affects peak width in the mobility dimension.',
-                'min_value': 0,
-                'max_value': 1,
-                'default_value': 0.01,
-                'decimals': 4
-            },
-            {
-                'attribute_name': 'variance_std_im_spin',
-                'label_text': 'Variance Std IM:',
-                'tooltip_text': 'Variance of the standard deviation of ion mobility, affecting distribution spread.',
-                'min_value': 0,
-                'max_value': 1,
-                'default_value': 0.001,
-                'decimals': 4
-            },
-            {
                 'attribute_name': 'z_score_spin',
                 'label_text': 'Z-Score:',
-                'tooltip_text': 'Defines the z-score threshold for filtering data, removing low-signal regions.',
+                'tooltip_text': 'Z-score threshold for filtering low-signal regions.',
                 'min_value': 0,
                 'max_value': 5,
                 'default_value': 0.99,
@@ -1020,7 +709,7 @@ class MainWindow(QMainWindow):
             {
                 'attribute_name': 'target_p_spin',
                 'label_text': 'Target Percentile:',
-                'tooltip_text': 'Specifies the target percentile for retention time, capturing high-density regions.',
+                'tooltip_text': 'Target percentile for high-density regions in the data.',
                 'min_value': 0,
                 'max_value': 1,
                 'default_value': 0.999,
@@ -1029,49 +718,34 @@ class MainWindow(QMainWindow):
             {
                 'attribute_name': 'sampling_step_size_spin',
                 'label_text': 'Sampling Step Size:',
-                'tooltip_text': 'Sets the step size for data sampling, adjusting resolution and computation time.',
+                'tooltip_text': 'Step size for data sampling (affects resolution and speed).',
                 'min_value': 0,
                 'max_value': 1,
                 'default_value': 0.001,
                 'decimals': 4
             },
         ]
-
-        # Loop over the settings and add them to the layout
         for setting in settings:
-            self.add_spinbox_with_info(
-                layout=settings_layout,
-                attribute_name=setting['attribute_name'],
-                label_text=setting['label_text'],
-                tooltip_text=setting['tooltip_text'],
-                min_value=setting['min_value'],
-                max_value=setting['max_value'],
-                default_value=setting['default_value'],
-                decimals=setting.get('decimals', 2),
-                step=setting.get('step', None)
-            )
-
-        # Add the EMG visualization to the plot layout
+            self.add_spinbox_with_info(settings_layout,
+                                       attribute_name=setting['attribute_name'],
+                                       label_text=setting['label_text'],
+                                       tooltip_text=setting['tooltip_text'],
+                                       min_value=setting['min_value'],
+                                       max_value=setting['max_value'],
+                                       default_value=setting['default_value'],
+                                       decimals=setting.get('decimals', 2),
+                                       step=setting.get('step', None))
         self.emg_plot = EMGPlot()
         plot_layout.addWidget(self.emg_plot)
-
-        # Add settings and plot layouts to the main horizontal layout
         main_layout.addLayout(settings_layout)
         main_layout.addLayout(plot_layout)
-
-        # Set the main layout to the content layout of the collapsible group
         self.distribution_settings_group.content_layout.addLayout(main_layout)
-
-        # Connect the spin boxes to the EMGPlot methods
         self.mean_std_rt_spin.valueChanged.connect(self.update_emg_std)
         self.variance_std_rt_spin.valueChanged.connect(self.update_emg_std_variance)
         self.mean_skewness_spin.valueChanged.connect(self.update_emg_skewness)
         self.variance_skewness_spin.valueChanged.connect(self.update_emg_skewness_variance)
-
-        # Add the distribution settings group to the main layout
         self.main_layout.addWidget(self.distribution_settings_group)
 
-    # Methods to update EMGPlot parameters
     def update_emg_std(self, value):
         self.emg_plot.set_std(value)
 
@@ -1085,36 +759,28 @@ class MainWindow(QMainWindow):
         self.emg_plot.set_skewness_variance(value)
 
     def init_noise_settings(self):
-        info_text = "Configure the noise parameters for the simulation, including adding m/z noise and real data noise."
+        info_text = "Configure simulation noise parameters, including m/z noise and real data noise options."
         self.noise_settings_group = CollapsibleBox("Noise Settings", info_text)
         layout = self.noise_settings_group.content_layout
-
-        # Load info icon image
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-
-        # Add Noise to Signals
         noise_signals_layout = QHBoxLayout()
         self.add_noise_to_signals_checkbox = QCheckBox("Add Noise to Signals")
         self.add_noise_to_signals_checkbox.setChecked(True)
         noise_signals_layout.addWidget(self.add_noise_to_signals_checkbox)
-        self.add_noise_to_signals_info = QLabel()
-        self.add_noise_to_signals_info.setPixmap(info_icon)
-        self.add_noise_to_signals_info.setToolTip("Enable or disable adding random noise to signal intensities.")
-        noise_signals_layout.addWidget(self.add_noise_to_signals_info)
+        noise_signals_info = QLabel()
+        noise_signals_info.setPixmap(info_icon)
+        noise_signals_info.setToolTip("Add random noise to signal intensities in RT and IM.")
+        noise_signals_layout.addWidget(noise_signals_info)
         layout.addLayout(noise_signals_layout)
-
-        # Add Precursor M/Z Noise
         mz_noise_precursor_layout = QHBoxLayout()
         self.mz_noise_precursor_checkbox = QCheckBox("Add Precursor M/Z Noise")
         self.mz_noise_precursor_checkbox.setChecked(True)
         mz_noise_precursor_layout.addWidget(self.mz_noise_precursor_checkbox)
-        self.mz_noise_precursor_info = QLabel()
-        self.mz_noise_precursor_info.setPixmap(info_icon)
-        self.mz_noise_precursor_info.setToolTip("Add random noise to precursor m/z values.")
-        mz_noise_precursor_layout.addWidget(self.mz_noise_precursor_info)
+        mz_noise_precursor_info = QLabel()
+        mz_noise_precursor_info.setPixmap(info_icon)
+        mz_noise_precursor_info.setToolTip("Add noise to precursor m/z values.")
+        mz_noise_precursor_layout.addWidget(mz_noise_precursor_info)
         layout.addLayout(mz_noise_precursor_layout)
-
-        # Precursor Noise PPM
         precursor_noise_ppm_layout = QHBoxLayout()
         self.precursor_noise_ppm_label = QLabel("Precursor Noise PPM:")
         self.precursor_noise_ppm_spin = QDoubleSpinBox()
@@ -1122,24 +788,20 @@ class MainWindow(QMainWindow):
         self.precursor_noise_ppm_spin.setValue(5.0)
         precursor_noise_ppm_layout.addWidget(self.precursor_noise_ppm_label)
         precursor_noise_ppm_layout.addWidget(self.precursor_noise_ppm_spin)
-        self.precursor_noise_ppm_info = QLabel()
-        self.precursor_noise_ppm_info.setPixmap(info_icon)
-        self.precursor_noise_ppm_info.setToolTip("Set the noise level (in parts per million) for precursor m/z values.")
-        precursor_noise_ppm_layout.addWidget(self.precursor_noise_ppm_info)
+        precursor_noise_ppm_info = QLabel()
+        precursor_noise_ppm_info.setPixmap(info_icon)
+        precursor_noise_ppm_info.setToolTip("Noise level (ppm) for precursor m/z values.")
+        precursor_noise_ppm_layout.addWidget(precursor_noise_ppm_info)
         layout.addLayout(precursor_noise_ppm_layout)
-
-        # Add Fragment M/Z Noise
         mz_noise_fragment_layout = QHBoxLayout()
         self.mz_noise_fragment_checkbox = QCheckBox("Add Fragment M/Z Noise")
         self.mz_noise_fragment_checkbox.setChecked(True)
         mz_noise_fragment_layout.addWidget(self.mz_noise_fragment_checkbox)
-        self.mz_noise_fragment_info = QLabel()
-        self.mz_noise_fragment_info.setPixmap(info_icon)
-        self.mz_noise_fragment_info.setToolTip("Add random noise to fragment m/z values.")
-        mz_noise_fragment_layout.addWidget(self.mz_noise_fragment_info)
+        mz_noise_fragment_info = QLabel()
+        mz_noise_fragment_info.setPixmap(info_icon)
+        mz_noise_fragment_info.setToolTip("Add noise to fragment m/z values.")
+        mz_noise_fragment_layout.addWidget(mz_noise_fragment_info)
         layout.addLayout(mz_noise_fragment_layout)
-
-        # Fragment Noise PPM
         fragment_noise_ppm_layout = QHBoxLayout()
         self.fragment_noise_ppm_label = QLabel("Fragment Noise PPM:")
         self.fragment_noise_ppm_spin = QDoubleSpinBox()
@@ -1147,36 +809,29 @@ class MainWindow(QMainWindow):
         self.fragment_noise_ppm_spin.setValue(5.0)
         fragment_noise_ppm_layout.addWidget(self.fragment_noise_ppm_label)
         fragment_noise_ppm_layout.addWidget(self.fragment_noise_ppm_spin)
-        self.fragment_noise_ppm_info = QLabel()
-        self.fragment_noise_ppm_info.setPixmap(info_icon)
-        self.fragment_noise_ppm_info.setToolTip("Set the noise level (in parts per million) for fragment m/z values.")
-        fragment_noise_ppm_layout.addWidget(self.fragment_noise_ppm_info)
+        fragment_noise_ppm_info = QLabel()
+        fragment_noise_ppm_info.setPixmap(info_icon)
+        fragment_noise_ppm_info.setToolTip("Noise level (ppm) for fragment m/z values.")
+        fragment_noise_ppm_layout.addWidget(fragment_noise_ppm_info)
         layout.addLayout(fragment_noise_ppm_layout)
-
-        # Use Uniform Distribution
         mz_noise_uniform_layout = QHBoxLayout()
         self.mz_noise_uniform_checkbox = QCheckBox("Use Uniform Distribution for M/Z Noise")
         self.mz_noise_uniform_checkbox.setChecked(False)
         mz_noise_uniform_layout.addWidget(self.mz_noise_uniform_checkbox)
-        self.mz_noise_uniform_info = QLabel()
-        self.mz_noise_uniform_info.setPixmap(info_icon)
-        self.mz_noise_uniform_info.setToolTip(
-            "If enabled, use a uniform distribution instead of Gaussian for m/z noise.")
-        mz_noise_uniform_layout.addWidget(self.mz_noise_uniform_info)
+        mz_noise_uniform_info = QLabel()
+        mz_noise_uniform_info.setPixmap(info_icon)
+        mz_noise_uniform_info.setToolTip("Use uniform instead of Gaussian distribution for m/z noise.")
+        mz_noise_uniform_layout.addWidget(mz_noise_uniform_info)
         layout.addLayout(mz_noise_uniform_layout)
-
-        # Add Real Data Noise
         real_data_noise_layout = QHBoxLayout()
         self.add_real_data_noise_checkbox = QCheckBox("Add Real Data Noise")
         self.add_real_data_noise_checkbox.setChecked(True)
         real_data_noise_layout.addWidget(self.add_real_data_noise_checkbox)
-        self.add_real_data_noise_info = QLabel()
-        self.add_real_data_noise_info.setPixmap(info_icon)
-        self.add_real_data_noise_info.setToolTip("Add noise derived from real data samples.")
-        real_data_noise_layout.addWidget(self.add_real_data_noise_info)
+        real_data_noise_info = QLabel()
+        real_data_noise_info.setPixmap(info_icon)
+        real_data_noise_info.setToolTip("Add noise based on real data samples.")
+        real_data_noise_layout.addWidget(real_data_noise_info)
         layout.addLayout(real_data_noise_layout)
-
-        # Reference Noise Intensity Max
         reference_noise_intensity_layout = QHBoxLayout()
         self.reference_noise_intensity_max_label = QLabel("Reference Noise Intensity Max:")
         self.reference_noise_intensity_max_spin = QDoubleSpinBox()
@@ -1184,38 +839,30 @@ class MainWindow(QMainWindow):
         self.reference_noise_intensity_max_spin.setValue(75)
         reference_noise_intensity_layout.addWidget(self.reference_noise_intensity_max_label)
         reference_noise_intensity_layout.addWidget(self.reference_noise_intensity_max_spin)
-        self.reference_noise_intensity_info = QLabel()
-        self.reference_noise_intensity_info.setPixmap(info_icon)
-        self.reference_noise_intensity_info.setToolTip(
-            "Set the maximum noise intensity for reference data samples."
-        )
-        reference_noise_intensity_layout.addWidget(self.reference_noise_intensity_info)
+        reference_noise_intensity_info = QLabel()
+        reference_noise_intensity_info.setPixmap(info_icon)
+        reference_noise_intensity_info.setToolTip("Maximum noise intensity from reference data samples.")
+        reference_noise_intensity_layout.addWidget(reference_noise_intensity_info)
         layout.addLayout(reference_noise_intensity_layout)
-
-        # Downsample Factor
         downsample_factor_layout = QHBoxLayout()
-        self.down_sample_factor_label = QLabel("Fragment downsample Factor:")
+        self.down_sample_factor_label = QLabel("Fragment Downsample Factor:")
         self.down_sample_factor_spin = QDoubleSpinBox()
         self.down_sample_factor_spin.setRange(0, 1)
         self.down_sample_factor_spin.setDecimals(2)
         self.down_sample_factor_spin.setValue(0.5)
         downsample_factor_layout.addWidget(self.down_sample_factor_label)
         downsample_factor_layout.addWidget(self.down_sample_factor_spin)
-        self.down_sample_factor_info = QLabel()
-        self.down_sample_factor_info.setPixmap(info_icon)
-        self.down_sample_factor_info.setToolTip("Set the downsample factor for fragment ions, fragment ions will be de-selected with probability inverse proportional to their intensity until the specified factor is reached.")
-        downsample_factor_layout.addWidget(self.down_sample_factor_info)
+        downsample_factor_info = QLabel()
+        downsample_factor_info.setPixmap(info_icon)
+        downsample_factor_info.setToolTip("Downsample fragment ions based on intensity.")
+        downsample_factor_layout.addWidget(downsample_factor_info)
         layout.addLayout(downsample_factor_layout)
 
     def init_charge_state_probabilities(self):
-        info_text = "Set the probabilities for different charge states of peptides."
+        info_text = "Set probabilities for peptide charge states."
         self.charge_state_probabilities_group = CollapsibleBox("Charge State Probabilities", info_text)
         layout = self.charge_state_probabilities_group.content_layout
-
-        # Load info icon image
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-
-        # Probability of Charge
         p_charge_layout = QHBoxLayout()
         self.p_charge_label = QLabel("Probability of Charge:")
         self.p_charge_spin = QDoubleSpinBox()
@@ -1224,13 +871,11 @@ class MainWindow(QMainWindow):
         self.p_charge_spin.setValue(0.5)
         p_charge_layout.addWidget(self.p_charge_label)
         p_charge_layout.addWidget(self.p_charge_spin)
-        self.p_charge_info = QLabel()
-        self.p_charge_info.setPixmap(info_icon)
-        self.p_charge_info.setToolTip("Defines the probability for a peptide to adopt a specific charge state.")
-        p_charge_layout.addWidget(self.p_charge_info)
+        p_charge_info = QLabel()
+        p_charge_info.setPixmap(info_icon)
+        p_charge_info.setToolTip("Probability for a peptide to adopt a given charge state.")
+        p_charge_layout.addWidget(p_charge_info)
         layout.addLayout(p_charge_layout)
-
-        # Minimum Charge Contribution
         min_charge_contrib_layout = QHBoxLayout()
         self.min_charge_contrib_label = QLabel("Minimum Charge Contribution:")
         self.min_charge_contrib_spin = QDoubleSpinBox()
@@ -1239,23 +884,17 @@ class MainWindow(QMainWindow):
         self.min_charge_contrib_spin.setValue(0.25)
         min_charge_contrib_layout.addWidget(self.min_charge_contrib_label)
         min_charge_contrib_layout.addWidget(self.min_charge_contrib_spin)
-        self.min_charge_contrib_info = QLabel()
-        self.min_charge_contrib_info.setPixmap(info_icon)
-        self.min_charge_contrib_info.setToolTip(
-            "Specifies the minimum contribution of peptides with this charge state in the simulation."
-        )
-        min_charge_contrib_layout.addWidget(self.min_charge_contrib_info)
+        min_charge_contrib_info = QLabel()
+        min_charge_contrib_info.setPixmap(info_icon)
+        min_charge_contrib_info.setToolTip("Minimum relative contribution of peptides with this charge state.")
+        min_charge_contrib_layout.addWidget(min_charge_contrib_info)
         layout.addLayout(min_charge_contrib_layout)
 
     def init_performance_settings(self):
-        info_text = "Adjust performance-related settings, such as the number of threads and batch size."
+        info_text = "Adjust performance settings such as threading and batch size."
         self.performance_settings_group = CollapsibleBox("Performance Settings", info_text)
         layout = self.performance_settings_group.content_layout
-
-        # Load info icon image
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-
-        # Number of Threads
         num_threads_layout = QHBoxLayout()
         self.num_threads_label = QLabel("Number of Threads:")
         self.num_threads_spin = QSpinBox()
@@ -1263,17 +902,11 @@ class MainWindow(QMainWindow):
         self.num_threads_spin.setValue(-1)
         num_threads_layout.addWidget(self.num_threads_label)
         num_threads_layout.addWidget(self.num_threads_spin)
-
-        self.num_threads_info = QLabel()
-        self.num_threads_info.setPixmap(info_icon)
-        self.num_threads_info.setToolTip(
-            "Set the number of threads for parallel processing. "
-            "Use -1 to auto-detect the number of available cores."
-        )
-        num_threads_layout.addWidget(self.num_threads_info)
+        num_threads_info = QLabel()
+        num_threads_info.setPixmap(info_icon)
+        num_threads_info.setToolTip("Number of threads to use (-1 uses all available cores).")
+        num_threads_layout.addWidget(num_threads_info)
         layout.addLayout(num_threads_layout)
-
-        # Batch Size
         batch_size_layout = QHBoxLayout()
         self.batch_size_label = QLabel("Batch Size:")
         self.batch_size_spin = QSpinBox()
@@ -1281,33 +914,22 @@ class MainWindow(QMainWindow):
         self.batch_size_spin.setValue(256)
         batch_size_layout.addWidget(self.batch_size_label)
         batch_size_layout.addWidget(self.batch_size_spin)
-
-        self.batch_size_info = QLabel()
-        self.batch_size_info.setPixmap(info_icon)
-        self.batch_size_info.setToolTip(
-            "Specify the batch size for processing. Larger batches may improve performance "
-            "at the cost of memory usage."
-        )
-        batch_size_layout.addWidget(self.batch_size_info)
+        batch_size_info = QLabel()
+        batch_size_info.setPixmap(info_icon)
+        batch_size_info.setToolTip("Size of each processing batch.")
+        batch_size_layout.addWidget(batch_size_info)
         layout.addLayout(batch_size_layout)
-
-        # Add a big RUN button
         self.run_button = QPushButton("RUN Simulation")
         self.run_button.setFixedHeight(50)
         self.run_button.setFont(QFont('Arial', 14))
-        # Set button style
         self.run_button.setStyleSheet("background-color: #6a994e; color: white; border: none;")
         self.run_button.clicked.connect(self.run_simulation)
-
-        # CANCEL button (initially hidden)
         self.cancel_button = QPushButton("CANCEL Simulation")
         self.cancel_button.setFixedHeight(50)
         self.cancel_button.setFont(QFont('Arial', 14))
         self.cancel_button.setStyleSheet("background-color: #bc4749; color: white; border: none;")
         self.cancel_button.clicked.connect(self.cancel_simulation)
         self.cancel_button.setVisible(False)
-
-        # Placeholder methods for browsing files
 
     def browse_save_path(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Save Directory")
@@ -1342,14 +964,10 @@ class MainWindow(QMainWindow):
     def init_console(self):
         self.console = QTextEdit()
         self.console.setReadOnly(True)
-        self.console.setFixedHeight(500)  # Adjust the height as needed
-        self.console.setFont(QFont('Courier', 10))  # Use a monospace font for console output
+        self.console.setFixedHeight(500)
+        self.console.setFont(QFont('Courier', 10))
 
     def run_simulation(self):
-        # Collect all parameters and run the simulation
-        # This function will map GUI inputs to command-line arguments
-
-        # Collect parameters from Main Settings
         save_path = self.path_input.text()
         reference_path = self.reference_input.text()
         fasta_path = self.fasta_input.text()
@@ -1363,8 +981,8 @@ class MainWindow(QMainWindow):
         proteome_mix = self.proteome_mix_checkbox.isChecked()
         silent_mode = self.silent_checkbox.isChecked()
         apply_fragmentation = self.apply_fragmentation_checkbox.isChecked()
+        phospho_mode = self.phospho_mode_checkbox.isChecked()
 
-        # Collect other parameters
         num_sample_peptides = self.num_sample_peptides_spin.value()
         missed_cleavages = self.missed_cleavages_spin.value()
         min_len = self.min_len_spin.value()
@@ -1379,13 +997,9 @@ class MainWindow(QMainWindow):
         sample_occurrences = self.sample_occurrences_checkbox.isChecked()
         intensity_value = 10 ** self.intensity_value_slider.value()
 
-        # Validation conditions
         if not (intensity_min < intensity_mean < intensity_max):
-            QMessageBox.warning(
-                self,
-                "Invalid Intensity Settings",
-                "Ensure that:\n- Minimum Intensity < Mean Intensity < Maximum Intensity.\nPlease adjust the values and try again."
-            )
+            QMessageBox.warning(self, "Invalid Intensity Settings",
+                                "Ensure that Minimum Intensity < Mean Intensity < Maximum Intensity.")
             return
 
         isotope_k = self.isotope_k_spin.value()
@@ -1397,8 +1011,6 @@ class MainWindow(QMainWindow):
         variance_std_rt = self.variance_std_rt_spin.value()
         mean_skewness = self.mean_skewness_spin.value()
         variance_skewness = self.variance_skewness_spin.value()
-        std_im = self.std_im_spin.value()
-        variance_std_im = self.variance_std_im_spin.value()
         z_score = self.z_score_spin.value()
         target_p = self.target_p_spin.value()
         sampling_step_size = self.sampling_step_size_spin.value()
@@ -1423,13 +1035,10 @@ class MainWindow(QMainWindow):
         use_existing_path = self.existing_path_input.text()
 
         multi_fasta_dilution_path = None
-
-        # Check if proteome mix is enabled
         if proteome_mix:
             fasta_path = self.multi_fasta_input.text()
             multi_fasta_dilution_path = self.multi_fasta_dilution_input.text()
 
-        # Build the argument list
         args = [
             "timsim",
             save_path,
@@ -1455,8 +1064,6 @@ class MainWindow(QMainWindow):
             "--variance_std_rt", str(variance_std_rt),
             "--mean_skewness", str(mean_skewness),
             "--variance_skewness", str(variance_skewness),
-            "--std_im", str(std_im),
-            "--variance_std_im", str(variance_std_im),
             "--z_score", str(z_score),
             "--target_p", str(target_p),
             "--sampling_step_size", str(sampling_step_size),
@@ -1468,14 +1075,10 @@ class MainWindow(QMainWindow):
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
-            "--existing_path", str(use_existing_path),
+            "--existing_path", use_existing_path,
         ]
-
-        # Check for dilution path
         if multi_fasta_dilution_path and proteome_mix:
             args.extend(["--multi_fasta_dilution", multi_fasta_dilution_path])
-
-        # Add boolean flags
         if not use_reference_layout:
             args.append("--no_reference_layout")
         if reference_in_memory:
@@ -1506,32 +1109,20 @@ class MainWindow(QMainWindow):
             args.append("--from_existing")
         if apply_fragmentation:
             args.append("--apply_fragmentation")
-
-        # Include modifications if provided
+        if phospho_mode:
+            args.append("--phospho_mode")
         if modifications:
             args.extend(["--modifications", modifications])
-
-        # Convert the list to strings
         args = [str(arg) for arg in args]
-
-        # Ensure no existing process is running before starting a new one
         if self.process and self.process.state() == QProcess.Running:
             self.process.kill()
-
-        # Update buttons
         self.run_button.setEnabled(False)
         self.run_button.setStyleSheet("background-color: #6d6875; color: white; border: none;")
         self.cancel_button.setVisible(True)
-
-        # Initialize QProcess
         self.process = QProcess()
         self.process.setProcessChannelMode(QProcess.MergedChannels)
-
-        # Connect signals to handle output and completion
         self.process.readyReadStandardOutput.connect(self.handle_stdout)
         self.process.finished.connect(self.process_finished)
-
-        # Start the process
         self.process.start(args[0], args[1:])
 
     def handle_stdout(self):
@@ -1543,59 +1134,37 @@ class MainWindow(QMainWindow):
         self.console.append("Simulation finished.")
         self.run_button.setEnabled(True)
         self.run_button.setStyleSheet("background-color: #6a994e; color: white; border: none;")
-
         self.cancel_button.setVisible(False)
 
     def cancel_simulation(self):
-        if self.process is not None and self.process.state() == QProcess.Running:
-            # Prompt the user to confirm cancellation
-            reply = QMessageBox.question(
-                self,
-                "Cancel Simulation",
-                "Are you sure you want to cancel the simulation?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-
-            # If the user confirms, cancel the simulation
+        if self.process and self.process.state() == QProcess.Running:
+            reply = QMessageBox.question(self, "Cancel Simulation",
+                                         "Are you sure you want to cancel the simulation?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.Yes:
                 self.process.kill()
                 self.console.append("Simulation canceled by user.")
-                self.process_finished()  # Clean up UI and reset buttons
+                self.process_finished()
             else:
                 self.console.append("Cancellation aborted by user.")
 
     def closeEvent(self, event):
-        if self.process is not None and self.process.state() == QProcess.Running:
-            # Prompt the user to confirm they want to terminate the running process
-            reply = QMessageBox.question(
-                self,
-                "Exit Application",
-                "A simulation is currently running. Do you want to terminate it?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
-            )
-
+        if self.process and self.process.state() == QProcess.Running:
+            reply = QMessageBox.question(self, "Exit Application",
+                                         "A simulation is running. Terminate it?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.Yes:
-                # Kill the process and accept the event to close the application
                 self.process.kill()
                 event.accept()
             else:
-                # Ignore the close event if the user chooses not to terminate the process
                 event.ignore()
         else:
-            # No running process, so close the application normally
             event.accept()
 
     def save_config(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Config File",
-            "",
-            "TOML Files (*.toml);;All Files (*)",
-            options=options
-        )
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config File", "",
+                                                   "TOML Files (*.toml);;All Files (*)", options=options)
         if file_path:
             try:
                 config = self.collect_settings()
@@ -1607,13 +1176,8 @@ class MainWindow(QMainWindow):
 
     def load_config(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Config File",
-            "",
-            "TOML Files (*.toml);;All Files (*)",
-            options=options
-        )
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Config File", "",
+                                                   "TOML Files (*.toml);;All Files (*)", options=options)
         if file_path:
             try:
                 with open(file_path, 'r') as config_file:
@@ -1625,23 +1189,16 @@ class MainWindow(QMainWindow):
 
     def load_modifications(self):
         options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Load Modifications File",
-            "",
-            "TOML Files (*.toml);;All Files (*)",
-            options=options
-        )
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Modifications File", "",
+                                                   "TOML Files (*.toml);;All Files (*)", options=options)
         if file_path:
             QMessageBox.information(self, "Success", "Modifications loaded successfully.")
             self.mods_input.setText(file_path)
         else:
-            QMessageBox.warning(self, "Error", f"Failed to load modifications file.")
+            QMessageBox.warning(self, "Error", "Failed to load modifications file.")
 
     def collect_settings(self):
         config = {}
-
-        # Main Settings
         config['main_settings'] = {
             'save_path': self.path_input.text(),
             'reference_path': self.reference_input.text(),
@@ -1658,11 +1215,10 @@ class MainWindow(QMainWindow):
             'from_existing': self.from_existing_checkbox.isChecked(),
             'existing_path': self.existing_path_input.text(),
             'apply_fragmentation': self.apply_fragmentation_checkbox.isChecked(),
+            'phospho_mode': self.phospho_mode_checkbox.isChecked(),
             'multi_fasta': self.multi_fasta_input.text(),
             'multi_fasta_dilution': self.multi_fasta_dilution_input.text(),
         }
-
-        # Peptide Digestion Settings
         config['peptide_digestion'] = {
             'num_sample_peptides': self.num_sample_peptides_spin.value(),
             'missed_cleavages': self.missed_cleavages_spin.value(),
@@ -1672,8 +1228,6 @@ class MainWindow(QMainWindow):
             'restrict': self.restrict_input.text(),
             'modifications': self.mods_input.text(),
         }
-
-        # Peptide Intensity Settings
         config['peptide_intensity'] = {
             'intensity_mean': self.intensity_mean_slider.value(),
             'intensity_min': self.intensity_min_slider.value(),
@@ -1681,29 +1235,21 @@ class MainWindow(QMainWindow):
             'sample_occurrences': self.sample_occurrences_checkbox.isChecked(),
             'intensity_value': self.intensity_value_slider.value(),
         }
-
-        # Isotopic Pattern Settings
         config['isotopic_pattern'] = {
             'isotope_k': self.isotope_k_spin.value(),
             'isotope_min_intensity': self.isotope_min_intensity_spin.value(),
             'isotope_centroid': self.isotope_centroid_checkbox.isChecked(),
         }
-
-        # Distribution Settings
         config['distribution_settings'] = {
             'gradient_length': self.gradient_length_spin.value(),
             'mean_std_rt': self.mean_std_rt_spin.value(),
             'variance_std_rt': self.variance_std_rt_spin.value(),
             'mean_skewness': self.mean_skewness_spin.value(),
             'variance_skewness': self.variance_skewness_spin.value(),
-            'std_im': self.std_im_spin.value(),
-            'variance_std_im': self.variance_std_im_spin.value(),
             'z_score': self.z_score_spin.value(),
             'target_p': self.target_p_spin.value(),
             'sampling_step_size': self.sampling_step_size_spin.value(),
         }
-
-        # Noise Settings
         config['noise_settings'] = {
             'add_noise_to_signals': self.add_noise_to_signals_checkbox.isChecked(),
             'mz_noise_precursor': self.mz_noise_precursor_checkbox.isChecked(),
@@ -1715,23 +1261,17 @@ class MainWindow(QMainWindow):
             'reference_noise_intensity_max': self.reference_noise_intensity_max_spin.value(),
             'down_sample_factor': self.down_sample_factor_spin.value(),
         }
-
-        # Charge State Probabilities
         config['charge_state_probabilities'] = {
             'p_charge': self.p_charge_spin.value(),
             'min_charge_contrib': self.min_charge_contrib_spin.value(),
         }
-
-        # Performance Settings
         config['performance_settings'] = {
             'num_threads': self.num_threads_spin.value(),
             'batch_size': self.batch_size_spin.value(),
         }
-
         return config
 
     def apply_settings(self, config):
-        # Main Settings
         main_settings = config.get('main_settings', {})
         self.path_input.setText(main_settings.get('save_path', ''))
         self.reference_input.setText(main_settings.get('reference_path', ''))
@@ -1748,13 +1288,12 @@ class MainWindow(QMainWindow):
         self.add_decoys_checkbox.setChecked(main_settings.get('add_decoys', False))
         self.proteome_mix_checkbox.setChecked(main_settings.get('proteome_mix', False))
         self.silent_checkbox.setChecked(main_settings.get('silent_mode', False))
-        self.apply_fragmentation_checkbox.setChecked(main_settings.get('fragmentation', True))
+        self.apply_fragmentation_checkbox.setChecked(main_settings.get('apply_fragmentation', False))
+        self.phospho_mode_checkbox.setChecked(main_settings.get('phospho_mode', False))
         self.from_existing_checkbox.setChecked(main_settings.get('from_existing', False))
         self.existing_path_input.setText(main_settings.get('existing_path', ''))
         self.multi_fasta_input.setText(main_settings.get('multi_fasta', ''))
         self.multi_fasta_dilution_input.setText(main_settings.get('multi_fasta_dilution', ''))
-
-        # Peptide Digestion Settings
         peptide_digestion = config.get('peptide_digestion', {})
         self.num_sample_peptides_spin.setValue(peptide_digestion.get('num_sample_peptides', 25000))
         self.missed_cleavages_spin.setValue(peptide_digestion.get('missed_cleavages', 2))
@@ -1763,36 +1302,25 @@ class MainWindow(QMainWindow):
         self.cleave_at_input.setText(peptide_digestion.get('cleave_at', 'KR'))
         self.restrict_input.setText(peptide_digestion.get('restrict', 'P'))
         self.mods_input.setText(peptide_digestion.get('modifications', ''))
-
-        # Peptide Intensity Settings
         peptide_intensity = config.get('peptide_intensity', {})
-        self.intensity_mean_slider.setValue(peptide_intensity.get('intensity_mean', 1e7))
-        self.intensity_min_slider.setValue(peptide_intensity.get('intensity_min', 1e5))
-        self.intensity_max_slider.setValue(peptide_intensity.get('intensity_max', 1e9))
+        self.intensity_mean_slider.setValue(peptide_intensity.get('intensity_mean', 7))
+        self.intensity_min_slider.setValue(peptide_intensity.get('intensity_min', 5))
+        self.intensity_max_slider.setValue(peptide_intensity.get('intensity_max', 9))
         self.sample_occurrences_checkbox.setChecked(peptide_intensity.get('sample_occurrences', True))
-        self.intensity_value_slider.setValue(peptide_intensity.get('intensity_value', 1e6))
-
-        # Isotopic Pattern Settings
+        self.intensity_value_slider.setValue(peptide_intensity.get('intensity_value', 6))
         isotopic_pattern = config.get('isotopic_pattern', {})
         self.isotope_k_spin.setValue(isotopic_pattern.get('isotope_k', 8))
         self.isotope_min_intensity_spin.setValue(isotopic_pattern.get('isotope_min_intensity', 1))
         self.isotope_centroid_checkbox.setChecked(isotopic_pattern.get('isotope_centroid', True))
-
-        # Distribution Settings
         distribution_settings = config.get('distribution_settings', {})
         self.gradient_length_spin.setValue(distribution_settings.get('gradient_length', 3600))
-        self.mean_std_rt_spin.setValue(distribution_settings.get('mean_std_rt', 1.5))
-        self.variance_std_rt_spin.setValue(distribution_settings.get('variance_std_rt', 0.3))
-        self.mean_skewness_spin.setValue(distribution_settings.get('mean_skewness', 0.3))
+        self.mean_std_rt_spin.setValue(distribution_settings.get('mean_std_rt', 1.0))
+        self.variance_std_rt_spin.setValue(distribution_settings.get('variance_std_rt', 0.1))
+        self.mean_skewness_spin.setValue(distribution_settings.get('mean_skewness', 1.5))
         self.variance_skewness_spin.setValue(distribution_settings.get('variance_skewness', 0.1))
-        self.std_im_spin.setValue(distribution_settings.get('std_im', 0.01))
-        self.variance_std_im_spin.setValue(distribution_settings.get('variance_std_im', 0.001))
-        self.variance_std_im_spin.setValue(distribution_settings.get('variance_std_im', 0.001))
         self.z_score_spin.setValue(distribution_settings.get('z_score', 0.99))
         self.target_p_spin.setValue(distribution_settings.get('target_p', 0.999))
         self.sampling_step_size_spin.setValue(distribution_settings.get('sampling_step_size', 0.001))
-
-        # Noise Settings
         noise_settings = config.get('noise_settings', {})
         self.add_noise_to_signals_checkbox.setChecked(noise_settings.get('add_noise_to_signals', False))
         self.mz_noise_precursor_checkbox.setChecked(noise_settings.get('mz_noise_precursor', False))
@@ -1803,17 +1331,12 @@ class MainWindow(QMainWindow):
         self.add_real_data_noise_checkbox.setChecked(noise_settings.get('add_real_data_noise', False))
         self.reference_noise_intensity_max_spin.setValue(noise_settings.get('reference_noise_intensity_max', 30))
         self.down_sample_factor_spin.setValue(noise_settings.get('down_sample_factor', 0.5))
-
-        # Charge State Probabilities
         charge_state_probabilities = config.get('charge_state_probabilities', {})
         self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.5))
         self.min_charge_contrib_spin.setValue(charge_state_probabilities.get('min_charge_contrib', 0.25))
-
-        # Performance Settings
         performance_settings = config.get('performance_settings', {})
         self.num_threads_spin.setValue(performance_settings.get('num_threads', -1))
         self.batch_size_spin.setValue(performance_settings.get('batch_size', 256))
-
 
 def main():
     app = QApplication(sys.argv)
@@ -1822,7 +1345,6 @@ def main():
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()

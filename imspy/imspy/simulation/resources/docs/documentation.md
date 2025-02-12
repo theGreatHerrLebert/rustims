@@ -1,6 +1,6 @@
 # TimSim: Proteomics Experiment Simulation on timsTOF
 
-Welcome to the TimSim user manual. This document provides detailed instructions on using the GUI to configure and run simulations. Each section corresponds to a group of parameters available in the GUI, with explanations for how these influence the simulation.
+Welcome to the TimSim user manual. This document provides comprehensive guidance on using the graphical user interface (GUI) to configure and run proteomics simulations on the timsTOF platform. Each section details a specific group of parameters, explaining how they influence the simulation and how you can adjust them to model your experiment accurately.
 
 ---
 
@@ -21,113 +21,110 @@ Welcome to the TimSim user manual. This document provides detailed instructions 
 ## Main Settings
 
 ### Parameters
-- **Save Path**: Directory to save the simulation outputs.
-- **Reference Dataset Path**: Path to the reference dataset used as a simulation template.
-- **FASTA File Path**: Path to the FASTA file containing protein sequences for digestion.
-- **Experiment Name**: A unique name for your experiment.
-- **Acquisition Type**: Select the method for data acquisition (DIA, SYNCHRO, SLICE, MIDIA).
+- **Save Path**: The directory where all simulation outputs, reports, and logs will be stored.
+- **Reference Dataset Path**: The path to a real timsTOF dataset that serves as the template for the simulation’s layout.
+- **FASTA File Path**: The location of the FASTA file containing protein sequences to be digested.
+- **Experiment Name**: A unique identifier for your simulation. This name is used to label output files and reports.
+- **Acquisition Type**: Choose the data acquisition method to simulate. Options include DIA, SYNCHRO, SLICE, and MIDIA.
 
 ### Options
-- **Use Reference Layout**: Use the layout of the reference dataset as a template.
-- **Load Reference into Memory**: Speeds up access by loading the reference dataset into memory.
-- **Sample Peptides**: Enable to randomly sample peptides for a subset of the dataset.
-- **Generate Decoys**: Simulate inverted decoy peptides (non-biological).
-- **Silent Mode**: Suppress output messages during the simulation.
-- **Apply Fragmentation to Ions**: Disable to skip ion fragmentation but retain quadrupole selection.
-- **Proteome Mixture**: Use a mixture of proteomes for more complex samples.
+- **Use Reference Layout**: Use the layout from the reference dataset to mimic realistic instrument parameters.
+- **Load Reference into Memory**: Pre-load the reference dataset into RAM to speed up data access during simulation.
+- **Sample Peptides**: When enabled, peptides are randomly sampled from the digestion process, reducing computation time.
+- **Generate Decoys**: Simulate decoy (inverted) peptides for more robust false discovery rate (FDR) estimation.
+- **Silent Mode**: Run the simulation with minimal console output for a cleaner user experience.
+- **Apply Fragmentation to Ions**: Perform ion fragmentation during the simulation. This option is enabled by default.
+- **Proteome Mixture**: Simulate complex samples by incorporating a mixture of proteomes.
+- **Phospho Mode**: Enable phospho mode to generate a phospho-enriched dataset for testing phosphosite localization algorithms.
 
 ---
 
 ## Peptide Digestion Settings
 
 ### Parameters
-- **Number of Sampled Peptides**: Total number of peptides to simulate.
-- **Missed Cleavages**: Maximum number of missed cleavages allowed during digestion.
-- **Minimum Peptide Length**: Minimum length of peptides in amino acids.
-- **Maximum Peptide Length**: Maximum length of peptides in amino acids.
-- **Cleave At**: Residues at which cleavage occurs (e.g., "KR" for trypsin).
-- **Restrict**: Residues where cleavage is restricted (e.g., "P" to prevent cleavage after proline).
-- **Amino Acid Modifications**: Path to a TOML file defining fixed and variable modifications.
+- **Number of Sampled Peptides**: The total number of peptides generated from the in-silico digestion process.
+- **Missed Cleavages**: The maximum number of allowed missed cleavage sites during digestion.
+- **Minimum Peptide Length**: The shortest acceptable peptide length (in amino acids).
+- **Maximum Peptide Length**: The longest acceptable peptide length (in amino acids).
+- **Cleave At**: Specifies the amino acid residues at which the protein is cleaved (e.g., `"KR"` for trypsin).
+- **Restrict**: Specifies residues that inhibit cleavage (e.g., `"P"` to prevent cleavage immediately after a cleavage site).
+- **Amino Acid Modifications**: The path to a TOML file that defines fixed and variable modifications applied during digestion.
 
 ---
 
 ## Peptide Intensity Settings
 
 ### Parameters
-- **Mean Intensity**: Average intensity for simulated peptides (power of 10).
-- **Minimum Intensity**: Lowest possible intensity for peptides (power of 10).
-- **Maximum Intensity**: Highest possible intensity for peptides (power of 10).
-- **Sample Occurrences Randomly**: Random sampling of peptide occurrences.
-- **Fixed Intensity Value**: Set a fixed intensity for peptides when random sampling is disabled.
+- **Mean Intensity**: The average intensity of simulated peptides, expressed as 10 raised to a given power.
+- **Minimum Intensity**: The lower bound for peptide intensities (expressed as a power of 10).
+- **Maximum Intensity**: The upper bound for peptide intensities (expressed as a power of 10).
+- **Sample Occurrences Randomly**: When enabled, peptide occurrences are randomly sampled from the defined intensity distribution.
+- **Fixed Intensity Value**: A constant intensity value (as a power of 10) assigned to all peptides if random sampling is disabled.
 
 ---
 
 ## Isotopic Pattern Settings
 
 ### Parameters
-- **Maximum Number of Isotopes**: Specify the number of isotopes to simulate for each peptide.
-- **Minimum Isotope Intensity**: Threshold intensity for including isotopes in the simulation.
-- **Centroid Isotopes**: Enable to average peak positions for simplified patterns.
+- **Maximum Number of Isotopes**: The number of isotopic peaks to simulate for each peptide.
+- **Minimum Isotope Intensity**: The threshold intensity below which isotopic peaks are not included.
+- **Centroid Isotopes**: When enabled, the simulation averages peak positions to generate a simplified isotopic pattern.
 
 ---
 
 ## Signal Distribution Settings
 
 ### Parameters
-- **Gradient Length**: Total length of the simulated chromatographic gradient (seconds).
-- **Mean Std RT**: Mean standard deviation for retention time.
-- **Variance Std RT**: Variance of the standard deviation of retention time.
-- **Mean Skewness**: Average skewness for retention time distribution.
-- **Variance Skewness**: Variance of skewness in retention time distribution.
-- **Standard Deviation IM**: Standard deviation of ion mobility.
-- **Variance Std IM**: Variance of standard deviation for ion mobility.
-- **Z-Score**: Threshold for filtering data by signal intensity.
-- **Target Percentile**: Target percentile for retention time density.
-- **Sampling Step Size**: Step size for data sampling, impacting resolution.
-
+- **Gradient Length**: The total duration of the simulated chromatographic gradient (in seconds).
+- **Mean Std RT**: The average standard deviation of the retention time (RT) distribution, which affects peak widths.
+- **Variance Std RT**: The variance in the RT standard deviation, influencing the spread of the peaks.
+- **Mean Skewness**: The average skewness of the RT distribution, which determines the asymmetry of peaks.
+- **Variance Skewness**: The variance in the skewness, further modulating the peak shapes.
+- **Z-Score**: A threshold used to filter out low-signal regions based on statistical significance.
+- **Target Percentile**: The percentile used to select high-density regions within the RT distribution.
+- **Sampling Step Size**: The resolution for sampling the RT distribution; smaller values yield finer detail.
 ---
 
 ## Noise Settings
 
 ### Parameters
-- **Add Noise to Signals**: Enable random noise for signal intensities.
-- **Add Precursor M/Z Noise**: Add noise to precursor m/z values.
-- **Precursor Noise PPM**: Noise level (ppm) for precursor m/z values.
-- **Add Fragment M/Z Noise**: Add noise to fragment m/z values.
-- **Fragment Noise PPM**: Noise level (ppm) for fragment m/z values.
-- **Use Uniform Distribution for M/Z Noise**: Use a uniform distribution for m/z noise instead of Gaussian.
-- **Add Real Data Noise**: Incorporate noise derived from real datasets.
-- **Reference Noise Intensity Max**: Maximum intensity for reference data noise.
-- **Fragment Downsample Factor**: Downsampling probability for fragment ions.
+- **Add Noise to Signals**: Enable this option to introduce random noise into signal intensities, mimicking experimental variability.
+- **Add Precursor M/Z Noise**: Adds variability to precursor m/z values to simulate instrument measurement precision.
+- **Precursor Noise PPM**: Specifies the noise level (in parts per million) for precursor m/z values.
+- **Add Fragment M/Z Noise**: Adds noise to fragment m/z values to simulate spectral variation.
+- **Fragment Noise PPM**: Specifies the noise level (in parts per million) for fragment m/z values.
+- **Use Uniform Distribution for M/Z Noise**: When enabled, m/z noise is sampled from a uniform distribution instead of a Gaussian.
+- **Add Real Data Noise**: Incorporate noise profiles derived from real experimental data.
+- **Reference Noise Intensity Max**: The maximum intensity threshold for noise derived from reference data.
+- **Fragment Downsample Factor**: Sets the probability of downsampling fragment ions based on their intensity.
 
 ---
 
 ## Charge State Probabilities
 
 ### Parameters
-- **Probability of Charge**: Likelihood of peptides adopting a specific charge state.
-- **Minimum Charge Contribution**: Minimum contribution of peptides with the specified charge state.
+- **Probability of Charge**: The likelihood that a peptide will adopt a particular charge state.
+- **Minimum Charge Contribution**: The minimum relative contribution required for peptides with a given charge state to be considered in the simulation.
 
 ---
 
 ## Performance Settings
 
 ### Parameters
-- **Number of Threads**: Number of threads for parallel processing (-1 for auto-detect).
-- **Batch Size**: Number of data points processed per batch.
+- **Number of Threads**: The number of parallel threads used for the simulation. Use `-1` to auto-detect all available cores.
+- **Batch Size**: The number of data points processed in each computational batch.
 
 ---
 
 ## Console and Execution
 
 ### Features
-- **Console Output**: Displays logs, warnings, and progress messages.
-- **Run Button**: Starts the simulation with the configured settings.
-- **Cancel Button**: Cancels a running simulation.
-- **Save Config**: Save your settings as a TOML file for reuse.
-- **Load Config**: Load a previously saved TOML configuration file.
+- **Console Output**: Displays real-time logs, warnings, and progress updates during the simulation.
+- **Run Button**: Initiates the simulation with the current configuration settings.
+- **Cancel Button**: Provides the ability to terminate a running simulation.
+- **Save Config**: Allows you to save your current settings to a TOML file for future use.
+- **Load Config**: Load a previously saved TOML configuration file to quickly restore your simulation settings.
 
 ---
 
-For further assistance or troubleshooting, consult the application's built-in tooltips or 
-[contact us via GitHub](https://github.com/theGreatHerrLebert/rustims).
+For additional assistance or troubleshooting, please refer to the tooltips within the application or visit our [GitHub repository](https://github.com/theGreatHerrLebert/rustims) for support.
