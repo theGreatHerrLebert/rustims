@@ -57,243 +57,191 @@ def load_config(config_path):
     return config
 
 def main():
+    # Use ArgumentDefaultsHelpFormatter to automatically show default values
+    parser = argparse.ArgumentParser(
+        description="🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with diaPASEF-like acquisition on a BRUKER TimsTOF.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
 
-    # use argparse to parse command line arguments
-    parser = argparse.ArgumentParser(description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation '
-                                                 'with diaPASEF-like acquisition on a BRUKER TimsTOF.')
+    # --------------------------
+    # Required arguments
+    # --------------------------
+    required = parser.add_argument_group("Required Arguments")
+    required.add_argument("save_path", type=str,
+                          help="Path to save the experiment to")
+    required.add_argument("reference_path", type=str,
+                          help="Path to a real TDF reference dataset")
+    required.add_argument("fasta_path", type=str,
+                          help="Path to the fasta file of proteins to be digested")
 
-    # Configuration file argument
-    parser.add_argument("--config", type=str, default=None, help="Path to configuration file (TOML format)")
-
-    # Required string arguments
-    parser.add_argument("save_path", type=str, nargs='?', default=None, help="Path to save the experiment to")
-    parser.add_argument("reference_path", type=str, nargs='?', default=None,
-                        help="Path to a real TDF reference dataset")
-    parser.add_argument("fasta_path", type=str, nargs='?', default=None,
-                        help="Path to the fasta file of proteins to be digested")
-
-    # Optional arguments
-    parser.add_argument("--reference_in_memory", dest="reference_in_memory", action="store_true",
-                        help="Whether to load the reference dataset into memory (default: False)")
-    parser.set_defaults(reference_in_memory=False)
-
-    parser.add_argument("-s", "--silent_mode,", dest="silent_mode", action="store_true",
-                        help="Silence output (default: False)")
-    parser.set_defaults(silent_mode=False)
-
-    parser.add_argument("-acq", "--acquisition_type",
-                        type=str,
-                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA")
-
-    parser.add_argument("-n", "--experiment_name", type=str, help="Name of the experiment")
-
-    parser.add_argument("--no_reference_layout", dest="use_reference_layout", action="store_false",
-                        help="Use the layout of the reference dataset for the acquisition (default: True)")
-    parser.set_defaults(use_reference_layout=True)
-
-    parser.add_argument("--no_peptide_sampling", dest="sample_peptides", action="store_false",
-                        help="Sample peptides from the digested fasta (default: True)")
-    parser.set_defaults(sample_peptides=True)
-    parser.add_argument("--sample_seed", type=int, help="Seed for peptide sampling (default: 41)")
-
-    parser.add_argument("--apply_fragmentation", dest="apply_fragmentation", action="store_true",
-                        help="Do not perform fragmentation (default: False)")
-    parser.set_defaults(apply_fragmentation=False)
-
-
-    # Peptide digestion arguments
-    parser.add_argument(
-        "--num_sample_peptides",
-        type=int,
-        default=25_000,
-        help="Number of peptides to sample from the digested fasta (default: 25_000)")
-
-    parser.add_argument("--missed_cleavages", type=int, help="Number of missed cleavages (default: 2)")
-    parser.add_argument("--min_len", type=int, help="Minimum peptide length (default: 7)")
-    parser.add_argument("--max_len", type=int, help="Maximum peptide length (default: 30)")
-    parser.add_argument("--cleave_at", type=str, help="Cleave at (default: KR)")
-    parser.add_argument("--restrict", type=str, help="Restrict (default: P)")
-    parser.add_argument("--decoys", dest="decoys", action="store_true",
-                        help="Generate decoys (default: False)")
-    parser.set_defaults(decoys=False)
-
-    # Path to the script directory
+    # --------------------------
+    # Configuration files
+    # --------------------------
+    config = parser.add_argument_group("Configuration")
+    config.add_argument("--config", type=str, default=None,
+                        help="Path to configuration file (TOML format)")
     script_dir = Path(__file__).parent
-
-    # Default configs modification configs path
     default_mods_config_path = script_dir / "configs" / "modifications.toml"
+    config.add_argument("--modifications", type=str, default=str(default_mods_config_path),
+                        help="Path to modifications configuration file (TOML format)")
 
-    # Optional argument for path to the configuration file
-    parser.add_argument(
-        "--modifications",
-        type=str,
-        default=default_mods_config_path,
-        help="Path to the configuration file (TOML format). Default: configs/modifications.toml"
-    )
+    # --------------------------
+    # General simulation options
+    # --------------------------
+    general = parser.add_argument_group("General Simulation Options")
+    general.add_argument("--reference_in_memory", action="store_true",
+                         help="Load the reference dataset into memory")
+    general.add_argument("-s", "--silent_mode", action="store_true",
+                         help="Silence output")
+    general.add_argument("--acquisition_type", type=str, default="DIA",
+                         choices=["DIA", "SYNCHRO", "SLICE", "MIDIA"],
+                         help="Type of acquisition to simulate")
+    general.add_argument("-n", "--experiment_name", type=str, default="",
+                         help="Name of the experiment")
+    general.add_argument("--no_reference_layout", dest="use_reference_layout", action="store_false",
+                         help="Do not use the reference dataset’s layout for acquisition")
+    general.add_argument("--no_peptide_sampling", dest="sample_peptides", action="store_false",
+                         help="Do not sample peptides from the digested fasta")
+    general.add_argument("--sample_seed", type=int, default=41,
+                         help="Seed for peptide sampling")
+    general.add_argument("--apply_fragmentation", action="store_true",
+                         help="Apply fragmentation (default: off)")
 
-    # Peptide intensities
-    parser.add_argument("--intensity_mean", type=float, help="Mean peptide intensity (default: 1e7)")
-    parser.add_argument("--intensity_min", type=float, help="Min peptide intensity (default: 1e5)")
-    parser.add_argument("--intensity_max", type=float, help="Max peptide intensity (default: 1e9)")
+    # --------------------------
+    # Peptide digestion options
+    # --------------------------
+    digestion = parser.add_argument_group("Peptide Digestion Options")
+    digestion.add_argument("--num_sample_peptides", type=int, default=25000,
+                           help="Number of peptides to sample from the digested fasta")
+    digestion.add_argument("--missed_cleavages", type=int, default=2,
+                           help="Number of missed cleavages")
+    digestion.add_argument("--min_len", type=int, default=7,
+                           help="Minimum peptide length")
+    digestion.add_argument("--max_len", type=int, default=30,
+                           help="Maximum peptide length")
+    digestion.add_argument("--cleave_at", type=str, default="KR",
+                           help="Residues to cleave at")
+    digestion.add_argument("--restrict", type=str, default="P",
+                           help="Residue to restrict cleavage")
+    digestion.add_argument("--decoys", action="store_true",
+                           help="Generate decoy peptides")
 
+    # --------------------------
+    # Peptide intensity settings
+    # --------------------------
+    intensity = parser.add_argument_group("Peptide Intensity Settings")
+    intensity.add_argument("--intensity_mean", type=float, default=1e7,
+                           help="Mean peptide intensity")
+    intensity.add_argument("--intensity_min", type=float, default=1e5,
+                           help="Minimum peptide intensity")
+    intensity.add_argument("--intensity_max", type=float, default=1e9,
+                           help="Maximum peptide intensity")
+
+    # --------------------------
     # Precursor isotopic pattern settings
-    parser.add_argument("--isotope_k", type=int, help="Number of isotopes to simulate (default: 8)")
-    parser.add_argument("--isotope_min_intensity", type=int, help="Min intensity for isotopes (default: 1)")
-    parser.add_argument("--no_isotope_centroid", dest="isotope_centroid", action="store_false",
-                        help="Centroid isotopes (default: True)")
-    parser.set_defaults(isotope_centroid=True)
+    # --------------------------
+    isotopes = parser.add_argument_group("Precursor Isotopic Pattern Settings")
+    isotopes.add_argument("--isotope_k", type=int, default=8,
+                          help="Number of isotopes to simulate")
+    isotopes.add_argument("--isotope_min_intensity", type=int, default=1,
+                          help="Minimum intensity for isotopes")
+    isotopes.add_argument("--no_isotope_centroid", dest="isotope_centroid", action="store_false",
+                          help="Do not centroid isotopes (default: on)")
 
-    # Sample occurrences parameters
-    parser.add_argument("--no_sample_occurrences",
-                        dest="sample_occurrences", action="store_false",
-                        help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
-    parser.set_defaults(sample_occurrences=True)
-    parser.add_argument(
-        "--intensity_value",
-        type=float,
-        help="Intensity value of all peptides if sample occurrence sampling is deactivated (default: 1e6)")
+    # --------------------------
+    # Peptide occurrence sampling
+    # --------------------------
+    sampling = parser.add_argument_group("Peptide Occurrence Sampling")
+    sampling.add_argument("--no_sample_occurrences", dest="sample_occurrences", action="store_false",
+                          help="Do not randomly assign peptide occurrences")
+    sampling.add_argument("--intensity_value", type=float, default=1e6,
+                          help="Uniform intensity value if occurrence sampling is disabled")
 
+    # --------------------------
     # Distribution parameters
-    parser.add_argument(
-        "--gradient_length",
-        type=float,
-        help="Length of the gradient in seconds (default: 3600)")
-    parser.add_argument("--z_score", type=float,
-                        help="Z-score for frame and scan distributions (default: .99)")
-    parser.add_argument("--mean_std_rt", type=float,
-                        help="Mean standard deviation for retention time distribution (default: 1.5)")
-    parser.add_argument("--variance_std_rt", type=float,
-                        help="Variance standard deviation for retention time distribution (default: 0.3)")
-    parser.add_argument("--mean_skewness", type=float,
-                        help="Mean scewness for retention time distribution (default: 0.3)")
-    parser.add_argument("--variance_skewness", type=float,
-                        help="Variance scewness for retention time distribution (default: 0.1)")
-    parser.add_argument("--target_p", type=float,
-                        help="Target percentile for frame distributions (default: 0.999)")
-    parser.add_argument("--sampling_step_size", type=float,
-                        help="Sampling step size for frame distributions (default: 0.001)")
+    # --------------------------
+    distribution = parser.add_argument_group("Distribution Parameters")
+    distribution.add_argument("--gradient_length", type=float, default=3600,
+                              help="Length of the gradient in seconds")
+    distribution.add_argument("--z_score", type=float, default=0.99,
+                              help="Z-score for frame and scan distributions")
+    distribution.add_argument("--mean_std_rt", type=float, default=1.5,
+                              help="Mean standard deviation for retention time distribution")
+    distribution.add_argument("--variance_std_rt", type=float, default=0.3,
+                              help="Variance of the retention time standard deviation")
+    distribution.add_argument("--mean_skewness", type=float, default=0.3,
+                              help="Mean skewness for retention time distribution")
+    distribution.add_argument("--variance_skewness", type=float, default=0.1,
+                              help="Variance of the retention time skewness")
+    distribution.add_argument("--target_p", type=float, default=0.999,
+                              help="Target percentile for frame and scan distributions")
+    distribution.add_argument("--sampling_step_size", type=float, default=0.001,
+                              help="Sampling step size for frame distributions")
 
-    # Number of cores to use
-    parser.add_argument("--num_threads", type=int, help="Number of threads to use (default: -1, all available)")
-    parser.add_argument("--batch_size", type=int, help="Batch size (default: 256)")
+    # --------------------------
+    # Threading and batch options
+    # --------------------------
+    threading = parser.add_argument_group("Threading and Batch Options")
+    threading.add_argument("--num_threads", type=int, default=-1,
+                           help="Number of threads to use (-1 means all available)")
+    threading.add_argument("--batch_size", type=int, default=256,
+                           help="Batch size")
 
-    # Charge state probabilities
-    parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.5)")
-    parser.add_argument("--min_charge_contrib", type=float,
-                        help="Minimum charge contribution (default: 0.25)")
+    # --------------------------
+    # Charge state settings
+    # --------------------------
+    charge = parser.add_argument_group("Charge State Settings")
+    charge.add_argument("--p_charge", type=float, default=0.5,
+                        help="Probability that a peptide carries a charge (for binomial modeling)")
+    charge.add_argument("--min_charge_contrib", type=float, default=0.25,
+                        help="Minimum charge contribution")
 
+    # --------------------------
     # Noise settings
-    # -- 1. RT and IM noise
-    parser.add_argument(
-        "--add_noise_to_signals", dest="add_noise_to_signals", action="store_true",
-        help="Add noise to ion distributions in retention time and ion mobility (default: False)")
-    parser.set_defaults(add_noise_to_signals=False)
+    # --------------------------
+    noise = parser.add_argument_group("Noise Settings")
+    noise.add_argument("--add_noise_to_signals", action="store_true",
+                       help="Add noise to ion distributions in retention time and ion mobility")
+    noise.add_argument("--mz_noise_precursor", action="store_true",
+                       help="Add noise to precursor m/z values")
+    noise.add_argument("--precursor_noise_ppm", type=float, default=5.0,
+                       help="Precursor noise (ppm)")
+    noise.add_argument("--mz_noise_fragment", action="store_true",
+                       help="Add noise to fragment m/z values")
+    noise.add_argument("--fragment_noise_ppm", type=float, default=5.0,
+                       help="Fragment noise (ppm)")
+    noise.add_argument("--mz_noise_uniform", action="store_true",
+                       help="Use a uniform distribution for m/z noise (instead of normal)")
+    noise.add_argument("--add_real_data_noise", action="store_true",
+                       help="Add noise to simulated data based on reference data")
+    noise.add_argument("--reference_noise_intensity_max", type=float, default=30,
+                       help="Maximum intensity for noise reference data")
+    noise.add_argument("--down_sample_factor", type=float, default=0.5,
+                       help="Down-sample fragment peaks (sampling probability inversely proportional to intensity)")
 
-    # -- 2. MZ noise precursor
-    parser.add_argument(
-        "--mz_noise_precursor", dest="mz_noise_precursor", action="store_true",
-        help="Add noise to precursor m/z (default: False)"
-    )
-    parser.set_defaults(mz_noise_precursor=False)
+    # --------------------------
+    # Proteome mixture options
+    # --------------------------
+    proteome = parser.add_argument_group("Proteome Mixture Options")
+    proteome.add_argument("--proteome_mix", action="store_true",
+                          help="Enable proteome mixture simulation")
+    proteome.add_argument("--multi_fasta_dilution", type=str,
+                          help="Path to CSV file with dilution factors for the proteome mixture")
 
-    parser.add_argument(
-        "--precursor_noise_ppm",
-        type=float,
-        help="Precursor noise in ppm (default: 5.0)"
-    )
-
-    # -- 3. MZ noise fragment
-    parser.add_argument(
-        "--mz_noise_fragment", dest="mz_noise_fragment", action="store_true",
-        help="Add noise to fragment m/z (default: False)"
-    )
-    parser.set_defaults(mz_noise_fragment=False)
-
-    parser.add_argument(
-        "--fragment_noise_ppm",
-        type=float,
-        help="Fragment noise in ppm (default: 5.0)"
-    )
-    parser.add_argument(
-        "--mz_noise_uniform", dest="mz_noise_uniform", action="store_true",
-        help="Use uniform distribution for m/z noise (default: False), otherwise normal distribution"
-    )
-    parser.set_defaults(mz_noise_uniform=False)
-
-    parser.add_argument(
-        "--add_real_data_noise", dest="add_real_data_noise", action="store_true",
-        help="Use given reference data to add noise to the simulated data (default: False)"
-    )
-    parser.set_defaults(add_real_data_noise=False)
-
-    parser.add_argument(
-        "--reference_noise_intensity_max",
-        type=float,
-        help="Maximum intensity for noise reference data (default: 30)"
-    )
-
-    parser.add_argument(
-        "--down_sample_factor",
-        type=float,
-        help="Down sample fragment peaks generated, sampling probability "
-             "is inverse proportional to intensity (default: 0.5)"
-    )
-
-    # Proteome mixture settings
-    parser.add_argument(
-        "--proteome_mix",
-        action="store_true",
-        dest="proteome_mix",
-    )
-    parser.set_defaults(proteome_mix=False)
-
-    # Dilution factors csv file path
-    parser.add_argument(
-        "--multi_fasta_dilution",
-        type=str,
-        help="Path to a CSV file containing dilution factors for the proteome mixture"
-    )
-
-    # Debug mode
-    parser.add_argument(
-        "--debug_mode",
-        action="store_true",
-        dest="debug_mode",
-    )
-    parser.set_defaults(debug_mode=False)
-
-    # Add from existing simulation
-    parser.add_argument(
-        "--from_existing",
-        action="store_true",
-        dest="from_existing",
-    )
-    parser.set_defaults(from_existing=False)
-
-    # Add existing simulation path
-    parser.add_argument(
-        "--existing_path",
-        type=str,
-        help="Path to existing simulation to use for frame distributions",
-    )
-
-    # Don't use bruker sdk
-    parser.add_argument(
-        "--no_bruker_sdk",
-        action="store_false",
-        dest="use_bruker_sdk",
-    )
-    parser.set_defaults(use_bruker_sdk=True)
-
-
-    parser.add_argument(
-        "--phospho_mode",
-        action="store_true",
-        dest="phospho_mode",
-        help="Enable phospho mode, generating a phospho enriched dataset for testing of "
-             "phospho site localization algorithms (default: False)"
-    )
-    parser.set_defaults(phospho_mode=False)
+    # --------------------------
+    # Debug and additional options
+    # --------------------------
+    debug = parser.add_argument_group("Debug and Additional Options")
+    debug.add_argument("--debug_mode", action="store_true",
+                       help="Enable debug mode")
+    debug.add_argument("--from_existing", action="store_true",
+                       help="Use an existing simulation to derive frame distributions")
+    debug.add_argument("--existing_path", type=str,
+                       help="Path to an existing simulation")
+    debug.add_argument("--no_bruker_sdk", dest="use_bruker_sdk", action="store_false",
+                       help="Do not use the Bruker SDK")
+    debug.add_argument("--phospho_mode", action="store_true",
+                       help="Enable phospho mode to generate a phospho-enriched dataset for testing")
 
     # Default configuration values
     defaults = {
@@ -304,7 +252,7 @@ def main():
         'use_reference_layout': True,
         'sample_peptides': True,
         'sample_seed': 41,
-        'apply_fragmentation': False,
+        'apply_fragmentation': True,
         'num_sample_peptides': 25000,
         'missed_cleavages': 2,
         'min_len': 7,
