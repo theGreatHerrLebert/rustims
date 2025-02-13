@@ -594,7 +594,7 @@ def main():
             lambda r: get_searchable_spec(
                 precursor=r.sage_precursor,
                 raw_fragment_data=r.raw_data,
-                spec_processor=SpectrumProcessor(take_top_n=params['take_top_n']),
+                spec_processor=SpectrumProcessor(take_top_n=params['take_top_n'], deisotope=True),
                 spec_id=r.spec_id,
                 time=r['time'],
             ),
