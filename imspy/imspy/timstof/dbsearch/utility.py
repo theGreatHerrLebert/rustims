@@ -1,5 +1,4 @@
 import os
-import re
 from typing import List, Tuple, Union, Dict
 
 import pandas as pd
@@ -20,6 +19,41 @@ from numpy.typing import NDArray
 
 from sagepy.core.scoring import merge_psm_dicts
 from numba import jit
+
+import ast
+import re
+
+def peptide_length(peptide: str):
+    """
+    Takes a peptide sequence as a string and returns its length,
+    excluding [UNIMOD:X] modifications.
+
+    Parameters:
+        peptide (str): A peptide sequence with possible UNIMOD modifications.
+
+    Returns:
+        int: The length of the peptide without modifications.
+    """
+    cleaned_peptide = re.sub(r'\[UNIMOD:\d+\]', '', peptide)
+    return len(cleaned_peptide)
+
+def parse_string_list(input_str: str):
+    """
+    Takes a string representation of a list and converts it into an actual list of strings.
+
+    Parameters:
+        input_str (str): A string containing a list representation.
+
+    Returns:
+        list: A list of strings parsed from the input string.
+    """
+    if isinstance(input_str, list):
+        return input_str
+
+    try:
+        return ast.literal_eval(input_str)
+    except (SyntaxError, ValueError):
+        raise ValueError("Invalid list format")
 
 
 @jit(nopython=True)
@@ -446,3 +480,68 @@ def transform_psm_to_pin(psm_df):
     df_pin_clean['ScanNr'] = range(1, len(df_pin_clean) + 1)
 
     return df_pin_clean
+
+full_renaming_scheme = {
+    'spec_idx': 'psm_id',
+    'sequence_modified': 'peptide',
+    'ims': 'ion_mobility',
+    'predicted_ims': 'predicted_mobility',
+    'delta_ims': 'delta_mobility',
+    'discriminant_score': 'sage_discriminant_score',
+    'delta_mass': 'precursor_ppm',
+    'average_ppm': 'fragment_ppm'
+}
+
+sage_target_columns = ['psm_id', 'peptide', 'proteins', 'num_proteins', 'filename', 'scannr',
+       'rank', 'label', 'expmass', 'calcmass', 'charge', 'peptide_len',
+       'missed_cleavages', 'semi_enzymatic', 'isotope_error', 'precursor_ppm',
+       'fragment_ppm', 'hyperscore', 'delta_next', 'delta_best', 'rt',
+       'aligned_rt', 'predicted_rt', 'delta_rt_model', 'ion_mobility',
+       'predicted_mobility', 'delta_mobility', 'matched_peaks', 'longest_b',
+       'longest_y', 'longest_y_pct', 'matched_intensity_pct',
+       'scored_candidates', 'poisson', 'sage_discriminant_score',
+       'posterior_error', 'spectrum_q', 'peptide_q', 'protein_q',
+       'ms2_intensity']
+
+def list_to_semicolon_string(value):
+    """Converts a list of proteins into a semicolon-separated string."""
+    if isinstance(value, list):
+        return ";".join(value)
+    return value
+
+def parse_to_tims2rescore(TDC):
+    TDC_tmp = TDC.copy()
+    TDC_tmp["filename"] = TDC_tmp.spec_idx.apply(lambda s: '-'.join(s.split('-')[-2:]) + ".d")
+    TDC_tmp["scannr"] = TDC_tmp.spec_idx.apply(lambda s: int(s.split('-')[2]) - 1)
+    TDC_tmp["num_proteins"] = TDC_tmp.proteins.apply(lambda protein: len(parse_string_list(protein)))
+    TDC_tmp["label"] = TDC_tmp.decoy.apply(lambda b: -1 if b else 1)
+    TDC_tmp["peptide_len"] = TDC_tmp.sequence.apply(peptide_length)
+    TDC_tmp["semi_enzymatic"] = False
+    TDC_tmp = TDC_tmp.rename(columns=full_renaming_scheme)
+    TDC_tmp = TDC_tmp[sage_target_columns]
+    TDC_tmp["psm_id"] = TDC_tmp.psm_id.apply(lambda s: int(s.split('-')[0]))
+    TDC_tmp["rank"] = TDC_tmp["rank"].astype(int)
+    TDC_tmp["charge"] = TDC_tmp["charge"].astype(int)
+    TDC_tmp["missed_cleavages"] = TDC_tmp["missed_cleavages"].astype(int)
+    TDC_tmp["semi_enzymatic"] = TDC_tmp["semi_enzymatic"].astype(int)
+    TDC_tmp["scored_candidates"] = TDC_tmp["scored_candidates"].astype(int)
+    TDC_tmp["matched_peaks"] = TDC_tmp["matched_peaks"].astype(int)
+    TDC_tmp["longest_b"] = TDC_tmp["longest_b"].astype(int)
+    TDC_tmp["longest_y"] = TDC_tmp["longest_y"].astype(int)
+    TDC_tmp["proteins"] = TDC_tmp.proteins.apply(list_to_semicolon_string)
+    TDC_tmp["proteins"] = TDC_tmp["proteins"].astype(str)
+
+    # sort by spectrum_q
+    TDC_tmp = TDC_tmp.sort_values(by="spectrum_q", ascending=True)
+
+    # set PSM id from 1 to n
+    TDC_tmp["psm_id"] = range(1, len(TDC_tmp) + 1)
+
+    def add_rev_prefix(protein, label):
+        if label == -1:
+            return f"rev_{protein}"
+        return protein
+
+    TDC_tmp["proteins"] = TDC_tmp.apply(lambda row: add_rev_prefix(row["proteins"], row["label"]), axis=1)
+
+    return TDC_tmp
