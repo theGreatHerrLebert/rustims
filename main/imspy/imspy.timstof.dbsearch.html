@@ -295,6 +295,12 @@
 <dd></dd></dl>
 
 <dl class="py function">
+<dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.list_to_semicolon_string">
+<span class="sig-prename descclassname"><span class="pre">imspy.timstof.dbsearch.utility.</span></span><span class="sig-name descname"><span class="pre">list_to_semicolon_string</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">value</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.timstof.dbsearch.utility.list_to_semicolon_string" title="Link to this definition">¶</a></dt>
+<dd><p>Converts a list of proteins into a semicolon-separated string.</p>
+</dd></dl>
+
+<dl class="py function">
 <dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.map_to_domain">
 <span class="sig-prename descclassname"><span class="pre">imspy.timstof.dbsearch.utility.</span></span><span class="sig-name descname"><span class="pre">map_to_domain</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">gradient_length</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">120.0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.timstof.dbsearch.utility.map_to_domain" title="Link to this definition">¶</a></dt>
 <dd><p>Maps the input data linearly into the domain [0, l].</p>
@@ -309,6 +315,46 @@
 <dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.merge_dicts_with_merge_dict">
 <span class="sig-prename descclassname"><span class="pre">imspy.timstof.dbsearch.utility.</span></span><span class="sig-name descname"><span class="pre">merge_dicts_with_merge_dict</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dicts</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.timstof.dbsearch.utility.merge_dicts_with_merge_dict" title="Link to this definition">¶</a></dt>
 <dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.parse_string_list">
+<span class="sig-prename descclassname"><span class="pre">imspy.timstof.dbsearch.utility.</span></span><span class="sig-name descname"><span class="pre">parse_string_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_str</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.timstof.dbsearch.utility.parse_string_list" title="Link to this definition">¶</a></dt>
+<dd><p>Takes a string representation of a list and converts it into an actual list of strings.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>input_str</strong> (<em>str</em>) – A string containing a list representation.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of strings parsed from the input string.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.parse_to_tims2rescore">
+<span class="sig-prename descclassname"><span class="pre">imspy.timstof.dbsearch.utility.</span></span><span class="sig-name descname"><span class="pre">parse_to_tims2rescore</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">TDC</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.timstof.dbsearch.utility.parse_to_tims2rescore" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.peptide_length">
+<span class="sig-prename descclassname"><span class="pre">imspy.timstof.dbsearch.utility.</span></span><span class="sig-name descname"><span class="pre">peptide_length</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">peptide</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.timstof.dbsearch.utility.peptide_length" title="Link to this definition">¶</a></dt>
+<dd><p>Takes a peptide sequence as a string and returns its length,
+excluding [UNIMOD:X] modifications.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>peptide</strong> (<em>str</em>) – A peptide sequence with possible UNIMOD modifications.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>The length of the peptide without modifications.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="imspy.timstof.dbsearch.utility.sanitize_charge">
