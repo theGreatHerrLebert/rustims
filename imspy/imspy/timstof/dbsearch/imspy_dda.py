@@ -14,7 +14,8 @@ from pathlib import Path
 
 from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SageSearchConfiguration
 from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, ScoreType
-from sagepy.qfdr.tdc import target_decoy_competition_pandas
+from sagepy.qfdr.tdc import target_decoy_competition_pandas, assign_sage_spectrum_q, assign_sage_peptide_q, \
+    assign_sage_protein_q
 
 from imspy.algorithm.ccs.predictors import DeepPeptideIonMobilityApex, load_deep_ccs_predictor
 from imspy.algorithm.utility import load_tokenizer_from_resources
@@ -845,6 +846,14 @@ def main():
         if args.verbose:
             print("calculating q-values using SAGE internal functions...")
         sage_fdr_psm(psms, indexed_db, use_hyper_score=False)
+
+    # if we have multiple fasta files, q-values need to be calculated with database independent functions
+    else:
+        if args.verbose:
+            print("calculating q-values using SAGE-style re-implemented functions...")
+        assign_sage_spectrum_q(psms, use_hyper_score=True)
+        assign_sage_peptide_q(psms, use_hyper_score=True)
+        assign_sage_protein_q(psms, use_hyper_score=True)
 
     # serialize all PSMs to JSON binary
     bts = compress_psms(psms)
