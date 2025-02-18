@@ -310,6 +310,8 @@ def main():
                         help="Batch size for model fine-tuning (default: 1024)")
     parser.add_argument("--sample_size_collision_energy_calibration", type=int, default=None,
                         help="Sample size for collision energy calibration (default: 256)")
+    parser.add_argument("--tims2rescore_table", dest="tims2rescore_table", action="store_true", help="Write PSM table that can be passed to tims2rescore")
+    parser.set_defaults(tims2rescore_table=None)
 
     args = parser.parse_args()
 
@@ -367,6 +369,7 @@ def main():
         'verbose': config.get('other', {}).get('verbose', True),
         'fasta_batch_size': config.get('other', {}).get('fasta_batch_size', 1),
         're_score_mokapot': config.get('re_scoring', {}).get('re_score_mokapot', True),
+        'tims2rescore_table': config.get('other', {}).get('tims2rescore_table', False),
     }
 
     # Override parameters with command-line arguments if provided
@@ -594,7 +597,7 @@ def main():
             lambda r: get_searchable_spec(
                 precursor=r.sage_precursor,
                 raw_fragment_data=r.raw_data,
-                spec_processor=SpectrumProcessor(take_top_n=params['take_top_n']),
+                spec_processor=SpectrumProcessor(take_top_n=params['take_top_n'], deisotope=True),
                 spec_id=r.spec_id,
                 time=r['time'],
             ),
@@ -890,6 +893,14 @@ def main():
 
     TDC.to_csv(f"{write_folder_path}" + "/imspy/PSMs.csv", index=False)
 
+    if params['tims2rescore_table']:
+        if args.verbose:
+            print(f"Writing PSM table that can be passed to tims2rescore ...")
+
+        from imspy.timstof.dbsearch.utility import parse_to_tims2rescore
+        TDC_tims2rescore = parse_to_tims2rescore(TDC)
+        TDC_tims2rescore.to_csv(f"{write_folder_path}" + "/imspy/results.sagepy.tsv", sep="\t", index=False)
+
     peptides_rescored = target_decoy_competition_pandas(psm_collection_to_pandas(psms),
                                                         method=params['fdr_peptide_method'], score=params['fdr_score'])
 
@@ -902,7 +913,7 @@ def main():
     TDC = pd.merge(peptides_rescored, PSM_pandas, left_on=["spec_idx", "match_idx", "decoy"],
                    right_on=["spec_idx", "match_idx", "decoy"]).sort_values(by="re_score", ascending=False)
 
-    TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False)
+    TDC.to_csv(f"{write_folder_path}" + "/imspy/Peptides.csv", index=False, encoding='utf-8')
 
     end_time = time.time()
 
