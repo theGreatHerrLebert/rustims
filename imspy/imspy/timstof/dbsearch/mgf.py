@@ -39,14 +39,17 @@ def iter_spectra(
             pass
     assert not recording
 
+
 def parse_spectrum(line_spectrum) -> tuple[dict, np.ndarray, np.ndarray]:
     """
-    Parse a spectrum from a list of lines
+    Parse the spectrum from the lines in the MGF file
     Args:
         line_spectrum: List of lines from an MGF file
 
     Returns:
-        a tuple of precursor_info, fragment_mzs, fragment_intensities
+        precursor_info: Dictionary containing precursor information
+        fragment_mzs: Numpy array of fragment m/z values
+        fragment_intensities: Numpy array of fragment intensities
     """
     precursor_info = {}
     fragment_mzs = []
@@ -56,7 +59,7 @@ def parse_spectrum(line_spectrum) -> tuple[dict, np.ndarray, np.ndarray]:
         if not l[0].isdigit():
             name, val = l.split("=", 1)
             if name == "CHARGE":
-                val = int(val.replace("+",""))
+                val = int(val.replace("+", ""))
             elif name == "PEPMASS":
                 name = "MZ"
                 val, precursor_intensity = val.split(" ")
@@ -75,8 +78,13 @@ def parse_spectrum(line_spectrum) -> tuple[dict, np.ndarray, np.ndarray]:
             fragment_intensities.append(int(frag_intensity))
     assert precursor_intensity != 0, "We did not manage to parse out precursor intensity!!!"
     precursor_info["intensity"] = precursor_intensity
-    return precursor_info, np.array(fragment_mzs), np.array(fragment_intensities)
 
+    try:
+        COLLISION_ENERGY = float(title.split(',')[2].replace(" ", "").replace("eV", ""))
+    except Exception as e:
+        raise Exception(f"{e}\nERROR IN PARSING COLLISION ENERGY")
+
+    return precursor_info, np.array(fragment_mzs), np.array(fragment_intensities)
 
 def read_mgf(mgf_path, top_n: int = 150) -> List[ProcessedSpectrum]:
     """
