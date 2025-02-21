@@ -565,7 +565,7 @@ def main():
 
         if args.use_mgf:
             mgf_path = mgfs[file_id]
-            fragments = mgf_to_sagepy_query(mgf_path)
+            fragments = mgf_to_sagepy_query(mgf_path, top_n=params['take_top_n'])
         else:
             fragments = dataset.get_pasef_fragments(num_threads=params['num_threads'] if not params['bruker_sdk'] else 1)
 
