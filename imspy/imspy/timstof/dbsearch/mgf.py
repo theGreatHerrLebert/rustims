@@ -80,7 +80,7 @@ def parse_spectrum(line_spectrum) -> tuple[dict, np.ndarray, np.ndarray]:
     precursor_info["intensity"] = precursor_intensity
 
     try:
-        COLLISION_ENERGY = float(precursor_info["title"].split(',')[2].replace(" ", "").replace("eV", ""))
+        COLLISION_ENERGY = float(precursor_info["TITLE"].split(',')[2].replace(" ", "").replace("eV", ""))
     except Exception as e:
         raise Exception(f"{e}\nERROR IN PARSING COLLISION ENERGY")
 
