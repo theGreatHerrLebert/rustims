@@ -12,6 +12,7 @@ import numpy as np
 
 from pathlib import Path
 
+from imspy.timstof.dbsearch.mgf import mgf_to_sagepy_query
 from sagepy.core import Precursor, Tolerance, SpectrumProcessor, Scorer, EnzymeBuilder, SageSearchConfiguration
 from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, ScoreType
 from sagepy.qfdr.tdc import target_decoy_competition_pandas, assign_sage_spectrum_q, assign_sage_peptide_q, \
@@ -390,6 +391,7 @@ def main():
         print(f"Static modifications to be applied: {static_modifications}")
 
     paths = []
+    mgfs = []
 
     # Check if path exists
     if not os.path.exists(args.path):
@@ -409,7 +411,19 @@ def main():
     for root, dirs, _ in os.walk(args.path):
         for file in dirs:
             if file.endswith(".d"):
-                paths.append(os.path.join(root, file))
+                path = os.path.join(root, file)
+                if args.use_mgf:
+                    mgf_path = None
+                    mgf_path_cnt = 0
+                    for potential_mgf_path in Path(path):
+                        if potential_mgf_path.suffix == ".mgf":
+                            mgf_path = str(potential_mgf_path)
+                            mgf_path_cnt += 1
+                    assert mgf_path_cnt == 1, f"Found {mgf_path_cnt} mgfs in folder `{path}`. We need exactly one. From Bruker DataAnalysis."
+                    mgfs.append(mgf_path)
+                paths.append(path)
+
+
 
     # Get the write folder path
     write_folder_path = str(Path(args.path))
@@ -551,7 +565,8 @@ def main():
         fragments = None
 
         if args.use_mgf:
-            pass
+            mgf_path = mgfs[file_id]
+            fragments = mgf_to_sagepy_query(mgf_path)
         else:
             fragments = dataset.get_pasef_fragments(num_threads=params['num_threads'] if not params['bruker_sdk'] else 1)
 
@@ -645,7 +660,7 @@ def main():
 
             psm_dict = scorer.score_collection_psm(
                 db=indexed_db,
-                spectrum_collection=fragments['processed_spec'].values,
+                spectrum_collection=fragments if args.use_mgf else fragments['processed_spec'].values,
                 num_threads=params['num_threads'],
             )
 
