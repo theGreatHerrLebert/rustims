@@ -210,6 +210,7 @@ def main():
     parser.set_defaults(c_terminal=None)
 
     parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
+    parser.set_defaults(calibrate_mz=None)
 
     parser.add_argument(
         "--no_decoys",
@@ -314,6 +315,7 @@ def main():
     parser.add_argument("--tims2rescore_table", dest="tims2rescore_table", action="store_true", help="Write PSM table that can be passed to tims2rescore")
     parser.set_defaults(tims2rescore_table=None)
     parser.add_argument("--use_mgf", action="store_true", help="Use Bruker DataAnalysis parsed MGF files stored in the .d folders instead of raw data.")
+    parser.set_defaults(use_mgf=None)
 
     args = parser.parse_args()
 
@@ -411,7 +413,9 @@ def main():
         for file in dirs:
             if file.endswith(".d"):
                 path = os.path.join(root, file)
-                if args.use_mgf:
+                if params['use_mgf']:
+                    if args.verbose:
+                        print(f"Looking for mgf in folder `{path}` ...")
                     mgf_path = None
                     mgf_path_cnt = 0
                     for potential_mgf_path in Path(path).iterdir():
@@ -421,8 +425,6 @@ def main():
                     assert mgf_path_cnt == 1, f"Found {mgf_path_cnt} mgfs in folder `{path}`. We need exactly one. From Bruker DataAnalysis."
                     mgfs.append(mgf_path)
                 paths.append(path)
-
-
 
     # Get the write folder path
     write_folder_path = str(Path(args.path))
@@ -563,7 +565,7 @@ def main():
 
         fragments = None
 
-        if args.use_mgf:
+        if params['use_mgf']:
             mgf_path = mgfs[file_id]
             fragments = mgf_to_sagepy_query(mgf_path, top_n=params['take_top_n'])
         else:
@@ -659,13 +661,13 @@ def main():
 
             psm_dict = scorer.score_collection_psm(
                 db=indexed_db,
-                spectrum_collection=fragments if args.use_mgf else fragments['processed_spec'].values,
+                spectrum_collection=fragments if params['use_mgf'] else fragments['processed_spec'].values,
                 num_threads=params['num_threads'],
             )
 
             if params['calibrate_mz']:
 
-                if args.use_mgf:
+                if params['use_mgf']:
                     raise NotImplementedError("Mass calibration is not yet supported in --use_mgf mode.")
 
                 if args.verbose:
