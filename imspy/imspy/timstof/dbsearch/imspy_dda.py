@@ -412,6 +412,8 @@ def main():
             if file.endswith(".d"):
                 path = os.path.join(root, file)
                 if params['use_mgf']:
+                    if args.verbose:
+                        print(f"Looking for mgf in folder `{path}` ...")
                     mgf_path = None
                     mgf_path_cnt = 0
                     for potential_mgf_path in Path(path).iterdir():
