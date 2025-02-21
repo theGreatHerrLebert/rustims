@@ -932,8 +932,11 @@ def main():
         if args.verbose:
             print(f"Writing PSM table that can be passed to tims2rescore ...")
 
+        if params['use_mgf']:
+            print("Warning: tims2rescore does not support parsed MGF files due to duplicate precursor IDs.")
+
         from imspy.timstof.dbsearch.utility import parse_to_tims2rescore
-        TDC_tims2rescore = parse_to_tims2rescore(TDC)
+        TDC_tims2rescore = parse_to_tims2rescore(TDC, from_mgf=params['use_mgf'], file_name=ds_name + ".d")
         TDC_tims2rescore.to_csv(f"{write_folder_path}" + "/imspy/results.sagepy.tsv", sep="\t", index=False)
 
     peptides_rescored = target_decoy_competition_pandas(psm_collection_to_pandas(psms),

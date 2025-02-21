@@ -509,17 +509,16 @@ def list_to_semicolon_string(value):
         return ";".join(value)
     return value
 
-def parse_to_tims2rescore(TDC):
+def parse_to_tims2rescore(TDC, from_mgf: bool = False, file_name: str = None):
     TDC_tmp = TDC.copy()
-    TDC_tmp["filename"] = TDC_tmp.spec_idx.apply(lambda s: '-'.join(s.split('-')[-2:]) + ".d")
-    TDC_tmp["scannr"] = TDC_tmp.spec_idx.apply(lambda s: int(s.split('-')[2]) - 1)
+    TDC_tmp["filename"] = file_name if from_mgf else TDC_tmp.spec_idx.apply(lambda s: '-'.join(s.split('-')[-2:]) + ".d")
+    TDC_tmp["scannr"] = TDC_tmp.spec_idx.apply(lambda i: int(i.split("-")[1]) - 1) if from_mgf else TDC_tmp.spec_idx.apply(lambda s: int(s.split('-')[2]) - 1)
     TDC_tmp["num_proteins"] = TDC_tmp.proteins.apply(lambda protein: len(parse_string_list(protein)))
-    TDC_tmp["label"] = TDC_tmp.decoy.apply(lambda b: -1 if b else 1)
+    TDC_tmp["label"] = TDC_tmp.decoy.apply(lambda b: - 1 if b else 1)
     TDC_tmp["peptide_len"] = TDC_tmp.sequence.apply(peptide_length)
     TDC_tmp["semi_enzymatic"] = False
     TDC_tmp = TDC_tmp.rename(columns=full_renaming_scheme)
     TDC_tmp = TDC_tmp[sage_target_columns]
-    TDC_tmp["psm_id"] = TDC_tmp.psm_id.apply(lambda s: int(s.split('-')[0]))
     TDC_tmp["rank"] = TDC_tmp["rank"].astype(int)
     TDC_tmp["charge"] = TDC_tmp["charge"].astype(int)
     TDC_tmp["missed_cleavages"] = TDC_tmp["missed_cleavages"].astype(int)
