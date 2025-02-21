@@ -210,7 +210,6 @@ def main():
     parser.set_defaults(c_terminal=None)
 
     parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
-    parser.set_defaults(calibrate_mz=None)
 
     parser.add_argument(
         "--no_decoys",
