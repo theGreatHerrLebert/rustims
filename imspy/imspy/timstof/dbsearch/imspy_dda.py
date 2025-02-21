@@ -313,6 +313,7 @@ def main():
                         help="Sample size for collision energy calibration (default: 256)")
     parser.add_argument("--tims2rescore_table", dest="tims2rescore_table", action="store_true", help="Write PSM table that can be passed to tims2rescore")
     parser.set_defaults(tims2rescore_table=None)
+    parser.add_argument("--use_mgf", action="store_true", help="Use Bruker DataAnalysis parsed MGF files stored in the .d folders instead of raw data.")
 
     args = parser.parse_args()
 
@@ -371,6 +372,7 @@ def main():
         'fasta_batch_size': config.get('other', {}).get('fasta_batch_size', 1),
         're_score_mokapot': config.get('re_scoring', {}).get('re_score_mokapot', True),
         'tims2rescore_table': config.get('other', {}).get('tims2rescore_table', False),
+        'use_mgf': config.get('other', {}).get('use_mgf', False)
     }
 
     # Override parameters with command-line arguments if provided
@@ -546,66 +548,71 @@ def main():
         if args.verbose:
             print("loading PASEF fragments ...")
 
-        fragments = dataset.get_pasef_fragments(num_threads=params['num_threads'] if not params['bruker_sdk'] else 1)
+        fragments = None
 
-        if args.verbose:
-            print("aggregating re-fragmented PASEF frames ...")
+        if args.use_mgf:
+            pass
+        else:
+            fragments = dataset.get_pasef_fragments(num_threads=params['num_threads'] if not params['bruker_sdk'] else 1)
 
-        fragments = fragments.groupby('precursor_id').agg({
-            'frame_id': 'first',
-            'time': 'first',
-            'precursor_id': 'first',
-            'raw_data': 'sum',
-            'scan_begin': 'first',
-            'scan_end': 'first',
-            'isolation_mz': 'first',
-            'isolation_width': 'first',
-            'collision_energy': 'first',
-            'largest_peak_mz': 'first',
-            'average_mz': 'first',
-            'monoisotopic_mz': 'first',
-            'charge': 'first',
-            'average_scan': 'first',
-            'intensity': 'first',
-            'parent_id': 'first',
-        })
+            if args.verbose:
+                print("aggregating re-fragmented PASEF frames ...")
 
-        mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
-        fragments['mobility'] = mobility
+            fragments = fragments.groupby('precursor_id').agg({
+                'frame_id': 'first',
+                'time': 'first',
+                'precursor_id': 'first',
+                'raw_data': 'sum',
+                'scan_begin': 'first',
+                'scan_end': 'first',
+                'isolation_mz': 'first',
+                'isolation_width': 'first',
+                'collision_energy': 'first',
+                'largest_peak_mz': 'first',
+                'average_mz': 'first',
+                'monoisotopic_mz': 'first',
+                'charge': 'first',
+                'average_scan': 'first',
+                'intensity': 'first',
+                'parent_id': 'first',
+            })
 
-        # generate random string for for spec_id
-        spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e6))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
-        fragments['spec_id'] = spec_id
+            mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
+            fragments['mobility'] = mobility
 
-        if args.verbose:
-            print("loading precursor data ...")
+            # generate random string for for spec_id
+            spec_id = fragments.apply(lambda r: str(np.random.randint(int(1e6))) + '-' + str(r['frame_id']) + '-' + str(r['precursor_id']) + '-' + ds_name, axis=1)
+            fragments['spec_id'] = spec_id
 
-        sage_precursor = fragments.apply(lambda r: Precursor(
-            mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
-            intensity=r['intensity'],
-            charge=sanitize_charge(r['charge']),
-            isolation_window=Tolerance(da=(params['isolation_window_lower'], params['isolation_window_upper'])),
-            collision_energy=r.collision_energy,
-            inverse_ion_mobility=r.mobility,
-        ), axis=1)
+            if args.verbose:
+                print("loading precursor data ...")
 
-        fragments['sage_precursor'] = sage_precursor
+            sage_precursor = fragments.apply(lambda r: Precursor(
+                mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
+                intensity=r['intensity'],
+                charge=sanitize_charge(r['charge']),
+                isolation_window=Tolerance(da=(params['isolation_window_lower'], params['isolation_window_upper'])),
+                collision_energy=r.collision_energy,
+                inverse_ion_mobility=r.mobility,
+            ), axis=1)
 
-        if args.verbose:
-            print("preprocessing spectra ...")
+            fragments['sage_precursor'] = sage_precursor
 
-        processed_spec = fragments.apply(
-            lambda r: get_searchable_spec(
-                precursor=r.sage_precursor,
-                raw_fragment_data=r.raw_data,
-                spec_processor=SpectrumProcessor(take_top_n=params['take_top_n'], deisotope=True),
-                spec_id=r.spec_id,
-                time=r['time'],
-            ),
-            axis=1
-        )
+            if args.verbose:
+                print("preprocessing spectra ...")
 
-        fragments['processed_spec'] = processed_spec
+            processed_spec = fragments.apply(
+                lambda r: get_searchable_spec(
+                    precursor=r.sage_precursor,
+                    raw_fragment_data=r.raw_data,
+                    spec_processor=SpectrumProcessor(take_top_n=params['take_top_n'], deisotope=True),
+                    spec_id=r.spec_id,
+                    time=r['time'],
+                ),
+                axis=1
+            )
+
+            fragments['processed_spec'] = processed_spec
 
         if args.verbose:
             print(f"generated: {len(fragments)} spectra to be scored ...")
@@ -643,6 +650,9 @@ def main():
             )
 
             if params['calibrate_mz']:
+
+                if args.use_mgf:
+                    raise NotImplementedError("Mass calibration is not yet supported in --use_mgf mode.")
 
                 if args.verbose:
                     print("calibrating mz ...")
