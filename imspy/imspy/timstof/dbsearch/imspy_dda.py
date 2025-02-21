@@ -375,6 +375,8 @@ def main():
         'use_mgf': config.get('other', {}).get('use_mgf', False)
     }
 
+    print(params)
+
     # Override parameters with command-line arguments if provided
     for key in vars(args):
         if getattr(args, key) is not None:
@@ -423,8 +425,6 @@ def main():
                     assert mgf_path_cnt == 1, f"Found {mgf_path_cnt} mgfs in folder `{path}`. We need exactly one. From Bruker DataAnalysis."
                     mgfs.append(mgf_path)
                 paths.append(path)
-
-
 
     # Get the write folder path
     write_folder_path = str(Path(args.path))
