@@ -210,6 +210,7 @@ def main():
     parser.set_defaults(c_terminal=None)
 
     parser.add_argument("--calibrate_mz", dest="calibrate_mz", action="store_true", help="Calibrate mz (default: False)")
+    parser.set_defaults(calibrate_mz=None)
 
     parser.add_argument(
         "--no_decoys",
@@ -314,6 +315,7 @@ def main():
     parser.add_argument("--tims2rescore_table", dest="tims2rescore_table", action="store_true", help="Write PSM table that can be passed to tims2rescore")
     parser.set_defaults(tims2rescore_table=None)
     parser.add_argument("--use_mgf", action="store_true", help="Use Bruker DataAnalysis parsed MGF files stored in the .d folders instead of raw data.")
+    parser.set_defaults(use_mgf=None)
 
     args = parser.parse_args()
 
@@ -374,8 +376,6 @@ def main():
         'tims2rescore_table': config.get('other', {}).get('tims2rescore_table', False),
         'use_mgf': config.get('other', {}).get('use_mgf', False)
     }
-
-    print(params)
 
     # Override parameters with command-line arguments if provided
     for key in vars(args):
