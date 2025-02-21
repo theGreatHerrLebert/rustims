@@ -415,7 +415,7 @@ def main():
                 if args.use_mgf:
                     mgf_path = None
                     mgf_path_cnt = 0
-                    for potential_mgf_path in Path(path):
+                    for potential_mgf_path in Path(path).iterdir():
                         if potential_mgf_path.suffix == ".mgf":
                             mgf_path = str(potential_mgf_path)
                             mgf_path_cnt += 1
