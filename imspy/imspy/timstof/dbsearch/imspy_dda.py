@@ -411,7 +411,7 @@ def main():
         for file in dirs:
             if file.endswith(".d"):
                 path = os.path.join(root, file)
-                if args.use_mgf:
+                if params['use_mgf']:
                     mgf_path = None
                     mgf_path_cnt = 0
                     for potential_mgf_path in Path(path).iterdir():
@@ -563,7 +563,7 @@ def main():
 
         fragments = None
 
-        if args.use_mgf:
+        if params['use_mgf']:
             mgf_path = mgfs[file_id]
             fragments = mgf_to_sagepy_query(mgf_path, top_n=params['take_top_n'])
         else:
@@ -659,13 +659,13 @@ def main():
 
             psm_dict = scorer.score_collection_psm(
                 db=indexed_db,
-                spectrum_collection=fragments if args.use_mgf else fragments['processed_spec'].values,
+                spectrum_collection=fragments if params['use_mgf'] else fragments['processed_spec'].values,
                 num_threads=params['num_threads'],
             )
 
             if params['calibrate_mz']:
 
-                if args.use_mgf:
+                if params['use_mgf']:
                     raise NotImplementedError("Mass calibration is not yet supported in --use_mgf mode.")
 
                 if args.verbose:
