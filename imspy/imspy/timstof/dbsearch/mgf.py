@@ -86,7 +86,7 @@ def parse_spectrum(line_spectrum) -> tuple[dict, np.ndarray, np.ndarray]:
 
     return precursor_info, np.array(fragment_mzs), np.array(fragment_intensities)
 
-def mgf_to_sagepy_query(mgf_path, top_n: int = 150) -> List[ProcessedSpectrum]:
+def mgf_to_sagepy_query(mgf_path, top_n: int = 150) -> list[ProcessedSpectrum]:
     """
     Read an MGF file and return a list of ProcessedSpectrum
     Args:
