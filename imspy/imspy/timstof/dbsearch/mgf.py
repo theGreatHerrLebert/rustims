@@ -1,11 +1,6 @@
-from collections import Counter
-
-from pathlib import Path
-
 import numpy as np
-from sagepy.core import (EnzymeBuilder, Precursor, ProcessedSpectrum,
-                         RawSpectrum, Representation, SageSearchConfiguration,
-                         Scorer, SpectrumProcessor, Tolerance)
+from sagepy.core import (Precursor, ProcessedSpectrum,
+                         RawSpectrum, SpectrumProcessor)
 
 def iter_spectra(
     codelines,
@@ -80,7 +75,14 @@ def parse_spectrum(line_spectrum) -> tuple[dict, np.ndarray, np.ndarray]:
     precursor_info["intensity"] = precursor_intensity
 
     try:
+        precursor_id = precursor_info["TITLE"].split(',')[0].split(' ')[1]
+        precursor_info["ID"] = precursor_id
+    except Exception as e:
+        raise Exception(f"{e}\nERROR IN PARSING PRECURSOR ID")
+
+    try:
         COLLISION_ENERGY = float(precursor_info["TITLE"].split(',')[2].replace(" ", "").replace("eV", ""))
+        precursor_info["COLLISION_ENERGY"] = COLLISION_ENERGY
     except Exception as e:
         raise Exception(f"{e}\nERROR IN PARSING COLLISION ENERGY")
 
@@ -100,8 +102,11 @@ def mgf_to_sagepy_query(mgf_path, top_n: int = 150) -> list[ProcessedSpectrum]:
     queries = []
 
     with open(mgf_path, "r") as mgf:
+
         for specNo, line_spectrum in enumerate(iter_spectra(mgf)):
+
             precursor_info, fragment_mzs, fragment_intensities = parse_spectrum(line_spectrum)
+
             precursor = Precursor(
                 mz=precursor_info["MZ"],
                 charge=precursor_info.get("CHARGE", None),
@@ -109,10 +114,11 @@ def mgf_to_sagepy_query(mgf_path, top_n: int = 150) -> list[ProcessedSpectrum]:
                 inverse_ion_mobility=precursor_info.get("ION_MOBILITY", None),
                 collision_energy=precursor_info.get("COLLISION_ENERGY", None),
             )
+
             prec_rt = precursor_info["RTINSECONDS"] / 60.0
             raw_spectrum = RawSpectrum(
                 file_id=1,
-                spec_id=str(specNo),
+                spec_id=str(specNo) + "-" + str(precursor_info["ID"]),
                 total_ion_current=fragment_intensities.sum(),
                 precursors=[precursor],
                 mz=fragment_mzs.astype(np.float32),
