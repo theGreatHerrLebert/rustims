@@ -143,6 +143,7 @@ def assign_events(df, upscale_factor=int(1e5)):
     indices = np.random.uniform(1, 1e4, num_samples).astype(np.int32)
     num_events = upscale_factor * get_tenzer_hokey()[indices]
     df["events"] = num_events
+    df["total_events"] = df["events"]
     return df
 
 

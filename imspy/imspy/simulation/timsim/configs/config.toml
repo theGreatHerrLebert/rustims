@@ -26,6 +26,13 @@ cleave_at = "KR"
 restrict = "P"
 modifications = "/scratch/timsim/midia/modifications.toml"
 
+[variable_modifications]
+M = ["[UNIMOD:35]"] # Oxidation of methionine
+"[" = ["[UNIMOD:1]"] # Acetylation of the peptide N-terminus of proteins
+
+[static_modifications]
+C = "[UNIMOD:4]" # Carbamidomethylation of cysteine
+
 [peptide_intensity]
 intensity_mean = 7
 intensity_min = 5
