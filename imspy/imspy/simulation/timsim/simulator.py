@@ -617,6 +617,7 @@ def main():
             im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
             verbose=not args.silent_mode,
+            remove_mods=True,
         )
 
         # JOB 7: Precursor isotopic distributions
