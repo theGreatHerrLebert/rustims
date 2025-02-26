@@ -14,6 +14,7 @@ from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 from sagepy.core import IonType
 
+from imspy.algorithm.intensity.predictors import remove_unimod_annotation
 from imspy.utility import tokenize_unimod_sequence
 
 @numba.njit
@@ -85,13 +86,16 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
 def generate_prosit_intensity_prediction_dataset(
         sequences: List[str],
         charges: NDArray,
-        collision_energies: NDArray | None = None):
+        collision_energies: NDArray | None = None,
+        remove_mods: bool = True,
+):
     """
     Generate a dataset for predicting fragment intensities using Prosit.
     Args:
         sequences: A list of peptide sequences.
         charges: A numpy array of precursor charges.
         collision_energies: A numpy array of collision energies.
+        remove_mods: Whether to remove modifications from the sequences.
 
     Returns:
         A tf.data.Dataset object that yields batches of data in the format expected by the model.
@@ -107,7 +111,11 @@ def generate_prosit_intensity_prediction_dataset(
         collision_energies = np.expand_dims(collision_energies, 1)
 
     charges = tf.one_hot(charges - 1, depth=6)
-    sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
+
+    if remove_mods:
+        sequences = tf.cast([seq_to_index(remove_unimod_annotation(s)) for s in sequences], dtype=tf.int32)
+    else:
+        sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
 
     # Create a dataset that yields batches in the format expected by the model??
     dataset = tf.data.Dataset.from_tensor_slices((
