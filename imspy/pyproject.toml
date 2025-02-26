@@ -1,6 +1,6 @@
 [project]
 name = "imspy"
-version = "0.3.14"
+version = "0.3.15"
 description = ""
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
@@ -19,7 +19,7 @@ dependencies = [
     "wandb>=0.12.1",
     "mokapot>=0.10.0",
     "sagepy>=0.3.8",
-    "imspy-connector>=0.3.14",
+    "imspy-connector>=0.3.15",
     "scipy>=1.7.1",
     "tqdm>=4.66",
     "pyarrow>=13.0",
