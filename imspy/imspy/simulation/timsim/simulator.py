@@ -593,8 +593,7 @@ def main():
             verbose=not args.silent_mode,
         )
 
-    # JOB 8: Simulate scan distributions
-    # TODO: sample standard deviation of ion mobility from a distribution (e.g., normal?)
+    # JOB 8: Simulate scan distributions with variance
     ions = simulate_scan_distributions_with_variance(
         ions=ions,
         scans=acquisition_builder.scan_table,
