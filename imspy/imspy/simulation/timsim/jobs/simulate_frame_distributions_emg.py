@@ -67,7 +67,7 @@ def simulate_frame_distributions_emg(
     times_np = frames.time.values
     peptide_rt = peptides
 
-    if verbose:
+    if verbose and not from_existing:
         print("Calculating frame distributions...")
 
     n = peptides.shape[0]
