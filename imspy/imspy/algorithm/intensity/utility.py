@@ -13,8 +13,8 @@ from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 from sagepy.core import IonType
-
 from imspy.utility import tokenize_unimod_sequence
+
 
 @numba.njit
 def _log_factorial(n: int, k: int) -> float:
@@ -85,13 +85,16 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
 def generate_prosit_intensity_prediction_dataset(
         sequences: List[str],
         charges: NDArray,
-        collision_energies: NDArray | None = None):
+        collision_energies: NDArray | None = None,
+        remove_mods: bool = False,
+):
     """
     Generate a dataset for predicting fragment intensities using Prosit.
     Args:
         sequences: A list of peptide sequences.
         charges: A numpy array of precursor charges.
         collision_energies: A numpy array of collision energies.
+        remove_mods: Whether to remove modifications from the sequences.
 
     Returns:
         A tf.data.Dataset object that yields batches of data in the format expected by the model.

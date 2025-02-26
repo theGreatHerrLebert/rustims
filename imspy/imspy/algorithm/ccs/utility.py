@@ -6,6 +6,19 @@ from typing import List, Dict
 
 import numpy as np
 
+def remove_unimod_annotation(sequence: str) -> str:
+    """
+    Remove the unimod annotation from a peptide sequence.
+    Args:
+        sequence: a peptide sequence
+
+    Returns:
+        str: the peptide sequence without unimod annotation
+    """
+
+    pattern = r'\[UNIMOD:\d+\]'
+    return re.sub(pattern, '', sequence)
+
 from imspy.algorithm.ccs.model_std import GRUCCSPredictorStd
 from imspy.algorithm.ccs.predictors import SquareRootProjectionLayer
 from imspy.algorithm.utility import get_model_path
@@ -125,7 +138,8 @@ def to_tf_dataset_with_variance(
         tokenizer: Dict[str, int] = load_tokenizer_from_resources(),
         batch: bool = True,
         batch_size: int = 2048,
-        shuffle: bool = True
+        shuffle: bool = True,
+        remove_unimod: bool = False
 ):
     """
     Create a TensorFlow dataset from input data, including CCS standard deviation
@@ -139,6 +153,7 @@ def to_tf_dataset_with_variance(
         batch: if True, return a batched dataset
         batch_size: the batch size for the dataset
         shuffle: if True, shuffle the dataset
+        remove_unimod: if True, remove UniMod annotations from sequences
 
     Returns:
         A TensorFlow dataset, when ccs and ccs_std are available, the dataset will include both CCS and CCS standard deviation for training,
@@ -151,6 +166,8 @@ def to_tf_dataset_with_variance(
     seq_padded = []
 
     for seq in sequences:
+        if remove_unimod:
+            seq = remove_unimod_annotation(seq)
         seq_padded.append(tokenize_and_pad(token_list_from_sequence(seq), tokenizer))
 
     # prepare ccs
