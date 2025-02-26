@@ -13,23 +13,8 @@ from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 from sagepy.core import IonType
-
-import re
 from imspy.utility import tokenize_unimod_sequence
 
-
-def remove_unimod_annotation(sequence: str) -> str:
-    """
-    Remove the unimod annotation from a peptide sequence.
-    Args:
-        sequence: a peptide sequence
-
-    Returns:
-        str: the peptide sequence without unimod annotation
-    """
-
-    pattern = r'\[UNIMOD:\d+\]'
-    return re.sub(pattern, '', sequence)
 
 @numba.njit
 def _log_factorial(n: int, k: int) -> float:
@@ -125,11 +110,7 @@ def generate_prosit_intensity_prediction_dataset(
         collision_energies = np.expand_dims(collision_energies, 1)
 
     charges = tf.one_hot(charges - 1, depth=6)
-
-    if remove_mods:
-        sequences = tf.cast([seq_to_index(remove_unimod_annotation(s)) for s in sequences], dtype=tf.int32)
-    else:
-        sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
+    sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
 
     # Create a dataset that yields batches in the format expected by the model??
     dataset = tf.data.Dataset.from_tensor_slices((
