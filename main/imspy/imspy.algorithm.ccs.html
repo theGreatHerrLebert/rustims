@@ -7,7 +7,7 @@
 
     <title>imspy.algorithm.ccs package &#8212; imspy 0.2.33 documentation</title>
     <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
-    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=686e5160" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
     <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
     <script src="_static/documentation_options.js?v=73d7b0fc"></script>
     <script src="_static/doctools.js?v=9bcbadda"></script>
@@ -43,7 +43,7 @@
 <span id="imspy-algorithm-ccs-predictors-module"></span><h2>imspy.algorithm.ccs.predictors module<a class="headerlink" href="#module-imspy.algorithm.ccs.predictors" title="Link to this heading">¶</a></h2>
 <dl class="py class">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">DeepPeptideIonMobilityApex</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'gru_predictor'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">DeepPeptideIonMobilityApex</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">verbose</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'gru_predictor'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <a class="reference internal" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex" title="imspy.algorithm.ccs.predictors.PeptideIonMobilityApex"><code class="xref py py-class docutils literal notranslate"><span class="pre">PeptideIonMobilityApex</span></code></a></p>
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.DeepPeptideIonMobilityApex.fine_tune_model">
@@ -74,7 +74,7 @@
 
 <dl class="py class">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.GRUCCSPredictor">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">GRUCCSPredictor</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.GRUCCSPredictor" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">GRUCCSPredictor</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.GRUCCSPredictor" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Model</span></code></p>
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.GRUCCSPredictor.build">
@@ -142,7 +142,7 @@ a list of tensors if there are more than one outputs.</p>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.GRUCCSPredictor.from_config">
-<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.GRUCCSPredictor.from_config" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.GRUCCSPredictor.from_config" title="Link to this definition">¶</a></dt>
 <dd><p>Creates a layer from its config.</p>
 <p>This method is the reverse of <cite>get_config</cite>,
 capable of instantiating the same layer from the config
@@ -187,11 +187,11 @@ Raises <cite>NotImplementedError</cite> when in cases where a custom
 
 <dl class="py class">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.PeptideIonMobilityApex">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">PeptideIonMobilityApex</span></span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">PeptideIonMobilityApex</span></span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></p>
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">simulate_ion_mobilities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sequences</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">abstractmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">simulate_ion_mobilities</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sequences</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities" title="Link to this definition">¶</a></dt>
 <dd><dl class="field-list simple">
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span></p>
@@ -201,7 +201,7 @@ Raises <cite>NotImplementedError</cite> when in cases where a custom
 
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities_pandas">
-<em class="property"><span class="pre">abstract</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">simulate_ion_mobilities_pandas</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities_pandas" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">abstractmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">simulate_ion_mobilities_pandas</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">data</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.PeptideIonMobilityApex.simulate_ion_mobilities_pandas" title="Link to this definition">¶</a></dt>
 <dd><dl class="field-list simple">
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
 <dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">DataFrame</span></code></span></p>
@@ -213,7 +213,7 @@ Raises <cite>NotImplementedError</cite> when in cases where a custom
 
 <dl class="py class">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.SquareRootProjectionLayer">
-<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">SquareRootProjectionLayer</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">slopes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">intercepts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trainable</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.algorithm.ccs.predictors.</span></span><span class="sig-name descname"><span class="pre">SquareRootProjectionLayer</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">slopes</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">intercepts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">trainable</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer" title="Link to this definition">¶</a></dt>
 <dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">Layer</span></code></p>
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.build">
@@ -300,7 +300,7 @@ from a Keras layer with masking support).</p></li>
 
 <dl class="py method">
 <dt class="sig sig-object py" id="imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.from_config">
-<em class="property"><span class="pre">classmethod</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.from_config" title="Link to this definition">¶</a></dt>
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">from_config</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">config</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.algorithm.ccs.predictors.SquareRootProjectionLayer.from_config" title="Link to this definition">¶</a></dt>
 <dd><p>Creates a layer from its config.</p>
 <p>This method is the reverse of <cite>get_config</cite>,
 capable of instantiating the same layer from the config
@@ -468,7 +468,7 @@ returned dict if they want to modify it.</p>
       &#169;2024, David Teschner.
       
       |
-      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.1.3</a>
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.1</a>
       &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
       
       |
