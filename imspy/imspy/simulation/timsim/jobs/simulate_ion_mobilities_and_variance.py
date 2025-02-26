@@ -10,7 +10,7 @@ def simulate_ion_mobilities_and_variance(
         im_upper: float,
         verbose: bool = False,
         epsilon: float = 1e-6,
-        remove_unimod_annotation: bool = False
+        remove_mods: bool = False
 ) -> pd.DataFrame:
     """Simulate ion mobilities.
 
@@ -20,7 +20,7 @@ def simulate_ion_mobilities_and_variance(
         im_upper: Upper ion mobility.
         verbose: Verbosity.
         epsilon: Epsilon value to be added to the variance.
-        remove_unimod_annotation: Remove Unimod annotation.
+        remove_mods: Remove Unimod annotation.
 
     Returns:
         pd.DataFrame: Ions DataFrame.
@@ -43,7 +43,7 @@ def simulate_ion_mobilities_and_variance(
         sequences=ions.sequence.values,
         batch=True,
         shuffle=False,
-        remove_unimod=remove_unimod_annotation,
+        remove_unimod=remove_mods,
     )
 
     ccs, ccs_std, _ = model.predict(tf_ds)
