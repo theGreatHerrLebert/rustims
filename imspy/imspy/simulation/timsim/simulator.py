@@ -601,7 +601,7 @@ def main():
         verbose=not args.silent_mode,
         p_target=args.target_p,
         num_threads=args.num_threads,
-        remove_unimod_annotation=True,
+        remove_unimod_annotation=False,
     )
 
     acquisition_builder.synthetics_handle.create_table(
