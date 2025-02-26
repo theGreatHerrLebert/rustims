@@ -486,7 +486,7 @@ def main():
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
-                num_peptides_total=2_000_000,
+                num_peptides_total=250_000,
                 verbose=not args.silent_mode,
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,
