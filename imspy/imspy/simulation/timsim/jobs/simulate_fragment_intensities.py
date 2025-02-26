@@ -37,7 +37,7 @@ def simulate_fragment_intensities(
     if verbose:
         print("Simulating fragment ion intensity distributions...")
 
-    assert 0 < down_sample_factor <= 1, "down_sample_factor must be in the range (0, 1]"
+    assert 0 <= down_sample_factor < 1, "down_sample_factor must be in the range (0, 1]"
 
     native_path = Path(path) / name / 'synthetic_data.db'
 

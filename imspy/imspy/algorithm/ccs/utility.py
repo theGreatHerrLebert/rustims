@@ -139,7 +139,7 @@ def to_tf_dataset_with_variance(
         batch: bool = True,
         batch_size: int = 2048,
         shuffle: bool = True,
-        remove_unimod: bool = True
+        remove_unimod: bool = False
 ):
     """
     Create a TensorFlow dataset from input data, including CCS standard deviation

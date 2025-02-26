@@ -101,7 +101,7 @@ def generate_prosit_intensity_prediction_dataset(
         sequences: List[str],
         charges: NDArray,
         collision_energies: NDArray | None = None,
-        remove_mods: bool = True,
+        remove_mods: bool = False,
 ):
     """
     Generate a dataset for predicting fragment intensities using Prosit.
