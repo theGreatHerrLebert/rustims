@@ -14,8 +14,22 @@ from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
 from sagepy.core import IonType
 
-from imspy.algorithm.intensity.predictors import remove_unimod_annotation
+import re
 from imspy.utility import tokenize_unimod_sequence
+
+
+def remove_unimod_annotation(sequence: str) -> str:
+    """
+    Remove the unimod annotation from a peptide sequence.
+    Args:
+        sequence: a peptide sequence
+
+    Returns:
+        str: the peptide sequence without unimod annotation
+    """
+
+    pattern = r'\[UNIMOD:\d+\]'
+    return re.sub(pattern, '', sequence)
 
 @numba.njit
 def _log_factorial(n: int, k: int) -> float:
