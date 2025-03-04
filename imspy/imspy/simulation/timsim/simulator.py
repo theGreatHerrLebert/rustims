@@ -170,6 +170,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # Charge state probabilities
     parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.5)")
     parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.25)")
+    parser.add_argument("--max_charge", type=int, help="Maximum charge state (default: 4)")
+    parser.add_argument("--binomial_charge_model", dest="binomial_charge_model", action="store_true",
+                        help="Use binomial charge state model (default: False)")
+    parser.set_defaults(binomial_charge_model=False)
 
     # Noise settings
     parser.add_argument("--add_noise_to_signals", dest="add_noise_to_signals", action="store_true",
@@ -294,6 +298,8 @@ def get_default_settings() -> dict:
         'existing_path': None,
         'use_bruker_sdk': True,
         'phospho_mode': False,
+        'max_charge': 4,
+        'binomial_charge_model': False,
     }
 
 
@@ -608,6 +614,8 @@ def main():
             mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
             mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
             p_charge=args.p_charge,
+            max_charge=args.max_charge,
+            use_binomial=args.binomial_charge_model,
             min_charge_contrib=args.min_charge_contrib,
         )
 
