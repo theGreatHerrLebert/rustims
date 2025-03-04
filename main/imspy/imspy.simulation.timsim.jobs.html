@@ -178,7 +178,7 @@
 <span id="imspy-simulation-timsim-jobs-simulate-charge-states-module"></span><h2>imspy.simulation.timsim.jobs.simulate_charge_states module<a class="headerlink" href="#module-imspy.simulation.timsim.jobs.simulate_charge_states" title="Link to this heading">¶</a></h2>
 <dl class="py function">
 <dt class="sig sig-object py" id="imspy.simulation.timsim.jobs.simulate_charge_states.simulate_charge_states">
-<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.simulate_charge_states.</span></span><span class="sig-name descname"><span class="pre">simulate_charge_states</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">peptides</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_lower</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_upper</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">p_charge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge_state_one_probability</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_charge_contrib</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.15</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.simulate_charge_states.simulate_charge_states" title="Link to this definition">¶</a></dt>
+<span class="sig-prename descclassname"><span class="pre">imspy.simulation.timsim.jobs.simulate_charge_states.</span></span><span class="sig-name descname"><span class="pre">simulate_charge_states</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">peptides</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_lower</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz_upper</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">p_charge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_charge</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge_state_one_probability</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">min_charge_contrib</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.15</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">use_binomial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.simulation.timsim.jobs.simulate_charge_states.simulate_charge_states" title="Link to this definition">¶</a></dt>
 <dd><p>Simulate charge states for peptides.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -187,8 +187,10 @@
 <li><p><strong>mz_lower</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Lower m/z value.</p></li>
 <li><p><strong>mz_upper</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Upper m/z value.</p></li>
 <li><p><strong>p_charge</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Probability of charge.</p></li>
+<li><p><strong>max_charge</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – Maximum charge that will be simulated (should default to 4 since IMS simulations are limited to 4).</p></li>
 <li><p><strong>charge_state_one_probability</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Probability of charge state one.</p></li>
 <li><p><strong>min_charge_contrib</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – Minimum charge contribution.</p></li>
+<li><p><strong>use_binomial</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>) – Use binomial distribution model, otherwise use deep learning model.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
@@ -528,7 +530,7 @@ and returns the count of sites and their indices.</p>
       &#169;2024, David Teschner.
       
       |
-      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.1</a>
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
       &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
       
       |
