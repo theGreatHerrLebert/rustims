@@ -1,6 +1,8 @@
 # TimSim: Proteomics Experiment Simulation on timsTOF
 
-Welcome to the TimSim user manual. This document provides comprehensive guidance on using the graphical user interface (GUI) to configure and run proteomics simulations on the timsTOF platform. Each section details a specific group of parameters, explaining how they influence the simulation and how you can adjust them to model your experiment accurately.
+Welcome to the `timsim` user manual. This document provides guidance on how to configure and run 
+proteomics simulations on a virtual timsTOF platform with `timsim`. Each section details a specific group of parameters, 
+explaining how they influence the simulation and how you can adjust them to model your experiment accurately.
 
 ---
 
@@ -30,9 +32,9 @@ Welcome to the TimSim user manual. This document provides comprehensive guidance
 ### Options
 - **Use Reference Layout**: Use the layout from the reference dataset to mimic realistic instrument parameters.
 - **Load Reference into Memory**: Pre-load the reference dataset into RAM to speed up data access during simulation.
-- **Sample Peptides**: When enabled, peptides are randomly sampled from the digestion process, reducing computation time.
-- **Generate Decoys**: Simulate decoy (inverted) peptides for more robust false discovery rate (FDR) estimation.
-- **Silent Mode**: Run the simulation with minimal console output for a cleaner user experience.
+- **Sample Peptides**: When enabled, peptides are randomly sampled from the digestion process.
+- **Generate Decoys**: Simulate decoy (inverted) peptides as well. Why would you want this? We still search an application!.
+- **Silent Mode**: Run the simulation with minimal console output.
 - **Apply Fragmentation to Ions**: Perform ion fragmentation during the simulation. This option is enabled by default.
 - **Proteome Mixture**: Simulate complex samples by incorporating a mixture of proteomes.
 - **Phospho Mode**: Enable phospho mode to generate a phospho-enriched dataset for testing phosphosite localization algorithms.
@@ -55,20 +57,16 @@ Welcome to the TimSim user manual. This document provides comprehensive guidance
 ## Peptide Intensity Settings
 
 ### Parameters
-- **Mean Intensity**: The average intensity of simulated peptides, expressed as 10 raised to a given power.
-- **Minimum Intensity**: The lower bound for peptide intensities (expressed as a power of 10).
-- **Maximum Intensity**: The upper bound for peptide intensities (expressed as a power of 10).
-- **Sample Occurrences Randomly**: When enabled, peptide occurrences are randomly sampled from the defined intensity distribution.
-- **Fixed Intensity Value**: A constant intensity value (as a power of 10) assigned to all peptides if random sampling is disabled.
-
----
+Peptide intensity settings are currently simulated with a fixed procedure. If you want to vary the intensity of peptides, 
+connect to a simulation database and adjust the intensity values there directly. Afterward you can re-run the simulation
+using the adapted database as reference.
 
 ## Isotopic Pattern Settings
 
 ### Parameters
 - **Maximum Number of Isotopes**: The number of isotopic peaks to simulate for each peptide.
 - **Minimum Isotope Intensity**: The threshold intensity below which isotopic peaks are not included.
-- **Centroid Isotopes**: When enabled, the simulation averages peak positions to generate a simplified isotopic pattern.
+- **Centroid Isotopes**: When enabled, the simulation averages peak positions to generate a simplified isotopic pattern. This parameter is enabled by default.
 
 ---
 
@@ -77,12 +75,12 @@ Welcome to the TimSim user manual. This document provides comprehensive guidance
 ### Parameters
 - **Gradient Length**: The total duration of the simulated chromatographic gradient (in seconds).
 - **Mean Std RT**: The average standard deviation of the retention time (RT) distribution, which affects peak widths.
-- **Variance Std RT**: The variance in the RT standard deviation, influencing the spread of the peaks.
+- **Variance Std RT**: The variance in the RT standard deviation, influencing the variability of the collection of all peak widths.
 - **Mean Skewness**: The average skewness of the RT distribution, which determines the asymmetry of peaks.
-- **Variance Skewness**: The variance in the skewness, further modulating the peak shapes.
-- **Z-Score**: A threshold used to filter out low-signal regions based on statistical significance.
+- **Variance Skewness**: The variance in the skewness, influencing the variability of the asymmetry of all peaks.
+- **Z-Score**: Total amount of signal intensity in the chromatogram that needs to be covered before the numerical integration stops.
 - **Target Percentile**: The percentile used to select high-density regions within the RT distribution.
-- **Sampling Step Size**: The resolution for sampling the RT distribution; smaller values yield finer detail.
+- **Sampling Step Size**: The resolution for sampling the RT distribution; smaller values yield finer detail but require more computational resources.
 ---
 
 ## Noise Settings
@@ -96,15 +94,17 @@ Welcome to the TimSim user manual. This document provides comprehensive guidance
 - **Use Uniform Distribution for M/Z Noise**: When enabled, m/z noise is sampled from a uniform distribution instead of a Gaussian.
 - **Add Real Data Noise**: Incorporate noise profiles derived from real experimental data.
 - **Reference Noise Intensity Max**: The maximum intensity threshold for noise derived from reference data.
-- **Fragment Downsample Factor**: Sets the probability of downsampling fragment ions based on their intensity.
+- **Fragment Downsample Factor**: Sets the relative amount fragment ions are downsampled. Take probability is inversely proportional to their intensity.
 
 ---
 
 ## Charge State Probabilities
 
 ### Parameters
+- **Binomial Charge Model**: When enabled, the charge state distribution is modeled using a binomial distribution. Only if enabled, the following parameters are considered.
 - **Probability of Charge**: The likelihood that a peptide will adopt a particular charge state.
 - **Minimum Charge Contribution**: The minimum relative contribution required for peptides with a given charge state to be considered in the simulation.
+- **Maximum Charge**: The highest charge state to simulate for peptides.
 
 ---
 
@@ -116,7 +116,7 @@ Welcome to the TimSim user manual. This document provides comprehensive guidance
 
 ---
 
-## Console and Execution
+## Console and Execution (GUI Mode)
 
 ### Features
 - **Console Output**: Displays real-time logs, warnings, and progress updates during the simulation.
@@ -127,4 +127,4 @@ Welcome to the TimSim user manual. This document provides comprehensive guidance
 
 ---
 
-For additional assistance or troubleshooting, please refer to the tooltips within the application or visit our [GitHub repository](https://github.com/theGreatHerrLebert/rustims) for support.
+For additional assistance or troubleshooting, please refer to the tooltips within the GUI application or visit our [GitHub repository](https://github.com/theGreatHerrLebert/rustims) for support.
