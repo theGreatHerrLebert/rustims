@@ -177,6 +177,10 @@ def main():
     parser.add_argument("--fragment_tolerance_upper", type=float, default=None,
                         help="Fragment tolerance upper (default: 20.0)")
 
+    # isotopic error range
+    parser.add_argument("--min_isotope_err", type=int, default=None, help="Minimum isotope error (default: -1)")
+    parser.add_argument("--max_isotope_err", type=int, default=None, help="Maximum isotope error (default: 3)")
+
     # number of psms to report
     parser.add_argument("--report_psms", type=int, default=None, help="Number of PSMs to report (default: 5)")
     # minimum number of matched peaks
@@ -374,7 +378,9 @@ def main():
         'fasta_batch_size': config.get('other', {}).get('fasta_batch_size', 1),
         're_score_mokapot': config.get('re_scoring', {}).get('re_score_mokapot', True),
         'tims2rescore_table': config.get('other', {}).get('tims2rescore_table', False),
-        'use_mgf': config.get('other', {}).get('use_mgf', False)
+        'use_mgf': config.get('other', {}).get('use_mgf', False),
+        'min_isotope_err': config.get('scoring', {}).get('min_isotope_err', -1),
+        'max_isotope_err': config.get('scoring', {}).get('max_isotope_err', 3),
     }
 
     # Override parameters with command-line arguments if provided
@@ -490,6 +496,8 @@ def main():
         score_type=score_type,
         variable_mods=variable_modifications,
         static_mods=static_modifications,
+        min_isotope_err=params['min_isotope_err'],
+        max_isotope_err=params['max_isotope_err'],
     )
 
     if args.verbose:
