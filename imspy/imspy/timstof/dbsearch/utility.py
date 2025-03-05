@@ -1,4 +1,5 @@
 import os
+import warnings
 from typing import List, Tuple, Union, Dict
 
 import pandas as pd
@@ -22,6 +23,22 @@ from numba import jit
 
 import ast
 import re
+
+def check_memory(
+        limit_in_gb: int = 16,
+        msg: str = "⚠️ Warning: System has only {total_ram_gb:.2f}GB of RAM, which is below the recommended {limit_in_gb}GB."):
+
+    if hasattr(os, "sysconf"):
+        total_ram_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        total_ram_gb = total_ram_bytes / (1024 ** 3)  # Convert to GB
+        if total_ram_gb < limit_in_gb:
+            msg = msg.format(total_ram_gb=total_ram_gb, limit_in_gb=limit_in_gb)
+            warnings.warn(msg)
+    else:
+        warnings.warn("⚠️ Unable to determine system memory.")
+
+# Run the check
+check_memory()
 
 def peptide_length(peptide: str):
     """
