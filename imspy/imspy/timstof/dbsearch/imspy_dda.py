@@ -31,7 +31,7 @@ from sagepy.core.fdr import sage_fdr_psm
 
 from imspy.timstof.dbsearch.utility import sanitize_mz, sanitize_charge, get_searchable_spec, split_fasta, \
     write_psms_binary, \
-    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map
+    merge_dicts_with_merge_dict, generate_balanced_rt_dataset, generate_balanced_im_dataset, linear_map, check_memory
 
 from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 
@@ -82,6 +82,9 @@ def load_config(config_path):
     return config
 
 def main():
+    # check memory
+    check_memory(limit_in_gb=16)
+
     # use argparse to parse command line arguments
     parser = argparse.ArgumentParser(description='🦀💻 IMSPY - timsTOF DDA 🔬🐍 - PROTEOMICS IMS DDA data analysis '
                                                  'using imspy and sagepy.')

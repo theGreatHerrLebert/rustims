@@ -19,6 +19,12 @@ import imspy_connector
 ims = imspy_connector.py_dataset
 import warnings
 
+import platform
+
+def is_amd64():
+    arch = platform.machine().lower()
+    return arch in ("amd64", "x86_64")
+
 
 class AcquisitionMode(RustWrapperObject):
     def __init__(self, mode: str):
@@ -70,11 +76,11 @@ class TimsDataset(ABC):
         """
         self.__dataset = None
         self.binary_path = None
-        if not use_bruker_sdk:
-            warnings.warn("Warning: SDK free data read is still experimental, expect higher mass errors and inverse "
-                            "mobility errors.")
-
         self.use_bruker_sdk = use_bruker_sdk
+
+        if not self.use_bruker_sdk:
+            warnings.warn("Warning: SDK free data read is still experimental, expect higher mass errors and inverse "
+                          "mobility errors.")
 
         self.data_path = data_path
         if data_path[-1] == "/":
@@ -94,14 +100,18 @@ class TimsDataset(ABC):
         # if we are on macOS, we only can use the bruker SDK False option, start by getting the OS we are on, use python's os module
         current_os = os.uname().sysname
 
-        # if use_bruker_sdk is True on MacOS, warn the user and set it to False
-        if current_os == "Darwin" and use_bruker_sdk:
-            warnings.warn("Warning: MacOS does not support bruker SDK, setting use_bruker_sdk to False.")
-            use_bruker_sdk = False
-            self.use_bruker_sdk = False
+        # if bruker_sdk_mode is requested, we need to check for cases where the vendor binary is not available
+        if self.use_bruker_sdk:
+            if current_os == "Darwin":
+                warnings.warn("Warning: MacOS does not support bruker SDK, setting use_bruker_sdk to False.")
+                self.use_bruker_sdk = False
 
-        if not use_bruker_sdk:
-            self.__dataset = ims.PyTimsDataset(self.data_path, "NO_SDK", in_memory, use_bruker_sdk)
+            if not is_amd64():
+                warnings.warn("Warning: Only x86_64 architecture is supported by bruker SDK, setting use_bruker_sdk to False.")
+                self.use_bruker_sdk = False
+
+        if not self.use_bruker_sdk:
+            self.__dataset = ims.PyTimsDataset(self.data_path, "NO_SDK", in_memory, self.use_bruker_sdk)
             self.binary_path = "NO_SDK"
 
         else:
@@ -109,7 +119,7 @@ class TimsDataset(ABC):
             appropriate_found = False
             for so_path in obb.get_so_paths():
                 try:
-                    self.__dataset = ims.PyTimsDataset(self.data_path, so_path, in_memory, use_bruker_sdk)
+                    self.__dataset = ims.PyTimsDataset(self.data_path, so_path, in_memory, self.use_bruker_sdk)
                     self.binary_path = so_path
                     appropriate_found = True
                     break
