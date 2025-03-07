@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from imspy_connector import py_utility as ims
 
-from imspy.simulation.utility import python_list_to_json_string
+from imspy.simulation.utility import python_list_to_json_string, add_uniform_noise
 
 
 def simulate_scan_distributions_with_variance(
@@ -10,6 +10,7 @@ def simulate_scan_distributions_with_variance(
         scans: pd.DataFrame,
         p_target: float = 0.9995,
         verbose: bool = False,
+        add_noise: bool = False,
         num_threads: int = 16,
 ) -> pd.DataFrame:
     """Simulate scan distributions for ions.
@@ -19,6 +20,7 @@ def simulate_scan_distributions_with_variance(
         scans: Scan DataFrame.
         p_target: Target percentile.
         verbose: Verbosity.
+        add_noise: Add noise to the scan distributions.
         num_threads: Number of threads.
 
     Returns:
@@ -44,7 +46,7 @@ def simulate_scan_distributions_with_variance(
         num_threads=num_threads
     )
 
-    abundance = ims.calculate_scan_abundances_gaussian_par(
+    abundances = ims.calculate_scan_abundances_gaussian_par(
         indices=scans.scan,
         times=scans.mobility,
         occurrences=occurrence,
@@ -57,8 +59,15 @@ def simulate_scan_distributions_with_variance(
     if verbose:
         print("Serializing scan distributions to json...")
 
+    if add_noise:
+        # TODO: Make noise model configurable
+        noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
+        abundances = [add_uniform_noise(np.array(abundance), noise_level) for abundance, noise_level in zip(abundances, noise_levels)]
+        # Normalize the abundances
+        abundances = [scan_abundance / np.sum(scan_abundance) for scan_abundance in abundances]
+
     ions['scan_occurrence'] = [list(x) for x in occurrence]
-    ions['scan_abundance'] = [list(x) for x in abundance]
+    ions['scan_abundance'] = [list(x) for x in abundances]
 
     ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: python_list_to_json_string(x, as_float=False))
     ions['scan_abundance'] = ions['scan_abundance'].apply(python_list_to_json_string)

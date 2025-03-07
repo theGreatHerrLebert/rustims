@@ -175,10 +175,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Use binomial charge state model (default: False)")
     parser.set_defaults(binomial_charge_model=False)
 
-    # Noise settings
-    parser.add_argument("--add_noise_to_signals", dest="add_noise_to_signals", action="store_true",
-                        help="Add noise to ion distributions in RT and IM (default: False)")
-    parser.set_defaults(add_noise_to_signals=False)
+    parser.add_argument("--noise_frame_abundance", dest="noise_frame_abundance", action="store_true",
+                        help="Add noise to frame abundance (default: False)")
+    parser.set_defaults(noise_frame_abundance=False)
+    parser.add_argument("--noise_scan_abundance", dest="noise_scan_abundance", action="store_true",
+                        help="Add noise to scan abundance (default: False)")
+    parser.set_defaults(noise_scan_abundance=False)
+
 
     parser.add_argument("--mz_noise_precursor", dest="mz_noise_precursor", action="store_true",
                         help="Add noise to precursor m/z (default: False)")
@@ -282,7 +285,8 @@ def get_default_settings() -> dict:
         'batch_size': 256,
         'p_charge': 0.5,
         'min_charge_contrib': 0.25,
-        'add_noise_to_signals': False,
+        'noise_frame_abundance': False,
+        'noise_scan_abundance': False,
         'mz_noise_precursor': False,
         'precursor_noise_ppm': 5.0,
         'mz_noise_fragment': False,
@@ -567,7 +571,7 @@ def main():
         target_p=args.target_p,
         step_size=args.sampling_step_size,
         verbose=not args.silent_mode,
-        add_noise=args.add_noise_to_signals,
+        add_noise=args.noise_frame_abundance,
         num_threads=args.num_threads,
         from_existing=args.from_existing,
         sigmas=rt_sigma,
@@ -641,6 +645,7 @@ def main():
         scans=acquisition_builder.scan_table,
         verbose=not args.silent_mode,
         p_target=args.target_p,
+        add_noise=args.noise_scan_abundance,
         num_threads=args.num_threads,
     )
 
