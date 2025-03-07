@@ -117,8 +117,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.set_defaults(apply_fragmentation=False)
 
     # Peptide digestion arguments
-    parser.add_argument("--num_sample_peptides", type=int, default=25000,
+    parser.add_argument("--num_sample_peptides", type=int, default=25_000,
                         help="Number of peptides to sample from the digested fasta (default: 25_000)")
+    parser.add_argument("--num_peptides_total", type=int, help="Total number of peptides to simulate initially before downsampling (default: 250_000)",
+                        default=250_000)
+    parser.add_argument("--n_proteins", type=int, help="Number of proteins to sample from the fasta (default: 20_000)",
+                        default=20_000)
     parser.add_argument("--missed_cleavages", type=int, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, help="Maximum peptide length (default: 30)")
@@ -131,11 +135,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # Modifications config
     parser.add_argument("--modifications", type=str, default=None,
                         help="Path to a modifications TOML file. Default: configs/modifications.toml")
-
-    # Peptide intensities
-    parser.add_argument("--intensity_mean", type=float, help="Mean peptide intensity (default: 1e7)")
-    parser.add_argument("--intensity_min", type=float, help="Min peptide intensity (default: 1e5)")
-    parser.add_argument("--intensity_max", type=float, help="Max peptide intensity (default: 1e9)")
 
     # Precursor isotopic pattern settings
     parser.add_argument("--isotope_k", type=int, help="Number of isotopes to simulate (default: 8)")
@@ -162,6 +161,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--variance_skewness", type=float, help="Variance skewness (default: 0.1)")
     parser.add_argument("--target_p", type=float, help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, help="Step size for frame distributions (default: 0.001)")
+    parser.add_argument("--no_use_inverse_mobility_std_mean", dest="use_inverse_mobility_std_mean", action="store_false",
+                        help="Don't use inverse mobility std mean (default: True)")
+    parser.set_defaults(use_inverse_mobility_std_mean=True)
+    parser.add_argument("--inverse_mobility_std_mean", type=float,
+                        help="Inverse mobility std mean (default: 0.009)")
 
     # Cores, batch, etc.
     parser.add_argument("--num_threads", type=int, help="Number of threads to use (default: -1 for all available)")
@@ -175,10 +179,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Use binomial charge state model (default: False)")
     parser.set_defaults(binomial_charge_model=False)
 
-    # Noise settings
-    parser.add_argument("--add_noise_to_signals", dest="add_noise_to_signals", action="store_true",
-                        help="Add noise to ion distributions in RT and IM (default: False)")
-    parser.set_defaults(add_noise_to_signals=False)
+    parser.add_argument("--noise_frame_abundance", dest="noise_frame_abundance", action="store_true",
+                        help="Add noise to frame abundance (default: False)")
+    parser.set_defaults(noise_frame_abundance=False)
+    parser.add_argument("--noise_scan_abundance", dest="noise_scan_abundance", action="store_true",
+                        help="Add noise to scan abundance (default: False)")
+    parser.set_defaults(noise_scan_abundance=False)
+
 
     parser.add_argument("--mz_noise_precursor", dest="mz_noise_precursor", action="store_true",
                         help="Add noise to precursor m/z (default: False)")
@@ -254,7 +261,9 @@ def get_default_settings() -> dict:
         'sample_peptides': True,
         'sample_seed': 41,
         'apply_fragmentation': False,
-        'num_sample_peptides': 250_000,
+        'num_sample_peptides': 25_000,
+        'num_peptides_total': 250_000,
+        'n_proteins': 20_000,
         'missed_cleavages': 2,
         'min_len': 7,
         'max_len': 30,
@@ -262,9 +271,6 @@ def get_default_settings() -> dict:
         'restrict': 'P',
         'decoys': False,
         'modifications': None,
-        'intensity_mean': 1e7,
-        'intensity_min': 1e5,
-        'intensity_max': 1e9,
         'isotope_k': 8,
         'isotope_min_intensity': 1,
         'isotope_centroid': True,
@@ -278,11 +284,14 @@ def get_default_settings() -> dict:
         'variance_skewness': 0.1,
         'target_p': 0.999,
         'sampling_step_size': 0.001,
+        'use_inverse_mobility_std_mean': True,
+        'inverse_mobility_std_mean': 0.009,
         'num_threads': -1,
         'batch_size': 256,
         'p_charge': 0.5,
         'min_charge_contrib': 0.25,
-        'add_noise_to_signals': False,
+        'noise_frame_abundance': False,
+        'noise_scan_abundance': False,
         'mz_noise_precursor': False,
         'precursor_noise_ppm': 5.0,
         'mz_noise_fragment': False,
@@ -474,7 +483,7 @@ def main():
             # JOB 0: Generate Protein Data
             proteins_tmp = simulate_proteins(
                 fasta_file_path=fasta_path,
-                n_proteins=20000,
+                n_proteins=args.n_proteins,
                 cleave_at=args.cleave_at,
                 restrict=args.restrict,
                 missed_cleavages=args.missed_cleavages,
@@ -492,7 +501,7 @@ def main():
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
-                num_peptides_total=250_000,
+                num_peptides_total=args.num_peptides_total,
                 verbose=not args.silent_mode,
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,
@@ -567,7 +576,7 @@ def main():
         target_p=args.target_p,
         step_size=args.sampling_step_size,
         verbose=not args.silent_mode,
-        add_noise=args.add_noise_to_signals,
+        add_noise=args.noise_frame_abundance,
         num_threads=args.num_threads,
         from_existing=args.from_existing,
         sigmas=rt_sigma,
@@ -626,6 +635,8 @@ def main():
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
             verbose=not args.silent_mode,
             remove_mods=True,
+            use_target_mean_std=args.use_inverse_mobility_std_mean,
+            target_std_mean=args.inverse_mobility_std_mean,
         )
 
         # JOB 7: Precursor isotopic distributions
@@ -641,6 +652,7 @@ def main():
         scans=acquisition_builder.scan_table,
         verbose=not args.silent_mode,
         p_target=args.target_p,
+        add_noise=args.noise_scan_abundance,
         num_threads=args.num_threads,
     )
 

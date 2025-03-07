@@ -31,7 +31,6 @@ def simulate_frame_distributions_emg(
         rt_cycle_length: float,
         verbose: bool = False,
         add_noise: bool = False,
-        normalize: bool = False,
         n_steps: int = 1000,
         num_threads: int = 4,
         from_existing: bool = False,
@@ -113,10 +112,10 @@ def simulate_frame_distributions_emg(
     peptide_rt['frame_occurrence'] = occurrences
 
     if add_noise:
+        # TODO: make noise model configurable
         noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
         abundances = [add_uniform_noise(np.array(abundance), noise_level) for abundance, noise_level in zip(abundances, noise_levels)]
-
-    if normalize:
+        # Normalize frame abundance
         abundances = [frame_abundance / np.sum(frame_abundance) for frame_abundance in abundances]
 
     peptide_rt['frame_abundance'] = [list(x) for x in abundances]
