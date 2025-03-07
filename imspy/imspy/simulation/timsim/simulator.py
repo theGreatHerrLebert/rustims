@@ -119,6 +119,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # Peptide digestion arguments
     parser.add_argument("--num_sample_peptides", type=int, default=25000,
                         help="Number of peptides to sample from the digested fasta (default: 25_000)")
+    parser.add_argument("--num_peptides_total", type=int, help="Total number of peptides to simulate",
+                        default=250_000)
+    parser.add_argument("--n_proteins", type=int, help="Number of proteins to sample from the fasta (default: 20000)",
+                        default=20_000)
     parser.add_argument("--missed_cleavages", type=int, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, help="Minimum peptide length (default: 7)")
     parser.add_argument("--max_len", type=int, help="Maximum peptide length (default: 30)")
@@ -252,7 +256,9 @@ def get_default_settings() -> dict:
         'sample_peptides': True,
         'sample_seed': 41,
         'apply_fragmentation': False,
-        'num_sample_peptides': 250_000,
+        'num_sample_peptides': 25_000,
+        'num_peptides_total': 250_000,
+        'n_proteins': 20_000,
         'missed_cleavages': 2,
         'min_len': 7,
         'max_len': 30,
@@ -470,7 +476,7 @@ def main():
             # JOB 0: Generate Protein Data
             proteins_tmp = simulate_proteins(
                 fasta_file_path=fasta_path,
-                n_proteins=20000,
+                n_proteins=args.n_proteins,
                 cleave_at=args.cleave_at,
                 restrict=args.restrict,
                 missed_cleavages=args.missed_cleavages,
@@ -488,7 +494,7 @@ def main():
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
-                num_peptides_total=250_000,
+                num_peptides_total=args.num_peptides_total,
                 verbose=not args.silent_mode,
                 exclude_accumulated_gradient_start=True,
                 min_rt_percent=2.0,
