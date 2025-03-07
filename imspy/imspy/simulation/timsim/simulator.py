@@ -161,6 +161,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--variance_skewness", type=float, help="Variance skewness (default: 0.1)")
     parser.add_argument("--target_p", type=float, help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, help="Step size for frame distributions (default: 0.001)")
+    parser.add_argument("--no_use_inverse_mobility_std_mean", dest="use_inverse_mobility_std_mean", action="store_false",
+                        help="Don't use inverse mobility std mean (default: True)")
+    parser.set_defaults(use_inverse_mobility_std_mean=True)
+    parser.add_argument("--inverse_mobility_std_mean", type=float,
+                        help="Inverse mobility std mean (default: 0.009)")
 
     # Cores, batch, etc.
     parser.add_argument("--num_threads", type=int, help="Number of threads to use (default: -1 for all available)")
@@ -279,6 +284,8 @@ def get_default_settings() -> dict:
         'variance_skewness': 0.1,
         'target_p': 0.999,
         'sampling_step_size': 0.001,
+        'use_inverse_mobility_std_mean': True,
+        'inverse_mobility_std_mean': 0.009,
         'num_threads': -1,
         'batch_size': 256,
         'p_charge': 0.5,
@@ -628,6 +635,8 @@ def main():
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
             verbose=not args.silent_mode,
             remove_mods=True,
+            use_target_mean_std=args.use_inverse_mobility_std_mean,
+            target_std_mean=args.inverse_mobility_std_mean,
         )
 
         # JOB 7: Precursor isotopic distributions
