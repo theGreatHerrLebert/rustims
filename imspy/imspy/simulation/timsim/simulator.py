@@ -132,11 +132,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--modifications", type=str, default=None,
                         help="Path to a modifications TOML file. Default: configs/modifications.toml")
 
-    # Peptide intensities
-    parser.add_argument("--intensity_mean", type=float, help="Mean peptide intensity (default: 1e7)")
-    parser.add_argument("--intensity_min", type=float, help="Min peptide intensity (default: 1e5)")
-    parser.add_argument("--intensity_max", type=float, help="Max peptide intensity (default: 1e9)")
-
     # Precursor isotopic pattern settings
     parser.add_argument("--isotope_k", type=int, help="Number of isotopes to simulate (default: 8)")
     parser.add_argument("--isotope_min_intensity", type=int, help="Min intensity for isotopes (default: 1)")
@@ -265,9 +260,6 @@ def get_default_settings() -> dict:
         'restrict': 'P',
         'decoys': False,
         'modifications': None,
-        'intensity_mean': 1e7,
-        'intensity_min': 1e5,
-        'intensity_max': 1e9,
         'isotope_k': 8,
         'isotope_min_intensity': 1,
         'isotope_centroid': True,
