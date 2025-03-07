@@ -117,11 +117,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.set_defaults(apply_fragmentation=False)
 
     # Peptide digestion arguments
-    parser.add_argument("--num_sample_peptides", type=int, default=25000,
+    parser.add_argument("--num_sample_peptides", type=int, default=25_000,
                         help="Number of peptides to sample from the digested fasta (default: 25_000)")
-    parser.add_argument("--num_peptides_total", type=int, help="Total number of peptides to simulate",
+    parser.add_argument("--num_peptides_total", type=int, help="Total number of peptides to simulate initially before downsampling (default: 250_000)",
                         default=250_000)
-    parser.add_argument("--n_proteins", type=int, help="Number of proteins to sample from the fasta (default: 20000)",
+    parser.add_argument("--n_proteins", type=int, help="Number of proteins to sample from the fasta (default: 20_000)",
                         default=20_000)
     parser.add_argument("--missed_cleavages", type=int, help="Number of missed cleavages (default: 2)")
     parser.add_argument("--min_len", type=int, help="Minimum peptide length (default: 7)")
