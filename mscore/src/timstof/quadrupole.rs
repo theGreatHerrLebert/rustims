@@ -512,6 +512,21 @@ impl TimsTransmissionDDA {
             k: k.unwrap_or(15.0),
         }
     }
+
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> Option<f64> {
+        let frame_meta = self.pasef_meta.get(&frame_id);
+        match frame_meta {
+            Some(meta) => {
+                for m in meta {
+                    if scan_id >= m.scan_start && scan_id <= m.scan_end {
+                        return Some(m.collision_energy);
+                    }
+                }
+                None
+            },
+            None => None,
+        }
+    }
 }
 
 impl IonTransmission for TimsTransmissionDDA {

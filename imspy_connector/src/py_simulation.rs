@@ -20,10 +20,10 @@ impl PyTimsTofSyntheticsDataHandle {
         PyTimsTofSyntheticsDataHandle { inner: TimsTofSyntheticsDataHandle::new(path).unwrap() }
     }
 
-    #[pyo3(signature = (num_threads=None))]
-    pub fn get_transmitted_ions(&self, num_threads: Option<usize>) -> (Vec<i32>, Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+    #[pyo3(signature = (num_threads=None, dda=None))]
+    pub fn get_transmitted_ions(&self, num_threads: Option<usize>, dda: Option<bool>) -> (Vec<i32>, Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
         let threads = num_threads.unwrap_or(4);
-        self.inner.get_transmitted_ions(threads)
+        self.inner.get_transmitted_ions(threads, dda.unwrap_or(false))
     }
 }
 
