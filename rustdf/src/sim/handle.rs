@@ -445,7 +445,6 @@ impl TimsTofSyntheticsDataHandle {
 
         let trees = match dda_mode {
             true => {
-                let collision_energy = self.get_collision_energy_dia();
                 let transmission = self.get_transmission_dda();
                 thread_pool.install(|| {
                     ions.par_iter()
@@ -461,15 +460,17 @@ impl TimsTofSyntheticsDataHandle {
             })
         },
             false => {
-                let transmission = self.get_transmission_dda();
+                let transmission = self.get_transmission_dia();
+                let collision_energy = self.get_collision_energy_dia();
                 thread_pool.install(|| {
                     ions.par_iter()
                         .map(|ion| {
-                            TimsTofSyntheticsDataHandle::ion_map_fn_dda(
+                            TimsTofSyntheticsDataHandle::ion_map_fn_dia(
                                 ion.clone(),
                                 &peptide_map,
                                 &precursor_frames,
                                 &transmission,
+                                &collision_energy,
                             )
                         })
                         .collect::<Vec<_>>()
