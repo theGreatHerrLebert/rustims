@@ -117,12 +117,12 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
                  reference_ds: TimsDataset,
-                 verbose: bool = True,
+                 verbose: bool = False,
                  gradient_length=60 * 60,
                  rt_cycle_length=0.109,
                  exp_name: str = "T001.d",
                  ):
-        super().__init__(path, reference_ds, gradient_length, rt_cycle_length, exp_name=exp_name)
+        super().__init__(path, reference_ds, gradient_length, rt_cycle_length, exp_name=exp_name, verbose=verbose)
 
         self.scan_table = None
         self.frame_table = None
