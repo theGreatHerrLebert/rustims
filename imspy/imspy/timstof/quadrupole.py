@@ -56,7 +56,7 @@ class PasefMeta:
 
 
 class TimsTofQuadrupoleDDA:
-    def __init__(self, pasef_meta: List[PasefMeta], k: float):
+    def __init__(self, pasef_meta: List[PasefMeta], k: float | None = None):
         self.__py_ptr = ims.PyTimsTransmissionDDA(
             [pasef_meta[i].get_py_ptr() for i in range(len(pasef_meta))], k
         )

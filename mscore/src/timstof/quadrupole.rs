@@ -501,7 +501,7 @@ pub struct TimsTransmissionDDA {
 }
 
 impl TimsTransmissionDDA {
-    pub fn new(pasef_meta: Vec<PASEFMeta>, k: f64) -> Self {
+    pub fn new(pasef_meta: Vec<PASEFMeta>, k: Option<f64>) -> Self {
         let mut pasef_map: BTreeMap<i32, Vec<PASEFMeta>> = BTreeMap::new();
         for meta in pasef_meta {
             let entry = pasef_map.entry(meta.frame).or_insert(Vec::new());
@@ -509,7 +509,7 @@ impl TimsTransmissionDDA {
         }
         Self {
             pasef_meta: pasef_map,
-            k,
+            k: k.unwrap_or(15.0),
         }
     }
 }

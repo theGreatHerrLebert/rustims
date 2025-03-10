@@ -72,8 +72,8 @@ pub struct PyTimsTransmissionDDA {
 #[pymethods]
 impl PyTimsTransmissionDDA {
     #[new]
-    #[pyo3(signature = (pasef_meta, k))]
-    pub fn new(pasef_meta: Vec<PyPasefMeta>, k: f64) -> Self {
+    #[pyo3(signature = (pasef_meta, k=None))]
+    pub fn new(pasef_meta: Vec<PyPasefMeta>, k: Option<f64>) -> Self {
         let inner_meta_vec = pasef_meta.iter().map(|x| x.inner.clone()).collect::<Vec<_>>();
         PyTimsTransmissionDDA {
             inner: TimsTransmissionDDA::new(inner_meta_vec, k)
