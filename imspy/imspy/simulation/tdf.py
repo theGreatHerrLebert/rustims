@@ -55,7 +55,7 @@ class TDFWriter:
             self.position = bin_file.tell()
 
         if self.verbose:
-            print(f"Done setting up TDF file meta data, created: {self.full_path}/analysis.tdf and {self.full_path}/analysis.tdf_bin")
+            print(f"Setting up TDF file meta data, created: {self.full_path}/analysis.tdf and {self.full_path}/analysis.tdf_bin")
 
     @staticmethod
     def _get_table(conn, table_name: str) -> pd.DataFrame:
