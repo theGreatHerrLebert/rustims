@@ -111,9 +111,9 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  path: str,
                  reference_ds: TimsDataset,
                  verbose: bool = True,
-                 gradient_length=120 * 60,
+                 gradient_length=60 * 60,
                  rt_cycle_length=0.109,
-                 exp_name: str = "RAW",
+                 exp_name: str = "T001.d",
                  ):
         super().__init__(path, reference_ds, gradient_length, rt_cycle_length, exp_name=exp_name)
 
