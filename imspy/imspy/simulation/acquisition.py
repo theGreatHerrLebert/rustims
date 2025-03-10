@@ -21,6 +21,7 @@ class TimsTofAcquisitionBuilder:
             gradient_length: float,
             rt_cycle_length: float,
             exp_name: str = "RAW.d",
+            verbose: bool = False,
     ):
         """ Base class for building TimsTOF experiments
         Parameters
@@ -31,17 +32,23 @@ class TimsTofAcquisitionBuilder:
             Length of the gradient in seconds
         rt_cycle_length : float
             Length of the RT cycle in seconds
+        exp_name : str
+            Name of the experiment
+        verbose : bool
+            Print verbose output
         """
 
         self.path = path
         self.gradient_length = gradient_length
         self.rt_cycle_length = rt_cycle_length
         self.num_frames = calculate_number_frames(gradient_length, rt_cycle_length)
+        self.verbose = verbose
         # Create the TDFWriter, used to deal with bruker binary format writing and metadata for libtimsdata.so
         self.tdf_writer = TDFWriter(
             path=self.path,
             helper_handle=reference_ds,
             exp_name=exp_name,
+            verbose=verbose,
         )
         # Create the SyntheticExperimentDataHandle, which is used to deal with the sqlite database of synthetic data
         self.synthetics_handle = SyntheticExperimentDataHandle(database_path=self.path)
