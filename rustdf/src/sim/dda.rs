@@ -31,7 +31,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap();
         let handle = TimsTofSyntheticsDataHandle::new(path).unwrap();
         let transmission_settings = handle.read_pasef_meta().unwrap();
-        let tims_transmission = TimsTransmissionDDA::new(transmission_settings, 2.0);
+        let tims_transmission = TimsTransmissionDDA::new(transmission_settings, None);
 
         TimsTofSyntheticsFrameBuilderDDA {
             path: path.to_str().unwrap().to_string(),
