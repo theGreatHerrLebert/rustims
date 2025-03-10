@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::f64;
 use std::f64::consts::E;
 use itertools::izip;
@@ -392,7 +392,6 @@ impl TimsTransmissionDIA {
     pub fn new(
         frame: Vec<i32>,
         frame_window_group: Vec<i32>,
-
         window_group: Vec<i32>,
         scan_start: Vec<i32>,
         scan_end: Vec<i32>,
@@ -465,6 +464,67 @@ impl IonTransmission for TimsTransmissionDIA {
                 true => vec![1.0; mz.len()],
                 false => vec![0.0; mz.len()],
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PASEFMeta {
+    pub frame: i32,
+    pub scan_start: i32,
+    pub scan_end: i32,
+    pub isolation_mz: f64,
+    pub isolation_width: f64,
+    pub collision_energy: f64,
+    pub precursor: i32,
+}
+
+#[derive(Clone, Debug)]
+pub struct TimsTransmissionDDA {
+    // frame id to corresponding pasef meta data
+    pub pasef_meta: BTreeMap<i32, Vec<PASEFMeta>>,
+    pub k: f64,
+}
+
+impl TimsTransmissionDDA {
+    pub fn new(pasef_meta: Vec<PASEFMeta>, k: f64) -> Self {
+        let mut pasef_map: BTreeMap<i32, Vec<PASEFMeta>> = BTreeMap::new();
+        for meta in pasef_meta {
+            let entry = pasef_map.entry(meta.frame).or_insert(Vec::new());
+            entry.push(meta);
+        }
+        Self {
+            pasef_meta: pasef_map,
+            k,
+        }
+    }
+}
+
+impl IonTransmission for TimsTransmissionDDA {
+    fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64> {
+
+        // get all selections for a frame, if frame is not in the PASEF metadata, it is a precursor frame and all ions are transmitted
+        let meta = self.pasef_meta.get(&frame_id);
+
+        match meta {
+            Some(meta) => {
+                let mut transmission = vec![0.0; mz.len()];
+
+                for m in meta {
+                    // check if scan id is in the range of the selection
+                    if scan_id >= m.scan_start && scan_id <= m.scan_end {
+                        // apply transmission function to mz values
+                        let transmission_prob = apply_transmission(m.isolation_mz, m.isolation_width, self.k, mz.clone());
+                        // make sure that the transmission probability is not lower than the previous one
+                        for (i, p) in transmission_prob.iter().enumerate() {
+                            transmission[i] = p.max(transmission[i]);
+                        }
+                    }
+                }
+                transmission
+            },
+            // if frame is not in the metadata, all ions are transmitted (precursor frame)
+            None => vec![1.0; mz.len()],
         }
     }
 }
