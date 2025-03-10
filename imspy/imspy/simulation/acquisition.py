@@ -111,35 +111,31 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  path: str,
                  reference_ds: TimsDataset,
                  verbose: bool = True,
-                 precursor_every: int = 7,
                  gradient_length=120 * 60,
                  rt_cycle_length=0.109,
                  exp_name: str = "RAW.d",
                  ):
-        super().__init__(path, gradient_length, rt_cycle_length,  reference_ds.im_lower, reference_ds.im_upper, reference_ds.mz_lower, reference_ds.mz_upper, reference_ds.num_scans, exp_name=exp_name)
+        super().__init__(path,
+                         gradient_length,
+                         rt_cycle_length,
+                         reference_ds.im_lower,
+                         reference_ds.im_upper,
+                         reference_ds.mz_lower,
+                         reference_ds.mz_upper,
+                         reference_ds.num_scans,
+                         exp_name=exp_name)
+
         self.scan_table = None
         self.frame_table = None
-        self.precursor_every = precursor_every
+        self.pasef_meta = None
+        self.selected_precursors = None
         self.acquisition_mode = AcquisitionMode('DDA')
         self.verbose = verbose
-
         self._setup(verbose=verbose)
-
-    def calculate_frame_types(self, table: pd.DataFrame, precursor_every: int = 7, verbose: bool = True) -> NDArray:
-        if verbose:
-            print(f'Calculating frame types, precursor frame will be taken every {precursor_every} rt cycles.')
-        return np.array([0 if (x - 1) % (precursor_every + 1) == 0 else 8 for x in table.frame_id])
 
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
-
-        self.frame_table['ms_type'] = self.calculate_frame_types(
-            table=self.frame_table,
-            precursor_every=self.precursor_every,
-            verbose=verbose
-        )
-
         self.synthetics_handle.create_table(
             table_name='frames',
             table=self.frame_table
@@ -149,6 +145,14 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
             table=self.scan_table
         )
 
+    def calculate_frame_types(self, frame_types: NDArray):
+        assert len(frame_types) == self.frame_table.shape[0], "frame_types must have the same length as the frame table."
+        assert set(frame_types).issubset({0, 8}), f"frame_types must be a list of 0s and 8s, got {set(frame_types)}."
+        self.frame_table['ms_type'] = frame_types
+        self.synthetics_handle.create_table(
+            table_name='frames',
+            table=self.frame_table
+        )
 
 class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,

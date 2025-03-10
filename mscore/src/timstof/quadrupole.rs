@@ -479,6 +479,20 @@ pub struct PASEFMeta {
     pub precursor: i32,
 }
 
+impl PASEFMeta {
+    pub fn new(frame: i32, scan_start: i32, scan_end: i32, isolation_mz: f64, isolation_width: f64, collision_energy: f64, precursor: i32) -> Self {
+        Self {
+            frame,
+            scan_start,
+            scan_end,
+            isolation_mz,
+            isolation_width,
+            collision_energy,
+            precursor,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TimsTransmissionDDA {
     // frame id to corresponding pasef meta data
