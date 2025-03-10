@@ -175,3 +175,15 @@ class TimsTofQuadrupoleDIA:
 
         """
         return self.handle.isotopes_transmitted(frame_id, scan_id, mz_mono, mz, min_proba)
+
+    def __repr__(self):
+        return f"TimsTofQuadrupoleDIA()"
+
+    @classmethod
+    def from_py_ptr(cls, py_ptr):
+        self = cls.__new__(cls)
+        self.handle = py_ptr
+        return self
+
+    def get_py_ptr(self):
+        return self.handle
