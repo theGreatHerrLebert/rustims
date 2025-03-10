@@ -6,7 +6,7 @@ use mscore::data::peptide::{FragmentType, PeptideProductIonSeriesCollection, Pep
 use mscore::data::spectrum::{MsType, MzSpectrum};
 use mscore::simulation::annotation::MzSpectrumAnnotated;
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
-use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::timstof::quadrupole::{IonTransmission, PASEFMeta, TimsTransmissionDIA};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rusqlite::Connection;
@@ -186,6 +186,28 @@ impl TimsTofSyntheticsDataHandle {
         }
 
         Ok(frame_to_window_groups)
+    }
+
+    pub fn read_pasef_meta(&self) -> rusqlite::Result<Vec<PASEFMeta>> {
+        let mut stmt = self.connection.prepare("SELECT * FROM pasef_meta")?;
+        let pasef_meta_iter = stmt.query_map([], |row| {
+            Ok(PASEFMeta::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?))
+        })?;
+
+        let mut pasef_meta: Vec<PASEFMeta> = Vec::new();
+
+        for pasef_meta_entry in pasef_meta_iter {
+            pasef_meta.push(pasef_meta_entry?);
+        }
+
+        Ok(pasef_meta)
     }
 
     pub fn read_fragment_ions(&self) -> rusqlite::Result<Vec<FragmentIonSim>> {
