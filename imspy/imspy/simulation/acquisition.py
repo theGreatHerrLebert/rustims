@@ -113,17 +113,9 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
                  verbose: bool = True,
                  gradient_length=120 * 60,
                  rt_cycle_length=0.109,
-                 exp_name: str = "RAW.d",
+                 exp_name: str = "RAW",
                  ):
-        super().__init__(path,
-                         gradient_length,
-                         rt_cycle_length,
-                         reference_ds.im_lower,
-                         reference_ds.im_upper,
-                         reference_ds.mz_lower,
-                         reference_ds.mz_upper,
-                         reference_ds.num_scans,
-                         exp_name=exp_name)
+        super().__init__(path, reference_ds, gradient_length, rt_cycle_length, exp_name=exp_name)
 
         self.scan_table = None
         self.frame_table = None
