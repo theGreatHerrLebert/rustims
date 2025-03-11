@@ -1,6 +1,7 @@
 use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
+use rustdf::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
 use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
@@ -119,10 +120,45 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
     }
 }
 
+#[pyclass(unsendable)]
+pub struct PyTimsTofSyntheticsFrameBuilderDDA {
+    pub inner: TimsTofSyntheticsFrameBuilderDDA,
+}
+
+#[pymethods]
+impl PyTimsTofSyntheticsFrameBuilderDDA {
+    #[new]
+    pub fn new(db_path: &str, with_annotations: bool, num_threads: usize) -> Self {
+        let path = std::path::Path::new(db_path);
+        PyTimsTofSyntheticsFrameBuilderDDA { inner: TimsTofSyntheticsFrameBuilderDDA::new(path, with_annotations, num_threads) }
+    }
+
+    pub fn build_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrame {
+        let frames = self.inner.build_frames(vec![frame_id], fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
+        PyTimsFrame { inner: frames[0].clone() }
+    }
+
+    pub fn build_frame_annotated(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrameAnnotated {
+        let frames = self.inner.build_frames_annotated(vec![frame_id], fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, 1);
+        PyTimsFrameAnnotated { inner: frames[0].clone() }
+    }
+
+    pub fn build_frames(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames(frame_ids, fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
+        frames.iter().map(|x| PyTimsFrame { inner: x.clone() }).collect::<Vec<_>>()
+    }
+
+    pub fn build_frames_annotated(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrameAnnotated> {
+        let frames = self.inner.build_frames_annotated(frame_ids, fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
+        frames.iter().map(|x| PyTimsFrameAnnotated { inner: x.clone() }).collect::<Vec<_>>()
+    }
+}
+
 #[pymodule]
 pub fn py_simulation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
     m.add_class::<PyTimsTofSyntheticsPrecursorFrameBuilder>()?;
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
+    m.add_class::<PyTimsTofSyntheticsFrameBuilderDDA>()?;
     Ok(())
 }
