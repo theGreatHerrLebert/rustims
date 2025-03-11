@@ -420,7 +420,7 @@ impl TimsTransmissionDIA {
         Self {
             frame_to_window_group,
             window_group_settings,
-            k: k.unwrap_or(2.0),
+            k: k.unwrap_or(15.0),
         }
     }
 
