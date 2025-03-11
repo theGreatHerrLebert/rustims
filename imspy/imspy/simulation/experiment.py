@@ -37,6 +37,9 @@ class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
     def get_pasef_meta(self) -> List[PasefMeta]:
         return [PasefMeta.from_py_ptr(meta) for meta in self.__py_ptr.get_pasef_meta()]
 
+    def get_fragment_frames(self) -> List[int]:
+        return self.__py_ptr.get_fragment_frames()
+
     def build_frame(self,
                     frame_id: int,
                     fragment: bool = True,

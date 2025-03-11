@@ -166,6 +166,16 @@ impl PyTimsTofSyntheticsFrameBuilderDDA {
 
         result
     }
+
+    pub fn get_fragment_frames(&self) -> Vec<i32> {
+        // extract the keys from the pasef_meta to get all fragment frames sorted by frame_id ascending
+        let pasef_meta = self.inner.transmission_settings.pasef_meta.clone();
+        let mut result = Vec::new();
+        for (key, _) in pasef_meta.iter() {
+            result.push(key.clone());
+        }
+        result
+    }
 }
 
 #[pymodule]
