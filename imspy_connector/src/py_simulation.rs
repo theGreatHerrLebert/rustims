@@ -6,6 +6,7 @@ use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::py_annotation::PyTimsFrameAnnotated;
+use crate::py_quadrupole::PyPasefMeta;
 use crate::py_tims_frame::PyTimsFrame;
 
 #[pyclass]
@@ -151,6 +152,19 @@ impl PyTimsTofSyntheticsFrameBuilderDDA {
     pub fn build_frames_annotated(&self, frame_ids: Vec<u32>, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrameAnnotated> {
         let frames = self.inner.build_frames_annotated(frame_ids, fragmentation, mz_noise_precursor, uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrameAnnotated { inner: x.clone() }).collect::<Vec<_>>()
+    }
+
+    pub fn get_pasef_meta(&self) -> Vec<PyPasefMeta> {
+        let pasef_meta = self.inner.transmission_settings.pasef_meta.clone();
+        // go over all key, list<value> pairs, extract the values, flatten
+        let mut result = Vec::new();
+        for (_, values) in pasef_meta.iter() {
+            for value in values.iter() {
+                result.push(PyPasefMeta { inner: value.clone() });
+            }
+        }
+
+        result
     }
 }
 
