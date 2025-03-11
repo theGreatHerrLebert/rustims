@@ -42,6 +42,9 @@ def build_acquisition(
 
     if acquisition_type.lower() == 'dda':
 
+        if verbose:
+            print("Using DDA acquisition type...")
+
         # Load reference dataset
         reference_ds = TimsDataset(reference_path)
 
