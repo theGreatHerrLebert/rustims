@@ -578,3 +578,76 @@ def set_percentage_to_zero(row, percentage):
     result[chosen_indices] = 0
 
     return result
+
+
+def iter_frame_batches(raw_data_handle, frame_builder, batch_size: int = 256, level="precursor"):
+    """
+    Iterates over frame batches and yields the frames as pandas dataframes.
+    Args:
+        raw_data_handle:
+        frame_builder:
+        batch_size:
+        level:
+
+    Returns:
+
+    """
+    match level.lower():
+        case "precursor":
+            frame_ids = raw_data_handle.precursor_frames
+        case "fragment":
+            frame_ids = raw_data_handle.fragment_frames
+        case _:
+            raise ValueError("Level not correct.")
+
+    num_batches = len(frame_ids) // batch_size + 1
+
+    for i in range(0, num_batches):
+        i_start = i * batch_size
+        i_end = (i + 1) * batch_size
+
+        current_slice = frame_ids[i_start:i_end]
+        tims_frames = frame_builder.build_frames_annotated(frame_ids=current_slice)
+
+        for fid, tims_frame in zip(current_slice, tims_frames):
+
+            if len(tims_frame.mz) == 0:
+                continue
+
+            current_frame = tims_frame.df
+            current_frame["tof"] = raw_data_handle.mz_to_tof(fid, tims_frame.mz)
+            current_frame["frame"] = fid
+
+            """
+            current_frame[
+                "ClusterID"] = current_frame.peptide_id * 100 + current_frame.charge_state * 10 + current_frame.isotope_peak
+            current_frame.intensity = current_frame.intensity.astype(np.uint32)
+            current_frame.ClusterID = current_frame.ClusterID.astype(np.uint32)
+            current_frame.frame = current_frame.frame.astype(np.uint32)
+            current_frame.tof = current_frame.tof.astype(np.uint32)
+            current_frame.scan = current_frame.scan.astype(np.uint32)
+            """
+
+            yield current_frame
+
+if __name__ == "__main__":
+
+    from tqdm import tqdm
+    from imspy.timstof.dia import TimsDatasetDIA
+    from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA
+
+    example_tdf_path = "/media/hd02/data/sim/redone/dia/hela/5K/TIMSIM-HeLa5K-003/TIMSIM-HeLa5K-003.d"
+    example_blueprint_path = "/media/hd02/data/sim/redone/dia/hela/5K/TIMSIM-HeLa5K-003/synthetic_data.db"
+
+    ds = TimsDatasetDIA(example_tdf_path)
+
+    # create frame builder DDA
+    frame_builder = TimsTofSyntheticFrameBuilderDIA(
+        example_blueprint_path,
+        num_threads=16,
+        with_annotations=True
+    )
+
+    for frame in tqdm(iter_frame_batches(ds, frame_builder, level="FRAGMENT", batch_size=512),
+                      total=len(ds.meta_data[ds.meta_data.MsMsType == 9])):
+        print(frame.shape)
