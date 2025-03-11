@@ -18,6 +18,7 @@ def simulate_fragment_intensities(
         verbose: bool,
         num_threads: int,
         down_sample_factor: int = 0.5,
+        dda: bool = False
 ) -> None:
     """Simulate fragment ion intensity distributions.
 
@@ -29,6 +30,7 @@ def simulate_fragment_intensities(
         verbose: Verbosity.
         num_threads: Number of threads for frame assembly.
         down_sample_factor: Down sample factor for fragment ion intensity distributions.
+        dda: Data dependent acquisition mode.
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -46,7 +48,7 @@ def simulate_fragment_intensities(
     if verbose:
         print("Calculating precursor ion transmissions and collision energies...")
 
-    transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=num_threads)
+    transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=num_threads, dda=dda)
 
     IntensityPredictor = Prosit2023TimsTofWrapper()
 
