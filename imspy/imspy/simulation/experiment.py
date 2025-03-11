@@ -12,6 +12,9 @@ from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 
 import imspy_connector
+
+from imspy.timstof.quadrupole import PasefMeta
+
 ims = imspy_connector.py_simulation
 
 
@@ -30,6 +33,9 @@ class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
             num_threads = os.cpu_count()
 
         self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(db_path, with_annotations, num_threads)
+
+    def get_pasef_meta(self) -> List[PasefMeta]:
+        return [PasefMeta.from_py_ptr(meta) for meta in self.__py_ptr.get_pasef_meta()]
 
     def build_frame(self,
                     frame_id: int,
