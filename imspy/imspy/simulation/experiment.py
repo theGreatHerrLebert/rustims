@@ -16,7 +16,7 @@ ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
-    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = 4):
+    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
 
         Args:
@@ -25,6 +25,10 @@ class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
             num_threads (int): Number of threads.
         """
         self.path = db_path
+
+        if num_threads == -1:
+            num_threads = os.cpu_count()
+
         self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(db_path, with_annotations, num_threads)
 
     def build_frame(self,
@@ -163,7 +167,7 @@ class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
         return self.__py_ptr
 
 class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
-    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = 4):
+    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
 
         Args:
@@ -172,6 +176,9 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
             num_threads (int): Number of threads.
         """
         self.path = db_path
+
+        if num_threads == -1:
+            num_threads = os.cpu_count()
         self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, with_annotations, num_threads)
 
     def build_frame(self,
