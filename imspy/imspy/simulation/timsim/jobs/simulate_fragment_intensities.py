@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 from imspy.algorithm.intensity.predictors import Prosit2023TimsTofWrapper
-from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
+from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
 from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
 from imspy.simulation.utility import flatten_prosit_array, flat_intensity_to_sparse, \
     python_list_to_json_string, set_percentage_to_zero
@@ -13,7 +13,7 @@ from imspy.simulation.utility import flatten_prosit_array, flat_intensity_to_spa
 def simulate_fragment_intensities(
         path: str,
         name: str,
-        acquisition_builder: TimsTofAcquisitionBuilderDIA,
+        acquisition_builder: TimsTofAcquisitionBuilder,
         batch_size: int,
         verbose: bool,
         num_threads: int,
