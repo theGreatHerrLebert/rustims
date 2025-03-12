@@ -528,15 +528,13 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     // get PASEF settings for the given frame
                     let maybe_pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
 
-                    // find the collision energy for the given scan
                     let collision_energy: f64 = match maybe_pasef_meta {
                         Some(pasef_meta) => {
-                            for pasef_scan in pasef_meta {
-                                if pasef_scan.scan_start <= *scan as i32 && pasef_scan.scan_end >= *scan as i32 {
-                                    pasef_scan.collision_energy;
-                                }
-                            }
-                            0.0
+                            pasef_meta
+                                .iter()
+                                .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
+                                .map(|s| s.collision_energy)
+                                .unwrap_or(0.0)
                         },
                         None => 0.0
                     };
@@ -737,15 +735,13 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     // get PASEF settings for the given frame
                     let maybe_pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
 
-                    // find the collision energy for the given scan
                     let collision_energy: f64 = match maybe_pasef_meta {
                         Some(pasef_meta) => {
-                            for pasef_scan in pasef_meta {
-                                if pasef_scan.scan_start <= *scan as i32 && pasef_scan.scan_end >= *scan as i32 {
-                                    pasef_scan.collision_energy;
-                                }
-                            }
-                            0.0
+                            pasef_meta
+                                .iter()
+                                .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
+                                .map(|s| s.collision_energy)
+                                .unwrap_or(0.0)
                         },
                         None => 0.0
                     };
