@@ -7,6 +7,8 @@ use rustdf::sim::dia::{TimsTofSyntheticsFrameBuilderDIA};
 use rustdf::sim::precursor::{TimsTofSyntheticsPrecursorFrameBuilder};
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::py_annotation::PyTimsFrameAnnotated;
+use crate::py_mz_spectrum::PyMzSpectrum;
+use crate::py_peptide::PyPeptideProductIonSeriesCollection;
 use crate::py_quadrupole::PyPasefMeta;
 use crate::py_tims_frame::PyTimsFrame;
 
@@ -177,6 +179,17 @@ impl PyTimsTofSyntheticsFrameBuilderDDA {
         let mut result = Vec::new();
         for (key, _) in pasef_meta.iter() {
             result.push(key.clone());
+        }
+        result
+    }
+
+    pub fn get_fragment_ions_map(&self) -> BTreeMap<(u32, i8, i8), (PyPeptideProductIonSeriesCollection, Vec<PyMzSpectrum>)> {
+        let mut result = BTreeMap::new();
+        for (key, value) in self.inner.fragment_ions.clone().unwrap().iter() {
+            let (peptide_ions, mz_spectra) = value;
+            let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
+            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum { inner: x.clone() }).collect::<Vec<_>>();
+            result.insert(key.clone(), (peptide_ions, mz_spectra));
         }
         result
     }

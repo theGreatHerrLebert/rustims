@@ -1,13 +1,15 @@
 import sqlite3
 import os
 from abc import ABC
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 from numpy.typing import NDArray
 
 import pandas as pd
 
+from imspy.data.peptide import PeptideProductIonSeriesCollection
+from imspy.data.spectrum import MzSpectrum
 from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 
@@ -39,6 +41,13 @@ class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
 
     def get_fragment_frames(self) -> List[int]:
         return self.__py_ptr.get_fragment_frames()
+
+    def get_fragment_ions_map(self):
+        ions_map = self.__py_ptr.get_fragment_ions_map()
+        ret_map = {}
+        for key, value in ions_map.items():
+            ret_map[key] = (PeptideProductIonSeriesCollection.from_py_ptr(value[0]), [MzSpectrum.from_py_ptr(spectrum) for spectrum in value[1]])
+        return ret_map
 
     def build_frame(self,
                     frame_id: int,
