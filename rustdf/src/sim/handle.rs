@@ -571,11 +571,15 @@ impl TimsTofSyntheticsDataHandle {
             let frame_abundance = peptide.frame_distribution.abundance.clone();
 
             for (frame_id, abundance) in frame_occurrence.iter().zip(frame_abundance.iter()) {
-                let (occurrences, abundances) = frame_to_abundances
-                    .entry(*frame_id)
-                    .or_insert((vec![], vec![]));
-                occurrences.push(peptide_id);
-                abundances.push(*abundance);
+                // only insert if the abundance is not 0
+
+                if *abundance > 0.0 {
+                    let (occurrences, abundances) = frame_to_abundances
+                        .entry(*frame_id)
+                        .or_insert((vec![], vec![]));
+                    occurrences.push(peptide_id);
+                    abundances.push(*abundance);
+                }
             }
         }
 
