@@ -623,7 +623,7 @@ impl TimsTofSyntheticsDataHandle {
         peptides_sim: &BTreeMap<u32, PeptidesSim>,
         fragment_ions: &Vec<FragmentIonSim>,
         num_threads: usize,
-    ) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
+    ) -> BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -635,7 +635,7 @@ impl TimsTofSyntheticsDataHandle {
                     let key = (
                         fragment_ion.peptide_id,
                         fragment_ion.charge,
-                        (fragment_ion.collision_energy * 1e3).round() as i8,
+                        (fragment_ion.collision_energy * 1e3).round() as i32,
                     );
 
                     let value = peptides_sim
@@ -669,7 +669,7 @@ impl TimsTofSyntheticsDataHandle {
         peptides_sim: &BTreeMap<u32, PeptidesSim>,
         fragment_ions: &Vec<FragmentIonSim>,
         num_threads: usize,
-    ) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>
+    ) -> BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>
     {
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -682,7 +682,7 @@ impl TimsTofSyntheticsDataHandle {
                     let key = (
                         fragment_ion.peptide_id,
                         fragment_ion.charge,
-                        (fragment_ion.collision_energy * 1e3).round() as i8,
+                        (fragment_ion.collision_energy * 1e3).round() as i32,
                     );
 
                     let value = peptides_sim

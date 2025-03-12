@@ -19,9 +19,9 @@ pub struct TimsTofSyntheticsFrameBuilderDDA {
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
     pub transmission_settings: TimsTransmissionDDA,
     pub fragment_ions:
-        Option<BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
+        Option<BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
     pub fragment_ions_annotated: Option<
-        BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
+        BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
     >,
 }
 
@@ -424,7 +424,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         &self,
         frame_id: u32,
         fragment_ions: &BTreeMap<
-            (u32, i8, i8),
+            (u32, i8, i32),
             (PeptideProductIonSeriesCollection, Vec<MzSpectrum>),
         >,
         mz_noise_fragment: bool,
@@ -541,7 +541,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                         None => 0.0
                     };
 
-                    let collision_energy_quantized = (collision_energy * 1e3).round() as i8;
+                    let collision_energy_quantized = (collision_energy * 1e3).round() as i32;
 
                     // get charge state for the ion
                     let charge_state = charges.get(index).unwrap();
@@ -631,7 +631,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         &self,
         frame_id: u32,
         fragment_ions: &BTreeMap<
-            (u32, i8, i8),
+            (u32, i8, i32),
             (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>),
         >,
         mz_noise_fragment: bool,
@@ -750,7 +750,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                         None => 0.0
                     };
 
-                    let collision_energy_quantized = (collision_energy * 1e3).round() as i8;
+                    let collision_energy_quantized = (collision_energy * 1e3).round() as i32;
 
                     let charge_state = charges.get(index).unwrap();
                     let maybe_value = fragment_ions.get(&(
