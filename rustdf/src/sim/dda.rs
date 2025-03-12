@@ -541,7 +541,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                         None => 0.0
                     };
 
-                    let collision_energy_quantized = (collision_energy * 1e3).round() as i32;
+                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
 
                     // get charge state for the ion
                     let charge_state = charges.get(index).unwrap();
@@ -750,7 +750,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                         None => 0.0
                     };
 
-                    let collision_energy_quantized = (collision_energy * 1e3).round() as i32;
+                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
 
                     let charge_state = charges.get(index).unwrap();
                     let maybe_value = fragment_ions.get(&(
