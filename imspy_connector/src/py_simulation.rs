@@ -125,6 +125,17 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
     pub fn count_number_transmissions_parallel(&self, peptide_ids: Vec<u32>, charge: Vec<i8>, num_threads: usize) -> Vec<(usize, usize)> {
         self.inner.count_number_transmissions_parallel(peptide_ids, charge, num_threads)
     }
+
+    pub fn get_fragment_ions_map(&self) -> BTreeMap<(u32, i8, i8), (PyPeptideProductIonSeriesCollection, Vec<PyMzSpectrum>)> {
+        let mut result = BTreeMap::new();
+        for (key, value) in self.inner.fragment_ions.clone().unwrap().iter() {
+            let (peptide_ions, mz_spectra) = value;
+            let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
+            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum { inner: x.clone() }).collect::<Vec<_>>();
+            result.insert(key.clone(), (peptide_ions, mz_spectra));
+        }
+        result
+    }
 }
 
 #[pyclass(unsendable)]

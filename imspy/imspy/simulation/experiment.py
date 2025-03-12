@@ -314,6 +314,13 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
     def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
         return self.__py_ptr.get_collision_energies(frame_ids, scan_ids)
 
+    def get_fragment_ions_map(self):
+        ions_map = self.__py_ptr.get_fragment_ions_map()
+        ret_map = {}
+        for key, value in ions_map.items():
+            ret_map[key] = (PeptideProductIonSeriesCollection.from_py_ptr(value[0]), [MzSpectrum.from_py_ptr(spectrum) for spectrum in value[1]])
+        return ret_map
+
     def __repr__(self):
         return f"TimsTofSyntheticFrameBuilderDIA(path={self.path})"
 
