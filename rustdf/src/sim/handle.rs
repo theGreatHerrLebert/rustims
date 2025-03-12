@@ -6,7 +6,7 @@ use mscore::data::peptide::{FragmentType, PeptideProductIonSeriesCollection, Pep
 use mscore::data::spectrum::{MsType, MzSpectrum};
 use mscore::simulation::annotation::MzSpectrumAnnotated;
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
-use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::timstof::quadrupole::{IonTransmission, PASEFMeta, TimsTransmissionDDA, TimsTransmissionDIA};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rusqlite::Connection;
@@ -188,6 +188,28 @@ impl TimsTofSyntheticsDataHandle {
         Ok(frame_to_window_groups)
     }
 
+    pub fn read_pasef_meta(&self) -> rusqlite::Result<Vec<PASEFMeta>> {
+        let mut stmt = self.connection.prepare("SELECT * FROM pasef_meta")?;
+        let pasef_meta_iter = stmt.query_map([], |row| {
+            Ok(PASEFMeta::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?))
+        })?;
+
+        let mut pasef_meta: Vec<PASEFMeta> = Vec::new();
+
+        for pasef_meta_entry in pasef_meta_iter {
+            pasef_meta.push(pasef_meta_entry?);
+        }
+
+        Ok(pasef_meta)
+    }
+
     pub fn read_fragment_ions(&self) -> rusqlite::Result<Vec<FragmentIonSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM fragment_ions")?;
 
@@ -272,6 +294,14 @@ impl TimsTofSyntheticsDataHandle {
         )
     }
 
+    pub fn get_transmission_dda(&self) -> TimsTransmissionDDA {
+        let pasef_meta = self.read_pasef_meta().unwrap();
+        TimsTransmissionDDA::new(
+            pasef_meta,
+            None,
+        )
+    }
+
     pub fn get_collision_energy_dia(&self) -> TimsTofCollisionEnergyDIA {
         let frame_to_window_group = self.read_frame_to_window_group().unwrap();
         let window_group_settings = self.read_window_group_settings().unwrap();
@@ -304,7 +334,51 @@ impl TimsTofSyntheticsDataHandle {
         )
     }
 
-    fn ion_map_fn(
+    fn ion_map_fn_dda(
+        ion: IonSim,
+        peptide_map: &BTreeMap<u32, PeptidesSim>,
+        precursor_frames: &HashSet<u32>,
+        transmission: &TimsTransmissionDDA,
+    ) -> BTreeSet<(u32, u32, String, i8, i32)> {
+        let peptide = peptide_map.get(&ion.peptide_id).unwrap();
+        let mut ret_tree: BTreeSet<(u32, u32, String, i8, i32)> = BTreeSet::new();
+
+        // go over all frames the ion occurs in
+        for frame in peptide.frame_distribution.occurrence.iter() {
+            // only consider fragment frames
+            if !precursor_frames.contains(frame) {
+                // go over all scans the ion occurs in
+                for scan in &ion.scan_distribution.occurrence {
+                    // check transmission for all precursor ion peaks of the isotopic envelope
+
+                    let precursor_spec = &ion.simulated_spectrum;
+
+                    if transmission.any_transmitted(
+                        *frame as i32,
+                        *scan as i32,
+                        &precursor_spec.mz,
+                        Some(0.5),
+                    ) {
+                        let collision_energy =
+                            transmission.get_collision_energy(*frame as i32, *scan as i32).unwrap_or(0.0);
+
+                        let quantized_energy = (collision_energy * 100.0).round() as i32;
+
+                        ret_tree.insert((
+                            ion.peptide_id,
+                            ion.ion_id,
+                            peptide.sequence.sequence.clone(),
+                            ion.charge,
+                            quantized_energy,
+                        ));
+                    }
+                }
+            }
+        }
+        ret_tree
+    }
+
+    fn ion_map_fn_dia(
         ion: IonSim,
         peptide_map: &BTreeMap<u32, PeptidesSim>,
         precursor_frames: &HashSet<u32>,
@@ -352,33 +426,57 @@ impl TimsTofSyntheticsDataHandle {
     pub fn get_transmitted_ions(
         &self,
         num_threads: usize,
+        dda_mode: bool,
     ) -> (Vec<i32>, Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
-            .unwrap(); // create a thread pool
+            .unwrap();
+
         let peptides = self.read_peptides().unwrap();
+
         let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
+
         let precursor_frames =
             TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&self.read_frames().unwrap());
-        let transmission = self.get_transmission_dia();
-        let collision_energy = self.get_collision_energy_dia();
 
         let ions = self.read_ions().unwrap();
 
-        let trees = thread_pool.install(|| {
-            ions.par_iter()
-                .map(|ion| {
-                    TimsTofSyntheticsDataHandle::ion_map_fn(
-                        ion.clone(),
-                        &peptide_map,
-                        &precursor_frames,
-                        &transmission,
-                        &collision_energy,
-                    )
+        let trees = match dda_mode {
+            true => {
+                let transmission = self.get_transmission_dda();
+                thread_pool.install(|| {
+                    ions.par_iter()
+                        .map(|ion| {
+                            TimsTofSyntheticsDataHandle::ion_map_fn_dda(
+                                ion.clone(),
+                                &peptide_map,
+                                &precursor_frames,
+                                &transmission,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+            })
+        },
+            false => {
+                let transmission = self.get_transmission_dia();
+                let collision_energy = self.get_collision_energy_dia();
+                thread_pool.install(|| {
+                    ions.par_iter()
+                        .map(|ion| {
+                            TimsTofSyntheticsDataHandle::ion_map_fn_dia(
+                                ion.clone(),
+                                &peptide_map,
+                                &precursor_frames,
+                                &transmission,
+                                &collision_energy,
+                            )
+                        })
+                        .collect::<Vec<_>>()
                 })
-                .collect::<Vec<_>>()
-        });
+            },
+        };
 
         let mut ret_tree: BTreeSet<(u32, u32, String, i8, i32)> = BTreeSet::new();
         for tree in trees {
@@ -473,11 +571,15 @@ impl TimsTofSyntheticsDataHandle {
             let frame_abundance = peptide.frame_distribution.abundance.clone();
 
             for (frame_id, abundance) in frame_occurrence.iter().zip(frame_abundance.iter()) {
-                let (occurrences, abundances) = frame_to_abundances
-                    .entry(*frame_id)
-                    .or_insert((vec![], vec![]));
-                occurrences.push(peptide_id);
-                abundances.push(*abundance);
+                // only insert if the abundance is greater than 1e-6
+
+                if *abundance > 1e-6 {
+                    let (occurrences, abundances) = frame_to_abundances
+                        .entry(*frame_id)
+                        .or_insert((vec![], vec![]));
+                    occurrences.push(peptide_id);
+                    abundances.push(*abundance);
+                }
             }
         }
 
@@ -521,7 +623,7 @@ impl TimsTofSyntheticsDataHandle {
         peptides_sim: &BTreeMap<u32, PeptidesSim>,
         fragment_ions: &Vec<FragmentIonSim>,
         num_threads: usize,
-    ) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
+    ) -> BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -533,7 +635,7 @@ impl TimsTofSyntheticsDataHandle {
                     let key = (
                         fragment_ion.peptide_id,
                         fragment_ion.charge,
-                        (fragment_ion.collision_energy * 1e3).round() as i8,
+                        (fragment_ion.collision_energy * 1e3).round() as i32,
                     );
 
                     let value = peptides_sim
@@ -567,7 +669,7 @@ impl TimsTofSyntheticsDataHandle {
         peptides_sim: &BTreeMap<u32, PeptidesSim>,
         fragment_ions: &Vec<FragmentIonSim>,
         num_threads: usize,
-    ) -> BTreeMap<(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>
+    ) -> BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>
     {
         let thread_pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
@@ -580,7 +682,7 @@ impl TimsTofSyntheticsDataHandle {
                     let key = (
                         fragment_ion.peptide_id,
                         fragment_ion.charge,
-                        (fragment_ion.collision_energy * 1e3).round() as i8,
+                        (fragment_ion.collision_energy * 1e3).round() as i32,
                     );
 
                     let value = peptides_sim

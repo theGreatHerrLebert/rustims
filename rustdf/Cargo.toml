@@ -1,6 +1,6 @@
 [package]
 name = "rustdf"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["David Teschner <davidteschner@googlemail.com>"] # Add your name and email
 description = "A Rust library for interacting with Bruker TDF formatted Raw Data."
@@ -17,24 +17,24 @@ path = "src/lib.rs"
 
 [dependencies]
 # Command-line argument parsing
-clap = { version = "4.5.26", features = ["derive"] }
+clap = { version = "4.5.32", features = ["derive"] }
 # Dynamic library loading
 libloading = "0.8.6"
 # SQLite with bundled binaries
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 # Compression libraries
 lzf = "1.0.0"
-zstd = "0.13.2"
+zstd = "0.13.3"
 # Byte order utilities
 byteorder = "1.5.0"
 # Core library for computational proteomics
-mscore = { version = "0.2.1" }
+mscore = { version = "0.3.0" }
 # mscore = { path = "../mscore" }
 # Parallelism
 rayon = "1.10.0"
 # Serialization
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.135"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
 # Random number generation
 rand = "0.8.5"
 

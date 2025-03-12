@@ -5,8 +5,8 @@ import numpy as np
 from pathlib import Path
 
 from imspy.simulation.utility import get_compressible_data
+from imspy.timstof import TimsDataset
 from imspy.timstof.frame import TimsFrame
-from imspy.timstof.dia import TimsDatasetDIA
 import zstd
 
 import imspy_connector
@@ -14,7 +14,7 @@ ims = imspy_connector.py_dataset
 
 
 class TDFWriter:
-    def __init__(self, helper_handle: TimsDatasetDIA, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64) -> None:
+    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False) -> None:
 
         self.path = Path(path)
         self.exp_name = exp_name
@@ -25,6 +25,7 @@ class TDFWriter:
         self.conn = None
         self.helper_handle = helper_handle
         self.offset_bytes = offset_bytes
+        self.verbose = verbose
 
         self.__conn_native = None
         self._setup_connections()
@@ -52,6 +53,9 @@ class TDFWriter:
         with open(self.binary_file, "wb") as bin_file:
             bin_file.write(b'\x00' * self.offset_bytes)
             self.position = bin_file.tell()
+
+        if self.verbose:
+            print(f"Setting up TDF file meta data, created: {self.full_path}/analysis.tdf and {self.full_path}/analysis.tdf_bin")
 
     @staticmethod
     def _get_table(conn, table_name: str) -> pd.DataFrame:

@@ -1,22 +1,27 @@
 import sqlite3
 import os
 from abc import ABC
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 from numpy.typing import NDArray
 
 import pandas as pd
 
+from imspy.data.peptide import PeptideProductIonSeriesCollection
+from imspy.data.spectrum import MzSpectrum
 from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 
 import imspy_connector
+
+from imspy.timstof.quadrupole import PasefMeta
+
 ims = imspy_connector.py_simulation
 
 
-class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
-    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = 4):
+class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
+    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
 
         Args:
@@ -25,7 +30,24 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
             num_threads (int): Number of threads.
         """
         self.path = db_path
-        self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, with_annotations, num_threads)
+
+        if num_threads == -1:
+            num_threads = os.cpu_count()
+
+        self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(db_path, with_annotations, num_threads)
+
+    def get_pasef_meta(self) -> List[PasefMeta]:
+        return [PasefMeta.from_py_ptr(meta) for meta in self.__py_ptr.get_pasef_meta()]
+
+    def get_fragment_frames(self) -> List[int]:
+        return self.__py_ptr.get_fragment_frames()
+
+    def get_fragment_ions_map(self):
+        ions_map = self.__py_ptr.get_fragment_ions_map()
+        ret_map = {}
+        for key, value in ions_map.items():
+            ret_map[key] = (PeptideProductIonSeriesCollection.from_py_ptr(value[0]), [MzSpectrum.from_py_ptr(spectrum) for spectrum in value[1]])
+        return ret_map
 
     def build_frame(self,
                     frame_id: int,
@@ -143,6 +165,163 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
         return self.__py_ptr.get_collision_energies(frame_ids, scan_ids)
 
     def __repr__(self):
+        return f"TimsTofSyntheticFrameBuilderDDA(path={self.path})"
+
+    @classmethod
+    def from_py_ptr(cls, py_ptr: ims.PyTimsTofSyntheticsFrameBuilderDDA) -> 'TimsTofSyntheticFrameBuilderDDA':
+        """Create a TimsTofSyntheticFrameBuilderDDA from a PyTimsTofSyntheticsFrameBuilderDDA.
+
+        Args:
+            py_ptr (ims.PyTimsTofSyntheticsFrameBuilderDDA): PyTimsTofSyntheticsFrameBuilderDDA.
+
+        Returns:
+            TimsTofSyntheticFrameBuilderDDA: TimsTofSyntheticFrameBuilderDDA.
+        """
+        builder = cls.__new__(cls)
+        builder.__py_ptr = py_ptr
+        return builder
+
+    def get_py_ptr(self) -> ims.PyTimsTofSyntheticsFrameBuilderDDA:
+        return self.__py_ptr
+
+class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
+    def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
+        """Initializes the TimsTofSyntheticFrameBuilderDIA.
+
+        Args:
+            db_path (str): Path to the raw data file.
+            with_annotations (bool): If true, frame annotations can be created during frame building, but this will slow down the process and needs a lot of extra memory, use with caution.
+            num_threads (int): Number of threads.
+        """
+        self.path = db_path
+
+        if num_threads == -1:
+            num_threads = os.cpu_count()
+        self.__py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(db_path, with_annotations, num_threads)
+
+    def build_frame(self,
+                    frame_id: int,
+                    fragment: bool = True,
+                    mz_noise_precursor: bool = False,
+                    mz_noise_uniform: bool = False,
+                    precursor_noise_ppm: float = 5.,
+                    mz_noise_fragment: bool = False,
+                    fragment_noise_ppm: float = 5.,
+                    right_drag: bool = True) -> TimsFrame:
+        """Build a frame.
+
+        Args:
+            frame_id (int): Frame ID.
+            fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
+            otherwise quadrupole isolation will still be applied but no fragmentation.
+            mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            mz_noise_uniform (bool): if true, noise will be added to the precursor m/z values uniformly.
+            precursor_noise_ppm (float): PPM of the precursor noise.
+            mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
+            fragment_noise_ppm (float): PPM of the fragment noise.
+            right_drag (bool): if true, the noise will be shifted to the right.
+
+        Returns:
+            TimsFrame: Frame.
+        """
+        frame = self.__py_ptr.build_frame(frame_id, fragment, mz_noise_precursor, mz_noise_uniform,
+                                          precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag)
+
+        return TimsFrame.from_py_ptr(frame)
+
+    def build_frames(self,
+                     frame_ids: List[int],
+                     fragment: bool = True,
+                     mz_noise_precursor: bool = False,
+                     mz_noise_uniform: bool = False,
+                     precursor_noise_ppm: float = 5.,
+                     mz_noise_fragment: bool = False,
+                     fragment_noise_ppm: float = 5.,
+                     right_drag: bool = True,
+                     num_threads: int = 4) -> List[TimsFrame]:
+        """Build frames.
+
+        Args:
+            frame_ids (List[int]): Frame IDs.
+            fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
+            otherwise quadrupole isolation will still be applied but no fragmentation.
+            mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            mz_noise_uniform (bool): if true, noise will be added to the precursor m/z values uniformly.
+            precursor_noise_ppm (float): PPM of the precursor noise.
+            mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
+            fragment_noise_ppm (float): PPM of the fragment noise.
+            right_drag (bool): if true, the noise will be shifted to the right.
+            num_threads (int): Number of threads.
+
+        Returns:
+            List[TimsFrame]: Frames.
+        """
+        frames = self.__py_ptr.build_frames(frame_ids, fragment, mz_noise_precursor, mz_noise_uniform,
+                                            precursor_noise_ppm,
+                                            mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
+        return [TimsFrame.from_py_ptr(frame) for frame in frames]
+
+    def build_frame_annotated(self, frame_id: int, fragment: bool = True, mz_noise_precursor: bool = False,
+                              mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
+                              mz_noise_fragment: bool = False,
+                              fragment_noise_ppm: float = 5., right_drag: bool = True) -> TimsFrameAnnotated:
+        """Build a frame. The frame will be annotated.
+
+        Args:
+            frame_id (int): Frame ID.
+            fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
+            otherwise quadrupole isolation will still be applied but no fragmentation.
+            mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            mz_noise_uniform (bool): if true, noise will be added to the precursor m/z values uniformly.
+            precursor_noise_ppm (float): PPM of the precursor noise.
+            mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
+            fragment_noise_ppm (float): PPM of the fragment noise.
+            right_drag (bool): if true, the noise will be shifted to the right.
+
+        Returns:
+            TimsFrameAnnotated: Frame.
+        """
+        frame = self.__py_ptr.build_frame_annotated(frame_id, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag)
+        return TimsFrameAnnotated.from_py_ptr(frame)
+
+    def build_frames_annotated(self, frame_ids: List[int], fragment: bool = True, mz_noise_precursor: bool = False,
+                               mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5.,
+                               mz_noise_fragment: bool = False, fragment_noise_ppm: float = 5.,
+                               right_drag: bool = True, num_threads: int = 4) -> List[TimsFrameAnnotated]:
+        """Build frames. The frames will be annotated.
+
+        Args:
+            frame_ids (List[int]): Frame IDs.
+            fragment (bool): if true, frame will undergo synthetic fragmentation if it is a fragment frame,
+            otherwise quadrupole isolation will still be applied but no fragmentation.
+            mz_noise_precursor (bool): if true, noise will be added to the precursor m/z values.
+            mz_noise_uniform (bool): if true, noise will be added to the precursor m/z values uniformly.
+            precursor_noise_ppm (float): PPM of the precursor noise.
+            mz_noise_fragment (bool): if true, noise will be added to the fragment m/z values.
+            fragment_noise_ppm (float): PPM of the fragment noise.
+            right_drag (bool): if true, the noise will be shifted to the right.
+            num_threads (int): Number of threads.
+
+        Returns:
+            List[TimsFrameAnnotated]: Frames.
+        """
+        frames = self.__py_ptr.build_frames_annotated(frame_ids, fragment, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag, num_threads)
+        return [TimsFrameAnnotated.from_py_ptr(frame) for frame in frames]
+
+    def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
+        return self.__py_ptr.get_collision_energy(frame_id, scan_id)
+
+    def get_collision_energies(self, frame_ids: List[int], scan_ids: List[int]) -> List[float]:
+        return self.__py_ptr.get_collision_energies(frame_ids, scan_ids)
+
+    def get_fragment_ions_map(self):
+        ions_map = self.__py_ptr.get_fragment_ions_map()
+        ret_map = {}
+        for key, value in ions_map.items():
+            ret_map[key] = (PeptideProductIonSeriesCollection.from_py_ptr(value[0]), [MzSpectrum.from_py_ptr(spectrum) for spectrum in value[1]])
+        return ret_map
+
+    def __repr__(self):
         return f"TimsTofSyntheticFrameBuilderDIA(path={self.path})"
 
     @classmethod
@@ -196,6 +375,9 @@ class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
     def build_precursor_frames_annotated(self, frame_ids: List[int], mz_noise_precursor: bool = False, mz_noise_uniform: bool = False, precursor_noise_ppm: float = 5., right_drag: bool = True, num_threads: int = 4) -> List[TimsFrameAnnotated]:
         frames = self.__py_ptr.build_precursor_frames_annotated(frame_ids, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag, num_threads)
         return [TimsFrameAnnotated.from_py_ptr(frame) for frame in frames]
+
+    def frame_to_abundances(self):
+        return self.__py_ptr.frame_to_abundances()
 
     def __repr__(self):
         return f"TimsTofSyntheticPrecursorFrameBuilder()"

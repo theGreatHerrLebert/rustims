@@ -3,24 +3,21 @@ use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::simulation::annotation::{
     MzSpectrumAnnotated, TimsFrameAnnotated, TimsSpectrumAnnotated,
 };
-use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::frame::TimsFrame;
-use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDDA};
 use mscore::timstof::spectrum::TimsSpectrum;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
-pub struct TimsTofSyntheticsFrameBuilderDIA {
+pub struct TimsTofSyntheticsFrameBuilderDDA {
     pub path: String,
     pub precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
-    pub transmission_settings: TimsTransmissionDIA,
-    pub fragmentation_settings: TimsTofCollisionEnergyDIA,
+    pub transmission_settings: TimsTransmissionDDA,
     pub fragment_ions:
         Option<BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
     pub fragment_ions_annotated: Option<
@@ -28,17 +25,14 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     >,
 }
 
-impl TimsTofSyntheticsFrameBuilderDIA {
-    pub fn new(path: &Path, with_annotations: bool, num_threads: usize) -> rusqlite::Result<Self> {
-        let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path)?;
-        let handle = TimsTofSyntheticsDataHandle::new(path)?;
+impl TimsTofSyntheticsFrameBuilderDDA {
+    pub fn new(path: &Path, with_annotations: bool, num_threads: usize) -> Self {
 
-        let fragment_ions = handle.read_fragment_ions()?;
+        let handle = TimsTofSyntheticsDataHandle::new(path).unwrap();
+        let fragment_ions = handle.read_fragment_ions().unwrap();
+        let transmission_settings = handle.get_transmission_dda();
 
-        // get collision energy settings per window group
-        let fragmentation_settings = handle.get_collision_energy_dia();
-        // get ion transmission settings per window group
-        let transmission_settings = handle.get_transmission_dia();
+        let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap();
 
         match with_annotations {
             true => {
@@ -48,35 +42,31 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                         &fragment_ions,
                         num_threads,
                     ));
-                Ok(Self {
+                Self {
                     path: path.to_str().unwrap().to_string(),
                     precursor_frame_builder: synthetics,
                     transmission_settings,
-                    fragmentation_settings,
                     fragment_ions: None,
                     fragment_ions_annotated: fragment_ions,
-                })
+                }
             }
-
             false => {
                 let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
                     &synthetics.peptides,
                     &fragment_ions,
                     num_threads,
                 ));
-                Ok(Self {
+                Self {
                     path: path.to_str().unwrap().to_string(),
                     precursor_frame_builder: synthetics,
                     transmission_settings,
-                    fragmentation_settings,
                     fragment_ions,
                     fragment_ions_annotated: None,
-                })
+                }
             }
         }
     }
-
-    /// Build a frame for DIA synthetic experiment
+    /// Build a frame for DDA synthetic experiment
     ///
     /// # Arguments
     ///
@@ -217,7 +207,6 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
         tims_frames
     }
-
     pub fn build_frames_annotated(
         &self,
         frame_ids: Vec<u32>,
@@ -452,7 +441,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             .precursor_frame_id_set
             .contains(&frame_id)
         {
-            false => MsType::FragmentDia,
+            false => MsType::FragmentDda,
             true => MsType::Unknown,
         };
 
@@ -536,10 +525,20 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let fraction_events =
                         frame_abundance * scan_abundance * ion_abundance * total_events;
 
-                    // get collision energy for the ion
-                    let collision_energy = self
-                        .fragmentation_settings
-                        .get_collision_energy(frame_id as i32, *scan as i32);
+                    // get PASEF settings for the given frame
+                    let maybe_pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
+
+                    let collision_energy: f64 = match maybe_pasef_meta {
+                        Some(pasef_meta) => {
+                            pasef_meta
+                                .iter()
+                                .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
+                                .map(|s| s.collision_energy)
+                                .unwrap_or(0.0)
+                        },
+                        None => 0.0
+                    };
+
                     let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
 
                     // get charge state for the ion
@@ -589,7 +588,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                                 mz_spectrum.mz,
                                 mz_spectrum.intensity,
                             )
-                            .filter_ranged(100.0, 1700.0, 1.0, 1e9),
+                                .filter_ranged(100.0, 1700.0, 1.0, 1e9),
                         ));
                     }
                 }
@@ -733,9 +732,20 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let fraction_events =
                         frame_abundance * scan_abundance * ion_abundance * total_events;
 
-                    let collision_energy = self
-                        .fragmentation_settings
-                        .get_collision_energy(frame_id as i32, *scan as i32);
+                    // get PASEF settings for the given frame
+                    let maybe_pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
+
+                    let collision_energy: f64 = match maybe_pasef_meta {
+                        Some(pasef_meta) => {
+                            pasef_meta
+                                .iter()
+                                .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
+                                .map(|s| s.collision_energy)
+                                .unwrap_or(0.0)
+                        },
+                        None => 0.0
+                    };
+
                     let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
 
                     let charge_state = charges.get(index).unwrap();
@@ -816,155 +826,17 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         )
     }
 
-    pub fn get_ion_transmission_matrix(
-        &self,
-        peptide_id: u32,
-        charge: i8,
-        include_precursor_frames: bool,
-    ) -> Vec<Vec<f32>> {
-        let maybe_peptide_sim = self.precursor_frame_builder.peptides.get(&peptide_id);
-
-        let mut frame_ids = match maybe_peptide_sim {
-            Some(maybe_peptide_sim) => maybe_peptide_sim.frame_distribution.occurrence.clone(),
-            _ => vec![],
-        };
-
-        if !include_precursor_frames {
-            frame_ids = frame_ids
-                .iter()
-                .filter(|frame_id| {
-                    !self
-                        .precursor_frame_builder
-                        .precursor_frame_id_set
-                        .contains(frame_id)
-                })
-                .cloned()
-                .collect();
-        }
-
-        let ion = self
-            .precursor_frame_builder
-            .ions
-            .get(&peptide_id)
-            .unwrap()
-            .iter()
-            .find(|ion| ion.charge == charge)
-            .unwrap();
-        let spectrum = ion.simulated_spectrum.clone();
-        let scan_distribution = &ion.scan_distribution;
-
-        let mut transmission_matrix =
-            vec![vec![0.0; frame_ids.len()]; scan_distribution.occurrence.len()];
-
-        for (frame_index, frame) in frame_ids.iter().enumerate() {
-            for (scan_index, scan) in scan_distribution.occurrence.iter().enumerate() {
-                if self.transmission_settings.all_transmitted(
-                    *frame as i32,
-                    *scan as i32,
-                    &spectrum.mz,
-                    None,
-                ) {
-                    transmission_matrix[scan_index][frame_index] = 1.0;
-                } else if self.transmission_settings.any_transmitted(
-                    *frame as i32,
-                    *scan as i32,
-                    &spectrum.mz,
-                    None,
-                ) {
-                    let transmitted_spectrum = self.transmission_settings.transmit_spectrum(
-                        *frame as i32,
-                        *scan as i32,
-                        spectrum.clone(),
-                        None,
-                    );
-                    let percentage_transmitted = transmitted_spectrum.intensity.iter().sum::<f64>()
-                        / spectrum.intensity.iter().sum::<f64>();
-                    transmission_matrix[scan_index][frame_index] = percentage_transmitted as f32;
-                }
-            }
-        }
-
-        transmission_matrix
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.transmission_settings.get_collision_energy(frame_id, scan_id).unwrap_or(0.0)
     }
 
-    pub fn count_number_transmissions(&self, peptide_id: u32, charge: i8) -> (usize, usize) {
-        let frame_ids: Vec<_> = self
-            .precursor_frame_builder
-            .peptides
-            .get(&peptide_id)
-            .unwrap()
-            .frame_distribution
-            .occurrence
-            .clone()
-            .iter()
-            .filter(|frame_id| {
-                !self
-                    .precursor_frame_builder
-                    .precursor_frame_id_set
-                    .contains(frame_id)
-            })
-            .cloned()
-            .collect();
-        let ion = self
-            .precursor_frame_builder
-            .ions
-            .get(&peptide_id)
-            .unwrap()
-            .iter()
-            .find(|ion| ion.charge == charge)
-            .unwrap();
-        let spectrum = ion.simulated_spectrum.clone();
-        let scan_distribution = &ion.scan_distribution;
-
-        let mut frame_count = 0;
-        let mut scan_count = 0;
-
-        for frame in frame_ids.iter() {
-            let mut frame_transmitted = false;
-            for scan in scan_distribution.occurrence.iter() {
-                if self.transmission_settings.any_transmitted(
-                    *frame as i32,
-                    *scan as i32,
-                    &spectrum.mz,
-                    None,
-                ) {
-                    frame_transmitted = true;
-                    scan_count += 1;
-                }
-            }
-            if frame_transmitted {
-                frame_count += 1;
+    pub fn get_collision_energies(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>) -> Vec<f64> {
+        let mut collision_energies: Vec<f64> = Vec::new();
+        for frame_id in frame_ids {
+            for scan_id in &scan_ids {
+                collision_energies.push(self.get_collision_energy(frame_id, *scan_id));
             }
         }
-
-        (frame_count, scan_count)
-    }
-
-    pub fn count_number_transmissions_parallel(
-        &self,
-        peptide_ids: Vec<u32>,
-        charge: Vec<i8>,
-        num_threads: usize,
-    ) -> Vec<(usize, usize)> {
-        let thread_pool = ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
-        let result: Vec<(usize, usize)> = thread_pool.install(|| {
-            peptide_ids
-                .par_iter()
-                .zip(charge.par_iter())
-                .map(|(peptide_id, charge)| self.count_number_transmissions(*peptide_id, *charge))
-                .collect()
-        });
-
-        result
-    }
-}
-
-impl TimsTofCollisionEnergy for TimsTofSyntheticsFrameBuilderDIA {
-    fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
-        self.fragmentation_settings
-            .get_collision_energy(frame_id, scan_id)
+        collision_energies
     }
 }
