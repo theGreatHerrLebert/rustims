@@ -22,7 +22,7 @@ ims = imspy_connector.py_simulation
 
 class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
     def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
-        """Initializes the TimsTofSyntheticFrameBuilderDIA.
+        """Initializes the TimsTofSyntheticFrameBuilderDDA.
 
         Args:
             db_path (str): Path to the raw data file.
