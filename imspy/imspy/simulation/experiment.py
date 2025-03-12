@@ -360,6 +360,9 @@ class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
         frames = self.__py_ptr.build_precursor_frames_annotated(frame_ids, mz_noise_precursor, mz_noise_uniform, precursor_noise_ppm, right_drag, num_threads)
         return [TimsFrameAnnotated.from_py_ptr(frame) for frame in frames]
 
+    def frame_to_abundances(self):
+        return self.__py_ptr.frame_to_abundances()
+
     def __repr__(self):
         return f"TimsTofSyntheticPrecursorFrameBuilder()"
 
