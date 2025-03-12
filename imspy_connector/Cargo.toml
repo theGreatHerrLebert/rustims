@@ -1,6 +1,6 @@
 [package]
 name = "imspy-connector"
-version = "0.3.15"
+version = "0.3.16"
 edition = "2021"
 
 [lib]
@@ -10,10 +10,10 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.22.6", features = ["extension-module", "gil-refs"] }
 numpy = "0.22.1"
-# mscore = { version = "0.2.1" }
-mscore = { path = "../mscore" }
-# rustdf = { version = "0.3.1" }
-rustdf = { path = "../rustdf" }
+mscore = { version = "0.3.0" }
+# mscore = { path = "../mscore" }
+rustdf = { version = "0.3.2" }
+# rustdf = { path = "../rustdf" }
 serde = "1.0.217"
 serde_json = "1.0.137"
 rayon = "1.10.0"
