@@ -829,4 +829,18 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             1e9,
         )
     }
+
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.transmission_settings.get_collision_energy(frame_id, scan_id).unwrap_or(0.0)
+    }
+
+    pub fn get_collision_energies(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>) -> Vec<f64> {
+        let mut collision_energies: Vec<f64> = Vec::new();
+        for frame_id in frame_ids {
+            for scan_id in &scan_ids {
+                collision_energies.push(self.get_collision_energy(frame_id, *scan_id));
+            }
+        }
+        collision_energies
+    }
 }

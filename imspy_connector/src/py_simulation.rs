@@ -171,6 +171,18 @@ impl PyTimsTofSyntheticsFrameBuilderDDA {
         frames.iter().map(|x| PyTimsFrameAnnotated { inner: x.clone() }).collect::<Vec<_>>()
     }
 
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.inner.get_collision_energy(frame_id, scan_id)
+    }
+
+    pub fn get_collision_energies(&self, frame_ids: Vec<i32>, scan_ids: Vec<i32>) -> Vec<f64> {
+        let mut result = Vec::with_capacity(frame_ids.len());
+        for (frame_id, scan_id) in frame_ids.iter().zip(scan_ids.iter()) {
+            result.push(self.inner.get_collision_energy(*frame_id, *scan_id));
+        }
+        result
+    }
+
     pub fn get_pasef_meta(&self) -> Vec<PyPasefMeta> {
         let pasef_meta = self.inner.transmission_settings.pasef_meta.clone();
         // go over all key, list<value> pairs, extract the values, flatten
