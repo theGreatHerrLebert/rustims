@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
@@ -58,6 +59,9 @@ impl PyTimsTofSyntheticsPrecursorFrameBuilder {
     pub fn build_precursor_frames_annotated(&self, frame_ids: Vec<u32>, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, right_drag: bool, num_threads: usize) -> Vec<PyTimsFrameAnnotated> {
         let frames = self.inner.build_precursor_frames_annotated(frame_ids, mz_noise_precursor, uniform, precursor_noise_ppm, right_drag, num_threads);
         frames.iter().map(|x| PyTimsFrameAnnotated { inner: x.clone() }).collect::<Vec<_>>()
+    }
+    pub fn frame_to_abundances(&self) -> BTreeMap<u32, (Vec<u32>, Vec<f32>)> {
+        self.inner.frame_to_abundances.clone()
     }
 }
 
