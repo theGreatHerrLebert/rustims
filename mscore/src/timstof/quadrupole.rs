@@ -83,7 +83,7 @@ pub fn smooth_step_up_down(x: &Vec<f64>, up_start: f64, up_end: f64, down_start:
 /// use mscore::timstof::quadrupole::ion_transition_function_midpoint;
 ///
 /// let ion_transmission = ion_transition_function_midpoint(150.0, 50.0, 1.0);
-/// let mz = vec![100.0, 150.0, 170.0];
+/// let mz = vec![100.0, 150.0, 160.0];
 /// let transmission = ion_transmission(mz).iter().map(
 /// |&x| (x * 100.0).round() / 100.0).collect::<Vec<f64>>();
 /// assert_eq!(transmission, vec![0.0, 1.0, 1.0]);
@@ -120,7 +120,7 @@ pub fn ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f6
 /// ```
 /// use mscore::timstof::quadrupole::apply_transmission;
 ///
-/// let mz = vec![100.0, 150.0, 170.0];
+/// let mz = vec![100.0, 150.0, 160.0];
 /// let transmission = apply_transmission(150.0, 50.0, 1.0, mz).iter().map(
 /// |&x| (x * 100.0).round() / 100.0).collect::<Vec<f64>>();
 /// assert_eq!(transmission, vec![0.0, 1.0, 1.0]);
