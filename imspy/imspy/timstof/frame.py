@@ -1,6 +1,6 @@
 import pandas as pd
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from numpy.typing import NDArray
 
 from tensorflow import sparse as sp
@@ -329,6 +329,21 @@ class TimsFrame(RustWrapperObject):
 
         assert 0.0 <= take_probability <= 1.0, "The take probability must be between 0 and 1."
         return TimsFrame.from_py_ptr(self.__frame_ptr.random_subsample_frame(take_probability))
+
+    def __getitem__(self, index: int) -> Optional[TimsSpectrum]:
+        """Get the TimsSpectrum at a given index.
+
+        Args:
+            index (int): Index.
+
+        Returns:
+            TimsSpectrum: TimsSpectrum at the index, or None if the index is out of bounds.
+        """
+        maybe_spectrum = self.__frame_ptr.get_tims_spectrum(index)
+        if maybe_spectrum is None:
+            return None
+        else:
+            return TimsSpectrum.from_py_ptr(maybe_spectrum)
 
 
 class TimsFrameVectorized(RustWrapperObject):

@@ -10,10 +10,10 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.22.6", features = ["extension-module", "gil-refs"] }
 numpy = "0.22.1"
-mscore = { version = "0.3.0" }
-# mscore = { path = "../mscore" }
-rustdf = { version = "0.3.2" }
-# rustdf = { path = "../rustdf" }
-serde = "1.0.217"
-serde_json = "1.0.137"
+# mscore = { version = "0.3.0" }
+mscore = { path = "../mscore" }
+# rustdf = { version = "0.3.2" }
+rustdf = { path = "../rustdf" }
+serde = "1.0.219"
+serde_json = "1.0.140"
 rayon = "1.10.0"
