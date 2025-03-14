@@ -115,9 +115,17 @@ def assemble_frames(
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
-    # write frame ms/ms info to database
-    acquisition_builder.tdf_writer.write_dia_ms_ms_info(
-        acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
-    # write frame ms/ms windows to database
-    acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
-        acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+    if acquisition_builder.acquisition_mode.mode == 'DIA':
+        # write frame ms/ms info to database
+        acquisition_builder.tdf_writer.write_dia_ms_ms_info(
+            acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
+        # write frame ms/ms windows to database
+        acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
+            acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+    else:
+        # write precursor table to database
+        acquisition_builder.tdf_writer.write_precursor_table(
+            acquisition_builder.synthetics_handle.get_table('precursors'))
+        # write pasef_meta table to database
+        acquisition_builder.tdf_writer.write_pasef_meta_table(
+            acquisition_builder.synthetics_handle.get_table('pasef_meta'))
