@@ -43,7 +43,7 @@ def build_acquisition(
     if acquisition_type.lower() == 'dda':
 
         if verbose:
-            print("Using DDA acquisition type...")
+            print("Using DDA acquisition mode...")
 
         # Load reference dataset
         reference_ds = TimsDataset(reference_path)
@@ -69,7 +69,7 @@ def build_acquisition(
             config['gradient_length'] = gradient_length
 
         if verbose:
-            print(f"Using acquisition type: {acquisition_type}")
+            print(f"Using acquisition mode: {acquisition_type}")
             print(config)
 
         ref_ds = TimsDatasetDIA(reference_path, in_memory=reference_in_memory, use_bruker_sdk=use_bruker_sdk)
