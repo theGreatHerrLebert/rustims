@@ -42,4 +42,4 @@ def simulate_dda_pasef_selection_scheme(
     acquisition_builder.calculate_frame_types(frame_types=frame_types)
     """
 
-    raise NotImplementedError("Not implemented yet.")
+    raise NotImplementedError("Generation of DDA PASEF tables precursor and pasef_meta not yet implemented.")
