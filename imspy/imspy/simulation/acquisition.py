@@ -146,7 +146,7 @@ class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
 
     def calculate_frame_types(self, frame_types: NDArray):
         assert len(frame_types) == self.frame_table.shape[0], "frame_types must have the same length as the frame table."
-        assert set(frame_types).issubset({0, 8}), f"frame_types must be a list of 0s and 8s, got {set(frame_types)}."
+        # assert set(frame_types).issubset({0, 8}), f"frame_types must be a list of 0s and 8s, got {set(frame_types)}."
         self.frame_table['ms_type'] = frame_types
         self.synthetics_handle.create_table(
             table_name='frames',

@@ -10,6 +10,7 @@ from tabulate import tabulate
 
 # imspy imports
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
+from imspy.simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
 from imspy.simulation.timsim.jobs.simulate_ion_mobilities_and_variance import simulate_ion_mobilities_and_variance
 from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
 from imspy.simulation.timsim.jobs.simulate_phosphorylation import simulate_phosphorylation
@@ -28,7 +29,7 @@ from .jobs.simulate_fragment_intensities import simulate_fragment_intensities
 from .jobs.simulate_frame_distributions_emg import simulate_frame_distributions_emg
 from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
-
+from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
 
 # ----------------------------------------------------------------------
 # Environment setup and GPU configuration
@@ -99,7 +100,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("-acq", "--acquisition_type",
                         type=str,
-                        help="Type of acquisition to simulate, choose between: [DIA, SYNCHRO, SLICE, MIDIA], default: DIA")
+                        help="Type of acquisition to simulate, choose between: [DDA, DIA, SYNCHRO, SLICE, MIDIA], default: DIA")
 
     parser.add_argument("-n", "--experiment_name", type=str, help="Name of the experiment")
 
@@ -658,6 +659,14 @@ def main():
 
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
+
+    if args.acquisition_type == 'DDA':
+        pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
+            acquisition_builder=acquisition_builder,
+            verbose=not args.silent_mode,
+        )
+        acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
+        acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
 
     # JOB 9: Simulate fragment intensities
     simulate_fragment_intensities(

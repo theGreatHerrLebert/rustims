@@ -195,6 +195,31 @@ class TDFWriter:
 
         self._create_table(self.conn, out, "DiaFrameMsMsInfo")
 
+    def write_precursor_table(self, precursor_table: pd.DataFrame) -> None:
+        out = precursor_table.rename(columns={
+            'id': 'Id',
+            'largest_peak_mz': 'LargestPeakMz',
+            'average_mz': 'AverageMz',
+            'monoisotopic_mz': 'MonoisotopicMz',
+            'charge': 'Charge',
+            'scan_number': 'ScanNumber',
+            'intensity': 'Intensity',
+            'parent': 'Parent',
+        })
+        self._create_table(self.conn, out, "Precursor")
+
+    def write_pasef_meta_table(self, pasef_meta_table: pd.DataFrame) -> None:
+        out = pasef_meta_table.rename(columns={
+            'frame': 'Frame',
+            'scan_start': 'ScanNumBegin',
+            'scan_end': 'ScanNumEnd',
+            'isolation_mz': 'IsolationMz',
+            'isolation_width': 'IsolationWidth',
+            'collision_energy': 'CollisionEnergy',
+            'precursor': 'Precursor',
+        })
+        self._create_table(self.conn, out, "PasefMeta")
+
     def write_dia_ms_ms_windows(self, dia_ms_ms_windows: pd.DataFrame) -> None:
         out = dia_ms_ms_windows.rename(columns={
             'window_group': 'WindowGroup',

@@ -151,6 +151,10 @@ impl PyTimsFrame {
         PyTimsFrame { inner: self.inner.to_resolution(resolution) }
     }
 
+    pub fn get_tims_spectrum(&self, scan_index: i32) -> Option<PyTimsSpectrum> {
+        self.inner.get_tims_spectrum(scan_index).map(|spectrum| PyTimsSpectrum { inner: spectrum })
+    }
+
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
         let spectra = self.inner.to_tims_spectra();
         let list: Py<PyList> = PyList::empty_bound(py).into();

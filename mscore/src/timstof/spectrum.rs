@@ -130,6 +130,13 @@ impl TimsSpectrum {
     }
 }
 
+// implement default (empty TimsSpectrum) constructor
+impl Default for TimsSpectrum {
+    fn default() -> Self {
+        TimsSpectrum { frame_id: 0, scan: 0, retention_time: 0.0, mobility: 0.0, ms_type: MsType::Unknown, spectrum: IndexedMzSpectrum::default() }
+    }
+}
+
 impl std::ops::Add for TimsSpectrum {
     type Output = Self;
 

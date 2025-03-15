@@ -529,6 +529,38 @@ impl TimsFrame {
 
         (mean, variance)
     }
+
+    pub fn get_tims_spectrum(&self, scan_number: i32) -> Option<TimsSpectrum> {
+        let mut tof = Vec::new();
+        let mut mz = Vec::new();
+        let mut intensity = Vec::new();
+
+        for (s, t, m, i) in itertools::multizip((&self.scan, &self.tof, &self.ims_frame.mz, &self.ims_frame.intensity)) {
+            if *s == scan_number {
+                tof.push(*t);
+                mz.push(*m);
+                intensity.push(*i);
+            }
+        }
+
+        if mz.is_empty() {
+            return None;
+        }
+
+        let mobility = self.ims_frame.mobility.iter()
+            .zip(&self.scan)
+            .find(|(_, s)| **s == scan_number)
+            .map(|(m, _)| *m)?;
+
+        Some(TimsSpectrum {
+            frame_id: self.frame_id,
+            scan: scan_number,
+            retention_time: self.ims_frame.retention_time,
+            mobility,
+            ms_type: self.ms_type.clone(),
+            spectrum: IndexedMzSpectrum::new(tof, mz, intensity),
+        })
+    }
 }
 
 struct AggregateData {

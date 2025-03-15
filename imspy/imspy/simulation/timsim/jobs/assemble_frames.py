@@ -4,12 +4,12 @@ import pandas as pd
 from tqdm import tqdm
 
 from .add_noise_from_real_data import add_real_data_noise_to_frames
-from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
-from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA
+from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
+from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA, TimsTofSyntheticFrameBuilderDDA
 
 
 def assemble_frames(
-        acquisition_builder: TimsTofAcquisitionBuilderDIA,
+        acquisition_builder: TimsTofAcquisitionBuilder,
         frames: pd.DataFrame,
         batch_size: int,
         verbose: bool = False,
@@ -56,20 +56,27 @@ def assemble_frames(
     """
 
     if verbose:
-        print("Starting frame assembly...")
+        print('Starting frame assembly...')
 
         if add_real_data_noise:
-            print("Real data noise will be added to the frames.")
+            print('Real data noise will be added to the frames.')
 
     batch_size = batch_size
     num_batches = len(frames) // batch_size + 1
     frame_ids = frames.frame_id.values
 
-    frame_builder = TimsTofSyntheticFrameBuilderDIA(
-        db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-        with_annotations=False,
-        num_threads=num_threads,
-    )
+    if acquisition_builder.acquisition_mode.mode == 'DDA':
+        frame_builder = TimsTofSyntheticFrameBuilderDDA(
+            db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+            with_annotations=False,
+            num_threads=num_threads,
+        )
+    else:
+        frame_builder = TimsTofSyntheticFrameBuilderDIA(
+            db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+            with_annotations=False,
+            num_threads=num_threads,
+        )
 
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
@@ -88,29 +95,37 @@ def assemble_frames(
             fragment=fragment,
         )
 
-        if add_real_data_noise:
-            built_frames = add_real_data_noise_to_frames(
-                acquisition_builder=acquisition_builder,
-                frames=built_frames,
-                intensity_max_precursor=intensity_max_precursor,
-                intensity_max_fragment=intensity_max_fragment,
-                precursor_sample_fraction=precursor_sample_fraction,
-                fragment_sample_fraction=fragment_sample_fraction,
-                num_precursor_frames=num_precursor_frames,
-                num_fragment_frames=num_fragment_frames,
-            )
+        built_frames = add_real_data_noise_to_frames(
+            acquisition_builder=acquisition_builder,
+            frames=built_frames,
+            intensity_max_precursor=intensity_max_precursor,
+            intensity_max_fragment=intensity_max_fragment,
+            precursor_sample_fraction=precursor_sample_fraction,
+            fragment_sample_fraction=fragment_sample_fraction,
+            num_precursor_frames=num_precursor_frames,
+            num_fragment_frames=num_fragment_frames,
+            acquisition_mode=acquisition_builder.acquisition_mode.mode,
+        )
 
         for frame in built_frames:
             acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
     if verbose:
-        print("Writing frame meta data to database...")
+        print('Writing frame meta data to database...')
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
-    # write frame ms/ms info to database
-    acquisition_builder.tdf_writer.write_dia_ms_ms_info(
-        acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
-    # write frame ms/ms windows to database
-    acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
-        acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+    if acquisition_builder.acquisition_mode.mode == 'DIA':
+        # write frame ms/ms info to database
+        acquisition_builder.tdf_writer.write_dia_ms_ms_info(
+            acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
+        # write frame ms/ms windows to database
+        acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
+            acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+    else:
+        # write precursor table to database
+        acquisition_builder.tdf_writer.write_precursor_table(
+            acquisition_builder.synthetics_handle.get_table('precursors'))
+        # write pasef_meta table to database
+        acquisition_builder.tdf_writer.write_pasef_meta_table(
+            acquisition_builder.synthetics_handle.get_table('pasef_meta'))

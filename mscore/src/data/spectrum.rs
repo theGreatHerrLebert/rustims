@@ -469,6 +469,13 @@ pub struct IndexedMzSpectrum {
     pub mz_spectrum: MzSpectrum,
 }
 
+// implement default (empty IndexedMzSpectrum) constructor
+impl Default for IndexedMzSpectrum {
+    fn default() -> Self {
+        IndexedMzSpectrum { index: Vec::new(), mz_spectrum: MzSpectrum::new(Vec::new(), Vec::new()) }
+    }
+}
+
 impl IndexedMzSpectrum {
     /// Creates a new `TOFMzSpectrum` instance.
     ///
