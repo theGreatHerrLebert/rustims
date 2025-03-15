@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `mscore/src/timstof/quadrupole.rs`."><title>quadrupole.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-42caa33d.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.84.0 (9fc6b4312 2025-01-07)" data-channel="1.84.0" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">mscore/timstof/</div>quadrupole.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `mscore/src/timstof/quadrupole.rs`."><title>quadrupole.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0 (4d91de4e4 2025-02-17)" data-channel="1.85.0" data-search-js="search-75f5ac3e.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">mscore/timstof/</div>quadrupole.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -468,7 +468,96 @@
 <a href="#467" id="467">467</a>
 <a href="#468" id="468">468</a>
 <a href="#469" id="469">469</a>
-<a href="#470" id="470">470</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{HashMap, HashSet};
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a>
+<a href="#474" id="474">474</a>
+<a href="#475" id="475">475</a>
+<a href="#476" id="476">476</a>
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::{BTreeMap, HashMap, HashSet};
 <span class="kw">use </span>std::f64;
 <span class="kw">use </span>std::f64::consts::E;
 <span class="kw">use </span>itertools::izip;
@@ -553,7 +642,7 @@
 /// use mscore::timstof::quadrupole::ion_transition_function_midpoint;
 ///
 /// let ion_transmission = ion_transition_function_midpoint(150.0, 50.0, 1.0);
-/// let mz = vec![100.0, 150.0, 170.0];
+/// let mz = vec![100.0, 150.0, 160.0];
 /// let transmission = ion_transmission(mz).iter().map(
 /// |&amp;x| (x * 100.0).round() / 100.0).collect::&lt;Vec&lt;f64&gt;&gt;();
 /// assert_eq!(transmission, vec![0.0, 1.0, 1.0]);
@@ -561,10 +650,10 @@
 </span><span class="kw">pub fn </span>ion_transition_function_midpoint(midpoint: f64, window_length: f64, k: f64) -&gt; <span class="kw">impl </span>Fn(Vec&lt;f64&gt;) -&gt; Vec&lt;f64&gt; {
     <span class="kw">let </span>half_window = window_length / <span class="number">2.0</span>;
 
-    <span class="kw">let </span>up_start = midpoint - half_window - <span class="number">2.0</span>;
+    <span class="kw">let </span>up_start = midpoint - half_window - <span class="number">0.5</span>;
     <span class="kw">let </span>up_end = midpoint - half_window;
     <span class="kw">let </span>down_start = midpoint + half_window;
-    <span class="kw">let </span>down_end = midpoint + half_window + <span class="number">2.0</span>;
+    <span class="kw">let </span>down_end = midpoint + half_window + <span class="number">0.5</span>;
 
     <span class="comment">// take a vector of mz values to their transmission probability
     </span><span class="kw">move </span>|mz: Vec&lt;f64&gt;| -&gt; Vec&lt;f64&gt; {
@@ -590,7 +679,7 @@
 /// ```
 /// use mscore::timstof::quadrupole::apply_transmission;
 ///
-/// let mz = vec![100.0, 150.0, 170.0];
+/// let mz = vec![100.0, 150.0, 160.0];
 /// let transmission = apply_transmission(150.0, 50.0, 1.0, mz).iter().map(
 /// |&amp;x| (x * 100.0).round() / 100.0).collect::&lt;Vec&lt;f64&gt;&gt;();
 /// assert_eq!(transmission, vec![0.0, 1.0, 1.0]);
@@ -862,7 +951,6 @@
     <span class="kw">pub fn </span>new(
         frame: Vec&lt;i32&gt;,
         frame_window_group: Vec&lt;i32&gt;,
-
         window_group: Vec&lt;i32&gt;,
         scan_start: Vec&lt;i32&gt;,
         scan_end: Vec&lt;i32&gt;,
@@ -891,7 +979,7 @@
         <span class="self">Self </span>{
             frame_to_window_group,
             window_group_settings,
-            k: k.unwrap_or(<span class="number">2.0</span>),
+            k: k.unwrap_or(<span class="number">15.0</span>),
         }
     }
 
@@ -935,6 +1023,96 @@
                 <span class="bool-val">true </span>=&gt; <span class="macro">vec!</span>[<span class="number">1.0</span>; mz.len()],
                 <span class="bool-val">false </span>=&gt; <span class="macro">vec!</span>[<span class="number">0.0</span>; mz.len()],
             }
+        }
+    }
+}
+
+<span class="attr">#[derive(Clone, Debug)]
+</span><span class="kw">pub struct </span>PASEFMeta {
+    <span class="kw">pub </span>frame: i32,
+    <span class="kw">pub </span>scan_start: i32,
+    <span class="kw">pub </span>scan_end: i32,
+    <span class="kw">pub </span>isolation_mz: f64,
+    <span class="kw">pub </span>isolation_width: f64,
+    <span class="kw">pub </span>collision_energy: f64,
+    <span class="kw">pub </span>precursor: i32,
+}
+
+<span class="kw">impl </span>PASEFMeta {
+    <span class="kw">pub fn </span>new(frame: i32, scan_start: i32, scan_end: i32, isolation_mz: f64, isolation_width: f64, collision_energy: f64, precursor: i32) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            frame,
+            scan_start,
+            scan_end,
+            isolation_mz,
+            isolation_width,
+            collision_energy,
+            precursor,
+        }
+    }
+}
+
+<span class="attr">#[derive(Clone, Debug)]
+</span><span class="kw">pub struct </span>TimsTransmissionDDA {
+    <span class="comment">// frame id to corresponding pasef meta data
+    </span><span class="kw">pub </span>pasef_meta: BTreeMap&lt;i32, Vec&lt;PASEFMeta&gt;&gt;,
+    <span class="kw">pub </span>k: f64,
+}
+
+<span class="kw">impl </span>TimsTransmissionDDA {
+    <span class="kw">pub fn </span>new(pasef_meta: Vec&lt;PASEFMeta&gt;, k: <span class="prelude-ty">Option</span>&lt;f64&gt;) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>pasef_map: BTreeMap&lt;i32, Vec&lt;PASEFMeta&gt;&gt; = BTreeMap::new();
+        <span class="kw">for </span>meta <span class="kw">in </span>pasef_meta {
+            <span class="kw">let </span>entry = pasef_map.entry(meta.frame).or_insert(Vec::new());
+            entry.push(meta);
+        }
+        <span class="self">Self </span>{
+            pasef_meta: pasef_map,
+            k: k.unwrap_or(<span class="number">15.0</span>),
+        }
+    }
+
+    <span class="kw">pub fn </span>get_collision_energy(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: i32, scan_id: i32) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+        <span class="kw">let </span>frame_meta = <span class="self">self</span>.pasef_meta.get(<span class="kw-2">&amp;</span>frame_id);
+        <span class="kw">match </span>frame_meta {
+            <span class="prelude-val">Some</span>(meta) =&gt; {
+                <span class="kw">for </span>m <span class="kw">in </span>meta {
+                    <span class="kw">if </span>scan_id &gt;= m.scan_start &amp;&amp; scan_id &lt;= m.scan_end {
+                        <span class="kw">return </span><span class="prelude-val">Some</span>(m.collision_energy);
+                    }
+                }
+                <span class="prelude-val">None
+            </span>},
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+        }
+    }
+}
+
+<span class="kw">impl </span>IonTransmission <span class="kw">for </span>TimsTransmissionDDA {
+    <span class="kw">fn </span>apply_transmission(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: i32, scan_id: i32, mz: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;f64&gt; {
+
+        <span class="comment">// get all selections for a frame, if frame is not in the PASEF metadata, it is a precursor frame and all ions are transmitted
+        </span><span class="kw">let </span>meta = <span class="self">self</span>.pasef_meta.get(<span class="kw-2">&amp;</span>frame_id);
+
+        <span class="kw">match </span>meta {
+            <span class="prelude-val">Some</span>(meta) =&gt; {
+                <span class="kw">let </span><span class="kw-2">mut </span>transmission = <span class="macro">vec!</span>[<span class="number">0.0</span>; mz.len()];
+
+                <span class="kw">for </span>m <span class="kw">in </span>meta {
+                    <span class="comment">// check if scan id is in the range of the selection
+                    </span><span class="kw">if </span>scan_id &gt;= m.scan_start &amp;&amp; scan_id &lt;= m.scan_end {
+                        <span class="comment">// apply transmission function to mz values
+                        </span><span class="kw">let </span>transmission_prob = apply_transmission(m.isolation_mz, m.isolation_width, <span class="self">self</span>.k, mz.clone());
+                        <span class="comment">// make sure that the transmission probability is not lower than the previous one
+                        </span><span class="kw">for </span>(i, p) <span class="kw">in </span>transmission_prob.iter().enumerate() {
+                            transmission[i] = p.max(transmission[i]);
+                        }
+                    }
+                }
+                transmission
+            },
+            <span class="comment">// if frame is not in the metadata, all ions are transmitted (precursor frame)
+            </span><span class="prelude-val">None </span>=&gt; <span class="macro">vec!</span>[<span class="number">1.0</span>; mz.len()],
         }
     }
 }</code></pre></div></section></main></body></html>

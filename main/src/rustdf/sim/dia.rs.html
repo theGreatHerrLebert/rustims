@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/sim/dia.rs`."><title>dia.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-42caa33d.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.84.0 (9fc6b4312 2025-01-07)" data-channel="1.84.0" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdf/sim/</div>dia.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/sim/dia.rs`."><title>dia.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-46132b98.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0 (4d91de4e4 2025-02-17)" data-channel="1.85.0" data-search-js="search-75f5ac3e.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdf/sim/</div>dia.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -992,9 +992,9 @@
     <span class="kw">pub </span>transmission_settings: TimsTransmissionDIA,
     <span class="kw">pub </span>fragmentation_settings: TimsTofCollisionEnergyDIA,
     <span class="kw">pub </span>fragment_ions:
-        <span class="prelude-ty">Option</span>&lt;BTreeMap&lt;(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec&lt;MzSpectrum&gt;)&gt;&gt;,
+        <span class="prelude-ty">Option</span>&lt;BTreeMap&lt;(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec&lt;MzSpectrum&gt;)&gt;&gt;,
     <span class="kw">pub </span>fragment_ions_annotated: <span class="prelude-ty">Option</span>&lt;
-        BTreeMap&lt;(u32, i8, i8), (PeptideProductIonSeriesCollection, Vec&lt;MzSpectrumAnnotated&gt;)&gt;,
+        BTreeMap&lt;(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec&lt;MzSpectrumAnnotated&gt;)&gt;,
     &gt;,
 }
 
@@ -1405,7 +1405,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         frame_id: u32,
         fragment_ions: <span class="kw-2">&amp;</span>BTreeMap&lt;
-            (u32, i8, i8),
+            (u32, i8, i32),
             (PeptideProductIonSeriesCollection, Vec&lt;MzSpectrum&gt;),
         &gt;,
         mz_noise_fragment: bool,
@@ -1510,7 +1510,7 @@
                     </span><span class="kw">let </span>collision_energy = <span class="self">self
                         </span>.fragmentation_settings
                         .get_collision_energy(frame_id <span class="kw">as </span>i32, <span class="kw-2">*</span>scan <span class="kw">as </span>i32);
-                    <span class="kw">let </span>collision_energy_quantized = (collision_energy * <span class="number">1e3</span>).round() <span class="kw">as </span>i8;
+                    <span class="kw">let </span>collision_energy_quantized = (collision_energy * <span class="number">1e1</span>).round() <span class="kw">as </span>i32;
 
                     <span class="comment">// get charge state for the ion
                     </span><span class="kw">let </span>charge_state = charges.get(index).unwrap();
@@ -1600,7 +1600,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         frame_id: u32,
         fragment_ions: <span class="kw-2">&amp;</span>BTreeMap&lt;
-            (u32, i8, i8),
+            (u32, i8, i32),
             (PeptideProductIonSeriesCollection, Vec&lt;MzSpectrumAnnotated&gt;),
         &gt;,
         mz_noise_fragment: bool,
@@ -1706,7 +1706,7 @@
                     <span class="kw">let </span>collision_energy = <span class="self">self
                         </span>.fragmentation_settings
                         .get_collision_energy(frame_id <span class="kw">as </span>i32, <span class="kw-2">*</span>scan <span class="kw">as </span>i32);
-                    <span class="kw">let </span>collision_energy_quantized = (collision_energy * <span class="number">1e3</span>).round() <span class="kw">as </span>i8;
+                    <span class="kw">let </span>collision_energy_quantized = (collision_energy * <span class="number">1e1</span>).round() <span class="kw">as </span>i32;
 
                     <span class="kw">let </span>charge_state = charges.get(index).unwrap();
                     <span class="kw">let </span>maybe_value = fragment_ions.get(<span class="kw-2">&amp;</span>(
