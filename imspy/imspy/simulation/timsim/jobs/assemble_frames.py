@@ -108,7 +108,10 @@ def assemble_frames(
         )
 
         for frame in built_frames:
-            acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
+            if acquisition_builder.acquisition_mode.mode == 'DDA':
+                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=8)
+            else:
+                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
     if verbose:
         print('Writing frame meta data to database...')
