@@ -35,6 +35,9 @@ def simulate_scan_distributions_with_variance(
     assert "inv_mobility_gru_predictor" in ions.columns, "inv_mobility_gru_predictor column is missing"
     assert "inv_mobility_gru_predictor_std" in ions.columns, "inv_mobility_gru_predictor_std column is missing"
 
+    if verbose:
+        print("Calculating scan occurrences...")
+
     occurrence = ims.calculate_scan_occurrences_gaussian_par(
         times=scans.mobility,
         means=ions.inv_mobility_gru_predictor,
@@ -45,6 +48,9 @@ def simulate_scan_distributions_with_variance(
         n_upper_start=5,
         num_threads=num_threads
     )
+
+    if verbose:
+        print("Calculating scan abundances...")
 
     abundances = ims.calculate_scan_abundances_gaussian_par(
         indices=scans.scan,
