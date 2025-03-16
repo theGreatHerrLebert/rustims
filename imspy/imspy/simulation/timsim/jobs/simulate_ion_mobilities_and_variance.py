@@ -65,7 +65,7 @@ def simulate_ion_mobilities_and_variance(
         inverse_mobility_std -= difference
 
         if verbose:
-            print(f"Mean standard deviation was shifted from {current_mean_std:.4f} to {target_std_mean:.4f}")
+            print(f"Mean standard deviation apex was shifted from {current_mean_std:.4f} to {target_std_mean:.4f}")
 
     dp = ions.copy()
     dp["inv_mobility_gru_predictor"] = inverse_mobility
