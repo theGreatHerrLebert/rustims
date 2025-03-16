@@ -71,15 +71,15 @@ def simulate_scan_distributions_with_variance(
     # Filter out zero-abundance entries
     filtered = [
         (
-            [o for o, a in zip(occ, ab) if a > 0],
-            [a for a in ab if a > 0]
+            [o for o, a in zip(occ, ab) if a > 1e-6],
+            [a for a in ab if a > 1e-6]
         )
         for occ, ab in zip(occurrence, abundances)
     ]
 
     # Ensure each entry is at least an empty list
     scan_occurrence, scan_abundance = zip(*[
-        (o, a) if len(o) > 1e-6 else ([], [])
+        (o, a) if len(o) > 0 else ([], [])
         for o, a in filtered
     ])
 
