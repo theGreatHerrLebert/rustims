@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from imspy_connector import py_utility as ims
-
 from imspy.simulation.utility import python_list_to_json_string, add_uniform_noise
 
 
@@ -29,12 +28,13 @@ def simulate_scan_distributions_with_variance(
 
     im_cycle_length = np.mean(np.diff(scans.mobility))
 
-    # inv_mobility_gru_predictor and inv_mobility_gru_predictor_std need to be in ions, scan and mobility in scans
+    # Check required columns
     assert "scan" in scans.columns, "scan column is missing"
     assert "mobility" in scans.columns, "mobility column is missing"
     assert "inv_mobility_gru_predictor" in ions.columns, "inv_mobility_gru_predictor column is missing"
     assert "inv_mobility_gru_predictor_std" in ions.columns, "inv_mobility_gru_predictor_std column is missing"
 
+    # Calculate occurrences and abundances
     occurrence = ims.calculate_scan_occurrences_gaussian_par(
         times=scans.mobility,
         means=ions.inv_mobility_gru_predictor,
@@ -57,26 +57,43 @@ def simulate_scan_distributions_with_variance(
     )
 
     if verbose:
-        print("Serializing scan distributions to json...")
+        print("Serializing scan distributions to JSON...")
 
+    # Optionally add noise and normalize
     if add_noise:
-        # TODO: Make noise model configurable
         noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
-        abundances = [add_uniform_noise(np.array(abundance), noise_level) for abundance, noise_level in zip(abundances, noise_levels)]
-        # Normalize the abundances
-        abundances = [scan_abundance / np.sum(scan_abundance) for scan_abundance in abundances]
+        abundances = [
+            add_uniform_noise(np.array(ab), level)
+            for ab, level in zip(abundances, noise_levels)
+        ]
+        abundances = [ab / np.sum(ab) if np.sum(ab) > 0 else ab for ab in abundances]
 
-    ions['scan_occurrence'] = [list(x) for x in occurrence]
-    ions['scan_abundance'] = [list(x) for x in abundances]
+    # Filter out zero-abundance entries
+    filtered = [
+        (
+            [o for o, a in zip(occ, ab) if a > 0],
+            [a for a in ab if a > 0]
+        )
+        for occ, ab in zip(occurrence, abundances)
+    ]
 
-    ions['scan_occurrence'] = ions['scan_occurrence'].apply(lambda x: python_list_to_json_string(x, as_float=False))
-    ions['scan_abundance'] = ions['scan_abundance'].apply(python_list_to_json_string)
+    # Ensure each entry is at least an empty list
+    scan_occurrence, scan_abundance = zip(*[
+        (o, a) if len(o) > 1e-6 else ([], [])
+        for o, a in filtered
+    ])
 
-    # remove rows where scan_abundance is empty
+    # Serialize to JSON strings
+    ions['scan_occurrence'] = [python_list_to_json_string(x, as_float=False) for x in scan_occurrence]
+    ions['scan_abundance'] = [python_list_to_json_string(x, as_float=True) for x in scan_abundance]
+
+    # Remove rows where scan_abundance is an empty list (length <= 2 due to '[]' or '[]\n')
     ions = ions[ions['scan_abundance'].apply(lambda x: len(x) > 2)]
 
-    ions = ions[['peptide_id', 'sequence', 'charge', 'mz', 'relative_abundance', 'inv_mobility_gru_predictor',
-                 'inv_mobility_gru_predictor_std', 'simulated_spectrum', 'scan_occurrence', 'scan_abundance']]
+    # Reorder and assign ion_id
+    ions = ions[['peptide_id', 'sequence', 'charge', 'mz', 'relative_abundance',
+                 'inv_mobility_gru_predictor', 'inv_mobility_gru_predictor_std',
+                 'simulated_spectrum', 'scan_occurrence', 'scan_abundance']]
 
     ion_id = ions.index
     ions.insert(0, 'ion_id', ion_id)

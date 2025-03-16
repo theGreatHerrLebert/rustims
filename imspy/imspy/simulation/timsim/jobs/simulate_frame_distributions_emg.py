@@ -103,6 +103,23 @@ def simulate_frame_distributions_emg(
     if verbose:
         print("Serializing frame distributions to json...")
 
+    # Filter out zero abundances, save space and computation
+    filtered_occurrences = []
+    filtered_abundances = []
+
+    for occ, ab in zip(occurrences, abundances):
+        filtered = [(o, a) for o, a in zip(occ, ab) if a > 1e-6]
+        if filtered:
+            o_clean, a_clean = zip(*filtered)
+            filtered_occurrences.append(list(o_clean))
+            filtered_abundances.append(list(a_clean))
+        else:
+            filtered_occurrences.append([])
+            filtered_abundances.append([])
+
+    occurrences = filtered_occurrences
+    abundances = filtered_abundances
+
     first_occurrence = [occurrence[0] for occurrence in occurrences]
     last_occurrence = [occurrence[-1] for occurrence in occurrences]
 
