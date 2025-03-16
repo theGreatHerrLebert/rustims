@@ -61,7 +61,7 @@ def generate_normal_efficiency(n, mean_log=-2, std_log=0.6, min_val=0.0001, max_
 
 def simulate_peptides(
         protein_table: pd.DataFrame,
-        num_peptides_total: int = 100_000,
+        num_peptides_total: int = 250_000,
         verbose: bool = True,
         exclude_accumulated_gradient_start: bool = True,
         min_rt_percent: float = 2.0,
