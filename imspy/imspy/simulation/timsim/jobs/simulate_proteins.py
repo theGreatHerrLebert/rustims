@@ -149,7 +149,7 @@ def assign_events(df, upscale_factor=int(1e5)):
 
 def simulate_proteins(
         fasta_file_path: str,
-        n_proteins: int = 10_000,
+        n_proteins: int = 20_000,
         upscale_factor: int = 1e5,
         cleave_at: str = 'KR',
         restrict: str = 'P',

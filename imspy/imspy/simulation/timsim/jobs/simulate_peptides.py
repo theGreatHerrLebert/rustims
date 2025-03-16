@@ -7,7 +7,7 @@ from imspy.data.peptide import PeptideSequence
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy.algorithm.utility import load_tokenizer_from_resources
 
-def sample_peptides_from_proteins(table, num_peptides_total=100_000, down_sample: bool = True):
+def sample_peptides_from_proteins(table, num_peptides_total=250_000, down_sample: bool = True):
 
     # Sample peptides from proteins, otherwise take all
     if down_sample:
