@@ -1,11 +1,16 @@
 from pathlib import Path
 from typing import Tuple
+import logging
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
 
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
 from imspy.simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
+
+Logger = logging.getLogger(__name__)
+
 
 def simulate_dda_pasef_selection_scheme(
         acquisition_builder: TimsTofAcquisitionBuilder,
