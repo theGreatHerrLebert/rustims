@@ -77,6 +77,9 @@ def simulate_frame_distributions_emg(
     peptide_rt['rt_sigma'] = sigmas
     peptide_rt['rt_lambda'] = lambdas
 
+    if verbose:
+        print("Calculating frame occurrences...")
+
     occurrences = ims.calculate_frame_occurrences_emg_par(
         times_np,
         peptides.retention_time_gru_predictor,
@@ -87,6 +90,9 @@ def simulate_frame_distributions_emg(
         num_threads=num_threads,
         n_steps=n_steps,
     )
+
+    if verbose:
+        print("Calculating frame abundances...")
 
     abundances = ims.calculate_frame_abundances_emg_par(
         frames_np,

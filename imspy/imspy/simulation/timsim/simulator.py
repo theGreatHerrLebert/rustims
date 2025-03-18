@@ -498,7 +498,7 @@ def main():
 
             # JOB 1: Simulate peptides
             if not args.silent_mode:
-                print("Creating Peptides from Proteins...")
+                print("Creating peptides from proteins...")
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
