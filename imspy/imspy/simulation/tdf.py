@@ -206,7 +206,7 @@ class TDFWriter:
             'intensity': 'Intensity',
             'parent': 'Parent',
         })
-        self._create_table(self.conn, out, "Precursor")
+        self._create_table(self.conn, out, "Precursors")
 
     def write_pasef_meta_table(self, pasef_meta_table: pd.DataFrame) -> None:
         out = pasef_meta_table.rename(columns={

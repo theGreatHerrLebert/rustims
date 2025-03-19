@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder, TimsTofAcquisitionBuilderDDA, TimsTofAcquisitionBuilderDIA
 from imspy.simulation.utility import read_acquisition_config
 from imspy.timstof import TimsDataset, TimsDatasetDIA
@@ -52,6 +54,11 @@ def build_acquisition(
             gradient_length = 3600.0
 
         rt_cycle_length = 0.109
+
+        path = str(Path(path) / exp_name)  # Append experiment name to path
+
+        # for sim raw data, append '.d' to the experiment name
+        exp_name = exp_name + '.d'
 
         return TimsTofAcquisitionBuilderDDA(
             path=path,
