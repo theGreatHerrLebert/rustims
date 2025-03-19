@@ -91,6 +91,8 @@ def simulate_dda_pasef_selection_scheme(
         **kwargs,
     )
     pasef_meta = transform_selected_precursor_to_pasefmeta(selected_p)
+    r_copy = pasef_meta.copy()
+
     # TODO: After the precursor table and pasef_meta table are created, the frame_types need to be set to 0 for MS1 frames and 8 for MS2 frames
 
     # select columns from pasef meta keys
@@ -129,7 +131,10 @@ def simulate_dda_pasef_selection_scheme(
           'charge', 'scan_number', 'intensity', 'parent']]
     )
 
-    return pasef_meta, selected_p_return
+    selected_p_return.sort_values("parent", inplace=True)
+    selected_p_return["id"] = np.arange(1, len(selected_p_return) + 1)
+
+    return r_copy, pasef_meta, selected_p, selected_p_return
 
 def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-0.0345):
     """Get precursor isolation window from a frame
@@ -345,7 +350,9 @@ def transform_selected_precursor_to_pasefmeta(selected_precursors):
     Returns:
         DataFrame: DataFrame with PASEF meta information
     """
-    selected_precursors["Precursor"] = selected_precursors["peptide_id"]
+    # TODO: maybe make this a little bit more robust...
+    # need to create ion id like id = 10 * peptide_id + charge_state
+    selected_precursors["Precursor"] = selected_precursors["peptide_id"] * 10 + selected_precursors["charge_state"]
     pasef_meta = selected_precursors[
         [
             "Frame",
@@ -357,4 +364,7 @@ def transform_selected_precursor_to_pasefmeta(selected_precursors):
             "Precursor",
         ]
     ]
+
+    # TODO: find why there are duplicates
+    pasef_meta = pasef_meta.drop_duplicates(subset=["Frame", "ScanNumBegin", "ScanNumEnd"])
     return pasef_meta
