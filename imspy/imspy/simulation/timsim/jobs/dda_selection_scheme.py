@@ -134,7 +134,7 @@ def simulate_dda_pasef_selection_scheme(
           'charge', 'scan_number', 'intensity', 'parent']]
     )
 
-    return r_copy, pasef_meta, selected_p, selected_p_return
+    return pasef_meta, selected_p_return
 
 def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-0.0345):
     """Get precursor isolation window from a frame
