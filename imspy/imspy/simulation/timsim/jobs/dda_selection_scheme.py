@@ -107,6 +107,9 @@ def simulate_dda_pasef_selection_scheme(
         precursor=lambda df: df["precursor"].astype(np.int32)
     )
 
+    # TODO: maybe return ion id instead of peptide id in the annotated frame?
+    selected_p["peptide_id"] = selected_p["peptide_id"] * 10 + selected_p["charge_state"]
+
     selected_p_return = (
         selected_p[["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Frame"]]
         .assign(
@@ -130,9 +133,6 @@ def simulate_dda_pasef_selection_scheme(
         [['id', 'largest_peak_mz', 'average_mz', 'monoisotopic_mz',
           'charge', 'scan_number', 'intensity', 'parent']]
     )
-
-    selected_p_return.sort_values("parent", inplace=True)
-    selected_p_return["id"] = np.arange(1, len(selected_p_return) + 1)
 
     return r_copy, pasef_meta, selected_p, selected_p_return
 
