@@ -71,7 +71,7 @@ jobs:
       - name: Build Documentation
         run: |
           rustup update
-          cargo doc --no-deps -p mscore -p rustdf -p rustms
+          cargo doc --no-deps --workspace --exclude imspy-connector --exclude imsjl_connector
 
       - name: Deploy to GitHub Pages (dev documentation)
         if: github.ref == 'refs/heads/main'
