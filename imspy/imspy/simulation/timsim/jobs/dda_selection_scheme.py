@@ -73,58 +73,37 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
     Returns:
         pd.DataFrame of precursor isolation windows for all available precursors
     """
-    # Aggregate basic stats
-    available_precursors = (
-        frame.groupby(["peptide_id", "charge_state"])
-        .agg(
-            scan_min=("scan", "min"),
-            scan_max=("scan", "max"),
-            mz_min=("mz", "min"),
-            mz_max=("mz", "max"),
-            intensity_sum=("intensity", "sum"),
-        )
-        .reset_index()
-    )
+    # Aggregate required stats in one step to minimize groupby operations
+    agg_funcs = {
+        "mz": ["min", "max"],
+        "intensity": ["sum", "idxmax"],
+    }
 
-    # Find the scan corresponding to the max intensity
-    max_intensity_scans = frame.loc[
-        frame.groupby(["peptide_id", "charge_state"])["intensity"].idxmax(),
-        ["peptide_id", "charge_state", "scan"],
-    ].rename(columns={"scan": "ScanNumApex"})
+    grouped = frame.groupby(["peptide_id", "charge_state"]).agg(agg_funcs)
+    grouped.columns = [
+        "mz_min",
+        "mz_max",
+        "intensity",
+        "idxmax",
+    ]
+    grouped.reset_index(inplace=True)
 
-    # Merge max intensity scan number back
-    available_precursors = available_precursors.merge(
-        max_intensity_scans, on=["peptide_id", "charge_state"], how="left"
-    )
+    # Extract ScanNumApex using the stored index
+    grouped["ScanNumApex"] = frame.loc[grouped["idxmax"], "scan"].values
 
-    # Rename columns for consistency
-    available_precursors.rename(
-        columns={
-            "scan_min": "ScanNumMin",
-            "scan_max": "ScanNumMax",
-            "mz_min": "mz_min",
-            "mz_max": "mz_max",
-            "intensity_sum": "intensity",
-        },
-        inplace=True,
-    )
+    # Drop unnecessary column
+    grouped.drop(columns=["idxmax"], inplace=True)
 
-    # Compute Isolation Width with a minimum value of 2 or 3 based on threshold
-    available_precursors["IsolationWidth"] = np.where(
-        (available_precursors["mz_max"] - available_precursors["mz_min"]) < 2, 2, 3
+    # Compute derived values in a vectorized way
+    grouped["IsolationWidth"] = np.where(
+        (grouped["mz_max"] - grouped["mz_min"]) < 2, 2, 3
     )
+    grouped["IsolationMz"] = (grouped["mz_min"] + grouped["mz_max"]) / 2
+    grouped["ScanNumBegin"] = grouped["ScanNumApex"] - 9
+    grouped["ScanNumEnd"] = grouped["ScanNumApex"] + 9
+    grouped["CollisionEnergy"] = ce_bias + ce_slope * grouped["ScanNumApex"]
 
-    # Compute Isolation Mz
-    available_precursors["IsolationMz"] = (
-        available_precursors["mz_min"] + available_precursors["mz_max"]
-    ) / 2
-    available_precursors["ScanNumEnd"] = available_precursors["ScanNumApex"] + 9
-    available_precursors["ScanNumBegin"] = available_precursors["ScanNumApex"] - 9
-    available_precursors["CollisionEnergy"] = (
-        ce_bias + ce_slope * available_precursors["ScanNumApex"]
-    )
-    # TODO: possible to automatically infer regression slope and bias? Not sure if it depends on some other settings in the acquisition method
-    return available_precursors
+    return grouped
 
 
 def select_precursors_pasef(
@@ -242,9 +221,6 @@ def select_precursors_from_frames(
         excluded_precursors_df = excluded_precursors_df.loc[
             (excluded_precursors_df["Frame"] - f) <= exclusion_width
         ]
-        logging.info(
-            "time %s",
-        )
         frame = precursor_frame_builder.build_precursor_frame_annotated(f)
         precursors = get_precursor_isolation_window_from_frame(frame.df)
         selected_precursors, excluded_precursors_df = select_precursors_pasef(
