@@ -78,6 +78,14 @@ def assemble_frames(
             num_threads=num_threads,
         )
 
+    if verbose:
+        print("Signal noise settings:")
+        print(f'Precursor m/z noise: {mz_noise_precursor}...')
+        print(f'Uniform m/z noise: {mz_noise_uniform}...')
+        print(f'Precursor noise PPM: {precursor_noise_ppm}...')
+        print(f'Fragment m/z noise: {mz_noise_fragment}...')
+        print(f'Fragment noise PPM: {fragment_noise_ppm}...')
+
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
         start_index = b * batch_size

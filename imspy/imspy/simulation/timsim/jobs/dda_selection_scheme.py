@@ -219,7 +219,7 @@ def select_precursors_pasef(
     # loop over fragment windows (Ramps)
     for i in range(1, precursor_every + 1):
         # corner case: if target frame exceeds max_frame, break the loop (or fear index out of bounds during frame read-in)
-        if max_frame is not None and (ms1_frame_id + i > max_frame):
+        if max_frame is not None and (ms1_frame_id + i >= max_frame):
             Logger.debug("Skipping Ramp %d for MS1 frame %d: target frame (%d) exceeds max_frame (%d)",
                          i, ms1_frame_id, ms1_frame_id + i, max_frame)
             break
