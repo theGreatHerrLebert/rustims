@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Tuple
 import logging
@@ -62,11 +63,13 @@ def simulate_dda_pasef_selection_scheme(
     # )
 
 
-def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-0.0345):
+def get_precursor_isolation_window_from_frame(
+    ms1_frame, ce_bias=54.1984, ce_slope=-0.0345
+):
     """Get precursor isolation window from a frame
 
     Args:
-        frame: pd.DataFrame
+        frame: pd.DataFrame of MS1 frames
         ce_bias: float, the bias of the linear regression fit for CE = slope * ScanNumApex + bias
         ce_slope: float, the slope of the linear regression fit for CE = slope * ScanNumApex + bias
 
@@ -75,12 +78,16 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
     """
     # Aggregate required stats in one step to minimize groupby operations
     agg_funcs = {
+        "peptide_id": "first",
         "mz": ["min", "max"],
         "intensity": ["sum", "idxmax"],
     }
-
-    grouped = frame.groupby(["peptide_id", "charge_state"]).agg(agg_funcs)
+    ms1_frame["ion_id"] = (
+        ms1_frame["peptide_id"] * 10 + ms1_frame["charge_state"]
+    )  # TODO: remove this line once the ion_id is available
+    grouped = ms1_frame.groupby(["ion_id"]).agg(agg_funcs)
     grouped.columns = [
+        "peptide_id",
         "mz_min",
         "mz_max",
         "intensity",
@@ -89,7 +96,7 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
     grouped.reset_index(inplace=True)
 
     # Extract ScanNumApex using the stored index
-    grouped["ScanNumApex"] = frame.loc[grouped["idxmax"], "scan"].values
+    grouped["ScanNumApex"] = ms1_frame.loc[grouped["idxmax"], "scan"].values
 
     # Drop unnecessary column
     grouped.drop(columns=["idxmax"], inplace=True)
@@ -108,7 +115,8 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
 
 def select_precursors_pasef(
     precursors: pd.DataFrame,
-    frame_id: int,
+    ms1_frame_id: int,
+    precursor_every: int = 6,
     excluded_precursors: pd.DataFrame = None,
     max_precursors: int = 25,
     intensity_threshold: float = 1200,
@@ -123,8 +131,10 @@ def select_precursors_pasef(
     ----------
     precursors : pd.DataFrame
         DataFrame with precursor information
-    frame_id : int
-        Frame ID
+    ms1_frame_id : int
+        Frame ID of the MS1 frame, where precursors are selected from
+    precursor_every : int, optional
+        Number of fragmentation frames, i.e. number of Ramps, between MS1 frames, by default 6
     excluded_precursors : pd.DataFrame, optional
         DataFrame with precursors to exclude, by default None
     max_precursors : int, optional
@@ -157,55 +167,104 @@ def select_precursors_pasef(
         ~precursors["peptide_id"].isin(excluded_precursors["peptide_id"])
     ]
     Logger.debug(
-        "Removed %d precursors due to exclusion", n_before - precursors.shape[0]
+        "Removed %d precursors due to exclusion, %d precursors left",
+        n_before - precursors.shape[0],
+        precursors.shape[0],
     )
 
     # Sort by intensity (descending)
     precursors = precursors.sort_values("intensity", ascending=False)
-    new_exclusion = []
-    selected_precursors = []
-    while len(selected_precursors) < max_precursors and not precursors.empty:
-        Logger.debug("Selecting precursor %d", len(selected_precursors) + 1)
+    new_exclusion_from_duty_cycle = {"peptide_id": [], "Parent": []}
+    selected_precursors = pd.DataFrame()
+    for i in range(1, precursor_every + 1):
+        Logger.debug("Selecting precursor for Ramp %d", i)
 
-        selected_precursor = precursors.iloc[0]  # Pick the highest-intensity precursor
-        selected_precursors.append(selected_precursor.to_dict())  # Store as dict
+        # Exclude already excluded precursors
+        n_before = precursors.shape[0]
+        precursors = precursors[
+            ~precursors["peptide_id"].isin(new_exclusion_from_duty_cycle["peptide_id"])
+        ]  # One peptide can lead to the removal of multiple precursors because of charge state
+        Logger.debug(
+            "Removed %d precursors that is already sampled, %d precursors left",
+            n_before - precursors.shape[0],
+            precursors.shape[0],
+        )
+        selected_precursors_one_ramp = []
+        all_precursors_one_ramp = precursors.copy(deep=True)
+        while (
+            len(selected_precursors_one_ramp) < max_precursors
+            and not all_precursors_one_ramp.empty
+        ):
 
-        # Add to exclusion list
-        new_exclusion.append(
-            {"peptide_id": selected_precursor["peptide_id"], "Frame": frame_id}
+            selected_precursor = all_precursors_one_ramp.iloc[
+                0
+            ]  # Pick the highest-intensity precursor
+            Logger.debug(
+                "Selected peptide id %d as precursor %d",
+                selected_precursor["peptide_id"],
+                len(selected_precursors_one_ramp) + 1,
+            )
+            selected_precursors_one_ramp.append(
+                selected_precursor.to_dict()
+            )  # Store as dict
+
+            # Add to duty cycle exclusion dict
+            new_exclusion_from_duty_cycle["peptide_id"].append(
+                selected_precursor["peptide_id"]
+            )
+            new_exclusion_from_duty_cycle["Parent"].append(ms1_frame_id)
+            # Remove precursors within the same scan window
+            all_precursors_one_ramp = all_precursors_one_ramp[
+                ~(
+                    (
+                        all_precursors_one_ramp["ScanNumApex"]
+                        <= selected_precursor["ScanNumEnd"]
+                    )
+                    & (
+                        all_precursors_one_ramp["ScanNumApex"]
+                        >= selected_precursor["ScanNumBegin"]
+                    )
+                )
+            ]
+            all_precursors_one_ramp = all_precursors_one_ramp.loc[
+                all_precursors_one_ramp["peptide_id"]
+                != selected_precursor["peptide_id"]
+            ]  # Remove the selected peptide (but with different charge) to be further sampled in the same ramp
+
+        # Convert selected precursors to a DataFrame
+        selected_precursors_one_ramp = pd.DataFrame(selected_precursors_one_ramp)
+        if not selected_precursors_one_ramp.empty:
+            selected_precursors_one_ramp["Parent"] = ms1_frame_id
+            selected_precursors_one_ramp["Frame"] = ms1_frame_id + i
+        selected_precursors = pd.concat(
+            [selected_precursors, selected_precursors_one_ramp]
         )
 
-        # Remove precursors within the same scan window
-        precursors = precursors[
-            ~(
-                (precursors["ScanNumApex"] <= selected_precursor["ScanNumEnd"])
-                & (precursors["ScanNumApex"] >= selected_precursor["ScanNumBegin"])
-            )
-        ]
-
-    # Convert selected precursors to a DataFrame
-    selected_precursors = pd.DataFrame(selected_precursors)
-    if not selected_precursors.empty:
-        selected_precursors["Frame"] = frame_id
-    new_exclusion = pd.DataFrame(new_exclusion)
-    excluded_precursors = pd.concat([excluded_precursors, new_exclusion])
+    new_exclusion_from_duty_cycle = pd.DataFrame(new_exclusion_from_duty_cycle)
+    excluded_precursors = pd.concat(
+        [excluded_precursors, new_exclusion_from_duty_cycle]
+    )
     return selected_precursors, excluded_precursors
 
 
 def select_precursors_from_frames(
     precursor_frame_builder,
     frame_ids,
+    precursor_every: int,
     exclusion_width,
     excluded_precursors_df: pd.DataFrame = None,
-    max_precursors=25,
-    intensity_threshold=1200,
+    max_precursors: int = 25,
+    intensity_threshold: int = 1200,
+    num_threads: int = -1,
+    batch_size: int = 256,
 ):
     """Select precursors for a list of frames
 
     Args:
         precursor_builder: Precursor builder object
         frame_ids: List of frame IDs
-        exclusion_width: Width, i.e. number of frames, for dynamic exclusion of precursors
+        exclusion_width: Width, i.e. number of MS1 frames, or duty cycles, for dynamic exclusion of precursors,
+                        not to be confused with number of total frames
         excluded_precursors_df: DataFrame with excluded precursors because of dynamic exclusion
         max_precursors: Maximum number of precursors to select
         intensity_threshold: Intensity threshold for precursors
@@ -213,26 +272,57 @@ def select_precursors_from_frames(
     Returns:
         pd.DataFrame: DataFrame with selected precursors from all frame_ids given
     """
+
+    if num_threads == -1:
+        num_threads = os.cpu_count()
+
     select_precursors_all_frames = pd.DataFrame()
+
     if excluded_precursors_df is None:
-        excluded_precursors_df = pd.DataFrame(columns=["peptide_id", "Frame"])
-    for f in tqdm(frame_ids, total=len(frame_ids), desc="Selecting Precursors"):
-        Logger.debug("Selecting precursors for frame %d", f)
-        excluded_precursors_df = excluded_precursors_df.loc[
-            (excluded_precursors_df["Frame"] - f) <= exclusion_width
-        ]
-        frame = precursor_frame_builder.build_precursor_frame_annotated(f)
-        precursors = get_precursor_isolation_window_from_frame(frame.df)
-        selected_precursors, excluded_precursors_df = select_precursors_pasef(
-            precursors,
-            f,
-            excluded_precursors=excluded_precursors_df,
-            max_precursors=max_precursors,
-            intensity_threshold=intensity_threshold,
-        )  # TODO: can support other selection methods here
-        select_precursors_all_frames = pd.concat(
-            [select_precursors_all_frames, selected_precursors]
+        excluded_precursors_df = pd.DataFrame(columns=["peptide_id", "Parent"])
+
+    # create batched frame_ids
+    num_splits = len(frame_ids) // batch_size
+    num_splits = np.max([num_splits, 1])  # ensure at least one split
+    frame_ids_in_batches = np.array_split(frame_ids, num_splits)
+
+    # parallel processing
+    for i, batch in tqdm(
+        enumerate(frame_ids_in_batches),
+        total=len(frame_ids_in_batches),
+        desc="Selecting Precursors",
+        ncols=80,
+    ):
+        Logger.debug("Processing batch %d, %s", i, batch)
+        # build precursor frames for the batch
+        build_batch = precursor_frame_builder.build_precursor_frames_annotated(
+            batch, num_threads=num_threads
         )
+
+        # go over all frames in the batch
+        for frame in build_batch:
+
+            Logger.debug("Selecting precursors for parent %d", frame.frame_id)
+
+            # exclude precursors based on the exclusion width
+            excluded_precursors_df = excluded_precursors_df.loc[
+                (excluded_precursors_df["Parent"] - frame.frame_id) <= exclusion_width
+            ]
+
+            precursors = get_precursor_isolation_window_from_frame(frame.df)
+
+            selected_precursors, excluded_precursors_df = select_precursors_pasef(
+                precursors,
+                frame.frame_id,
+                precursor_every=precursor_every,
+                excluded_precursors=excluded_precursors_df,
+                max_precursors=max_precursors,
+                intensity_threshold=intensity_threshold,
+            )  # TODO: can support other selection methods here
+
+            select_precursors_all_frames = pd.concat(
+                [select_precursors_all_frames, selected_precursors]
+            )
 
     return select_precursors_all_frames
 
@@ -246,7 +336,7 @@ def transform_selected_precursor_to_pasefmeta(selected_precursors):
     Returns:
         DataFrame: DataFrame with PASEF meta information
     """
-    selected_precursors["Precursor"] = selected_precursors["peptide_id"]
+    selected_precursors["Precursor"] = selected_precursors["ion_id"]
     pasef_meta = selected_precursors[
         [
             "Frame",
