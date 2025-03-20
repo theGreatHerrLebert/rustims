@@ -63,11 +63,13 @@ def simulate_dda_pasef_selection_scheme(
     # )
 
 
-def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-0.0345):
+def get_precursor_isolation_window_from_frame(
+    ms1_frame, ce_bias=54.1984, ce_slope=-0.0345
+):
     """Get precursor isolation window from a frame
 
     Args:
-        frame: pd.DataFrame
+        frame: pd.DataFrame of MS1 frames
         ce_bias: float, the bias of the linear regression fit for CE = slope * ScanNumApex + bias
         ce_slope: float, the slope of the linear regression fit for CE = slope * ScanNumApex + bias
 
@@ -94,7 +96,7 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
     grouped.reset_index(inplace=True)
 
     # Extract ScanNumApex using the stored index
-    grouped["ScanNumApex"] = frame.loc[grouped["idxmax"], "scan"].values
+    grouped["ScanNumApex"] = ms1_frame.loc[grouped["idxmax"], "scan"].values
 
     # Drop unnecessary column
     grouped.drop(columns=["idxmax"], inplace=True)
@@ -113,7 +115,8 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
 
 def select_precursors_pasef(
     precursors: pd.DataFrame,
-    frame_id: int,
+    ms1_frame_id: int,
+    precursor_every: int = 6,
     excluded_precursors: pd.DataFrame = None,
     max_precursors: int = 25,
     intensity_threshold: float = 1200,
@@ -128,8 +131,10 @@ def select_precursors_pasef(
     ----------
     precursors : pd.DataFrame
         DataFrame with precursor information
-    frame_id : int
-        Frame ID
+    ms1_frame_id : int
+        Frame ID of the MS1 frame, where precursors are selected from
+    precursor_every : int, optional
+        Number of fragmentation frames, i.e. number of Ramps, between MS1 frames, by default 6
     excluded_precursors : pd.DataFrame, optional
         DataFrame with precursors to exclude, by default None
     max_precursors : int, optional
@@ -162,38 +167,83 @@ def select_precursors_pasef(
         ~precursors["peptide_id"].isin(excluded_precursors["peptide_id"])
     ]
     Logger.debug(
-        "Removed %d precursors due to exclusion", n_before - precursors.shape[0]
+        "Removed %d precursors due to exclusion, %d precursors left",
+        n_before - precursors.shape[0],
+        precursors.shape[0],
     )
 
     # Sort by intensity (descending)
     precursors = precursors.sort_values("intensity", ascending=False)
-    new_exclusion = []
-    selected_precursors = []
-    while len(selected_precursors) < max_precursors and not precursors.empty:
-        Logger.debug("Selecting precursor %d", len(selected_precursors) + 1)
+    new_exclusion_from_duty_cycle = {"peptide_id": [], "Parent": []}
+    selected_precursors = pd.DataFrame()
+    for i in range(1, precursor_every + 1):
+        Logger.debug("Selecting precursor for Ramp %d", i)
 
-        selected_precursor = precursors.iloc[0]  # Pick the highest-intensity precursor
-        selected_precursors.append(selected_precursor.to_dict())  # Store as dict
+        # Exclude already excluded precursors
+        n_before = precursors.shape[0]
+        precursors = precursors[
+            ~precursors["peptide_id"].isin(new_exclusion_from_duty_cycle["peptide_id"])
+        ]  # One peptide can lead to the removal of multiple precursors because of charge state
+        Logger.debug(
+            "Removed %d precursors that is already sampled, %d precursors left",
+            n_before - precursors.shape[0],
+            precursors.shape[0],
+        )
+        selected_precursors_one_ramp = []
+        all_precursors_one_ramp = precursors.copy(deep=True)
+        while (
+            len(selected_precursors_one_ramp) < max_precursors
+            and not all_precursors_one_ramp.empty
+        ):
 
-        # Add to exclusion list
-        new_exclusion.append(
-            {"peptide_id": selected_precursor["peptide_id"], "Frame": frame_id}
+            selected_precursor = all_precursors_one_ramp.iloc[
+                0
+            ]  # Pick the highest-intensity precursor
+            Logger.debug(
+                "Selected peptide id %d as precursor %d",
+                selected_precursor["peptide_id"],
+                len(selected_precursors_one_ramp) + 1,
+            )
+            selected_precursors_one_ramp.append(
+                selected_precursor.to_dict()
+            )  # Store as dict
+
+            # Add to duty cycle exclusion dict
+            new_exclusion_from_duty_cycle["peptide_id"].append(
+                selected_precursor["peptide_id"]
+            )
+            new_exclusion_from_duty_cycle["Parent"].append(ms1_frame_id)
+            # Remove precursors within the same scan window
+            all_precursors_one_ramp = all_precursors_one_ramp[
+                ~(
+                    (
+                        all_precursors_one_ramp["ScanNumApex"]
+                        <= selected_precursor["ScanNumEnd"]
+                    )
+                    & (
+                        all_precursors_one_ramp["ScanNumApex"]
+                        >= selected_precursor["ScanNumBegin"]
+                    )
+                )
+            ]
+            all_precursors_one_ramp = all_precursors_one_ramp.loc[
+                all_precursors_one_ramp["peptide_id"]
+                != selected_precursor["peptide_id"]
+            ]  # Remove the selected peptide (but with different charge) to be further sampled in the same ramp
+
+        # Convert selected precursors to a DataFrame
+        selected_precursors_one_ramp = pd.DataFrame(selected_precursors_one_ramp)
+        if not selected_precursors_one_ramp.empty:
+            selected_precursors_one_ramp["Parent"] = ms1_frame_id
+            selected_precursors_one_ramp["Frame"] = ms1_frame_id + i
+        selected_precursors = pd.concat(
+            [selected_precursors, selected_precursors_one_ramp]
         )
 
-        # Remove precursors within the same scan window
-        precursors = precursors[
-            ~(
-                (precursors["ScanNumApex"] <= selected_precursor["ScanNumEnd"])
-                & (precursors["ScanNumApex"] >= selected_precursor["ScanNumBegin"])
-            )
-        ]
-
-    # Convert selected precursors to a DataFrame
-    selected_precursors = pd.DataFrame(selected_precursors)
-    if not selected_precursors.empty:
-        selected_precursors["Frame"] = frame_id
-    new_exclusion = pd.DataFrame(new_exclusion)
-    excluded_precursors = pd.concat([excluded_precursors, new_exclusion])
+    new_exclusion_from_duty_cycle = pd.DataFrame(new_exclusion_from_duty_cycle)
+    excluded_precursors = pd.concat(
+        [excluded_precursors, new_exclusion_from_duty_cycle]
+    )
     return selected_precursors, excluded_precursors
 
 
