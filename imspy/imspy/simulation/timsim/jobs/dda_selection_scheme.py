@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Tuple
 import logging
@@ -213,28 +214,61 @@ def select_precursors_from_frames(
     Returns:
         pd.DataFrame: DataFrame with selected precursors from all frame_ids given
     """
+
+    if num_threads == -1:
+        num_threads = os.cpu_count()
+
     select_precursors_all_frames = pd.DataFrame()
     if excluded_precursors_df is None:
         excluded_precursors_df = pd.DataFrame(columns=["peptide_id", "Frame"])
-    for f in tqdm(frame_ids, total=len(frame_ids), desc="Selecting Precursors"):
-        Logger.debug("Selecting precursors for frame %d", f)
-        excluded_precursors_df = excluded_precursors_df.loc[
-            (excluded_precursors_df["Frame"] - f) <= exclusion_width
-        ]
-        frame = precursor_frame_builder.build_precursor_frame_annotated(f)
-        precursors = get_precursor_isolation_window_from_frame(frame.df)
-        selected_precursors, excluded_precursors_df = select_precursors_pasef(
-            precursors,
-            f,
-            excluded_precursors=excluded_precursors_df,
-            max_precursors=max_precursors,
-            intensity_threshold=intensity_threshold,
-        )  # TODO: can support other selection methods here
-        select_precursors_all_frames = pd.concat(
-            [select_precursors_all_frames, selected_precursors]
-        )
 
-    return select_precursors_all_frames
+        # create batched frame_ids
+        num_splits = len(frame_ids) // batch_size
+        frame_ids = np.array_split(frame_ids, num_splits)
+
+        select_precursors_all_frames_list = []
+
+        # parallel processing
+        for i, batch in tqdm(
+            enumerate(frame_ids),
+            total=len(frame_ids),
+            desc="Selecting Precursors",
+            ncols=80,
+        ):
+
+            # build precursor frames for the batch
+            build_batch = precursor_frame_builder.build_precursor_frames_annotated(
+                batch, num_threads=num_threads
+            )
+
+            # go over all frames in the batch
+            for frame in build_batch:
+
+                Logger.debug("Selecting precursors for frame %d", frame.frame_id)
+
+                # exclude precursors based on the exclusion width
+                excluded_precursors_df = excluded_precursors_df.loc[
+                    (excluded_precursors_df["Frame"] - frame.frame_id)
+                    <= exclusion_width
+                ]
+
+                precursors = get_precursor_isolation_window_from_frame(frame.df)
+
+                selected_precursors, excluded_precursors_df = select_precursors_pasef(
+                    precursors,
+                    frame.frame_id,
+                    excluded_precursors=excluded_precursors_df,
+                    max_precursors=max_precursors,
+                    intensity_threshold=intensity_threshold,
+                )  # TODO: can support other selection methods here
+
+                select_precursors_all_frames = pd.concat(
+                    [select_precursors_all_frames, selected_precursors]
+                )
+
+            select_precursors_all_frames_list.append(select_precursors_all_frames)
+
+        return pd.concat(select_precursors_all_frames_list)
 
 
 def transform_selected_precursor_to_pasefmeta(selected_precursors):
