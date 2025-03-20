@@ -12,7 +12,6 @@ from imspy.simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
 
 Logger = logging.getLogger(__name__)
 
-# Mapping of column names for PASEF meta data
 PASEF_META_COLUMNS_MAPPING = {
     "frame": "Frame",
     "scan_start": "ScanNumBegin",
@@ -23,7 +22,6 @@ PASEF_META_COLUMNS_MAPPING = {
     "precursor": "Precursor",
 }
 
-# Mapping of precursor column names
 PRECURSOR_MAPPING = {
     "id": "Id",
     "largest_peak_mz": "LargestPeakMz",
@@ -49,53 +47,52 @@ def simulate_dda_pasef_selection_scheme(
     """
     Simulate DDA selection scheme.
 
-    This function now selects precursor ions as before, but then reassigns their
-    Frame key to the corresponding fragment frames. Specifically, for each precursor
-    frame, the selected ions are distributed over the next k fragment frames,
-    where k = precursors_every - 1 (if you wish to include the precursor frame in the duty cycle,
-    you can adjust the range below).
+    This function selects precursor ions as before, but then reassigns their Frame
+    key to the corresponding fragment frames. Specifically, for each precursor frame,
+    the selected ions are distributed over the next k fragment frames, where k = precursors_every - 1.
+    (If there are not enough frames left, no fragment frames are generated.)
 
     Args:
         acquisition_builder: Acquisition builder object.
         verbose: Verbosity flag.
         precursors_every: Number of frames between precursor acquisitions.
-                          (For example, precursors_every=4 means every 4th frame is an MS1 frame.)
         batch_size: Batch size for parallel processing.
         intensity_threshold: Intensity threshold for precursors.
-        max_precursors: Maximum number of precursors to select per duty cycle (per fragment window).
+        max_precursors: Maximum number of precursors to select per duty cycle.
         exclusion_width: Number of MS1 frames (duty cycles) to use for dynamic exclusion.
-        **kwargs: Additional keyword arguments for the selection scheme.
+        **kwargs: Additional keyword arguments.
 
     Returns:
         Tuple of two pandas DataFrames:
-            - PASEF meta information with updated fragment frame keys.
-            - Selected precursor information (annotated precursor table).
+          - PASEF meta information with updated fragment frame keys.
+          - Annotated precursor selection table.
     """
-    # Retrieve all frame IDs and initialize frame types (default to dda-fragmentation type: 8)
+    # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
     frames = acquisition_builder.frame_table.frame_id.values
     frame_types = np.full(len(frames), 8, dtype=int)
 
-    # Mark every precursors_every frame as a precursor frame (type 0)
     for idx in range(len(frames)):
         if idx % precursors_every == 0:
             frame_types[idx] = 0
 
-    # Update the acquisition builder with the new frame types
     acquisition_builder.calculate_frame_types(frame_types=frame_types)
 
-    # Build the precursor frame builder (database for synthetic data)
+    # compute overall maximum frame id (to avoid generating fragment frames beyond available indices)
+    max_frame = int(np.max(frames))
+
+    # precursor frame builder things
     synthetic_db_path = str(Path(acquisition_builder.path) / "synthetic_data.db")
     precursor_frame_builder = TimsTofSyntheticPrecursorFrameBuilder(synthetic_db_path)
 
-    # Extract frame IDs corresponding to MS1 (precursor) frames
+    # etract MS1 frame IDs (precursor frames)
     ms1_frame_ids = acquisition_builder.frame_table[
         acquisition_builder.frame_table.ms_type == 0
     ].frame_id.values
 
-    # Select precursors from frames (note that we now pass precursors_every)
+    # create precursor table
     selected_p = select_precursors_from_frames(
         precursor_frame_builder=precursor_frame_builder,
-        frame_ids=ms1_frame_ids,  # TODO: refine frame ID selection if needed.
+        frame_ids=ms1_frame_ids,  # TODO: refine frame selection if needed.
         precursor_every=precursors_every,
         exclusion_width=exclusion_width,
         excluded_precursors_df=None,
@@ -103,27 +100,26 @@ def simulate_dda_pasef_selection_scheme(
         intensity_threshold=intensity_threshold,
         num_threads=-1,
         batch_size=batch_size,
+        max_frame=max_frame,
         **kwargs,
     )
 
-    # Transform the selected precursors into PASEF meta data and reassign their keys
+    # transform selected precursors into PASEF meta data and reassign their keys
     pasef_meta = transform_selected_precursor_to_pasefmeta(selected_p, precursors_every)
 
-    # Reformat the pasef_meta table as before (mapping keys to lowercase names)
+    # Reformat meta table using the mapping (and cast key columns to int32)
     pasef_meta_names = PASEF_META_COLUMNS_MAPPING.values()
     pasef_meta = pasef_meta[list(pasef_meta_names)]
     inverse_mapping = {v: k for k, v in PASEF_META_COLUMNS_MAPPING.items()}
     pasef_meta = pasef_meta.rename(columns=inverse_mapping)
-
     pasef_meta = pasef_meta.assign(
         scan_start=lambda df: df["scan_start"].astype(np.int32),
         scan_end=lambda df: df["scan_end"].astype(np.int32),
         precursor=lambda df: df["precursor"].astype(np.int32),
     )
 
-    # Annotate the selected precursor table (this part is left mostly unchanged)
+    # annotate the precursor table (calculate ion id)
     selected_p["peptide_id"] = selected_p["peptide_id"] * 10 + selected_p["charge_state"]
-
     selected_p_return = (
         selected_p[["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Frame"]]
         .assign(
@@ -161,23 +157,17 @@ def get_precursor_isolation_window_from_frame(
     Returns:
         DataFrame with computed precursor isolation windows.
     """
-    # Aggregate required statistics in one step to minimize groupby operations
     agg_funcs = {"mz": ["min", "max"], "intensity": ["sum", "idxmax"]}
     grouped = frame.groupby(["peptide_id", "charge_state"]).agg(agg_funcs)
     grouped.columns = ["mz_min", "mz_max", "intensity", "idxmax"]
     grouped.reset_index(inplace=True)
-
-    # Extract ScanNumApex using the stored index
     grouped["ScanNumApex"] = frame.loc[grouped["idxmax"], "scan"].values
     grouped.drop(columns=["idxmax"], inplace=True)
-
-    # Compute derived values in a vectorized way
     grouped["IsolationWidth"] = np.where((grouped["mz_max"] - grouped["mz_min"]) < 2, 2, 3)
     grouped["IsolationMz"] = (grouped["mz_min"] + grouped["mz_max"]) / 2
-    grouped["ScanNumBegin"] = grouped["ScanNumApex"] - 9
-    grouped["ScanNumEnd"] = grouped["ScanNumApex"] + 9
+    grouped["ScanNumBegin"] = grouped["ScanNumApex"] - 13
+    grouped["ScanNumEnd"] = grouped["ScanNumApex"] + 13
     grouped["CollisionEnergy"] = ce_bias + ce_slope * grouped["ScanNumApex"]
-
     return grouped
 
 def select_precursors_pasef(
@@ -187,55 +177,56 @@ def select_precursors_pasef(
     excluded_precursors: Optional[pd.DataFrame] = None,
     max_precursors: int = 25,
     intensity_threshold: float = 1200,
+    max_frame: int = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Select precursors from an MS1 frame and distribute them over fragment frames.
 
     This function applies a duty cycle: for each MS1 frame (ms1_frame_id), it loops
-    over available fragment windows (from ms1_frame_id+1 to ms1_frame_id+precursor_every)
-    and selects up to max_precursors precursors per window, based on intensity and dynamic exclusion.
+    over available fragment windows (from ms1_frame_id+1 to ms1_frame_id+precursor_every).
+    If a target fragment frame would exceed the overall max_frame, that ramp is skipped.
 
     Args:
         precursors: DataFrame with precursor information.
         ms1_frame_id: The frame ID of the current MS1 frame.
-        precursor_every: Total number of frames between precursor frames.
-                         (The duty cycle will be performed over precursor_every windows.)
-        excluded_precursors: DataFrame with already excluded precursor ion IDs.
+        precursor_every: Total frames between precursor frames.
+        excluded_precursors: DataFrame with already excluded precursor IDs.
         max_precursors: Maximum number of precursors to select per fragment window.
         intensity_threshold: Minimum intensity for precursor selection.
+        max_frame: Overall maximum frame ID available.
 
     Returns:
         Tuple:
-            - DataFrame with selected precursors (each assigned a new 'Frame' value for the fragment window).
+            - DataFrame with selected precursors (each assigned a new 'Frame' for the fragment window).
             - Updated DataFrame with exclusion information.
     """
     if excluded_precursors is None:
         excluded_precursors = pd.DataFrame(columns=["peptide_id", "Frame"])
 
-    # Filter out precursors below intensity threshold
     n_before_int_thres = precursors.shape[0]
     precursors = precursors[precursors["intensity"] > intensity_threshold]
     Logger.debug("Removed %d precursors below intensity threshold", n_before_int_thres - precursors.shape[0])
 
-    # Exclude precursors already flagged in previous duty cycles
     n_before = precursors.shape[0]
     precursors = precursors[~precursors["peptide_id"].isin(excluded_precursors["peptide_id"])]
     Logger.debug("Removed %d precursors due to exclusion", n_before - precursors.shape[0])
 
-    # Sort by intensity (descending)
     precursors = precursors.sort_values("intensity", ascending=False)
 
-    # New logic: loop over duty cycles (fragment windows)
     duty_cycle_exclusions = {"peptide_id": [], "Parent": []}
     selected_all = pd.DataFrame()
 
-    # Loop over fragment windows (Ramps). The college solution uses range(1, precursor_every+1)
+    # loop over fragment windows (Ramps)
     for i in range(1, precursor_every + 1):
+        # corner case: if target frame exceeds max_frame, break the loop (or fear index out of bounds during frame read-in)
+        if max_frame is not None and (ms1_frame_id + i > max_frame):
+            Logger.debug("Skipping Ramp %d for MS1 frame %d: target frame (%d) exceeds max_frame (%d)",
+                         i, ms1_frame_id, ms1_frame_id + i, max_frame)
+            break
+
         Logger.debug("Selecting precursors for Ramp %d (ms1_frame_id %d + %d)", i, ms1_frame_id, i)
-        # Exclude precursors already selected in this duty cycle
-        n_before = precursors.shape[0]
         precursors = precursors[~precursors["peptide_id"].isin(duty_cycle_exclusions["peptide_id"])]
-        Logger.debug("Removed %d precursors already sampled, %d left", n_before - precursors.shape[0], precursors.shape[0])
+        Logger.debug("After duty-cycle exclusion, %d precursors remain", precursors.shape[0])
         selected_precursors_one_ramp = []
         all_precursors_one_ramp = precursors.copy(deep=True)
         while (len(selected_precursors_one_ramp) < max_precursors) and (not all_precursors_one_ramp.empty):
@@ -244,7 +235,6 @@ def select_precursors_pasef(
             selected_precursors_one_ramp.append(selected_precursor.to_dict())
             duty_cycle_exclusions["peptide_id"].append(selected_precursor["peptide_id"])
             duty_cycle_exclusions["Parent"].append(ms1_frame_id)
-            # Remove precursors within the same scan window (dynamic exclusion)
             all_precursors_one_ramp = all_precursors_one_ramp[
                 ~((all_precursors_one_ramp["ScanNumApex"] <= selected_precursor["ScanNumEnd"]) &
                   (all_precursors_one_ramp["ScanNumApex"] >= selected_precursor["ScanNumBegin"]))
@@ -273,20 +263,22 @@ def select_precursors_from_frames(
     intensity_threshold: float = 1200,
     num_threads: int = -1,
     batch_size: int = 256,
+    max_frame: int = None  # pass through overall max_frame
 ) -> pd.DataFrame:
     """
     Select precursors for a list of frames.
 
     Args:
         precursor_frame_builder: Precursor builder object.
-        frame_ids: List of frame IDs.
+        frame_ids: List of MS1 frame IDs.
         precursor_every: Number of frames between precursor acquisitions.
         exclusion_width: Number of frames for dynamic exclusion.
-        excluded_precursors_df: DataFrame of precursors to exclude.
+        excluded_precursors_df: DataFrame with precursors to exclude.
         max_precursors: Maximum number of precursors to select per frame.
         intensity_threshold: Minimum intensity for a precursor.
         num_threads: Number of threads to use (-1 uses all cores).
-        batch_size: Batch size for parallel processing.
+        batch_size: Batch size for processing frames.
+        max_frame: Overall maximum frame ID available.
 
     Returns:
         DataFrame with selected precursors from all provided frames.
@@ -304,7 +296,6 @@ def select_precursors_from_frames(
     for batch in tqdm(frame_batches, total=len(frame_batches), desc="Selecting Precursors", ncols=80):
         precursor_frames = precursor_frame_builder.build_precursor_frames_annotated(batch, num_threads=num_threads)
         batch_selected = pd.DataFrame()
-
         for frame in precursor_frames:
             Logger.debug("Selecting precursors for frame %d", frame.frame_id)
             excluded_precursors_df = excluded_precursors_df.loc[
@@ -318,6 +309,7 @@ def select_precursors_from_frames(
                 excluded_precursors=excluded_precursors_df,
                 max_precursors=max_precursors,
                 intensity_threshold=intensity_threshold,
+                max_frame=max_frame  # pass the max_frame
             )
             batch_selected = pd.concat([batch_selected, selected], ignore_index=True)
         all_selected.append(batch_selected)
@@ -333,10 +325,7 @@ def transform_selected_precursor_to_pasefmeta(
     the selections across fragment frames.
 
     For each group of selected precursors (grouped by the original precursor frame),
-    this function reassigns the "Frame" key to one of the fragment frames. Specifically,
-    if precursors_every is N, then the fragment frames available are:
-        precursor_frame + 1, precursor_frame + 2, ..., precursor_frame + (N - 1)
-    and the selected ions are assigned in a round-robin fashion over these frames.
+    this function reassigns the "Frame" key to one of the fragment frames in a round-robin manner.
 
     Args:
         selected_precursors: DataFrame with selected precursors.
@@ -346,25 +335,19 @@ def transform_selected_precursor_to_pasefmeta(
     Returns:
         DataFrame with PASEF meta information, keyed by fragment frame IDs.
     """
-    # Create ion id: id = 10 * peptide_id + charge_state
     selected_precursors["Precursor"] = selected_precursors["peptide_id"] * 10 + selected_precursors["charge_state"]
 
     def assign_fragment_frame(group: pd.DataFrame) -> pd.DataFrame:
         group = group.copy()
         num_fragment_frames = precursors_every - 1
-        # If no fragment frames are available, leave the Frame unchanged.
         if num_fragment_frames <= 0:
             return group
-        # Sort for reproducibility and assign offsets in a round-robin fashion.
         group = group.sort_index()
         offsets = np.arange(len(group)) % num_fragment_frames
-        # Reassign the Frame: the first fragment frame is precursor_frame + 1
         group["Frame"] = group["Frame"].iloc[0] + 1 + offsets
         return group
 
-    # Group by the original precursor frame and reassign frame IDs
     distributed = selected_precursors.groupby("Frame", group_keys=False).apply(assign_fragment_frame)
-
     pasef_meta = distributed[
         [
             "Frame",
@@ -376,6 +359,5 @@ def transform_selected_precursor_to_pasefmeta(
             "Precursor",
         ]
     ]
-    # Remove duplicates, if any
     pasef_meta = pasef_meta.drop_duplicates(subset=["Frame", "ScanNumBegin", "ScanNumEnd"])
     return pasef_meta
