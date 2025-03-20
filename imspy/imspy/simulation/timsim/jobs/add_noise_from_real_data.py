@@ -35,7 +35,7 @@ def add_real_data_noise_to_frames(
 
     # DDA noise not yet implemented
     if acquisition_mode == 'DDA':
-        print("Warning: DDA noise not yet implemented, no noise will be added added.")
+        # print("Warning: DDA noise not yet implemented, no noise will be added added.")
         for frame in frames:
             r_list.append(frame)
 
