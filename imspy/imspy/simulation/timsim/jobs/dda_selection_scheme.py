@@ -76,12 +76,16 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
     """
     # Aggregate required stats in one step to minimize groupby operations
     agg_funcs = {
+        "peptide_id": "first",
         "mz": ["min", "max"],
         "intensity": ["sum", "idxmax"],
     }
-
-    grouped = frame.groupby(["peptide_id", "charge_state"]).agg(agg_funcs)
+    ms1_frame["ion_id"] = (
+        ms1_frame["peptide_id"] * 10 + ms1_frame["charge_state"]
+    )  # TODO: remove this line once the ion_id is available
+    grouped = ms1_frame.groupby(["ion_id"]).agg(agg_funcs)
     grouped.columns = [
+        "peptide_id",
         "mz_min",
         "mz_max",
         "intensity",
@@ -280,7 +284,7 @@ def transform_selected_precursor_to_pasefmeta(selected_precursors):
     Returns:
         DataFrame: DataFrame with PASEF meta information
     """
-    selected_precursors["Precursor"] = selected_precursors["peptide_id"]
+    selected_precursors["Precursor"] = selected_precursors["ion_id"]
     pasef_meta = selected_precursors[
         [
             "Frame",
