@@ -1,49 +1,52 @@
 import os
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Any, Optional, List
 import logging
-from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
 from imspy.simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
 
 Logger = logging.getLogger(__name__)
 
-pasef_meta_columns_mapping = {
-    'frame': 'Frame',
-    'scan_start': 'ScanNumBegin',
-    'scan_end': 'ScanNumEnd',
-    'isolation_mz': 'IsolationMz',
-    'isolation_width': 'IsolationWidth',
-    'collision_energy': 'CollisionEnergy',
-    'precursor': 'Precursor',
+# Mapping of column names for PASEF meta data
+PASEF_META_COLUMNS_MAPPING = {
+    "frame": "Frame",
+    "scan_start": "ScanNumBegin",
+    "scan_end": "ScanNumEnd",
+    "isolation_mz": "IsolationMz",
+    "isolation_width": "IsolationWidth",
+    "collision_energy": "CollisionEnergy",
+    "precursor": "Precursor",
 }
 
-precursor_mapping = {
-    'id': 'Id',
-    'largest_peak_mz': 'LargestPeakMz',
-    'average_mz': 'AverageMz',
-    'monoisotopic_mz': 'MonoisotopicMz',
-    'charge': 'Charge',
-    'scan_number': 'ScanNumber',
-    'intensity': 'Intensity',
-    'parent': 'Parent',
+# Mapping of precursor column names
+PRECURSOR_MAPPING = {
+    "id": "Id",
+    "largest_peak_mz": "LargestPeakMz",
+    "average_mz": "AverageMz",
+    "monoisotopic_mz": "MonoisotopicMz",
+    "charge": "Charge",
+    "scan_number": "ScanNumber",
+    "intensity": "Intensity",
+    "parent": "Parent",
 }
 
 
 def simulate_dda_pasef_selection_scheme(
     acquisition_builder: TimsTofAcquisitionBuilder,
     verbose: bool,
-    precursors_every,
-    batch_size,
-    intensity_threshold,
-    max_precursors,
-    **kwargs,
+    precursors_every: int,
+    batch_size: int,
+    intensity_threshold: float,
+    max_precursors: int,
+    **kwargs: Any,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Simulate DDA selection scheme.
+    """
+    Simulate DDA selection scheme.
 
     Args:
         acquisition_builder: Acquisition builder object.
@@ -55,34 +58,35 @@ def simulate_dda_pasef_selection_scheme(
         **kwargs: Additional keyword arguments for the selection scheme.
 
     Returns:
-        Tuple of two pandas DataFrames, one holding the DDA PASEF selection scheme and one holding selected precursor information.
+        Tuple of two pandas DataFrames:
+            - PASEF meta information.
+            - Selected precursor information.
     """
+    # Retrieve frame IDs and initialize frame types (default to dda-fragmentation: 8)
+    frame_ids = acquisition_builder.frame_table.frame_id.values
+    frame_types = np.full(len(frame_ids), 8, dtype=int)
 
+    # Mark every `precursors_every` frame as dda-precursor (0)
+    for idx, _ in enumerate(frame_ids):
+        if idx % precursors_every == 0:
+            frame_types[idx] = 0
 
-    frames = acquisition_builder.frame_table.frame_id.values
-
-    # set all frames types to dda-fragmentation by default (8)
-    frame_types = np.repeat(8, len(frames))
-
-    # go over all frames and set every precursors_every frame to dda-precursor
-    for i, frame_id in enumerate(frames):
-        if i % precursors_every == 0:
-            frame_types[i] = 0
-
-    # sets the frame types and saves the updated frame table to the blueprint
+    # Update the acquisition builder with the new frame types
     acquisition_builder.calculate_frame_types(frame_types=frame_types)
 
-    precursor_frame_builder = TimsTofSyntheticPrecursorFrameBuilder(
-        str(Path(acquisition_builder.path) / "synthetic_data.db")
-    )
+    # Build precursor frame builder with the synthetic database path
+    synthetic_db_path = str(Path(acquisition_builder.path) / "synthetic_data.db")
+    precursor_frame_builder = TimsTofSyntheticPrecursorFrameBuilder(synthetic_db_path)
 
-    precursor_ids = acquisition_builder.frame_table[
+    # Extract frame IDs for MS1 frames (ms_type == 0)
+    ms1_frame_ids = acquisition_builder.frame_table[
         acquisition_builder.frame_table.ms_type == 0
     ].frame_id.values
 
-    selected_p = select_precursors_from_frames(
+    # Select precursors from frames
+    selected_precursors = select_precursors_from_frames(
         precursor_frame_builder=precursor_frame_builder,
-        frame_ids=precursor_ids,  # TODO: placeholder, need to get the frame IDs of the MS1 frames
+        frame_ids=ms1_frame_ids,  # TODO: placeholder; refine frame ID selection if needed.
         excluded_precursors_df=None,
         max_precursors=max_precursors,
         intensity_threshold=intensity_threshold,
@@ -90,88 +94,81 @@ def simulate_dda_pasef_selection_scheme(
         batch_size=batch_size,
         **kwargs,
     )
-    pasef_meta = transform_selected_precursor_to_pasefmeta(selected_p)
-    r_copy = pasef_meta.copy()
 
-    # TODO: After the precursor table and pasef_meta table are created, the frame_types need to be set to 0 for MS1 frames and 8 for MS2 frames
+    # Transform selected precursor data into PASEF meta data format
+    pasef_meta_df = transform_selected_precursor_to_pasefmeta(selected_precursors)
 
-    # select columns from pasef meta keys
-    pasef_meta_names = pasef_meta_columns_mapping.values()
-    pasef_meta = pasef_meta[list(pasef_meta_names)]
-    # set to the inverse of the columns mapping
-    pasef_meta = pasef_meta.rename(columns={v: k for k, v in pasef_meta_columns_mapping.items()})
+    # Rearrange and reformat PASEF meta columns
+    pasef_meta_df = pasef_meta_df[list(PASEF_META_COLUMNS_MAPPING.values())]
+    # Rename columns to use the inverse mapping
+    inverse_mapping = {v: k for k, v in PASEF_META_COLUMNS_MAPPING.items()}
+    pasef_meta_df = pasef_meta_df.rename(columns=inverse_mapping)
 
-    pasef_meta = pasef_meta.assign(
+    pasef_meta_df = pasef_meta_df.assign(
         scan_start=lambda df: df["scan_start"].astype(np.int32),
         scan_end=lambda df: df["scan_end"].astype(np.int32),
-        precursor=lambda df: df["precursor"].astype(np.int32)
+        precursor=lambda df: df["precursor"].astype(np.int32),
     )
 
-    # TODO: maybe return ion id instead of peptide id in the annotated frame?
-    selected_p["peptide_id"] = selected_p["peptide_id"] * 10 + selected_p["charge_state"]
+    # TODO: Consider returning ion id instead of peptide id in the annotated frame.
+    # Update peptide_id to encode ion information.
+    selected_precursors["peptide_id"] = selected_precursors["peptide_id"] * 10 + selected_precursors["charge_state"]
 
-    selected_p_return = (
-        selected_p[["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Frame"]]
+    # Create a refined DataFrame for selected precursors
+    selected_precursors_df = (
+        selected_precursors[
+            ["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Frame"]
+        ]
         .assign(
-            # compute the average m/z without applying row-wise lambda
             average_mz=lambda df: (df["mz_min"] + df["mz_max"]) / 2,
-            # copy mz_min to new columns
             largest_peak_mz=lambda df: df["mz_min"],
             monoisotopic_mz=lambda df: df["mz_min"],
-            # convert peptide_id to int32
             peptide_id=lambda df: df["peptide_id"].astype(np.int32),
-            # round the intensity values
-            intensity=lambda df: df["intensity"].round()
+            intensity=lambda df: df["intensity"].round(),
         )
         .rename(columns={
             "peptide_id": "id",
             "Frame": "parent",
             "ScanNumApex": "scan_number",
-            "charge_state": "charge"
+            "charge_state": "charge",
         })
-            # order
-        [['id', 'largest_peak_mz', 'average_mz', 'monoisotopic_mz',
-          'charge', 'scan_number', 'intensity', 'parent']]
+        [["id", "largest_peak_mz", "average_mz", "monoisotopic_mz",
+          "charge", "scan_number", "intensity", "parent"]]
     )
 
-    return pasef_meta, selected_p_return
+    return pasef_meta_df, selected_precursors_df
 
-def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-0.0345):
-    """Get precursor isolation window from a frame
+
+def get_precursor_isolation_window_from_frame(
+    frame: pd.DataFrame,
+    ce_bias: float = 54.1984,
+    ce_slope: float = -0.0345,
+) -> pd.DataFrame:
+    """
+    Get precursor isolation window from a frame.
 
     Args:
-        frame: pd.DataFrame
-        ce_bias: float, the bias of the linear regression fit for CE = slope * ScanNumApex + bias
-        ce_slope: float, the slope of the linear regression fit for CE = slope * ScanNumApex + bias
+        frame: DataFrame containing frame data.
+        ce_bias: Bias for collision energy calculation.
+        ce_slope: Slope for collision energy calculation.
 
     Returns:
-        pd.DataFrame of precursor isolation windows for all available precursors
+        DataFrame with computed precursor isolation windows.
     """
-    # Aggregate required stats in one step to minimize groupby operations
-    agg_funcs = {
-        "mz": ["min", "max"],
-        "intensity": ["sum", "idxmax"],
-    }
-
+    # Aggregate required statistics to minimize groupby operations
+    agg_funcs = {"mz": ["min", "max"], "intensity": ["sum", "idxmax"]}
     grouped = frame.groupby(["peptide_id", "charge_state"]).agg(agg_funcs)
-    grouped.columns = [
-        "mz_min",
-        "mz_max",
-        "intensity",
-        "idxmax",
-    ]
+
+    # Flatten the multi-index columns
+    grouped.columns = ["mz_min", "mz_max", "intensity", "idxmax"]
     grouped.reset_index(inplace=True)
 
-    # Extract ScanNumApex using the stored index
+    # Retrieve the apex scan number using the stored index
     grouped["ScanNumApex"] = frame.loc[grouped["idxmax"], "scan"].values
-
-    # Drop unnecessary column
     grouped.drop(columns=["idxmax"], inplace=True)
 
-    # Compute derived values in a vectorized way
-    grouped["IsolationWidth"] = np.where(
-        (grouped["mz_max"] - grouped["mz_min"]) < 2, 2, 3
-    )
+    # Compute additional derived columns in a vectorized way
+    grouped["IsolationWidth"] = np.where((grouped["mz_max"] - grouped["mz_min"]) < 2, 2, 3)
     grouped["IsolationMz"] = (grouped["mz_min"] + grouped["mz_max"]) / 2
     grouped["ScanNumBegin"] = grouped["ScanNumApex"] - 9
     grouped["ScanNumEnd"] = grouped["ScanNumApex"] + 9
@@ -183,176 +180,160 @@ def get_precursor_isolation_window_from_frame(frame, ce_bias=54.1984, ce_slope=-
 def select_precursors_pasef(
     precursors: pd.DataFrame,
     frame_id: int,
-    excluded_precursors: pd.DataFrame = None,
+    excluded_precursors: Optional[pd.DataFrame] = None,
     max_precursors: int = 25,
     intensity_threshold: float = 1200,
-):
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Select precursors for a PASEF frame
-    It selects the top `max_precursors` precursors based on intensity, excluding precursors
-    below `intensity_threshold` and precursors that are within the same scan window as the
-    selected precursor.
+    Select precursors for a PASEF frame.
+
+    This function selects the top `max_precursors` precursors based on intensity,
+    while excluding precursors below the given intensity threshold and those that fall
+    within the same scan window as a previously selected precursor.
 
     Parameters
     ----------
     precursors : pd.DataFrame
-        DataFrame with precursor information
+        DataFrame with precursor information.
     frame_id : int
-        Frame ID
+        Frame ID.
     excluded_precursors : pd.DataFrame, optional
-        DataFrame with precursors to exclude, by default None
+        DataFrame with precursors to exclude, by default None.
     max_precursors : int, optional
-        Maximum number of precursors to select, it should be a function of tims ramp time,
-        by default 25 (set empirically based on the real data)
+        Maximum number of precursors to select, by default 25.
     intensity_threshold : float, optional
-        Intensity threshold to exclude precursors, by default 1200
+        Intensity threshold to filter out precursors, by default 1200.
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame with selected precursors
-    pd.DataFrame
-        DataFrame with excluded precursors
+    Tuple[pd.DataFrame, pd.DataFrame]
+        - DataFrame with selected precursors.
+        - Updated DataFrame with excluded precursors.
     """
     if excluded_precursors is None:
         excluded_precursors = pd.DataFrame(columns=["peptide_id", "Frame"])
 
-    # Exclude precursors below intensity threshold
-    n_before_int_thres = precursors.shape[0]
+    # Filter out low-intensity precursors
+    initial_count = precursors.shape[0]
     precursors = precursors[precursors["intensity"] > intensity_threshold]
-    Logger.debug(
-        "Removed %d precursors below intensity threshold",
-        n_before_int_thres - precursors.shape[0],
-    )
+    Logger.debug("Removed %d precursors below intensity threshold",
+                 initial_count - precursors.shape[0])
 
-    # Exclude already excluded precursors
-    n_before = precursors.shape[0]
-    precursors = precursors[
-        ~precursors["peptide_id"].isin(excluded_precursors["peptide_id"])
-    ]
-    Logger.debug(
-        "Removed %d precursors due to exclusion", n_before - precursors.shape[0]
-    )
+    # Exclude precursors that are already marked for exclusion
+    count_before = precursors.shape[0]
+    precursors = precursors[~precursors["peptide_id"].isin(excluded_precursors["peptide_id"])]
+    Logger.debug("Removed %d precursors due to exclusion", count_before - precursors.shape[0])
 
-    # Sort by intensity (descending)
+    # Sort precursors in descending order by intensity
     precursors = precursors.sort_values("intensity", ascending=False)
-    new_exclusion = []
-    selected_precursors = []
-    while len(selected_precursors) < max_precursors and not precursors.empty:
-        Logger.debug("Selecting precursor %d", len(selected_precursors) + 1)
 
-        selected_precursor = precursors.iloc[0]  # Pick the highest-intensity precursor
-        selected_precursors.append(selected_precursor.to_dict())  # Store as dict
+    selected: List[dict] = []
+    new_exclusions: List[dict] = []
 
-        # Add to exclusion list
-        new_exclusion.append(
-            {"peptide_id": selected_precursor["peptide_id"], "Frame": frame_id}
-        )
+    # Iteratively select the highest-intensity precursor and update exclusions
+    while len(selected) < max_precursors and not precursors.empty:
+        Logger.debug("Selecting precursor %d", len(selected) + 1)
+        current = precursors.iloc[0]
+        selected.append(current.to_dict())
+        new_exclusions.append({"peptide_id": current["peptide_id"], "Frame": frame_id})
 
-        # Remove precursors within the same scan window
+        # Remove precursors that fall within the scan window of the selected precursor
         precursors = precursors[
-            ~(
-                (precursors["ScanNumApex"] <= selected_precursor["ScanNumEnd"])
-                & (precursors["ScanNumApex"] >= selected_precursor["ScanNumBegin"])
-            )
+            ~((precursors["ScanNumApex"] <= current["ScanNumEnd"]) &
+              (precursors["ScanNumApex"] >= current["ScanNumBegin"]))
         ]
 
-    # Convert selected precursors to a DataFrame
-    selected_precursors = pd.DataFrame(selected_precursors)
+    selected_df = pd.DataFrame(selected)
+    if not selected_df.empty:
+        selected_df["Frame"] = frame_id
 
-    if not selected_precursors.empty:
-        selected_precursors["Frame"] = frame_id
-    new_exclusion = pd.DataFrame(new_exclusion)
-    excluded_precursors = pd.concat([excluded_precursors, new_exclusion])
-    return selected_precursors, excluded_precursors
+    exclusions_df = pd.DataFrame(new_exclusions)
+    excluded_precursors = pd.concat([excluded_precursors, exclusions_df])
+    return selected_df, excluded_precursors
 
 
 def select_precursors_from_frames(
-    precursor_frame_builder,
-    frame_ids,
+    precursor_frame_builder: Any,
+    frame_ids: List[int],
     exclusion_width: int = 25,
-    excluded_precursors_df: pd.DataFrame = None,
-    max_precursors=25,
-    intensity_threshold=1200,
-    num_threads=-1,
+    excluded_precursors_df: Optional[pd.DataFrame] = None,
+    max_precursors: int = 25,
+    intensity_threshold: float = 1200,
+    num_threads: int = -1,
     batch_size: int = 256,
 ) -> pd.DataFrame:
-    """Select precursors for a list of frames
+    """
+    Select precursors for a list of frames.
 
     Args:
-        precursor_builder: Precursor builder object
-        frame_ids: List of frame IDs
-        exclusion_width: Width, i.e. number of frames, for dynamic exclusion of precursors
-        excluded_precursors_df: DataFrame with excluded precursors because of dynamic exclusion
-        max_precursors: Maximum number of precursors to select
-        intensity_threshold: Intensity threshold for precursors
-        num_threads: Number of threads to use
-        batch_size: Batch size for parallel processing
+        precursor_frame_builder: Precursor builder object.
+        frame_ids: List of frame IDs.
+        exclusion_width: Number of frames to consider for dynamic exclusion.
+        excluded_precursors_df: DataFrame of precursors to exclude.
+        max_precursors: Maximum number of precursors to select per frame.
+        intensity_threshold: Minimum intensity required for a precursor.
+        num_threads: Number of threads to use (-1 uses all available cores).
+        batch_size: Batch size for parallel processing.
 
     Returns:
-        pd.DataFrame: DataFrame with selected precursors from all frame_ids given
+        DataFrame with selected precursors from all provided frames.
     """
-
     if num_threads == -1:
         num_threads = os.cpu_count()
 
-    select_precursors_all_frames = pd.DataFrame()
     if excluded_precursors_df is None:
         excluded_precursors_df = pd.DataFrame(columns=["peptide_id", "Frame"])
 
-        # create batched frame_ids
-        num_splits = len(frame_ids) // batch_size
-        frame_ids = np.array_split(frame_ids, num_splits)
+    # Split frame IDs into batches
+    num_batches = max(1, len(frame_ids) // batch_size)
+    frame_batches = np.array_split(frame_ids, num_batches)
 
-        select_precursors_all_frames_list = []
+    all_selected_precursors: List[pd.DataFrame] = []
 
-        # parallel processing
-        for i, batch in tqdm(enumerate(frame_ids), total=len(frame_ids), desc="Selecting Precursors", ncols=80):
+    for batch in tqdm(frame_batches, total=len(frame_batches), desc="Selecting Precursors", ncols=80):
+        # Build precursor frames for the current batch
+        precursor_frames = precursor_frame_builder.build_precursor_frames_annotated(batch, num_threads=num_threads)
+        batch_selected = pd.DataFrame()
 
-            # build precursor frames for the batch
-            build_batch = precursor_frame_builder.build_precursor_frames_annotated(batch, num_threads=num_threads)
+        for frame in precursor_frames:
+            Logger.debug("Selecting precursors for frame %d", frame.frame_id)
 
-            # go over all frames in the batch
-            for frame in build_batch:
+            # Update exclusion: keep only those within the specified exclusion width
+            excluded_precursors_df = excluded_precursors_df.loc[
+                (excluded_precursors_df["Frame"] - frame.frame_id) <= exclusion_width
+            ]
 
-                Logger.debug("Selecting precursors for frame %d", frame.frame_id)
+            # Compute precursor isolation window for the current frame
+            precursors = get_precursor_isolation_window_from_frame(frame.df)
 
-                # exclude precursors based on the exclusion width
-                excluded_precursors_df = excluded_precursors_df.loc[
-                    (excluded_precursors_df["Frame"] - frame.frame_id) <= exclusion_width
-                    ]
+            # Select precursors for the current frame
+            selected, excluded_precursors_df = select_precursors_pasef(
+                precursors,
+                frame.frame_id,
+                excluded_precursors=excluded_precursors_df,
+                max_precursors=max_precursors,
+                intensity_threshold=intensity_threshold,
+            )
+            batch_selected = pd.concat([batch_selected, selected])
 
-                precursors = get_precursor_isolation_window_from_frame(frame.df)
+        all_selected_precursors.append(batch_selected)
 
-                selected_precursors, excluded_precursors_df = select_precursors_pasef(
-                    precursors,
-                    frame.frame_id,
-                    excluded_precursors=excluded_precursors_df,
-                    max_precursors=max_precursors,
-                    intensity_threshold=intensity_threshold,
-                )  # TODO: can support other selection methods here
-
-                select_precursors_all_frames = pd.concat(
-                    [select_precursors_all_frames, selected_precursors]
-                )
-
-            select_precursors_all_frames_list.append(select_precursors_all_frames)
-
-        return pd.concat(select_precursors_all_frames_list)
+    return pd.concat(all_selected_precursors)
 
 
-def transform_selected_precursor_to_pasefmeta(selected_precursors):
-    """Transform selected precursor DataFrame to PASEF meta DataFrame
+def transform_selected_precursor_to_pasefmeta(selected_precursors: pd.DataFrame) -> pd.DataFrame:
+    """
+    Transform selected precursor DataFrame to PASEF meta DataFrame.
 
     Args:
-        selected_precursors: DataFrame with selected precursors
+        selected_precursors: DataFrame with selected precursors.
 
     Returns:
-        DataFrame: DataFrame with PASEF meta information
+        DataFrame with PASEF meta information.
     """
-    # TODO: maybe make this a little bit more robust...
-    # need to create ion id like id = 10 * peptide_id + charge_state
+    # Create ion id: id = 10 * peptide_id + charge_state
     selected_precursors["Precursor"] = selected_precursors["peptide_id"] * 10 + selected_precursors["charge_state"]
+
     pasef_meta = selected_precursors[
         [
             "Frame",
@@ -364,7 +345,6 @@ def transform_selected_precursor_to_pasefmeta(selected_precursors):
             "Precursor",
         ]
     ]
-
-    # TODO: find why there are duplicates
+    # Remove duplicate entries if any exist
     pasef_meta = pasef_meta.drop_duplicates(subset=["Frame", "ScanNumBegin", "ScanNumEnd"])
     return pasef_meta
