@@ -206,7 +206,7 @@ class TDFWriter:
             'intensity': 'Intensity',
             'parent': 'Parent',
         })
-        self._create_table(self.conn, out, "Precursor")
+        self._create_table(self.conn, out, "Precursors")
 
     def write_pasef_meta_table(self, pasef_meta_table: pd.DataFrame) -> None:
         out = pasef_meta_table.rename(columns={
@@ -218,7 +218,7 @@ class TDFWriter:
             'collision_energy': 'CollisionEnergy',
             'precursor': 'Precursor',
         })
-        self._create_table(self.conn, out, "PasefMeta")
+        self._create_table(self.conn, out, "PasefFrameMsMsInfo")
 
     def write_dia_ms_ms_windows(self, dia_ms_ms_windows: pd.DataFrame) -> None:
         out = dia_ms_ms_windows.rename(columns={

@@ -10,7 +10,6 @@ from tabulate import tabulate
 
 # imspy imports
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
-from imspy.simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
 from imspy.simulation.timsim.jobs.simulate_ion_mobilities_and_variance import simulate_ion_mobilities_and_variance
 from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
 from imspy.simulation.timsim.jobs.simulate_phosphorylation import simulate_phosphorylation
@@ -664,6 +663,11 @@ def main():
         pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
             acquisition_builder=acquisition_builder,
             verbose=not args.silent_mode,
+            precursors_every=11,
+            batch_size=args.batch_size,
+            intensity_threshold=500.0,
+            max_precursors=25,
+            exclusion_width=25,
         )
         acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
         acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
@@ -677,6 +681,7 @@ def main():
         verbose=not args.silent_mode,
         num_threads=args.num_threads,
         down_sample_factor=args.down_sample_factor,
+        dda=args.acquisition_type == 'DDA',
     )
 
     # JOB 10: Assemble frames
