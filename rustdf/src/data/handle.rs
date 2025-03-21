@@ -311,9 +311,18 @@ impl TimsData for TimsLazyLoder {
         let num_peaks = self.raw_data_layout.frame_meta_data[frame_index].num_peaks;
 
         if num_peaks == 0 {
+
+            let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+            let ms_type = match ms_type_raw {
+                0 => MsType::Precursor,
+                8 => MsType::FragmentDda,
+                9 => MsType::FragmentDia,
+                _ => MsType::Unknown,
+            };
+
             return TimsFrame {
                 frame_id: frame_id as i32,
-                ms_type: MsType::Unknown,
+                ms_type,
                 scan: Vec::new(),
                 tof: Vec::new(),
                 ims_frame: ImsFrame {
