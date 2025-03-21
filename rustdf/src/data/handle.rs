@@ -313,6 +313,7 @@ impl TimsData for TimsLazyLoder {
         if num_peaks == 0 {
 
             let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+
             let ms_type = match ms_type_raw {
                 0 => MsType::Precursor,
                 8 => MsType::FragmentDda,
