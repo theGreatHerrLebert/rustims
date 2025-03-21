@@ -245,6 +245,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Enable phospho-enriched dataset generation (default: False)")
     parser.set_defaults(phospho_mode=False)
 
+    # DDA selection arguments
+    parser.add_argument("--precursors_every", type=int, help="Number of precursors to select every cycle (default: 10)")
+    parser.add_argument("--precursor_intensity_threshold", type=float, help="Intensity threshold for precursor selection (default: 500)")
+    parser.add_argument("max_precursors", type=int, help="Maximum number of precursors to select per cycle (default: 25)")
+    parser.add_argument("exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
+
     return parser
 
 
@@ -309,6 +315,10 @@ def get_default_settings() -> dict:
         'phospho_mode': False,
         'max_charge': 4,
         'binomial_charge_model': False,
+        'precursors_every': 10,
+        'precursor_intensity_threshold': 500,
+        'max_precursors': 25,
+        'exclusion_width': 25,
     }
 
 
@@ -663,11 +673,11 @@ def main():
         pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
             acquisition_builder=acquisition_builder,
             verbose=not args.silent_mode,
-            precursors_every=11,
+            precursors_every=args.precursors_every,
             batch_size=args.batch_size,
-            intensity_threshold=500.0,
-            max_precursors=25,
-            exclusion_width=25,
+            intensity_threshold=args.precursor_intensity_threshold,
+            max_precursors=args.max_precursors,
+            exclusion_width=args.exclusion_width,
         )
         acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
         acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
