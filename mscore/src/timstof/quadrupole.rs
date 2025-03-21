@@ -532,7 +532,7 @@ impl TimsTransmissionDDA {
 impl IonTransmission for TimsTransmissionDDA {
     fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64> {
 
-        // get all selections for a frame, if frame is not in the PASEF metadata, it is a precursor frame and all ions are transmitted
+        // get all selections for a frame, if frame is not in the PASEF metadata, no ions are transmitted
         let meta = self.pasef_meta.get(&frame_id);
 
         match meta {
@@ -552,8 +552,8 @@ impl IonTransmission for TimsTransmissionDDA {
                 }
                 transmission
             },
-            // if frame is not in the metadata, all ions are transmitted (precursor frame)
-            None => vec![1.0; mz.len()],
+            // if frame is not in the metadata, no ions are transmitted
+            None => vec![0.0; mz.len()],
         }
     }
 }
