@@ -98,6 +98,10 @@ def simulate_dda_pasef_selection_scheme(
         acquisition_builder.frame_table.ms_type == 0
     ].frame_id.values
 
+    # skip the last precursor frame to avoid index out-of-bounds errors ? What is the reason for this?
+    if ms1_frame_ids.size > 1:
+        ms1_frame_ids = ms1_frame_ids[:-1]
+
     # create precursor table
     selected_p = select_precursors_from_frames(
         precursor_frame_builder=precursor_frame_builder,
