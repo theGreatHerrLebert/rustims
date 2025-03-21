@@ -377,5 +377,5 @@ def transform_selected_precursor_to_pasefmeta(
     ]
     pasef_meta = pasef_meta.drop_duplicates(subset=["fragment_frame", "ScanNumBegin", "ScanNumEnd"])
     # Rename for consistency if needed
-    pasef_meta = pasef_meta.rename(columns={"fragment_frame": "frame_id"})
+    pasef_meta = pasef_meta.rename(columns={"fragment_frame": "Frame"})
     return pasef_meta
