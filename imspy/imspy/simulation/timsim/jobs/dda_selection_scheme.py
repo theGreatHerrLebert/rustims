@@ -144,12 +144,11 @@ def simulate_dda_pasef_selection_scheme(
         )
         .rename(columns={
             "peptide_id": "id",
-            "Parent": "parent",
+            "Parent": "parent",  # now correctly uses the original precursor frame
             "ScanNumApex": "scan_number",
             "charge_state": "charge",
         })
-        [['id', 'largest_peak_mz', 'average_mz', 'monoisotopic_mz',
-          'charge', 'scan_number', 'intensity', 'parent']]
+        [['id', 'largest_peak_mz', 'average_mz', 'monoisotopic_mz', 'charge', 'scan_number', 'intensity', 'parent']]
     )
 
     return pasef_meta, selected_p_return
@@ -338,46 +337,45 @@ def select_precursors_from_frames(
 
 
 def transform_selected_precursor_to_pasefmeta(
-    selected_precursors: pd.DataFrame, precursors_every: int
+        selected_precursors: pd.DataFrame, precursors_every: int
 ) -> pd.DataFrame:
     """
     Transform selected precursor DataFrame to PASEF meta DataFrame and distribute
-    the selections across fragment frames.
-
-    For each group of selected precursors (grouped by the original precursor frame),
-    this function reassigns the "Frame" key to one of the fragment frames in a round-robin manner.
-
-    Args:
-        selected_precursors: DataFrame with selected precursors.
-        precursors_every: Number of frames between precursor acquisitions.
-                         (The fragment frames available will be precursors_every - 1.)
-
-    Returns:
-        DataFrame with PASEF meta information, keyed by fragment frame IDs.
+    the selections across fragment frames, while preserving the original precursor (MS1) frame.
     """
+    # Calculate a unique precursor identifier
     selected_precursors["Precursor"] = selected_precursors["peptide_id"] * 10 + selected_precursors["charge_state"]
 
+    # Instead of overwriting the 'Frame' column, we create a new column for the fragment frame.
     def assign_fragment_frame(group: pd.DataFrame) -> pd.DataFrame:
         group = group.copy()
         num_fragment_frames = precursors_every - 1
         if num_fragment_frames <= 0:
+            # No fragment frames to assign, so return as is.
             return group
         group = group.sort_index()
         offsets = np.arange(len(group)) % num_fragment_frames
-        group["Frame"] = group["Frame"].iloc[0] + 1 + offsets
+        # Create a new column 'fragment_frame' for the new frame id for fragmentation.
+        group["fragment_frame"] = group["Frame"].iloc[0] + 1 + offsets
         return group
 
-    distributed = selected_precursors.groupby("Frame", group_keys=False).apply(assign_fragment_frame)
+    # IMPORTANT: Group by the original precursor frame ('Parent') rather than 'Frame'
+    distributed = selected_precursors.groupby("Parent", group_keys=False).apply(assign_fragment_frame)
+
+    # Build PASEF meta data using the new 'fragment_frame' for the fragmentation frame, and keep the original 'Parent'
     pasef_meta = distributed[
         [
-            "Frame",
+            "fragment_frame",
             "ScanNumBegin",
             "ScanNumEnd",
             "IsolationMz",
             "IsolationWidth",
             "CollisionEnergy",
             "Precursor",
+            "Parent"  # preserved original precursor frame
         ]
     ]
-    pasef_meta = pasef_meta.drop_duplicates(subset=["Frame", "ScanNumBegin", "ScanNumEnd"])
+    pasef_meta = pasef_meta.drop_duplicates(subset=["fragment_frame", "ScanNumBegin", "ScanNumEnd"])
+    # Rename for consistency if needed
+    pasef_meta = pasef_meta.rename(columns={"fragment_frame": "frame_id"})
     return pasef_meta
