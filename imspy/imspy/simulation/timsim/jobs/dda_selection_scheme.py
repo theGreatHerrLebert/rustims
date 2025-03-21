@@ -67,6 +67,14 @@ def simulate_dda_pasef_selection_scheme(
           - PASEF meta information with updated fragment frame keys.
           - Annotated precursor selection table.
     """
+
+    if verbose:
+        print("Simulating dda-PASEF selection scheme...")
+        print(f"precursors_every: {precursors_every}...")
+        print(f"intensity_threshold: {intensity_threshold}...")
+        print(f"max_precursors: {max_precursors}...")
+        print(f"exclusion_width: {exclusion_width}...")
+
     # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
     frames = acquisition_builder.frame_table.frame_id.values
     frame_types = np.full(len(frames), 8, dtype=int)
