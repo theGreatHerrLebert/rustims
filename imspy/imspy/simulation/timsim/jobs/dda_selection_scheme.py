@@ -79,6 +79,7 @@ def simulate_dda_pasef_selection_scheme(
     frames = acquisition_builder.frame_table.frame_id.values
     frame_types = np.full(len(frames), 8, dtype=int)
 
+    # set frame types for precursor frames (default: 0) to every precursors_every-th frame
     for idx in range(len(frames)):
         if idx % precursors_every == 0:
             frame_types[idx] = 0
@@ -92,7 +93,7 @@ def simulate_dda_pasef_selection_scheme(
     synthetic_db_path = str(Path(acquisition_builder.path) / "synthetic_data.db")
     precursor_frame_builder = TimsTofSyntheticPrecursorFrameBuilder(synthetic_db_path)
 
-    # etract MS1 frame IDs (precursor frames)
+    # extract MS1 frame IDs (precursor frames)
     ms1_frame_ids = acquisition_builder.frame_table[
         acquisition_builder.frame_table.ms_type == 0
     ].frame_id.values
@@ -130,6 +131,7 @@ def simulate_dda_pasef_selection_scheme(
     selected_p["peptide_id"] = selected_p["peptide_id"] * 10 + selected_p["charge_state"]
     selected_p_return = (
         selected_p[["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Frame"]]
+        # TODO: make it more robust, e.g. by extracting information from the isotopic envelope of the precursor
         .assign(
             average_mz=lambda df: (df["mz_min"] + df["mz_max"]) / 2,
             largest_peak_mz=lambda df: df["mz_min"],

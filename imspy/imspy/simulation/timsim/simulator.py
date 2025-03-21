@@ -248,8 +248,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # DDA selection arguments
     parser.add_argument("--precursors_every", type=int, help="Number of precursors to select every cycle (default: 10)")
     parser.add_argument("--precursor_intensity_threshold", type=float, help="Intensity threshold for precursor selection (default: 500)")
-    parser.add_argument("max_precursors", type=int, help="Maximum number of precursors to select per cycle (default: 25)")
-    parser.add_argument("exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
+    parser.add_argument("--max_precursors", type=int, help="Maximum number of precursors to select per cycle (default: 25)")
+    parser.add_argument("--exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
 
     return parser
 
