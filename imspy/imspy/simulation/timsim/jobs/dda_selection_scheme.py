@@ -134,8 +134,7 @@ def simulate_dda_pasef_selection_scheme(
     # annotate the precursor table (calculate ion id)
     selected_p["peptide_id"] = selected_p["peptide_id"] * 10 + selected_p["charge_state"]
     selected_p_return = (
-        selected_p[["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Frame"]]
-        # TODO: make it more robust, e.g. by extracting information from the isotopic envelope of the precursor
+        selected_p[["peptide_id", "mz_min", "mz_max", "charge_state", "ScanNumApex", "intensity", "Parent"]]
         .assign(
             average_mz=lambda df: (df["mz_min"] + df["mz_max"]) / 2,
             largest_peak_mz=lambda df: df["mz_min"],
@@ -145,7 +144,7 @@ def simulate_dda_pasef_selection_scheme(
         )
         .rename(columns={
             "peptide_id": "id",
-            "Frame": "parent",
+            "Parent": "parent",
             "ScanNumApex": "scan_number",
             "charge_state": "charge",
         })
