@@ -151,10 +151,12 @@ def simulate_dda_pasef_selection_scheme(
 
     return pasef_meta, selected_p_return
 
+
 def get_precursor_isolation_window_from_frame(
-    frame: pd.DataFrame,
-    ce_bias: float = 54.1984,
-    ce_slope: float = -0.0345,
+        frame: pd.DataFrame,
+        ce_bias: float = 54.1984,
+        ce_slope: float = -0.0345,
+        scan_window: int = 13,
 ) -> pd.DataFrame:
     """
     Get precursor isolation window from a frame.
@@ -163,6 +165,7 @@ def get_precursor_isolation_window_from_frame(
         frame: DataFrame containing frame data.
         ce_bias: Bias for collision energy calculation.
         ce_slope: Slope for collision energy calculation.
+        scan_window: Number of scans to subtract/add from the apex to set the isolation window.
 
     Returns:
         DataFrame with computed precursor isolation windows.
@@ -175,8 +178,9 @@ def get_precursor_isolation_window_from_frame(
     grouped.drop(columns=["idxmax"], inplace=True)
     grouped["IsolationWidth"] = np.where((grouped["mz_max"] - grouped["mz_min"]) < 2, 2, 3)
     grouped["IsolationMz"] = (grouped["mz_min"] + grouped["mz_max"]) / 2
-    grouped["ScanNumBegin"] = grouped["ScanNumApex"] - 13
-    grouped["ScanNumEnd"] = grouped["ScanNumApex"] + 13
+
+    grouped["ScanNumBegin"] = grouped["ScanNumApex"] - scan_window
+    grouped["ScanNumEnd"] = grouped["ScanNumApex"] + scan_window
     grouped["CollisionEnergy"] = ce_bias + ce_slope * grouped["ScanNumApex"]
     return grouped
 
@@ -264,16 +268,17 @@ def select_precursors_pasef(
 
 
 def select_precursors_from_frames(
-    precursor_frame_builder: Any,
-    frame_ids: List[int],
-    precursor_every: int,
-    exclusion_width: int = 25,
-    excluded_precursors_df: Optional[pd.DataFrame] = None,
-    max_precursors: int = 25,
-    intensity_threshold: float = 1200,
-    num_threads: int = -1,
-    batch_size: int = 256,
-    max_frame: int = None  # pass through overall max_frame
+        precursor_frame_builder: Any,
+        frame_ids: List[int],
+        precursor_every: int,
+        exclusion_width: int = 25,
+        excluded_precursors_df: Optional[pd.DataFrame] = None,
+        max_precursors: int = 25,
+        intensity_threshold: float = 1200,
+        num_threads: int = -1,
+        batch_size: int = 256,
+        max_frame: int = None,
+        scan_window: int = 13
 ) -> pd.DataFrame:
     """
     Select precursors for a list of frames.
@@ -289,6 +294,7 @@ def select_precursors_from_frames(
         num_threads: Number of threads to use (-1 uses all cores).
         batch_size: Batch size for processing frames.
         max_frame: Overall maximum frame ID available.
+        scan_window: Number of scans to set as the precursor selection window.
 
     Returns:
         DataFrame with selected precursors from all provided frames.
@@ -310,8 +316,9 @@ def select_precursors_from_frames(
             Logger.debug("Selecting precursors for frame %d", frame.frame_id)
             excluded_precursors_df = excluded_precursors_df.loc[
                 (excluded_precursors_df["Frame"] - frame.frame_id) <= exclusion_width
-            ]
-            precursors = get_precursor_isolation_window_from_frame(frame.df)
+                ]
+            # Pass scan_window to the isolation window function
+            precursors = get_precursor_isolation_window_from_frame(frame.df, scan_window=scan_window)
             selected, excluded_precursors_df = select_precursors_pasef(
                 precursors,
                 ms1_frame_id=frame.frame_id,
