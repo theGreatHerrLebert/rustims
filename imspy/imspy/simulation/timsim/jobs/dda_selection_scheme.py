@@ -76,6 +76,9 @@ def simulate_dda_pasef_selection_scheme(
     ms1_frame_ids = acquisition_builder.frame_table.loc[
         acquisition_builder.frame_table.ms_type == 0, "frame_id"
     ].values
+
+    ms1_frame_ids = np.sort(ms1_frame_ids)
+
     if ms1_frame_ids.size > 1:
         ms1_frame_ids = ms1_frame_ids[:-1]
 
@@ -309,7 +312,7 @@ def transform_selected_precursor_to_pasefmeta(
         num_fragment_frames = precursors_every - 1
         if num_fragment_frames <= 0:
             return group
-        group = group.sort_index()
+        group = group.sort_values("Frame")
         offsets = np.arange(len(group)) % num_fragment_frames
         group["Frame"] = group["Frame"].iloc[0] + 1 + offsets
         return group
