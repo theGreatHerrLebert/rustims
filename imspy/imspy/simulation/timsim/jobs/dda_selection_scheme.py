@@ -91,14 +91,14 @@ def simulate_dda_pasef_selection_scheme(
     for frame in tqdm(np.sort(list(ms_1_frames)[:-1]), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
         if len(X_tmp) > 0:
-            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every-1, n=max_precursors, w=13)
+            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13)
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
     pasef_meta_df = pd.concat(pasef_meta_list)
     precursors_df = pd.concat(precursors_list)
 
-    # map column names to the inverse of the PASEF_META_COLUMNS_MAPPING
+    # map column names to the inverse of the PASEF_META_COLUMNS_MAPPING and PRECURSOR_MAPPING
     pasef_meta_df = pasef_meta_df.rename(columns={v: k for k, v in PASEF_META_COLUMNS_MAPPING.items()})
     precursors_df = precursors_df.rename(columns={v: k for k, v in PRECURSOR_MAPPING.items()})
 
@@ -165,7 +165,7 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
             if not conflict:
                 current_frame.append((ion.scan_apex, ion.ion_id))
 
-                frame_id = frame_id_precursor + frame_idx
+                frame_id = frame_id_precursor + frame_idx + 1
                 scan_apex = ion.scan_apex
                 mz_max_contrib = ion.mz_max_contrib
                 mz_mono = ion.mz_mono
