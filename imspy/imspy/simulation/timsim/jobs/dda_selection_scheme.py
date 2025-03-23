@@ -209,6 +209,7 @@ def schedule_precursors(
                 assigned = True
                 break
 
+        # potentially LOG something... ?
         if not assigned:
             pass
 
