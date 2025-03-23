@@ -57,6 +57,7 @@ def simulate_dda_pasef_selection_scheme(
 
     # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
     frames = acquisition_builder.frame_table.frame_id.values
+    max_frame_id = np.max(frames)
     frame_types = np.full(len(frames), 8, dtype=int)
 
     for idx in range(len(frames)):
@@ -91,7 +92,7 @@ def simulate_dda_pasef_selection_scheme(
     for frame in tqdm(np.sort(list(ms_1_frames)[:-2]), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
         if len(X_tmp) > 0:
-            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13)
+            pasef_meta, precursors = schedule_precursors(X_tmp, max_frame_id, k=precursors_every - 1, n=max_precursors, w=13)
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
@@ -136,7 +137,14 @@ def create_ion_table(ions, ms_1_frames, intensity_min: float = 1500.0):
     return T[T.ion_intensity >= intensity_min]
 
 
-def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slope: float = -0.0345):
+def schedule_precursors(
+        ions,
+        max_frame_id: int,
+        k=7,
+        n=15,
+        w=13,
+        ce_bias: float = 54.1984,
+        ce_slope: float = -0.0345):
     frame_id_precursor = ions.frame_id.values[0]
 
     # Step 1: Sort ions by intensity (descending)
@@ -172,6 +180,11 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
                 current_frame.append((ion.scan_apex, ion.ion_id))
 
                 frame_id = frame_id_precursor + fragment_frame_index + 1
+
+                # skip frames if the frame_id is outside the range of the frame table
+                if frame_id > max_frame_id:
+                    continue
+
                 mz_max_contrib = ion.mz_max_contrib
                 mz_mono = ion.mz_mono
                 mz_avg = (mz_mono + ion.mz_max) / 2.0
