@@ -41,6 +41,7 @@ def simulate_dda_pasef_selection_scheme(
         precursors_every: int,
         intensity_threshold: float,
         max_precursors: int,
+        selection_mode: str = "topN",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Simulate DDA selection scheme.
@@ -92,7 +93,8 @@ def simulate_dda_pasef_selection_scheme(
     for frame in tqdm(np.sort(list(ms_1_frames)), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
         if len(X_tmp) > 0 and frame < max_frame_id:
-            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13)
+            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13,
+                                                         selection_mode=selection_mode)
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
