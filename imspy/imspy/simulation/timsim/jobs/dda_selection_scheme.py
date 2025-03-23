@@ -55,6 +55,16 @@ def simulate_dda_pasef_selection_scheme(
         print(f"intensity_threshold: {intensity_threshold}")
         print(f"max_precursors: {max_precursors}")
 
+    # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
+    frames = acquisition_builder.frame_table.frame_id.values
+    frame_types = np.full(len(frames), 8, dtype=int)
+
+    for idx in range(len(frames)):
+        if idx % precursors_every == 0:
+            frame_types[idx] = 0
+
+    acquisition_builder.calculate_frame_types(frame_types=frame_types)
+
     handle = acquisition_builder.synthetics_handle
     ms_1_frames = set(handle.get_table("frames")[handle.get_table("frames").ms_type == 0].frame_id.values)
 
