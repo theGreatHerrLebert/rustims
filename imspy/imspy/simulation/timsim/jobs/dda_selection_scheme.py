@@ -143,11 +143,19 @@ def schedule_precursors(
         n=15,
         w=13,
         ce_bias: float = 54.1984,
-        ce_slope: float = -0.0345):
+        ce_slope: float = -0.0345,
+        selection_mode: str = "topN",
+):
     frame_id_precursor = ions.frame_id.values[0]
 
-    # Step 1: Sort ions by intensity (descending)
-    ions_sorted = ions.sort_values(by="ion_intensity", ascending=False).copy()
+    known_selection_modes = ["topN", "random"]
+
+    if selection_mode.lower() == "topn":
+        ions_sorted = ions.sort_values(by="ion_intensity", ascending=False).copy()
+    elif selection_mode.lower() == "random":
+        ions_sorted = ions.sample(frac=1.0, random_state=None).copy()
+    else:
+        raise ValueError(f"Invalid selection_mode: {selection_mode}. Must be one of {known_selection_modes}")
 
     # Step 2: Initialize list of k empty fragment frames
     fragment_frames = [[] for _ in range(k)]
