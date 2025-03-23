@@ -898,7 +898,17 @@
 <a href="#897" id="897">897</a>
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a></pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a></pre></div><pre class="rust"><code><span class="kw">use </span><span class="kw">crate</span>::data::meta::{read_global_meta_sql, read_meta_data_sql, FrameMeta, GlobalMetaData};
 <span class="kw">use </span><span class="kw">crate</span>::data::raw::BrukerTimsDataLibrary;
 <span class="kw">use </span><span class="kw">crate</span>::data::utility::{
     flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress,
@@ -1211,9 +1221,19 @@
         </span><span class="kw">let </span>num_peaks = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].num_peaks;
 
         <span class="kw">if </span>num_peaks == <span class="number">0 </span>{
+
+            <span class="kw">let </span>ms_type_raw = <span class="self">self</span>.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
+
+            <span class="kw">let </span>ms_type = <span class="kw">match </span>ms_type_raw {
+                <span class="number">0 </span>=&gt; MsType::Precursor,
+                <span class="number">8 </span>=&gt; MsType::FragmentDda,
+                <span class="number">9 </span>=&gt; MsType::FragmentDia,
+                <span class="kw">_ </span>=&gt; MsType::Unknown,
+            };
+
             <span class="kw">return </span>TimsFrame {
                 frame_id: frame_id <span class="kw">as </span>i32,
-                ms_type: MsType::Unknown,
+                ms_type,
                 scan: Vec::new(),
                 tof: Vec::new(),
                 ims_frame: ImsFrame {

@@ -1091,7 +1091,7 @@
 <span class="kw">impl </span>IonTransmission <span class="kw">for </span>TimsTransmissionDDA {
     <span class="kw">fn </span>apply_transmission(<span class="kw-2">&amp;</span><span class="self">self</span>, frame_id: i32, scan_id: i32, mz: <span class="kw-2">&amp;</span>Vec&lt;f64&gt;) -&gt; Vec&lt;f64&gt; {
 
-        <span class="comment">// get all selections for a frame, if frame is not in the PASEF metadata, it is a precursor frame and all ions are transmitted
+        <span class="comment">// get all selections for a frame, if frame is not in the PASEF metadata, no ions are transmitted
         </span><span class="kw">let </span>meta = <span class="self">self</span>.pasef_meta.get(<span class="kw-2">&amp;</span>frame_id);
 
         <span class="kw">match </span>meta {
@@ -1111,8 +1111,8 @@
                 }
                 transmission
             },
-            <span class="comment">// if frame is not in the metadata, all ions are transmitted (precursor frame)
-            </span><span class="prelude-val">None </span>=&gt; <span class="macro">vec!</span>[<span class="number">1.0</span>; mz.len()],
+            <span class="comment">// if frame is not in the metadata, no ions are transmitted
+            </span><span class="prelude-val">None </span>=&gt; <span class="macro">vec!</span>[<span class="number">0.0</span>; mz.len()],
         }
     }
 }</code></pre></div></section></main></body></html>
