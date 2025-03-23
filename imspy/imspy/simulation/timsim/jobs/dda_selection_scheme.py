@@ -88,7 +88,7 @@ def simulate_dda_pasef_selection_scheme(
     pasef_meta_list = []
     precursors_list = []
 
-    for frame in tqdm(np.sort(list(ms_1_frames)[:-1]), ncols=80, desc="Simulating PASEF meta and precursors"):
+    for frame in tqdm(np.sort(list(ms_1_frames)[:-1]), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
         if len(X_tmp) > 0:
             pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every-1, n=max_precursors, w=13)
