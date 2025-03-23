@@ -89,10 +89,10 @@ def simulate_dda_pasef_selection_scheme(
     pasef_meta_list = []
     precursors_list = []
 
-    for frame in tqdm(np.sort(list(ms_1_frames)[:-2]), ncols=80, desc="Selecting precursors"):
+    for frame in tqdm(np.sort(list(ms_1_frames)), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
-        if len(X_tmp) > 0:
-            pasef_meta, precursors = schedule_precursors(X_tmp, max_frame_id, k=precursors_every - 1, n=max_precursors, w=13)
+        if len(X_tmp) > 0 and frame < max_frame_id:
+            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13)
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
@@ -139,7 +139,6 @@ def create_ion_table(ions, ms_1_frames, intensity_min: float = 1500.0):
 
 def schedule_precursors(
         ions,
-        max_frame_id: int,
         k=7,
         n=15,
         w=13,
@@ -180,10 +179,6 @@ def schedule_precursors(
                 current_frame.append((ion.scan_apex, ion.ion_id))
 
                 frame_id = frame_id_precursor + fragment_frame_index + 1
-
-                # skip frames if the frame_id is outside the range of the frame table
-                if frame_id > max_frame_id:
-                    continue
 
                 mz_max_contrib = ion.mz_max_contrib
                 mz_mono = ion.mz_mono
