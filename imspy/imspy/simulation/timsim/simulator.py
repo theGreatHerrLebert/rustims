@@ -674,10 +674,8 @@ def main():
             acquisition_builder=acquisition_builder,
             verbose=not args.silent_mode,
             precursors_every=args.precursors_every,
-            batch_size=args.batch_size,
             intensity_threshold=args.precursor_intensity_threshold,
             max_precursors=args.max_precursors,
-            exclusion_width=args.exclusion_width,
         )
         acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
         acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
