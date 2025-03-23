@@ -143,7 +143,7 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
     ions_sorted = ions.sort_values(by="ion_intensity", ascending=False).copy()
 
     # Step 2: Initialize list of k empty fragment frames
-    fragment_frames = [[] for _ in range(k)]  # each will store (scan_apex, ion_id)
+    fragment_frames = [[] for _ in range(k)]
 
     # Step 3: Assignment loop
     scheduled_rows = []
@@ -158,17 +158,17 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
         for fragment_frame_index in range(k):
             current_frame = fragment_frames[fragment_frame_index]
 
+            # skip full frames
             if len(current_frame) >= n:
-                continue  # skip full frames
+                continue
 
-            # Check scan overlap with existing ions in this frame
+            # check scan overlap with existing ions in this frame
             conflict = any(
                 not (new_end < (existing_apex - w) or new_start > (existing_apex + w))
                 for existing_apex, _ in current_frame
             )
 
             if not conflict:
-                # Assign ion
                 current_frame.append((ion.scan_apex, ion.ion_id))
 
                 frame_id = frame_id_precursor + fragment_frame_index + 1
@@ -199,16 +199,15 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
                 })
 
                 assigned = True
-                break  # Stop looking for a frame for this ion
+                break
 
         if not assigned:
-            # Optional: track skipped ions if needed
             pass
 
     schedule_df = pd.DataFrame(scheduled_rows).sort_values(by=["Frame", "ScanNumBegin"])
     precursors_df = pd.DataFrame(precursor_rows).sort_values(by="ScanNumber")
 
-    # Ensure selected columns are integers
+    # ensure selected columns are integers
     if not schedule_df.empty:
         schedule_df["Precursor"] = schedule_df["Precursor"].astype(int)
         schedule_df["Frame"] = schedule_df["Frame"].astype(int)
