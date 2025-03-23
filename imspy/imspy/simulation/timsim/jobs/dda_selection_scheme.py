@@ -86,9 +86,9 @@ def simulate_dda_pasef_selection_scheme(
     # transform json string spectrum to MzSpectrum
     ions["simulated_spectrum"] = ions.simulated_spectrum.apply(MzSpectrum.from_jsons)
 
-    # in random mode, set intensity threshold to 0
+    # in random mode, set intensity threshold to a lower value (need to figure out what makes sense here)
     if selection_mode.lower() == "random":
-        intensity_threshold = 1.0
+        intensity_threshold = 25.0
 
     X = create_ion_table(ions, ms_1_frames, intensity_min=intensity_threshold)
 
