@@ -137,36 +137,41 @@ def create_ion_table(ions, ms_1_frames, intensity_min: float = 1500.0):
 
 
 def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slope: float = -0.0345):
-
     frame_id_precursor = ions.frame_id.values[0]
 
+    # Step 1: Sort ions by intensity (descending)
     ions_sorted = ions.sort_values(by="ion_intensity", ascending=False).copy()
 
-    fragment_frames = [[] for _ in range(k)]
+    # Step 2: Initialize list of k empty fragment frames
+    fragment_frames = [[] for _ in range(k)]  # each will store (scan_apex, ion_id)
 
+    # Step 3: Assignment loop
     scheduled_rows = []
     precursor_rows = []
 
     for _, ion in ions_sorted.iterrows():
         assigned = False
-        for frame_idx in range(k):
-            current_frame = fragment_frames[frame_idx]
+
+        new_start = ion.scan_apex - w
+        new_end = ion.scan_apex + w
+
+        for fragment_frame_index in range(k):
+            current_frame = fragment_frames[fragment_frame_index]
 
             if len(current_frame) >= n:
-                continue
+                continue  # skip full frames
 
-            new_start = ion.scan_apex - w
-            new_end = ion.scan_apex + w
-
+            # Check scan overlap with existing ions in this frame
             conflict = any(
                 not (new_end < (existing_apex - w) or new_start > (existing_apex + w))
                 for existing_apex, _ in current_frame
             )
+
             if not conflict:
+                # Assign ion
                 current_frame.append((ion.scan_apex, ion.ion_id))
 
-                frame_id = frame_id_precursor + frame_idx + 1
-                scan_apex = ion.scan_apex
+                frame_id = frame_id_precursor + fragment_frame_index + 1
                 mz_max_contrib = ion.mz_max_contrib
                 mz_mono = ion.mz_mono
                 mz_avg = (mz_mono + ion.mz_max) / 2.0
@@ -174,11 +179,11 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
 
                 scheduled_rows.append({
                     "Frame": frame_id,
-                    "ScanNumBegin": scan_apex - w,
-                    "ScanNumEnd": scan_apex + w,
+                    "ScanNumBegin": new_start,
+                    "ScanNumEnd": new_end,
                     "IsolationMz": mz_max_contrib,
                     "IsolationWidth": isolation_width,
-                    "CollisionEnergy": ce_bias + ce_slope * scan_apex,
+                    "CollisionEnergy": ce_bias + ce_slope * ion.scan_apex,
                     "Precursor": ion.ion_id
                 })
 
@@ -188,17 +193,22 @@ def schedule_precursors(ions, k=7, n=15, w=13, ce_bias: float = 54.1984, ce_slop
                     "AverageMz": mz_avg,
                     "MonoisotopicMz": mz_mono,
                     "Charge": ion.charge,
-                    "ScanNumber": scan_apex,
+                    "ScanNumber": ion.scan_apex,
                     "Intensity": ion.ion_intensity,
                     "Parent": frame_id_precursor
                 })
 
                 assigned = True
-                break
+                break  # Stop looking for a frame for this ion
+
+        if not assigned:
+            # Optional: track skipped ions if needed
+            pass
 
     schedule_df = pd.DataFrame(scheduled_rows).sort_values(by=["Frame", "ScanNumBegin"])
     precursors_df = pd.DataFrame(precursor_rows).sort_values(by="ScanNumber")
 
+    # Ensure selected columns are integers
     if not schedule_df.empty:
         schedule_df["Precursor"] = schedule_df["Precursor"].astype(int)
         schedule_df["Frame"] = schedule_df["Frame"].astype(int)
