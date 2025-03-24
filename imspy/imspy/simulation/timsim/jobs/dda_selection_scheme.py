@@ -117,7 +117,7 @@ def simulate_dda_pasef_selection_scheme(
 def create_ion_table(ions, ms_1_frames, intensity_min: float = 1500.0):
     row_list = []
 
-    for index, row in tqdm(ions.iterrows(), total=len(ions), ncols=80, desc="Pre-selecting precursors"):
+    for index, row in tqdm(ions.iterrows(), total=len(ions), ncols=80, desc="Pre-filtering"):
 
         frame_start, frame_end = row.frame_occurrence[0], row.frame_occurrence[-1]
         scan_start, scan_end = row.scan_occurrence[0], row.scan_occurrence[-1]
