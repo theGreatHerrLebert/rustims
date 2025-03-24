@@ -9,7 +9,7 @@ import tensorflow as tf
 from tabulate import tabulate
 
 # imspy imports
-from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
+from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA, SyntheticExperimentDataHandle
 from imspy.simulation.timsim.jobs.simulate_ion_mobilities_and_variance import simulate_ion_mobilities_and_variance
 from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
 from imspy.simulation.timsim.jobs.simulate_phosphorylation import simulate_phosphorylation
@@ -446,7 +446,12 @@ def main():
 
     if args.from_existing:
         # Load existing simulation data
-        existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
+
+        if args.acquisition_type == 'DIA':
+            existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
+        else:
+            existing_sim_handle = SyntheticExperimentDataHandle(database_path=args.existing_path)
+
         peptides = existing_sim_handle.get_table('peptides')
         proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
