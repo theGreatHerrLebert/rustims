@@ -59,13 +59,16 @@ def simulate_dda_pasef_selection_scheme(
 
     # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
     frames = acquisition_builder.frame_table.frame_id.values
-    max_frame_id = np.max(frames)
+
     scan_max = acquisition_builder.synthetics_handle.get_table("scans").scan.max()
     frame_types = np.full(len(frames), 8, dtype=int)
 
     for idx in range(len(frames)):
         if idx % precursors_every == 0:
             frame_types[idx] = 0
+
+    # get the last precursor frame ID
+    max_frame_id = frames[frame_types == 0][-1]
 
     acquisition_builder.calculate_frame_types(frame_types=frame_types)
 
@@ -99,8 +102,14 @@ def simulate_dda_pasef_selection_scheme(
     for frame in tqdm(np.sort(list(ms_1_frames)), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
         if len(X_tmp) > 0 and frame < max_frame_id:
-            pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13,
-                                                         selection_mode=selection_mode, scan_max=scan_max)
+            pasef_meta, precursors = schedule_precursors(
+                X_tmp,
+                k=precursors_every - 1,
+                n=max_precursors,
+                w=13,
+                selection_mode=selection_mode,
+                scan_max=scan_max
+            )
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
