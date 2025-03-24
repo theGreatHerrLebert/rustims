@@ -131,8 +131,15 @@ def create_ion_table(ions, ms_1_frames, intensity_min: float = 1500.0):
         frame_start, frame_end = row.frame_occurrence[0], row.frame_occurrence[-1]
         scan_start, scan_end = row.scan_occurrence[0], row.scan_occurrence[-1]
 
-        mz_mono = row.simulated_spectrum.mz[0]
-        mz_max = row.simulated_spectrum.mz[-1]
+        spectrum = row.simulated_spectrum
+        mz = spectrum.mz
+        intensity = spectrum.intensity
+
+        # remove all mz where intensity is below 5% of the maximum intensity
+        mz = mz[intensity > 0.05 * np.max(intensity)]
+
+        mz_mono = mz[0]
+        mz_max = mz[-1]
         mz_max_contrib = row.simulated_spectrum.mz[np.argmax(row.simulated_spectrum.intensity)]
 
         for frame, frame_abu in zip(row.frame_occurrence, row.frame_abundance):
