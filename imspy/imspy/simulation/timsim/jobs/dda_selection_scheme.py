@@ -60,6 +60,7 @@ def simulate_dda_pasef_selection_scheme(
     # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
     frames = acquisition_builder.frame_table.frame_id.values
     max_frame_id = np.max(frames)
+    scan_max = acquisition_builder.synthetics_handle.get_table("scans").scan.max()
     frame_types = np.full(len(frames), 8, dtype=int)
 
     for idx in range(len(frames)):
@@ -99,7 +100,7 @@ def simulate_dda_pasef_selection_scheme(
         X_tmp = X[X.frame_id == frame]
         if len(X_tmp) > 0 and frame < max_frame_id:
             pasef_meta, precursors = schedule_precursors(X_tmp, k=precursors_every - 1, n=max_precursors, w=13,
-                                                         selection_mode=selection_mode)
+                                                         selection_mode=selection_mode, scan_max=scan_max)
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
@@ -152,6 +153,7 @@ def schedule_precursors(
         ce_bias: float = 54.1984,
         ce_slope: float = -0.0345,
         selection_mode: str = "topN",
+        scan_max: int = 913,
 ):
     frame_id_precursor = ions.frame_id.values[0]
 
@@ -167,15 +169,27 @@ def schedule_precursors(
     # Step 2: Initialize list of k empty fragment frames
     fragment_frames = [[] for _ in range(k)]
 
+    # Initialize dynamic exclusion set for ion_ids already scheduled.
+    scheduled_ion_ids = set()
+
     # Step 3: Assignment loop
     scheduled_rows = []
     precursor_rows = []
 
     for _, ion in ions_sorted.iterrows():
-        assigned = False
+        # Skip if this ion has already been scheduled
+        if ion.ion_id in scheduled_ion_ids:
+            continue
 
+        assigned = False
         new_start = ion.scan_apex - w
         new_end = ion.scan_apex + w
+
+        if new_start < 0:
+            new_start = 0
+
+        if new_end > scan_max:
+            new_end = scan_max
 
         for fragment_frame_index in range(k):
             current_frame = fragment_frames[fragment_frame_index]
@@ -192,7 +206,6 @@ def schedule_precursors(
 
             if not conflict:
                 current_frame.append((ion.scan_apex, ion.ion_id))
-
                 frame_id = frame_id_precursor + fragment_frame_index + 1
 
                 mz_max_contrib = ion.mz_max_contrib
@@ -221,12 +234,15 @@ def schedule_precursors(
                     "Parent": frame_id_precursor
                 })
 
+                # Add ion_id to dynamic exclusion set so it will not be scheduled again
+                scheduled_ion_ids.add(ion.ion_id)
+
                 assigned = True
                 break
 
-        # potentially LOG something... ?
         if not assigned:
-            pass
+            # Optionally log that the ion could not be scheduled
+            Logger.debug("Ion id %s could not be scheduled in any fragment frame.", ion.ion_id)
 
     schedule_df = pd.DataFrame(scheduled_rows).sort_values(by=["Frame", "ScanNumBegin"])
     precursors_df = pd.DataFrame(precursor_rows).sort_values(by="ScanNumber")
