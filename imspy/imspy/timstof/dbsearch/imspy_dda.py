@@ -948,6 +948,7 @@ def main():
 
         from imspy.timstof.dbsearch.utility import parse_to_tims2rescore
         TDC_tims2rescore = parse_to_tims2rescore(TDC, from_mgf=params['use_mgf'], file_name=ds_name + ".d")
+        TDC_tims2rescore.sort_values(by="filename", inplace=True)
         TDC_tims2rescore.to_csv(f"{write_folder_path}" + "/imspy/results.sagepy.tsv", sep="\t", index=False)
 
     peptides_rescored = target_decoy_competition_pandas(psm_collection_to_pandas(psms),
