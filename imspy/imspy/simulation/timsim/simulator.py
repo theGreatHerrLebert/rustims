@@ -153,12 +153,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "(default: 1e6)")
 
     # Distribution parameters
+    # TODO add all defaults
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
     parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .999)")
-    parser.add_argument("--mean_std_rt", type=float, help="Mean standard deviation for RT distribution (default: 1.5)")
-    parser.add_argument("--variance_std_rt", type=float, help="Variance std for RT distribution (default: 0.3)")
-    parser.add_argument("--mean_skewness", type=float, help="Mean skewness for RT distribution (default: 0.3)")
-    parser.add_argument("--variance_skewness", type=float, help="Variance skewness (default: 0.1)")
+    parser.add_argument("--sigma_lower_rt", type=float, help="Lower bound for sigma of an EMG chromatographic peak.")
+    parser.add_argument("--sigma_upper_rt", type=float, help="Upper bound for sigma of an EMG chromatographic peak.")
+    parser.add_argument("--sigma_alpha_rt", type=float, help="Alpha for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
+    parser.add_argument("--sigma_beta_rt", type=float, help="Beta for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
+    parser.add_argument("--k_lower_rt", type=float, help="Lower bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness)")
+    parser.add_argument("--k_upper_rt", type=float, help="Upper bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness)")
+    parser.add_argument("--k_alpha_rt", type=float, help="Alpha for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt)")
+    parser.add_argument("--k_beta_rt", type=float, help="Beta for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).")
     parser.add_argument("--target_p", type=float, help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, help="Step size for frame distributions (default: 0.001)")
     parser.add_argument("--no_use_inverse_mobility_std_mean", dest="use_inverse_mobility_std_mean", action="store_false",
@@ -285,10 +290,14 @@ def get_default_settings() -> dict:
         'intensity_value': 1e6,
         'gradient_length': 3600,
         'z_score': 0.999,
-        'mean_std_rt': 1.5,
-        'variance_std_rt': 0.3,
-        'mean_skewness': 0.3,
-        'variance_skewness': 0.1,
+        'sigma_lower_rt': None,
+        'sigma_upper_rt': None,
+        'sigma_alpha_rt': 4,
+        'sigma_beta_rt': 4,
+        'k_lower_rt': 0,
+        'k_upper_rt': 10,
+        'k_alpha_rt': 1,
+        'k_beta_rt': 20,
         'target_p': 0.999,
         'sampling_step_size': 0.001,
         'use_inverse_mobility_std_mean': True,
@@ -334,7 +343,35 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
         parser.error("the following argument is required: reference_path")
     if args.fasta_path is None:
         parser.error("the following argument is required: fasta_path")
+    if args.sigma_lower_rt is None or args.sigma_upper_rt is None:
+        rt_defaults = calculate_rt_defaults(args.gradient_length)
+        args.sigma_lower_rt = rt_defaults['sigma_lower_rt']
+        args.sigma_upper_rt = rt_defaults['sigma_upper_rt']
+    if args.sigma_lower_rt >= args.sigma_upper_rt:
+        parser.error("sigma_lower_rt must be less than sigma_upper_rt")
+    if args.k_lower_rt >= args.k_upper_rt:
+        parser.error("k_lower_rt must be less than k_upper_rt")
 
+def calculate_rt_defaults(gradient_length: float) -> dict:
+    """Calculates 'sigma_lower_rt' and 'sigma_upper_rt', if these
+    are not provided by the user. The calculation is based
+    on the gradient length.
+
+    Args:
+        gradient_length (float): Length of the LC gradient in seconds.
+
+    Returns:
+        dict: Parameter dictionary with calculated values.
+    """
+            
+    sigma_middle_rt = gradient_length/(60*60)*0.75+1.125
+    sigma_lower_rt = sigma_middle_rt-sigma_middle_rt*0.25
+    sigma_upper_rt = sigma_middle_rt+sigma_middle_rt*0.25
+    return {
+        'sigma_lower_rt': sigma_lower_rt,
+        'sigma_upper_rt': sigma_upper_rt
+    }
+    
 
 # ----------------------------------------------------------------------
 # Main Execution
@@ -370,6 +407,7 @@ def main():
     args = parser.parse_args()
 
     # Ensure required arguments are set
+    # calculate rt defaults if not provided
     check_required_args(args, parser)
 
     # MacOS check for Bruker SDK
@@ -585,10 +623,14 @@ def main():
     peptides = simulate_frame_distributions_emg(
         peptides=peptides,
         frames=acquisition_builder.frame_table,
-        mean_std_rt=args.mean_std_rt,
-        variance_std_rt=args.variance_std_rt,
-        mean_scewness=args.mean_skewness,
-        variance_scewness=args.variance_skewness,
+        sigma_lower_rt=args.sigma_lower_rt,
+        sigma_upper_rt=args.sigma_upper_rt,
+        sigma_alpha_rt=args.sigma_alpha_rt,
+        sigma_beta_rt=args.sigma_beta_rt,
+        k_lower_rt=args.k_lower_rt,
+        k_upper_rt=args.k_upper_rt,
+        k_alpha_rt=args.k_alpha_rt,
+        k_beta_rt=args.k_beta_rt,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
         target_p=args.target_p,
         step_size=args.sampling_step_size,
