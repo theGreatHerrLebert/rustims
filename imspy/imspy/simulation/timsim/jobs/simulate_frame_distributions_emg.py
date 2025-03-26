@@ -198,6 +198,7 @@ def simulate_frame_distributions_emg(
 
     if verbose and not from_existing:
         print("Calculating frame distributions...")
+        print(f"sigma_lower: {sigma_lower_rt}, sigma_upper: {sigma_upper_rt}, sigma_alpha: {sigma_alpha_rt}, sigma_beta: {sigma_beta_rt}")
 
     n = peptides.shape[0]
 
