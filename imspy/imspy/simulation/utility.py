@@ -384,52 +384,6 @@ def calculate_bounds_numba(mean, std, z_score):
     """
     return mean - z_score * std, mean + z_score * std
 
-
-@jit(nopython=True)
-def get_frames_numba(rt_value, times_array, std_rt, z_score):
-    """
-    Get the frames that will be acquired for a given retention time value.
-    Parameters
-    ----------
-    rt_value : float
-        Retention time value
-    times_array : NDArray
-        Array of retention times
-    std_rt : float
-        Standard deviation of the retention time
-    z_score : float
-        Z-score of the normal distribution
-
-    Returns
-    -------
-    NDArray
-        Array of frame indices
-    """
-    rt_min, rt_max = calculate_bounds_numba(rt_value, std_rt, z_score)
-    first_frame = np.argmin(np.abs(times_array - rt_min)) + 1
-    last_frame = np.argmin(np.abs(times_array - rt_max)) + 1
-    rt_frames = np.arange(first_frame, last_frame + 1)
-
-    return rt_frames
-
-
-@jit(nopython=True)
-def get_scans_numba(im_value, ims_array, scans_array, std_im, z_score):
-    """
-    Get the scans that will be acquired for a given ion mobility value.
-    """
-    im_min, im_max = calculate_bounds_numba(im_value, std_im, z_score)
-    im_start = np.argmin(np.abs(ims_array - im_max))
-    im_end = np.argmin(np.abs(ims_array - im_min))
-
-    scan_start = scans_array[im_start]
-    scan_end = scans_array[im_end]
-
-    # Generate scan indices in the correct order given the inverse relationship
-    im_scans = np.arange(scan_start, scan_end + 1)
-    return im_scans
-
-
 @numba.jit(cache=True, nopython=True)
 def get_peak_cnts(total_scans, scans):
     peak_cnts = [total_scans]

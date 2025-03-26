@@ -6,6 +6,8 @@ import qdarkstyle
 import toml
 import numpy as np
 from scipy.special import erfc
+from scipy.stats import exponnorm
+from imspy.simulation.timsim.simulator import calculate_rt_defaults
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
@@ -177,51 +179,91 @@ class CollapsibleBox(QWidget):
 # =============================================================================
 class EMGPlot(FigureCanvas):
     def __init__(self):
-        self.fig, self.ax = plt.subplots()
+        self.fig, self.ax = plt.subplots(1,2)
         super().__init__(self.fig)
-        self.mean = 0
-        self.std = 1.5
-        self.skewness = 0.3
-        self.std_variance = 0.3
-        self.skewness_variance = 0.1
-        self.N = 25
+        self.mu = 0
+        self.central_interval_p = 0.76
+        # TODO redefinition of defaults is bad practice
+
+        default_param_sigma_lower_upper = calculate_rt_defaults(3600)
+        self.sigma_lower = default_param_sigma_lower_upper["sigma_lower_rt"]
+        self.sigma_upper = default_param_sigma_lower_upper["sigma_upper_rt"]
+        self.sigma_alpha = 4
+        self.sigma_beta = 4
+        self.k_lower = 0
+        self.k_upper = 10
+        self.k_alpha = 1
+        self.k_beta = 20
+        self.N = 200
         self.x = np.linspace(-20, 20, 1000)
         self.update_plot()
 
-    def emg_pdf(self, x, mean, std, skewness):
-        lambda_ = 1 / skewness if skewness != 0 else 1e6
-        exp_component = lambda_ / 2 * np.exp(lambda_ / 2 * (2 * mean + lambda_ * std ** 2 - 2 * x))
-        erfc_component = erfc((mean + lambda_ * std ** 2 - x) / (np.sqrt(2) * std))
-        return exp_component * erfc_component
+    def emg_pdf(self, x, mu, sigma, k):
+        return exponnorm.pdf(x, K=k, loc=mu, scale=sigma)
 
+    def central_interval(self, mu, sigma, k):
+        p = self.central_interval_p
+        higher = exponnorm.ppf(1-(1-p)/2, K=k, loc=mu, scale=sigma)
+        lower = exponnorm.ppf((1-p)/2, K=k, loc=mu, scale=sigma)
+        return higher-lower
+    
     def update_plot(self):
-        self.ax.clear()
-        self.ax.set_xlim(-10, 10)
+        for ax in self.ax:
+            ax.clear()
+        self.ax[0].set_xlim(-10, 10)
+        self.ax[1].set_xlim(0, 20)
+        central_intervals = []
         for _ in range(self.N):
-            sampled_std = max(np.random.normal(self.std, self.std_variance), 0.01)
-            sampled_skewness = max(np.random.normal(self.skewness, self.skewness_variance), 0.01)
-            y = self.emg_pdf(self.x, self.mean, sampled_std, sampled_skewness)
-            self.ax.plot(self.x, y, alpha=0.5)
-        self.ax.set_title("Exponentially Modified Gaussian Distribution")
-        self.ax.set_xlabel("Retention Time Spread [Seconds]")
-        self.ax.set_ylabel("Intensity")
+            #TODO use rng
+            sampled_sigma = np.random.beta(a=self.sigma_alpha, b=self.sigma_beta) * (self.sigma_upper - self.sigma_lower) + self.sigma_lower
+            sampled_k = np.random.beta(a=self.k_alpha, b=self.k_beta) * (self.k_upper - self.k_lower) + self.k_lower
+            y = self.emg_pdf(self.x, self.mu, sampled_sigma, sampled_k)
+            central_intervals.append(self.central_interval(self.mu, sampled_sigma, sampled_k))
+            self.ax[0].plot(self.x, y, alpha=0.5)
+
+        self.ax[0].set_title("EMG Distributions")
+        self.ax[0].set_xlabel("Retention Time [Seconds]")
+        self.ax[0].set_ylabel("Intensity")
+        self.ax[1].hist(central_intervals, bins=20)
+        ci_mean = np.mean(central_intervals)
+        self.ax[1].vlines(ci_mean, 0, self.ax[1].get_ylim()[1]*0.9 , color='r', linestyle='--')
+        self.ax[1].text(ci_mean, self.ax[1].get_ylim()[1]*0.91, f"Mean: {ci_mean:.2f}s")
+        self.ax[1].set_title(f"Central Interval ({self.central_interval_p*100:.1f}%) Sizes")
+        self.ax[1].set_xlabel(f"Central Interval ({self.central_interval_p*100:.1f}%) [Seconds]")
+        self.ax[1].set_ylabel("Count")
         self.draw()
 
-    def set_std(self, value):
-        self.std = value
+    def set_sigma_lower(self, value):
+        self.sigma_lower = value
         self.update_plot()
 
-    def set_std_variance(self, value):
-        self.std_variance = value
+    def set_sigma_upper(self, value):
+        self.sigma_upper = value
         self.update_plot()
 
-    def set_skewness(self, value):
-        self.skewness = value
+    def set_sigma_alpha(self, value):
+        self.sigma_alpha = value
         self.update_plot()
 
-    def set_skewness_variance(self, value):
-        self.skewness_variance = value
+    def set_sigma_beta(self, value):
+        self.sigma_beta = value
         self.update_plot()
+    
+    def set_k_lower(self, value):
+        self.k_lower = value
+        self.update_plot()
+
+    def set_k_upper(self, value):
+        self.k_upper = value
+        self.update_plot()
+
+    def set_k_alpha(self, value):
+        self.k_alpha = value
+        self.update_plot()
+
+    def set_k_beta(self, value):
+        self.k_beta = value
+        self.update_plot()   
 
 # =============================================================================
 # MainWindow – The Main GUI
@@ -651,6 +693,7 @@ class MainWindow(QMainWindow):
         settings_layout = QVBoxLayout()
         plot_layout = QVBoxLayout()
         # List of settings – note the two new ones for ion mobility
+        sigma_lower_upper_start = calculate_rt_defaults(3600)
         settings = [
             {
                 'attribute_name': 'gradient_length_spin',
@@ -662,40 +705,76 @@ class MainWindow(QMainWindow):
                 'decimals': 0
             },
             {
-                'attribute_name': 'mean_std_rt_spin',
-                'label_text': 'Mean Std RT:',
-                'tooltip_text': 'Mean standard deviation for retention time (affects peak widths).',
-                'min_value': 0.1,
-                'max_value': 10,
-                'default_value': 1.0,
-                'decimals': 2
+                'attribute_name': 'sigma_lower_rt_spin',
+                'label_text': 'Lower sigma RT:',
+                'tooltip_text': 'Lower bound for sigma of an EMG chromatographic peak (affects peak widths).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': sigma_lower_upper_start["sigma_lower_rt"],
+                'decimals': 3
             },
             {
-                'attribute_name': 'variance_std_rt_spin',
-                'label_text': 'Variance Std RT:',
-                'tooltip_text': 'Variance of the retention time standard deviation.',
-                'min_value': 0,
-                'max_value': 5,
-                'default_value': 0.1,
-                'decimals': 2
+                'attribute_name': 'sigma_upper_rt_spin',
+                'label_text': 'Upper sigma RT:',
+                'tooltip_text': 'Upper bound for sigma of an EMG chromatographic peak (affects peak widths, must be higher than sigma_lower_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': sigma_lower_upper_start["sigma_upper_rt"],
+                'decimals': 3
             },
             {
-                'attribute_name': 'mean_skewness_spin',
-                'label_text': 'Mean Skewness:',
-                'tooltip_text': 'Average skewness of the retention time distribution.',
-                'min_value': 0,
-                'max_value': 5,
-                'default_value': 1.5,
-                'decimals': 2
+                'attribute_name': 'sigma_alpha_rt_spin',
+                'label_text': 'Alpha sigma RT:',
+                'tooltip_text': 'Alpha for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 4,
+                'decimals': 3
             },
             {
-                'attribute_name': 'variance_skewness_spin',
-                'label_text': 'Variance Skewness:',
-                'tooltip_text': 'Variance in the skewness of retention time.',
+                'attribute_name': 'sigma_beta_rt_spin',
+                'label_text': 'Beta sigma RT:',
+                'tooltip_text': 'Beta for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 4,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_lower_rt_spin',
+                'label_text': 'Lower k RT:',
+                'tooltip_text': 'Lower bound for k of an EMG chromatographic peak (affects peak skewness).',
                 'min_value': 0,
-                'max_value': 5,
-                'default_value': 0.1,
-                'decimals': 2
+                'max_value': 100,
+                'default_value': 0,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_upper_rt_spin',
+                'label_text': 'Upper k RT:',
+                'tooltip_text': 'Upper bound for k of an EMG chromatographic peak (affects peak skewness, must be higher than k_lower_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 10,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_alpha_rt_spin',
+                'label_text': 'Alpha k RT:',
+                'tooltip_text': 'Alpha for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 1,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_beta_rt_spin',
+                'label_text': 'Beta k RT:',
+                'tooltip_text': 'Beta for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 20,
+                'decimals': 3
             },
             {
                 'attribute_name': 'z_score_spin',
@@ -740,24 +819,48 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(settings_layout)
         main_layout.addLayout(plot_layout)
         self.distribution_settings_group.content_layout.addLayout(main_layout)
-        self.mean_std_rt_spin.valueChanged.connect(self.update_emg_std)
-        self.variance_std_rt_spin.valueChanged.connect(self.update_emg_std_variance)
-        self.mean_skewness_spin.valueChanged.connect(self.update_emg_skewness)
-        self.variance_skewness_spin.valueChanged.connect(self.update_emg_skewness_variance)
+        self.gradient_length_spin.valueChanged.connect(self.update_gradient_length)
+        self.sigma_lower_rt_spin.valueChanged.connect(self.update_emg_sigma_lower)
+        self.sigma_upper_rt_spin.valueChanged.connect(self.update_emg_sigma_upper)
+        self.sigma_alpha_rt_spin.valueChanged.connect(self.update_emg_sigma_alpha)
+        self.sigma_beta_rt_spin.valueChanged.connect(self.update_emg_sigma_beta)
+        self.k_lower_rt_spin.valueChanged.connect(self.update_emg_k_lower)
+        self.k_upper_rt_spin.valueChanged.connect(self.update_emg_k_upper)
+        self.k_alpha_rt_spin.valueChanged.connect(self.update_emg_k_alpha)
+        self.k_beta_rt_spin.valueChanged.connect(self.update_emg_k_beta)
         self.main_layout.addWidget(self.distribution_settings_group)
 
-    def update_emg_std(self, value):
-        self.emg_plot.set_std(value)
-
-    def update_emg_std_variance(self, value):
-        self.emg_plot.set_std_variance(value)
-
-    def update_emg_skewness(self, value):
-        self.emg_plot.set_skewness(value)
-
-    def update_emg_skewness_variance(self, value):
-        self.emg_plot.set_skewness_variance(value)
-
+    def update_gradient_length(self, value):
+        # update all emg parameters based on gradient length
+        # get all defaults
+        param_dict = calculate_rt_defaults(value)
+        self.sigma_lower_rt_spin.setValue(param_dict['sigma_lower_rt'])
+        self.sigma_upper_rt_spin.setValue(param_dict['sigma_upper_rt'])
+        
+    def update_emg_sigma_lower(self, value):
+        self.emg_plot.set_sigma_lower(value)
+    
+    def update_emg_sigma_upper(self, value):
+        self.emg_plot.set_sigma_upper(value)
+    
+    def update_emg_sigma_alpha(self, value):
+        self.emg_plot.set_sigma_alpha(value)
+        
+    def update_emg_sigma_beta(self, value):
+        self.emg_plot.set_sigma_beta(value)
+    
+    def update_emg_k_lower(self, value):
+        self.emg_plot.set_k_lower(value)
+        
+    def update_emg_k_upper(self, value):
+        self.emg_plot.set_k_upper(value)
+    
+    def update_emg_k_alpha(self, value):
+        self.emg_plot.set_k_alpha(value)
+    
+    def update_emg_k_beta(self, value):
+        self.emg_plot.set_k_beta(value)
+        
     def init_noise_settings(self):
         info_text = "Configure simulation noise parameters, including m/z noise and real data noise options."
         self.noise_settings_group = CollapsibleBox("Noise Settings", info_text)
@@ -1007,10 +1110,14 @@ class MainWindow(QMainWindow):
         isotope_centroid = self.isotope_centroid_checkbox.isChecked()
 
         gradient_length = self.gradient_length_spin.value()
-        mean_std_rt = self.mean_std_rt_spin.value()
-        variance_std_rt = self.variance_std_rt_spin.value()
-        mean_skewness = self.mean_skewness_spin.value()
-        variance_skewness = self.variance_skewness_spin.value()
+        sigma_lower_rt = self.sigma_lower_rt_spin.value()
+        sigma_upper_rt = self.sigma_upper_rt_spin.value()
+        sigma_alpha_rt = self.sigma_alpha_rt_spin.value()
+        sigma_beta_rt = self.sigma_beta_rt_spin.value()
+        k_lower_rt = self.lambda_lower_rt_spin.value()
+        k_upper_rt = self.lambda_upper_rt_spin.value()
+        k_alpha_rt = self.lambda_alpha_rt_spin.value()
+        k_beta_rt = self.lambda_beta_rt_spin.value()
         z_score = self.z_score_spin.value()
         target_p = self.target_p_spin.value()
         sampling_step_size = self.sampling_step_size_spin.value()
@@ -1060,10 +1167,14 @@ class MainWindow(QMainWindow):
             "--isotope_k", str(isotope_k),
             "--isotope_min_intensity", str(isotope_min_intensity),
             "--gradient_length", str(gradient_length),
-            "--mean_std_rt", str(mean_std_rt),
-            "--variance_std_rt", str(variance_std_rt),
-            "--mean_skewness", str(mean_skewness),
-            "--variance_skewness", str(variance_skewness),
+            "--sigma_lower_rt", str(sigma_lower_rt),
+            "--sigma_upper_rt", str(sigma_upper_rt),
+            "--sigma_alpha_rt", str(sigma_alpha_rt),
+            "--sigma_beta_rt", str(sigma_beta_rt),
+            "--k_lower_rt", str(k_lower_rt),
+            "--k_upper_rt", str(k_upper_rt),
+            "--k_alpha_rt", str(k_alpha_rt),
+            "--k_beta_rt", str(k_beta_rt),
             "--z_score", str(z_score),
             "--target_p", str(target_p),
             "--sampling_step_size", str(sampling_step_size),
@@ -1242,10 +1353,14 @@ class MainWindow(QMainWindow):
         }
         config['distribution_settings'] = {
             'gradient_length': self.gradient_length_spin.value(),
-            'mean_std_rt': self.mean_std_rt_spin.value(),
-            'variance_std_rt': self.variance_std_rt_spin.value(),
-            'mean_skewness': self.mean_skewness_spin.value(),
-            'variance_skewness': self.variance_skewness_spin.value(),
+            'sigma_lower_rt': self.sigma_lower_rt_spin.value(),
+            'sigma_upper_rt': self.sigma_upper_rt_spin.value(),
+            'sigma_alpha_rt': self.sigma_alpha_rt_spin.value(),
+            'sigma_beta_rt': self.sigma_beta_rt_spin.value(),
+            'k_lower_rt': self.k_lower_rt_spin.value(),
+            'k_upper_rt': self.k_upper_rt_spin.value(),
+            'k_alpha_rt': self.k_alpha_rt_spin.value(),
+            'k_beta_rt': self.k_beta_rt_spin.value(),
             'z_score': self.z_score_spin.value(),
             'target_p': self.target_p_spin.value(),
             'sampling_step_size': self.sampling_step_size_spin.value(),
@@ -1313,11 +1428,16 @@ class MainWindow(QMainWindow):
         self.isotope_min_intensity_spin.setValue(isotopic_pattern.get('isotope_min_intensity', 1))
         self.isotope_centroid_checkbox.setChecked(isotopic_pattern.get('isotope_centroid', True))
         distribution_settings = config.get('distribution_settings', {})
+        # TODO redefinition of defaults is bad practice
         self.gradient_length_spin.setValue(distribution_settings.get('gradient_length', 3600))
-        self.mean_std_rt_spin.setValue(distribution_settings.get('mean_std_rt', 1.0))
-        self.variance_std_rt_spin.setValue(distribution_settings.get('variance_std_rt', 0.1))
-        self.mean_skewness_spin.setValue(distribution_settings.get('mean_skewness', 1.5))
-        self.variance_skewness_spin.setValue(distribution_settings.get('variance_skewness', 0.1))
+        self.sigma_lower_rt_spin.setValue(distribution_settings.get('sigma_lower_rt', 1.969))
+        self.sigma_upper_rt_spin.setValue(distribution_settings.get('sigma_upper_rt', 3.281))
+        self.sigma_alpha_rt_spin.setValue(distribution_settings.get('sigma_alpha_rt', 4.0))
+        self.sigma_beta_rt_spin.setValue(distribution_settings.get('sigma_beta_rt', 4.0))
+        self.k_lower_rt_spin.setValue(distribution_settings.get('k_lower_rt', 0.0))
+        self.k_upper_rt_spin.setValue(distribution_settings.get('k_upper_rt', 10.0))
+        self.k_alpha_rt_spin.setValue(distribution_settings.get('k_alpha_rt', 1.0))
+        self.k_beta_rt_spin.setValue(distribution_settings.get('k_beta_rt', 20.0))
         self.z_score_spin.setValue(distribution_settings.get('z_score', 0.99))
         self.target_p_spin.setValue(distribution_settings.get('target_p', 0.999))
         self.sampling_step_size_spin.setValue(distribution_settings.get('sampling_step_size', 0.001))

@@ -47,10 +47,14 @@ isotope_centroid = true
 
 [distribution_settings]
 gradient_length = 3600.0
-mean_std_rt = 1.0
-variance_std_rt = 0.1
-mean_skewness = 1.5
-variance_skewness = 0.1
+sigma_lower_rt  = 0.1
+sigma_upper_rt  = 2
+sigma_alpha_rt  = 1
+sigma_beta_rt   = 1
+k_lower_rt = 0.1
+k_upper_rt = 2
+k_alpha_rt = 1
+k_beta_rt  = 1
 std_im = 0.01
 variance_std_im = 0.001
 z_score = 0.99
