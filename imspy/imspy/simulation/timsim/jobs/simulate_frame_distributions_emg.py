@@ -216,7 +216,6 @@ def simulate_frame_distributions_emg(
     mus = estimate_mu_from_mode_emg(peptide_rt.retention_time_gru_predictor, sigmas, lambdas)
     peptide_rt['rt_sigma'] = sigmas
     peptide_rt['rt_lambda'] = lambdas
-    peptide_rt['rt_mu'] = mus
     
     occurrences = ims.calculate_frame_occurrences_emg_par(
         times_np,
@@ -268,6 +267,8 @@ def simulate_frame_distributions_emg(
     peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(
         lambda r: python_list_to_json_string(r, as_float=True)
     )
+
+    peptide_rt['rt_mu'] = mus
 
     # remove empty lists, that are now cast to strings, for frame_abundance
     peptide_rt_filtered = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 2]
