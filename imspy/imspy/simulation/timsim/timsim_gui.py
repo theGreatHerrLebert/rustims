@@ -307,21 +307,23 @@ class MainWindow(QMainWindow):
         self.main_layout = QVBoxLayout(main_tab)
         self.init_main_settings()
         self.init_peptide_digestion_settings()
-        self.init_peptide_intensity_settings()
+        # self.init_peptide_intensity_settings()
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
         self.init_charge_state_probabilities()
         self.init_performance_settings()
+        self.init_dda_settings()
         self.init_console()
         self.main_layout.addWidget(self.main_settings_group)
         self.main_layout.addWidget(self.peptide_digestion_group)
-        self.main_layout.addWidget(self.peptide_intensity_group)
+        # self.main_layout.addWidget(self.peptide_intensity_group)
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
         self.main_layout.addWidget(self.noise_settings_group)
         self.main_layout.addWidget(self.charge_state_probabilities_group)
         self.main_layout.addWidget(self.performance_settings_group)
+        self.main_layout.addWidget(self.dda_settings_group)
         self.main_layout.addWidget(self.console)
         self.main_layout.addWidget(self.run_button)
         self.main_layout.addWidget(self.cancel_button)
@@ -437,7 +439,7 @@ class MainWindow(QMainWindow):
                                    "Name your experiment to identify it in saved outputs and reports.")
         # Acquisition Type
         self.acquisition_combo = QComboBox()
-        self.acquisition_combo.addItems(["DIA", "SYNCHRO", "SLICE", "MIDIA"])
+        self.acquisition_combo.addItems(["DIA", "DDA", "SYNCHRO", "SLICE", "MIDIA"])
         self.add_setting_with_info(layout, "Acquisition Type:", self.acquisition_combo,
                                    "Select the acquisition method used to simulate data.")
         # Options (checkboxes)
@@ -653,6 +655,48 @@ class MainWindow(QMainWindow):
         self.peptide_intensity_group.setLayout(layout)
         self.main_layout.addWidget(self.peptide_intensity_group)
 
+    def init_dda_settings(self):
+        info_text = "Configure DDA selection parameters."
+        self.dda_settings_group = CollapsibleBox("DDA Settings", info_text)
+        layout = self.dda_settings_group.content_layout
+
+        # Precursors Every
+        self.precursors_every_spin = QSpinBox()
+        self.precursors_every_spin.setRange(2, 50)
+        self.precursors_every_spin.setValue(7)
+        self.add_setting_with_info(layout, "Precursors Every:", self.precursors_every_spin,
+                                   "Number of precursors to select every cycle (default: 10)")
+
+        # Precursor Intensity Threshold
+        self.precursor_intensity_threshold_spin = QDoubleSpinBox()
+        self.precursor_intensity_threshold_spin.setRange(0, 1e6)
+        self.precursor_intensity_threshold_spin.setValue(500)
+        self.add_setting_with_info(layout, "Precursor Intensity Threshold:", self.precursor_intensity_threshold_spin,
+                                   "Intensity threshold for precursor selection (default: 500)")
+
+        # Maximum Precursors
+        self.max_precursors_spin = QSpinBox()
+        self.max_precursors_spin.setRange(1, 1000)
+        self.max_precursors_spin.setValue(7)
+        self.add_setting_with_info(layout, "Max Precursors:", self.max_precursors_spin,
+                                   "Maximum number of precursors to select per cycle (default: 25)")
+
+        # Exclusion Width
+        self.exclusion_width_spin = QSpinBox()
+        self.exclusion_width_spin.setRange(1, 1000)
+        self.exclusion_width_spin.setValue(25)
+        self.add_setting_with_info(layout, "Exclusion Width:", self.exclusion_width_spin,
+                                   "Exclusion width for precursor selection (default: 25)")
+
+        # Selection Mode using QComboBox with fixed options:
+        self.selection_mode_combo = QComboBox()
+        self.selection_mode_combo.addItems(["topN", "random"])
+        self.add_setting_with_info(layout, "Selection Mode:", self.selection_mode_combo,
+                                   "Selection mode for precursors (default: topN)")
+
+        # Add the group to your main layout
+        self.main_layout.addWidget(self.dda_settings_group)
+
     def init_isotopic_pattern_settings(self):
         info_text = "Configure isotopic pattern generation (number of isotopes, intensity thresholds, centroiding)."
         self.isotopic_pattern_group = CollapsibleBox("Isotopic Pattern Settings", info_text)
@@ -836,31 +880,31 @@ class MainWindow(QMainWindow):
         param_dict = calculate_rt_defaults(value)
         self.sigma_lower_rt_spin.setValue(param_dict['sigma_lower_rt'])
         self.sigma_upper_rt_spin.setValue(param_dict['sigma_upper_rt'])
-        
+
     def update_emg_sigma_lower(self, value):
         self.emg_plot.set_sigma_lower(value)
-    
+
     def update_emg_sigma_upper(self, value):
         self.emg_plot.set_sigma_upper(value)
-    
+
     def update_emg_sigma_alpha(self, value):
         self.emg_plot.set_sigma_alpha(value)
-        
+
     def update_emg_sigma_beta(self, value):
         self.emg_plot.set_sigma_beta(value)
-    
+
     def update_emg_k_lower(self, value):
         self.emg_plot.set_k_lower(value)
-        
+
     def update_emg_k_upper(self, value):
         self.emg_plot.set_k_upper(value)
-    
+
     def update_emg_k_alpha(self, value):
         self.emg_plot.set_k_alpha(value)
-    
+
     def update_emg_k_beta(self, value):
         self.emg_plot.set_k_beta(value)
-        
+
     def init_noise_settings(self):
         info_text = "Configure simulation noise parameters, including m/z noise and real data noise options."
         self.noise_settings_group = CollapsibleBox("Noise Settings", info_text)
@@ -1224,6 +1268,15 @@ class MainWindow(QMainWindow):
             args.append("--phospho_mode")
         if modifications:
             args.extend(["--modifications", modifications])
+
+        args.extend([
+            "--precursors_every", str(self.precursors_every_spin.value()),
+            "--precursor_intensity_threshold", str(self.precursor_intensity_threshold_spin.value()),
+            "--max_precursors", str(self.max_precursors_spin.value()),
+            "--exclusion_width", str(self.exclusion_width_spin.value()),
+            "--selection_mode", self.selection_mode_combo.currentText(),
+        ])
+
         args = [str(arg) for arg in args]
         if self.process and self.process.state() == QProcess.Running:
             self.process.kill()
