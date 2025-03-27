@@ -726,6 +726,7 @@ def main():
             intensity_threshold=args.precursor_intensity_threshold,
             max_precursors=args.max_precursors,
             selection_mode=args.selection_mode,
+            precursor_exclusion_width=args.exclusion_width,
         )
         acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
         acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
