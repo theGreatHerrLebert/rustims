@@ -1,7 +1,7 @@
 import json
-
-from typing import Tuple, Any
+from typing import Tuple
 import logging
+from itertools import count
 
 import numpy as np
 import pandas as pd
@@ -42,13 +42,12 @@ def simulate_dda_pasef_selection_scheme(
         intensity_threshold: float,
         max_precursors: int,
         selection_mode: str = "topN",
+        precursor_exclusion_width: int = 25
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Simulate DDA selection scheme.
-
-    This function selects precursor ions and then distributes them across fragment frames.
-    The returned PASEF meta table is later reformatted using the mapping in PASEF_META_COLUMNS_MAPPING,
-    and the precursor table is reformatted according to PRECURSOR_MAPPING.
+    Simulate DDA selection scheme with dynamic exclusion.
+    Each ion is excluded for `exclusion_frames` frames after being scheduled.
+    Also, each precursor is assigned a new unique id.
     """
     if verbose:
         print("Simulating dda-PASEF selection scheme...")
@@ -56,6 +55,7 @@ def simulate_dda_pasef_selection_scheme(
         print(f"intensity_threshold: {intensity_threshold}")
         print(f"max_precursors: {max_precursors}")
         print(f"selection_mode: {selection_mode}")
+        print(f"exclusion_frames: {precursor_exclusion_width}")
 
     # retrieve all frame IDs and initialize frame types (default: 8 for fragmentation)
     frames = acquisition_builder.frame_table.frame_id.values
@@ -90,14 +90,14 @@ def simulate_dda_pasef_selection_scheme(
     # transform json string spectrum to MzSpectrum
     ions["simulated_spectrum"] = ions.simulated_spectrum.apply(MzSpectrum.from_jsons)
 
-    # in random mode, set intensity threshold to a lower value (need to figure out what makes sense here)
-    if selection_mode.lower() == "random":
-        intensity_threshold = 25.0
-
     X = create_ion_table(ions, ms_1_frames, intensity_min=intensity_threshold)
 
     pasef_meta_list = []
     precursors_list = []
+
+    # {ion_id: last_frame_scheduled}
+    global_scheduled_ion_tracker = {}
+    unique_id_generator = count(start=1)
 
     for frame in tqdm(np.sort(list(ms_1_frames)), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
@@ -106,9 +106,12 @@ def simulate_dda_pasef_selection_scheme(
                 X_tmp,
                 k=precursors_every - 1,
                 n=max_precursors,
-                w=13,
+                w=11,
                 selection_mode=selection_mode,
-                scan_max=scan_max
+                scan_max=scan_max,
+                scheduled_ion_tracker=global_scheduled_ion_tracker,
+                exclusion_frames=precursor_exclusion_width,
+                unique_id_generator=unique_id_generator
             )
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
@@ -170,8 +173,19 @@ def schedule_precursors(
         ce_slope: float = -0.0345,
         selection_mode: str = "topN",
         scan_max: int = 913,
+        scheduled_ion_tracker: dict = None,
+        exclusion_frames: int = 25,
+        unique_id_generator=None
 ):
+    """
+    Schedules precursors for a given MS1 frame.
+
+    - scheduled_ion_tracker: a dict mapping ion_id -> last frame (from ions.frame_id) where it was scheduled.
+      An ion is only eligible if (current_frame - last_scheduled_frame) >= exclusion_frames.
+    - unique_id_generator: a generator that yields unique IDs for precursors.
+    """
     frame_id_precursor = ions.frame_id.values[0]
+    current_frame = frame_id_precursor  # current MS1 frame id
 
     known_selection_modes = ["topN", "random"]
 
@@ -185,17 +199,19 @@ def schedule_precursors(
     # Step 2: Initialize list of k empty fragment frames
     fragment_frames = [[] for _ in range(k)]
 
-    # Initialize dynamic exclusion set for ion_ids already scheduled.
-    scheduled_ion_ids = set()
+    # Ensure scheduled_ion_tracker is a dict
+    if scheduled_ion_tracker is None:
+        scheduled_ion_tracker = {}
 
-    # Step 3: Assignment loop
     scheduled_rows = []
     precursor_rows = []
 
     for _, ion in ions_sorted.iterrows():
-        # Skip if this ion has already been scheduled
-        if ion.ion_id in scheduled_ion_ids:
-            continue
+        # check if ion was scheduled and if it was scheduled in the last exclusion_frames frames
+        if ion.ion_id in scheduled_ion_tracker:
+            last_frame = scheduled_ion_tracker[ion.ion_id]
+            if (current_frame - last_frame) < exclusion_frames:
+                continue
 
         assigned = False
         new_start = ion.scan_apex - w
@@ -208,26 +224,28 @@ def schedule_precursors(
             new_end = scan_max
 
         for fragment_frame_index in range(k):
-            current_frame = fragment_frames[fragment_frame_index]
+            current_frame_list = fragment_frames[fragment_frame_index]
 
-            # skip full frames
-            if len(current_frame) >= n:
+            if len(current_frame_list) >= n:
                 continue
 
-            # check scan overlap with existing ions in this frame
             conflict = any(
                 not (new_end < (existing_apex - w) or new_start > (existing_apex + w))
-                for existing_apex, _ in current_frame
+                for existing_apex, _ in current_frame_list
             )
 
             if not conflict:
-                current_frame.append((ion.scan_apex, ion.ion_id))
+                current_frame_list.append((ion.scan_apex, ion.ion_id))
+                # Calculate the frame for the scheduled precursor (offset by fragment frame index)
                 frame_id = frame_id_precursor + fragment_frame_index + 1
 
                 mz_max_contrib = ion.mz_max_contrib
                 mz_mono = ion.mz_mono
                 mz_avg = (mz_mono + ion.mz_max) / 2.0
                 isolation_width = 3.0 if (ion.mz_max - mz_mono) > 2.0 else 2.0
+
+                # Get a new unique ID for this precursor
+                new_precursor_id = next(unique_id_generator) if unique_id_generator is not None else ion.ion_id
 
                 scheduled_rows.append({
                     "Frame": frame_id,
@@ -236,11 +254,11 @@ def schedule_precursors(
                     "IsolationMz": mz_max_contrib,
                     "IsolationWidth": isolation_width,
                     "CollisionEnergy": ce_bias + ce_slope * ion.scan_apex,
-                    "Precursor": ion.ion_id
+                    "Precursor": new_precursor_id  # using new unique id instead of ion id
                 })
 
                 precursor_rows.append({
-                    "Id": ion.ion_id,
+                    "Id": new_precursor_id,  # unique id replacing ion.ion_id
                     "LargestPeakMz": mz_max_contrib,
                     "AverageMz": mz_avg,
                     "MonoisotopicMz": mz_mono,
@@ -250,20 +268,30 @@ def schedule_precursors(
                     "Parent": frame_id_precursor
                 })
 
-                # Add ion_id to dynamic exclusion set so it will not be scheduled again
-                scheduled_ion_ids.add(ion.ion_id)
-
+                # Update the last scheduled frame for this ion
+                scheduled_ion_tracker[ion.ion_id] = current_frame
                 assigned = True
                 break
 
         if not assigned:
-            # Optionally log that the ion could not be scheduled
             Logger.debug("Ion id %s could not be scheduled in any fragment frame.", ion.ion_id)
 
-    schedule_df = pd.DataFrame(scheduled_rows).sort_values(by=["Frame", "ScanNumBegin"])
-    precursors_df = pd.DataFrame(precursor_rows).sort_values(by="ScanNumber")
+    # If no ions were scheduled, return empty DataFrames with the expected columns
+    if scheduled_rows:
+        schedule_df = pd.DataFrame(scheduled_rows).sort_values(by=["Frame", "ScanNumBegin"])
+    else:
+        schedule_df = pd.DataFrame(
+            columns=["Frame", "ScanNumBegin", "ScanNumEnd", "IsolationMz", "IsolationWidth", "CollisionEnergy",
+                     "Precursor"])
 
-    # ensure selected columns are integers
+    if precursor_rows:
+        precursors_df = pd.DataFrame(precursor_rows).sort_values(by="ScanNumber")
+    else:
+        precursors_df = pd.DataFrame(
+            columns=["Id", "LargestPeakMz", "AverageMz", "MonoisotopicMz", "Charge", "ScanNumber", "Intensity",
+                     "Parent"])
+
+    # Ensure selected columns are integers if the DataFrames are not empty
     if not schedule_df.empty:
         schedule_df["Precursor"] = schedule_df["Precursor"].astype(int)
         schedule_df["Frame"] = schedule_df["Frame"].astype(int)
