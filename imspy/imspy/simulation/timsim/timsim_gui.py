@@ -1513,6 +1513,10 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    script_dir = Path(__file__).resolve().parent.parent
+    path = script_dir / "resources" / "icons" / "logo_2.png"
+    print(path)
+    app.setWindowIcon(QIcon(str(path)))
     app.setApplicationName("TimSim")
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     window = MainWindow()
