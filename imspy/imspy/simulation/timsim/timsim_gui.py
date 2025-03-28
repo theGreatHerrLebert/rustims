@@ -5,7 +5,6 @@ import markdown
 import qdarkstyle
 import toml
 import numpy as np
-from scipy.special import erfc
 from scipy.stats import exponnorm
 from imspy.simulation.timsim.simulator import calculate_rt_defaults
 
@@ -13,9 +12,9 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QVBoxLayout, QHBoxLayout, QFileDialog, QCheckBox, QSpinBox, QToolButton,
     QDoubleSpinBox, QComboBox, QGroupBox, QScrollArea, QAction, QMessageBox,
-    QTextEdit, QSlider, QGridLayout, QTabWidget
+    QTextEdit, QTabWidget
 )
-from PyQt5.QtCore import Qt, QProcess, QSize
+from PyQt5.QtCore import Qt, QProcess
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -24,6 +23,7 @@ import matplotlib.pyplot as plt
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+
 
 # =============================================================================
 # VTK Visualizer (unchanged)
@@ -128,6 +128,7 @@ class VTKVisualizer(QWidget):
         axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
         return axes
 
+
 # =============================================================================
 # Collapsible Box for Grouping Settings
 # =============================================================================
@@ -174,12 +175,13 @@ class CollapsibleBox(QWidget):
     def add_widget(self, widget):
         self.content_layout.addWidget(widget)
 
+
 # =============================================================================
 # EMGPlot for Distribution Visualization (unchanged)
 # =============================================================================
 class EMGPlot(FigureCanvas):
     def __init__(self):
-        self.fig, self.ax = plt.subplots(1,2)
+        self.fig, self.ax = plt.subplots(1, 2)
         super().__init__(self.fig)
         self.mu = 0
         self.central_interval_p = 0.76
@@ -203,10 +205,10 @@ class EMGPlot(FigureCanvas):
 
     def central_interval(self, mu, sigma, k):
         p = self.central_interval_p
-        higher = exponnorm.ppf(1-(1-p)/2, K=k, loc=mu, scale=sigma)
-        lower = exponnorm.ppf((1-p)/2, K=k, loc=mu, scale=sigma)
-        return higher-lower
-    
+        higher = exponnorm.ppf(1 - (1 - p) / 2, K=k, loc=mu, scale=sigma)
+        lower = exponnorm.ppf((1 - p) / 2, K=k, loc=mu, scale=sigma)
+        return higher - lower
+
     def update_plot(self):
         for ax in self.ax:
             ax.clear()
@@ -214,8 +216,9 @@ class EMGPlot(FigureCanvas):
         self.ax[1].set_xlim(0, 20)
         central_intervals = []
         for _ in range(self.N):
-            #TODO use rng
-            sampled_sigma = np.random.beta(a=self.sigma_alpha, b=self.sigma_beta) * (self.sigma_upper - self.sigma_lower) + self.sigma_lower
+            # TODO use rng
+            sampled_sigma = np.random.beta(a=self.sigma_alpha, b=self.sigma_beta) * (
+                        self.sigma_upper - self.sigma_lower) + self.sigma_lower
             sampled_k = np.random.beta(a=self.k_alpha, b=self.k_beta) * (self.k_upper - self.k_lower) + self.k_lower
             y = self.emg_pdf(self.x, self.mu, sampled_sigma, sampled_k)
             central_intervals.append(self.central_interval(self.mu, sampled_sigma, sampled_k))
@@ -226,10 +229,10 @@ class EMGPlot(FigureCanvas):
         self.ax[0].set_ylabel("Intensity")
         self.ax[1].hist(central_intervals, bins=20)
         ci_mean = np.mean(central_intervals)
-        self.ax[1].vlines(ci_mean, 0, self.ax[1].get_ylim()[1]*0.9 , color='r', linestyle='--')
-        self.ax[1].text(ci_mean, self.ax[1].get_ylim()[1]*0.91, f"Mean: {ci_mean:.2f}s")
-        self.ax[1].set_title(f"Central Interval ({self.central_interval_p*100:.1f}%) Sizes")
-        self.ax[1].set_xlabel(f"Central Interval ({self.central_interval_p*100:.1f}%) [Seconds]")
+        self.ax[1].vlines(ci_mean, 0, self.ax[1].get_ylim()[1] * 0.9, color='r', linestyle='--')
+        self.ax[1].text(ci_mean, self.ax[1].get_ylim()[1] * 0.91, f"Mean: {ci_mean:.2f}s")
+        self.ax[1].set_title(f"Central Interval ({self.central_interval_p * 100:.1f}%) Sizes")
+        self.ax[1].set_xlabel(f"Central Interval ({self.central_interval_p * 100:.1f}%) [Seconds]")
         self.ax[1].set_ylabel("Count")
         self.draw()
 
@@ -248,7 +251,7 @@ class EMGPlot(FigureCanvas):
     def set_sigma_beta(self, value):
         self.sigma_beta = value
         self.update_plot()
-    
+
     def set_k_lower(self, value):
         self.k_lower = value
         self.update_plot()
@@ -263,9 +266,11 @@ class EMGPlot(FigureCanvas):
 
     def set_k_beta(self, value):
         self.k_beta = value
-        self.update_plot()   
+        self.update_plot()
 
-# =============================================================================
+    # =============================================================================
+
+
 # MainWindow – The Main GUI
 # =============================================================================
 class MainWindow(QMainWindow):
@@ -496,7 +501,7 @@ class MainWindow(QMainWindow):
         existing_path_layout.addWidget(self.existing_path_input)
         existing_path_layout.addWidget(self.existing_path_browse)
         existing_setting_widget = self.add_setting_with_info(layout, "Existing Simulation Path:", existing_path_widget,
-                                                               "Select the directory with existing simulated data.")
+                                                             "Select the directory with existing simulated data.")
         existing_setting_widget.setVisible(False)
         self.from_existing_checkbox.toggled.connect(existing_setting_widget.setVisible)
         # Multi-FASTA options (visible if proteome_mix is checked)
@@ -519,7 +524,8 @@ class MainWindow(QMainWindow):
         multi_fasta_dilution_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_input)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_browse)
-        multi_fasta_dilution_setting_widget = self.add_setting_with_info(layout, "Multi-FASTA Dilution File:", multi_fasta_dilution_widget,
+        multi_fasta_dilution_setting_widget = self.add_setting_with_info(layout, "Multi-FASTA Dilution File:",
+                                                                         multi_fasta_dilution_widget,
                                                                          "Select the CSV file with dilution factors for the proteome mixture.")
         multi_fasta_dilution_setting_widget.setVisible(False)
         self.proteome_mix_checkbox.toggled.connect(multi_fasta_setting_widget.setVisible)
@@ -1438,6 +1444,7 @@ class MainWindow(QMainWindow):
         if index >= 0:
             self.selection_mode_combo.setCurrentIndex(index)
 
+
 def main():
     app = QApplication(sys.argv)
     script_dir = Path(__file__).resolve().parent.parent
@@ -1449,6 +1456,7 @@ def main():
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()
