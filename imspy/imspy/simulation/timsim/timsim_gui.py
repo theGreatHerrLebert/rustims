@@ -833,15 +833,17 @@ class MainWindow(QMainWindow):
         self.noise_settings_group = CollapsibleBox("Noise Settings", info_text)
         layout = self.noise_settings_group.content_layout
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-        noise_signals_layout = QHBoxLayout()
-        self.add_noise_to_signals_checkbox = QCheckBox("Add Noise to Signals")
-        self.add_noise_to_signals_checkbox.setChecked(True)
-        noise_signals_layout.addWidget(self.add_noise_to_signals_checkbox)
-        noise_signals_info = QLabel()
-        noise_signals_info.setPixmap(info_icon)
-        noise_signals_info.setToolTip("Add random noise to signal intensities in RT and IM.")
-        noise_signals_layout.addWidget(noise_signals_info)
-        layout.addLayout(noise_signals_layout)
+        # Add Noise to Frame Abundance
+        self.noise_frame_abundance_checkbox = QCheckBox("Add Noise to Frame Abundance")
+        self.noise_frame_abundance_checkbox.setChecked(False)
+        self.add_checkbox_with_info(layout, self.noise_frame_abundance_checkbox,
+                                    "Add noise to frame abundance (default: False)")
+
+        # Add Noise to Scan Abundance
+        self.noise_scan_abundance_checkbox = QCheckBox("Add Noise to Scan Abundance")
+        self.noise_scan_abundance_checkbox.setChecked(False)
+        self.add_checkbox_with_info(layout, self.noise_scan_abundance_checkbox,
+                                    "Add noise to scan abundance (default: False)")
         mz_noise_precursor_layout = QHBoxLayout()
         self.mz_noise_precursor_checkbox = QCheckBox("Add Precursor M/Z Noise")
         self.mz_noise_precursor_checkbox.setChecked(True)
@@ -1322,7 +1324,6 @@ class MainWindow(QMainWindow):
             'sampling_step_size': self.sampling_step_size_spin.value(),
         }
         config['noise_settings'] = {
-            'add_noise_to_signals': self.add_noise_to_signals_checkbox.isChecked(),
             'mz_noise_precursor': self.mz_noise_precursor_checkbox.isChecked(),
             'precursor_noise_ppm': self.precursor_noise_ppm_spin.value(),
             'mz_noise_fragment': self.mz_noise_fragment_checkbox.isChecked(),
@@ -1331,6 +1332,8 @@ class MainWindow(QMainWindow):
             'add_real_data_noise': self.add_real_data_noise_checkbox.isChecked(),
             'reference_noise_intensity_max': self.reference_noise_intensity_max_spin.value(),
             'down_sample_factor': self.down_sample_factor_spin.value(),
+            'noise_frame_abundance': self.noise_frame_abundance_checkbox.isChecked(),
+            'noise_scan_abundance': self.noise_scan_abundance_checkbox.isChecked(),
         }
         config['charge_state_probabilities'] = {
             'p_charge': self.p_charge_spin.value(),
@@ -1407,7 +1410,6 @@ class MainWindow(QMainWindow):
         self.sampling_step_size_spin.setValue(distribution_settings.get('sampling_step_size', 0.001))
 
         noise_settings = config.get('noise_settings', {})
-        self.add_noise_to_signals_checkbox.setChecked(noise_settings.get('add_noise_to_signals', False))
         self.mz_noise_precursor_checkbox.setChecked(noise_settings.get('mz_noise_precursor', False))
         self.precursor_noise_ppm_spin.setValue(noise_settings.get('precursor_noise_ppm', 5.0))
         self.mz_noise_fragment_checkbox.setChecked(noise_settings.get('mz_noise_fragment', False))
@@ -1416,6 +1418,8 @@ class MainWindow(QMainWindow):
         self.add_real_data_noise_checkbox.setChecked(noise_settings.get('add_real_data_noise', False))
         self.reference_noise_intensity_max_spin.setValue(noise_settings.get('reference_noise_intensity_max', 30))
         self.down_sample_factor_spin.setValue(noise_settings.get('down_sample_factor', 0.5))
+        self.noise_frame_abundance_checkbox.setChecked(noise_settings.get('noise_frame_abundance', False))
+        self.noise_scan_abundance_checkbox.setChecked(noise_settings.get('noise_scan_abundance', False))
 
         charge_state_probabilities = config.get('charge_state_probabilities', {})
         self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.5))
