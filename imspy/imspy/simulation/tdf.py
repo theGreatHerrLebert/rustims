@@ -158,6 +158,28 @@ class TDFWriter:
         tof = self.mz_to_tof(i, frame.mz).astype(np.uint32)
         scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
         intensity = frame.intensity.astype(np.uint32)
+
+        # stack scan and tof to form a 2D array for unique grouping
+        scan_tof = np.stack((scan, tof), axis=1)
+
+        # get unique (scan, tof) pairs and their inverse indices
+        unique_pairs, inverse_indices = np.unique(scan_tof, axis=0, return_inverse=True)
+
+        # sum intensities for each unique (scan, tof) pair
+        summed_intensity = np.bincount(inverse_indices, weights=intensity)
+
+        # now split back scan and tof
+        unique_scan = unique_pairs[:, 0]
+        unique_tof = unique_pairs[:, 1]
+
+        # sort first by scan, then by tof
+        sort_idx = np.lexsort((unique_tof, unique_scan))
+
+        # final sorted arrays
+        scan = unique_scan[sort_idx]
+        tof = unique_tof[sort_idx]
+        intensity = summed_intensity[sort_idx].astype(np.uint32)
+
         # get the real data as interleaved bytes
         real_data = get_compressible_data(tof, scan, intensity, self.helper_handle.num_scans)
         # compress the data

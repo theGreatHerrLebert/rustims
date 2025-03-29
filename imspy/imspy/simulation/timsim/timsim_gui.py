@@ -1087,7 +1087,6 @@ class MainWindow(QMainWindow):
         target_p = self.target_p_spin.value()
         sampling_step_size = self.sampling_step_size_spin.value()
 
-        add_noise_to_signals = self.add_noise_to_signals_checkbox.isChecked()
         mz_noise_precursor = self.mz_noise_precursor_checkbox.isChecked()
         precursor_noise_ppm = self.precursor_noise_ppm_spin.value()
         mz_noise_fragment = self.mz_noise_fragment_checkbox.isChecked()
@@ -1167,8 +1166,6 @@ class MainWindow(QMainWindow):
             args.append("--no_sample_occurrences")
         if not isotope_centroid:
             args.append("--no_isotope_centroid")
-        if add_noise_to_signals:
-            args.append("--add_noise_to_signals")
         if mz_noise_precursor:
             args.append("--mz_noise_precursor")
         if mz_noise_fragment:
