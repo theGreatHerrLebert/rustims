@@ -169,6 +169,7 @@ class TDFWriter:
         scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
         intensity = frame.intensity.astype(np.uint32)
 
+        # Since, mz -> tof is not bijective, we need to check for duplicates
         # stack scan and tof to form a 2D array for unique grouping
         scan_tof = np.stack((scan, tof), axis=1)
 
