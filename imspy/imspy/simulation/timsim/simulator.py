@@ -148,10 +148,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
     parser.set_defaults(sample_occurrences=True)
 
-    parser.add_argument("--intensity_value", type=float,
-                        help="Intensity value of all peptides if sample occurrence sampling is deactivated "
-                             "(default: 1e6)")
-
     # Distribution parameters
     # TODO add all defaults
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
@@ -287,7 +283,6 @@ def get_default_settings() -> dict:
         'isotope_min_intensity': 1,
         'isotope_centroid': True,
         'sample_occurrences': True,
-        'intensity_value': 1e6,
         'gradient_length': 3600,
         'z_score': 0.999,
         'sigma_lower_rt': None,
