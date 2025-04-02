@@ -18,32 +18,32 @@ def sample_sigma_lambda_emg(sigma_lower:ArrayLike,
                             lambda_beta:ArrayLike, 
                             n:int)->Tuple[ArrayLike,ArrayLike]:
     r"""
-    Sample $\sigma$ and $\lambda$ from scaled beta distributions:
+    Sample :math:`\sigma` and :math:`\lambda` from scaled beta distributions:
     
-    $$
-    \begin{aligned}
-    \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}})
-    \hat{\sigma} &\sim \text{Beta}(\alpha_{\sigma}, \beta_{\sigma})
-    \end{aligned}
-    $$
+    .. math::
+        \begin{aligned}
+        \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}})
+        \hat{\sigma} &\sim \text{Beta}(\alpha_{\sigma}, \beta_{\sigma})
+        \end{aligned}
+    
     
     This function is currently not used in the codebase.
     It is kept in case we want to use the EMG parametrization
-    with $\sigma$ and $\lambda$ instead of $\sigma$ and $k$.
+    with :math:`\sigma$ and :math:`\lambda` instead of :math:`\sigma` and :math:`k`.
 
     Args:
-        sigma_lower (ArrayLike): The lower bound for $\sigma$.
-        sigma_upper (ArrayLike): The upper bound for $\sigma$.
-        sigma_alpha (ArrayLike): The $\alpha$ parameter for the beta distribution for $\hat{sigma}$.
-        sigma_beta (ArrayLike): The $\beta$ parameter for the beta distribution for $\hat{sigma}$.
-        lambda_lower (ArrayLike): The lower bound for $\lambda$.
-        lambda_upper (ArrayLike): The upper bound for $\lambda$.
-        lambda_alpha (ArrayLike): The $\alpha$ parameter for the beta distribution for $\hat{\lambda}$.
-        lambda_beta (ArrayLike): The $\beta$ parameter for the beta distribution for $\hat{\lambda}$.
+        sigma_lower (ArrayLike): The lower bound for :math:`\sigma`.
+        sigma_upper (ArrayLike): The upper bound for :math:`\sigma`.
+        sigma_alpha (ArrayLike): The :math:`\alpha` parameter for the beta distribution for :math:`\hat{sigma}`.
+        sigma_beta (ArrayLike): The :math:`\beta` parameter for the beta distribution for :math:`\hat{sigma}`.
+        lambda_lower (ArrayLike): The lower bound for :math:`\lambda`.
+        lambda_upper (ArrayLike): The upper bound for :math:`\lambda`.
+        lambda_alpha (ArrayLike): The :math:`\alpha` parameter for the beta distribution for :math:`\hat{\lambda}`.
+        lambda_beta (ArrayLike): The :math:`\beta` parameter for the beta distribution for :math:`\hat{\lambda}`.
         n (int): Number of samples.
 
     Returns:
-        Tuple[ArrayLike, ArrayLike]: The sampled $\sigma$ and $\lambda$.
+        Tuple[ArrayLike, ArrayLike]: The sampled :math:`\sigma` and :math:`\lambda`.
     """
     # TODO use rng
     sigma_hat = np.random.beta(a=sigma_alpha, b=sigma_beta, size=n)
@@ -63,32 +63,33 @@ def sample_sigma_k_emg(sigma_lower: ArrayLike,
                         k_beta: ArrayLike, 
                         n:int)->Tuple[ArrayLike,ArrayLike]:
     r"""
-    Sample $\sigma$ and $k$ from scaled beta distributions:
+    Sample :math:`\sigma` and :math:`k` from scaled beta distributions:
     
-    $$
-    \begin{aligned}
-    \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}})
-    \hat{\sigma} &\sim \text{Beta}(\alpha_{\sigma}, \beta_{\sigma}) \\
-    $$
+    .. math::
+        \begin{aligned}
+        \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}})
+        \hat{\sigma} &\sim \text{Beta}(\alpha_{\sigma}, \beta_{\sigma}) \\
+        \end{aligned}
     
-    This function samples $\sigma$ and $k$ parameters for the exponentially modified Gaussian (EMG) distribution
+    This function samples :math:`\sigma` and :math:`k` parameters for the exponentially modified Gaussian (EMG) distribution
     with: 
     
-    $$k=frac{1}{\sigma\lambda}$$
+    .. math::
+    k=frac{1}{\sigma\lambda}
     
     Args:
-        sigma_lower (ArrayLike): The lower bound for $\sigma$.
-        sigma_upper (ArrayLike): The upper bound for $\sigma$.
-        sigma_alpha (ArrayLike): The $\alpha$ parameter for the beta distribution for $\hat{sigma}$.
-        sigma_beta (ArrayLike): The $\beta$ parameter for the beta distribution for $\hat{sigma}$.
-        k_lower (ArrayLike): The lower bound for $k$.
-        k_upper (ArrayLike): The upper bound for $k$.
-        k_alpha (ArrayLike): The $\alpha$ parameter for the beta distribution for $\hat{k}$.
-        k_beta (ArrayLike): The $\beta$ parameter for the beta distribution for $\hat{k}$.
+        sigma_lower (ArrayLike): The lower bound for :math:`\sigma`.
+        sigma_upper (ArrayLike): The upper bound for :math:`\sigma`.
+        sigma_alpha (ArrayLike): The :math:`\alpha$ parameter for the beta distribution for :math:`\hat{sigma}`.
+        sigma_beta (ArrayLike): The :math:`\beta$ parameter for the beta distribution for :math:`\hat{sigma}`.
+        k_lower (ArrayLike): The lower bound for :math:`k`.
+        k_upper (ArrayLike): The upper bound for :math:`k`.
+        k_alpha (ArrayLike): The :math:`\alpha$ parameter for the beta distribution for :math:`\hat{k}`.
+        k_beta (ArrayLike): The :math:`\beta$ parameter for the beta distribution for :math:`\hat{k}`.
         n (int): Number of samples.
 
     Returns:
-        Tuple[ArrayLike, ArrayLike]: The sampled $\sigma$ and $k$.
+        Tuple[ArrayLike, ArrayLike]: The sampled :math:`\sigma` and :math:`k`.
     """
     # TODO use rng
     sigma_hat = np.random.beta(a=sigma_alpha, b=sigma_beta, size=n)
@@ -122,21 +123,21 @@ def erfcxinv(y:ArrayLike, n:int=10)->ArrayLike:
 
 def estimate_mu_from_mode_emg(mode: ArrayLike, sigma: ArrayLike, lambda_: ArrayLike)->ArrayLike:
     r"""
-    Estimate the parameter $\mu$ of an EMG distribution from the mode (vectorized).
+    Estimate the parameter :math:`\mu` of an EMG distribution from the mode (vectorized).
     The function uses the following formula 
     (adapted from en.wikipedia.org/wiki/Exponentially_modified_Gaussian_distribution)
     
-    $$
-    \mu = \x_m + \sqrt{2}\sigma\text{erfcx}^{-1}\left(\frac{1}{\lambda\sigma}\sqrt{\frac{2}{\pi}}\right)-\sigma^2\lambda
-    $$
+    .. math::
+        \mu = \x_m + \sqrt{2}\sigma\text{erfcx}^{-1}\left(\frac{1}{\lambda\sigma}\sqrt{\frac{2}{\pi}}\right)-\sigma^2\lambda
+    
     
     Args:
         mode (ArrayLike): The modes of the EMG distributions.
-        sigma (ArrayLike): EMG parameters $\sigma$.
-        lambda_ (ArrayLike): EMG parameters $\lambda$.
+        sigma (ArrayLike): EMG parameters :math:`\sigma`.
+        lambda_ (ArrayLike): EMG parameters :math:`\lambda`.
     
     Returns:
-        ArrayLike: The estimated parameters $\mu$.
+        ArrayLike: The estimated parameters :math:`\mu`.
     """
     return mode + np.sqrt(2)*sigma*erfcxinv(1/(lambda_*sigma)*np.sqrt(2/np.pi))-np.power(sigma,2)*lambda_
 
