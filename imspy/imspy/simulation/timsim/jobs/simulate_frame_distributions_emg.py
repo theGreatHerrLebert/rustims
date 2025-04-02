@@ -22,7 +22,7 @@ def sample_sigma_lambda_emg(sigma_lower:ArrayLike,
     
     .. math::
         \begin{aligned}
-        \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}})
+        \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}}) \\
         \hat{\sigma} &\sim \text{Beta}(\alpha_{\sigma}, \beta_{\sigma})
         \end{aligned}
     
@@ -67,7 +67,7 @@ def sample_sigma_k_emg(sigma_lower: ArrayLike,
     
     .. math::
         \begin{aligned}
-        \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}})
+        \sigma &= \sigma_{\text{lower}} + \hat{\sigma} \cdot (\sigma_{\text{upper}} - \sigma_{\text{lower}}) \\
         \hat{\sigma} &\sim \text{Beta}(\alpha_{\sigma}, \beta_{\sigma}) \\
         \end{aligned}
     
@@ -75,7 +75,7 @@ def sample_sigma_k_emg(sigma_lower: ArrayLike,
     with: 
     
     .. math::
-    k=frac{1}{\sigma\lambda}
+        k=frac{1}{\sigma\lambda}
     
     Args:
         sigma_lower (ArrayLike): The lower bound for :math:`\sigma`.
@@ -128,7 +128,7 @@ def estimate_mu_from_mode_emg(mode: ArrayLike, sigma: ArrayLike, lambda_: ArrayL
     (adapted from en.wikipedia.org/wiki/Exponentially_modified_Gaussian_distribution)
     
     .. math::
-        \mu = \x_m + \sqrt{2}\sigma\text{erfcx}^{-1}\left(\frac{1}{\lambda\sigma}\sqrt{\frac{2}{\pi}}\right)-\sigma^2\lambda
+        \mu = x_m + \sqrt{2}\sigma\text{erfcx}^{-1}\left(\frac{1}{\lambda\sigma}\sqrt{\frac{2}{\pi}}\right)-\sigma^2\lambda
     
     
     Args:
