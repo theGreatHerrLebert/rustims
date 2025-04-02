@@ -29,7 +29,7 @@ def sample_sigma_lambda_emg(sigma_lower:ArrayLike,
     
     This function is currently not used in the codebase.
     It is kept in case we want to use the EMG parametrization
-    with :math:`\sigma$ and :math:`\lambda` instead of :math:`\sigma` and :math:`k`.
+    with :math:`\sigma` and :math:`\lambda` instead of :math:`\sigma` and :math:`k`.
 
     Args:
         sigma_lower (ArrayLike): The lower bound for :math:`\sigma`.
@@ -75,17 +75,17 @@ def sample_sigma_k_emg(sigma_lower: ArrayLike,
     with: 
     
     .. math::
-        k=frac{1}{\sigma\lambda}
+        k=\frac{1}{\sigma\lambda}
     
     Args:
         sigma_lower (ArrayLike): The lower bound for :math:`\sigma`.
         sigma_upper (ArrayLike): The upper bound for :math:`\sigma`.
-        sigma_alpha (ArrayLike): The :math:`\alpha$ parameter for the beta distribution for :math:`\hat{sigma}`.
-        sigma_beta (ArrayLike): The :math:`\beta$ parameter for the beta distribution for :math:`\hat{sigma}`.
+        sigma_alpha (ArrayLike): The :math:`\alpha` parameter for the beta distribution for :math:`\hat{sigma}`.
+        sigma_beta (ArrayLike): The :math:`\beta` parameter for the beta distribution for :math:`\hat{sigma}`.
         k_lower (ArrayLike): The lower bound for :math:`k`.
         k_upper (ArrayLike): The upper bound for :math:`k`.
-        k_alpha (ArrayLike): The :math:`\alpha$ parameter for the beta distribution for :math:`\hat{k}`.
-        k_beta (ArrayLike): The :math:`\beta$ parameter for the beta distribution for :math:`\hat{k}`.
+        k_alpha (ArrayLike): The :math:`\alpha` parameter for the beta distribution for :math:`\hat{k}`.
+        k_beta (ArrayLike): The :math:`\beta` parameter for the beta distribution for :math:`\hat{k}`.
         n (int): Number of samples.
 
     Returns:
