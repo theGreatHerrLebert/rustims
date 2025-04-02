@@ -109,7 +109,7 @@ def erfcxinv(y:ArrayLike, n:int=10)->ArrayLike:
     Returns:
         ArrayLike: The inverse of the scaled complementary error function at y.
     """
-    assert np.all(y > 0), "y must be positive, as erfcx is only defined for positive values."
+    assert np.all(y > 0), "y must be positive, as erfcx only maps to positive values."
     # assert that y is an array of np.float64 
     y = np.array(y).astype(np.float64)
     # start value depends on the value of y

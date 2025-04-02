@@ -149,17 +149,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.set_defaults(sample_occurrences=True)
 
     # Distribution parameters
-    # TODO add all defaults
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
     parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .999)")
-    parser.add_argument("--sigma_lower_rt", type=float, help="Lower bound for sigma of an EMG chromatographic peak.")
-    parser.add_argument("--sigma_upper_rt", type=float, help="Upper bound for sigma of an EMG chromatographic peak.")
-    parser.add_argument("--sigma_alpha_rt", type=float, help="Alpha for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
-    parser.add_argument("--sigma_beta_rt", type=float, help="Beta for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
-    parser.add_argument("--k_lower_rt", type=float, help="Lower bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness)")
-    parser.add_argument("--k_upper_rt", type=float, help="Upper bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness)")
-    parser.add_argument("--k_alpha_rt", type=float, help="Alpha for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt)")
-    parser.add_argument("--k_beta_rt", type=float, help="Beta for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).")
+    parser.add_argument("--sigma_lower_rt", type=float, help="Lower bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
+    parser.add_argument("--sigma_upper_rt", type=float, help="Upper bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
+    parser.add_argument("--sigma_alpha_rt", type=float, help="Alpha for beta distribution (default: 4) for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
+    parser.add_argument("--sigma_beta_rt", type=float, help="Beta for beta distribution (default: 4) for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
+    parser.add_argument("--k_lower_rt", type=float, help="Lower bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness (default: 0)")
+    parser.add_argument("--k_upper_rt", type=float, help="Upper bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness (default: 10)")
+    parser.add_argument("--k_alpha_rt", type=float, help="Alpha for beta distribution (default: 1) for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt)")
+    parser.add_argument("--k_beta_rt", type=float, help="Beta for beta distribution (default: 20) for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).")
     parser.add_argument("--target_p", type=float, help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, help="Step size for frame distributions (default: 0.001)")
     parser.add_argument("--no_use_inverse_mobility_std_mean", dest="use_inverse_mobility_std_mean", action="store_false",

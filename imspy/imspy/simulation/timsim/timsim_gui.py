@@ -1400,8 +1400,9 @@ class MainWindow(QMainWindow):
         distribution_settings = config.get('distribution_settings', {})
         # TODO redefinition of defaults is bad practice
         self.gradient_length_spin.setValue(distribution_settings.get('gradient_length', 3600))
-        self.sigma_lower_rt_spin.setValue(distribution_settings.get('sigma_lower_rt', 1.969))
-        self.sigma_upper_rt_spin.setValue(distribution_settings.get('sigma_upper_rt', 3.281))
+        rt_default_values = calculate_rt_defaults(self.gradient_length_spin.value())
+        self.sigma_lower_rt_spin.setValue(distribution_settings.get('sigma_lower_rt', rt_default_values["sigma_lower_rt"]))
+        self.sigma_upper_rt_spin.setValue(distribution_settings.get('sigma_upper_rt', rt_default_values["sigma_upper_rt"]))
         self.sigma_alpha_rt_spin.setValue(distribution_settings.get('sigma_alpha_rt', 4.0))
         self.sigma_beta_rt_spin.setValue(distribution_settings.get('sigma_beta_rt', 4.0))
         self.k_lower_rt_spin.setValue(distribution_settings.get('k_lower_rt', 0.0))
