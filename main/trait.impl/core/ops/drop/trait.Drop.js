@@ -1,5 +1,5 @@
 (function() {
-    var implementors = Object.fromEntries([["rustdf",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.85.1/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"rustdf/data/raw/struct.BrukerTimsDataLibrary.html\" title=\"struct rustdf::data::raw::BrukerTimsDataLibrary\">BrukerTimsDataLibrary</a>"]]]]);
+    var implementors = Object.fromEntries([["rustdf",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.86.0/core/ops/drop/trait.Drop.html\" title=\"trait core::ops::drop::Drop\">Drop</a> for <a class=\"struct\" href=\"rustdf/data/raw/struct.BrukerTimsDataLibrary.html\" title=\"struct rustdf::data::raw::BrukerTimsDataLibrary\">BrukerTimsDataLibrary</a>"]]]]);
     if (window.register_implementors) {
         window.register_implementors(implementors);
     } else {
