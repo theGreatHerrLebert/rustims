@@ -15,7 +15,7 @@ struct TokenizerState {
 }
 
 #[pyclass]
-pub struct PyTokenizer {
+pub struct PyProformaTokenizer {
     common_composites: HashSet<String>,
     terminal_mods: HashSet<String>,
     special_tokens: HashSet<String>,
@@ -27,7 +27,7 @@ pub struct PyTokenizer {
 }
 
 #[pymethods]
-impl PyTokenizer {
+impl PyProformaTokenizer {
     #[new]
     fn new(
         common_composites: Vec<String>,
@@ -55,7 +55,7 @@ impl PyTokenizer {
             .map(|(i, tok)| (tok.clone(), i))
             .collect::<HashMap<_, _>>();
 
-        PyTokenizer {
+        PyProformaTokenizer {
             common_composites: common_composites.into_iter().collect(),
             terminal_mods: terminal_mods.into_iter().collect(),
             special_tokens: special_tokens.into_iter().collect(),
@@ -183,7 +183,7 @@ impl PyTokenizer {
             .map(|(i, tok)| (tok.clone(), i))
             .collect::<HashMap<_, _>>();
 
-        Ok(PyTokenizer {
+        Ok(PyProformaTokenizer {
             common_composites: state.common_composites.into_iter().collect(),
             terminal_mods: state.terminal_mods.into_iter().collect(),
             special_tokens: state.special_tokens.into_iter().collect(),
@@ -244,6 +244,6 @@ fn tokenize_internal(seq: &str, common_composites: &HashSet<String>) -> Vec<Stri
 
 #[pymodule]
 pub fn py_ml_utility(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyTokenizer>()?;
+    m.add_class::<PyProformaTokenizer>()?;
     Ok(())
 }
