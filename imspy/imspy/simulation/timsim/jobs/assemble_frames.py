@@ -133,6 +133,10 @@ def assemble_frames(
         # write frame ms/ms windows to database
         acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
             acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+        # write prm frame ms ms info
+        acquisition_builder.tdf_writer.write_prm_frame_ms_ms_info()
+        # write pasef frame ms ms info
+        acquisition_builder.tdf_writer.write_pasef_frame_ms_ms_info()
     else:
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(
