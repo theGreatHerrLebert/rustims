@@ -231,7 +231,7 @@ class TDFWriter:
     def write_calibration_info(self, mz_standard_deviation_ppm: float = 0.15) -> None:
         try:
             table = self.helper_handle.get_table("CalibrationInfo")
-            # TODO: do some stuff here
+            table.iloc[5].Value = str(mz_standard_deviation_ppm)
             self._create_table(self.conn, table, "CalibrationInfo")
 
         except Exception as e:
