@@ -351,12 +351,12 @@ pub fn simulate_charge_state_for_sequence(
     max_charge: Option<usize>,
     charged_probability: Option<f64>,
 ) -> Vec<f64> {
-    let charged_prob = charged_probability.unwrap_or(0.5);
-    let max_charge = max_charge.unwrap_or(5);
+    let charged_prob = charged_probability.unwrap_or(0.8);
+    let max_charge = max_charge.unwrap_or(4);
     let num_protonizable_sites = get_num_protonizable_sites(sequence);
     let mut charge_state_probs = vec![0.0; max_charge];
 
-    for charge in 0..max_charge {
+    for charge in 0..=max_charge {
         let binom = Binomial::new(charged_prob, num_protonizable_sites as u64).unwrap();
         let prob = binom.pmf(charge as u64);
 
