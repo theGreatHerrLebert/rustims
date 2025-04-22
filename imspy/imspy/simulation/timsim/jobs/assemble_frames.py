@@ -137,6 +137,8 @@ def assemble_frames(
         acquisition_builder.tdf_writer.write_prm_frame_ms_ms_info()
         # write pasef frame ms ms info
         acquisition_builder.tdf_writer.write_pasef_frame_ms_ms_info()
+        # write calibration info to database
+        acquisition_builder.tdf_writer.write_calibration_info()
     else:
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(

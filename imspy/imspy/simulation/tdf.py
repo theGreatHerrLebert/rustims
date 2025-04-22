@@ -228,6 +228,15 @@ class TDFWriter:
     def write_frame_meta_data(self) -> None:
         self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
 
+    def write_calibration_info(self, mz_standard_deviation_ppm: float = 0.15) -> None:
+        try:
+            table = self.helper_handle.get_table("CalibrationInfo")
+            # TODO: do some stuff here
+            self._create_table(self.conn, table, "CalibrationInfo")
+
+        except Exception as e:
+            print(f"Error writing calibration info table: {e}")
+
     def write_pasef_frame_ms_ms_info(self) -> None:
         try:
             self._create_table(self.conn, self.helper_handle.get_table("PasefFrameMsMsInfo"), "PasefFrameMsMsInfo")
