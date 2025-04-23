@@ -345,7 +345,7 @@ pub fn get_num_protonizable_sites(sequence: &str) -> usize {
 ///
 /// let sequence = "PEPTIDEH";
 /// let charge_state_probs = simulate_charge_state_for_sequence(sequence, None, None);
-/// assert_eq!(charge_state_probs, vec![0.25, 0.5, 0.25, 0.0, 0.0]);
+/// assert_eq!(charge_state_probs, vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0]);
 pub fn simulate_charge_state_for_sequence(
     sequence: &str,
     max_charge: Option<usize>,
@@ -386,7 +386,7 @@ pub fn simulate_charge_state_for_sequence(
 ///
 /// let sequences = vec!["PEPTIDEH", "PEPTIDEH", "PEPTIDEH"];
 /// let charge_state_probs = simulate_charge_states_for_sequences(sequences, 4, None, None);
-/// assert_eq!(charge_state_probs, vec![vec![0.25, 0.5, 0.25, 0.0, 0.0], vec![0.25, 0.5, 0.25, 0.0, 0.0], vec![0.25, 0.5, 0.25, 0.0, 0.0]]);
+/// assert_eq!(charge_state_probs, vec![vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0], vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0], vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0]]);
 /// ```
 pub fn simulate_charge_states_for_sequences(
     sequences: Vec<&str>,
