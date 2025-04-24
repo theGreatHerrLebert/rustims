@@ -296,6 +296,9 @@ def simulate_frame_distributions_emg(
         lambda r: python_list_to_json_string(r, as_float=False)
     )
 
+    # replace NaN values with 0.0 in frame abundance
+    peptide_rt['frame_abundance'] = [np.nan_to_num(np.array(x), nan=0.0).tolist() for x in abundances]
+
     peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(
         lambda r: python_list_to_json_string(r, as_float=True)
     )
