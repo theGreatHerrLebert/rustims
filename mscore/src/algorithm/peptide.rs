@@ -359,7 +359,7 @@ pub fn simulate_charge_state_for_sequence(
     
     for charge in 0..max_charge {
         charge_state_probs[charge] = binom.pmf(charge as u64);
-
+    }
     charge_state_probs
 }
 
