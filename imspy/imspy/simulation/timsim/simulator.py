@@ -634,6 +634,7 @@ def main():
         from_existing=args.from_existing,
         sigmas=rt_sigma,
         lambdas=rt_lambda,
+        gradient_length=acquisition_builder.gradient_length,
     )
 
     # Save proteins
