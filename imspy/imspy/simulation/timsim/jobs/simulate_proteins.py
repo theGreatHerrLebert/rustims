@@ -198,6 +198,9 @@ def simulate_proteins(
         n_proteins = len(tbl)
         print(f"Number of proteins requested exceeds the number of proteins in the FASTA file. Using {n_proteins} available proteins.")
 
+    else:
+        print(f"Sampling {n_proteins} proteins from the FASTA file.")
+
     sample = tbl.sample(n=n_proteins)
 
     # Generate peptides
