@@ -1,13 +1,9 @@
-use mscore::algorithm::utility::adaptive_integration;
+use mscore::data::smiles::parse_peptide;
 
 fn main() {
-    let f = |x: f64| 1.0 / (x * x + 1.0); // Example: Integrating the function 1/(x^2 + 1)
-    let a = 0.0;
-    let b = 1.0;
-    let epsabs = 1e-4;
-    let epsrel = 1e-4;
-
-    let (result, total_error) = adaptive_integration(&f, a, b, epsabs, epsrel);
-    println!("Result: {}", result);
-    println!("Total Estimated Error: {}", total_error);
+    let input = "[]-AC[U:4]DE[UNIMOD:35]F-[U:7]";
+    match parse_peptide(input) {
+        Ok(peptide) => println!("{:#?}", peptide),
+        Err(e) => println!("Error: {}", e),
+    }
 }
