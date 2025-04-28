@@ -1,14 +1,12 @@
-import os
-
 from numpy.typing import NDArray
-from typing import List, Tuple
+from typing import List
 import numba
 import numpy as np
 import pandas as pd
 
 import tensorflow as tf
 
-from dlomix.constants import PTMS_ALPHABET, ALPHABET_UNMOD
+from dlomix.constants import ALPHABET_UNMOD
 
 from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
                                            normalize_base_peak, mask_outofcharge, mask_outofrange)
