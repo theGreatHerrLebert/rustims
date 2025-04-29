@@ -60,7 +60,7 @@ class PeptideChargeStateDistribution(ABC):
 class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution, ABC):
 
     def __init__(self,
-                 charged_probability: float = .5,
+                 charged_probability: float = .8,
                  max_charge: int = 4,
                  ):
         self.charged_probability = charged_probability
@@ -74,13 +74,11 @@ class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution, ABC):
         probabilities = charge_state_distributions_from_sequences_rust(data.sequence.values, max_charge=self.max_charge,
                                                                        charge_probability=self.charged_probability)
 
-        probabilities = probabilities / np.expand_dims(np.sum(probabilities, axis=1), axis=1)
-
         r_table = []
 
         for charges, (_, row) in tqdm(zip(probabilities, data.iterrows()), desc='flatmap charges', ncols=80,
                                       total=len(probabilities)):
-            for i, charge in enumerate(charges, start=1):
+            for i, charge in enumerate(charges[1:], start=1):
                 if charge >= min_charge_contrib:
                     r_table.append({'peptide_id': row.peptide_id, 'charge': i, 'relative_abundance': charge})
 

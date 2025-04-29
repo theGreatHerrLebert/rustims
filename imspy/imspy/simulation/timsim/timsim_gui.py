@@ -946,7 +946,7 @@ class MainWindow(QMainWindow):
         self.p_charge_spin = QDoubleSpinBox()
         self.p_charge_spin.setRange(0, 1)
         self.p_charge_spin.setDecimals(2)
-        self.p_charge_spin.setValue(0.5)
+        self.p_charge_spin.setValue(0.8)
         p_charge_layout.addWidget(self.p_charge_label)
         p_charge_layout.addWidget(self.p_charge_spin)
         p_charge_info = QLabel()
@@ -1426,7 +1426,7 @@ class MainWindow(QMainWindow):
         self.noise_scan_abundance_checkbox.setChecked(noise_settings.get('noise_scan_abundance', False))
 
         charge_state_probabilities = config.get('charge_state_probabilities', {})
-        self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.5))
+        self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.8))
         self.min_charge_contrib_spin.setValue(charge_state_probabilities.get('min_charge_contrib', 0.25))
 
         performance_settings = config.get('performance_settings', {})
