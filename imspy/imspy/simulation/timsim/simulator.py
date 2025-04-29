@@ -173,7 +173,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Charge state probabilities
     parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.8)")
-    parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.25)")
+    parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.005)")
     parser.add_argument("--max_charge", type=int, help="Maximum charge state (default: 4)")
     parser.add_argument("--binomial_charge_model", dest="binomial_charge_model", action="store_true",
                         help="Use binomial charge state model (default: False)")
@@ -302,7 +302,7 @@ def get_default_settings() -> dict:
         'num_threads': -1,
         'batch_size': 256,
         'p_charge': 0.8,
-        'min_charge_contrib': 0.25,
+        'min_charge_contrib': 0.005,
         'noise_frame_abundance': False,
         'noise_scan_abundance': False,
         'mz_noise_precursor': False,

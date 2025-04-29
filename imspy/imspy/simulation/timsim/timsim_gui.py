@@ -941,8 +941,33 @@ class MainWindow(QMainWindow):
         self.charge_state_probabilities_group = CollapsibleBox("Charge State Probabilities", info_text)
         layout = self.charge_state_probabilities_group.content_layout
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
+        
+        binomial_charge_model_layout = QHBoxLayout()
+        self.binomial_charge_model_label = QLabel("Use Binomial Model:")
+        self.binomial_charge_model_checkbox = QCheckBox()
+        self.binomial_charge_model_checkbox.setChecked(False)
+        binomial_charge_model_layout.addWidget(self.binomial_charge_model_label)
+        binomial_charge_model_layout.addWidget(self.binomial_charge_model_checkbox)
+        binomial_charge_model_info = QLabel()
+        binomial_charge_model_info.setPixmap(info_icon)
+        binomial_charge_model_info.setToolTip("Whether to use a binomial model for charge state probabilities.")
+        binomial_charge_model_layout.addWidget(binomial_charge_model_info)
+        layout.addLayout(binomial_charge_model_layout)
+        
+        normalize_charge_states_layout = QHBoxLayout()
+        self.normalize_charge_states_label = QLabel("Normalize charge states:")
+        self.normalize_charge_states_checkbox = QCheckBox()
+        self.normalize_charge_states_checkbox.setChecked(True)
+        normalize_charge_states_layout.addWidget(self.normalize_charge_states_label)
+        normalize_charge_states_layout.addWidget(self.normalize_charge_states_checkbox)
+        normalize_charge_states_info = QLabel()
+        normalize_charge_states_info.setPixmap(info_icon)
+        normalize_charge_states_info.setToolTip("Whether to normalize the charge states, such that the probability mass of all charge kept charge states (charge states between 1 and set maximum charge) sums to one.")
+        normalize_charge_states_layout.addWidget(normalize_charge_states_info)
+        layout.addLayout(normalize_charge_states_layout)
+        
         p_charge_layout = QHBoxLayout()
-        self.p_charge_label = QLabel("Probability of Charge:")
+        self.p_charge_label = QLabel("Probability of Charge (binomial model):")
         self.p_charge_spin = QDoubleSpinBox()
         self.p_charge_spin.setRange(0, 1)
         self.p_charge_spin.setDecimals(2)
@@ -951,15 +976,17 @@ class MainWindow(QMainWindow):
         p_charge_layout.addWidget(self.p_charge_spin)
         p_charge_info = QLabel()
         p_charge_info.setPixmap(info_icon)
-        p_charge_info.setToolTip("Probability for a peptide to adopt a given charge state.")
+        p_charge_info.setToolTip("Probability for a peptide to adopt a given charge state (only relevant for binomial model).")
         p_charge_layout.addWidget(p_charge_info)
         layout.addLayout(p_charge_layout)
+        
         min_charge_contrib_layout = QHBoxLayout()
         self.min_charge_contrib_label = QLabel("Minimum Charge Contribution:")
         self.min_charge_contrib_spin = QDoubleSpinBox()
         self.min_charge_contrib_spin.setRange(0, 1)
-        self.min_charge_contrib_spin.setDecimals(2)
-        self.min_charge_contrib_spin.setValue(0.25)
+        self.min_charge_contrib_spin.setDecimals(3)
+        self.min_charge_contrib_spin.setSingleStep(0.001)
+        self.min_charge_contrib_spin.setValue(0.005)
         min_charge_contrib_layout.addWidget(self.min_charge_contrib_label)
         min_charge_contrib_layout.addWidget(self.min_charge_contrib_spin)
         min_charge_contrib_info = QLabel()
@@ -967,6 +994,19 @@ class MainWindow(QMainWindow):
         min_charge_contrib_info.setToolTip("Minimum relative contribution of peptides with this charge state.")
         min_charge_contrib_layout.addWidget(min_charge_contrib_info)
         layout.addLayout(min_charge_contrib_layout)
+        
+        max_charge_layout = QHBoxLayout()
+        self.max_charge_label = QLabel("Maximum charge state:")
+        self.max_charge_spin = QSpinBox()
+        self.max_charge_spin.setRange(1, 10)
+        self.max_charge_spin.setValue(4)
+        max_charge_layout.addWidget(self.max_charge_label)
+        max_charge_layout.addWidget(self.max_charge_spin)
+        max_charge_info = QLabel()
+        max_charge_info.setPixmap(info_icon)
+        max_charge_info.setToolTip("Maximum charge of a peptide")
+        max_charge_layout.addWidget(max_charge_info)
+        layout.addLayout(max_charge_layout)
 
     def init_performance_settings(self):
         info_text = "Adjust performance settings such as threading and batch size."
@@ -1098,6 +1138,9 @@ class MainWindow(QMainWindow):
 
         p_charge = self.p_charge_spin.value()
         min_charge_contrib = self.min_charge_contrib_spin.value()
+        max_charge = self.max_charge_spin.value()
+        binomial_charge_model = self.binomial_charge_model_checkbox.isChecked()
+        normalize_charge_states = self.normalize_charge_states_checkbox.isChecked()
 
         num_threads = self.num_threads_spin.value()
         batch_size = self.batch_size_spin.value()
@@ -1143,6 +1186,7 @@ class MainWindow(QMainWindow):
             "--reference_noise_intensity_max", str(reference_noise_intensity_max),
             "--down_sample_factor", str(down_sample_factor),
             "--p_charge", str(p_charge),
+            "--max-charge", str(max_charge),
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
@@ -1182,6 +1226,10 @@ class MainWindow(QMainWindow):
             args.append("--phospho_mode")
         if modifications:
             args.extend(["--modifications", modifications])
+        if binomial_charge_model:
+            args.extend("--binomial_charge_model")
+        if not normalize_charge_states:
+            args.extend("--not_normalize_charge_states")
 
         args.extend([
             "--precursors_every", str(self.precursors_every_spin.value()),
@@ -1341,6 +1389,9 @@ class MainWindow(QMainWindow):
         config['charge_state_probabilities'] = {
             'p_charge': self.p_charge_spin.value(),
             'min_charge_contrib': self.min_charge_contrib_spin.value(),
+            'max_charge': self.max_charge_spin.value(),
+            'binomial_charge_model': self.binomial_charge_model_checkbox.isChecked(),
+            'normalize_charge_states': self.normalize_charge_states_checkbox.isChecked(),
         }
         config['dda_settings'] = {
             'precursors_every': self.precursors_every_spin.value(),
@@ -1427,8 +1478,11 @@ class MainWindow(QMainWindow):
 
         charge_state_probabilities = config.get('charge_state_probabilities', {})
         self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.8))
-        self.min_charge_contrib_spin.setValue(charge_state_probabilities.get('min_charge_contrib', 0.25))
-
+        self.min_charge_contrib_spin.setValue(charge_state_probabilities.get('min_charge_contrib', 0.005))
+        self.max_charge_spin.setValue(charge_state_probabilities.get('max_charge', 4))
+        self.binomial_charge_model_checkbox.setChecked(charge_state_probabilities.get('binomial_charge_model', False))
+        self.normalize_charge_states_checkbox.setChecked(charge_state_probabilities.get('normalize_charge_states', True))
+        
         performance_settings = config.get('performance_settings', {})
         self.num_threads_spin.setValue(performance_settings.get('num_threads', -1))
         self.batch_size_spin.setValue(performance_settings.get('batch_size', 256))
