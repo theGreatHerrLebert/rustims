@@ -918,7 +918,7 @@ def main():
         psms_moka = mokapot.read_pin(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin")
         results, models = mokapot.brew(psms_moka, max_workers=params['num_threads'])
 
-        results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/")
+        results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/", decoys=True)
 
     PSM_pandas = PSM_pandas.drop(columns=["re_score"])
 
