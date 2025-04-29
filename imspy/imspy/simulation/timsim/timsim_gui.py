@@ -6,7 +6,7 @@ import qdarkstyle
 import toml
 import numpy as np
 from scipy.stats import exponnorm
-from imspy.simulation.timsim.simulator import calculate_rt_defaults
+from imspy.simulation.timsim.jobs.simulate_frame_distributions_emg import calculate_rt_defaults
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
