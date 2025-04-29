@@ -341,34 +341,11 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
         parser.error("the following argument is required: reference_path")
     if args.fasta_path is None:
         parser.error("the following argument is required: fasta_path")
-    if args.sigma_lower_rt is None or args.sigma_upper_rt is None:
-        rt_defaults = calculate_rt_defaults(args.gradient_length)
-        args.sigma_lower_rt = rt_defaults['sigma_lower_rt']
-        args.sigma_upper_rt = rt_defaults['sigma_upper_rt']
-    if args.sigma_lower_rt >= args.sigma_upper_rt:
-        parser.error("sigma_lower_rt must be less than sigma_upper_rt")
+    if args.sigma_lower_rt  is not None and args.sigma_upper_rt is not None:
+        if args.sigma_lower_rt >= args.sigma_upper_rt:
+            parser.error("sigma_lower_rt must be less than sigma_upper_rt")
     if args.k_lower_rt >= args.k_upper_rt:
         parser.error("k_lower_rt must be less than k_upper_rt")
-
-def calculate_rt_defaults(gradient_length: float) -> dict:
-    """Calculates 'sigma_lower_rt' and 'sigma_upper_rt', if these
-    are not provided by the user. The calculation is based
-    on the gradient length.
-
-    Args:
-        gradient_length (float): Length of the LC gradient in seconds.
-
-    Returns:
-        dict: Parameter dictionary with calculated values.
-    """
-            
-    sigma_middle_rt = gradient_length/(60*60)*0.75+1.125
-    sigma_lower_rt = sigma_middle_rt-sigma_middle_rt*0.25
-    sigma_upper_rt = sigma_middle_rt+sigma_middle_rt*0.25
-    return {
-        'sigma_lower_rt': sigma_lower_rt,
-        'sigma_upper_rt': sigma_upper_rt
-    }
     
 
 # ----------------------------------------------------------------------
@@ -638,6 +615,7 @@ def main():
         from_existing=args.from_existing,
         sigmas=rt_sigma,
         lambdas=rt_lambda,
+        gradient_length=acquisition_builder.gradient_length,
     )
 
     # Save proteins

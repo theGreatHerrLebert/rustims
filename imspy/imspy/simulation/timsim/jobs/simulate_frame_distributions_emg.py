@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy.special import erfcx
@@ -6,6 +6,27 @@ from numpy.typing import ArrayLike
 from imspy.simulation.utility import python_list_to_json_string, add_uniform_noise
 import imspy_connector
 ims = imspy_connector.py_utility
+
+
+def calculate_rt_defaults(gradient_length: float) -> dict:
+    """Calculates 'sigma_lower_rt' and 'sigma_upper_rt', if these
+    are not provided by the user. The calculation is based
+    on the gradient length.
+
+    Args:
+        gradient_length (float): Length of the LC gradient in seconds.
+
+    Returns:
+        dict: Parameter dictionary with calculated values.
+    """
+
+    sigma_middle_rt = gradient_length / (60 * 60) * 0.75 + 1.125
+    sigma_lower_rt = sigma_middle_rt - sigma_middle_rt * 0.25
+    sigma_upper_rt = sigma_middle_rt + sigma_middle_rt * 0.25
+    return {
+        'sigma_lower_rt': sigma_lower_rt,
+        'sigma_upper_rt': sigma_upper_rt
+    }
 
 
 def sample_sigma_lambda_emg(sigma_lower:ArrayLike, 
@@ -145,8 +166,8 @@ def estimate_mu_from_mode_emg(mode: ArrayLike, sigma: ArrayLike, lambda_: ArrayL
 def simulate_frame_distributions_emg(
         peptides: pd.DataFrame,
         frames: pd.DataFrame,
-        sigma_lower_rt: float,
-        sigma_upper_rt: float,
+        sigma_lower_rt: Union[float, None],
+        sigma_upper_rt: Union[float, None],
         sigma_alpha_rt: float,
         sigma_beta_rt: float,
         k_lower_rt: float,
@@ -163,6 +184,7 @@ def simulate_frame_distributions_emg(
         from_existing: bool = False,
         sigmas: np.ndarray = None,
         lambdas: np.ndarray = None,
+        gradient_length: float = None,
 ) -> pd.DataFrame:
     """Simulate frame distributions for peptides.
 
@@ -188,6 +210,7 @@ def simulate_frame_distributions_emg(
         from_existing: Use existing parameters.
         sigmas: sigmas.
         lambdas: lambdas.
+        gradient_length: Length of the LC gradient in seconds.
 
     Returns:
         pd.DataFrame: Peptide DataFrame with frame distributions.
@@ -196,6 +219,13 @@ def simulate_frame_distributions_emg(
     frames_np = frames.frame_id.values
     times_np = frames.time.values
     peptide_rt = peptides
+
+    if sigma_lower_rt is None:
+        if gradient_length is None:
+            raise ValueError("gradient_length must be provided if sigma_lower_rt is None")
+        defaults = calculate_rt_defaults(gradient_length)
+        sigma_lower_rt = defaults['sigma_lower_rt']
+        sigma_upper_rt = defaults['sigma_upper_rt']
 
     if verbose and not from_existing:
         print("Calculating frame distributions...")
@@ -265,6 +295,9 @@ def simulate_frame_distributions_emg(
     peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
         lambda r: python_list_to_json_string(r, as_float=False)
     )
+
+    # replace NaN values with 0.0 in frame abundance
+    peptide_rt['frame_abundance'] = [np.nan_to_num(np.array(x), nan=0.0).tolist() for x in abundances]
 
     peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(
         lambda r: python_list_to_json_string(r, as_float=True)

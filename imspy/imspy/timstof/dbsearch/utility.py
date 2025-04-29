@@ -528,7 +528,7 @@ def list_to_semicolon_string(value):
 
 def parse_to_tims2rescore(TDC, from_mgf: bool = False, file_name: str = None):
     TDC_tmp = TDC.copy()
-    TDC_tmp["filename"] = file_name if from_mgf else TDC_tmp.spec_idx.apply(lambda s: '-'.join(s.split('-')[-2:]) + ".d")
+    TDC_tmp["filename"] = file_name if from_mgf else TDC_tmp.spec_idx.apply(lambda s: '-'.join(s.split('-')[3:]) + ".d")
     TDC_tmp["scannr"] = TDC_tmp.spec_idx.apply(lambda i: int(i.split("-")[1]) - 1) if from_mgf else TDC_tmp.spec_idx.apply(lambda s: int(s.split('-')[2]) - 1)
     TDC_tmp["num_proteins"] = TDC_tmp.proteins.apply(lambda protein: len(parse_string_list(protein)))
     TDC_tmp["label"] = TDC_tmp.decoy.apply(lambda b: - 1 if b else 1)

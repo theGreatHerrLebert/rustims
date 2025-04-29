@@ -42,6 +42,15 @@ Have a look at the [imspy-README](https://github.com/theGreatHerrLebert/rustims/
   </figcaption>
 </figure>
 
+## Citation
+
+If you find rustims or imspy useful, please consider citing our paper:
+
+Teschner, D et al. “Rustims: An Open-Source Framework for Rapid Development and Processing of timsTOF Data-Dependent Acquisition Data.” [Journal of Proteome Research (2025)]( https://pubs.acs.org/doi/full/10.1021/acs.jproteome.4c00966).
+
+Thanks for supporting open-source science!
+
+
 ## Analyzing a DDA dataset from Bruker timsTOF with imspy_dda
 You can directly run the `imspy_dda` command to analyze a DDA dataset:
 ```shell
