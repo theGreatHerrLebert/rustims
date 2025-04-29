@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["peptide","spectrum"]};
+window.SIDEBAR_ITEMS = {"mod":["peptide","smiles","spectrum"]};
