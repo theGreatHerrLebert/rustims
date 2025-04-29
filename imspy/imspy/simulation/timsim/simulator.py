@@ -172,12 +172,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch_size", type=int, help="Batch size (default: 256)")
 
     # Charge state probabilities
-    parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.5)")
-    parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.25)")
+    parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.8)")
+    parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.005)")
     parser.add_argument("--max_charge", type=int, help="Maximum charge state (default: 4)")
     parser.add_argument("--binomial_charge_model", dest="binomial_charge_model", action="store_true",
                         help="Use binomial charge state model (default: False)")
     parser.set_defaults(binomial_charge_model=False)
+    parser.add_argument("--not_normalize_charge_states", action="store_false", dest="normalize_charge_states",
+                        help="Do not normalize charge states (default: False, i.e. normalize)")
+    parser.set_defaults(normalize_charge_states=True)
 
     parser.add_argument("--noise_frame_abundance", dest="noise_frame_abundance", action="store_true",
                         help="Add noise to frame abundance (default: False)")
@@ -237,7 +240,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Bruker SDK usage
     parser.add_argument("--no_bruker_sdk", action="store_false", dest="use_bruker_sdk",
-                        help="Disable Bruker SDK usage (default: True)")
+                        help="Disable Bruker SDK usage (default: False i.e. enable Bruker SDK usage)")
     parser.set_defaults(use_bruker_sdk=True)
 
     # Phospho mode
@@ -298,8 +301,8 @@ def get_default_settings() -> dict:
         'inverse_mobility_std_mean': 0.009,
         'num_threads': -1,
         'batch_size': 256,
-        'p_charge': 0.5,
-        'min_charge_contrib': 0.25,
+        'p_charge': 0.8,
+        'min_charge_contrib': 0.005,
         'noise_frame_abundance': False,
         'noise_scan_abundance': False,
         'mz_noise_precursor': False,
@@ -319,6 +322,7 @@ def get_default_settings() -> dict:
         'phospho_mode': False,
         'max_charge': 4,
         'binomial_charge_model': False,
+        'normalize_charge_states': True,
         'precursors_every': 10,
         'precursor_intensity_threshold': 500,
         'max_precursors': 25,
@@ -679,6 +683,7 @@ def main():
             max_charge=args.max_charge,
             use_binomial=args.binomial_charge_model,
             min_charge_contrib=args.min_charge_contrib,
+            normalize=args.normalize_charge_states,
         )
 
         # JOB 6: Ion mobilities
