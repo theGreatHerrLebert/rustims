@@ -16,6 +16,7 @@ def simulate_charge_states(
         charge_state_one_probability: float = 0.0,
         min_charge_contrib: float = 0.15,
         use_binomial: bool = False,
+        normalize: bool = True,
 ) -> pd.DataFrame:
     """Simulate charge states for peptides.
 
@@ -34,7 +35,7 @@ def simulate_charge_states(
     """
 
     if use_binomial:
-        ion_source = BinomialChargeStateDistributionModel(charged_probability=p_charge, max_charge=max_charge)
+        ion_source = BinomialChargeStateDistributionModel(charged_probability=p_charge, max_charge=max_charge, normalize=normalize)
         peptide_ions = ion_source.simulate_charge_state_distribution_pandas(
             peptides,
             min_charge_contrib=min_charge_contrib,

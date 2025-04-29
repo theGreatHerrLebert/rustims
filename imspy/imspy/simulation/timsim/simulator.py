@@ -178,6 +178,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--binomial_charge_model", dest="binomial_charge_model", action="store_true",
                         help="Use binomial charge state model (default: False)")
     parser.set_defaults(binomial_charge_model=False)
+    parser.add_argument("--not_normalize_charge_states", action="store_false", dest="normalize_charge_states",
+                        help="Do not normalize charge states (default: False, i.e. normalize)")
+    parser.set_defaults(normalize_charge_states=True)
 
     parser.add_argument("--noise_frame_abundance", dest="noise_frame_abundance", action="store_true",
                         help="Add noise to frame abundance (default: False)")
@@ -237,7 +240,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Bruker SDK usage
     parser.add_argument("--no_bruker_sdk", action="store_false", dest="use_bruker_sdk",
-                        help="Disable Bruker SDK usage (default: True)")
+                        help="Disable Bruker SDK usage (default: False i.e. enable Bruker SDK usage)")
     parser.set_defaults(use_bruker_sdk=True)
 
     # Phospho mode
@@ -319,6 +322,7 @@ def get_default_settings() -> dict:
         'phospho_mode': False,
         'max_charge': 4,
         'binomial_charge_model': False,
+        'normalize_charge_states': True,
         'precursors_every': 10,
         'precursor_intensity_threshold': 500,
         'max_precursors': 25,
@@ -679,6 +683,7 @@ def main():
             max_charge=args.max_charge,
             use_binomial=args.binomial_charge_model,
             min_charge_contrib=args.min_charge_contrib,
+            normalize=args.normalize_charge_states,
         )
 
         # JOB 6: Ion mobilities
