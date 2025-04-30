@@ -1,3 +1,5 @@
+from typing import Union
+
 import pandas as pd
 import numpy as np
 
@@ -6,16 +8,18 @@ from imspy.simulation.timsim.jobs.utility import phosphorylation_sizes
 
 def simulate_phosphorylation(
         peptides: pd.DataFrame,
+        ions = Union[None, pd.DataFrame],
         min_phospho_sizes: int = 2,
         pick_phospho_sites: int = 2,
         template: bool = True,
         verbose: bool = False,
-) -> pd.DataFrame:
+) -> (pd.DataFrame, Union[None, pd.DataFrame]):
     """
     Simulate phosphorylation for peptides.
 
     Args:
         peptides: Peptides DataFrame.
+        ions: Ions DataFrame.
         min_phospho_sizes: Minimum number of phosphorylation sizes.
         pick_phospho_sites: Number of phosphorylation sites to pick for each peptide.
         template: Generate template
@@ -62,7 +66,7 @@ def simulate_phosphorylation(
         # Since we changed the sequence, we need to recalculate the monoisotopic mass
         peptides_filtered["monoisotopic-mass"] = peptides_filtered.sequence.apply(lambda p: PeptideSequence(p).mono_isotopic_mass)
 
-        return peptides_filtered
+        return peptides_filtered, None
 
     else:
         if verbose:
@@ -77,4 +81,13 @@ def simulate_phosphorylation(
         # Since we changed the sequence, we need to recalculate the monoisotopic mass
         peptides["monoisotopic-mass"] = peptides.sequence.apply(lambda p: PeptideSequence(p).mono_isotopic_mass)
 
-        return peptides
+        # create a dictionary going from peptide id to sequence
+        peptide_dict = {peptide_id: peptide for peptide_id, peptide in zip(peptides.peptide_id, peptides.sequence)}
+
+        # replace the sequence in the ions dataframe with the new sequence
+        if ions is not None:
+            ions = ions.copy()
+            ions["sequence"] = ions.peptide_id.map(peptide_dict)
+            # Since we changed the sequence, we need to recalculate the monoisotopic mass
+
+        return peptides, ions

@@ -482,8 +482,9 @@ def main():
 
         if args.phospho_mode:
             # if args.from_existing is True, we need to set template to False
-            peptides = simulate_phosphorylation(
+            peptides, ions = simulate_phosphorylation(
                 peptides=peptides,
+                ions=ions,
                 pick_phospho_sites=2,
                 template=False,
                 verbose=not args.silent_mode
@@ -565,8 +566,9 @@ def main():
         if args.phospho_mode:
             if not args.silent_mode:
                 print("Simulating phosphorylation...")
-            peptides = simulate_phosphorylation(
+            peptides, _ = simulate_phosphorylation(
                 peptides=peptides,
+                ions=None,
                 pick_phospho_sites=2,
                 template=True,
                 verbose=not args.silent_mode
