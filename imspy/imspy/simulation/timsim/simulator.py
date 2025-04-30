@@ -480,6 +480,19 @@ def main():
                 peptides.loc[mask, 'events'] *= dilution_factor
                 peptides.loc[mask, 'fasta'] = fasta
 
+        if args.phospho_mode:
+            # Phospho mode
+            if not args.silent_mode:
+                print("Simulating phosphorylation. from existing template...")
+
+            # if args.from_existing is True, we need to set template to False
+            peptides = simulate_phosphorylation(
+                peptides=peptides,
+                pick_phospho_sites=2,
+                template=False,
+                verbose=not args.silent_mode
+            )
+
         # Warn if gradient length mismatch is large
         rt_max = peptides['retention_time_gru_predictor'].max()
         if abs(rt_max - args.gradient_length) / args.gradient_length > 0.05:
