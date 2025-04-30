@@ -65,7 +65,6 @@ def simulate_phosphorylation(
         return peptides_filtered
 
     else:
-
         if verbose:
             print("Simulating phosphorylation from existing template...")
 

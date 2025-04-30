@@ -481,10 +481,6 @@ def main():
                 peptides.loc[mask, 'fasta'] = fasta
 
         if args.phospho_mode:
-            # Phospho mode
-            if not args.silent_mode:
-                print("Simulating phosphorylation. from existing template...")
-
             # if args.from_existing is True, we need to set template to False
             peptides = simulate_phosphorylation(
                 peptides=peptides,
