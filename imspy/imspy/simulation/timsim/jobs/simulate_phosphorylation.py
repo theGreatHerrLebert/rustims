@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+
+from imspy.data.peptide import PeptideSequence
 from imspy.simulation.timsim.jobs.utility import phosphorylation_sizes
 
 def simulate_phosphorylation(
@@ -57,6 +59,9 @@ def simulate_phosphorylation(
             lambda r: r["sequence"][:r["phospho_site_a"] + 1] + "[UNIMOD:21]" + r["sequence"][r["phospho_site_a"] + 2:], axis=1
         )
 
+        # Since we changed the sequence, we need to recalculate the monoisotopic mass
+        peptides_filtered["monoisotopic-mass"] = peptides_filtered.sequence.apply(lambda p: PeptideSequence(p).mono_isotopic_mass)
+
         return peptides_filtered
 
     else:
@@ -69,5 +74,8 @@ def simulate_phosphorylation(
         peptides["sequence"] = peptides.apply(
             lambda r: r["sequence_original"][:r["phospho_site_b"] + 1] + "[UNIMOD:21]" + r["sequence_original"][r["phospho_site_b"] + 2:], axis=1
         )
+
+        # Since we changed the sequence, we need to recalculate the monoisotopic mass
+        peptides["monoisotopic-mass"] = peptides.sequence.apply(lambda p: PeptideSequence(p).mono_isotopic_mass)
 
         return peptides
