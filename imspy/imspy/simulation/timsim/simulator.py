@@ -394,7 +394,7 @@ def main():
     script_dir = Path(__file__).parent
     if not args.modifications or args.modifications == "":
         args.modifications = script_dir / "configs" / "modifications.toml"
-    mod_config = load_toml_config(args.modifications)
+    mod_config = load_toml_config(str(args.modifications))
     variable_modifications = mod_config.get('variable_modifications', {})
     static_modifications = mod_config.get('static_modifications', {})
 
@@ -640,8 +640,8 @@ def main():
             'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
             'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
             'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
-            'frame_abundance',
-            'phospho_site_a', 'phospho_site_b', 'sequence_original'
+            'frame_abundance', 'rt_mu',
+            'phospho_site_a', 'phospho_site_b', 'sequence_original',
         ]
         peptides = peptides[columns_phospho]
     elif args.proteome_mix:
