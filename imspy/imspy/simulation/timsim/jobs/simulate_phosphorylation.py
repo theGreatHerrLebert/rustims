@@ -60,7 +60,7 @@ def simulate_phosphorylation(
 
         # Add UNIMOD:21 to the A site
         peptides_filtered["sequence"] = peptides_filtered.apply(
-            lambda r: r["sequence"][:r["phospho_site_a"] + 1] + "[UNIMOD:21]" + r["sequence"][r["phospho_site_a"] + 2:], axis=1
+            lambda r: r["sequence"][:r["phospho_site_a"] + 1] + "[UNIMOD:21]" + r["sequence"][r["phospho_site_a"] + 1:], axis=1
         )
 
         # Since we changed the sequence, we need to recalculate the monoisotopic mass
@@ -75,7 +75,7 @@ def simulate_phosphorylation(
         # Add UNIMOD:21 to the B site if not a template
         peptides = peptides.copy()
         peptides["sequence"] = peptides.apply(
-            lambda r: r["sequence_original"][:r["phospho_site_b"] + 1] + "[UNIMOD:21]" + r["sequence_original"][r["phospho_site_b"] + 2:], axis=1
+            lambda r: r["sequence_original"][:r["phospho_site_b"] + 1] + "[UNIMOD:21]" + r["sequence_original"][r["phospho_site_b"] + 1:], axis=1
         )
 
         # Since we changed the sequence, we need to recalculate the monoisotopic mass
