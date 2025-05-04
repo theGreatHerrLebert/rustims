@@ -29,6 +29,7 @@ def simulate_charge_states(
         charge_state_one_probability: Probability of charge state one.
         min_charge_contrib: Minimum charge contribution.
         use_binomial: Use binomial distribution model, otherwise use deep learning model.
+        normalize: Normalize the charge state distribution.
 
     Returns:
         pd.DataFrame: Ions DataFrame.

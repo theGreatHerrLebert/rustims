@@ -1,19 +1,25 @@
+from typing import Union
+
 import pandas as pd
 import numpy as np
+
+from imspy.data.peptide import PeptideSequence
 from imspy.simulation.timsim.jobs.utility import phosphorylation_sizes
 
 def simulate_phosphorylation(
         peptides: pd.DataFrame,
+        ions = Union[None, pd.DataFrame],
         min_phospho_sizes: int = 2,
         pick_phospho_sites: int = 2,
         template: bool = True,
         verbose: bool = False,
-) -> pd.DataFrame:
+) -> (pd.DataFrame, Union[None, pd.DataFrame]):
     """
     Simulate phosphorylation for peptides.
 
     Args:
         peptides: Peptides DataFrame.
+        ions: Ions DataFrame.
         min_phospho_sizes: Minimum number of phosphorylation sizes.
         pick_phospho_sites: Number of phosphorylation sites to pick for each peptide.
         template: Generate template
@@ -54,20 +60,34 @@ def simulate_phosphorylation(
 
         # Add UNIMOD:21 to the A site
         peptides_filtered["sequence"] = peptides_filtered.apply(
-            lambda r: r["sequence"][:r["phospho_site_a"] + 1] + "[UNIMOD:21]" + r["sequence"][r["phospho_site_a"] + 2:], axis=1
+            lambda r: r["sequence"][:r["phospho_site_a"] + 1] + "[UNIMOD:21]" + r["sequence"][r["phospho_site_a"] + 1:], axis=1
         )
 
-        return peptides_filtered
+        # Since we changed the sequence, we need to recalculate the monoisotopic mass
+        peptides_filtered["monoisotopic-mass"] = peptides_filtered.sequence.apply(lambda p: PeptideSequence(p).mono_isotopic_mass)
+
+        return peptides_filtered, None
 
     else:
-
         if verbose:
             print("Simulating phosphorylation from existing template...")
 
         # Add UNIMOD:21 to the B site if not a template
         peptides = peptides.copy()
         peptides["sequence"] = peptides.apply(
-            lambda r: r["sequence_original"][:r["phospho_site_b"] + 1] + "[UNIMOD:21]" + r["sequence_original"][r["phospho_site_b"] + 2:], axis=1
+            lambda r: r["sequence_original"][:r["phospho_site_b"] + 1] + "[UNIMOD:21]" + r["sequence_original"][r["phospho_site_b"] + 1:], axis=1
         )
 
-        return peptides
+        # Since we changed the sequence, we need to recalculate the monoisotopic mass
+        peptides["monoisotopic-mass"] = peptides.sequence.apply(lambda p: PeptideSequence(p).mono_isotopic_mass)
+
+        # create a dictionary going from peptide id to sequence
+        peptide_dict = {peptide_id: peptide for peptide_id, peptide in zip(peptides.peptide_id, peptides.sequence)}
+
+        # replace the sequence in the ions dataframe with the new sequence
+        if ions is not None:
+            ions = ions.copy()
+            ions["sequence"] = ions.peptide_id.map(peptide_dict)
+            # Since we changed the sequence, we need to recalculate the monoisotopic mass
+
+        return peptides, ions

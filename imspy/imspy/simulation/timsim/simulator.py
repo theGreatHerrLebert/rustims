@@ -394,7 +394,7 @@ def main():
     script_dir = Path(__file__).parent
     if not args.modifications or args.modifications == "":
         args.modifications = script_dir / "configs" / "modifications.toml"
-    mod_config = load_toml_config(args.modifications)
+    mod_config = load_toml_config(str(args.modifications))
     variable_modifications = mod_config.get('variable_modifications', {})
     static_modifications = mod_config.get('static_modifications', {})
 
@@ -480,6 +480,16 @@ def main():
                 peptides.loc[mask, 'events'] *= dilution_factor
                 peptides.loc[mask, 'fasta'] = fasta
 
+        if args.phospho_mode:
+            # if args.from_existing is True, we need to set template to False
+            peptides, ions = simulate_phosphorylation(
+                peptides=peptides,
+                ions=ions,
+                pick_phospho_sites=2,
+                template=False,
+                verbose=not args.silent_mode
+            )
+
         # Warn if gradient length mismatch is large
         rt_max = peptides['retention_time_gru_predictor'].max()
         if abs(rt_max - args.gradient_length) / args.gradient_length > 0.05:
@@ -556,8 +566,9 @@ def main():
         if args.phospho_mode:
             if not args.silent_mode:
                 print("Simulating phosphorylation...")
-            peptides = simulate_phosphorylation(
+            peptides, _ = simulate_phosphorylation(
                 peptides=peptides,
+                ions=None,
                 pick_phospho_sites=2,
                 template=True,
                 verbose=not args.silent_mode
@@ -629,8 +640,8 @@ def main():
             'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
             'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
             'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
-            'frame_abundance',
-            'phospho_site_a', 'phospho_site_b', 'sequence_original'
+            'frame_abundance', 'rt_mu',
+            'phospho_site_a', 'phospho_site_b', 'sequence_original',
         ]
         peptides = peptides[columns_phospho]
     elif args.proteome_mix:
