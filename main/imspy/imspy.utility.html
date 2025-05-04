@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>imspy.utility package &#8212; imspy 0.2.33 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=73d7b0fc"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="canonical" href="https://thegreatherrlebert.github.io/rustims/imspy/imspy.utility.html" />
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="imspy.vis package" href="imspy.vis.html" />
+    <link rel="prev" title="imspy.timstof.dbsearch package" href="imspy.timstof.dbsearch.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="imspy-utility-package">
+<h1>imspy.utility package<a class="headerlink" href="#imspy-utility-package" title="Link to this heading">¶</a></h1>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.utility.sequence">
+<span id="imspy-utility-sequence-module"></span><h2>imspy.utility.sequence module<a class="headerlink" href="#module-imspy.utility.sequence" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.sequence.tokenize_unimod_sequence">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.sequence.</span></span><span class="sig-name descname"><span class="pre">tokenize_unimod_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">unimod_sequence</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.sequence.tokenize_unimod_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Tokenizes a sequence of modified amino acids.
+:type unimod_sequence: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>
+:param unimod_sequence: A string representing the sequence of amino acids with modifications.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">List</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>]</span></p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>A list of tokenized amino acids.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="module-imspy.utility.utilities">
+<span id="imspy-utility-utilities-module"></span><h2>imspy.utility.utilities module<a class="headerlink" href="#module-imspy.utility.utilities" title="Link to this heading">¶</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="imspy.utility.utilities.ExponentialGaussianDistribution">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">ExponentialGaussianDistribution</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">μ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">σ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">λ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.25</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.ExponentialGaussianDistribution" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="imspy.utility.utilities.NormalDistribution">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">NormalDistribution</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">μ</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">σ</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.NormalDistribution" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="imspy.utility.utilities.TokenSequence">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">TokenSequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sequence_tokenized</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">jsons</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.TokenSequence" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<dl class="py property">
+<dt class="sig sig-object py" id="imspy.utility.utilities.TokenSequence.jsons">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">jsons</span></span><a class="headerlink" href="#imspy.utility.utilities.TokenSequence.jsons" title="Link to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.exp_distribution">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">exp_distribution</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">λ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.exp_distribution" title="Link to this definition">¶</a></dt>
+<dd><p>Exponential function
+:type x: 
+:param x:
+:type λ: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>
+:param λ:
+:return:</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.exp_gaussian">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">exp_gaussian</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">μ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-3</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">σ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">λ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.25</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.exp_gaussian" title="Link to this definition">¶</a></dt>
+<dd><p>laplacian distribution with exponential decay
+:type x: 
+:param x:
+:type μ: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>
+:param μ:
+:type σ: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>
+:param σ:
+:type λ: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>
+:param λ:
+:return:</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.gaussian">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">gaussian</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">μ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">σ</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.gaussian" title="Link to this definition">¶</a></dt>
+<dd><p>Gaussian function
+:type x: 
+:param x:
+:type μ: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>
+:param μ:
+:type σ: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>
+:param σ:
+:return:</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.get_aa_num_proforma_sequence">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">get_aa_num_proforma_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sequence</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.get_aa_num_proforma_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>get number of amino acids in sequence</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>sequence</strong> (<em>str</em>) – proforma formatted aa sequence</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Number of amino acids</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.is_unimod_end">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">is_unimod_end</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">char</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.is_unimod_end" title="Link to this definition">¶</a></dt>
+<dd><p>Tests if char is end of unimod
+bracket</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>char</strong> (<em>str</em>) – Character of a proForma formatted aa sequence</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Whether char is end of unimod bracket</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.is_unimod_start">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">is_unimod_start</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">char</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.is_unimod_start" title="Link to this definition">¶</a></dt>
+<dd><p>Tests if char is start of unimod
+bracket</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>char</strong> (<em>str</em>) – Character of a proForma formatted aa sequence</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Whether char is start of unimod bracket</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.normal_pdf">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">normal_pdf</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">x</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mass</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">s</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.001</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">inv_sqrt_2pi</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.3989422804014327</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">normalize</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.normal_pdf" title="Link to this definition">¶</a></dt>
+<dd><dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>x</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-data docutils literal notranslate"><span class="pre">Union</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">_SupportsArray</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>]], <code class="xref py py-class docutils literal notranslate"><span class="pre">_NestedSequence</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">_SupportsArray</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>]]], <code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">complex</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">bytes</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">_NestedSequence</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Union</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">complex</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">bytes</span></code>]]]</span>)</p></li>
+<li><p><strong>mass</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>)</p></li>
+<li><p><strong>s</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>)</p></li>
+<li><p><strong>inv_sqrt_2pi</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>)</p></li>
+<li><p><strong>normalize</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">bool</span></code></span>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.re_index_indices">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">re_index_indices</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ids</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.re_index_indices" title="Link to this definition">¶</a></dt>
+<dd><p>Re-index indices, i.e. replace gaps in indices with consecutive numbers.
+Can be used, e.g., to re-index frame IDs from precursors for visualization.
+:type ids: 
+:param ids: Indices.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Indices.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.tokenize_proforma_sequence">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">tokenize_proforma_sequence</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">sequence</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.tokenize_proforma_sequence" title="Link to this definition">¶</a></dt>
+<dd><p>Tokenize a ProForma formatted sequence string.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>sequence</strong> (<em>str</em>) – Sequence string (ProForma formatted)</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>List of tokens</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.tokenizer_from_json">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">tokenizer_from_json</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.tokenizer_from_json" title="Link to this definition">¶</a></dt>
+<dd><p>load a pre-fit tokenizer from a json file
+:type path: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>
+:param path: path to tokenizer as json file
+:return: a keras tokenizer loaded from json</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.utility.utilities.tokenizer_to_json">
+<span class="sig-prename descclassname"><span class="pre">imspy.utility.utilities.</span></span><span class="sig-name descname"><span class="pre">tokenizer_to_json</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tokenizer</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">path</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.utility.utilities.tokenizer_to_json" title="Link to this definition">¶</a></dt>
+<dd><p>save a fit keras tokenizer to json for later use
+:type tokenizer: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">Tokenizer</span></code></span>
+:param tokenizer: fit keras tokenizer to save
+:type path: <span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">str</span></code></span>
+:param path: path to save json to</p>
+</dd></dl>
+
+</section>
+<section id="module-imspy.utility">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-imspy.utility" title="Link to this heading">¶</a></h2>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">imspy</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Main Modules</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="modules.html">imspy Modules</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="imspy.html">imspy Package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.html">imspy.algorithm package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.chemistry.html">imspy.chemistry package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.data.html">imspy.data package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.simulation.html">imspy.simulation package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.timstof.html">imspy.timstof package</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">imspy.utility package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.vis.html">imspy.vis package</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+  <li><a href="modules.html">imspy Modules</a><ul>
+      <li>Previous: <a href="imspy.timstof.dbsearch.html" title="previous chapter">imspy.timstof.dbsearch package</a></li>
+      <li>Next: <a href="imspy.vis.html" title="next chapter">imspy.vis package</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2024, David Teschner.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/imspy.utility.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
