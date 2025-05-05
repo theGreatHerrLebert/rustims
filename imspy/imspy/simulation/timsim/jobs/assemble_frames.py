@@ -126,6 +126,7 @@ def assemble_frames(
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
+
     if acquisition_builder.acquisition_mode.mode == 'DIA':
         if verbose:
             print("Writing DIA specific meta data to database...")
