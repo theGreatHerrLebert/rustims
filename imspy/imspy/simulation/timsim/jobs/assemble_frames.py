@@ -149,7 +149,7 @@ def assemble_frames(
 
         else:
             acquisition_builder.tdf_writer.write_calibration_info(mz_standard_deviation_ppm=0.0)
-    else:
+    elif acquisition_builder.acquisition_mode.mode == 'DDA':
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(
             acquisition_builder.synthetics_handle.get_table('precursors'))
