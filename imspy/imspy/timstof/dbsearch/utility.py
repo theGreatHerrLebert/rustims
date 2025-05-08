@@ -6,7 +6,8 @@ import pandas as pd
 
 import numpy as np
 from typing import Optional
-from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation, Tolerance
+from sagepy.core import Precursor, RawSpectrum, ProcessedSpectrum, SpectrumProcessor, Representation, Tolerance, \
+    ProcessedIMSpectrum
 from sagepy.core.scoring import Psm
 
 from imspy.timstof import TimsDatasetDDA
@@ -189,6 +190,43 @@ def split_fasta(fasta: str, num_splits: int = 16, randomize: bool = True) -> Lis
         start_index = stop_index
 
     return fastas
+
+def get_ms1_ims_spectrum(
+    raw_spectrum: TimsFrame,
+    spec_processor: SpectrumProcessor,
+    time: float,
+    spec_id: str,
+    file_id: int = 0,
+    ms_level: int = 1) -> ProcessedIMSpectrum:
+    """
+    Get SAGE searchable spectrum from raw data.
+    Args:
+        raw_spectrum: TimsFrame object
+        time: float
+        spec_processor: SpectrumProcessor object
+        spec_id: str
+        file_id: int
+        ms_level: int
+
+    Returns:
+        ProcessedSpectrum: ProcessedSpectrum object
+    """
+
+    spec = RawSpectrum(
+        file_id=file_id,
+        ms_level=ms_level,
+        spec_id=spec_id,
+        precursors=[],
+        representation=Representation(),
+        scan_start_time=time,
+        ion_injection_time=time,
+        total_ion_current=np.sum(raw_spectrum.intensity),
+        mz=raw_spectrum.mz.astype(np.float32),
+        intensity=raw_spectrum.intensity.astype(np.float32),
+        mobility=raw_spectrum.mobility.astype(np.float32),
+    )
+
+    return spec_processor.process_with_mobility(spec)
 
 
 def get_searchable_spec(precursor: Precursor,
