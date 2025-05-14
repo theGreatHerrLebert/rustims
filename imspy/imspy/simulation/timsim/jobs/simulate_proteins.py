@@ -1,3 +1,5 @@
+from typing import Union
+
 import numpy as np
 import pandas as pd
 
@@ -67,7 +69,7 @@ def protein_to_peptides(fasta,
                         generate_decoys=False,
                         c_terminal=True,
                         variable_mods={},
-                        static_mods={"C": "[UNIMOD:4]"}):
+                        static_mods={"C": "[UNIMOD:4]"}) -> Union[set, None]:
     """
     Generates a set of unique peptides from a protein sequence using digestion logic, including PTMs.
 
@@ -107,17 +109,22 @@ def protein_to_peptides(fasta,
         bucket_size=int(np.power(2, 6))
     )
 
-    indexed_db = sage_config.generate_indexed_database()
+    try:
+        indexed_db = sage_config.generate_indexed_database()
 
-    peptide_set = set()
+        peptide_set = set()
 
-    # Generate peptides using SageSearch's indexed database
-    for i in range(indexed_db.num_peptides):
-        idx = PeptideIx(idx=i)
-        peptide = indexed_db[idx]
-        peptide_set.add(peptide.to_unimod_sequence())
+        # Generate peptides using SageSearch's indexed database
+        for i in range(indexed_db.num_peptides):
+            idx = PeptideIx(idx=i)
+            peptide = indexed_db[idx]
+            peptide_set.add(peptide.to_unimod_sequence())
 
-    return peptide_set
+        return peptide_set
+
+    except Exception as e:
+        print(f"Error generating peptides: {e}")
+        return None
 
 
 def get_tenzer_hokey():
@@ -191,6 +198,9 @@ def simulate_proteins(
         n_proteins = len(tbl)
         print(f"Number of proteins requested exceeds the number of proteins in the FASTA file. Using {n_proteins} available proteins.")
 
+    else:
+        print(f"Sampling {n_proteins} proteins from the FASTA file.")
+
     sample = tbl.sample(n=n_proteins)
 
     # Generate peptides
@@ -208,6 +218,9 @@ def simulate_proteins(
         min_len=min_len,
         max_len=max_len,
     ), axis=1)
+
+    # Remove None values
+    sample = sample[sample.peptides.notnull()]
 
     # Assign protein IDs and events
     sample["protein_id"] = list(range(0, len(sample)))

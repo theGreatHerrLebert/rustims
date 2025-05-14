@@ -78,6 +78,14 @@ def assemble_frames(
             num_threads=num_threads,
         )
 
+    if verbose:
+        print("Signal noise settings:")
+        print(f'Precursor m/z noise: {mz_noise_precursor}...')
+        print(f'Uniform m/z noise: {mz_noise_uniform}...')
+        print(f'Precursor noise PPM: {precursor_noise_ppm}...')
+        print(f'Fragment m/z noise: {mz_noise_fragment}...')
+        print(f'Fragment noise PPM: {fragment_noise_ppm}...')
+
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
         start_index = b * batch_size
@@ -125,6 +133,22 @@ def assemble_frames(
         # write frame ms/ms windows to database
         acquisition_builder.tdf_writer.write_dia_ms_ms_windows(
             acquisition_builder.synthetics_handle.get_table('dia_ms_ms_windows'))
+        # write prm frame ms ms info
+        acquisition_builder.tdf_writer.write_prm_frame_ms_ms_info()
+        # write pasef frame ms ms info
+        acquisition_builder.tdf_writer.write_pasef_frame_ms_ms_info()
+        # write calibration info to database
+
+        if mz_noise_precursor:
+            acquisition_builder.tdf_writer.write_calibration_info(
+                mz_standard_deviation_ppm=precursor_noise_ppm)
+
+        elif mz_noise_fragment:
+            acquisition_builder.tdf_writer.write_calibration_info(
+                mz_standard_deviation_ppm=fragment_noise_ppm)
+
+        else:
+            acquisition_builder.tdf_writer.write_calibration_info(mz_standard_deviation_ppm=0.0)
     else:
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(

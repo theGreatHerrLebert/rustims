@@ -918,7 +918,7 @@ def main():
         psms_moka = mokapot.read_pin(f"{write_folder_path}" + "/imspy/mokapot/PSMs.pin")
         results, models = mokapot.brew(psms_moka, max_workers=params['num_threads'])
 
-        results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/")
+        results.to_txt(dest_dir=f"{write_folder_path}" + "/imspy/mokapot/", decoys=True)
 
     PSM_pandas = PSM_pandas.drop(columns=["re_score"])
 
@@ -948,6 +948,7 @@ def main():
 
         from imspy.timstof.dbsearch.utility import parse_to_tims2rescore
         TDC_tims2rescore = parse_to_tims2rescore(TDC, from_mgf=params['use_mgf'], file_name=ds_name + ".d")
+        TDC_tims2rescore.sort_values(by="filename", inplace=True)
         TDC_tims2rescore.to_csv(f"{write_folder_path}" + "/imspy/results.sagepy.tsv", sep="\t", index=False)
 
     peptides_rescored = target_decoy_competition_pandas(psm_collection_to_pandas(psms),

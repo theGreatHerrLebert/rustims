@@ -5,15 +5,16 @@ import markdown
 import qdarkstyle
 import toml
 import numpy as np
-from scipy.special import erfc
+from scipy.stats import exponnorm
+from imspy.simulation.timsim.jobs.simulate_frame_distributions_emg import calculate_rt_defaults
 
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QLineEdit, QPushButton, QSizePolicy,
     QVBoxLayout, QHBoxLayout, QFileDialog, QCheckBox, QSpinBox, QToolButton,
     QDoubleSpinBox, QComboBox, QGroupBox, QScrollArea, QAction, QMessageBox,
-    QTextEdit, QSlider, QGridLayout, QTabWidget
+    QTextEdit, QTabWidget
 )
-from PyQt5.QtCore import Qt, QProcess, QSize
+from PyQt5.QtCore import Qt, QProcess
 from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -22,6 +23,7 @@ import matplotlib.pyplot as plt
 import vtk
 from vtk.util.numpy_support import numpy_to_vtk
 from vtk.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+
 
 # =============================================================================
 # VTK Visualizer (unchanged)
@@ -126,6 +128,7 @@ class VTKVisualizer(QWidget):
         axes.SetGridLineLocation(axes.VTK_GRID_LINES_FURTHEST)
         return axes
 
+
 # =============================================================================
 # Collapsible Box for Grouping Settings
 # =============================================================================
@@ -172,58 +175,102 @@ class CollapsibleBox(QWidget):
     def add_widget(self, widget):
         self.content_layout.addWidget(widget)
 
+
 # =============================================================================
 # EMGPlot for Distribution Visualization (unchanged)
 # =============================================================================
 class EMGPlot(FigureCanvas):
     def __init__(self):
-        self.fig, self.ax = plt.subplots()
+        self.fig, self.ax = plt.subplots(1, 2)
         super().__init__(self.fig)
-        self.mean = 0
-        self.std = 1.5
-        self.skewness = 0.3
-        self.std_variance = 0.3
-        self.skewness_variance = 0.1
-        self.N = 25
+        self.mu = 0
+        self.central_interval_p = 0.76
+        # TODO redefinition of defaults is bad practice
+
+        default_param_sigma_lower_upper = calculate_rt_defaults(3600)
+        self.sigma_lower = default_param_sigma_lower_upper["sigma_lower_rt"]
+        self.sigma_upper = default_param_sigma_lower_upper["sigma_upper_rt"]
+        self.sigma_alpha = 4
+        self.sigma_beta = 4
+        self.k_lower = 0
+        self.k_upper = 10
+        self.k_alpha = 1
+        self.k_beta = 20
+        self.N = 200
         self.x = np.linspace(-20, 20, 1000)
         self.update_plot()
 
-    def emg_pdf(self, x, mean, std, skewness):
-        lambda_ = 1 / skewness if skewness != 0 else 1e6
-        exp_component = lambda_ / 2 * np.exp(lambda_ / 2 * (2 * mean + lambda_ * std ** 2 - 2 * x))
-        erfc_component = erfc((mean + lambda_ * std ** 2 - x) / (np.sqrt(2) * std))
-        return exp_component * erfc_component
+    def emg_pdf(self, x, mu, sigma, k):
+        return exponnorm.pdf(x, K=k, loc=mu, scale=sigma)
+
+    def central_interval(self, mu, sigma, k):
+        p = self.central_interval_p
+        higher = exponnorm.ppf(1 - (1 - p) / 2, K=k, loc=mu, scale=sigma)
+        lower = exponnorm.ppf((1 - p) / 2, K=k, loc=mu, scale=sigma)
+        return higher - lower
 
     def update_plot(self):
-        self.ax.clear()
-        self.ax.set_xlim(-10, 10)
+        for ax in self.ax:
+            ax.clear()
+        self.ax[0].set_xlim(-10, 10)
+        self.ax[1].set_xlim(0, 20)
+        central_intervals = []
         for _ in range(self.N):
-            sampled_std = max(np.random.normal(self.std, self.std_variance), 0.01)
-            sampled_skewness = max(np.random.normal(self.skewness, self.skewness_variance), 0.01)
-            y = self.emg_pdf(self.x, self.mean, sampled_std, sampled_skewness)
-            self.ax.plot(self.x, y, alpha=0.5)
-        self.ax.set_title("Exponentially Modified Gaussian Distribution")
-        self.ax.set_xlabel("Retention Time Spread [Seconds]")
-        self.ax.set_ylabel("Intensity")
+            # TODO use rng
+            sampled_sigma = np.random.beta(a=self.sigma_alpha, b=self.sigma_beta) * (
+                        self.sigma_upper - self.sigma_lower) + self.sigma_lower
+            sampled_k = np.random.beta(a=self.k_alpha, b=self.k_beta) * (self.k_upper - self.k_lower) + self.k_lower
+            y = self.emg_pdf(self.x, self.mu, sampled_sigma, sampled_k)
+            central_intervals.append(self.central_interval(self.mu, sampled_sigma, sampled_k))
+            self.ax[0].plot(self.x, y, alpha=0.5)
+
+        self.ax[0].set_title("EMG Distributions")
+        self.ax[0].set_xlabel("Retention Time [Seconds]")
+        self.ax[0].set_ylabel("Intensity")
+        self.ax[1].hist(central_intervals, bins=20)
+        ci_mean = np.mean(central_intervals)
+        self.ax[1].vlines(ci_mean, 0, self.ax[1].get_ylim()[1] * 0.9, color='r', linestyle='--')
+        self.ax[1].text(ci_mean, self.ax[1].get_ylim()[1] * 0.91, f"Mean: {ci_mean:.2f}s")
+        self.ax[1].set_title(f"Central Interval ({self.central_interval_p * 100:.1f}%) Sizes")
+        self.ax[1].set_xlabel(f"Central Interval ({self.central_interval_p * 100:.1f}%) [Seconds]")
+        self.ax[1].set_ylabel("Count")
         self.draw()
 
-    def set_std(self, value):
-        self.std = value
+    def set_sigma_lower(self, value):
+        self.sigma_lower = value
         self.update_plot()
 
-    def set_std_variance(self, value):
-        self.std_variance = value
+    def set_sigma_upper(self, value):
+        self.sigma_upper = value
         self.update_plot()
 
-    def set_skewness(self, value):
-        self.skewness = value
+    def set_sigma_alpha(self, value):
+        self.sigma_alpha = value
         self.update_plot()
 
-    def set_skewness_variance(self, value):
-        self.skewness_variance = value
+    def set_sigma_beta(self, value):
+        self.sigma_beta = value
         self.update_plot()
 
-# =============================================================================
+    def set_k_lower(self, value):
+        self.k_lower = value
+        self.update_plot()
+
+    def set_k_upper(self, value):
+        self.k_upper = value
+        self.update_plot()
+
+    def set_k_alpha(self, value):
+        self.k_alpha = value
+        self.update_plot()
+
+    def set_k_beta(self, value):
+        self.k_beta = value
+        self.update_plot()
+
+    # =============================================================================
+
+
 # MainWindow – The Main GUI
 # =============================================================================
 class MainWindow(QMainWindow):
@@ -265,21 +312,21 @@ class MainWindow(QMainWindow):
         self.main_layout = QVBoxLayout(main_tab)
         self.init_main_settings()
         self.init_peptide_digestion_settings()
-        self.init_peptide_intensity_settings()
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
         self.init_noise_settings()
         self.init_charge_state_probabilities()
         self.init_performance_settings()
+        self.init_dda_settings()
         self.init_console()
         self.main_layout.addWidget(self.main_settings_group)
         self.main_layout.addWidget(self.peptide_digestion_group)
-        self.main_layout.addWidget(self.peptide_intensity_group)
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
         self.main_layout.addWidget(self.noise_settings_group)
         self.main_layout.addWidget(self.charge_state_probabilities_group)
         self.main_layout.addWidget(self.performance_settings_group)
+        self.main_layout.addWidget(self.dda_settings_group)
         self.main_layout.addWidget(self.console)
         self.main_layout.addWidget(self.run_button)
         self.main_layout.addWidget(self.cancel_button)
@@ -395,7 +442,7 @@ class MainWindow(QMainWindow):
                                    "Name your experiment to identify it in saved outputs and reports.")
         # Acquisition Type
         self.acquisition_combo = QComboBox()
-        self.acquisition_combo.addItems(["DIA", "SYNCHRO", "SLICE", "MIDIA"])
+        self.acquisition_combo.addItems(["DIA", "DDA", "SYNCHRO", "SLICE", "MIDIA"])
         self.add_setting_with_info(layout, "Acquisition Type:", self.acquisition_combo,
                                    "Select the acquisition method used to simulate data.")
         # Options (checkboxes)
@@ -454,7 +501,7 @@ class MainWindow(QMainWindow):
         existing_path_layout.addWidget(self.existing_path_input)
         existing_path_layout.addWidget(self.existing_path_browse)
         existing_setting_widget = self.add_setting_with_info(layout, "Existing Simulation Path:", existing_path_widget,
-                                                               "Select the directory with existing simulated data.")
+                                                             "Select the directory with existing simulated data.")
         existing_setting_widget.setVisible(False)
         self.from_existing_checkbox.toggled.connect(existing_setting_widget.setVisible)
         # Multi-FASTA options (visible if proteome_mix is checked)
@@ -477,7 +524,8 @@ class MainWindow(QMainWindow):
         multi_fasta_dilution_layout.setContentsMargins(0, 0, 0, 0)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_input)
         multi_fasta_dilution_layout.addWidget(self.multi_fasta_dilution_browse)
-        multi_fasta_dilution_setting_widget = self.add_setting_with_info(layout, "Multi-FASTA Dilution File:", multi_fasta_dilution_widget,
+        multi_fasta_dilution_setting_widget = self.add_setting_with_info(layout, "Multi-FASTA Dilution File:",
+                                                                         multi_fasta_dilution_widget,
                                                                          "Select the CSV file with dilution factors for the proteome mixture.")
         multi_fasta_dilution_setting_widget.setVisible(False)
         self.proteome_mix_checkbox.toggled.connect(multi_fasta_setting_widget.setVisible)
@@ -490,6 +538,15 @@ class MainWindow(QMainWindow):
         self.peptide_digestion_group = CollapsibleBox("Peptide Digestion Settings", info_text)
         layout = self.peptide_digestion_group.content_layout
         self.num_sample_peptides_spin = QSpinBox()
+
+        self.sample_occurrences_checkbox = QCheckBox("Sample Occurrences Randomly")
+        self.sample_occurrences_checkbox.setChecked(True)
+        layout.addWidget(self.sample_occurrences_checkbox)
+        occ_info = QLabel()
+        occ_info.setPixmap(self.info_icon.scaled(19, 19))
+        occ_info.setToolTip("If enabled, peptide occurrences will be randomly sampled.")
+        layout.addWidget(occ_info)
+
         self.num_sample_peptides_spin.setRange(1, 1000000)
         self.num_sample_peptides_spin.setValue(25000)
         self.add_setting_with_info(layout, "Number of Sampled Peptides:", self.num_sample_peptides_spin,
@@ -527,89 +584,47 @@ class MainWindow(QMainWindow):
                                    "Path to the modifications TOML file (fixed and variable modifications).")
         self.main_layout.addWidget(self.peptide_digestion_group)
 
-    def init_peptide_intensity_settings(self):
-        info_text = "Set peptide intensity parameters (mean, min, max) and sampling options."
-        self.peptide_intensity_group = CollapsibleBox("Peptide Intensity Settings", info_text)
-        layout = self.peptide_intensity_group.content_layout
+    def init_dda_settings(self):
+        info_text = "Configure DDA selection parameters."
+        self.dda_settings_group = CollapsibleBox("DDA Settings", info_text)
+        layout = self.dda_settings_group.content_layout
 
-        def update_label_from_slider(slider, label):
-            power = slider.value()
-            label.setText(f"10^{power} ({10 ** power:.1e})")
+        # Precursors Every
+        self.precursors_every_spin = QSpinBox()
+        self.precursors_every_spin.setRange(2, 50)
+        self.precursors_every_spin.setValue(7)
+        self.add_setting_with_info(layout, "Precursors Every:", self.precursors_every_spin,
+                                   "Number of precursors to select every cycle (default: 10)")
 
-        # Mean Intensity
-        self.intensity_mean_label = QLabel()
-        self.intensity_mean_slider = QSlider(Qt.Horizontal)
-        self.intensity_mean_slider.setRange(0, 10)
-        self.intensity_mean_slider.setValue(7)
-        update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)
-        self.intensity_mean_slider.valueChanged.connect(
-            lambda: update_label_from_slider(self.intensity_mean_slider, self.intensity_mean_label)
-        )
-        layout.addWidget(QLabel("Mean Intensity:"))
-        layout.addWidget(self.intensity_mean_label)
-        layout.addWidget(self.intensity_mean_slider)
-        mean_info = QLabel()
-        mean_info.setPixmap(self.info_icon.scaled(19, 19))
-        mean_info.setToolTip("Average peptide intensity (as a power of 10).")
-        layout.addWidget(mean_info)
-        # Minimum Intensity
-        self.intensity_min_label = QLabel()
-        self.intensity_min_slider = QSlider(Qt.Horizontal)
-        self.intensity_min_slider.setRange(0, 10)
-        self.intensity_min_slider.setValue(5)
-        update_label_from_slider(self.intensity_min_slider, self.intensity_min_label)
-        self.intensity_min_slider.valueChanged.connect(
-            lambda: update_label_from_slider(self.intensity_min_slider, self.intensity_min_label)
-        )
-        layout.addWidget(QLabel("Minimum Intensity:"))
-        layout.addWidget(self.intensity_min_label)
-        layout.addWidget(self.intensity_min_slider)
-        min_info = QLabel()
-        min_info.setPixmap(self.info_icon.scaled(19, 19))
-        min_info.setToolTip("Minimum peptide intensity (as a power of 10).")
-        layout.addWidget(min_info)
-        # Maximum Intensity
-        self.intensity_max_label = QLabel()
-        self.intensity_max_slider = QSlider(Qt.Horizontal)
-        self.intensity_max_slider.setRange(0, 10)
-        self.intensity_max_slider.setValue(9)
-        update_label_from_slider(self.intensity_max_slider, self.intensity_max_label)
-        self.intensity_max_slider.valueChanged.connect(
-            lambda: update_label_from_slider(self.intensity_max_slider, self.intensity_max_label)
-        )
-        layout.addWidget(QLabel("Maximum Intensity:"))
-        layout.addWidget(self.intensity_max_label)
-        layout.addWidget(self.intensity_max_slider)
-        max_info = QLabel()
-        max_info.setPixmap(self.info_icon.scaled(19, 19))
-        max_info.setToolTip("Maximum peptide intensity (as a power of 10).")
-        layout.addWidget(max_info)
-        # Sample Occurrences
-        self.sample_occurrences_checkbox = QCheckBox("Sample Occurrences Randomly")
-        self.sample_occurrences_checkbox.setChecked(True)
-        layout.addWidget(self.sample_occurrences_checkbox)
-        occ_info = QLabel()
-        occ_info.setPixmap(self.info_icon.scaled(19, 19))
-        occ_info.setToolTip("If enabled, peptide occurrences will be randomly sampled.")
-        layout.addWidget(occ_info)
-        # Fixed Intensity Value
-        self.intensity_value_label = QLabel()
-        self.intensity_value_slider = QSlider(Qt.Horizontal)
-        self.intensity_value_slider.setRange(0, 10)
-        self.intensity_value_slider.setValue(6)
-        update_label_from_slider(self.intensity_value_slider, self.intensity_value_label)
-        self.intensity_value_slider.valueChanged.connect(
-            lambda: update_label_from_slider(self.intensity_value_slider, self.intensity_value_label)
-        )
-        layout.addWidget(QLabel("Fixed Intensity Value:"))
-        layout.addWidget(self.intensity_value_label)
-        layout.addWidget(self.intensity_value_slider)
-        fix_info = QLabel()
-        fix_info.setPixmap(self.info_icon.scaled(19, 19))
-        fix_info.setToolTip("Fixed intensity (as a power of 10) used if random sampling is disabled.")
-        layout.addWidget(fix_info)
-        self.peptide_intensity_group.setLayout(layout)
-        self.main_layout.addWidget(self.peptide_intensity_group)
+        # Precursor Intensity Threshold
+        self.precursor_intensity_threshold_spin = QDoubleSpinBox()
+        self.precursor_intensity_threshold_spin.setRange(0, 1e6)
+        self.precursor_intensity_threshold_spin.setValue(500)
+        self.add_setting_with_info(layout, "Precursor Intensity Threshold:", self.precursor_intensity_threshold_spin,
+                                   "Intensity threshold for precursor selection (default: 500)")
+
+        # Maximum Precursors
+        self.max_precursors_spin = QSpinBox()
+        self.max_precursors_spin.setRange(1, 1000)
+        self.max_precursors_spin.setValue(7)
+        self.add_setting_with_info(layout, "Max Precursors:", self.max_precursors_spin,
+                                   "Maximum number of precursors to select per cycle (default: 25)")
+
+        # Exclusion Width
+        self.exclusion_width_spin = QSpinBox()
+        self.exclusion_width_spin.setRange(1, 1000)
+        self.exclusion_width_spin.setValue(25)
+        self.add_setting_with_info(layout, "Exclusion Width:", self.exclusion_width_spin,
+                                   "Exclusion width for precursor selection (default: 25)")
+
+        # Selection Mode using QComboBox with fixed options:
+        self.selection_mode_combo = QComboBox()
+        self.selection_mode_combo.addItems(["topN", "random"])
+        self.add_setting_with_info(layout, "Selection Mode:", self.selection_mode_combo,
+                                   "Selection mode for precursors (default: topN)")
+
+        # Add the group to your main layout
+        self.main_layout.addWidget(self.dda_settings_group)
 
     def init_isotopic_pattern_settings(self):
         info_text = "Configure isotopic pattern generation (number of isotopes, intensity thresholds, centroiding)."
@@ -651,6 +666,7 @@ class MainWindow(QMainWindow):
         settings_layout = QVBoxLayout()
         plot_layout = QVBoxLayout()
         # List of settings – note the two new ones for ion mobility
+        sigma_lower_upper_start = calculate_rt_defaults(3600)
         settings = [
             {
                 'attribute_name': 'gradient_length_spin',
@@ -662,40 +678,76 @@ class MainWindow(QMainWindow):
                 'decimals': 0
             },
             {
-                'attribute_name': 'mean_std_rt_spin',
-                'label_text': 'Mean Std RT:',
-                'tooltip_text': 'Mean standard deviation for retention time (affects peak widths).',
-                'min_value': 0.1,
-                'max_value': 10,
-                'default_value': 1.0,
-                'decimals': 2
+                'attribute_name': 'sigma_lower_rt_spin',
+                'label_text': 'Lower sigma RT:',
+                'tooltip_text': 'Lower bound for sigma of an EMG chromatographic peak (affects peak widths).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': sigma_lower_upper_start["sigma_lower_rt"],
+                'decimals': 3
             },
             {
-                'attribute_name': 'variance_std_rt_spin',
-                'label_text': 'Variance Std RT:',
-                'tooltip_text': 'Variance of the retention time standard deviation.',
-                'min_value': 0,
-                'max_value': 5,
-                'default_value': 0.1,
-                'decimals': 2
+                'attribute_name': 'sigma_upper_rt_spin',
+                'label_text': 'Upper sigma RT:',
+                'tooltip_text': 'Upper bound for sigma of an EMG chromatographic peak (affects peak widths, must be higher than sigma_lower_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': sigma_lower_upper_start["sigma_upper_rt"],
+                'decimals': 3
             },
             {
-                'attribute_name': 'mean_skewness_spin',
-                'label_text': 'Mean Skewness:',
-                'tooltip_text': 'Average skewness of the retention time distribution.',
-                'min_value': 0,
-                'max_value': 5,
-                'default_value': 1.5,
-                'decimals': 2
+                'attribute_name': 'sigma_alpha_rt_spin',
+                'label_text': 'Alpha sigma RT:',
+                'tooltip_text': 'Alpha for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 4,
+                'decimals': 3
             },
             {
-                'attribute_name': 'variance_skewness_spin',
-                'label_text': 'Variance Skewness:',
-                'tooltip_text': 'Variance in the skewness of retention time.',
+                'attribute_name': 'sigma_beta_rt_spin',
+                'label_text': 'Beta sigma RT:',
+                'tooltip_text': 'Beta for beta distribution for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 4,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_lower_rt_spin',
+                'label_text': 'Lower k RT:',
+                'tooltip_text': 'Lower bound for k of an EMG chromatographic peak (affects peak skewness).',
                 'min_value': 0,
-                'max_value': 5,
-                'default_value': 0.1,
-                'decimals': 2
+                'max_value': 100,
+                'default_value': 0,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_upper_rt_spin',
+                'label_text': 'Upper k RT:',
+                'tooltip_text': 'Upper bound for k of an EMG chromatographic peak (affects peak skewness, must be higher than k_lower_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 10,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_alpha_rt_spin',
+                'label_text': 'Alpha k RT:',
+                'tooltip_text': 'Alpha for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 1,
+                'decimals': 3
+            },
+            {
+                'attribute_name': 'k_beta_rt_spin',
+                'label_text': 'Beta k RT:',
+                'tooltip_text': 'Beta for beta distribution for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).',
+                'min_value': 0.01,
+                'max_value': 100,
+                'default_value': 20,
+                'decimals': 3
             },
             {
                 'attribute_name': 'z_score_spin',
@@ -740,38 +792,64 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(settings_layout)
         main_layout.addLayout(plot_layout)
         self.distribution_settings_group.content_layout.addLayout(main_layout)
-        self.mean_std_rt_spin.valueChanged.connect(self.update_emg_std)
-        self.variance_std_rt_spin.valueChanged.connect(self.update_emg_std_variance)
-        self.mean_skewness_spin.valueChanged.connect(self.update_emg_skewness)
-        self.variance_skewness_spin.valueChanged.connect(self.update_emg_skewness_variance)
+        self.gradient_length_spin.valueChanged.connect(self.update_gradient_length)
+        self.sigma_lower_rt_spin.valueChanged.connect(self.update_emg_sigma_lower)
+        self.sigma_upper_rt_spin.valueChanged.connect(self.update_emg_sigma_upper)
+        self.sigma_alpha_rt_spin.valueChanged.connect(self.update_emg_sigma_alpha)
+        self.sigma_beta_rt_spin.valueChanged.connect(self.update_emg_sigma_beta)
+        self.k_lower_rt_spin.valueChanged.connect(self.update_emg_k_lower)
+        self.k_upper_rt_spin.valueChanged.connect(self.update_emg_k_upper)
+        self.k_alpha_rt_spin.valueChanged.connect(self.update_emg_k_alpha)
+        self.k_beta_rt_spin.valueChanged.connect(self.update_emg_k_beta)
         self.main_layout.addWidget(self.distribution_settings_group)
 
-    def update_emg_std(self, value):
-        self.emg_plot.set_std(value)
+    def update_gradient_length(self, value):
+        # update all emg parameters based on gradient length
+        # get all defaults
+        param_dict = calculate_rt_defaults(value)
+        self.sigma_lower_rt_spin.setValue(param_dict['sigma_lower_rt'])
+        self.sigma_upper_rt_spin.setValue(param_dict['sigma_upper_rt'])
 
-    def update_emg_std_variance(self, value):
-        self.emg_plot.set_std_variance(value)
+    def update_emg_sigma_lower(self, value):
+        self.emg_plot.set_sigma_lower(value)
 
-    def update_emg_skewness(self, value):
-        self.emg_plot.set_skewness(value)
+    def update_emg_sigma_upper(self, value):
+        self.emg_plot.set_sigma_upper(value)
 
-    def update_emg_skewness_variance(self, value):
-        self.emg_plot.set_skewness_variance(value)
+    def update_emg_sigma_alpha(self, value):
+        self.emg_plot.set_sigma_alpha(value)
+
+    def update_emg_sigma_beta(self, value):
+        self.emg_plot.set_sigma_beta(value)
+
+    def update_emg_k_lower(self, value):
+        self.emg_plot.set_k_lower(value)
+
+    def update_emg_k_upper(self, value):
+        self.emg_plot.set_k_upper(value)
+
+    def update_emg_k_alpha(self, value):
+        self.emg_plot.set_k_alpha(value)
+
+    def update_emg_k_beta(self, value):
+        self.emg_plot.set_k_beta(value)
 
     def init_noise_settings(self):
         info_text = "Configure simulation noise parameters, including m/z noise and real data noise options."
         self.noise_settings_group = CollapsibleBox("Noise Settings", info_text)
         layout = self.noise_settings_group.content_layout
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
-        noise_signals_layout = QHBoxLayout()
-        self.add_noise_to_signals_checkbox = QCheckBox("Add Noise to Signals")
-        self.add_noise_to_signals_checkbox.setChecked(True)
-        noise_signals_layout.addWidget(self.add_noise_to_signals_checkbox)
-        noise_signals_info = QLabel()
-        noise_signals_info.setPixmap(info_icon)
-        noise_signals_info.setToolTip("Add random noise to signal intensities in RT and IM.")
-        noise_signals_layout.addWidget(noise_signals_info)
-        layout.addLayout(noise_signals_layout)
+        # Add Noise to Frame Abundance
+        self.noise_frame_abundance_checkbox = QCheckBox("Add Noise to Frame Abundance")
+        self.noise_frame_abundance_checkbox.setChecked(False)
+        self.add_checkbox_with_info(layout, self.noise_frame_abundance_checkbox,
+                                    "Add noise to frame abundance (default: False)")
+
+        # Add Noise to Scan Abundance
+        self.noise_scan_abundance_checkbox = QCheckBox("Add Noise to Scan Abundance")
+        self.noise_scan_abundance_checkbox.setChecked(False)
+        self.add_checkbox_with_info(layout, self.noise_scan_abundance_checkbox,
+                                    "Add noise to scan abundance (default: False)")
         mz_noise_precursor_layout = QHBoxLayout()
         self.mz_noise_precursor_checkbox = QCheckBox("Add Precursor M/Z Noise")
         self.mz_noise_precursor_checkbox.setChecked(True)
@@ -863,25 +941,52 @@ class MainWindow(QMainWindow):
         self.charge_state_probabilities_group = CollapsibleBox("Charge State Probabilities", info_text)
         layout = self.charge_state_probabilities_group.content_layout
         info_icon = QPixmap(str(self.script_dir / "info_icon.png")).scaled(19, 19, Qt.KeepAspectRatio)
+        
+        binomial_charge_model_layout = QHBoxLayout()
+        self.binomial_charge_model_label = QLabel("Use Binomial Model:")
+        self.binomial_charge_model_checkbox = QCheckBox()
+        self.binomial_charge_model_checkbox.setChecked(False)
+        binomial_charge_model_layout.addWidget(self.binomial_charge_model_label)
+        binomial_charge_model_layout.addWidget(self.binomial_charge_model_checkbox)
+        binomial_charge_model_info = QLabel()
+        binomial_charge_model_info.setPixmap(info_icon)
+        binomial_charge_model_info.setToolTip("Whether to use a binomial model for charge state probabilities.")
+        binomial_charge_model_layout.addWidget(binomial_charge_model_info)
+        layout.addLayout(binomial_charge_model_layout)
+        
+        normalize_charge_states_layout = QHBoxLayout()
+        self.normalize_charge_states_label = QLabel("Normalize charge states:")
+        self.normalize_charge_states_checkbox = QCheckBox()
+        self.normalize_charge_states_checkbox.setChecked(True)
+        normalize_charge_states_layout.addWidget(self.normalize_charge_states_label)
+        normalize_charge_states_layout.addWidget(self.normalize_charge_states_checkbox)
+        normalize_charge_states_info = QLabel()
+        normalize_charge_states_info.setPixmap(info_icon)
+        normalize_charge_states_info.setToolTip("Whether to normalize the charge states, such that the probability mass of all charge kept charge states (charge states between 1 and set maximum charge) sums to one.")
+        normalize_charge_states_layout.addWidget(normalize_charge_states_info)
+        layout.addLayout(normalize_charge_states_layout)
+        
         p_charge_layout = QHBoxLayout()
-        self.p_charge_label = QLabel("Probability of Charge:")
+        self.p_charge_label = QLabel("Probability of Charge (binomial model):")
         self.p_charge_spin = QDoubleSpinBox()
         self.p_charge_spin.setRange(0, 1)
         self.p_charge_spin.setDecimals(2)
-        self.p_charge_spin.setValue(0.5)
+        self.p_charge_spin.setValue(0.8)
         p_charge_layout.addWidget(self.p_charge_label)
         p_charge_layout.addWidget(self.p_charge_spin)
         p_charge_info = QLabel()
         p_charge_info.setPixmap(info_icon)
-        p_charge_info.setToolTip("Probability for a peptide to adopt a given charge state.")
+        p_charge_info.setToolTip("Probability for a peptide to adopt a given charge state (only relevant for binomial model).")
         p_charge_layout.addWidget(p_charge_info)
         layout.addLayout(p_charge_layout)
+        
         min_charge_contrib_layout = QHBoxLayout()
         self.min_charge_contrib_label = QLabel("Minimum Charge Contribution:")
         self.min_charge_contrib_spin = QDoubleSpinBox()
         self.min_charge_contrib_spin.setRange(0, 1)
-        self.min_charge_contrib_spin.setDecimals(2)
-        self.min_charge_contrib_spin.setValue(0.25)
+        self.min_charge_contrib_spin.setDecimals(3)
+        self.min_charge_contrib_spin.setSingleStep(0.001)
+        self.min_charge_contrib_spin.setValue(0.005)
         min_charge_contrib_layout.addWidget(self.min_charge_contrib_label)
         min_charge_contrib_layout.addWidget(self.min_charge_contrib_spin)
         min_charge_contrib_info = QLabel()
@@ -889,6 +994,19 @@ class MainWindow(QMainWindow):
         min_charge_contrib_info.setToolTip("Minimum relative contribution of peptides with this charge state.")
         min_charge_contrib_layout.addWidget(min_charge_contrib_info)
         layout.addLayout(min_charge_contrib_layout)
+        
+        max_charge_layout = QHBoxLayout()
+        self.max_charge_label = QLabel("Maximum charge state:")
+        self.max_charge_spin = QSpinBox()
+        self.max_charge_spin.setRange(1, 10)
+        self.max_charge_spin.setValue(4)
+        max_charge_layout.addWidget(self.max_charge_label)
+        max_charge_layout.addWidget(self.max_charge_spin)
+        max_charge_info = QLabel()
+        max_charge_info.setPixmap(info_icon)
+        max_charge_info.setToolTip("Maximum charge of a peptide")
+        max_charge_layout.addWidget(max_charge_info)
+        layout.addLayout(max_charge_layout)
 
     def init_performance_settings(self):
         info_text = "Adjust performance settings such as threading and batch size."
@@ -990,32 +1108,25 @@ class MainWindow(QMainWindow):
         cleave_at = self.cleave_at_input.text()
         restrict = self.restrict_input.text()
         modifications = self.mods_input.text()
-
-        intensity_mean = 10 ** self.intensity_mean_slider.value()
-        intensity_min = 10 ** self.intensity_min_slider.value()
-        intensity_max = 10 ** self.intensity_max_slider.value()
         sample_occurrences = self.sample_occurrences_checkbox.isChecked()
-        intensity_value = 10 ** self.intensity_value_slider.value()
-
-        if not (intensity_min < intensity_mean < intensity_max):
-            QMessageBox.warning(self, "Invalid Intensity Settings",
-                                "Ensure that Minimum Intensity < Mean Intensity < Maximum Intensity.")
-            return
 
         isotope_k = self.isotope_k_spin.value()
         isotope_min_intensity = self.isotope_min_intensity_spin.value()
         isotope_centroid = self.isotope_centroid_checkbox.isChecked()
 
         gradient_length = self.gradient_length_spin.value()
-        mean_std_rt = self.mean_std_rt_spin.value()
-        variance_std_rt = self.variance_std_rt_spin.value()
-        mean_skewness = self.mean_skewness_spin.value()
-        variance_skewness = self.variance_skewness_spin.value()
+        sigma_lower_rt = self.sigma_lower_rt_spin.value()
+        sigma_upper_rt = self.sigma_upper_rt_spin.value()
+        sigma_alpha_rt = self.sigma_alpha_rt_spin.value()
+        sigma_beta_rt = self.sigma_beta_rt_spin.value()
+        k_lower_rt = self.k_lower_rt_spin.value()
+        k_upper_rt = self.k_upper_rt_spin.value()
+        k_alpha_rt = self.k_alpha_rt_spin.value()
+        k_beta_rt = self.k_beta_rt_spin.value()
         z_score = self.z_score_spin.value()
         target_p = self.target_p_spin.value()
         sampling_step_size = self.sampling_step_size_spin.value()
 
-        add_noise_to_signals = self.add_noise_to_signals_checkbox.isChecked()
         mz_noise_precursor = self.mz_noise_precursor_checkbox.isChecked()
         precursor_noise_ppm = self.precursor_noise_ppm_spin.value()
         mz_noise_fragment = self.mz_noise_fragment_checkbox.isChecked()
@@ -1027,6 +1138,9 @@ class MainWindow(QMainWindow):
 
         p_charge = self.p_charge_spin.value()
         min_charge_contrib = self.min_charge_contrib_spin.value()
+        max_charge = self.max_charge_spin.value()
+        binomial_charge_model = self.binomial_charge_model_checkbox.isChecked()
+        normalize_charge_states = self.normalize_charge_states_checkbox.isChecked()
 
         num_threads = self.num_threads_spin.value()
         batch_size = self.batch_size_spin.value()
@@ -1053,17 +1167,17 @@ class MainWindow(QMainWindow):
             "--max_len", str(max_len),
             "--cleave_at", cleave_at,
             "--restrict", restrict,
-            "--intensity_mean", str(intensity_mean),
-            "--intensity_min", str(intensity_min),
-            "--intensity_max", str(intensity_max),
-            "--intensity_value", str(intensity_value),
             "--isotope_k", str(isotope_k),
             "--isotope_min_intensity", str(isotope_min_intensity),
             "--gradient_length", str(gradient_length),
-            "--mean_std_rt", str(mean_std_rt),
-            "--variance_std_rt", str(variance_std_rt),
-            "--mean_skewness", str(mean_skewness),
-            "--variance_skewness", str(variance_skewness),
+            "--sigma_lower_rt", str(sigma_lower_rt),
+            "--sigma_upper_rt", str(sigma_upper_rt),
+            "--sigma_alpha_rt", str(sigma_alpha_rt),
+            "--sigma_beta_rt", str(sigma_beta_rt),
+            "--k_lower_rt", str(k_lower_rt),
+            "--k_upper_rt", str(k_upper_rt),
+            "--k_alpha_rt", str(k_alpha_rt),
+            "--k_beta_rt", str(k_beta_rt),
             "--z_score", str(z_score),
             "--target_p", str(target_p),
             "--sampling_step_size", str(sampling_step_size),
@@ -1072,6 +1186,7 @@ class MainWindow(QMainWindow):
             "--reference_noise_intensity_max", str(reference_noise_intensity_max),
             "--down_sample_factor", str(down_sample_factor),
             "--p_charge", str(p_charge),
+            "--max-charge", str(max_charge),
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
@@ -1095,8 +1210,6 @@ class MainWindow(QMainWindow):
             args.append("--no_sample_occurrences")
         if not isotope_centroid:
             args.append("--no_isotope_centroid")
-        if add_noise_to_signals:
-            args.append("--add_noise_to_signals")
         if mz_noise_precursor:
             args.append("--mz_noise_precursor")
         if mz_noise_fragment:
@@ -1113,6 +1226,19 @@ class MainWindow(QMainWindow):
             args.append("--phospho_mode")
         if modifications:
             args.extend(["--modifications", modifications])
+        if binomial_charge_model:
+            args.extend("--binomial_charge_model")
+        if not normalize_charge_states:
+            args.extend("--not_normalize_charge_states")
+
+        args.extend([
+            "--precursors_every", str(self.precursors_every_spin.value()),
+            "--precursor_intensity_threshold", str(self.precursor_intensity_threshold_spin.value()),
+            "--max_precursors", str(self.max_precursors_spin.value()),
+            "--exclusion_width", str(self.exclusion_width_spin.value()),
+            "--selection_mode", self.selection_mode_combo.currentText(),
+        ])
+
         args = [str(arg) for arg in args]
         if self.process and self.process.state() == QProcess.Running:
             self.process.kill()
@@ -1220,6 +1346,7 @@ class MainWindow(QMainWindow):
             'multi_fasta_dilution': self.multi_fasta_dilution_input.text(),
         }
         config['peptide_digestion'] = {
+            'sample_occurrences': self.sample_occurrences_checkbox.isChecked(),
             'num_sample_peptides': self.num_sample_peptides_spin.value(),
             'missed_cleavages': self.missed_cleavages_spin.value(),
             'min_len': self.min_len_spin.value(),
@@ -1228,13 +1355,6 @@ class MainWindow(QMainWindow):
             'restrict': self.restrict_input.text(),
             'modifications': self.mods_input.text(),
         }
-        config['peptide_intensity'] = {
-            'intensity_mean': self.intensity_mean_slider.value(),
-            'intensity_min': self.intensity_min_slider.value(),
-            'intensity_max': self.intensity_max_slider.value(),
-            'sample_occurrences': self.sample_occurrences_checkbox.isChecked(),
-            'intensity_value': self.intensity_value_slider.value(),
-        }
         config['isotopic_pattern'] = {
             'isotope_k': self.isotope_k_spin.value(),
             'isotope_min_intensity': self.isotope_min_intensity_spin.value(),
@@ -1242,16 +1362,19 @@ class MainWindow(QMainWindow):
         }
         config['distribution_settings'] = {
             'gradient_length': self.gradient_length_spin.value(),
-            'mean_std_rt': self.mean_std_rt_spin.value(),
-            'variance_std_rt': self.variance_std_rt_spin.value(),
-            'mean_skewness': self.mean_skewness_spin.value(),
-            'variance_skewness': self.variance_skewness_spin.value(),
+            'sigma_lower_rt': self.sigma_lower_rt_spin.value(),
+            'sigma_upper_rt': self.sigma_upper_rt_spin.value(),
+            'sigma_alpha_rt': self.sigma_alpha_rt_spin.value(),
+            'sigma_beta_rt': self.sigma_beta_rt_spin.value(),
+            'k_lower_rt': self.k_lower_rt_spin.value(),
+            'k_upper_rt': self.k_upper_rt_spin.value(),
+            'k_alpha_rt': self.k_alpha_rt_spin.value(),
+            'k_beta_rt': self.k_beta_rt_spin.value(),
             'z_score': self.z_score_spin.value(),
             'target_p': self.target_p_spin.value(),
             'sampling_step_size': self.sampling_step_size_spin.value(),
         }
         config['noise_settings'] = {
-            'add_noise_to_signals': self.add_noise_to_signals_checkbox.isChecked(),
             'mz_noise_precursor': self.mz_noise_precursor_checkbox.isChecked(),
             'precursor_noise_ppm': self.precursor_noise_ppm_spin.value(),
             'mz_noise_fragment': self.mz_noise_fragment_checkbox.isChecked(),
@@ -1260,10 +1383,22 @@ class MainWindow(QMainWindow):
             'add_real_data_noise': self.add_real_data_noise_checkbox.isChecked(),
             'reference_noise_intensity_max': self.reference_noise_intensity_max_spin.value(),
             'down_sample_factor': self.down_sample_factor_spin.value(),
+            'noise_frame_abundance': self.noise_frame_abundance_checkbox.isChecked(),
+            'noise_scan_abundance': self.noise_scan_abundance_checkbox.isChecked(),
         }
         config['charge_state_probabilities'] = {
             'p_charge': self.p_charge_spin.value(),
             'min_charge_contrib': self.min_charge_contrib_spin.value(),
+            'max_charge': self.max_charge_spin.value(),
+            'binomial_charge_model': self.binomial_charge_model_checkbox.isChecked(),
+            'normalize_charge_states': self.normalize_charge_states_checkbox.isChecked(),
+        }
+        config['dda_settings'] = {
+            'precursors_every': self.precursors_every_spin.value(),
+            'precursor_intensity_threshold': self.precursor_intensity_threshold_spin.value(),
+            'max_precursors': self.max_precursors_spin.value(),
+            'exclusion_width': self.exclusion_width_spin.value(),
+            'selection_mode': self.selection_mode_combo.currentText()
         }
         config['performance_settings'] = {
             'num_threads': self.num_threads_spin.value(),
@@ -1272,11 +1407,13 @@ class MainWindow(QMainWindow):
         return config
 
     def apply_settings(self, config):
+
         main_settings = config.get('main_settings', {})
         self.path_input.setText(main_settings.get('save_path', ''))
         self.reference_input.setText(main_settings.get('reference_path', ''))
         self.fasta_input.setText(main_settings.get('fasta_path', ''))
         self.name_input.setText(main_settings.get('experiment_name', f"TIMSIM-{int(time.time())}"))
+
         acquisition_type = main_settings.get('acquisition_type', 'DIA')
         index = self.acquisition_combo.findText(acquisition_type)
         if index >= 0:
@@ -1294,6 +1431,7 @@ class MainWindow(QMainWindow):
         self.existing_path_input.setText(main_settings.get('existing_path', ''))
         self.multi_fasta_input.setText(main_settings.get('multi_fasta', ''))
         self.multi_fasta_dilution_input.setText(main_settings.get('multi_fasta_dilution', ''))
+
         peptide_digestion = config.get('peptide_digestion', {})
         self.num_sample_peptides_spin.setValue(peptide_digestion.get('num_sample_peptides', 25000))
         self.missed_cleavages_spin.setValue(peptide_digestion.get('missed_cleavages', 2))
@@ -1302,27 +1440,31 @@ class MainWindow(QMainWindow):
         self.cleave_at_input.setText(peptide_digestion.get('cleave_at', 'KR'))
         self.restrict_input.setText(peptide_digestion.get('restrict', 'P'))
         self.mods_input.setText(peptide_digestion.get('modifications', ''))
-        peptide_intensity = config.get('peptide_intensity', {})
-        self.intensity_mean_slider.setValue(peptide_intensity.get('intensity_mean', 7))
-        self.intensity_min_slider.setValue(peptide_intensity.get('intensity_min', 5))
-        self.intensity_max_slider.setValue(peptide_intensity.get('intensity_max', 9))
-        self.sample_occurrences_checkbox.setChecked(peptide_intensity.get('sample_occurrences', True))
-        self.intensity_value_slider.setValue(peptide_intensity.get('intensity_value', 6))
+
+        self.sample_occurrences_checkbox.setChecked(peptide_digestion.get('sample_occurrences', True))
+
         isotopic_pattern = config.get('isotopic_pattern', {})
         self.isotope_k_spin.setValue(isotopic_pattern.get('isotope_k', 8))
         self.isotope_min_intensity_spin.setValue(isotopic_pattern.get('isotope_min_intensity', 1))
         self.isotope_centroid_checkbox.setChecked(isotopic_pattern.get('isotope_centroid', True))
+
         distribution_settings = config.get('distribution_settings', {})
+        # TODO redefinition of defaults is bad practice
         self.gradient_length_spin.setValue(distribution_settings.get('gradient_length', 3600))
-        self.mean_std_rt_spin.setValue(distribution_settings.get('mean_std_rt', 1.0))
-        self.variance_std_rt_spin.setValue(distribution_settings.get('variance_std_rt', 0.1))
-        self.mean_skewness_spin.setValue(distribution_settings.get('mean_skewness', 1.5))
-        self.variance_skewness_spin.setValue(distribution_settings.get('variance_skewness', 0.1))
+        rt_default_values = calculate_rt_defaults(self.gradient_length_spin.value())
+        self.sigma_lower_rt_spin.setValue(distribution_settings.get('sigma_lower_rt', rt_default_values["sigma_lower_rt"]))
+        self.sigma_upper_rt_spin.setValue(distribution_settings.get('sigma_upper_rt', rt_default_values["sigma_upper_rt"]))
+        self.sigma_alpha_rt_spin.setValue(distribution_settings.get('sigma_alpha_rt', 4.0))
+        self.sigma_beta_rt_spin.setValue(distribution_settings.get('sigma_beta_rt', 4.0))
+        self.k_lower_rt_spin.setValue(distribution_settings.get('k_lower_rt', 0.0))
+        self.k_upper_rt_spin.setValue(distribution_settings.get('k_upper_rt', 10.0))
+        self.k_alpha_rt_spin.setValue(distribution_settings.get('k_alpha_rt', 1.0))
+        self.k_beta_rt_spin.setValue(distribution_settings.get('k_beta_rt', 20.0))
         self.z_score_spin.setValue(distribution_settings.get('z_score', 0.99))
         self.target_p_spin.setValue(distribution_settings.get('target_p', 0.999))
         self.sampling_step_size_spin.setValue(distribution_settings.get('sampling_step_size', 0.001))
+
         noise_settings = config.get('noise_settings', {})
-        self.add_noise_to_signals_checkbox.setChecked(noise_settings.get('add_noise_to_signals', False))
         self.mz_noise_precursor_checkbox.setChecked(noise_settings.get('mz_noise_precursor', False))
         self.precursor_noise_ppm_spin.setValue(noise_settings.get('precursor_noise_ppm', 5.0))
         self.mz_noise_fragment_checkbox.setChecked(noise_settings.get('mz_noise_fragment', False))
@@ -1331,20 +1473,42 @@ class MainWindow(QMainWindow):
         self.add_real_data_noise_checkbox.setChecked(noise_settings.get('add_real_data_noise', False))
         self.reference_noise_intensity_max_spin.setValue(noise_settings.get('reference_noise_intensity_max', 30))
         self.down_sample_factor_spin.setValue(noise_settings.get('down_sample_factor', 0.5))
+        self.noise_frame_abundance_checkbox.setChecked(noise_settings.get('noise_frame_abundance', False))
+        self.noise_scan_abundance_checkbox.setChecked(noise_settings.get('noise_scan_abundance', False))
+
         charge_state_probabilities = config.get('charge_state_probabilities', {})
-        self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.5))
-        self.min_charge_contrib_spin.setValue(charge_state_probabilities.get('min_charge_contrib', 0.25))
+        self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.8))
+        self.min_charge_contrib_spin.setValue(charge_state_probabilities.get('min_charge_contrib', 0.005))
+        self.max_charge_spin.setValue(charge_state_probabilities.get('max_charge', 4))
+        self.binomial_charge_model_checkbox.setChecked(charge_state_probabilities.get('binomial_charge_model', False))
+        self.normalize_charge_states_checkbox.setChecked(charge_state_probabilities.get('normalize_charge_states', True))
+        
         performance_settings = config.get('performance_settings', {})
         self.num_threads_spin.setValue(performance_settings.get('num_threads', -1))
         self.batch_size_spin.setValue(performance_settings.get('batch_size', 256))
 
+        dda_settings = config.get('dda_settings', {})
+        self.precursors_every_spin.setValue(dda_settings.get('precursors_every', 7))
+        self.precursor_intensity_threshold_spin.setValue(dda_settings.get('precursor_intensity_threshold', 500))
+        self.max_precursors_spin.setValue(dda_settings.get('max_precursors', 7))
+        self.exclusion_width_spin.setValue(dda_settings.get('exclusion_width', 25))
+        index = self.selection_mode_combo.findText(dda_settings.get('selection_mode', "topN"))
+        if index >= 0:
+            self.selection_mode_combo.setCurrentIndex(index)
+
+
 def main():
     app = QApplication(sys.argv)
+    script_dir = Path(__file__).resolve().parent.parent
+    path = script_dir / "resources" / "icons" / "logo_2.png"
+    print(path)
+    app.setWindowIcon(QIcon(str(path)))
     app.setApplicationName("TimSim")
     app.setStyleSheet(qdarkstyle.load_stylesheet_pyqt5())
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()

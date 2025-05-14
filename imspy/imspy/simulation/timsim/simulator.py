@@ -9,8 +9,7 @@ import tensorflow as tf
 from tabulate import tabulate
 
 # imspy imports
-from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA
-from imspy.simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
+from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA, SyntheticExperimentDataHandle
 from imspy.simulation.timsim.jobs.simulate_ion_mobilities_and_variance import simulate_ion_mobilities_and_variance
 from imspy.simulation.timsim.jobs.simulate_peptides import simulate_peptides
 from imspy.simulation.timsim.jobs.simulate_phosphorylation import simulate_phosphorylation
@@ -149,17 +148,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
     parser.set_defaults(sample_occurrences=True)
 
-    parser.add_argument("--intensity_value", type=float,
-                        help="Intensity value of all peptides if sample occurrence sampling is deactivated "
-                             "(default: 1e6)")
-
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
     parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .999)")
-    parser.add_argument("--mean_std_rt", type=float, help="Mean standard deviation for RT distribution (default: 1.5)")
-    parser.add_argument("--variance_std_rt", type=float, help="Variance std for RT distribution (default: 0.3)")
-    parser.add_argument("--mean_skewness", type=float, help="Mean skewness for RT distribution (default: 0.3)")
-    parser.add_argument("--variance_skewness", type=float, help="Variance skewness (default: 0.1)")
+    parser.add_argument("--sigma_lower_rt", type=float, help="Lower bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
+    parser.add_argument("--sigma_upper_rt", type=float, help="Upper bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
+    parser.add_argument("--sigma_alpha_rt", type=float, help="Alpha for beta distribution (default: 4) for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
+    parser.add_argument("--sigma_beta_rt", type=float, help="Beta for beta distribution (default: 4) for sigma_hat that is then scaled to sigma in (sigma_lower_rt, sigma_upper_rt)")
+    parser.add_argument("--k_lower_rt", type=float, help="Lower bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness (default: 0)")
+    parser.add_argument("--k_upper_rt", type=float, help="Upper bound for k of an EMG chromatographic peak. (k=1/(sigma*lambda), affects skewness (default: 10)")
+    parser.add_argument("--k_alpha_rt", type=float, help="Alpha for beta distribution (default: 1) for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt)")
+    parser.add_argument("--k_beta_rt", type=float, help="Beta for beta distribution (default: 20) for k_hat that is then scaled to k in (k_lower_rt, k_upper_rt).")
     parser.add_argument("--target_p", type=float, help="Target percentile for frame distributions (default: 0.999)")
     parser.add_argument("--sampling_step_size", type=float, help="Step size for frame distributions (default: 0.001)")
     parser.add_argument("--no_use_inverse_mobility_std_mean", dest="use_inverse_mobility_std_mean", action="store_false",
@@ -173,12 +172,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch_size", type=int, help="Batch size (default: 256)")
 
     # Charge state probabilities
-    parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.5)")
-    parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.25)")
+    parser.add_argument("--p_charge", type=float, help="Probability of being charged (default: 0.8)")
+    parser.add_argument("--min_charge_contrib", type=float, help="Minimum charge contribution (default: 0.005)")
     parser.add_argument("--max_charge", type=int, help="Maximum charge state (default: 4)")
     parser.add_argument("--binomial_charge_model", dest="binomial_charge_model", action="store_true",
                         help="Use binomial charge state model (default: False)")
     parser.set_defaults(binomial_charge_model=False)
+    parser.add_argument("--not_normalize_charge_states", action="store_false", dest="normalize_charge_states",
+                        help="Do not normalize charge states (default: False, i.e. normalize)")
+    parser.set_defaults(normalize_charge_states=True)
 
     parser.add_argument("--noise_frame_abundance", dest="noise_frame_abundance", action="store_true",
                         help="Add noise to frame abundance (default: False)")
@@ -238,13 +240,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Bruker SDK usage
     parser.add_argument("--no_bruker_sdk", action="store_false", dest="use_bruker_sdk",
-                        help="Disable Bruker SDK usage (default: True)")
+                        help="Disable Bruker SDK usage (default: False i.e. enable Bruker SDK usage)")
     parser.set_defaults(use_bruker_sdk=True)
 
     # Phospho mode
     parser.add_argument("--phospho_mode", action="store_true", dest="phospho_mode",
                         help="Enable phospho-enriched dataset generation (default: False)")
     parser.set_defaults(phospho_mode=False)
+
+    # DDA selection arguments
+    parser.add_argument("--precursors_every", type=int, help="Number of precursors to select every cycle (default: 10)")
+    parser.add_argument("--precursor_intensity_threshold", type=float, help="Intensity threshold for precursor selection (default: 500)")
+    parser.add_argument("--max_precursors", type=int, help="Maximum number of precursors to select per cycle (default: 25)")
+    parser.add_argument("--exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
+    parser.add_argument("--selection_mode", type=str, help="Selection mode for precursors (default: topN)")
 
     return parser
 
@@ -276,21 +285,24 @@ def get_default_settings() -> dict:
         'isotope_min_intensity': 1,
         'isotope_centroid': True,
         'sample_occurrences': True,
-        'intensity_value': 1e6,
         'gradient_length': 3600,
         'z_score': 0.999,
-        'mean_std_rt': 1.5,
-        'variance_std_rt': 0.3,
-        'mean_skewness': 0.3,
-        'variance_skewness': 0.1,
+        'sigma_lower_rt': None,
+        'sigma_upper_rt': None,
+        'sigma_alpha_rt': 4,
+        'sigma_beta_rt': 4,
+        'k_lower_rt': 0,
+        'k_upper_rt': 10,
+        'k_alpha_rt': 1,
+        'k_beta_rt': 20,
         'target_p': 0.999,
         'sampling_step_size': 0.001,
         'use_inverse_mobility_std_mean': True,
         'inverse_mobility_std_mean': 0.009,
         'num_threads': -1,
         'batch_size': 256,
-        'p_charge': 0.5,
-        'min_charge_contrib': 0.25,
+        'p_charge': 0.8,
+        'min_charge_contrib': 0.005,
         'noise_frame_abundance': False,
         'noise_scan_abundance': False,
         'mz_noise_precursor': False,
@@ -310,6 +322,12 @@ def get_default_settings() -> dict:
         'phospho_mode': False,
         'max_charge': 4,
         'binomial_charge_model': False,
+        'normalize_charge_states': True,
+        'precursors_every': 10,
+        'precursor_intensity_threshold': 500,
+        'max_precursors': 25,
+        'exclusion_width': 25,
+        'selection_mode': 'topN',
     }
 
 
@@ -323,7 +341,12 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
         parser.error("the following argument is required: reference_path")
     if args.fasta_path is None:
         parser.error("the following argument is required: fasta_path")
-
+    if args.sigma_lower_rt  is not None and args.sigma_upper_rt is not None:
+        if args.sigma_lower_rt >= args.sigma_upper_rt:
+            parser.error("sigma_lower_rt must be less than sigma_upper_rt")
+    if args.k_lower_rt >= args.k_upper_rt:
+        parser.error("k_lower_rt must be less than k_upper_rt")
+    
 
 # ----------------------------------------------------------------------
 # Main Execution
@@ -359,6 +382,7 @@ def main():
     args = parser.parse_args()
 
     # Ensure required arguments are set
+    # calculate rt defaults if not provided
     check_required_args(args, parser)
 
     # MacOS check for Bruker SDK
@@ -370,7 +394,7 @@ def main():
     script_dir = Path(__file__).parent
     if not args.modifications or args.modifications == "":
         args.modifications = script_dir / "configs" / "modifications.toml"
-    mod_config = load_toml_config(args.modifications)
+    mod_config = load_toml_config(str(args.modifications))
     variable_modifications = mod_config.get('variable_modifications', {})
     static_modifications = mod_config.get('static_modifications', {})
 
@@ -435,7 +459,12 @@ def main():
 
     if args.from_existing:
         # Load existing simulation data
-        existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
+
+        if args.acquisition_type == 'DIA':
+            existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=args.existing_path)
+        else:
+            existing_sim_handle = SyntheticExperimentDataHandle(database_path=args.existing_path)
+
         peptides = existing_sim_handle.get_table('peptides')
         proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
@@ -450,6 +479,16 @@ def main():
                 mask = peptides['fasta'] == fasta
                 peptides.loc[mask, 'events'] *= dilution_factor
                 peptides.loc[mask, 'fasta'] = fasta
+
+        if args.phospho_mode:
+            # if args.from_existing is True, we need to set template to False
+            peptides, ions = simulate_phosphorylation(
+                peptides=peptides,
+                ions=ions,
+                pick_phospho_sites=2,
+                template=False,
+                verbose=not args.silent_mode
+            )
 
         # Warn if gradient length mismatch is large
         rt_max = peptides['retention_time_gru_predictor'].max()
@@ -527,8 +566,9 @@ def main():
         if args.phospho_mode:
             if not args.silent_mode:
                 print("Simulating phosphorylation...")
-            peptides = simulate_phosphorylation(
+            peptides, _ = simulate_phosphorylation(
                 peptides=peptides,
+                ions=None,
                 pick_phospho_sites=2,
                 template=True,
                 verbose=not args.silent_mode
@@ -569,10 +609,14 @@ def main():
     peptides = simulate_frame_distributions_emg(
         peptides=peptides,
         frames=acquisition_builder.frame_table,
-        mean_std_rt=args.mean_std_rt,
-        variance_std_rt=args.variance_std_rt,
-        mean_scewness=args.mean_skewness,
-        variance_scewness=args.variance_skewness,
+        sigma_lower_rt=args.sigma_lower_rt,
+        sigma_upper_rt=args.sigma_upper_rt,
+        sigma_alpha_rt=args.sigma_alpha_rt,
+        sigma_beta_rt=args.sigma_beta_rt,
+        k_lower_rt=args.k_lower_rt,
+        k_upper_rt=args.k_upper_rt,
+        k_alpha_rt=args.k_alpha_rt,
+        k_beta_rt=args.k_beta_rt,
         rt_cycle_length=acquisition_builder.rt_cycle_length,
         target_p=args.target_p,
         step_size=args.sampling_step_size,
@@ -582,6 +626,7 @@ def main():
         from_existing=args.from_existing,
         sigmas=rt_sigma,
         lambdas=rt_lambda,
+        gradient_length=acquisition_builder.gradient_length,
     )
 
     # Save proteins
@@ -595,8 +640,8 @@ def main():
             'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
             'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
             'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
-            'frame_abundance',
-            'phospho_site_a', 'phospho_site_b', 'sequence_original'
+            'frame_abundance', 'rt_mu',
+            'phospho_site_a', 'phospho_site_b', 'sequence_original',
         ]
         peptides = peptides[columns_phospho]
     elif args.proteome_mix:
@@ -627,6 +672,7 @@ def main():
             max_charge=args.max_charge,
             use_binomial=args.binomial_charge_model,
             min_charge_contrib=args.min_charge_contrib,
+            normalize=args.normalize_charge_states,
         )
 
         # JOB 6: Ion mobilities
@@ -664,6 +710,11 @@ def main():
         pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
             acquisition_builder=acquisition_builder,
             verbose=not args.silent_mode,
+            precursors_every=args.precursors_every,
+            intensity_threshold=args.precursor_intensity_threshold,
+            max_precursors=args.max_precursors,
+            selection_mode=args.selection_mode,
+            precursor_exclusion_width=args.exclusion_width,
         )
         acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
         acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
@@ -677,6 +728,7 @@ def main():
         verbose=not args.silent_mode,
         num_threads=args.num_threads,
         down_sample_factor=args.down_sample_factor,
+        dda=args.acquisition_type == 'DDA',
     )
 
     # JOB 10: Assemble frames

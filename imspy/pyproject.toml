@@ -18,7 +18,7 @@ dependencies = [
     "tensorflow-probability>=0.22.1",
     "wandb>=0.12.1",
     "mokapot>=0.10.0",
-    "sagepy>=0.3.8",
+    "sagepy>=0.3.9",
     "imspy-connector>=0.3.16",
     "scipy>=1.7.1",
     "tqdm>=4.66",
@@ -26,8 +26,9 @@ dependencies = [
     "mendeleev>=0.7.0",
     "dlomix>=0.0.6",
     "toml>=0.10.2",
-    "poetry (>=2.0.0,<3.0.0)",
     "koinapy>=0.0.10"
+    "poetry (>=2.0.0,<3.0.0)",
+    "pyopenms (>=3.2.0,<4.0.0)",
 ]
 
 [project.optional-dependencies]

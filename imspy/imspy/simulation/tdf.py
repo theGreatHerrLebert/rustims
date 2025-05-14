@@ -4,6 +4,8 @@ import numpy as np
 
 from pathlib import Path
 
+from numpy._typing import NDArray
+
 from imspy.simulation.utility import get_compressible_data
 from imspy.timstof import TimsDataset
 from imspy.timstof.frame import TimsFrame
@@ -109,9 +111,17 @@ class TDFWriter:
                f'im_lower={self.helper_handle.im_lower}, im_upper={self.helper_handle.im_upper}, mz_lower={self.helper_handle.mz_lower}, ' \
                f'mz_upper={self.helper_handle.mz_upper})'
 
-    def build_frame_meta_row(self, frame: TimsFrame, scan_mode: int, frame_start_pos: int, only_frame_one: bool = False):
+    def build_frame_meta_row(
+            self,
+            intensity: NDArray,
+            frame: TimsFrame,
+            scan_mode: int,
+            frame_start_pos: int,
+            only_frame_one: bool = False
+    ):
         """Build a row for the frame meta data table from a TimsFrame object.
             Arguments:
+                intensity: NDArray
                 frame: TimsFrame object
                 scan_mode: int
                 frame_start_pos: int
@@ -132,21 +142,21 @@ class TDFWriter:
         r.ScanMode = scan_mode
         r.MsMsType = frame.ms_type
         r.TimsId = frame_start_pos
-        r.MaxIntensity = int(np.max(frame.intensity)) if len(frame.intensity) > 0 else 0
-        r.SummedIntensities = int(np.sum(frame.intensity)) if len(frame.intensity) > 0 else 0
+        r.MaxIntensity = int(np.max(intensity)) if len(intensity) > 0 else 0
+        r.SummedIntensities = int(np.sum(intensity)) if len(intensity) > 0 else 0
         r.NumScans = self.helper_handle.num_scans
-        r.NumPeaks = len(frame.mz)
+        r.NumPeaks = len(intensity)
 
         return r
 
-    def compress_frame(self, frame: TimsFrame, only_frame_one: bool = False) -> bytes:
+    def compress_frame(self, frame: TimsFrame, only_frame_one: bool = False) -> (NDArray, bytes):
         """Compress a single frame using zstd.
             Arguments:
                 frame: TimsFrame object
                 only_frame_one: bool
 
             Returns:
-                bytes: compressed data
+                bytes: intensities, compressed data
         """
         # either use frame 1 or the ref handle frame for writing of calibration data and call to conversion function
         i = 1 if only_frame_one else frame.frame_id
@@ -158,10 +168,33 @@ class TDFWriter:
         tof = self.mz_to_tof(i, frame.mz).astype(np.uint32)
         scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
         intensity = frame.intensity.astype(np.uint32)
+
+        # Since, mz -> tof is not bijective, we need to check for duplicates
+        # stack scan and tof to form a 2D array for unique grouping
+        scan_tof = np.stack((scan, tof), axis=1)
+
+        # get unique (scan, tof) pairs and their inverse indices
+        unique_pairs, inverse_indices = np.unique(scan_tof, axis=0, return_inverse=True)
+
+        # sum intensities for each unique (scan, tof) pair
+        summed_intensity = np.bincount(inverse_indices, weights=intensity)
+
+        # now split back scan and tof
+        unique_scan = unique_pairs[:, 0]
+        unique_tof = unique_pairs[:, 1]
+
+        # sort first by scan, then by tof
+        sort_idx = np.lexsort((unique_tof, unique_scan))
+
+        # final sorted arrays
+        scan = unique_scan[sort_idx]
+        tof = unique_tof[sort_idx]
+        intensity = summed_intensity[sort_idx].astype(np.uint32)
+
         # get the real data as interleaved bytes
         real_data = get_compressible_data(tof, scan, intensity, self.helper_handle.num_scans)
         # compress the data
-        return zstd.ZSTD_compress(bytes(real_data), 0)
+        return intensity, zstd.ZSTD_compress(bytes(real_data), 0)
 
     def write_frame(self, frame: TimsFrame, scan_mode: int, only_frame_one: bool = False) -> None:
         """Write a single frame to the binary file.
@@ -170,8 +203,16 @@ class TDFWriter:
                 scan_mode: int
                 only_frame_one: bool
         """
-        self.frame_meta_data.append(self.build_frame_meta_row(frame, scan_mode, self.position, only_frame_one))
-        compressed_data = self.compress_frame(frame, only_frame_one)
+        intensity, compressed_data = self.compress_frame(frame, only_frame_one)
+
+        self.frame_meta_data.append(
+            self.build_frame_meta_row(
+                intensity,
+                frame,
+                scan_mode,
+                self.position,
+                only_frame_one
+        ))
 
         with open(self.binary_file, "ab") as bin_file:
             bin_file.write(
@@ -186,6 +227,27 @@ class TDFWriter:
 
     def write_frame_meta_data(self) -> None:
         self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
+
+    def write_calibration_info(self, mz_standard_deviation_ppm: float = 0.15) -> None:
+        try:
+            table = self.helper_handle.get_table("CalibrationInfo")
+            table.iloc[5].Value = str(mz_standard_deviation_ppm)
+            self._create_table(self.conn, table, "CalibrationInfo")
+
+        except Exception as e:
+            print(f"Error writing calibration info table: {e}")
+
+    def write_pasef_frame_ms_ms_info(self) -> None:
+        try:
+            self._create_table(self.conn, self.helper_handle.get_table("PasefFrameMsMsInfo"), "PasefFrameMsMsInfo")
+        except Exception as e:
+            print(f"Error writing PasefFrameMsMsInfo table: {e}")
+
+    def write_prm_frame_ms_ms_info(self) -> None:
+        try:
+            self._create_table(self.conn, self.helper_handle.get_table("PrmFrameMsMsInfo"), "PrmFrameMsMsInfo")
+        except Exception as e:
+            print(f"Error writing PrmFrameMsMsInfo table: {e}")
 
     def write_dia_ms_ms_info(self, dia_ms_ms_info: pd.DataFrame) -> None:
         out = dia_ms_ms_info.rename(columns={
@@ -206,7 +268,7 @@ class TDFWriter:
             'intensity': 'Intensity',
             'parent': 'Parent',
         })
-        self._create_table(self.conn, out, "Precursor")
+        self._create_table(self.conn, out, "Precursors")
 
     def write_pasef_meta_table(self, pasef_meta_table: pd.DataFrame) -> None:
         out = pasef_meta_table.rename(columns={
@@ -218,7 +280,7 @@ class TDFWriter:
             'collision_energy': 'CollisionEnergy',
             'precursor': 'Precursor',
         })
-        self._create_table(self.conn, out, "PasefMeta")
+        self._create_table(self.conn, out, "PasefFrameMsMsInfo")
 
     def write_dia_ms_ms_windows(self, dia_ms_ms_windows: pd.DataFrame) -> None:
         out = dia_ms_ms_windows.rename(columns={
