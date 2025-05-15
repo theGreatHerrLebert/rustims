@@ -79,6 +79,13 @@ down_sample_factor = 0.6
 p_charge = 0.5
 min_charge_contrib = 0.25
 
+[dda_settings]
+precursors_every = 2
+max_precursors = 6
+exclusion_width = 25
+precursor_intensity_threshold = 500
+selection_mode = "random"
+
 [performance_settings]
 num_threads = -1
 batch_size = 256
