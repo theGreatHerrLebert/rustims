@@ -45,6 +45,9 @@ isotope_k = 8
 isotope_min_intensity = 1
 isotope_centroid = true
 
+[koina_property_prediction]
+koina_rt_model = ""
+
 [distribution_settings]
 gradient_length = 3600.0
 sigma_lower_rt  = 0.1
