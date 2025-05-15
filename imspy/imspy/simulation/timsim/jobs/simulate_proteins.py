@@ -124,6 +124,7 @@ def protein_to_peptides(fasta,
 
     except Exception as e:
         print(f"Error generating peptides: {e}")
+        print("This error can usually be safely ignored when using TIMSIM ...")
         return None
 
 
