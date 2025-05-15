@@ -255,7 +255,11 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
 
 def predict_retention_time_with_koina(
-    model_name, data, seq_col="sequence", gradient_length=None
+    model_name,
+        data,
+        seq_col="sequence",
+        gradient_length=None,
+        verbose=False,
 ):
     """
     Predict retention times using Koina.
@@ -272,9 +276,10 @@ def predict_retention_time_with_koina(
     inputs = data.copy()
     inputs.rename(columns={seq_col: "peptide_sequences"}, inplace=True)
     rts = rt_model_from_koina.predict(inputs[["peptide_sequences"]])
-    logger.debug(
-        f"Koina model {model_name} predicted retention times for {len(rts)} peptides. Returning DataFrame with columns: {rts.columns}, {rts.columns[1]} will be mapped to predicted retention time."
-    )
+
+    if verbose:
+        print(f"[DEBUG] Koina model {model_name} predicted retention times for {len(rts)} peptides. Columns: {rts.columns}")
+
     if gradient_length is not None:
         mapped_rt = linear_map(
             rts.iloc[:, 1].values,
