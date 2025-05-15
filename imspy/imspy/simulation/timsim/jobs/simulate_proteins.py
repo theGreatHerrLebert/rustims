@@ -223,6 +223,9 @@ def simulate_proteins(
     # Remove None values
     sample = sample[sample.peptides.notnull()]
 
+    # Remove peptides that have the letter 'U' or 'X' in them
+    sample = sample[sample.peptides.apply(lambda x: not any(c in x for c in ['U', 'X']))]
+
     # Assign protein IDs and events
     sample["protein_id"] = list(range(0, len(sample)))
     sample = assign_events(sample, int(upscale_factor))
