@@ -150,7 +150,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
-    parser.add_argument("--use_koina_rt_model", type=str, help="Use KOINA model for retention time prediction (default: None)")
+    parser.add_argument("--koina_rt_model", type=str, help="Use KOINA model for retention time prediction (default: None)")
     parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .999)")
     parser.add_argument("--sigma_lower_rt", type=float, help="Lower bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
     parser.add_argument("--sigma_upper_rt", type=float, help="Upper bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
@@ -287,7 +287,7 @@ def get_default_settings() -> dict:
         'isotope_centroid': True,
         'sample_occurrences': True,
         'gradient_length': 3600,
-        'use_koina_rt_model': None,
+        'koina_rt_model': None,
         'z_score': 0.999,
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
@@ -380,7 +380,7 @@ def main():
         defaults['fasta_path'] = config.get('fasta_path', defaults.get('fasta_path'))
 
         # Handle KOINA models
-        defaults['use_koina_rt_model'] = config.get('use_koina_rt_model', defaults.get('use_koina_rt_model'))
+        defaults['koina_rt_model'] = config.get('koina_rt_model', defaults.get('koina_rt_model'))
 
     # Update parser defaults with new merged defaults
     parser.set_defaults(**defaults)
@@ -600,7 +600,7 @@ def main():
             peptides=peptides,
             verbose=not args.silent_mode,
             gradient_length=acquisition_builder.gradient_length,
-            use_koina_model=args.use_koina_rt_model,
+            use_koina_model=args.koina_rt_model,
         )
 
         # Workaround for the correct column ordering
