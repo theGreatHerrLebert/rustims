@@ -437,7 +437,7 @@ def main():
 
     # Build the acquisition (frames, scans, etc.)
     if not args.silent_mode:
-        print(f"Simulating experiment {name} at {save_path}...")
+        print(f"Simulating experiment {name} at {save_path} ...")
 
     acquisition_builder = build_acquisition(
         path=save_path,
@@ -519,7 +519,7 @@ def main():
     if not args.from_existing:
         for fasta_name, fasta_path in fastas.items():
             if not args.silent_mode:
-                print(f"Digesting fasta file: {fasta_name}...")
+                print(f"Digesting fasta file: {fasta_name} ...")
 
             mixture_factor = 1.0
             if args.proteome_mix:
@@ -544,7 +544,7 @@ def main():
 
             # JOB 1: Simulate peptides
             if not args.silent_mode:
-                print("Creating peptides from proteins...")
+                print("Creating peptides from proteins ...")
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
@@ -572,7 +572,7 @@ def main():
         # Phospho mode
         if args.phospho_mode:
             if not args.silent_mode:
-                print("Simulating phosphorylation...")
+                print("Simulating phosphorylation ...")
             peptides, _ = simulate_phosphorylation(
                 peptides=peptides,
                 ions=None,
@@ -593,7 +593,7 @@ def main():
                 )
 
         if not args.silent_mode:
-            print(f"Simulating {peptides.shape[0]} peptides...")
+            print(f"Simulating {peptides.shape[0]} peptides ...")
 
         # JOB 3: Simulate retention times
         peptides = simulate_retention_times(
