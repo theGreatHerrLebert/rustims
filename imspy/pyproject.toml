@@ -26,7 +26,7 @@ dependencies = [
     "mendeleev>=0.7.0",
     "dlomix>=0.0.6",
     "toml>=0.10.2",
-    "koinapy>=0.0.10"
+    "koinapy>=0.0.10",
     "poetry (>=2.0.0,<3.0.0)",
     "pyopenms (>=3.2.0,<4.0.0)",
 ]
