@@ -2,6 +2,7 @@
 from koinapy import Koina
 import numpy as np
 import pandas as pd
+from .input_filters import filter_input_by_model
 
 
 class ModelFromKoina:
@@ -37,5 +38,8 @@ class ModelFromKoina:
         Returns:
             pd.DataFrame: Output data from the model.
         """
+        inputs = filter_input_by_model(
+            self.model_name, inputs
+        )  # Filter inputs based on model requirements
         predictions = self.model.predict(inputs)
         return predictions
