@@ -368,14 +368,19 @@ def main():
 
     # Load defaults and override with config file if provided
     defaults = get_default_settings()
+
     if args.config:
         config = load_toml_config(args.config)
         for section in config:
             defaults.update(config[section])
+
         # If config includes path info, handle them
         defaults['save_path'] = config.get('save_path', defaults.get('save_path'))
         defaults['reference_path'] = config.get('reference_path', defaults.get('reference_path'))
         defaults['fasta_path'] = config.get('fasta_path', defaults.get('fasta_path'))
+
+        # Handle KOINA models
+        defaults['use_koina_rt_model'] = config.get('use_koina_rt_model', defaults.get('use_koina_rt_model'))
 
     # Update parser defaults with new merged defaults
     parser.set_defaults(**defaults)
