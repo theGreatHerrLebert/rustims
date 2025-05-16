@@ -68,23 +68,6 @@ impl TimsDatasetDDA {
         TimsDatasetDDA { loader }
     }
 
-    /*
-        #[derive(Debug, Clone)]
-    pub struct DDAPrecursor {
-        pub frame_id: i64,
-        pub precursor_id: i64,
-        pub mono_mz: f64,
-        pub highest_intensity_mz: f64,
-        pub average_mz: f64,
-        pub charge: Option<i64>,
-        pub inverse_ion_mobility: f64,
-        pub collision_energy: f64,
-        pub precuror_total_intensity: f64,
-        pub isolation_mz: f64,
-        pub isolation_width: f64,
-    }
-         */
-
     pub fn get_selected_precursors(&self) -> Vec<DDAPrecursor> {
         let precursor_meta = read_dda_precursor_meta(&self.loader.get_data_path()).unwrap();
         let pasef_meta = self.get_pasef_frame_ms_ms_info();

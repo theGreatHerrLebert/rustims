@@ -445,10 +445,20 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             true => MsType::Unknown,
         };
 
-        let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
+        // pull out RT once so we don’t unwrap twice
+        let rt = *self
+            .precursor_frame_builder
+            .frame_to_rt
+            .get(&frame_id)
+            .expect("frame_to_rt should always have this frame") as f64;
 
-        // Frame might not have any peptides
-        if !self
+        // if no PASEF meta *or* no abundances, return an empty frame
+        if self
+            .transmission_settings
+            .pasef_meta
+            .get(&(frame_id as i32))
+            .is_none()
+            || !self
             .precursor_frame_builder
             .frame_to_abundances
             .contains_key(&frame_id)
@@ -456,18 +466,12 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             return TimsFrame::new(
                 frame_id as i32,
                 ms_type.clone(),
-                *self
-                    .precursor_frame_builder
-                    .frame_to_rt
-                    .get(&frame_id)
-                    .unwrap() as f64,
-                vec![],
-                vec![],
-                vec![],
-                vec![],
-                vec![],
+                rt,
+                vec![], vec![], vec![], vec![], vec![],
             );
         }
+
+        let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
 
         // Get the peptide ids and abundances for the frame, should now save to unwrap since we checked if the frame is in the map
         let (peptide_ids, frame_abundances) = self
