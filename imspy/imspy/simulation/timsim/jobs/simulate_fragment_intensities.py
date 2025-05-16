@@ -1,5 +1,5 @@
 from pathlib import Path
-
+from typing import Optional
 import numpy as np
 from tqdm import tqdm
 
@@ -18,7 +18,8 @@ def simulate_fragment_intensities(
         verbose: bool,
         num_threads: int,
         down_sample_factor: int = 0.5,
-        dda: bool = False
+        dda: bool = False,
+        use_koina_model: Optional[str] = None,
 ) -> None:
     """Simulate fragment ion intensity distributions.
 
@@ -31,6 +32,7 @@ def simulate_fragment_intensities(
         num_threads: Number of threads for frame assembly.
         down_sample_factor: Down sample factor for fragment ion intensity distributions.
         dda: Data dependent acquisition mode.
+        use_koina_model: Model name for Koina fragment intensity model.
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -49,11 +51,13 @@ def simulate_fragment_intensities(
         print("Calculating precursor ion transmissions and collision energies...")
 
     transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=num_threads, dda=dda)
+    if use_koina_model is not None and use_koina_model != "":
+        raise NotImplementedError("Koina model for fragment ion intensity simulation needs to be integrated from algorithm.intensity.predictors.")
+    else:
+        IntensityPredictor = Prosit2023TimsTofWrapper()
 
-    IntensityPredictor = Prosit2023TimsTofWrapper()
-
-    i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(transmitted_fragment_ions,
-                                                                        batch_size_tf_ds=batch_size)
+        i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(transmitted_fragment_ions,
+                                                                            batch_size_tf_ds=batch_size)
 
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions...")
