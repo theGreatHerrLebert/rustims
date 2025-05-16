@@ -5,6 +5,7 @@ from collections import Counter
 from imspy.data.peptide import PeptideSequence
 
 from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
+from imspy.algorithm.ionization.predictors import predict_peptide_flyability_with_koina
 from imspy.algorithm.utility import load_tokenizer_from_resources
 
 def sample_peptides_from_proteins(table, num_peptides_total=250_000, down_sample: bool = True):
@@ -70,7 +71,25 @@ def simulate_peptides(
         min_length: int = 7,
         max_length: int = 30,
         proteome_mix: bool = False,
+        use_koina_model: str = None,
 ) -> pd.DataFrame:
+    """
+    Simulate peptides from a protein table.
+    Args:
+        protein_table: DataFrame with protein sequences and events.
+        num_peptides_total: Total number of peptides to simulate.
+        verbose: Print progress.
+        exclude_accumulated_gradient_start: Exclude peptides with low retention times.
+        min_rt_percent: Minimum retention time percentage to keep.
+        gradient_length: Length of the gradient in seconds.
+        down_sample: Down sample the peptides from the proteins.
+        min_length: Minimum length of the peptides.
+        max_length: Maximum length of the peptides.
+        proteome_mix: If True, simulate a proteome mix.
+        use_koina_model: If not None, use the Koina model to predict peptide flyability, i.e. chances of being measured in the experiment, currently only supports pfly.
+    Returns:
+        DataFrame with simulated peptides.
+    """
     protein_table["peptides_sampled"] = sample_peptides_from_proteins(protein_table, num_peptides_total, down_sample)
     protein_table = protein_table[[len(l) > 0 for l in protein_table.peptides_sampled]]
 
@@ -109,14 +128,31 @@ def simulate_peptides(
         "events": events}
     )
 
-    # Simulate peptide efficiency using rejection sampling in log-normal space
-    efficiency = generate_normal_efficiency(
-        n=len(peptide_table),
-        mean_log=-2,  # Center the log values around log10(0.01)
-        std_log=1,  # Spread the values across 3 orders of magnitude
-        min_val=0.0001,  # Minimum value
-        max_val=1  # Maximum value
-    )
+    # Simulate peptide efficiency
+    if use_koina_model is not None and use_koina_model != "":
+        try:
+            if verbose:
+                print(f"Using Koina model: {use_koina_model}")
+
+            # Simulate flyability using Koina model
+            peptide_table["events"] = predict_peptide_flyability_with_koina(
+                model_name=use_koina_model,
+                data=peptide_table,
+                gradient_length=gradient_length,
+            )
+
+        except Exception as e:
+            print(f"Failed to predict peptide flyability with KOINA: {e}")
+            print("Falling back to normal distribution...")
+            
+            # Simulate peptide efficiency using rejection sampling in log-normal space
+            efficiency = generate_normal_efficiency(
+                n=len(peptide_table),
+                mean_log=-2,  # Center the log values around log10(0.01)
+                std_log=1,  # Spread the values across 3 orders of magnitude
+                min_val=0.0001,  # Minimum value
+                max_val=1  # Maximum value
+            )
 
     peptide_table["events"] = (peptide_table.events * efficiency).astype(np.int32)
 
