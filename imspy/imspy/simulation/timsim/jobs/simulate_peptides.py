@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+from typing import Optional
 from collections import Counter
 from imspy.data.peptide import PeptideSequence
 
@@ -71,7 +71,7 @@ def simulate_peptides(
         min_length: int = 7,
         max_length: int = 30,
         proteome_mix: bool = False,
-        use_koina_model: str = None,
+        use_koina_model: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Simulate peptides from a protein table.
