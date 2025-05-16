@@ -374,6 +374,6 @@ def predict_fragment_intensities_with_koina(
     intensity = intensity_model.predict(inputs)
 
     if verbose:
-        print(f"[DEBUG] Koina model {model_name} predicted retention times for {len(intensity)} peptides. Columns: {intensity.columns}")
+        print(f"[DEBUG] Koina model {model_name} predicted fragment intensity for {len(intensity)} peptides. Columns: {intensity.columns}")
     
     return intensity
