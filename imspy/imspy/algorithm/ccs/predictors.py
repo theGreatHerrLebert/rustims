@@ -395,3 +395,45 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
     def __repr__(self):
         return f'DeepPeptideIonMobilityApex(name={self.name}, model={self.model})'
+
+def predict_inverse_ion_mobility_with_koina(
+        model_name: str,
+        data: pd.DataFrame,
+        seq_col: str = "sequence",
+        charge_col: str = "charge",
+        verbose: bool = False,
+
+) -> pd.DataFrame:
+    """
+    Predict ion mobility using Koina model.
+    Args:
+        model_name: Name of the Koina model.
+        data: Input data for the model.
+        seq_col: Column name for peptide sequences.
+        charge_col: Column name for precursor charges.
+        verbose: Verbosity.
+
+    Returns:
+        pd.DataFrame: Output data from the model. 
+            It has the same input columns as the input data, 
+            plus the extra column ['ccs', 'mz', 'inv_mobility'].
+    """
+    assert 'calcmass' in data.columns, 'Data must contain column named "calcmass"'
+    from ..koina_models.access_models import ModelFromKoina
+    ccs_model = ModelFromKoina(model_name=model_name)
+    inputs = data.copy()
+    inputs.rename(columns={seq_col: "peptide_sequences", charge_col: "precursor_charges"}, inplace=True)
+    ccs = ccs_model.predict(inputs)
+
+    if verbose:
+        print(f"Koina model {model_name} predicted ccs for {len(ccs)} peptides. Columns: {ccs.columns}")
+
+    # Calculate inv_mobility from ccs
+    data[f'ccs_{model_name}'] = ccs['ccs']
+    data['mz'] = data['calcmass'] / data[charge_col]
+    im = [ccs_to_one_over_k0(c, m, z) for c, m, z in zip(data[f'ccs_{model_name}'].values, data['mz'], data[charge_col])]
+    data[f'inv_mobility_{model_name}'] = im
+
+    return data
+
+  
