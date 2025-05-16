@@ -38,6 +38,13 @@ class ModelFromKoina:
         Returns:
             pd.DataFrame: Output data from the model.
         """
+        # check if required columns are present
+        required_columns = self.model.model_inputs.keys()
+        for col in required_columns:
+            if col not in inputs.columns:
+                raise ValueError(
+                    f"Input DataFrame is missing required column: {col}. Please check the model requirements."
+                )
         inputs = filter_input_by_model(
             self.model_name, inputs
         )  # Filter inputs based on model requirements
