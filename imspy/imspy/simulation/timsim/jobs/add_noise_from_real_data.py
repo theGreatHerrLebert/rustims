@@ -64,9 +64,6 @@ def add_real_data_noise_to_frames(
     """
     r_list = []
 
-    # debug print pasef_meta
-    print(pasef_meta)
-
     # DDA noise not yet implemented
     if acquisition_mode == 'DDA':
 
