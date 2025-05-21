@@ -74,6 +74,12 @@ def add_real_data_noise_to_frames(
             # if the frame is not a precursor frame, we need to magic
             if frame.frame_id not in precursor_frames:
                 scan_center_list = get_center_scans_per_frame_id(frame.frame_id, pasef_meta)
+
+                # if scan_center_list is empty, append the frame
+                if len(scan_center_list) == 0:
+                    r_list.append(frame)
+                    continue
+
                 noise = acquisition_builder.tdf_writer.helper_handle.sample_pasef_fragments_random(scan_center_list, max_scan)
                 r_list.append(frame + noise)
 
