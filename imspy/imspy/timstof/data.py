@@ -93,8 +93,15 @@ class TimsDataset(ABC):
         self.global_meta_data = self.__load_global_meta_data()
         self.tims_calibration = self.__load_tims_calibration()
         self.mz_calibration = self.__load_mz_calibration()
-        self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
-        self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
+
+        try:
+            self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].Id.values.astype(np.int32)
+            self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].Id.values.astype(np.int32)
+
+        except AttributeError:
+            self.precursor_frames = self.meta_data[self.meta_data["MsMsType"] == 0].frame_id.values.astype(np.int32)
+            self.fragment_frames = self.meta_data[self.meta_data["MsMsType"] > 0].frame_id.values.astype(np.int32)
+
         self.__current_index = 1
 
         # if we are on macOS, we only can use the bruker SDK False option, start by getting the OS we are on, use python's os module
