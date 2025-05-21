@@ -1,12 +1,13 @@
 use crate::data::acquisition::AcquisitionMode;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
 use crate::data::meta::{read_dda_precursor_meta, read_global_meta_sql, read_meta_data_sql, read_pasef_frame_ms_ms_info, DDAPrecursor, PasefMsMsMeta};
-use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
+use mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::collections::BTreeMap;
 use rand::prelude::IteratorRandom;
+use mscore::data::spectrum::MsType;
 
 #[derive(Clone)]
 pub struct PASEFDDAFragment {
@@ -253,6 +254,17 @@ impl TimsDatasetDDA {
         target_scan_apex_values: Vec<i32>,
         experiment_max_scan: i32,
     ) -> TimsFrame {
+
+        // return empty frame is target_scan_apex_values is empty
+        if target_scan_apex_values.is_empty() {
+            return TimsFrame {
+                frame_id: 0, // Replace with a suitable default value
+                ms_type: MsType::FragmentDda,
+                scan: Vec::new(),
+                tof: Vec::new(),
+                ims_frame: ImsFrame::default(), // Uses the default implementation for `ImsFrame`
+            }
+        }
         
         let mut pasef_frames = Vec::new();
         
