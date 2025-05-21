@@ -148,7 +148,10 @@ class TDFWriter:
                 frame_start_pos: int
                 only_frame_one: bool
         """
-        max_index = self.helper_handle.meta_data.Id.max()
+        try:
+            max_index = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_index = self.helper_handle.meta_data.frame_id.max()
 
         r = self.helper_handle.meta_data.iloc[0, :].copy()
         if not only_frame_one:
