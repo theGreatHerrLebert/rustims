@@ -184,7 +184,12 @@ class TDFWriter:
         """
         # either use frame 1 or the ref handle frame for writing of calibration data and call to conversion function
         i = 1 if only_frame_one else frame.frame_id
-        max_index = self.helper_handle.meta_data.Id.max()
+
+        try:
+            max_index = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_index = self.helper_handle.meta_data.frame_id.max()
+
         if frame.frame_id > max_index and not only_frame_one:
             i = max_index
 
