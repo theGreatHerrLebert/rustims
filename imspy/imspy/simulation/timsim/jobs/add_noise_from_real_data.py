@@ -16,6 +16,9 @@ def get_center_scans_per_frame_id(frame_id, pasef_meta) -> List[int]:
     Returns:
         List[int]: List of center scans.
     """
+    if pasef_meta is None:
+        return []
+
     pasef_meta_f = pasef_meta[pasef_meta.frame == frame_id]
 
     if len(pasef_meta_f) == 0:
@@ -60,6 +63,9 @@ def add_real_data_noise_to_frames(
         List[TimsFrame]: Frames.
     """
     r_list = []
+
+    # debug print pasef_meta
+    print(pasef_meta)
 
     # DDA noise not yet implemented
     if acquisition_mode == 'DDA':
