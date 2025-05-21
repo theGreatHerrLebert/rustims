@@ -40,7 +40,13 @@ class TDFWriter:
         # Create the tables for the analysis.tdf
         frame_ms_ms_info = self.helper_handle.get_table("FrameMsmsInfo")
         segments = self.helper_handle.get_table("Segments")
-        last_frame = self.helper_handle.meta_data.Id.max()
+
+        try:
+            last_frame = self.helper_handle.meta_data.Id.max()
+        except Exception as e:
+            print(f"Error getting last frame: {e}")
+            last_frame = self.helper_handle.meta_data.frame_id.max()
+
         segments.iloc[0, segments.columns.get_loc("LastFrame")] = last_frame
 
         # Save table to analysis.tdf

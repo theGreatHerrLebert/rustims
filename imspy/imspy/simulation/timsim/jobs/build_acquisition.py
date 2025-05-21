@@ -2,7 +2,7 @@ from pathlib import Path
 
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder, TimsTofAcquisitionBuilderDDA, TimsTofAcquisitionBuilderDIA
 from imspy.simulation.utility import read_acquisition_config
-from imspy.timstof import TimsDataset, TimsDatasetDIA, TimsDatasetDDA
+from imspy.timstof import TimsDatasetDIA, TimsDatasetDDA
 
 
 def build_acquisition(
