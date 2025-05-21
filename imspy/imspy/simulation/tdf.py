@@ -43,8 +43,7 @@ class TDFWriter:
 
         try:
             last_frame = self.helper_handle.meta_data.Id.max()
-        except Exception as e:
-            print(f"Error getting last frame: {e}")
+        except AttributeError as e:
             last_frame = self.helper_handle.meta_data.frame_id.max()
 
         segments.iloc[0, segments.columns.get_loc("LastFrame")] = last_frame
@@ -79,7 +78,13 @@ class TDFWriter:
         """Convert m/z values to TOF values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
+
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
 
@@ -89,7 +94,11 @@ class TDFWriter:
         """Convert TOF values to m/z values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
         return np.array(self.helper_handle.tof_to_mz(frame_id, tofs))
@@ -98,7 +107,10 @@ class TDFWriter:
         """Convert inverse mobility values to scan values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
         return np.array(self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs))
@@ -107,7 +119,10 @@ class TDFWriter:
         """Convert scan values to inverse mobility values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
         return np.array(self.helper_handle.scan_to_inverse_mobility(frame_id, scans))
