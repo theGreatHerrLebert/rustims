@@ -128,6 +128,15 @@ def simulate_peptides(
         "events": events}
     )
 
+    # Simulate peptide efficiency using rejection sampling in log-normal space
+    efficiency = generate_normal_efficiency(
+        n=len(peptide_table),
+        mean_log=-2,  # Center the log values around log10(0.01)
+        std_log=1,  # Spread the values across 3 orders of magnitude
+        min_val=0.0001,  # Minimum value
+        max_val=1  # Maximum value
+    )
+
     # Simulate peptide efficiency
     if use_koina_model is not None and use_koina_model != "":
         try:
@@ -135,24 +144,14 @@ def simulate_peptides(
                 print(f"Using Koina model: {use_koina_model}")
 
             # Simulate flyability using Koina model
-            peptide_table["events"] = predict_peptide_flyability_with_koina(
+            efficiency = predict_peptide_flyability_with_koina(
                 model_name=use_koina_model,
                 data=peptide_table,
-                gradient_length=gradient_length,
             )
 
         except Exception as e:
             print(f"Failed to predict peptide flyability with KOINA: {e}")
             print("Falling back to normal distribution...")
-            
-            # Simulate peptide efficiency using rejection sampling in log-normal space
-            efficiency = generate_normal_efficiency(
-                n=len(peptide_table),
-                mean_log=-2,  # Center the log values around log10(0.01)
-                std_log=1,  # Spread the values across 3 orders of magnitude
-                min_val=0.0001,  # Minimum value
-                max_val=1  # Maximum value
-            )
 
     peptide_table["events"] = (peptide_table.events * efficiency).astype(np.int32)
 

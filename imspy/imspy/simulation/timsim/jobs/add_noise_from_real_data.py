@@ -3,6 +3,32 @@ from typing import List
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.timstof.frame import TimsFrame
 
+import numpy as np
+
+def get_center_scans_per_frame_id(frame_id, pasef_meta) -> List[int]:
+    """
+    Get the center scans for a given frame id.
+    Args:
+        frame_id:
+        pasef_meta:
+
+    Returns:
+        List[int]: List of center scans.
+    """
+    pasef_meta_f = pasef_meta[pasef_meta.Frame == frame_id]
+
+    if len(pasef_meta_f) == 0:
+        return []
+
+    centers = []
+
+    for index, row in pasef_meta_f.iterrows():
+        window_mid = int(np.round((row.ScanNumEnd - row.ScanNumBegin) / 2))
+
+        centers.append(int(row.ScanNumBegin) + window_mid)
+
+    return centers
+
 
 def add_real_data_noise_to_frames(
         acquisition_builder: TimsTofAcquisitionBuilderDIA,
@@ -35,9 +61,25 @@ def add_real_data_noise_to_frames(
 
     # DDA noise not yet implemented
     if acquisition_mode == 'DDA':
-        # print("Warning: DDA noise not yet implemented, no noise will be added added.")
+
+        max_scan = acquisition_builder.tdf_writer.helper_handle.num_scans
+        precursor_frames = set(acquisition_builder.tdf_writer.helper_handle.precursor_frames)
+
         for frame in frames:
-            r_list.append(frame)
+            # if the frame is not a precursor frame, we need to magic
+            if frame.frame_id not in precursor_frames:
+                scan_center_list = []
+                noise = acquisition_builder.tdf_writer.helper_handle.sample_pasef_fragments_random(scan_center_list, max_scan)
+                r_list.append(frame + noise)
+
+            # if the frame is a precursor frame, we need to simply add noise the same way as in DIA
+            else:
+                noise = acquisition_builder.tdf_writer.helper_handle.sample_precursor_signal(
+                    num_frames=num_precursor_frames,
+                    max_intensity=intensity_max_precursor,
+                    take_probability=precursor_sample_fraction
+                )
+                r_list.append(frame + noise)
 
     else:
         d = acquisition_builder.frames_to_window_groups
