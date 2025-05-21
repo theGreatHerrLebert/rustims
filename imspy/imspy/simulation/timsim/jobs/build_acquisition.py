@@ -2,7 +2,7 @@ from pathlib import Path
 
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder, TimsTofAcquisitionBuilderDDA, TimsTofAcquisitionBuilderDIA
 from imspy.simulation.utility import read_acquisition_config
-from imspy.timstof import TimsDataset, TimsDatasetDIA
+from imspy.timstof import TimsDataset, TimsDatasetDIA, TimsDatasetDDA
 
 
 def build_acquisition(
@@ -48,7 +48,7 @@ def build_acquisition(
             print("Using DDA acquisition mode...")
 
         # Load reference dataset
-        reference_ds = TimsDataset(reference_path)
+        reference_ds = TimsDatasetDDA(reference_path)
 
         if gradient_length is None:
             gradient_length = 3600.0
