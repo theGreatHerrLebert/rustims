@@ -286,6 +286,22 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
             self.__dataset.sample_pasef_fragments_random(scan_apex_values, scan_max_value)
         )
 
+    def sample_precursor_signal(self, num_frames: int, max_intensity: float, take_probability: float) -> TimsFrame:
+        """
+        Sample precursor signal from the dataset.
+        Args:
+            num_frames: number of frames to sample
+            max_intensity: maximum intensity of the sampled frames
+            take_probability: probability of taking a frame
+
+        Returns:
+            TimsFrame: sampled precursor signal
+        """
+
+        return TimsFrame.from_py_ptr(
+            self.__dataset.sample_precursor_signal(num_frames, max_intensity, take_probability)
+        )
+
     def __repr__(self):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "
                 f"fragmented_precursors={self.fragmented_precursors.shape[0]})")

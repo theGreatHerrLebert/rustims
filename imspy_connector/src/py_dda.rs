@@ -132,6 +132,10 @@ impl PyTimsDatasetDDA {
         );
         PyTimsFrame { inner: tims_frame }
     }
+
+    pub fn sample_precursor_signal(&self, num_frames: usize, max_intensity: f64, take_probability: f64) -> PyTimsFrame {
+        PyTimsFrame { inner: self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability) }
+    }
 }
 
 #[pyclass]
