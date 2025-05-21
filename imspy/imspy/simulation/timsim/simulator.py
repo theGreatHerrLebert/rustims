@@ -714,6 +714,8 @@ def main():
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
 
+    pasef_meta = None
+
     if args.acquisition_type == 'DDA':
         pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
             acquisition_builder=acquisition_builder,
@@ -759,6 +761,7 @@ def main():
         num_precursor_frames=5,
         num_fragment_frames=5,
         fragment=args.apply_fragmentation,
+        pasef_meta=pasef_meta,
     )
 
 if __name__ == '__main__':

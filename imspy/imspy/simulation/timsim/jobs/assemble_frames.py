@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 from tqdm import tqdm
@@ -27,6 +28,7 @@ def assemble_frames(
         num_precursor_frames: int = 10,
         num_fragment_frames: int = 10,
         fragment: bool = True,
+        pasef_meta: Optional[pd.DataFrame] = None,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -49,6 +51,7 @@ def assemble_frames(
         num_precursor_frames: Number of precursor frames.
         num_fragment_frames: Number of fragment frames.
         fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
+        pasef_meta: PASEF metadata, if None, will be read from the database.
 
 
     Returns:
@@ -113,6 +116,7 @@ def assemble_frames(
             num_precursor_frames=num_precursor_frames,
             num_fragment_frames=num_fragment_frames,
             acquisition_mode=acquisition_builder.acquisition_mode.mode,
+            pasef_meta=pasef_meta,
         )
 
         for frame in built_frames:

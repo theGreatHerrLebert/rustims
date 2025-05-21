@@ -1,4 +1,5 @@
-from typing import List
+import pandas as pd
+from typing import List, Optional
 
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilderDIA
 from imspy.timstof.frame import TimsFrame
@@ -15,7 +16,7 @@ def get_center_scans_per_frame_id(frame_id, pasef_meta) -> List[int]:
     Returns:
         List[int]: List of center scans.
     """
-    pasef_meta_f = pasef_meta[pasef_meta.Frame == frame_id]
+    pasef_meta_f = pasef_meta[pasef_meta.frame == frame_id]
 
     if len(pasef_meta_f) == 0:
         return []
@@ -23,9 +24,8 @@ def get_center_scans_per_frame_id(frame_id, pasef_meta) -> List[int]:
     centers = []
 
     for index, row in pasef_meta_f.iterrows():
-        window_mid = int(np.round((row.ScanNumEnd - row.ScanNumBegin) / 2))
-
-        centers.append(int(row.ScanNumBegin) + window_mid)
+        window_mid = int(np.round((row.scan_end - row.scan_start) / 2))
+        centers.append(int(row.scan_start) + window_mid)
 
     return centers
 
@@ -40,6 +40,7 @@ def add_real_data_noise_to_frames(
         num_precursor_frames: int = 5,
         num_fragment_frames: int = 5,
         acquisition_mode: str = 'DIA',
+        pasef_meta: Optional[pd.DataFrame] = None,
 ) -> List[TimsFrame]:
     """Add noise to frame.
 
@@ -53,6 +54,7 @@ def add_real_data_noise_to_frames(
         num_precursor_frames (int): Number of precursor frames.
         num_fragment_frames (int): Number of fragment frames.
         acquisition_mode (str): Acquisition mode.
+        pasef_meta (Optional[pd.DataFrame]): PASEF metadata.
 
     Returns:
         List[TimsFrame]: Frames.
@@ -68,7 +70,7 @@ def add_real_data_noise_to_frames(
         for frame in frames:
             # if the frame is not a precursor frame, we need to magic
             if frame.frame_id not in precursor_frames:
-                scan_center_list = []
+                scan_center_list = get_center_scans_per_frame_id(frame.frame_id, pasef_meta)
                 noise = acquisition_builder.tdf_writer.helper_handle.sample_pasef_fragments_random(scan_center_list, max_scan)
                 r_list.append(frame + noise)
 
