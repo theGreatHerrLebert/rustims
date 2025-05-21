@@ -1,9 +1,6 @@
 use crate::data::acquisition::AcquisitionMode;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
-use crate::data::meta::{
-    read_dda_precursor_meta, read_global_meta_sql, read_meta_data_sql, read_pasef_frame_ms_ms_info,
-    DDAPrecursor, PasefMsMsMeta,
-};
+use crate::data::meta::{read_dda_precursor_meta, read_global_meta_sql, read_meta_data_sql, read_pasef_frame_ms_ms_info, DDAPrecursor, PasefMsMsMeta};
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rayon::prelude::*;
@@ -20,6 +17,7 @@ pub struct PASEFDDAFragment {
 
 pub struct TimsDatasetDDA {
     pub loader: TimsDataLoader,
+    pub pasef_meta: Vec<PasefMsMsMeta>,
 }
 
 impl TimsDatasetDDA {
@@ -65,12 +63,15 @@ impl TimsDatasetDDA {
                 mz_upper,
             ),
         };
-        TimsDatasetDDA { loader }
+        
+        let pasef_meta = read_pasef_frame_ms_ms_info(data_path).unwrap();
+        
+        TimsDatasetDDA { loader, pasef_meta }
     }
 
     pub fn get_selected_precursors(&self) -> Vec<DDAPrecursor> {
         let precursor_meta = read_dda_precursor_meta(&self.loader.get_data_path()).unwrap();
-        let pasef_meta = self.get_pasef_frame_ms_ms_info();
+        let pasef_meta = &self.pasef_meta;
 
         let precursor_id_to_pasef_meta: BTreeMap<i64, &PasefMsMsMeta> = pasef_meta
             .iter()
@@ -184,6 +185,89 @@ impl TimsDatasetDDA {
         });
 
         filtered_frames
+    }
+    
+    pub fn sample_pasef_fragment_random(
+        &self,
+        target_scan_apex: i32,
+        experiment_max_scan: i32,
+    ) -> TimsFrame {
+        let pasef_meta = &self.pasef_meta;
+        let random_index = rand::random::<usize>() % pasef_meta.len();
+        let pasef_info = &pasef_meta[random_index];
+        
+        // get the frame
+        let frame = self.loader.get_frame(pasef_info.frame_id as u32);
+        
+        // get five percent of the scan range
+        let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
+        
+        // get the fragment spectrum by scan range
+        let mut filtered = frame.filter_ranged(
+            0.0,
+            2000.0,
+            (pasef_info.scan_num_begin - scan_margin) as i32,
+            (pasef_info.scan_num_end + scan_margin) as i32,
+            0.0,
+            5.0,
+            0.0,
+            1e9,
+        );
+
+        // Safety check
+        if filtered.scan.is_empty() {
+            return filtered;
+        }
+
+        // Compute median scan
+        let mut scan_copy = filtered.scan.clone();
+        scan_copy.sort_unstable();
+        let median_scan = scan_copy[scan_copy.len() / 2];
+
+        // Compute shift
+        let scan_shift = target_scan_apex - median_scan;
+
+        // Apply shift to scan values
+        for s in filtered.scan.iter_mut() {
+            *s += scan_shift;
+        }
+
+        // Refilter to clip shifted scans that fall outside valid bounds
+        let re_filtered = filtered.filter_ranged(
+            0.0,
+            2000.0,
+            0,
+            experiment_max_scan,
+            0.0,
+            5.0,
+            0.0,
+            1e9,
+        );
+        
+        re_filtered
+    }
+    
+    pub fn sample_pasef_fragments_random(
+        &self,
+        target_scan_apex_values: Vec<i32>,
+        experiment_max_scan: i32,
+    ) -> TimsFrame {
+        
+        let mut pasef_frames = Vec::new();
+        
+        for target_scan_apex in target_scan_apex_values {
+            let pasef_frame = self.sample_pasef_fragment_random(target_scan_apex, experiment_max_scan);
+            pasef_frames.push(pasef_frame);
+        }
+        
+        // create combined frame by summing the frame structures, they override add
+        let mut combined_frame = pasef_frames[0].clone();
+        
+        for frame in pasef_frames.iter().skip(1) {
+            combined_frame = combined_frame + frame.clone();
+        }
+        
+        combined_frame
     }
 }
 

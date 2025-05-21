@@ -268,6 +268,24 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         """
         return [PrecursorDDA.from_py_ptr(precursor) for precursor in self.__dataset.get_selected_precursors()]
 
+    def sample_pasef_fragments_random(self,
+                                      scan_apex_values: List[int],
+                                      scan_max_value: int,
+                                      ) -> TimsFrame:
+        """
+        Sample PASEF fragments randomly from the dataset.
+        Args:
+            scan_apex_values: List of scan apex values to sample from
+            scan_max_value: maximum scan value to sample from
+
+        Returns:
+            TimsFrame: sampled PASEF fragments
+        """
+
+        return TimsFrame.from_py_ptr(
+            self.__dataset.sample_pasef_fragments_random(scan_apex_values, scan_max_value)
+        )
+
     def __repr__(self):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "
                 f"fragmented_precursors={self.fragmented_precursors.shape[0]})")
