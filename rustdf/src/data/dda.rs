@@ -235,7 +235,7 @@ impl TimsDatasetDDA {
         }
 
         // Refilter to clip shifted scans that fall outside valid bounds
-        let mut re_filtered = filtered.filter_ranged(
+        let re_filtered = filtered.filter_ranged(
             0.0,
             2000.0,
             0,
@@ -245,16 +245,7 @@ impl TimsDatasetDDA {
             0.0,
             1e9,
         );
-        
-        // re-calculate ion mobility
-        let im_values = self.scan_to_inverse_mobility(
-            pasef_info.frame_id as u32,
-            &re_filtered.scan.iter().map(|x| *x as u32).collect(),
-        );
-        
-        // Update the inverse mobility values
-        re_filtered.ims_frame.mobility = im_values;
-        
+
         re_filtered
     }
     
@@ -288,6 +279,15 @@ impl TimsDatasetDDA {
         for frame in pasef_frames.iter().skip(1) {
             combined_frame = combined_frame + frame.clone();
         }
+
+        // re-calculate ion mobility
+        let im_values = self.scan_to_inverse_mobility(
+            combined_frame.frame_id as u32,
+            &combined_frame.scan.iter().map(|x| *x as u32).collect(),
+        );
+
+        // Update the inverse mobility values
+        combined_frame.ims_frame.mobility = im_values;
         
         combined_frame
     }
