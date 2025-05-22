@@ -154,7 +154,7 @@ class DDAFrameRenderer(BaseFrameRenderer):
     def _render_frame(self, frame_id: int, save_path=None,
                       dpi: int = 150, cmap: str = 'inferno',
                       annotate: bool = True):
-        F = get_frame_matrix(self.handle, frame_id)
+        F = get_frame_matrix(self.handle, frame_id,scan_max=self.handle.precursor_frames)
         fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
         ax.imshow(np.cbrt(F), cmap=cmap, origin='upper')
         ax.set(xlabel='m/z (1 Da bins)', ylabel='Scan Num',
@@ -203,7 +203,7 @@ class DIAFrameRenderer(BaseFrameRenderer):
     def _render_frame(self, frame_id: int, save_path=None,
                       dpi: int = 150, cmap: str = 'inferno',
                       annotate: bool = True):
-        F = get_frame_matrix(self.handle, frame_id)
+        F = get_frame_matrix(self.handle, frame_id, scan_max=self.handle.num_scans)
         fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
         ax.imshow(np.sqrt(F), cmap=cmap, origin='upper')
         ax.set(xlabel='m/z (1 Da bins)', ylabel='Scan Num',
