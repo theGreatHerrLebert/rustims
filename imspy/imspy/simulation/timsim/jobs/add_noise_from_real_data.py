@@ -68,11 +68,15 @@ def add_real_data_noise_to_frames(
     if acquisition_mode == 'DDA':
 
         max_scan = acquisition_builder.tdf_writer.helper_handle.num_scans
-        precursor_frames = set(acquisition_builder.tdf_writer.helper_handle.precursor_frames)
+
+        if pasef_meta is None:
+            fragment_frames = set(pasef_meta.frame)
+        else:
+            raise ValueError("PASEF metadata is required for DDA acquisition mode.")
 
         for frame in frames:
             # if the frame is not a precursor frame, we need to magic
-            if frame.frame_id not in precursor_frames:
+            if frame.frame_id in fragment_frames:
                 scan_center_list = get_center_scans_per_frame_id(frame.frame_id, pasef_meta)
 
                 # if scan_center_list is empty, append the frame
