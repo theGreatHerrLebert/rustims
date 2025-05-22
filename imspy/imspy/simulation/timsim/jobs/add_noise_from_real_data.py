@@ -66,17 +66,19 @@ def add_real_data_noise_to_frames(
 
     # DDA noise not yet implemented
     if acquisition_mode == 'DDA':
-
+        # Get the maximum number of scans to avoid picking scan values out of range during noise generation
         max_scan = acquisition_builder.tdf_writer.helper_handle.num_scans
 
+        # if the acquisition mode is DDA, we need to check if the frame is a precursor or fragment frame
         if pasef_meta is not None:
             fragment_frames = set(pasef_meta.frame)
         else:
             raise ValueError("PASEF metadata is required for DDA acquisition mode.")
 
         for frame in frames:
-            # if the frame is not a precursor frame, we need to magic
+            # if the frame is a fragment frame, we need to get the center scans
             if frame.frame_id in fragment_frames:
+                # get the center scans for the frame
                 scan_center_list = get_center_scans_per_frame_id(frame.frame_id, pasef_meta)
 
                 # if scan_center_list is empty, append the frame
@@ -84,7 +86,10 @@ def add_real_data_noise_to_frames(
                     r_list.append(frame)
                     continue
 
-                noise = acquisition_builder.tdf_writer.helper_handle.sample_pasef_fragments_random(scan_center_list, max_scan)
+                # extract real data noise which will be moved to the center scans
+                noise = acquisition_builder.tdf_writer.helper_handle.sample_pasef_fragments_random(
+                    scan_center_list, max_scan
+                )
                 r_list.append(frame + noise)
 
             # if the frame is a precursor frame, we need to simply add noise the same way as in DIA
