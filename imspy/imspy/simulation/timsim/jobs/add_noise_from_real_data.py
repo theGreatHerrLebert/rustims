@@ -69,7 +69,7 @@ def add_real_data_noise_to_frames(
 
         max_scan = acquisition_builder.tdf_writer.helper_handle.num_scans
 
-        if pasef_meta is None:
+        if pasef_meta is not None:
             fragment_frames = set(pasef_meta.frame)
         else:
             raise ValueError("PASEF metadata is required for DDA acquisition mode.")
