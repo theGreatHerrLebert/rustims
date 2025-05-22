@@ -27,7 +27,7 @@ def configure_gpu_memory(limit_gb: float = 4.0):
 
 
 def get_frame_matrix(handle, frame_id: int,
-                     index_max: int = 1710, scan_max: int = 972) -> np.ndarray:
+                     index_max: int = 1800, scan_max: int = 972) -> np.ndarray:
     frame = handle[frame_id]
     return frame.vectorized(0).get_tensor_repr(
         dense=True, zero_indexed=False, re_index=False,
