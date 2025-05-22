@@ -48,7 +48,7 @@ def build_acquisition(
             print("Using DDA acquisition mode...")
 
         # Load reference dataset
-        reference_ds = TimsDatasetDDA(reference_path)
+        reference_ds = TimsDatasetDDA(reference_path, rename_id=False)
 
         if gradient_length is None:
             gradient_length = 3600.0
