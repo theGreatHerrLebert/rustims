@@ -81,6 +81,8 @@ def add_real_data_noise_to_frames(
                 # get the center scans for the frame
                 scan_center_list = get_center_scans_per_frame_id(frame.frame_id, pasef_meta)
 
+                print(f"Frame {frame.frame_id} has {scan_center_list} center scans.")
+
                 # if scan_center_list is empty, append the frame
                 if len(scan_center_list) == 0:
                     r_list.append(frame)
