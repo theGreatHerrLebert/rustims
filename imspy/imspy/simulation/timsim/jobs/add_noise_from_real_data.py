@@ -80,9 +80,6 @@ def add_real_data_noise_to_frames(
             if frame.frame_id in fragment_frames:
                 # get the center scans for the frame
                 scan_center_list = get_center_scans_per_frame_id(frame.frame_id, pasef_meta)
-
-                print(f"Frame {frame.frame_id} has {scan_center_list} center scans.")
-
                 # if scan_center_list is empty, append the frame
                 if len(scan_center_list) == 0:
                     r_list.append(frame)
@@ -92,6 +89,7 @@ def add_real_data_noise_to_frames(
                 noise = acquisition_builder.tdf_writer.helper_handle.sample_pasef_fragments_random(
                     scan_center_list, max_scan
                 )
+
                 r_list.append(frame + noise)
 
             # if the frame is a precursor frame, we need to simply add noise the same way as in DIA
