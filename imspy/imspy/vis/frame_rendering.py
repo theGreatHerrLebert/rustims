@@ -209,7 +209,7 @@ class DIAFrameRenderer(BaseFrameRenderer):
         F = get_frame_matrix(self.handle, frame_id, scan_max=self.handle.num_scans)
         fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
         ax.imshow(np.sqrt(F), cmap=cmap, origin='upper')
-        ax.set(xlabel='m/z (1 Da bins)', ylabel='Scan Num',
+        ax.set(xlabel='m/z (1 Th bins)', ylabel='Scan Num',
                title=(f"Frame {frame_id}"
                       f"{' [Precursor]' if frame_id in self.precursor_frames else ''}"
                       f"{' [+Fragment]' if frame_id in self.fragment_frames else ''}"))
