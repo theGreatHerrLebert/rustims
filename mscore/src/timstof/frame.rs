@@ -378,11 +378,20 @@ impl TimsFrame {
         TimsFrame::new(frame_id, ms_type, retention_time, scan, mobility, tof, mzs, intensity)
     }
 
-    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
+    pub fn to_dense_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, resolution: i32) -> (Vec<f64>, Vec<f64>, Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
         let factor = (10.0f64).powi(resolution);
         let num_colums = ((window_length * factor).round() + 1.0) as usize;
 
         let (scans, window_indices, spectra) = self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        let mut mobilities = Vec::with_capacity(spectra.len());
+        let mut mzs = Vec::with_capacity(spectra.len());
+
+        // go over all spectra and fill mobilities and mzs
+        for spectrum in &spectra {
+            mobilities.push(spectrum.mobility);
+            mzs.push(spectrum.spectrum.mz_spectrum.mz.first().unwrap().clone());
+        }
+
         let vectorized_spectra = spectra.iter().map(|spectrum| spectrum.vectorized(resolution)).collect::<Vec<_>>();
 
         let mut flat_matrix: Vec<f64> = vec![0.0; spectra.len() * num_colums];
@@ -401,7 +410,7 @@ impl TimsFrame {
             }
 
         }
-        (flat_matrix, scans, window_indices, spectra.len(), num_colums)
+        (flat_matrix, mobilities, mzs, scans, window_indices, spectra.len(), num_colums)
     }
 
 

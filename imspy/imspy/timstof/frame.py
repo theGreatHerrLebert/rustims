@@ -278,13 +278,13 @@ class TimsFrame(RustWrapperObject):
         ))
 
     def to_dense_windows(self, window_length: float = 10, resolution: int = 1, overlapping: bool = True,
-                         min_num_peaks: int = 5, min_intensity: float = 0.0) -> NDArray[np.float64]:
+                         min_num_peaks: int = 5, min_intensity: float = 0.0):
 
-        rows, cols, values, scans, window_indices = self.__frame_ptr.to_dense_windows(window_length, resolution,
+        rows, cols, values, ims, mzs, scans, window_indices = self.__frame_ptr.to_dense_windows(window_length, resolution,
                                                                                       overlapping, min_num_peaks,
                                                                                       min_intensity)
 
-        return scans, window_indices, np.reshape(values, (rows, cols))
+        return ims, mzs, scans, window_indices, np.reshape(values, (rows, cols))
 
     def to_noise_annotated_tims_frame(self) -> 'TimsFrameAnnotated':
         """Convert the frame to a noise annotated frame.

@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, List, Tuple
 from abc import ABC, abstractmethod
 import imspy_connector
 import numpy as np
@@ -295,6 +295,66 @@ class TimsFrameAnnotated(RustWrapperObject):
         return TimsFrameAnnotated.from_py_ptr(self.__py_ptr +
                                               other.__py_ptr)
 
+    def to_tims_spectra_annotated(self) -> List['TimsSpectrumAnnotated']:
+        tims_spectra_annotated = self.__py_ptr.to_tims_spectra_annotated()
+        return [TimsSpectrumAnnotated.from_py_ptr(s) for s in tims_spectra_annotated]
+
+    def to_windows_indexed(self, window_length: float = 10.0, overlapping: bool = True,
+                            min_peaks: int = 5, min_intensity: float = 0.0) -> Tuple[List[int], List[int], List['TimsSpectrumAnnotated']]:
+        ids, indices, spectra = self.__py_ptr.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity)
+        spectra_annotated = [TimsSpectrumAnnotated.from_py_ptr(s) for s in spectra]
+
+        return ids, indices, spectra_annotated
+
+    def to_windows(
+            self,
+            window_length: float = 10.0,
+            overlapping: bool = True,
+            min_num_peaks: int = 5,
+            min_intensity: float = 0.0,
+    ) -> List['TimsSpectrumAnnotated']:
+        windows = self.__py_ptr.to_windows(window_length, overlapping, min_num_peaks, min_intensity)
+        return [TimsSpectrumAnnotated.from_py_ptr(w) for w in windows]
+
+
+    def to_dense_windows(
+            self,
+            window_length: float = 10.0,
+            overlapping: bool = True,
+            min_num_peaks: int = 5,
+            min_intensity: float = 0.0,
+            resolution: int = 1,
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        values, scans, window_indices, rows, cols = self.__py_ptr.to_dense_windows(
+            window_length,
+            overlapping,
+            min_num_peaks,
+            min_intensity,
+            resolution
+        )
+
+        return scans, window_indices, np.reshape(values, (rows, cols))
+
+    def to_dense_windows_with_labels(
+            self,
+            window_length: float = 10.0,
+            overlapping: bool = True,
+            min_num_peaks: int = 5,
+            min_intensity: float = 0.0,
+            resolution: int = 1,
+    ) -> Tuple[NDArray[np.float64], NDArray[np.int32], NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], NDArray[np.int32], NDArray[np.int32], NDArray[np.int32]]:
+
+        values, scans, window_indices, mzs, inv_ion_mobs, rows, cols, isotopologue_labels, charge_state_labels, feature_id_labels = self.__py_ptr.to_dense_windows_with_labels(
+            window_length,
+            overlapping,
+            min_num_peaks,
+            min_intensity,
+            resolution
+        )
+
+        return np.array(scans), np.array(window_indices), np.array(mzs), np.array(inv_ion_mobs), np.reshape(values, (rows, cols)), np.reshape(isotopologue_labels, (rows, cols)), np.reshape(charge_state_labels, (rows, cols)), np.reshape(feature_id_labels, (rows, cols))
+
+
     def __repr__(self) -> str:
         return (f"TimsFrameAnnotated("
                 f"frame_id={self.frame_id}, "
@@ -310,3 +370,53 @@ class TimsFrameAnnotated(RustWrapperObject):
 
     def get_py_ptr(self) -> ims.PyTimsFrameAnnotated:
         return self.__py_ptr
+
+
+class TimsSpectrumAnnotated(RustWrapperObject):
+    def __init__(self, mz: list[float], intensity: list[float], annotations: list[PeakAnnotation]):
+        assert len(mz) == len(intensity) == len(annotations), "Length of mz, intensity and annotations must be equal."
+        self.__py_ptr = ims.PyTimsSpectrumAnnotated(
+            mz,
+            intensity,
+            [a.get_py_ptr() for a in annotations]
+        )
+
+    @property
+    def mz(self) -> list[float]:
+        return self.__py_ptr.mz
+
+    @property
+    def intensity(self) -> list[float]:
+        return self.__py_ptr.intensity
+
+    @property
+    def annotations(self) -> list[PeakAnnotation]:
+        return [PeakAnnotation.from_py_ptr(a) for a in self.__py_ptr.annotations]
+
+    def __repr__(self) -> str:
+        return f"TimsSpectrumAnnotated(mz={self.mz}, intensity={self.intensity}, annotations={self.annotations})"
+
+    @classmethod
+    def from_py_ptr(cls, tims_spectrum_annotated: ims.PyTimsSpectrumAnnotated) -> 'TimsSpectrumAnnotated':
+        instance = cls.__new__(cls)
+        instance.__py_ptr = tims_spectrum_annotated
+        return instance
+
+    def get_py_ptr(self) -> ims.PyTimsSpectrumAnnotated:
+        return self.__py_ptr
+
+    def filter(self,
+                mz_min: float = 0.0,
+                mz_max: float = 1700.0,
+                intensity_min: float = 0.0,
+                intensity_max: float = 1e9) -> 'TimsSpectrumAnnotated':
+          return TimsSpectrumAnnotated.from_py_ptr(
+                self.__py_ptr.filter_ranged(mz_min, mz_max, intensity_min, intensity_max))
+
+    def to_windows(self, window_length: float = 10.0, overlapping: bool = True,
+                     min_peaks: int = 5, min_intensity: float = 0.0) -> dict[int, 'TimsSpectrumAnnotated']:
+          windows = self.__py_ptr.to_windows(window_length, overlapping, min_peaks, min_intensity)
+          return {k: TimsSpectrumAnnotated.from_py_ptr(v) for k, v in windows.items()}
+
+    def __add__(self, other: 'TimsSpectrumAnnotated') -> 'TimsSpectrumAnnotated':
+        return TimsSpectrumAnnotated.from_py_ptr(self.__py_ptr + other.__py_ptr)

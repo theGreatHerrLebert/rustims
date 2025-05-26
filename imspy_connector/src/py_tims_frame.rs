@@ -222,8 +222,10 @@ impl PyTimsFrame {
 
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
 
-        let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
+        let (data, mobilities, mzs, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
         let py_array: Bound<'_, PyArray1<f64>> = data.into_pyarray_bound(py);
+        let mobilities: Bound<'_, PyArray1<f64>> = mobilities.into_pyarray_bound(py);
+        let mzs: Bound<'_, PyArray1<f64>> = mzs.into_pyarray_bound(py);
         let py_scans: Bound<'_, PyArray1<i32>> = scans.into_pyarray_bound(py);
         let py_window_indices: Bound<'_, PyArray1<i32>> = window_indices.into_pyarray_bound(py);
 
@@ -231,7 +233,12 @@ impl PyTimsFrame {
         let py_array = py_array.unbind();
         let py_scans = py_scans.unbind();
         let py_window_indices = py_window_indices.unbind();
-        let tuple = PyTuple::new_bound(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py), py_array.into_py(py), py_scans.into_py(py), py_window_indices.into_py(py)]);
+        let tuple = PyTuple::new_bound(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py),
+            py_array.into_py(py),
+            mobilities.into_py(py),
+            mzs.into_py(py),
+            py_scans.into_py(py),
+            py_window_indices.into_py(py)]);
 
         Ok(tuple.into())
     }
