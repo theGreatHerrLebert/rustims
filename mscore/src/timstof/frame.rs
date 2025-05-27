@@ -570,6 +570,33 @@ impl TimsFrame {
             spectrum: IndexedMzSpectrum::new(tof, mz, intensity),
         })
     }
+
+    pub fn fold_along_scan_axis(self, fold_width: usize) -> TimsFrame {
+        // extract tims spectra from frame
+        let spectra = self.to_tims_spectra();
+
+        // create a new collection of merged spectra,where spectra are first grouped by the key they create when divided by fold_width
+        // and then merge them by addition
+        let mut merged_spectra: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
+        for spectrum in spectra {
+            let key = spectrum.scan / fold_width as i32;
+
+            // if the key already exists, merge the spectra
+            if let Some(existing_spectrum) = merged_spectra.get_mut(&key) {
+
+                let merged_spectrum = existing_spectrum.clone() + spectrum;
+                // update the existing spectrum with the merged one
+                *existing_spectrum = merged_spectrum;
+
+            } else {
+                // otherwise, insert the new spectrum
+                merged_spectra.insert(key, spectrum);
+            }
+        }
+
+        // convert the merged spectra back to a TimsFrame
+        TimsFrame::from_tims_spectra(merged_spectra.into_values().collect())
+    }
 }
 
 struct AggregateData {

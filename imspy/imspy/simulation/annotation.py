@@ -354,6 +354,16 @@ class TimsFrameAnnotated(RustWrapperObject):
 
         return np.array(scans), np.array(window_indices), np.array(mzs), np.array(inv_ion_mobs), np.reshape(values, (rows, cols)), np.reshape(isotopologue_labels, (rows, cols)), np.reshape(charge_state_labels, (rows, cols)), np.reshape(feature_id_labels, (rows, cols))
 
+    def fold_along_scan_axis(self, fold_width: int = 4) -> 'TimsFrameAnnotated':
+        """Fold the frame along the scan axis.
+
+        Args:
+            fold_width (int): Width of the fold. Default to 4.
+
+        Returns:
+            TimsFrame: Folded frame.
+        """
+        return TimsFrameAnnotated.from_py_ptr(self.__py_ptr.fold_along_scan_axis(fold_width))
 
     def __repr__(self) -> str:
         return (f"TimsFrameAnnotated("

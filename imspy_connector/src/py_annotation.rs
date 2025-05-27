@@ -271,6 +271,11 @@ impl PyTimsFrameAnnotated {
     ) {
         self.inner.to_dense_windows_with_labels(window_length, overlapping, min_peaks, min_intensity, resolution)
     }
+
+    pub fn fold_along_scan_axis(&self, fold_width: usize) -> PyTimsFrameAnnotated {
+        let folded_frame = self.inner.clone().fold_along_scan_axis(fold_width);
+        PyTimsFrameAnnotated { inner: folded_frame }
+    }
 }
 
 #[pyclass]

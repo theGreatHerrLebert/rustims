@@ -500,10 +500,10 @@ impl TimsSpectrumAnnotated {
 impl std::ops::Add for TimsSpectrumAnnotated {
     type Output = Self;
     fn add(self, other: Self) -> Self {
-        assert_eq!(self.scan, other.scan);
 
         let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
         let mut spec_map: BTreeMap<i64, (u32, f64, PeakAnnotation, i64)> = BTreeMap::new();
+        let mean_scan_floor = ((self.scan as f64 + other.scan as f64) / 2.0) as u32;
 
         for (tof, mz, intensity, annotation) in izip!(self.tof.iter(), self.spectrum.mz.iter(), self.spectrum.intensity.iter(), self.spectrum.annotations.iter()) {
             let key = quantize(*mz);
@@ -536,7 +536,7 @@ impl std::ops::Add for TimsSpectrumAnnotated {
 
         TimsSpectrumAnnotated {
             frame_id: self.frame_id,
-            scan: self.scan,
+            scan: mean_scan_floor,
             retention_time: self.retention_time,
             mobility: self.mobility,
             ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
@@ -925,6 +925,32 @@ impl TimsFrameAnnotated {
             charge_labels,
             peptide_labels,
         )
+    }
+
+    pub fn fold_along_scan_axis(self, fold_width: usize) -> TimsFrameAnnotated {
+        // extract tims spectra from frame
+        let spectra = self.to_tims_spectra_annotated();
+
+        // create a new collection of merged spectra,where spectra are first grouped by the key they create when divided by fold_width
+        // and then merge them by addition
+        let mut merged_spectra: BTreeMap<u32, TimsSpectrumAnnotated> = BTreeMap::new();
+        for spectrum in spectra {
+            let key = spectrum.scan / fold_width as u32;
+
+            // if the key already exists, merge the spectra
+            if let Some(existing_spectrum) = merged_spectra.get_mut(&key) {
+
+                let merged_spectrum = existing_spectrum.clone() + spectrum;
+                // update the existing spectrum with the merged one
+                *existing_spectrum = merged_spectrum;
+
+            } else {
+                // otherwise, insert the new spectrum
+                merged_spectra.insert(key, spectrum);
+            }
+        }
+        // convert the merged spectra back to a TimsFrame
+        TimsFrameAnnotated::from_tims_spectra_annotated(merged_spectra.into_values().collect())
     }
 }
 

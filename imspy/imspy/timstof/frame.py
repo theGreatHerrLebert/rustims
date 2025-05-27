@@ -330,6 +330,17 @@ class TimsFrame(RustWrapperObject):
         assert 0.0 <= take_probability <= 1.0, "The take probability must be between 0 and 1."
         return TimsFrame.from_py_ptr(self.__frame_ptr.random_subsample_frame(take_probability))
 
+    def fold_along_scan_axis(self, fold_width: int = 4) -> 'TimsFrame':
+        """Fold the frame along the scan axis.
+
+        Args:
+            fold_width (int): Width of the fold. Default to 4.
+
+        Returns:
+            TimsFrame: Folded frame.
+        """
+        return TimsFrame.from_py_ptr(self.__frame_ptr.fold_along_scan_axis(fold_width))
+
     def __getitem__(self, index: int) -> Optional[TimsSpectrum]:
         """Get the TimsSpectrum at a given index.
 

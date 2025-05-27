@@ -245,17 +245,22 @@ impl PyTimsFrame {
 
     pub fn to_noise_annotated_tims_frame(&self) -> PyTimsFrameAnnotated {
         let result = self.inner.to_noise_annotated_tims_frame();
-        return PyTimsFrameAnnotated { inner: result }
+        PyTimsFrameAnnotated { inner: result }
     }
 
     pub fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
         let result = self.inner.clone() + other.inner.clone();
-        return PyTimsFrame { inner: result }
+        PyTimsFrame { inner: result }
     }
 
     pub fn random_subsample_frame(&self, take_probability: f64) -> PyTimsFrame {
         let result = self.inner.generate_random_sample(take_probability);
-        return PyTimsFrame { inner: result }
+        PyTimsFrame { inner: result }
+    }
+
+    pub fn fold_along_scan_axis(&self, fold_width: usize) -> PyTimsFrame {
+        let folded_frame = self.inner.clone().fold_along_scan_axis(fold_width);
+        PyTimsFrame { inner: folded_frame }
     }
 }
 
