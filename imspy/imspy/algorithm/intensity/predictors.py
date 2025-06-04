@@ -124,7 +124,6 @@ def get_collision_energy_calibration_factor(
     return calibration_factor, similarities
 
 
-
 def remove_unimod_annotation(sequence: str) -> str:
     """
     Remove the unimod annotation from a peptide sequence.
