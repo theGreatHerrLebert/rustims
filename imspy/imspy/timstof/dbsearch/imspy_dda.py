@@ -880,7 +880,7 @@ def main():
         assign_sage_protein_q(psms, use_hyper_score=True)
 
     # sort PSMs to avoid leaking information into predictions during re-scoring
-    psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
+    # psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
     psms = rescore_psms(
         psm_collection=psms,
