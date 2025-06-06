@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["read_dda_precursor_meta","read_dia_ms_ms_info","read_dia_ms_ms_windows","read_global_meta_sql","read_meta_data_sql","read_pasef_frame_ms_ms_info"],"struct":["DDAFragmentInfo","DDAPrecursor","DDAPrecursorMeta","DIAFragmentFrameInfo","DIAWindowGroupInfo","DiaMsMisInfo","DiaMsMsWindow","FrameMeta","GlobalMetaData","PasefMsMsMeta"]};
