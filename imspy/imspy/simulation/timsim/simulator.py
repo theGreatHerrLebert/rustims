@@ -484,6 +484,9 @@ def main():
                 if not args.silent_mode:
                     print(f"Applying dilution factor {dilution_factor} to {fasta}")
                 mask = peptides['fasta'] == fasta
+
+                # need to multiply total_events by dilution factor and save it as events
+                peptides.loc[mask, 'events'] = peptides.loc[mask, 'total_events']
                 peptides.loc[mask, 'events'] *= dilution_factor
                 peptides.loc[mask, 'fasta'] = fasta
 
