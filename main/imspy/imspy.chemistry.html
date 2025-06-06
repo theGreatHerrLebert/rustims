@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>imspy.chemistry package &#8212; imspy 0.2.33 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=73d7b0fc"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="canonical" href="https://thegreatherrlebert.github.io/rustims/imspy/imspy.chemistry.html" />
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="imspy.data package" href="imspy.data.html" />
+    <link rel="prev" title="imspy.algorithm.rt package" href="imspy.algorithm.rt.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="imspy-chemistry-package">
+<h1>imspy.chemistry package<a class="headerlink" href="#imspy-chemistry-package" title="Link to this heading">¶</a></h1>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.chemistry.amino_acids">
+<span id="imspy-chemistry-amino-acids-module"></span><h2>imspy.chemistry.amino_acids module<a class="headerlink" href="#module-imspy.chemistry.amino_acids" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.chemistry.constants">
+<span id="imspy-chemistry-constants-module"></span><h2>imspy.chemistry.constants module<a class="headerlink" href="#module-imspy.chemistry.constants" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.chemistry.elements">
+<span id="imspy-chemistry-elements-module"></span><h2>imspy.chemistry.elements module<a class="headerlink" href="#module-imspy.chemistry.elements" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.chemistry.mobility">
+<span id="imspy-chemistry-mobility-module"></span><h2>imspy.chemistry.mobility module<a class="headerlink" href="#module-imspy.chemistry.mobility" title="Link to this heading">¶</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.chemistry.mobility.ccs_to_one_over_k0">
+<span class="sig-prename descclassname"><span class="pre">imspy.chemistry.mobility.</span></span><span class="sig-name descname"><span class="pre">ccs_to_one_over_k0</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ccs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mass_gas</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">28.013</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temp</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">31.85</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t_diff</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">273.15</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.chemistry.mobility.ccs_to_one_over_k0" title="Link to this definition">¶</a></dt>
+<dd><p>Convert CCS to reduced ion mobility (1/k0).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ccs</strong> – collision cross-section</p></li>
+<li><p><strong>mz</strong> – mass-over-charge of the ion</p></li>
+<li><p><strong>charge</strong> – charge state of the ion</p></li>
+<li><p><strong>mass_gas</strong> – mass of drift gas</p></li>
+<li><p><strong>temp</strong> – temperature of the drift gas in C°</p></li>
+<li><p><strong>t_diff</strong> – factor to translate from C° to K</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>reduced ion mobility</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.chemistry.mobility.ccs_to_one_over_k0_par">
+<span class="sig-prename descclassname"><span class="pre">imspy.chemistry.mobility.</span></span><span class="sig-name descname"><span class="pre">ccs_to_one_over_k0_par</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ccs</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mass_gas</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">28.013</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temp</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">31.85</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t_diff</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">273.15</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_threads</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.chemistry.mobility.ccs_to_one_over_k0_par" title="Link to this definition">¶</a></dt>
+<dd><p>Convert CCS to reduced ion mobility (1/k0) in parallel.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ccs</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span>) – collision cross-section</p></li>
+<li><p><strong>mz</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span>) – mass-over-charge of the ion</p></li>
+<li><p><strong>charge</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span>) – charge state of the ion</p></li>
+<li><p><strong>mass_gas</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – mass of drift gas</p></li>
+<li><p><strong>temp</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – temperature of the drift gas in C°</p></li>
+<li><p><strong>t_diff</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – factor to translate from C° to K</p></li>
+<li><p><strong>num_threads</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – number of threads</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>reduced ion mobility</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>NDArray</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.chemistry.mobility.one_over_k0_to_ccs">
+<span class="sig-prename descclassname"><span class="pre">imspy.chemistry.mobility.</span></span><span class="sig-name descname"><span class="pre">one_over_k0_to_ccs</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">one_over_k0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mass_gas</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">28.013</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temp</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">31.85</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t_diff</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">273.15</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.chemistry.mobility.one_over_k0_to_ccs" title="Link to this definition">¶</a></dt>
+<dd><p>Convert reduced ion mobility (1/k0) to CCS.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>one_over_k0</strong> – reduced ion mobility</p></li>
+<li><p><strong>mz</strong> – mass-over-charge of the ion</p></li>
+<li><p><strong>charge</strong> – charge state of the ion</p></li>
+<li><p><strong>mass_gas</strong> – mass of drift gas</p></li>
+<li><p><strong>temp</strong> – temperature of the drift gas in C°</p></li>
+<li><p><strong>t_diff</strong> – factor to translate from C° to K</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>collision cross-section</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>float</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="imspy.chemistry.mobility.one_over_k0_to_ccs_par">
+<span class="sig-prename descclassname"><span class="pre">imspy.chemistry.mobility.</span></span><span class="sig-name descname"><span class="pre">one_over_k0_to_ccs_par</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">one_over_k0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mz</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mass_gas</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">28.013</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">temp</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">31.85</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">t_diff</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">273.15</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_threads</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#imspy.chemistry.mobility.one_over_k0_to_ccs_par" title="Link to this definition">¶</a></dt>
+<dd><p>Convert reduced ion mobility (1/k0) to CCS in parallel.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>one_over_k0</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span>) – reduced ion mobility</p></li>
+<li><p><strong>mz</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span>) – mass-over-charge of the ion</p></li>
+<li><p><strong>charge</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">ndarray</span></code>[<code class="xref py py-data docutils literal notranslate"><span class="pre">Any</span></code>, <code class="xref py py-class docutils literal notranslate"><span class="pre">dtype</span></code>[<code class="xref py py-class docutils literal notranslate"><span class="pre">TypeVar</span></code>(<code class="docutils literal notranslate"><span class="pre">_ScalarType_co</span></code>, bound= <code class="xref py py-class docutils literal notranslate"><span class="pre">generic</span></code>, covariant=True)]]</span>) – charge state of the ion</p></li>
+<li><p><strong>mass_gas</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – mass of drift gas</p></li>
+<li><p><strong>temp</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – temperature of the drift gas in C°</p></li>
+<li><p><strong>t_diff</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">float</span></code></span>) – factor to translate from C° to K</p></li>
+<li><p><strong>num_threads</strong> (<span class="sphinx_autodoc_typehints-type"><code class="xref py py-class docutils literal notranslate"><span class="pre">int</span></code></span>) – number of threads</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>collision cross-section</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>NDArray</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="imspy-chemistry-sum-formula-module">
+<h2>imspy.chemistry.sum_formula module<a class="headerlink" href="#imspy-chemistry-sum-formula-module" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.chemistry.unimod">
+<span id="imspy-chemistry-unimod-module"></span><h2>imspy.chemistry.unimod module<a class="headerlink" href="#module-imspy.chemistry.unimod" title="Link to this heading">¶</a></h2>
+</section>
+<section id="imspy-chemistry-utility-module">
+<h2>imspy.chemistry.utility module<a class="headerlink" href="#imspy-chemistry-utility-module" title="Link to this heading">¶</a></h2>
+</section>
+<section id="module-imspy.chemistry">
+<span id="module-contents"></span><h2>Module contents<a class="headerlink" href="#module-imspy.chemistry" title="Link to this heading">¶</a></h2>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">imspy</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Main Modules</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="reference internal" href="modules.html">imspy Modules</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="imspy.html">imspy Package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.algorithm.html">imspy.algorithm package</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">imspy.chemistry package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.data.html">imspy.data package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.simulation.html">imspy.simulation package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.timstof.html">imspy.timstof package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.utility.html">imspy.utility package</a></li>
+<li class="toctree-l2"><a class="reference internal" href="imspy.vis.html">imspy.vis package</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+  <li><a href="modules.html">imspy Modules</a><ul>
+      <li>Previous: <a href="imspy.algorithm.rt.html" title="previous chapter">imspy.algorithm.rt package</a></li>
+      <li>Next: <a href="imspy.data.html" title="next chapter">imspy.data package</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2024, David Teschner.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/imspy.chemistry.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
