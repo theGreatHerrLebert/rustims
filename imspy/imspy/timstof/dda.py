@@ -102,10 +102,11 @@ class PrecursorDDA(RustWrapperObject):
 
 class TimsDatasetDDA(TimsDataset, RustWrapperObject):
 
-    def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):
+    def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True, rename_id: bool = True):
         super().__init__(data_path=data_path, in_memory=in_memory, use_bruker_sdk=use_bruker_sdk)
         self.__dataset = ims.PyTimsDatasetDDA(self.data_path, self.binary_path, in_memory, self.use_bruker_sdk)
-        self.meta_data = self.meta_data.rename(columns={"Id": "frame_id"})
+        if rename_id:
+            self.meta_data = self.meta_data.rename(columns={"Id": "frame_id"})
         self.fragmented_precursors = self._load_selected_precursors().rename(
             columns={
                 'Id': 'precursor_id',
@@ -267,6 +268,40 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
             List[PrecursorDDA]: List of all selected precursors
         """
         return [PrecursorDDA.from_py_ptr(precursor) for precursor in self.__dataset.get_selected_precursors()]
+
+    def sample_pasef_fragments_random(self,
+                                      scan_apex_values: List[int],
+                                      scan_max_value: int,
+                                      ) -> TimsFrame:
+        """
+        Sample PASEF fragments randomly from the dataset.
+        Args:
+            scan_apex_values: List of scan apex values to sample from
+            scan_max_value: maximum scan value to sample from
+
+        Returns:
+            TimsFrame: sampled PASEF fragments
+        """
+
+        return TimsFrame.from_py_ptr(
+            self.__dataset.sample_pasef_fragments_random(scan_apex_values, scan_max_value)
+        )
+
+    def sample_precursor_signal(self, num_frames: int, max_intensity: float, take_probability: float) -> TimsFrame:
+        """
+        Sample precursor signal from the dataset.
+        Args:
+            num_frames: number of frames to sample
+            max_intensity: maximum intensity of the sampled frames
+            take_probability: probability of taking a frame
+
+        Returns:
+            TimsFrame: sampled precursor signal
+        """
+
+        return TimsFrame.from_py_ptr(
+            self.__dataset.sample_precursor_signal(num_frames, max_intensity, take_probability)
+        )
 
     def __repr__(self):
         return (f"TimsDatasetDDA(data_path={self.data_path}, num_frames={self.frame_count}, "

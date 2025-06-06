@@ -657,8 +657,3 @@ pub struct IndexedMzSpectrumVectorized {
     pub index: Vec<i32>,
     pub mz_vector: MzSpectrumVectorized,
 }
-
-
-
-
-

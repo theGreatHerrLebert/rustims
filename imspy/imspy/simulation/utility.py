@@ -84,7 +84,7 @@ def sequences_to_all_ions(
         charges: List[int],
         intensities_flat: List[List[float]],
         normalized: bool = True,
-        half_charge_one: bool = True,
+        half_charge_one: bool = False,
         num_threads: int = 4) -> List[str]:
     """
     Simulate ion intensities for a list of peptide sequences, charges, and collision energies.

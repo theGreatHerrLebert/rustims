@@ -1,5 +1,5 @@
 from typing import Union, List
-
+import logging
 import pandas as pd
 import numpy as np
 import tensorflow as tf
@@ -250,5 +250,45 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         if gradient_length is not None:
             rts = linear_map(rts, old_min=rts.min(), old_max=rts.max(), new_min=0, new_max=gradient_length)
 
-        data[f'retention_time_{self.name}'] = rts
+        data[f"retention_time_{self.name}"] = rts
         return data
+
+
+def predict_retention_time_with_koina(
+    model_name,
+        data,
+        seq_col="sequence",
+        gradient_length=None,
+        verbose=False,
+):
+    """
+    Predict retention times using Koina.
+    Args:
+        model_name: Name of the model.
+        data: DataFrame with peptide sequence.
+
+    Returns:
+        DataFrame with predicted retention times.
+    """
+    from ..koina_models.access_models import ModelFromKoina
+
+    rt_model_from_koina = ModelFromKoina(model_name=model_name)
+    inputs = data.copy()
+    inputs.rename(columns={seq_col: "peptide_sequences"}, inplace=True)
+    rts = rt_model_from_koina.predict(inputs[["peptide_sequences"]])
+
+    if verbose:
+        print(f"[DEBUG] Koina model {model_name} predicted retention times for {len(rts)} peptides. Columns: {rts.columns}")
+
+    if gradient_length is not None:
+        mapped_rt = linear_map(
+            rts.iloc[:, 1].values,
+            old_min=rts.iloc[:, 1].min(),
+            old_max=rts.iloc[:, 1].max(),
+            new_min=0,
+            new_max=gradient_length,
+        )
+    data["retention_time_gru_predictor"] = (
+        mapped_rt  # FIXME: dirty naming for downstream compatibility
+    )
+    return data

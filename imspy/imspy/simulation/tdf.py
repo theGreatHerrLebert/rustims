@@ -40,7 +40,12 @@ class TDFWriter:
         # Create the tables for the analysis.tdf
         frame_ms_ms_info = self.helper_handle.get_table("FrameMsmsInfo")
         segments = self.helper_handle.get_table("Segments")
-        last_frame = self.helper_handle.meta_data.Id.max()
+
+        try:
+            last_frame = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            last_frame = self.helper_handle.meta_data.frame_id.max()
+
         segments.iloc[0, segments.columns.get_loc("LastFrame")] = last_frame
 
         # Save table to analysis.tdf
@@ -73,7 +78,13 @@ class TDFWriter:
         """Convert m/z values to TOF values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
+
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
 
@@ -83,7 +94,11 @@ class TDFWriter:
         """Convert TOF values to m/z values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
         return np.array(self.helper_handle.tof_to_mz(frame_id, tofs))
@@ -92,7 +107,10 @@ class TDFWriter:
         """Convert inverse mobility values to scan values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
         return np.array(self.helper_handle.inverse_mobility_to_scan(frame_id, inv_mobs))
@@ -101,7 +119,10 @@ class TDFWriter:
         """Convert scan values to inverse mobility values for a given frame using the helper handle.
         # CAUTION: This will use the calibration data from the reference handle.
         """
-        max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        try:
+            max_ref_frame_id = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_ref_frame_id = self.helper_handle.meta_data.frame_id.max()
         if frame_id > max_ref_frame_id:
             frame_id = max_ref_frame_id
         return np.array(self.helper_handle.scan_to_inverse_mobility(frame_id, scans))
@@ -127,7 +148,10 @@ class TDFWriter:
                 frame_start_pos: int
                 only_frame_one: bool
         """
-        max_index = self.helper_handle.meta_data.Id.max()
+        try:
+            max_index = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_index = self.helper_handle.meta_data.frame_id.max()
 
         r = self.helper_handle.meta_data.iloc[0, :].copy()
         if not only_frame_one:
@@ -160,7 +184,12 @@ class TDFWriter:
         """
         # either use frame 1 or the ref handle frame for writing of calibration data and call to conversion function
         i = 1 if only_frame_one else frame.frame_id
-        max_index = self.helper_handle.meta_data.Id.max()
+
+        try:
+            max_index = self.helper_handle.meta_data.Id.max()
+        except AttributeError as e:
+            max_index = self.helper_handle.meta_data.frame_id.max()
+
         if frame.frame_id > max_index and not only_frame_one:
             i = max_index
 
@@ -241,7 +270,7 @@ class TDFWriter:
         try:
             self._create_table(self.conn, self.helper_handle.get_table("PasefFrameMsMsInfo"), "PasefFrameMsMsInfo")
         except Exception as e:
-            print(f"Error writing PasefFrameMsMsInfo table: {e}")
+            print(f"Error writing PasefFrameMsMsInfo table: {e}. In most cases, this is not a problem, since the table is empty in DIA mode.")
 
     def write_prm_frame_ms_ms_info(self) -> None:
         try:

@@ -142,10 +142,10 @@ impl std::ops::Add for TimsSpectrum {
 
     fn add(self, other: Self) -> TimsSpectrum {
         assert_eq!(self.frame_id, other.frame_id);
-        assert_eq!(self.scan, other.scan);
 
         let average_mobility = (self.mobility + other.mobility) / 2.0;
         let average_retention_time = (self.retention_time + other.retention_time) / 2.0;
+        let average_scan_floor = ((self.scan as f64 + other.scan as f64) / 2.0) as i32;
 
         let mut combined_map: BTreeMap<i64, (f64, i32, i32)> = BTreeMap::new();
         let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
@@ -169,7 +169,7 @@ impl std::ops::Add for TimsSpectrum {
         let index_combined: Vec<i32> = combined_map.values().map(|(_, index, count)| index / count).collect(); // Average index
 
         let spectrum = IndexedMzSpectrum { index: index_combined, mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
-        TimsSpectrum { frame_id: self.frame_id, scan: self.scan, retention_time: average_retention_time, mobility: average_mobility, ms_type: self.ms_type.clone(), spectrum }
+        TimsSpectrum { frame_id: self.frame_id, scan: average_scan_floor, retention_time: average_retention_time, mobility: average_mobility, ms_type: self.ms_type.clone(), spectrum }
     }
 }
 

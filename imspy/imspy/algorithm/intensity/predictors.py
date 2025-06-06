@@ -124,7 +124,6 @@ def get_collision_energy_calibration_factor(
     return calibration_factor, similarities
 
 
-
 def remove_unimod_annotation(sequence: str) -> str:
     """
     Remove the unimod annotation from a peptide sequence.
@@ -337,3 +336,43 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             ion_collections.append(series)
 
         return ion_collections
+
+def predict_fragment_intensities_with_koina(
+        model_name: str,
+        data: pd.DataFrame,
+        seq_col: str = 'sequence',
+        charge_col: str = 'charge',
+        ce_col: str = 'collision_energy',
+        verbose: bool = False,
+) -> pd.DataFrame:
+    """
+    Predict fragment ion intensities with Koina.
+    Args:
+        model_name: Model name for Koina fragment intensity prediction.
+        data: DataFrame with peptide sequences.
+        seq_col: Column name for peptide sequences in data.
+        charge_col: Column name for precursor charges in data.
+        ce_col: Column name for collision energies in data.
+        verbose: Verbosity.
+
+    Returns:
+        pd.DataFrame: DataFrame with with columns ['peptide_sequences', 'precursor_charges', 'collision_energies',
+            'instrument_types', 'intensities', 'mz', 'annotation'], 
+            last three are output columns.
+            intensities are min-max normalized by base intensity, 
+            annotation is in format of b'b5+2'
+    """
+    from ..koina_models.access_models import ModelFromKoina
+    intensity_model = ModelFromKoina(model_name=model_name)
+    inputs = data.copy()
+    if 'instrument_types' not in inputs.columns:
+        inputs['instrument_types'] = 'TIMSTOF'
+    inputs.rename(columns={'peptide_sequences': seq_col, 
+                           'precursor_charges': charge_col,
+                           'collision_energies': ce_col}, inplace=True)
+    intensity = intensity_model.predict(inputs)
+
+    if verbose:
+        print(f"[DEBUG] Koina model {model_name} predicted fragment intensity for {len(intensity)} peptides. Columns: {intensity.columns}")
+    
+    return intensity

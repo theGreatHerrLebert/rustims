@@ -232,3 +232,39 @@ class GRUChargeStatePredictor(tf.keras.models.Model):
     @classmethod
     def from_config(cls, config):
         return cls(**config)
+
+def predict_peptide_flyability_with_koina(
+        data: pd.DataFrame,  
+        model_name: str = "pfly_2024_fine_tuned", 
+        seq_col = "sequence", 
+        verbose = False
+        ) -> np.ndarray:
+    """
+    Predict charge state using Koina model
+    Args:
+        data: DataFrame containing peptide sequences
+        model_name: Name of the Koina model
+        seq_col: Column name for peptide sequences
+        verbose: Verbosity flag
+    Returns:
+        np.ndarray: Predicted probability of being a flyer
+    """
+    # raise NotImplementedError("Koina model for flyability is not implemented yet.")
+    from ..koina_models.access_models import ModelFromKoina
+    flyability_model = ModelFromKoina(model_name=model_name)
+    inputs = data.copy()
+    inputs.rename(columns={seq_col: "sequence"}, inplace=True)
+    flyability = flyability_model.predict(inputs[['peptide_sequences']])
+
+    # the output format has two columns, one for the sequence and one for the flyability ('output_1') 
+    # Assign a group index within each peptide sequence
+    flyer_labels = ['non_flyer', 'weak_flyer', 'intermediate_flyer', 'strong_flyer']
+    flyability['flyer_type'] = flyability.groupby('peptide_sequences').cumcount().map(dict(enumerate(flyer_labels)))
+
+    # Pivot to wide format
+    flyability_wide = flyability.pivot(index='peptide_sequences', columns='flyer_type', values='output_1').reset_index()
+    efficiency = 1-flyability_wide['non_flyer'] 
+    if verbose:
+        print(f"[DEBUG] Koina model {model_name} predicted retention times for {len(efficiency)} peptides. Columns: {flyability.columns}")
+    
+    return efficiency.values

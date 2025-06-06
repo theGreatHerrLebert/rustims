@@ -7,7 +7,7 @@ name = "imspy_connector"
 dependencies = [
     "opentims-bruker-bridge>=1.1.0",
 ]
-version = "0.3.16"
+version = "0.3.17"
 requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Rust",

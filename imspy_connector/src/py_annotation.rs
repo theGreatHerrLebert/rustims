@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use mscore::data::spectrum::MsType;
 use pyo3::prelude::*;
 use mscore::simulation::annotation::{SourceType, SignalAttributes, ContributionSource, MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated, TimsSpectrumAnnotated};
@@ -57,6 +58,21 @@ impl PyTimsSpectrumAnnotated {
     pub fn inv_mobility(&self) -> f64 { self.inner.mobility }
 
     #[getter]
+    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.spectrum.mz.clone().into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
+        self.inner.spectrum.intensity.clone().into_pyarray_bound(py).unbind()
+    }
+
+    #[getter]
+    pub fn annotations(&self) -> Vec<PyPeakAnnotation> {
+        self.inner.spectrum.annotations.iter().map(|x| PyPeakAnnotation { inner: x.contributions.clone() }).collect()
+    }
+
+    #[getter]
     pub fn get_annotated_spectrum(&self) -> PyMzSpectrumAnnotated {
         PyMzSpectrumAnnotated { inner: self.inner.spectrum.clone() }
     }
@@ -71,6 +87,13 @@ impl PyTimsSpectrumAnnotated {
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsSpectrumAnnotated {
         PyTimsSpectrumAnnotated { inner: self.inner.clone().filter_ranged(mz_min, mz_max, intensity_min, intensity_max) }
+    }
+
+    pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, PyTimsSpectrumAnnotated> {
+        self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity)
+            .into_iter()
+            .map(|(id, spectrum)| (id, PyTimsSpectrumAnnotated { inner: spectrum }))
+            .collect()
     }
 }
 
@@ -192,6 +215,67 @@ impl PyTimsFrameAnnotated {
         PyTimsFrameAnnotated { inner: self.inner.clone().filter_ranged(mz_min, mz_max, inv_mobility_min, inv_mobility_max, scan_min, scan_max, intensity_min, intensity_max) }
     }
 
+    pub fn to_windows_indexed(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64
+    ) -> (Vec<u32>, Vec<i32>, Vec<PyTimsSpectrumAnnotated>) {
+        let (ids, indices, spectra) = self.inner.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        let py_spectra = spectra.into_iter().map(|s| PyTimsSpectrumAnnotated { inner: s }).collect();
+        (ids, indices, py_spectra)
+    }
+
+    pub fn to_windows(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64
+    ) -> Vec<PyTimsSpectrumAnnotated> {
+        self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity)
+            .into_iter()
+            .map(|s| PyTimsSpectrumAnnotated { inner: s })
+            .collect()
+    }
+
+    pub fn to_dense_windows(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64,
+        resolution: i32
+    ) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
+        self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution)
+    }
+    pub fn to_dense_windows_with_labels(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64,
+        resolution: i32,
+    ) -> (
+        Vec<f64>,    // intensities
+        Vec<u32>,    // scan index per row
+        Vec<i32>,    // window key per row
+        Vec<f64>,    // mz values
+        Vec<f64>,    // inv_mobility values
+        usize,       // n_rows
+        usize,       // n_cols
+        Vec<i32>,    // isotopologue labels
+        Vec<i32>,    // charge_state labels
+        Vec<i32>,    // feature_id labels
+    ) {
+        self.inner.to_dense_windows_with_labels(window_length, overlapping, min_peaks, min_intensity, resolution)
+    }
+
+    pub fn fold_along_scan_axis(&self, fold_width: usize) -> PyTimsFrameAnnotated {
+        let folded_frame = self.inner.clone().fold_along_scan_axis(fold_width);
+        PyTimsFrameAnnotated { inner: folded_frame }
+    }
 }
 
 #[pyclass]
@@ -345,6 +429,7 @@ pub fn py_annotation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyContributionSource>()?;
     m.add_class::<PyPeakAnnotation>()?;
     m.add_class::<PyMzSpectrumAnnotated>()?;
+    m.add_class::<PyTimsSpectrumAnnotated>()?;
     m.add_class::<PyTimsFrameAnnotated>()?;
     Ok(())
 }

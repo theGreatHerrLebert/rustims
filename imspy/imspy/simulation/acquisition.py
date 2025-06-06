@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from abc import abstractmethod, ABC
 
 from imspy.simulation.experiment import SyntheticExperimentDataHandle
-from imspy.timstof import TimsDatasetDIA
+from imspy.timstof import TimsDatasetDIA, TimsDatasetDDA
 from imspy.timstof.data import AcquisitionMode, TimsDataset
 from imspy.simulation.utility import calculate_number_frames, get_ms_ms_window_layout_resource_path
 from imspy.simulation.tdf import TDFWriter
@@ -116,7 +116,7 @@ class TimsTofAcquisitionBuilder:
 class TimsTofAcquisitionBuilderDDA(TimsTofAcquisitionBuilder, ABC):
     def __init__(self,
                  path: str,
-                 reference_ds: TimsDataset,
+                 reference_ds: TimsDatasetDDA,
                  verbose: bool = False,
                  gradient_length=60 * 60,
                  rt_cycle_length=0.109,

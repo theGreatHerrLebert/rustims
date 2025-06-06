@@ -278,13 +278,13 @@ class TimsFrame(RustWrapperObject):
         ))
 
     def to_dense_windows(self, window_length: float = 10, resolution: int = 1, overlapping: bool = True,
-                         min_num_peaks: int = 5, min_intensity: float = 0.0) -> NDArray[np.float64]:
+                         min_num_peaks: int = 5, min_intensity: float = 0.0):
 
-        rows, cols, values, scans, window_indices = self.__frame_ptr.to_dense_windows(window_length, resolution,
+        rows, cols, values, ims, mzs, scans, window_indices = self.__frame_ptr.to_dense_windows(window_length, resolution,
                                                                                       overlapping, min_num_peaks,
                                                                                       min_intensity)
 
-        return scans, window_indices, np.reshape(values, (rows, cols))
+        return ims, mzs, scans, window_indices, np.reshape(values, (rows, cols))
 
     def to_noise_annotated_tims_frame(self) -> 'TimsFrameAnnotated':
         """Convert the frame to a noise annotated frame.
@@ -329,6 +329,17 @@ class TimsFrame(RustWrapperObject):
 
         assert 0.0 <= take_probability <= 1.0, "The take probability must be between 0 and 1."
         return TimsFrame.from_py_ptr(self.__frame_ptr.random_subsample_frame(take_probability))
+
+    def fold_along_scan_axis(self, fold_width: int = 4) -> 'TimsFrame':
+        """Fold the frame along the scan axis.
+
+        Args:
+            fold_width (int): Width of the fold. Default to 4.
+
+        Returns:
+            TimsFrame: Folded frame.
+        """
+        return TimsFrame.from_py_ptr(self.__frame_ptr.fold_along_scan_axis(fold_width))
 
     def __getitem__(self, index: int) -> Optional[TimsSpectrum]:
         """Get the TimsSpectrum at a given index.

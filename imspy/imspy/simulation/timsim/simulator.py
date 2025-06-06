@@ -150,6 +150,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
+    parser.add_argument("--koina_rt_model", type=str, help="Use KOINA model for retention time prediction (default: None)")
     parser.add_argument("--z_score", type=float, help="Z-score for frame and scan distributions (default: .999)")
     parser.add_argument("--sigma_lower_rt", type=float, help="Lower bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
     parser.add_argument("--sigma_upper_rt", type=float, help="Upper bound for sigma of an EMG chromatographic peak (default: None). If None, it is calculated based on the gradient length.")
@@ -286,6 +287,7 @@ def get_default_settings() -> dict:
         'isotope_centroid': True,
         'sample_occurrences': True,
         'gradient_length': 3600,
+        'koina_rt_model': None,
         'z_score': 0.999,
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
@@ -366,14 +368,19 @@ def main():
 
     # Load defaults and override with config file if provided
     defaults = get_default_settings()
+
     if args.config:
         config = load_toml_config(args.config)
         for section in config:
             defaults.update(config[section])
+
         # If config includes path info, handle them
         defaults['save_path'] = config.get('save_path', defaults.get('save_path'))
         defaults['reference_path'] = config.get('reference_path', defaults.get('reference_path'))
         defaults['fasta_path'] = config.get('fasta_path', defaults.get('fasta_path'))
+
+        # Handle KOINA models
+        defaults['koina_rt_model'] = config.get('koina_rt_model', defaults.get('koina_rt_model'))
 
     # Update parser defaults with new merged defaults
     parser.set_defaults(**defaults)
@@ -430,7 +437,7 @@ def main():
 
     # Build the acquisition (frames, scans, etc.)
     if not args.silent_mode:
-        print(f"Simulating experiment {name} at {save_path}...")
+        print(f"Simulating experiment {name} at {save_path} ...")
 
     acquisition_builder = build_acquisition(
         path=save_path,
@@ -477,6 +484,9 @@ def main():
                 if not args.silent_mode:
                     print(f"Applying dilution factor {dilution_factor} to {fasta}")
                 mask = peptides['fasta'] == fasta
+
+                # need to multiply total_events by dilution factor and save it as events
+                peptides.loc[mask, 'events'] = peptides.loc[mask, 'total_events']
                 peptides.loc[mask, 'events'] *= dilution_factor
                 peptides.loc[mask, 'fasta'] = fasta
 
@@ -512,7 +522,7 @@ def main():
     if not args.from_existing:
         for fasta_name, fasta_path in fastas.items():
             if not args.silent_mode:
-                print(f"Digesting fasta file: {fasta_name}...")
+                print(f"Digesting fasta file: {fasta_name} ...")
 
             mixture_factor = 1.0
             if args.proteome_mix:
@@ -537,7 +547,7 @@ def main():
 
             # JOB 1: Simulate peptides
             if not args.silent_mode:
-                print("Creating peptides from proteins...")
+                print("Creating peptides from proteins ...")
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
@@ -565,7 +575,7 @@ def main():
         # Phospho mode
         if args.phospho_mode:
             if not args.silent_mode:
-                print("Simulating phosphorylation...")
+                print("Simulating phosphorylation ...")
             peptides, _ = simulate_phosphorylation(
                 peptides=peptides,
                 ions=None,
@@ -586,13 +596,14 @@ def main():
                 )
 
         if not args.silent_mode:
-            print(f"Simulating {peptides.shape[0]} peptides...")
+            print(f"Simulating {peptides.shape[0]} peptides ...")
 
         # JOB 3: Simulate retention times
         peptides = simulate_retention_times(
             peptides=peptides,
             verbose=not args.silent_mode,
             gradient_length=acquisition_builder.gradient_length,
+            use_koina_model=args.koina_rt_model,
         )
 
         # Workaround for the correct column ordering
@@ -706,6 +717,8 @@ def main():
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
 
+    pasef_meta = None
+
     if args.acquisition_type == 'DDA':
         pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
             acquisition_builder=acquisition_builder,
@@ -751,6 +764,7 @@ def main():
         num_precursor_frames=5,
         num_fragment_frames=5,
         fragment=args.apply_fragmentation,
+        pasef_meta=pasef_meta,
     )
 
 if __name__ == '__main__':

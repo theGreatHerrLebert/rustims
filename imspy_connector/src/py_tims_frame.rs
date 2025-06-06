@@ -222,8 +222,10 @@ impl PyTimsFrame {
 
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
 
-        let (data, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
+        let (data, mobilities, mzs, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
         let py_array: Bound<'_, PyArray1<f64>> = data.into_pyarray_bound(py);
+        let mobilities: Bound<'_, PyArray1<f64>> = mobilities.into_pyarray_bound(py);
+        let mzs: Bound<'_, PyArray1<f64>> = mzs.into_pyarray_bound(py);
         let py_scans: Bound<'_, PyArray1<i32>> = scans.into_pyarray_bound(py);
         let py_window_indices: Bound<'_, PyArray1<i32>> = window_indices.into_pyarray_bound(py);
 
@@ -231,24 +233,34 @@ impl PyTimsFrame {
         let py_array = py_array.unbind();
         let py_scans = py_scans.unbind();
         let py_window_indices = py_window_indices.unbind();
-        let tuple = PyTuple::new_bound(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py), py_array.into_py(py), py_scans.into_py(py), py_window_indices.into_py(py)]);
+        let tuple = PyTuple::new_bound(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py),
+            py_array.into_py(py),
+            mobilities.into_py(py),
+            mzs.into_py(py),
+            py_scans.into_py(py),
+            py_window_indices.into_py(py)]);
 
         Ok(tuple.into())
     }
 
     pub fn to_noise_annotated_tims_frame(&self) -> PyTimsFrameAnnotated {
         let result = self.inner.to_noise_annotated_tims_frame();
-        return PyTimsFrameAnnotated { inner: result }
+        PyTimsFrameAnnotated { inner: result }
     }
 
     pub fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
         let result = self.inner.clone() + other.inner.clone();
-        return PyTimsFrame { inner: result }
+        PyTimsFrame { inner: result }
     }
 
     pub fn random_subsample_frame(&self, take_probability: f64) -> PyTimsFrame {
         let result = self.inner.generate_random_sample(take_probability);
-        return PyTimsFrame { inner: result }
+        PyTimsFrame { inner: result }
+    }
+
+    pub fn fold_along_scan_axis(&self, fold_width: usize) -> PyTimsFrame {
+        let folded_frame = self.inner.clone().fold_along_scan_axis(fold_width);
+        PyTimsFrame { inner: folded_frame }
     }
 }
 

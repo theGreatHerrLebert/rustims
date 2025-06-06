@@ -124,6 +124,18 @@ impl PyTimsDatasetDDA {
         let precursor_frames = self.inner.get_precursor_frames(min_intensity, max_peaks, num_threads);
         precursor_frames.iter().map(|frame| PyTimsFrame { inner: frame.clone() }).collect()
     }
+    
+    pub fn sample_pasef_fragments_random(&self, target_scan_apex_values: Vec<i32>, experiment_max_scan: i32, ) -> PyTimsFrame {
+        let tims_frame = self.inner.sample_pasef_fragments_random(
+            target_scan_apex_values,
+            experiment_max_scan,
+        );
+        PyTimsFrame { inner: tims_frame }
+    }
+
+    pub fn sample_precursor_signal(&self, num_frames: usize, max_intensity: f64, take_probability: f64) -> PyTimsFrame {
+        PyTimsFrame { inner: self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability) }
+    }
 }
 
 #[pyclass]

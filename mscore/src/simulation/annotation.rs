@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
-use itertools::izip;
+use itertools::{izip, multizip};
 use rand::distributions::{Uniform, Distribution};
 use rand::rngs::ThreadRng;
 use statrs::distribution::Normal;
@@ -408,15 +408,102 @@ impl TimsSpectrumAnnotated {
             spectrum: self.spectrum.add_mz_noise_normal(ppm),
         }
     }
+
+    pub fn to_windows(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64,
+    ) -> BTreeMap<i32, TimsSpectrumAnnotated> {
+        // 1) base‐window buckets
+        let mut buckets: BTreeMap<i32, Vec<(u32, f64, f64, PeakAnnotation)>> = BTreeMap::new();
+        for (&tof, &mz, &intensity, annotation) in
+            izip!(
+                &self.tof,
+                &self.spectrum.mz,
+                &self.spectrum.intensity,
+                &self.spectrum.annotations
+            )
+        {
+            let idx = (mz / window_length).floor() as i32;
+            buckets.entry(idx)
+                .or_default()
+                .push((tof, mz, intensity, annotation.clone()));
+        }
+
+        // 2) overlapping half‐shifted buckets
+        if overlapping {
+            let mut off: BTreeMap<i32, Vec<(u32, f64, f64, PeakAnnotation)>> = BTreeMap::new();
+            let half = window_length / 2.0;
+            for (&tof, &mz, &intensity, annotation) in
+                izip!(
+                    &self.tof,
+                    &self.spectrum.mz,
+                    &self.spectrum.intensity,
+                    &self.spectrum.annotations
+                )
+            {
+                let idx = -(((mz + half) / window_length).floor() as i32);
+                off.entry(idx)
+                    .or_default()
+                    .push((tof, mz, intensity, annotation.clone()));
+            }
+            for (k, v) in off {
+                buckets.entry(k).or_default().extend(v);
+            }
+        }
+
+        // 3) filter & rebuild
+        let mut out = BTreeMap::new();
+        for (idx, group) in buckets {
+            if group.len() < min_peaks {
+                continue;
+            }
+            let max_i = group.iter().map(|&(_, _, i, _)| i).fold(0.0, f64::max);
+            if max_i < min_intensity {
+                continue;
+            }
+
+            // manual “unzip4”
+            let mut tofs   = Vec::with_capacity(group.len());
+            let mut mzs    = Vec::with_capacity(group.len());
+            let mut ints   = Vec::with_capacity(group.len());
+            let mut annots = Vec::with_capacity(group.len());
+            for (tof, mz, intensity, annotation) in group {
+                tofs.push(tof);
+                mzs.push(mz);
+                ints.push(intensity);
+                annots.push(annotation);
+            }
+
+            // sort+rebuild the annotated spectrum
+            let window_spec = MzSpectrumAnnotated::new(mzs, ints, annots);
+
+            let sub = TimsSpectrumAnnotated {
+                frame_id:       self.frame_id,
+                scan:           self.scan,
+                retention_time: self.retention_time,
+                mobility:       self.mobility,
+                ms_type:        self.ms_type.clone(),
+                tof:            tofs,
+                spectrum:       window_spec,
+            };
+
+            out.insert(idx, sub);
+        }
+
+        out
+    }
 }
 
 impl std::ops::Add for TimsSpectrumAnnotated {
     type Output = Self;
     fn add(self, other: Self) -> Self {
-        assert_eq!(self.scan, other.scan);
 
         let quantize = |mz: f64| -> i64 { (mz * 1_000_000.0).round() as i64 };
         let mut spec_map: BTreeMap<i64, (u32, f64, PeakAnnotation, i64)> = BTreeMap::new();
+        let mean_scan_floor = ((self.scan as f64 + other.scan as f64) / 2.0) as u32;
 
         for (tof, mz, intensity, annotation) in izip!(self.tof.iter(), self.spectrum.mz.iter(), self.spectrum.intensity.iter(), self.spectrum.annotations.iter()) {
             let key = quantize(*mz);
@@ -449,7 +536,7 @@ impl std::ops::Add for TimsSpectrumAnnotated {
 
         TimsSpectrumAnnotated {
             frame_id: self.frame_id,
-            scan: self.scan,
+            scan: mean_scan_floor,
             retention_time: self.retention_time,
             mobility: self.mobility,
             ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
@@ -597,6 +684,273 @@ impl TimsFrameAnnotated {
             intensity: intensity_vec,
             annotations: annotations_vec,
         }
+    }
+    pub fn to_windows_indexed(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64
+    ) -> (Vec<u32>, Vec<i32>, Vec<TimsSpectrumAnnotated>) {
+        // 1) explode into spectra by scan/mobility
+        let spectra = self.to_tims_spectra_annotated();
+
+        // 2) window each one
+        let windows_per_scan: Vec<_> = spectra
+            .iter()
+            .map(|s| s.to_windows(window_length, overlapping, min_peaks, min_intensity))
+            .collect();
+
+        // 3) flatten out into three parallel vectors
+        let mut scan_indices   = Vec::new();
+        let mut window_indices = Vec::new();
+        let mut out_spectra    = Vec::new();
+
+        for (spec, window_map) in spectra.iter().zip(windows_per_scan.iter()) {
+            for (&win_idx, win_spec) in window_map {
+                scan_indices.push(spec.scan);
+                window_indices.push(win_idx);
+                out_spectra.push(win_spec.clone());
+            }
+        }
+
+        (scan_indices, window_indices, out_spectra)
+    }
+
+    pub fn to_windows(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64
+    ) -> Vec<TimsSpectrumAnnotated> {
+        // 1) explode into spectra by scan/mobility
+        let spectra = self.to_tims_spectra_annotated();
+
+        // 2) window each one
+        let windows_per_scan: Vec<_> = spectra
+            .iter()
+            .map(|s| s.to_windows(window_length, overlapping, min_peaks, min_intensity))
+            .collect();
+
+        // 3) flatten out into a single vector of TimsSpectrumAnnotated
+        let mut out_spectra = Vec::new();
+        for (_, window_map) in spectra.iter().zip(windows_per_scan.iter()) {
+            for (_, win_spec) in window_map {
+                out_spectra.push(win_spec.clone());
+            }
+        }
+
+        out_spectra
+    }
+
+    pub fn to_dense_windows(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64,
+        resolution: i32
+    ) -> (Vec<f64>, Vec<i32>, Vec<i32>, usize, usize) {
+        let factor    = 10f64.powi(resolution);
+        let n_cols    = ((window_length * factor).round() + 1.0) as usize;
+
+        // 1) get indexed windows
+        let (scan_indices, window_indices, spectra) =
+            self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+
+        // 2) vectorize each window’s MzSpectrumAnnotated
+        let vec_specs: Vec<_> = spectra
+            .iter()
+            .map(|ts| ts.spectrum.vectorized(resolution))
+            .collect();
+
+        // 3) prepare flat matrix
+        let n_rows      = spectra.len();
+        let mut matrix = vec![0.0; n_rows * n_cols];
+
+        // 4) fill in each row
+        for (row, ( &win_idx, vec_spec)) in
+            multizip((&window_indices, &vec_specs))
+                .enumerate()
+        {
+            // compute the "vectorized" start index of this window
+            let start_i = if win_idx >= 0 {
+                ((win_idx as f64 * window_length) * factor).round() as i32
+            } else {
+                // negative key → half‐shifted
+                ((((-win_idx) as f64 * window_length) - 0.5 * window_length) * factor)
+                    .round() as i32
+            };
+
+            // now place each nonzero bin
+            for (&idx, &val) in vec_spec.indices.iter().zip(&vec_spec.values) {
+                let col = (idx as i32 - start_i) as usize;
+                let flat_idx = row * n_cols + col;
+                matrix[flat_idx] = val;
+            }
+        }
+
+        // cast scan indices to i32 for consistency
+        let scan_indices: Vec<i32> = scan_indices.iter().map(|&scan| scan as i32).collect();
+
+        (matrix, scan_indices, window_indices, n_rows, n_cols)
+    }
+
+    /// Returns:
+    ///  - intensity_matrix,
+    ///  - scan_indices,
+    ///  - window_indices,
+    ///  - mz_start for each window,
+    ///  - ion_mobility_start for each window,
+    ///  - n_rows, n_cols,
+    ///  - isotope_peak labels,
+    ///  - charge_state labels,
+    ///  - peptide_id labels (0..5)
+    pub fn to_dense_windows_with_labels(
+        &self,
+        window_length: f64,
+        overlapping: bool,
+        min_peaks: usize,
+        min_intensity: f64,
+        resolution: i32,
+    ) -> (
+        Vec<f64>,    // intensities
+        Vec<u32>,    // scan index per row
+        Vec<i32>,    // window key per row
+        Vec<f64>,    // mz_start per row
+        Vec<f64>,    // ion_mobility_start per row
+        usize,       // n_rows
+        usize,       // n_cols
+        Vec<i32>,    // isotope_peak labels
+        Vec<i32>,    // charge_state labels
+        Vec<i32>,    // peptide_id labels
+    ) {
+        let factor = 10f64.powi(resolution);
+        let n_cols = ((window_length * factor).round() + 1.0) as usize;
+
+        // 1) explode into per-scan windows
+        let (scan_indices, window_indices, spectra) =
+            self.to_windows_indexed(window_length, overlapping, min_peaks, min_intensity);
+        let vec_specs: Vec<_> = spectra
+            .iter()
+            .map(|ts| ts.spectrum.vectorized(resolution))
+            .collect();
+
+        let n_rows     = vec_specs.len();
+        let matrix_sz  = n_rows * n_cols;
+
+        // 2) allocate output arrays
+        let mut intensities       = vec![0.0_f64; matrix_sz];
+        let mut iso_labels        = vec![-1_i32; matrix_sz];
+        let mut charge_labels     = vec![-1_i32; matrix_sz];
+        let mut peptide_labels    = vec![-1_i32; matrix_sz];
+        let mut mz_start          = Vec::with_capacity(n_rows);
+        let mut ion_mobility_start = Vec::with_capacity(n_rows);
+
+        // 3) fill each row
+        for (row, ((&win_idx, vec_spec), ts)) in
+            multizip((&window_indices, &vec_specs))
+                .zip(spectra.iter())
+                .enumerate()
+        {
+            // record the first‐peak m/z and mobility
+            let first_mz = ts.spectrum.mz.first().cloned().unwrap_or(0.0);
+            mz_start.push(first_mz);
+            ion_mobility_start.push(ts.mobility);
+
+            // per‐window map for peptide_id → 0..5
+            let mut feat_map  = HashMap::<i32,i32>::new();
+            let mut next_feat = 0;
+
+            // window start index
+            let start_i = if win_idx >= 0 {
+                ((win_idx as f64 * window_length) * factor).round() as i32
+            } else {
+                (((-win_idx) as f64 * window_length - 0.5 * window_length) * factor)
+                    .round() as i32
+            };
+
+            // fill columns
+            for (&bin_idx, &val, annotation) in
+                izip!(&vec_spec.indices, &vec_spec.values, &vec_spec.annotations)
+            {
+                let col  = (bin_idx as i32 - start_i) as usize;
+                let flat = row * n_cols + col;
+                intensities[flat] = val;
+
+                // choose best contributor
+                if let Some(best) = annotation
+                    .contributions
+                    .iter()
+                    .max_by(|a, b| {
+                        a.intensity_contribution
+                            .partial_cmp(&b.intensity_contribution)
+                            .unwrap()
+                    })
+                {
+                    match best.source_type {
+                        SourceType::Signal => {
+                            if let Some(sa) = &best.signal_attributes {
+                                iso_labels[flat]    = sa.isotope_peak;
+                                charge_labels[flat] = sa.charge_state;
+                                // re-index peptide_id
+                                let old = sa.peptide_id;
+                                let new = *feat_map.entry(old).or_insert_with(|| {
+                                    let i = next_feat; next_feat += 1; i.min(5)
+                                });
+                                peptide_labels[flat] = new;
+                            }
+                        }
+                        SourceType::RandomNoise => {
+                            iso_labels[flat]    = -2;
+                            charge_labels[flat] = -2;
+                            peptide_labels[flat] = -2;
+                        }
+                        _ => { /* leave as -1 */ }
+                    }
+                }
+            }
+        }
+
+        (
+            intensities,
+            scan_indices,
+            window_indices,
+            mz_start,
+            ion_mobility_start,
+            n_rows,
+            n_cols,
+            iso_labels,
+            charge_labels,
+            peptide_labels,
+        )
+    }
+
+    pub fn fold_along_scan_axis(self, fold_width: usize) -> TimsFrameAnnotated {
+        // extract tims spectra from frame
+        let spectra = self.to_tims_spectra_annotated();
+
+        // create a new collection of merged spectra,where spectra are first grouped by the key they create when divided by fold_width
+        // and then merge them by addition
+        let mut merged_spectra: BTreeMap<u32, TimsSpectrumAnnotated> = BTreeMap::new();
+        for spectrum in spectra {
+            let key = spectrum.scan / fold_width as u32;
+
+            // if the key already exists, merge the spectra
+            if let Some(existing_spectrum) = merged_spectra.get_mut(&key) {
+
+                let merged_spectrum = existing_spectrum.clone() + spectrum;
+                // update the existing spectrum with the merged one
+                *existing_spectrum = merged_spectrum;
+
+            } else {
+                // otherwise, insert the new spectrum
+                merged_spectra.insert(key, spectrum);
+            }
+        }
+        // convert the merged spectra back to a TimsFrame
+        TimsFrameAnnotated::from_tims_spectra_annotated(merged_spectra.into_values().collect())
     }
 }
 

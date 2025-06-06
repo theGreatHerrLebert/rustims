@@ -865,6 +865,20 @@ def main():
             f.close()
             psms.extend(decompress_psms(data))
 
+    # if we have only one fasta file, we can use sage core fdr calculation
+    if len(fastas) == 1:
+        if args.verbose:
+            print("calculating q-values using SAGE internal functions...")
+        sage_fdr_psm(psms, indexed_db, use_hyper_score=True)
+
+    # if we have multiple fasta files, q-values need to be calculated with database independent functions
+    else:
+        if args.verbose:
+            print("calculating q-values using SAGE-style re-implemented functions...")
+        assign_sage_spectrum_q(psms, use_hyper_score=True)
+        assign_sage_peptide_q(psms, use_hyper_score=True)
+        assign_sage_protein_q(psms, use_hyper_score=True)
+
     # sort PSMs to avoid leaking information into predictions during re-scoring
     psms = list(sorted(psms, key=lambda psm: (psm.spec_idx, psm.peptide_idx)))
 
@@ -877,20 +891,6 @@ def main():
         score=params['re_score_metric'],
         num_threads=params['num_threads'],
     )
-
-    # if we have only one fasta file, we can use sage core fdr calculation
-    if len(fastas) == 1:
-        if args.verbose:
-            print("calculating q-values using SAGE internal functions...")
-        sage_fdr_psm(psms, indexed_db, use_hyper_score=False)
-
-    # if we have multiple fasta files, q-values need to be calculated with database independent functions
-    else:
-        if args.verbose:
-            print("calculating q-values using SAGE-style re-implemented functions...")
-        assign_sage_spectrum_q(psms, use_hyper_score=True)
-        assign_sage_peptide_q(psms, use_hyper_score=True)
-        assign_sage_protein_q(psms, use_hyper_score=True)
 
     # serialize all PSMs to JSON binary
     bts = compress_psms(psms)
