@@ -255,6 +255,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_precursors", type=int, help="Maximum number of precursors to select per cycle (default: 25)")
     parser.add_argument("--exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
     parser.add_argument("--selection_mode", type=str, help="Selection mode for precursors (default: topN)")
+    parser.add_argument("--no_digest_proteins", dest="digest_proteins", action="store_false",
+                        help="Do not digest proteins, use existing peptides (default: True)")
+    parser.set_defaults(digest_proteins=True)
 
     return parser
 
@@ -330,6 +333,7 @@ def get_default_settings() -> dict:
         'max_precursors': 25,
         'exclusion_width': 25,
         'selection_mode': 'topN',
+        'digest_proteins': True,
     }
 
 
@@ -543,6 +547,7 @@ def main():
                 variable_mods=variable_modifications,
                 static_mods=static_modifications,
                 verbose=not args.silent_mode,
+                digest=args.digest,
             )
 
             # JOB 1: Simulate peptides
