@@ -71,6 +71,7 @@ def protein_to_peptides(fasta,
                         variable_mods={},
                         static_mods={"C": "[UNIMOD:4]"},
                         digest: bool = True,
+                        verbose: bool = True,
                         ) -> Union[set, None]:
     """
     Generates a set of unique peptides from a protein sequence using digestion logic, including PTMs.
@@ -94,6 +95,9 @@ def protein_to_peptides(fasta,
 
     # if digest is set to False, we will take every protein and put it into a set
     if not digest:
+        if verbose:
+            print("Digesting is set to False, returning the protein sequences ...")
+
         # Remove '>' from the FASTA header and return the sequence as a set
         return {fasta.split('\n', 1)[1].replace('\n', '')}
 
@@ -238,6 +242,7 @@ def simulate_proteins(
         min_len=min_len,
         max_len=max_len,
         digest=digest,
+        verbose=verbose,
     ), axis=1)
 
     # Remove None values
