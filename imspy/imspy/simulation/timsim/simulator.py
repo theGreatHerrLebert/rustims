@@ -74,7 +74,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     Builds and returns the command line argument parser.
     """
     parser = argparse.ArgumentParser(
-        description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with diaPASEF-like acquisition '
+        description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition '
                     'on a BRUKER TimsTOF.'
     )
 
@@ -484,6 +484,9 @@ def main():
                 if not args.silent_mode:
                     print(f"Applying dilution factor {dilution_factor} to {fasta}")
                 mask = peptides['fasta'] == fasta
+
+                # need to multiply total_events by dilution factor and save it as events
+                peptides.loc[mask, 'events'] = peptides.loc[mask, 'total_events']
                 peptides.loc[mask, 'events'] *= dilution_factor
                 peptides.loc[mask, 'fasta'] = fasta
 

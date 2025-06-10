@@ -270,7 +270,7 @@ class TDFWriter:
         try:
             self._create_table(self.conn, self.helper_handle.get_table("PasefFrameMsMsInfo"), "PasefFrameMsMsInfo")
         except Exception as e:
-            print(f"Error writing PasefFrameMsMsInfo table: {e}")
+            print(f"Error writing PasefFrameMsMsInfo table: {e}. In most cases, this is not a problem, since the table is empty in DIA mode.")
 
     def write_prm_frame_ms_ms_info(self) -> None:
         try:

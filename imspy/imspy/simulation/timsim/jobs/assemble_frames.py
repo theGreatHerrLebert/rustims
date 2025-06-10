@@ -130,7 +130,10 @@ def assemble_frames(
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
+
     if acquisition_builder.acquisition_mode.mode == 'DIA':
+        if verbose:
+            print("Writing DIA specific meta data to database...")
         # write frame ms/ms info to database
         acquisition_builder.tdf_writer.write_dia_ms_ms_info(
             acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
@@ -153,7 +156,10 @@ def assemble_frames(
 
         else:
             acquisition_builder.tdf_writer.write_calibration_info(mz_standard_deviation_ppm=0.0)
-    else:
+
+    elif acquisition_builder.acquisition_mode.mode == 'DDA':
+        if verbose:
+            print("Writing DDA specific meta data to database...")
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(
             acquisition_builder.synthetics_handle.get_table('precursors'))

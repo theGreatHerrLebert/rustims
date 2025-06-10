@@ -1,6 +1,6 @@
 [package]
 name = "mscore"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 authors = ["David Teschner <davidteschner@googlemail.com>"]
 description = "A Rust library providing core operations for computational mass spectrometry proteomics."
