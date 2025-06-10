@@ -681,6 +681,7 @@ def main():
             use_binomial=args.binomial_charge_model,
             min_charge_contrib=args.min_charge_contrib,
             normalize=args.normalize_charge_states,
+            verbose=not args.silent_mode,
         )
 
         # JOB 6: Ion mobilities
