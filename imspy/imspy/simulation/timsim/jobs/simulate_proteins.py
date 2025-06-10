@@ -69,7 +69,9 @@ def protein_to_peptides(fasta,
                         generate_decoys=False,
                         c_terminal=True,
                         variable_mods={},
-                        static_mods={"C": "[UNIMOD:4]"}) -> Union[set, None]:
+                        static_mods={"C": "[UNIMOD:4]"},
+                        digest: bool = True,
+                        ) -> Union[set, None]:
     """
     Generates a set of unique peptides from a protein sequence using digestion logic, including PTMs.
 
@@ -89,6 +91,12 @@ def protein_to_peptides(fasta,
     Returns:
         set: A set of unique peptide sequences with PTMs.
     """
+
+    # if digest is set to False, we will take every protein and put it into a set
+    if not digest:
+        # Remove '>' from the FASTA header and return the sequence as a set
+        return {fasta.split('\n', 1)[1].replace('\n', '')}
+
     # Simulate enzyme builder and digestion logic
     enzyme_builder = EnzymeBuilder(
         missed_cleavages=missed_cleavages,
@@ -168,6 +176,8 @@ def simulate_proteins(
         variable_mods: dict = {},
         static_mods: dict = {"C": "[UNIMOD:4]"},
         verbose: bool = True,
+        sample_proteins: bool = True,
+        digest: bool = True,
 ) -> pd.DataFrame:
     """
     Simulate proteins.
@@ -185,6 +195,7 @@ def simulate_proteins(
         max_len (int): Maximum peptide length.
         generate_decoys (bool): Generate decoys.
         verbose (bool): Verbosity.
+        sample_proteins (bool): Whether to sample proteins from the FASTA file.
 
     Returns:
         pd.DataFrame: Proteins DataFrame.
@@ -197,12 +208,20 @@ def simulate_proteins(
     # Sample proteins
     if n_proteins > len(tbl):
         n_proteins = len(tbl)
-        print(f"Number of proteins requested exceeds the number of proteins in the FASTA file. Using {n_proteins} available proteins.")
+
+        if verbose:
+            print(f"Number of proteins requested exceeds the number of proteins in the FASTA file. Using {n_proteins} available proteins.")
 
     else:
-        print(f"Sampling {n_proteins} proteins from the FASTA file.")
+        if sample_proteins:
+            if verbose:
+                print(f"Sampling {n_proteins} proteins from the FASTA file.")
 
-    sample = tbl.sample(n=n_proteins)
+    if sample_proteins:
+        sample = tbl.sample(n=n_proteins)
+    else:
+        print("Sampling all proteins from the FASTA file.")
+        sample = tbl
 
     # Generate peptides
     sample["peptides"] = sample.apply(lambda f: protein_to_peptides(
@@ -218,6 +237,7 @@ def simulate_proteins(
         missed_cleavages=missed_cleavages,
         min_len=min_len,
         max_len=max_len,
+        digest=digest,
     ), axis=1)
 
     # Remove None values
