@@ -256,7 +256,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
     parser.add_argument("--selection_mode", type=str, help="Selection mode for precursors (default: topN)")
     parser.add_argument("--no_digest_proteins", dest="digest_proteins", action="store_false",
-                        help="Do not digest proteins, use existing peptides (default: True)")
+                        help="Do not digest proteins, use when fasta contains peptides instead of proteins, "
+                             "default: True")
     parser.set_defaults(digest_proteins=True)
 
     return parser
