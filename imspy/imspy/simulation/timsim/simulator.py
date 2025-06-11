@@ -548,7 +548,7 @@ def main():
                 variable_mods=variable_modifications,
                 static_mods=static_modifications,
                 verbose=not args.silent_mode,
-                digest=args.digest,
+                digest=args.digest_proteins,
             )
 
             # JOB 1: Simulate peptides
