@@ -673,6 +673,9 @@ def main():
         # Ensure columns exist in the DataFrame
         peptides = peptides[[col for col in columns_mixed if col in peptides.columns]]
 
+    if args.proteome_mix:
+        # need to drop duplictes by sequence for proteome mix
+        peptides = peptides.drop_duplicates(subset=['sequence'])
     # Save peptides
     acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
 
@@ -720,6 +723,10 @@ def main():
         add_noise=args.noise_scan_abundance,
         num_threads=args.num_threads,
     )
+
+    # need to drop duplicates by sequence and charge state for ions if proteome mix
+    if args.proteome_mix:
+        ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
