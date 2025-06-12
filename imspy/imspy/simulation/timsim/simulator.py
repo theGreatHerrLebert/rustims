@@ -696,6 +696,10 @@ def main():
             verbose=not args.silent_mode,
         )
 
+        # need to drop duplicates by sequence and charge state for ions if proteome mix
+        if args.proteome_mix:
+            ions = ions.drop_duplicates(subset=['sequence', 'charge'])
+
         # JOB 6: Ion mobilities
         ions = simulate_ion_mobilities_and_variance(
             ions=ions,
@@ -723,10 +727,6 @@ def main():
         add_noise=args.noise_scan_abundance,
         num_threads=args.num_threads,
     )
-
-    # need to drop duplicates by sequence and charge state for ions if proteome mix
-    if args.proteome_mix:
-        ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
