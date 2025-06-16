@@ -1,4 +1,5 @@
 import os
+import platform
 import argparse
 import time
 from pathlib import Path
@@ -74,7 +75,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     Builds and returns the command line argument parser.
     """
     parser = argparse.ArgumentParser(
-        description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with diaPASEF-like acquisition '
+        description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition '
                     'on a BRUKER TimsTOF.'
     )
 
@@ -255,6 +256,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_precursors", type=int, help="Maximum number of precursors to select per cycle (default: 25)")
     parser.add_argument("--exclusion_width", type=int, help="Exclusion width for precursor selection (default: 25)")
     parser.add_argument("--selection_mode", type=str, help="Selection mode for precursors (default: topN)")
+    parser.add_argument("--no_digest_proteins", dest="digest_proteins", action="store_false",
+                        help="Do not digest proteins, use when fasta contains peptides instead of proteins, "
+                             "default: True")
+    parser.set_defaults(digest_proteins=True)
 
     return parser
 
@@ -330,6 +335,7 @@ def get_default_settings() -> dict:
         'max_precursors': 25,
         'exclusion_width': 25,
         'selection_mode': 'topN',
+        'digest_proteins': True,
     }
 
 
@@ -392,8 +398,7 @@ def main():
     # calculate rt defaults if not provided
     check_required_args(args, parser)
 
-    # MacOS check for Bruker SDK
-    if os.uname().sysname == 'Darwin':
+    if platform.system() == 'Darwin':
         print("Warning: Using Bruker SDK on MacOS is not supported, setting use_bruker_sdk to False.")
         args.use_bruker_sdk = False
 
@@ -543,6 +548,7 @@ def main():
                 variable_mods=variable_modifications,
                 static_mods=static_modifications,
                 verbose=not args.silent_mode,
+                digest=args.digest_proteins,
             )
 
             # JOB 1: Simulate peptides
@@ -667,6 +673,9 @@ def main():
         # Ensure columns exist in the DataFrame
         peptides = peptides[[col for col in columns_mixed if col in peptides.columns]]
 
+    if args.proteome_mix:
+        # need to drop duplictes by sequence for proteome mix
+        peptides = peptides.drop_duplicates(subset=['sequence'])
     # Save peptides
     acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
 
@@ -684,7 +693,12 @@ def main():
             use_binomial=args.binomial_charge_model,
             min_charge_contrib=args.min_charge_contrib,
             normalize=args.normalize_charge_states,
+            verbose=not args.silent_mode,
         )
+
+        # need to drop duplicates by sequence and charge state for ions if proteome mix
+        if args.proteome_mix:
+            ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
         # JOB 6: Ion mobilities
         ions = simulate_ion_mobilities_and_variance(
