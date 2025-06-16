@@ -1,4 +1,5 @@
 import os
+import platform
 import argparse
 import time
 from pathlib import Path
@@ -397,8 +398,7 @@ def main():
     # calculate rt defaults if not provided
     check_required_args(args, parser)
 
-    # MacOS check for Bruker SDK
-    if os.uname().sysname == 'Darwin':
+    if platform.system() == 'Darwin':
         print("Warning: Using Bruker SDK on MacOS is not supported, setting use_bruker_sdk to False.")
         args.use_bruker_sdk = False
 

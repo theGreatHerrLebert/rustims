@@ -1,5 +1,7 @@
 import os
 
+import platform
+
 import numpy as np
 import pandas as pd
 import sqlite3
@@ -105,7 +107,7 @@ class TimsDataset(ABC):
         self.__current_index = 1
 
         # if we are on macOS, we only can use the bruker SDK False option, start by getting the OS we are on, use python's os module
-        current_os = os.uname().sysname
+        current_os = platform.system()
 
         # if bruker_sdk_mode is requested, we need to check for cases where the vendor binary is not available
         if self.use_bruker_sdk:
