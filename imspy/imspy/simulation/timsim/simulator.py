@@ -500,11 +500,11 @@ def main():
                 print(f"Retention times will be varied with a standard deviation of {args.rt_variation_std} seconds.")
 
             # find the column containing the word 'retention_time' in its name
-            name = [col for col in peptides.columns if 'retention_time' in col][0]
+            col_name = [col for col in peptides.columns if 'retention_time' in col][0]
 
             # Apply RT variation
-            peptides[name] = add_normal_noise_softclip(
-                values=peptides[name],
+            peptides[col_name] = add_normal_noise_softclip(
+                values=peptides[col_name],
                 variation_std=args.rt_variation_std,
             )
 
@@ -513,11 +513,11 @@ def main():
                 print(f"Ion mobilities will be varied with a standard deviation of {args.ion_mobility_variation_std}.")
 
             # find the column containing the word 'inv_mobility' in its name
-            name = [col for col in ions.columns if 'inv_mobility' in col][0]
+            col_name = [col for col in ions.columns if 'inv_mobility' in col][0]
 
             # Apply ion mobility variation
-            ions[name] = add_normal_noise_softclip(
-                values=ions[name],
+            ions[col_name] = add_normal_noise_softclip(
+                values=ions[col_name],
                 variation_std=args.ion_mobility_variation_std,
             )
 
