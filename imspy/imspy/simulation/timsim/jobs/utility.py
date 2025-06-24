@@ -41,7 +41,7 @@ import numpy as np
 
 def add_normal_noise_softclip(values: np.ndarray,
                               variation_std: float = 10.0,
-                              softclip_tau: float = 5.0) -> np.ndarray:
+                              softclip_tau: float = 1.0) -> np.ndarray:
     """
     Add Gaussian noise to values and apply a soft-pull toward bounds [0, max_val].
     Args:
