@@ -383,7 +383,7 @@ def main():
     parser = build_arg_parser()
     args, remaining_args = parser.parse_known_args()
 
-    # Load defaults and override with config file if provided
+    # Load defaults and override with a config file if provided
     defaults = get_default_settings()
 
     if args.config:
@@ -492,6 +492,9 @@ def main():
         proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
 
+        rt_sigma = peptides['rt_sigma'].values
+        rt_lambda = peptides['rt_lambda'].values
+
         if args.rt_variation_std is not None:
             if not args.silent_mode:
                 print(f"Retention times will be varied with a standard deviation of {args.rt_variation_std} seconds.")
@@ -505,11 +508,7 @@ def main():
                 variation_std=args.rt_variation_std,
             )
 
-        else:
-            rt_sigma = peptides['rt_sigma'].values
-            rt_lambda = peptides['rt_lambda'].values
-
-        if args.ion_variation_std is not None:
+        if args.ion_mobility_variation_std is not None:
             if not args.silent_mode:
                 print(f"Ion mobilities will be varied with a standard deviation of {args.ion_mobility_variation_std}.")
 
@@ -526,12 +525,9 @@ def main():
             if not args.silent_mode:
                 print(f"Fragment intensities will be varied with a standard deviation of {args.intensity_variation_std}.")
 
-            # find the column containing the word 'intensity' in its name
-            name = "events"
-
             # Apply intensity variation
-            ions[name] = add_log_normal_noise(
-                intensities=peptides[name],
+            peptides["events"] = add_log_normal_noise(
+                intensities=peptides["events"].values,
                 log_noise_std=args.intensity_variation_std,
             )
 
