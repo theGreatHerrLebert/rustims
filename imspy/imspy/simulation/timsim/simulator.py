@@ -22,7 +22,7 @@ from imspy.simulation.timsim.jobs.simulate_scan_distributions_with_variance impo
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from imspy.simulation.timsim.jobs.utility import check_path
 
-from .jobs.utility import add_log_normal_noise, add_normal_noise_softclip
+from .jobs.utility import add_log_normal_noise, add_normal_noise
 
 # Local imports
 from .jobs.assemble_frames import assemble_frames
@@ -503,7 +503,7 @@ def main():
             col_name = [col for col in peptides.columns if 'retention_time' in col][0]
 
             # Apply RT variation
-            peptides[col_name] = add_normal_noise_softclip(
+            peptides[col_name] = add_normal_noise(
                 values=peptides[col_name],
                 variation_std=args.rt_variation_std,
             )
@@ -516,7 +516,7 @@ def main():
             col_name = [col for col in ions.columns if 'inv_mobility' in col][0]
 
             # Apply ion mobility variation
-            ions[col_name] = add_normal_noise_softclip(
+            ions[col_name] = add_normal_noise(
                 values=ions[col_name],
                 variation_std=args.ion_mobility_variation_std,
             )
