@@ -4,6 +4,7 @@ import argparse
 import time
 from pathlib import Path
 
+import numpy as np
 import toml
 import pandas as pd
 import tensorflow as tf
@@ -20,6 +21,8 @@ from imspy.simulation.timsim.jobs.simulate_scan_distributions_with_variance impo
 )
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from imspy.simulation.timsim.jobs.utility import check_path
+
+from .jobs.utility import add_log_normal_noise, add_normal_noise_softclip
 
 # Local imports
 from .jobs.assemble_frames import assemble_frames
@@ -148,6 +151,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no_sample_occurrences", dest="sample_occurrences", action="store_false",
                         help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
     parser.set_defaults(sample_occurrences=True)
+
+    # Retention time, Ion Mobility, and Intensity variance settings
+    parser.add_argument("--rt_variation_std", type=float, help="Standard deviation of the retention time variation (default: None)")
+    parser.add_argument("--ion_mobility_variation_std", type=float, help="Standard deviation of the ion mobility variation (default: None)")
+    parser.add_argument("--intensity_variation_std", type=float, help="Standard deviation of the intensity variation (default: None)")
 
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
@@ -336,6 +344,9 @@ def get_default_settings() -> dict:
         'exclusion_width': 25,
         'selection_mode': 'topN',
         'digest_proteins': True,
+        'rt_variation_std': None,
+        'ion_mobility_variation_std': None,
+        'intensity_variation_std': None,
     }
 
 
@@ -480,8 +491,49 @@ def main():
         peptides = existing_sim_handle.get_table('peptides')
         proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
-        rt_sigma = peptides['rt_sigma'].values
-        rt_lambda = peptides['rt_lambda'].values
+
+        if args.rt_variation_std is not None:
+            if not args.silent_mode:
+                print(f"Retention times will be varied with a standard deviation of {args.rt_variation_std} seconds.")
+
+            # find the column containing the word 'retention_time' in its name
+            name = [col for col in peptides.columns if 'retention_time' in col][0]
+
+            # Apply RT variation
+            peptides[name] = add_normal_noise_softclip(
+                values=peptides[name],
+                variation_std=args.rt_variation_std,
+            )
+
+        else:
+            rt_sigma = peptides['rt_sigma'].values
+            rt_lambda = peptides['rt_lambda'].values
+
+        if args.ion_variation_std is not None:
+            if not args.silent_mode:
+                print(f"Ion mobilities will be varied with a standard deviation of {args.ion_mobility_variation_std}.")
+
+            # find the column containing the word 'inv_mobility' in its name
+            name = [col for col in ions.columns if 'inv_mobility' in col][0]
+
+            # Apply ion mobility variation
+            ions[name] = add_normal_noise_softclip(
+                values=ions[name],
+                variation_std=args.ion_mobility_variation_std,
+            )
+
+        if args.intensity_variation_std is not None:
+            if not args.silent_mode:
+                print(f"Fragment intensities will be varied with a standard deviation of {args.intensity_variation_std}.")
+
+            # find the column containing the word 'intensity' in its name
+            name = "events"
+
+            # Apply intensity variation
+            ions[name] = add_log_normal_noise(
+                intensities=peptides[name],
+                log_noise_std=args.intensity_variation_std,
+            )
 
         # If mixing is enabled, apply dilution factors by FASTA
         if args.proteome_mix:

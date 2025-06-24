@@ -39,14 +39,15 @@ def phosphorylation_sizes(sequence: str) -> Tuple[int, List[int]]:
 
 import numpy as np
 
-def add_normal_noise_softclip(values: np.ndarray, rt_variation_std: float = 10.0,
+def add_normal_noise_softclip(values: np.ndarray,
+                              variation_std: float = 10.0,
                               softclip_tau: float = 10.0) -> np.ndarray:
     """
     Add Gaussian noise to values and apply a soft-pull toward bounds [0, max_val].
     Args:
         values: np.ndarray
             Array of values to which noise will be added.
-        rt_variation_std: float
+        variation_std: float
             Standard deviation of the Gaussian noise to be added.
         softclip_tau: float
             Controls the steepness of the soft-pull function.
@@ -60,7 +61,7 @@ def add_normal_noise_softclip(values: np.ndarray, rt_variation_std: float = 10.0
     max_val = np.max(values)
 
     # Add Gaussian noise
-    noisy = values + np.random.normal(0, rt_variation_std, size=values.shape)
+    noisy = values + np.random.normal(0, variation_std, size=values.shape)
 
     # Soft-pull toward bounds
     # Define a smooth function that asymptotically approaches [0, max_val]
@@ -72,3 +73,32 @@ def add_normal_noise_softclip(values: np.ndarray, rt_variation_std: float = 10.0
 
     return soft_pull(noisy)
 
+import numpy as np
+
+def add_log_normal_noise(
+    intensities: np.ndarray,
+    log_noise_std: float = 0.02,
+) -> np.ndarray:
+    """
+    Add log-normal noise to a set of intensities.
+    Args:
+        intensities: np.ndarray
+            Array of intensities to which noise will be added.
+        log_noise_std: float
+            Standard deviation of the log-normal noise to be added.
+    Returns:
+        np.ndarray
+            Array of intensities with added log-normal noise.
+    """
+    intensities = np.asarray(intensities)
+    assert np.all(intensities >= 0), "All intensities must be ≥ 0"
+
+    # Log-transform safely
+    log_vals = np.log1p(intensities)
+
+    # Add noise
+    noisy_log_vals = log_vals + np.random.normal(0, log_noise_std, size=log_vals.shape)
+
+    # Transform back and ensure non-negativity
+    noised_intensities = np.expm1(noisy_log_vals)
+    return np.clip(noised_intensities, 0, None)
