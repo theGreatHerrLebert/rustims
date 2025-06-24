@@ -4,7 +4,6 @@ import argparse
 import time
 from pathlib import Path
 
-import numpy as np
 import toml
 import pandas as pd
 import tensorflow as tf
@@ -22,7 +21,7 @@ from imspy.simulation.timsim.jobs.simulate_scan_distributions_with_variance impo
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from imspy.simulation.timsim.jobs.utility import check_path
 
-from .jobs.utility import add_log_normal_noise, add_normal_noise
+from .jobs.utility import add_log_noise_variation, add_normal_noise
 
 # Local imports
 from .jobs.assemble_frames import assemble_frames
@@ -526,7 +525,7 @@ def main():
                 print(f"Fragment intensities will be varied with a standard deviation of {args.intensity_variation_std}.")
 
             # Apply intensity variation
-            peptides["events"] = add_log_normal_noise(
+            peptides["events"] = add_log_noise_variation(
                 intensities=peptides["events"].values,
                 log_noise_std=args.intensity_variation_std,
             )

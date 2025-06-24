@@ -57,24 +57,40 @@ def add_normal_noise(
     return np.clip(noisy, 0, np.max(values))
 
 
-def add_log_normal_noise(
-        intensities: np.ndarray,
-        log_noise_std: float = 0.2
+import numpy as np
+
+import numpy as np
+
+def add_log_noise_variation(
+    intensities: np.ndarray,
+    log_noise_std: float = 0.02,
+    hard_clip: bool = True
 ) -> np.ndarray:
     """
-    Add log-normal noise to the input intensities and hard clip to [0, max(intensities)].
-    Args:
-        intensities: np.ndarray of non-negative intensities
-        log_noise_std: standard deviation of the log-normal noise to be added
+    Add small Gaussian noise in log1p space, transform back, and clip in linear space.
+
+    Parameters:
+    - intensities: np.ndarray of non-negative values
+    - log_noise_std: standard deviation of Gaussian noise in log1p space
+    - hard_clip: if True, clip output to [0, max(intensities)]
 
     Returns:
-        np.ndarray of noise-added and clipped intensities
+    - np.ndarray of noise-added intensities, all ≥ 0
     """
     intensities = np.asarray(intensities)
-    assert np.all(intensities >= 0), "All intensities must be ≥ 0"
+    assert np.all(intensities >= 0), "All intensities must be non-negative"
 
+    # 1. Log-transform
     log_vals = np.log1p(intensities)
-    noisy_log_vals = log_vals + np.random.normal(0, log_noise_std, size=log_vals.shape)
-    noised = np.expm1(noisy_log_vals)
 
-    return np.clip(noised, 0, np.max(intensities))
+    # 2. Add noise
+    noisy_log_vals = log_vals + np.random.normal(0, log_noise_std, size=log_vals.shape)
+
+    # 3. Back-transform
+    noised_intensities = np.expm1(noisy_log_vals)
+
+    # 4. Clip in linear space
+    if hard_clip:
+        return np.clip(noised_intensities, 0, np.max(intensities))
+    else:
+        return np.maximum(noised_intensities, 0)
