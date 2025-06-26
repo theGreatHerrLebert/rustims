@@ -36,8 +36,8 @@ def simulate_scan_distributions_with_variance(
     assert "inv_mobility_gru_predictor_std" in ions.columns, "inv_mobility_gru_predictor_std column is missing"
 
     if verbose:
-        print("Calculating scan distributions...")
-        print("Calculating scan occurrences...")
+        print("Calculating scan distributions ...")
+        print("Calculating scan occurrences ...")
 
     occurrence = ims.calculate_scan_occurrences_gaussian_par(
         times=scans.mobility,
@@ -51,7 +51,7 @@ def simulate_scan_distributions_with_variance(
     )
 
     if verbose:
-        print("Calculating scan abundances...")
+        print("Calculating scan abundances ...")
 
     abundances = ims.calculate_scan_abundances_gaussian_par(
         indices=scans.scan,
@@ -64,7 +64,7 @@ def simulate_scan_distributions_with_variance(
     )
 
     if verbose:
-        print("Serializing scan distributions to json...")
+        print("Serializing scan distributions to json ...")
 
     if add_noise:
         # TODO: Make noise model configurable

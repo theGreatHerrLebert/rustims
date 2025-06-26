@@ -23,7 +23,7 @@ def simulate_ion_mobilities(
     """
 
     if verbose:
-        print("Simulating ion mobilities...")
+        print("Simulating ion mobilities ...")
 
         # load IM predictor
     IMS = DeepPeptideIonMobilityApex(

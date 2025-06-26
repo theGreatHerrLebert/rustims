@@ -151,7 +151,7 @@ def simulate_peptides(
 
         except Exception as e:
             print(f"Failed to predict peptide flyability with KOINA: {e}")
-            print("Falling back to normal distribution...")
+            print("Falling back to normal distribution ...")
 
     peptide_table["events"] = (peptide_table.events * efficiency).astype(np.int32)
 
@@ -163,7 +163,7 @@ def simulate_peptides(
         assert 0 <= min_rt_percent <= 100, "min_rt_percent must be between 0 and 100"
 
         if verbose:
-            print("Simulating retention times for peptides and filtering...")
+            print("Simulating retention times for peptides and filtering ...")
 
         RTColumn = DeepChromatographyApex(
             model=load_deep_retention_time_predictor(),

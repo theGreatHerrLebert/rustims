@@ -228,7 +228,7 @@ def simulate_frame_distributions_emg(
         sigma_upper_rt = defaults['sigma_upper_rt']
 
     if verbose and not from_existing:
-        print("Calculating frame distributions...")
+        print("Calculating frame distributions ...")
         print(f"sigma_lower: {sigma_lower_rt}, sigma_upper: {sigma_upper_rt}, sigma_alpha: {sigma_alpha_rt}, sigma_beta: {sigma_beta_rt}")
 
     n = peptides.shape[0]
@@ -273,7 +273,7 @@ def simulate_frame_distributions_emg(
     )
 
     if verbose:
-        print("Serializing frame distributions to json...")
+        print("Serializing frame distributions to json ...")
 
     first_occurrence = [occurrence[0] for occurrence in occurrences]
     last_occurrence = [occurrence[-1] for occurrence in occurrences]

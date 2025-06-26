@@ -31,7 +31,7 @@ def simulate_ion_mobilities_and_variance(
     """
 
     if verbose:
-        print("Simulating ion mobilities and variance...")
+        print("Simulating ion mobilities and variance ...")
 
     # load IM predictor
     model = load_deep_ccs_std_predictor()

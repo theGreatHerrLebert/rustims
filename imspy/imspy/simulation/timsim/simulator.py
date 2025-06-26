@@ -21,6 +21,8 @@ from imspy.simulation.timsim.jobs.simulate_scan_distributions_with_variance impo
 from imspy.simulation.utility import get_fasta_file_paths, get_dilution_factors
 from imspy.simulation.timsim.jobs.utility import check_path
 
+from .jobs.utility import add_log_noise_variation, add_normal_noise
+
 # Local imports
 from .jobs.assemble_frames import assemble_frames
 from .jobs.build_acquisition import build_acquisition
@@ -148,6 +150,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no_sample_occurrences", dest="sample_occurrences", action="store_false",
                         help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
     parser.set_defaults(sample_occurrences=True)
+
+    # Retention time, Ion Mobility, and Intensity variance settings
+    parser.add_argument("--re_scale_rt", type=bool, default=False,
+                        help="Whether to re-scale retention times to a new gradient length, only makes sense when re-simulating from existing template (default: False)")
+
+    parser.add_argument("--rt_variation_std", type=float, help="Standard deviation of the retention time variation (default: None)")
+    parser.add_argument("--ion_mobility_variation_std", type=float, help="Standard deviation of the ion mobility variation (default: None)")
+    parser.add_argument("--intensity_variation_std", type=float, help="Standard deviation of the intensity variation (default: None)")
 
     # Distribution parameters
     parser.add_argument("--gradient_length", type=float, help="Length of the gradient in seconds (default: 3600)")
@@ -336,6 +346,10 @@ def get_default_settings() -> dict:
         'exclusion_width': 25,
         'selection_mode': 'topN',
         'digest_proteins': True,
+        're_scale_rt': False,
+        'rt_variation_std': None,
+        'ion_mobility_variation_std': None,
+        'intensity_variation_std': None,
     }
 
 
@@ -361,6 +375,12 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
 # ----------------------------------------------------------------------
 
 def main():
+
+    print("🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition on a BRUKER TimsTOF.")
+    print("Version: 0.3.20")
+    print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
+    print("License: MIT")
+
     """
     Entry point for the proteomics simulation script.
     """
@@ -372,7 +392,7 @@ def main():
     parser = build_arg_parser()
     args, remaining_args = parser.parse_known_args()
 
-    # Load defaults and override with config file if provided
+    # Load defaults and override with a config file if provided
     defaults = get_default_settings()
 
     if args.config:
@@ -480,8 +500,62 @@ def main():
         peptides = existing_sim_handle.get_table('peptides')
         proteins = existing_sim_handle.get_table('proteins')
         ions = existing_sim_handle.get_table('ions')
+
         rt_sigma = peptides['rt_sigma'].values
         rt_lambda = peptides['rt_lambda'].values
+
+        if not args.silent_mode:
+            print(f"Using existing simulation from {args.existing_path}")
+            print(f"Peptides: {peptides.shape[0]}")
+            print(f"Ions: {ions.shape[0]}")
+
+        if args.re_scale_rt:
+            if not args.silent_mode:
+                print(f"Re-scaling retention times to a new gradient length of {args.gradient_length} seconds.")
+
+            # re-scale retention times by running rt simulation again
+            peptides = simulate_retention_times(
+                peptides=peptides,
+                verbose=not args.silent_mode,
+                gradient_length=args.gradient_length,
+                use_koina_model=args.koina_rt_model,
+            )
+
+        if args.rt_variation_std is not None:
+            if not args.silent_mode:
+                print(f"Retention times will be varied with a standard deviation of {args.rt_variation_std} seconds.")
+
+            # find the column containing the word 'retention_time' in its name
+            col_name = [col for col in peptides.columns if 'retention_time' in col][0]
+
+            # Apply RT variation
+            peptides[col_name] = add_normal_noise(
+                values=peptides[col_name],
+                variation_std=args.rt_variation_std,
+            )
+
+        if args.ion_mobility_variation_std is not None:
+            if not args.silent_mode:
+                print(f"Ion mobilities will be varied with a standard deviation of {args.ion_mobility_variation_std}.")
+
+            # find the column containing the word 'inv_mobility' in its name
+            col_name = [col for col in ions.columns if 'inv_mobility' in col][0]
+
+            # Apply ion mobility variation
+            ions[col_name] = add_normal_noise(
+                values=ions[col_name],
+                variation_std=args.ion_mobility_variation_std,
+            )
+
+        if args.intensity_variation_std is not None:
+            if not args.silent_mode:
+                print(f"Fragment intensities will be varied with a standard deviation of {args.intensity_variation_std}.")
+
+            # Apply intensity variation
+            peptides["events"] = add_log_noise_variation(
+                intensities=peptides["events"].values,
+                log_noise_std=args.intensity_variation_std,
+            )
 
         # If mixing is enabled, apply dilution factors by FASTA
         if args.proteome_mix:
@@ -512,11 +586,6 @@ def main():
                 f"Warning: The gradient length of the existing simulation is {rt_max} seconds, "
                 f"which is off by more than 5% of the new gradient length {args.gradient_length} seconds."
             )
-
-        if not args.silent_mode:
-            print(f"Using existing simulation from {args.existing_path}")
-            print(f"Peptides: {peptides.shape[0]}")
-            print(f"Ions: {ions.shape[0]}")
 
     # ----------------------------------------
     # FASTA processing if not from existing
