@@ -152,6 +152,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.set_defaults(sample_occurrences=True)
 
     # Retention time, Ion Mobility, and Intensity variance settings
+    parser.add_argument("--re_scale_rt", type=bool, default=False,
+                        help="Whether to re-scale retention times to a new gradient length, only makes sense when re-simulating from existing template (default: False)")
+
     parser.add_argument("--rt_variation_std", type=float, help="Standard deviation of the retention time variation (default: None)")
     parser.add_argument("--ion_mobility_variation_std", type=float, help="Standard deviation of the ion mobility variation (default: None)")
     parser.add_argument("--intensity_variation_std", type=float, help="Standard deviation of the intensity variation (default: None)")
@@ -343,6 +346,7 @@ def get_default_settings() -> dict:
         'exclusion_width': 25,
         'selection_mode': 'topN',
         'digest_proteins': True,
+        're_scale_rt': False,
         'rt_variation_std': None,
         'ion_mobility_variation_std': None,
         'intensity_variation_std': None,
@@ -494,6 +498,23 @@ def main():
         rt_sigma = peptides['rt_sigma'].values
         rt_lambda = peptides['rt_lambda'].values
 
+        if not args.silent_mode:
+            print(f"Using existing simulation from {args.existing_path}")
+            print(f"Peptides: {peptides.shape[0]}")
+            print(f"Ions: {ions.shape[0]}")
+
+        if args.re_scale_rt:
+            if not args.silent_mode:
+                print(f"Re-scaling retention times to a new gradient length of {args.gradient_length} seconds.")
+
+            # re-scale retention times by running rt simulation again
+            peptides = simulate_retention_times(
+                peptides=peptides,
+                verbose=not args.silent_mode,
+                gradient_length=args.gradient_length,
+                use_koina_model=args.koina_rt_model,
+            )
+
         if args.rt_variation_std is not None:
             if not args.silent_mode:
                 print(f"Retention times will be varied with a standard deviation of {args.rt_variation_std} seconds.")
@@ -559,11 +580,6 @@ def main():
                 f"Warning: The gradient length of the existing simulation is {rt_max} seconds, "
                 f"which is off by more than 5% of the new gradient length {args.gradient_length} seconds."
             )
-
-        if not args.silent_mode:
-            print(f"Using existing simulation from {args.existing_path}")
-            print(f"Peptides: {peptides.shape[0]}")
-            print(f"Ions: {ions.shape[0]}")
 
     # ----------------------------------------
     # FASTA processing if not from existing
