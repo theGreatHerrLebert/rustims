@@ -28,7 +28,7 @@ def simulate_retention_times(
     """
 
     if verbose:
-        print("Simulating retention times...")
+        print("Simulating retention times ...")
 
     if use_koina_model is not None and use_koina_model != "":
         try:

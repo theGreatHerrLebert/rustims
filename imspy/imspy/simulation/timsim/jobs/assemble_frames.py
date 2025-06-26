@@ -59,7 +59,7 @@ def assemble_frames(
     """
 
     if verbose:
-        print('Starting frame assembly...')
+        print('Starting frame assembly ...')
 
         if add_real_data_noise:
             print('Real data noise will be added to the frames.')
@@ -83,11 +83,11 @@ def assemble_frames(
 
     if verbose:
         print("Signal noise settings:")
-        print(f'Precursor m/z noise: {mz_noise_precursor}...')
-        print(f'Uniform m/z noise: {mz_noise_uniform}...')
-        print(f'Precursor noise PPM: {precursor_noise_ppm}...')
-        print(f'Fragment m/z noise: {mz_noise_fragment}...')
-        print(f'Fragment noise PPM: {fragment_noise_ppm}...')
+        print(f'Precursor m/z noise: {mz_noise_precursor} ...')
+        print(f'Uniform m/z noise: {mz_noise_uniform} ...')
+        print(f'Precursor noise PPM: {precursor_noise_ppm} ...')
+        print(f'Fragment m/z noise: {mz_noise_fragment} ...')
+        print(f'Fragment noise PPM: {fragment_noise_ppm} ...')
 
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
@@ -126,14 +126,14 @@ def assemble_frames(
                 acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
     if verbose:
-        print('Writing frame meta data to database...')
+        print('Writing frame meta data to database ...')
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
 
     if acquisition_builder.acquisition_mode.mode == 'DIA':
         if verbose:
-            print("Writing DIA specific meta data to database...")
+            print("Writing DIA specific meta data to database ...")
         # write frame ms/ms info to database
         acquisition_builder.tdf_writer.write_dia_ms_ms_info(
             acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
@@ -159,7 +159,7 @@ def assemble_frames(
 
     elif acquisition_builder.acquisition_mode.mode == 'DDA':
         if verbose:
-            print("Writing DDA specific meta data to database...")
+            print("Writing DDA specific meta data to database ...")
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(
             acquisition_builder.synthetics_handle.get_table('precursors'))

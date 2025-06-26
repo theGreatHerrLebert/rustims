@@ -70,7 +70,7 @@ def simulate_phosphorylation(
 
     else:
         if verbose:
-            print("Simulating phosphorylation from existing template...")
+            print("Simulating phosphorylation from existing template ...")
 
         # Add UNIMOD:21 to the B site if not a template
         peptides = peptides.copy()

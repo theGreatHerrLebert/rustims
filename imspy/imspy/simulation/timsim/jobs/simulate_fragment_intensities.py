@@ -39,7 +39,7 @@ def simulate_fragment_intensities(
     """
 
     if verbose:
-        print("Simulating fragment ion intensity distributions...")
+        print("Simulating fragment ion intensity distributions ...")
 
     assert 0 <= down_sample_factor < 1, "down_sample_factor must be in the range (0, 1]"
 
@@ -48,7 +48,7 @@ def simulate_fragment_intensities(
     native_handle = TimsTofSyntheticsDataHandleRust(str(native_path))
 
     if verbose:
-        print("Calculating precursor ion transmissions and collision energies...")
+        print("Calculating precursor ion transmissions and collision energies ...")
 
     transmitted_fragment_ions = native_handle.get_transmitted_ions(num_threads=num_threads, dda=dda)
     if use_koina_model is not None and use_koina_model != "":
@@ -60,7 +60,7 @@ def simulate_fragment_intensities(
                                                                             batch_size_tf_ds=batch_size)
 
     if verbose:
-        print("Mapping fragment ion intensity distributions to b and y ions...")
+        print("Mapping fragment ion intensity distributions to b and y ions ...")
 
     n = int(5e4)
     batch_counter = 0

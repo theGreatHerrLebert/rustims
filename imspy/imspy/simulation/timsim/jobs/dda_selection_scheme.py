@@ -50,7 +50,7 @@ def simulate_dda_pasef_selection_scheme(
     Also, each precursor is assigned a new unique id.
     """
     if verbose:
-        print("Simulating dda-PASEF selection scheme...")
+        print("Simulating dda-PASEF selection scheme ...")
         print(f"precursors_every: {precursors_every}")
         print(f"intensity_threshold: {intensity_threshold}")
         print(f"max_precursors: {max_precursors}")

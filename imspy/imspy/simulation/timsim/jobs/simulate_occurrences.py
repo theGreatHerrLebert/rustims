@@ -29,7 +29,7 @@ def simulate_peptide_occurrences(
     """
 
     if verbose:
-        print("Simulating peptide occurrences...")
+        print("Simulating peptide occurrences ...")
 
     if sample_occurrences:
         peptides['events'] = generate_events(

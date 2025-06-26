@@ -39,7 +39,7 @@ def simulate_charge_states(
     if use_binomial:
 
         if verbose:
-            print("Using binomial charge state distribution model...")
+            print("Using binomial charge state distribution model ...")
 
         ion_source = BinomialChargeStateDistributionModel(charged_probability=p_charge, max_charge=max_charge, normalize=normalize)
         peptide_ions = ion_source.simulate_charge_state_distribution_pandas(

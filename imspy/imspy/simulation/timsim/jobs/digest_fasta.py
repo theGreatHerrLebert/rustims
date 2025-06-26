@@ -45,7 +45,7 @@ def digest_fasta(
         PeptideDigest: Peptide digest object.
     """
     if verbose:
-        print("Digesting peptides...")
+        print("Digesting peptides ...")
 
     peptides = PeptideDigest(
         check_path(fasta_file_path),
@@ -70,7 +70,7 @@ def digest_fasta(
         )
 
         if verbose:
-            print("Simulating retention times for exclusion of low retention times...")
+            print("Simulating retention times for exclusion of low retention times ...")
 
         peptide_rt = RTColumn.simulate_separation_times_pandas(
             # deep copy the data to avoid modifying the original data

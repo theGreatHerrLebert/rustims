@@ -29,7 +29,7 @@ def simulate_precursor_spectra_sequence(
     )
 
     if verbose:
-        print("Serializing simulated spectra to json...")
+        print("Serializing simulated spectra to json ...")
 
     specs = [spec.to_jsons() for spec in specs]
     ions.insert(5, 'simulated_spectrum', specs)
@@ -45,7 +45,7 @@ def simulate_precursor_spectra_averagine(
         verbose: bool = False) -> pd.DataFrame:
 
     if verbose:
-        print("Simulating precursor isotopic distributions...")
+        print("Simulating precursor isotopic distributions ...")
 
     specs = generate_isotope_patterns_rust(
         ions['monoisotopic-mass'], ions.charge,
