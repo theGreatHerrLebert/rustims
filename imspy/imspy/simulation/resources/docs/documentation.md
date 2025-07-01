@@ -151,10 +151,10 @@ Set all three to `0` to disable feature jitter completely.
 
 ## Performance Settings
 
-| Parameter | Description |
-|-----------|-------------|
-| **Number of Threads** | Parallel threads (`-1` = all cores). |
-| **Batch Size** | Data points processed per batch. |
+| Parameter | Description                                   |
+|-----------|-----------------------------------------------|
+| **Number of Threads** | Parallel threads (`-1` = all cores).          |
+| **Batch Size** | Number of TimsFrames to be build in parallel. |
 
 ---
 

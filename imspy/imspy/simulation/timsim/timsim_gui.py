@@ -289,18 +289,37 @@ class MainWindow(QMainWindow):
         self.process = None
 
     def create_documentation_tab(self):
+
+        import markdown
+
         documentation_tab = QWidget()
         layout = QVBoxLayout(documentation_tab)
+
         doc_path = Path(__file__).parent.parent / "resources/docs/documentation.md"
         if doc_path.exists():
             try:
                 with open(doc_path, "r", encoding="utf-8") as f:
                     markdown_text = f.read()
-                html_content = markdown.markdown(markdown_text)
+
+                # ─── NEW: convert with extensions ──────────────────────────────
+                html_content = markdown.markdown(
+                    markdown_text,
+                    extensions=["tables", "fenced_code", "toc"],  # <- “tables” fixes pipe tables
+                )
+                # (optional) add borders so grids are visible in QTextEdit
+                html_content = (
+                        "<style>"
+                        "table,th,td{border:1px solid #555;border-collapse:collapse;padding:4px;}"
+                        "th{background:#eee;}"
+                        "</style>\n"
+                        + html_content
+                )
+                # ───────────────────────────────────────────────────────────────
             except Exception as e:
                 html_content = f"<p>Error loading documentation: {str(e)}</p>"
         else:
             html_content = "<p>Documentation file not found.</p>"
+
         self.documentation_viewer = QTextEdit()
         self.documentation_viewer.setHtml(html_content)
         self.documentation_viewer.setReadOnly(True)
