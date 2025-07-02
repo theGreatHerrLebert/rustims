@@ -109,7 +109,7 @@ For custom intensity profiles, edit the simulation database directly and rerun `
 
 ## Property Variation Settings
 
-Feature-level Gaussian jitter applied *after* deterministic peak shaping and noise modelling.
+Feature-level Gaussian jitter applied *after* deterministic peak shaping and noise modeling. Will only be applied
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -125,15 +125,16 @@ Set all three to `0` to disable feature jitter completely.
 
 *Only active when **Acquisition Type** is set to **DDA**.*
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| **Precursors Every** | `7` | Precursors selected per MS¹ cycle. |
-| **Precursor Intensity Threshold** | `500` | Minimum MS¹ intensity for eligibility. |
-| **Max Precursors** | `7` | Hard cap on precursors per cycle. |
-| **Exclusion Width** | `25` | Th window excluded after selection. |
-| **Selection Mode** | `topN` | `topN` (by intensity) or `random`. |
+| Parameter | Default | Description                                                                                                   |
+|-----------|---------|---------------------------------------------------------------------------------------------------------------|
+| **Precursors Every** | `7` | Distance between MS¹  frames in one cycle (7 = 1 precursor frame followed by 6 fragment frames).              |
+| **Precursor Intensity Threshold** | `500` | Minimum MS¹ intensity for eligibility.                                                                        |
+| **Max Precursors** | `7` | Hard cap on selected precursors per fragment frame.                                                           |
+| **Exclusion Width** | `25` | Number of frames the re-acquisition of the same mz range that had been selected should not be selected again. |
+| **Selection Mode** | `topN` | `topN` (by intensity) or `random`.                                                                            |
 
-> *Lower thresholds or higher counts improve coverage but reduce MS² time per precursor.*
+> *Features in precursor space are currently not detected from raw-data but taken from the simulation tables, and therefore feature detection is de-facto perfect. 
+> For a more realistic procedure, we are planning to include a feature detection step in the future.*
 
 ---
 
