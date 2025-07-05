@@ -289,18 +289,37 @@ class MainWindow(QMainWindow):
         self.process = None
 
     def create_documentation_tab(self):
+
+        import markdown
+
         documentation_tab = QWidget()
         layout = QVBoxLayout(documentation_tab)
+
         doc_path = Path(__file__).parent.parent / "resources/docs/documentation.md"
         if doc_path.exists():
             try:
                 with open(doc_path, "r", encoding="utf-8") as f:
                     markdown_text = f.read()
-                html_content = markdown.markdown(markdown_text)
+
+                # ─── NEW: convert with extensions ──────────────────────────────
+                html_content = markdown.markdown(
+                    markdown_text,
+                    extensions=["tables", "fenced_code", "toc"],  # <- “tables” fixes pipe tables
+                )
+                # (optional) add borders so grids are visible in QTextEdit
+                html_content = (
+                        "<style>"
+                        "table,th,td{border:1px solid #555;border-collapse:collapse;padding:4px;}"
+                        "th{background:#eee;}"
+                        "</style>\n"
+                        + html_content
+                )
+                # ───────────────────────────────────────────────────────────────
             except Exception as e:
                 html_content = f"<p>Error loading documentation: {str(e)}</p>"
         else:
             html_content = "<p>Documentation file not found.</p>"
+
         self.documentation_viewer = QTextEdit()
         self.documentation_viewer.setHtml(html_content)
         self.documentation_viewer.setReadOnly(True)
@@ -314,6 +333,7 @@ class MainWindow(QMainWindow):
         self.init_peptide_digestion_settings()
         self.init_isotopic_pattern_settings()
         self.init_distribution_settings()
+        self.init_property_variation_settings()
         self.init_noise_settings()
         self.init_charge_state_probabilities()
         self.init_performance_settings()
@@ -323,7 +343,9 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.peptide_digestion_group)
         self.main_layout.addWidget(self.isotopic_pattern_group)
         self.main_layout.addWidget(self.distribution_settings_group)
+
         self.main_layout.addWidget(self.noise_settings_group)
+        self.main_layout.addWidget(self.property_variation_settings_group)
         self.main_layout.addWidget(self.charge_state_probabilities_group)
         self.main_layout.addWidget(self.performance_settings_group)
         self.main_layout.addWidget(self.dda_settings_group)
@@ -936,6 +958,56 @@ class MainWindow(QMainWindow):
         downsample_factor_layout.addWidget(downsample_factor_info)
         layout.addLayout(downsample_factor_layout)
 
+    def init_property_variation_settings(self):
+        """
+        Stochastic, per-feature variation (std-dev) that is applied **after**
+        the deterministic peak-shape and noise models.
+        """
+        info_text = (
+            "Standard deviations used to jitter feature-level properties around their "
+            "nominal values, e.g. for data-augmentation."
+        )
+        self.property_variation_settings_group = CollapsibleBox(
+            "Property Variation Settings", info_text
+        )
+        layout = self.property_variation_settings_group.content_layout
+
+        # Retention-time variation
+        self.add_spinbox_with_info(
+            layout,
+            attribute_name="rt_variation_std_spin",
+            label_text="RT variation σ (s):",
+            tooltip_text="Std-dev for Gaussian jitter of retention time.",
+            min_value=0,
+            max_value=1e3,
+            default_value=15,
+            decimals=1,
+        )
+
+        # Ion-mobility variation
+        self.add_spinbox_with_info(
+            layout,
+            attribute_name="ion_mobility_variation_std_spin",
+            label_text="Ion-mobility variation σ (1/K0):",
+            tooltip_text="Std-dev for Gaussian jitter of ion mobility.",
+            min_value=0,
+            max_value=1,
+            default_value=0.008,
+            decimals=4,
+        )
+
+        # Intensity variation
+        self.add_spinbox_with_info(
+            layout,
+            attribute_name="intensity_variation_std_spin",
+            label_text="Intensity variation σ (relative):",
+            tooltip_text="Relative std-dev (e.g. 0.02 = ±2 %) applied multiplicatively in intensity log space.",
+            min_value=0,
+            max_value=1,
+            default_value=0.02,
+            decimals=4,
+        )
+
     def init_charge_state_probabilities(self):
         info_text = "Set probabilities for peptide charge states."
         self.charge_state_probabilities_group = CollapsibleBox("Charge State Probabilities", info_text)
@@ -1136,6 +1208,10 @@ class MainWindow(QMainWindow):
         reference_noise_intensity_max = self.reference_noise_intensity_max_spin.value()
         down_sample_factor = self.down_sample_factor_spin.value()
 
+        rt_variation_std = self.rt_variation_std_spin.value()
+        ion_mobility_variation_std = self.ion_mobility_variation_std_spin.value()
+        intensity_variation_std = self.intensity_variation_std_spin.value()
+
         p_charge = self.p_charge_spin.value()
         min_charge_contrib = self.min_charge_contrib_spin.value()
         max_charge = self.max_charge_spin.value()
@@ -1186,7 +1262,7 @@ class MainWindow(QMainWindow):
             "--reference_noise_intensity_max", str(reference_noise_intensity_max),
             "--down_sample_factor", str(down_sample_factor),
             "--p_charge", str(p_charge),
-            "--max-charge", str(max_charge),
+            "--max_charge", str(max_charge),
             "--min_charge_contrib", str(min_charge_contrib),
             "--num_threads", str(num_threads),
             "--batch_size", str(batch_size),
@@ -1237,6 +1313,12 @@ class MainWindow(QMainWindow):
             "--max_precursors", str(self.max_precursors_spin.value()),
             "--exclusion_width", str(self.exclusion_width_spin.value()),
             "--selection_mode", self.selection_mode_combo.currentText(),
+        ])
+
+        args.extend([
+            "--rt_variation_std", str(rt_variation_std),
+            "--ion_mobility_variation_std", str(ion_mobility_variation_std),
+            "--intensity_variation_std", str(intensity_variation_std),
         ])
 
         args = [str(arg) for arg in args]
@@ -1404,6 +1486,13 @@ class MainWindow(QMainWindow):
             'num_threads': self.num_threads_spin.value(),
             'batch_size': self.batch_size_spin.value(),
         }
+
+        config['property_variation_settings'] = {
+            'rt_variation_std': rt_variation_std,
+            'ion_mobility_variation_std': ion_mobility_variation_std,
+            'intensity_variation_std': intensity_variation_std,
+        }
+
         return config
 
     def apply_settings(self, config):
@@ -1475,6 +1564,15 @@ class MainWindow(QMainWindow):
         self.down_sample_factor_spin.setValue(noise_settings.get('down_sample_factor', 0.5))
         self.noise_frame_abundance_checkbox.setChecked(noise_settings.get('noise_frame_abundance', False))
         self.noise_scan_abundance_checkbox.setChecked(noise_settings.get('noise_scan_abundance', False))
+
+        prop_var = config.get('property_variation_settings', {})
+        self.rt_variation_std_spin.setValue(prop_var.get('rt_variation_std', 15))
+        self.ion_mobility_variation_std_spin.setValue(
+            prop_var.get('ion_mobility_variation_std', 0.008)
+        )
+        self.intensity_variation_std_spin.setValue(
+            prop_var.get('intensity_variation_std', 0.02)
+        )
 
         charge_state_probabilities = config.get('charge_state_probabilities', {})
         self.p_charge_spin.setValue(charge_state_probabilities.get('p_charge', 0.8))
