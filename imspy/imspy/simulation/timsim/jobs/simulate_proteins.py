@@ -131,8 +131,8 @@ def protein_to_peptides(fasta,
         return peptide_set
 
     except Exception as e:
-        print(f"Error generating peptides: {e}")
-        print("This error can usually be safely ignored when using TIMSIM ...")
+        # print(f"Error generating peptides: {e}")
+        # print("This error can usually be safely ignored when using TIMSIM ...")
         return None
 
 
