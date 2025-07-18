@@ -385,7 +385,7 @@ def main():
 
     print(banner(sys.stdout.isatty()))
 
-    print("Version: 0.3.20")
+    print("Version: 0.3.21")
     print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     print("License: MIT")
 
