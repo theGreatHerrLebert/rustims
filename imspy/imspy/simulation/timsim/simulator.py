@@ -1,4 +1,5 @@
 import os
+import sys
 import platform
 import argparse
 import time
@@ -374,9 +375,18 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
 # Main Execution
 # ----------------------------------------------------------------------
 
+def banner(use_unicode=True):
+    if use_unicode:
+        return "🦀💻 TIMSIM 🔬🐍 - Proteomics Simulation Engine"
+    else:
+        return "TIMSIM - Proteomics Simulation Engine"
+
+print(banner(sys.stdout.isatty()))
+
 def main():
 
-    print("TIMSIM - Run a proteomics experiment simulation with PASEF-like acquisition on a BRUKER TimsTOF.")
+    print(banner(sys.stdout.isatty()))
+
     print("Version: 0.3.20")
     print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     print("License: MIT")
