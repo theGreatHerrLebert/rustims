@@ -1,6 +1,3 @@
-import sys, io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 import os
 import platform
 import argparse
@@ -80,7 +77,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     Builds and returns the command line argument parser.
     """
     parser = argparse.ArgumentParser(
-        description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition '
+        description='TIMSIM - Run a proteomics experiment simulation with PASEF-like acquisition '
                     'on a BRUKER TimsTOF.'
     )
 

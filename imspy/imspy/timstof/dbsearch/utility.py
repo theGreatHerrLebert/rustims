@@ -27,7 +27,7 @@ import re
 
 def check_memory(
         limit_in_gb: int = 16,
-        msg: str = "⚠️ Warning: System has only {total_ram_gb:.2f}GB of RAM, which is below the recommended {limit_in_gb}GB."):
+        msg: str = "Warning: System has only {total_ram_gb:.2f}GB of RAM, which is below the recommended {limit_in_gb}GB."):
 
     if hasattr(os, "sysconf"):
         total_ram_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
@@ -36,7 +36,7 @@ def check_memory(
             msg = msg.format(total_ram_gb=total_ram_gb, limit_in_gb=limit_in_gb)
             warnings.warn(msg)
     else:
-        warnings.warn("⚠️ Unable to determine system memory.")
+        warnings.warn("Unable to determine system memory.")
 
 # Run the check
 check_memory()

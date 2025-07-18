@@ -86,7 +86,7 @@ def main():
     check_memory(limit_in_gb=16)
 
     # use argparse to parse command line arguments
-    parser = argparse.ArgumentParser(description='🦀💻 IMSPY - timsTOF DDA 🔬🐍 - PROTEOMICS IMS DDA data analysis '
+    parser = argparse.ArgumentParser(description='IMSPY - timsTOF DDA - PROTEOMICS IMS DDA data analysis '
                                                  'using imspy and sagepy.')
 
     # Required string argument for path of bruker raw data
