@@ -1,4 +1,5 @@
 import os
+import sys
 import platform
 import argparse
 import time
@@ -77,7 +78,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     Builds and returns the command line argument parser.
     """
     parser = argparse.ArgumentParser(
-        description='🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition '
+        description='TIMSIM - Run a proteomics experiment simulation with PASEF-like acquisition '
                     'on a BRUKER TimsTOF.'
     )
 
@@ -368,16 +369,23 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
             parser.error("sigma_lower_rt must be less than sigma_upper_rt")
     if args.k_lower_rt >= args.k_upper_rt:
         parser.error("k_lower_rt must be less than k_upper_rt")
-    
+
+
+def banner(use_unicode=True):
+    if use_unicode:
+        return "🦀💻 TIMSIM 🔬🐍 - Proteomics Simulation Engine"
+    else:
+        return "TIMSIM - Proteomics Simulation Engine"
+
 
 # ----------------------------------------------------------------------
 # Main Execution
 # ----------------------------------------------------------------------
-
 def main():
 
-    print("🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition on a BRUKER TimsTOF.")
-    print("Version: 0.3.20")
+    print(banner(sys.stdout.isatty()))
+
+    print("Version: 0.3.21")
     print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     print("License: MIT")
 
