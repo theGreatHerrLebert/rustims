@@ -376,7 +376,7 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
 
 def main():
 
-    print("🦀💻 TIMSIM 🔬🐍 - Run a proteomics experiment simulation with PASEF-like acquisition on a BRUKER TimsTOF.")
+    print("TIMSIM - Run a proteomics experiment simulation with PASEF-like acquisition on a BRUKER TimsTOF.")
     print("Version: 0.3.20")
     print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     print("License: MIT")
