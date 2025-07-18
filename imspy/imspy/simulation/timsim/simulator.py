@@ -369,11 +369,7 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
             parser.error("sigma_lower_rt must be less than sigma_upper_rt")
     if args.k_lower_rt >= args.k_upper_rt:
         parser.error("k_lower_rt must be less than k_upper_rt")
-    
 
-# ----------------------------------------------------------------------
-# Main Execution
-# ----------------------------------------------------------------------
 
 def banner(use_unicode=True):
     if use_unicode:
@@ -381,8 +377,10 @@ def banner(use_unicode=True):
     else:
         return "TIMSIM - Proteomics Simulation Engine"
 
-print(banner(sys.stdout.isatty()))
 
+# ----------------------------------------------------------------------
+# Main Execution
+# ----------------------------------------------------------------------
 def main():
 
     print(banner(sys.stdout.isatty()))
