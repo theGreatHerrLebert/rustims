@@ -1,6 +1,6 @@
 [project]
 name = "imspy"
-version = "0.3.21"
+version = "0.3.22"
 description = "A Python package for analyzing timsTOF ion mobility spectrometry data, including tools for raw data acccess and simulation."
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
@@ -19,7 +19,7 @@ dependencies = [
     "wandb>=0.12.1",
     "mokapot>=0.10.0",
     "sagepy>=0.3.12",
-    "imspy-connector>=0.3.21",
+    "imspy-connector>=0.3.22",
     "scipy>=1.7.1",
     "tqdm>=4.66",
     "pyarrow>=13.0",
@@ -28,7 +28,6 @@ dependencies = [
     "toml>=0.10.2",
     "koinapy>=0.0.10",
     "poetry (>=2.0.0,<3.0.0)",
-    "pyopenms (>=3.2.0,<4.0.0)",
     "qdarkstyle >=3.2.3",
     "pyqt5 >=5.15.11",
     "vtk >=9.5.0",
