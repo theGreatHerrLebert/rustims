@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from imspy.data.spectrum import MzSpectrum
 from imspy.utility.utilities import gaussian, exp_gaussian, normal_pdf
 import numba
-import pyopenms
 
 from imspy.simulation.noise import detection_noise
 import imspy_connector
