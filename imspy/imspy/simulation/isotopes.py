@@ -53,7 +53,7 @@ def weight(mass: float, peak_nums: NDArray, normalize: bool = True):
         norm = weights.sum()
     return weights / norm
 
-
+"""
 def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenms.CoarseIsotopePatternGenerator):
 
     n = peak_nums.shape[0]
@@ -64,6 +64,7 @@ def get_pyopenms_weights(sequence: str, peak_nums: ArrayLike, generator: pyopenm
     distribution = generator.run(formula)
     intensities = [i.getIntensity() for i in distribution.getContainer()]
     return intensities
+"""
 
 
 @numba.jit(nopython=True)
