@@ -647,6 +647,9 @@ def main():
                 proteome_mix=args.proteome_mix,
             )
 
+            if not args.remove_degenerate_peptides:
+                peptides_tmp = peptides_tmp.drop_duplicates(subset=['sequence'])
+
             if args.proteome_mix:
                 # Scale by mixture factor
                 peptides_tmp['events'] *= mixture_factor

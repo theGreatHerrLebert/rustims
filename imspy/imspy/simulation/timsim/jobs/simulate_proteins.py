@@ -267,7 +267,6 @@ def simulate_proteins(
         # Pass 2: Remove shared items from each set
         sample['peptides'] = sample['peptides'].apply(lambda row_set: list(row_set - shared_items))
 
-
     sample["num_peptides"] = sample.peptides.apply(lambda s: len(s))
 
     sample = sample[sample.num_peptides > 0]
