@@ -178,6 +178,7 @@ def simulate_proteins(
         verbose: bool = True,
         sample_proteins: bool = True,
         digest: bool = True,
+        remove_degenerate_peptides: bool = False,
 ) -> pd.DataFrame:
     """
     Simulate proteins.
@@ -196,6 +197,8 @@ def simulate_proteins(
         generate_decoys (bool): Generate decoys.
         verbose (bool): Verbosity.
         sample_proteins (bool): Whether to sample proteins from the FASTA file.
+        digest (bool): Whether to digest proteins into peptides.
+        remove_degenerate_peptides (bool): Whether to remove peptides that map to multiple proteins.
 
     Returns:
         pd.DataFrame: Proteins DataFrame.
@@ -253,15 +256,18 @@ def simulate_proteins(
     sample["protein_id"] = list(range(0, len(sample)))
     sample = assign_events(sample, int(upscale_factor))
 
-    # Pass 1: Count occurrences of each item
-    all_items = (item for row_set in sample['peptides'] for item in row_set)
-    item_counts = Counter(all_items)
+    if remove_degenerate_peptides:
+        # Pass 1: Count occurrences of each item
+        all_items = (item for row_set in sample['peptides'] for item in row_set)
+        item_counts = Counter(all_items)
 
-    # Identify items that appear more than once
-    shared_items = {item for item, count in item_counts.items() if count > 1}
+        # Identify items that appear more than once
+        shared_items = {item for item, count in item_counts.items() if count > 1}
 
-    # Pass 2: Remove shared items from each set
-    sample['peptides'] = sample['peptides'].apply(lambda row_set: list(row_set - shared_items))
+        # Pass 2: Remove shared items from each set
+        sample['peptides'] = sample['peptides'].apply(lambda row_set: list(row_set - shared_items))
+
+
     sample["num_peptides"] = sample.peptides.apply(lambda s: len(s))
 
     sample = sample[sample.num_peptides > 0]

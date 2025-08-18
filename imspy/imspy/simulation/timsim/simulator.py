@@ -135,6 +135,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--decoys", dest="decoys", action="store_true",
                         help="Generate decoys (default: False)")
     parser.set_defaults(decoys=False)
+    parser.add_argument("--remove_degenerate_peptides", dest="remove_degenerate_peptides", action="store_true",
+                        help="Remove peptides that map to multiple proteins (default: False)")
+    parser.set_defaults(remove_degenerate_peptides=False)
 
     # Modifications config
     parser.add_argument("--modifications", type=str, default=None,
@@ -626,6 +629,7 @@ def main():
                 static_mods=static_modifications,
                 verbose=not args.silent_mode,
                 digest=args.digest_proteins,
+                remove_degenerate_peptides=args.remove_degenerate_peptides,
             )
 
             # JOB 1: Simulate peptides
