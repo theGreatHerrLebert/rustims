@@ -354,6 +354,7 @@ def get_default_settings() -> dict:
         'rt_variation_std': None,
         'ion_mobility_variation_std': None,
         'intensity_variation_std': None,
+        'remove_degenerate_peptides': False,
     }
 
 
@@ -648,7 +649,8 @@ def main():
             )
 
             if not args.remove_degenerate_peptides:
-                peptides_tmp = peptides_tmp.drop_duplicates(subset=['sequence'])
+                # peptides_tmp = peptides_tmp.drop_duplicates(subset=['sequence'])
+                pass
 
             if args.proteome_mix:
                 # Scale by mixture factor
