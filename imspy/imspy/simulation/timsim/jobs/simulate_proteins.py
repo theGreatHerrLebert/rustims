@@ -173,8 +173,8 @@ def simulate_proteins(
         min_len: int = 7,
         max_len: int = 30,
         generate_decoys: bool = False,
-        variable_mods: dict = None,
-        static_mods: dict = None,
+        variable_mods: dict ={},
+        static_mods: dict =  {"C": "[UNIMOD:4]"},
         verbose: bool = True,
         sample_proteins: bool = True,
         digest: bool = True,
@@ -203,12 +203,6 @@ def simulate_proteins(
     Returns:
         pd.DataFrame: Proteins DataFrame.
     """
-
-    if variable_mods is None:
-        variable_mods = {}
-
-    if static_mods is None:
-        static_mods = {"C": "[UNIMOD:4]"}
 
     tbl = parse_fasta_to_dataframe(
         fasta_file_path,
@@ -255,10 +249,8 @@ def simulate_proteins(
     # Remove None values
     sample = sample[sample.peptides.notnull()]
 
-    # Remove peptides with 'U' or 'X'
-    sample = sample[sample['peptides'].apply(
-        lambda peps: all(('U' not in p) and ('X' not in p) for p in peps)
-    )]
+    # Remove peptides that have the letter 'U' or 'X' in them
+    sample = sample[sample.peptides.apply(lambda x: not any(c in x for c in ['U', 'X']))]
 
     # Assign protein IDs and events
     sample["protein_id"] = list(range(0, len(sample)))
