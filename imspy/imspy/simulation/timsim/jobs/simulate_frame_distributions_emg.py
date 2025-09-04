@@ -324,7 +324,7 @@ def simulate_frame_distributions_emg(
     if verbose:
         num_removed = np.sum((peptide_rt['frame_occurrence_start'] == -1) | (peptide_rt['frame_occurrence_end'] == -1))
         if num_removed > 0:
-            print(f"Removing {num_removed} peptides that do not elute in any frame.")
+            print(f"Removing {num_removed} peptides that do not elute in any frame ...")
 
     # remove lists where frame_start is -1, or frame_end is -1
     peptide_rt = peptide_rt[(peptide_rt['frame_occurrence_start'] != -1) & (peptide_rt['frame_occurrence_end'] != -1)]
