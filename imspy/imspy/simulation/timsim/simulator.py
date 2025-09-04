@@ -135,6 +135,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--decoys", dest="decoys", action="store_true",
                         help="Generate decoys (default: False)")
     parser.set_defaults(decoys=False)
+    parser.add_argument("--remove_degenerate_peptides", dest="remove_degenerate_peptides", action="store_true",
+                        help="Remove peptides that map to multiple proteins (default: False)")
+    parser.set_defaults(remove_degenerate_peptides=False)
 
     # Modifications config
     parser.add_argument("--modifications", type=str, default=None,
@@ -351,6 +354,7 @@ def get_default_settings() -> dict:
         'rt_variation_std': None,
         'ion_mobility_variation_std': None,
         'intensity_variation_std': None,
+        'remove_degenerate_peptides': False,
     }
 
 
@@ -385,7 +389,7 @@ def main():
 
     print(banner(sys.stdout.isatty()))
 
-    print("Version: 0.3.21")
+    print("Version: 0.3.23")
     print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     print("License: MIT")
 
@@ -626,6 +630,7 @@ def main():
                 static_mods=static_modifications,
                 verbose=not args.silent_mode,
                 digest=args.digest_proteins,
+                remove_degenerate_peptides=args.remove_degenerate_peptides,
             )
 
             # JOB 1: Simulate peptides
@@ -642,6 +647,10 @@ def main():
                 down_sample=args.sample_peptides,
                 proteome_mix=args.proteome_mix,
             )
+
+            if not args.remove_degenerate_peptides:
+                # peptides_tmp = peptides_tmp.drop_duplicates(subset=['sequence'])
+                pass
 
             if args.proteome_mix:
                 # Scale by mixture factor
@@ -804,6 +813,9 @@ def main():
         add_noise=args.noise_scan_abundance,
         num_threads=args.num_threads,
     )
+
+    # remove ions where peptide_id is not in the peptides table (can happen after removal of empty frame occurrence)
+    ions = ions[ions['peptide_id'].isin(peptides['peptide_id'])].reset_index(drop=True)
 
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
