@@ -185,6 +185,7 @@ def simulate_frame_distributions_emg(
         sigmas: np.ndarray = None,
         lambdas: np.ndarray = None,
         gradient_length: float = None,
+        remove_epsilon: float = 1e-4,
 ) -> pd.DataFrame:
     """Simulate frame distributions for peptides.
 
@@ -211,6 +212,7 @@ def simulate_frame_distributions_emg(
         sigmas: sigmas.
         lambdas: lambdas.
         gradient_length: Length of the LC gradient in seconds.
+        remove_epsilon: Remove values with a probability lower than this value.
 
     Returns:
         pd.DataFrame: Peptide DataFrame with frame distributions.
@@ -275,8 +277,21 @@ def simulate_frame_distributions_emg(
     if verbose:
         print("Serializing frame distributions to json ...")
 
-    first_occurrence = [occurrence[0] for occurrence in occurrences]
-    last_occurrence = [occurrence[-1] for occurrence in occurrences]
+    # filter occurrences and abundances
+    occurrences = [list(np.array(occurrence)[np.array(abundance) > remove_epsilon]) for occurrence, abundance in zip(occurrences, abundances)]
+    abundances = [list(np.array(abundance)[np.array(abundance) > remove_epsilon]) for abundance in abundances]
+
+    # this could now fail, if all values are removed because they are below remove_epsilon
+
+    first_occurrence, last_occurrence = [], []
+
+    for oc, ab in zip(occurrences, abundances):
+        if len(oc) == 0 or len(ab) == 0:
+            first_occurrence.append(-1)
+            last_occurrence.append(-1)
+        else:
+            first_occurrence.append(oc[0])
+            last_occurrence.append(oc[-1])
 
     peptide_rt['frame_occurrence_start'] = first_occurrence
     peptide_rt['frame_occurrence_end'] = last_occurrence
@@ -304,6 +319,15 @@ def simulate_frame_distributions_emg(
     )
 
     peptide_rt['rt_mu'] = mus
+
+    # print how many rows get removed, if any
+    if verbose:
+        num_removed = np.sum((peptide_rt['frame_occurrence_start'] == -1) | (peptide_rt['frame_occurrence_end'] == -1))
+        if num_removed > 0:
+            print(f"Removing {num_removed} peptides that do not elute in any frame.")
+
+    # remove lists where frame_start is -1, or frame_end is -1
+    peptide_rt = peptide_rt[(peptide_rt['frame_occurrence_start'] != -1) & (peptide_rt['frame_occurrence_end'] != -1)]
 
     # remove empty lists, that are now cast to strings, for frame_abundance
     peptide_rt_filtered = peptide_rt[peptide_rt['frame_abundance'].apply(len) > 2]

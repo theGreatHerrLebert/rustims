@@ -389,7 +389,7 @@ def main():
 
     print(banner(sys.stdout.isatty()))
 
-    print("Version: 0.3.21")
+    print("Version: 0.3.23")
     print("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     print("License: MIT")
 
@@ -813,6 +813,9 @@ def main():
         add_noise=args.noise_scan_abundance,
         num_threads=args.num_threads,
     )
+
+    # remove ions where peptide_id is not in the peptides table (can happen after removal of empty frame occurrence)
+    ions = ions[ions['peptide_id'].isin(peptides['peptide_id'])].reset_index(drop=True)
 
     # Save ions
     acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
