@@ -17,7 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Command-line argument parsing
-clap = { version = "4.5.32", features = ["derive"] }
+clap = { version = "4.5.47", features = ["derive"] }
 # Dynamic library loading
 libloading = "0.8.6"
 # SQLite with bundled binaries
@@ -37,6 +37,7 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 # Random number generation
 rand = "0.8.5"
+rustc-hash = "2.1.0"
 
 [profile.release]
 debug = true

@@ -5,6 +5,10 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::io;
 use std::io::{Read, Write};
+use rustc_hash::{FxHashMap, FxHashSet};
+use crate::data::dia::TimsDatasetDIA;
+use crate::data::handle::TimsData;
+use crate::data::meta::FrameMeta;
 
 /// Decompresses a ZSTD compressed byte array
 ///
@@ -312,4 +316,137 @@ pub fn flatten_scan_values(scan: &Vec<u32>, zero_indexed: bool) -> Vec<u32> {
         .enumerate()
         .flat_map(|(index, &count)| vec![(index + add) as u32; count as usize].into_iter())
         .collect()
+}
+
+// tune this to your binning (0.01 m/z here)
+#[inline(always)]
+fn quantize_mz(mz: f32, resolution: usize) -> u32 {
+    // faster than roundf on many CPUs
+    let factor = 10f32.powi(resolution as i32);
+    (mz * factor + 0.5) as u32
+}
+
+pub struct RtIndex {
+    // ascending m/z bin list
+    pub bins: Vec<MzBin>,
+    // RT-ordered frame ids
+    pub frames: Vec<u32>,
+    // dense matrix column-major
+    pub data: Vec<f32>,
+    pub rows: usize,
+    pub cols: usize,
+}
+
+type MzBin = u32;
+
+// You likely have an RT/scan time in metadata; adapt `frame_rt` accordingly.
+fn frame_rt(meta: &FrameMeta) -> f32 { meta.time  as f32} // <-- replace with real field
+
+// Returns (bins_sorted, frame_ids_sorted_by_rt, dense matrix column-major)
+pub fn build_dense_rt_by_mz(
+    data_handle: &TimsDatasetDIA,
+    resolution: usize,
+    num_threads: usize,
+) -> RtIndex {
+
+    // 1) collect precursor frames and RT sort them
+    let precursor_meta: Vec<_> = data_handle.meta_data
+        .iter()
+        .filter(|m| m.ms_ms_type == 0)
+        .collect();
+
+    let mut rt_sorted_meta = precursor_meta.clone();
+    rt_sorted_meta.sort_by(|a, b| frame_rt(a).partial_cmp(&frame_rt(b)).unwrap());
+
+    let frame_ids_sorted: Vec<u32> = rt_sorted_meta.iter().map(|m| m.id as u32).collect();
+    let num_frames = frame_ids_sorted.len();
+
+    // quick index to go from frame_id -> column
+    let _col_index: FxHashMap<u32, usize> = frame_ids_sorted
+        .iter()
+        .enumerate()
+        .map(|(c, &fid)| (fid, c))
+        .collect();
+
+    // 2) materialize the frames you need at your chosen resolution
+    let frames = data_handle
+        .get_slice(frame_ids_sorted.clone(), num_threads)
+        .to_resolution(resolution as i32, num_threads)
+        .frames;
+
+    // Optional: map from frame_id to its loaded frame record for O(1) access
+    let mut frame_by_id: FxHashMap<u32, &TimsFrame> = FxHashMap::default();
+    for f in &frames {
+        frame_by_id.insert(f.frame_id as u32, f);
+    }
+
+    // 3) Pass A: discover all m/z bins in parallel
+    let all_bins: FxHashSet<MzBin> = frames
+        .par_iter()
+        .map(|frame| {
+            let mut local: FxHashSet<MzBin> = FxHashSet::default();
+            // assuming f32 inputs; cast if f64
+            for &mz in frame.ims_frame.mz.iter() {
+                local.insert(quantize_mz(mz as f32, resolution));
+            }
+            local
+        })
+        .reduce(FxHashSet::default, |mut a, b| { a.extend(b); a });
+
+    // sort bins for deterministic row order
+    let mut bins_sorted: Vec<MzBin> = all_bins.into_iter().collect();
+    bins_sorted.sort_unstable();
+    let num_bins = bins_sorted.len();
+
+    // row index for fast lookups
+    let row_index: FxHashMap<MzBin, usize> = bins_sorted
+        .iter()
+        .enumerate()
+        .map(|(r, &bin)| (bin, r))
+        .collect();
+
+    // 4) allocate dense matrix (column-major: contiguous per frame/column)
+    let mut matrix = vec![0.0f32; num_bins * num_frames];
+
+    // 5) build a column-ordered frame list (aligned with RT order)
+    // Each column gets a disjoint mutable slice => safe parallel fill with no locks.
+    let frames_in_col_order: Vec<&TimsFrame> = frame_ids_sorted
+        .iter()
+        .map(|fid| frame_by_id[fid])
+        .collect();
+
+    // Parallel fill: one thread per column
+    matrix
+        .par_chunks_mut(num_bins)
+        .enumerate()
+        .for_each(|(col, col_slice)| {
+            let frame = frames_in_col_order[col];
+            let mz = &frame.ims_frame.mz;
+            let inten = &frame.ims_frame.intensity;
+
+            // keep an optional small local combiner to collapse duplicates within the column
+            // (helps when many points quantize to the same bin)
+            // This avoids repeated row_index lookups for identical bins within the same frame.
+            let mut accum: FxHashMap<usize, f32> = FxHashMap::default();
+
+            for (&m, &i) in mz.iter().zip(inten.iter()) {
+                let q = quantize_mz(m as f32, resolution);
+                if let Some(&row) = row_index.get(&q) {
+                    *accum.entry(row).or_insert(0.0) += i as f32;
+                }
+            }
+
+            // write back once per unique row in this column
+            for (row, val) in accum {
+                col_slice[row] += val;
+            }
+        });
+
+    RtIndex {
+        bins: bins_sorted,
+        frames: frame_ids_sorted,
+        data: matrix,
+        rows: num_bins,
+        cols: num_frames,
+    }
 }

@@ -4,6 +4,8 @@ use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+use numpy::{PyArray1, PyArray2};
+use numpy::ndarray::{Array2, ShapeBuilder};
 
 #[pyclass]
 pub struct PyTimsDatasetDIA {
@@ -43,6 +45,28 @@ impl PyTimsDatasetDIA {
     
     pub fn sample_fragment_signal(&self, num_frames: usize, window_group: u32, max_intensity: f64, take_probability: f64) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.sample_fragment_signal(num_frames, window_group, max_intensity, take_probability) }
+    }
+
+    pub fn build_dense_rt_by_mz(
+        &self,
+        resolution: usize,
+        num_threads: usize,
+        py: Python<'_>,
+    ) -> PyResult<(
+        Py<PyArray1<u32>>,
+        Py<PyArray1<u32>>,
+        Py<PyArray2<f32>>,
+    )> {
+        let rt = self.inner.get_dense_rt_by_mz(resolution, num_threads);
+
+        let bins_py   = PyArray1::from_vec_bound(py, rt.bins).unbind();
+        let frames_py = PyArray1::from_vec_bound(py, rt.frames).unbind();
+
+        let arr_f: Array2<f32> = Array2::from_shape_vec((rt.rows, rt.cols).f(), rt.data)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
+        let data_py = PyArray2::from_owned_array_bound(py, arr_f).unbind();
+
+        Ok((bins_py, frames_py, data_py))
     }
 }
 

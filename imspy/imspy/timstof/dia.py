@@ -1,4 +1,5 @@
 import sqlite3
+import warnings
 from typing import List
 
 from imspy.simulation.annotation import RustWrapperObject
@@ -88,3 +89,17 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
     def get_py_ptr(self):
         return self.__dataset
+
+    def get_dense_mz_vs_rt(self, resolution: int = 1, num_threads: int = 4):
+        """Get dense m/z vs RT matrix.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]: m/z values, RT values, intensity matrix.
+        """
+
+        # need to set num_threads to 1 when not using bruker sdk
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, setting num_threads to 1.")
+            num_threads = 1
+
+        return self.__dataset.build_dense_rt_by_mz(resolution, num_threads)
