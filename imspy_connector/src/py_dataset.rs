@@ -1,8 +1,10 @@
 use mscore::timstof::frame::TimsFrame;
 use pyo3::prelude::*;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::utility::{zstd_compress, zstd_decompress, reconstruct_compressed_data, compress_collection, parse_decompressed_bruker_binary_data};
-
+use rustdf::data::utility::{
+    zstd_compress, zstd_decompress, reconstruct_compressed_data, compress_collection,
+    parse_decompressed_bruker_binary_data
+};
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
