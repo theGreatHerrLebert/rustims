@@ -7,7 +7,7 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
-use crate::cluster::utility::{build_dense_rt_by_mz, RtIndex};
+use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex};
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -158,6 +158,89 @@ impl TimsDatasetDIA {
         num_threads: usize
     ) -> RtIndex {
         build_dense_rt_by_mz(self, maybe_sigma_frames, truncate, resolution, num_threads)
+    }
+
+    /// Build dense matrix, optionally smooth, then pick peaks.
+    /// Returns the RtIndex (with data + frame_times) and the list of peaks.
+    pub fn pick_peaks_dense(
+        &self,
+        maybe_sigma_frames: Option<f32>,
+        truncate: f32,
+        resolution: usize,
+        num_threads: usize,
+        min_prom: f32,
+        min_distance: usize,
+        min_width: usize,
+        pad_left: usize,          // NEW
+        pad_right: usize,         // NEW
+    ) -> (RtIndex, Vec<RtPeak1D>) {
+        let rt = self.get_dense_rt_by_mz(maybe_sigma_frames, truncate, resolution, num_threads);
+        let data_raw_slice = rt.data_raw.as_deref().unwrap_or(rt.data.as_slice());
+
+        let peaks = pick_peaks_all_rows(
+            rt.data.as_slice(),
+            data_raw_slice,
+            rt.rows,
+            rt.cols,
+            Some(&rt.frame_times),
+            min_prom,
+            min_distance,
+            min_width,
+            pad_left,
+            pad_right,
+        );
+        (rt, peaks)
+    }
+
+    /// Peak picking on an already built RtIndex (e.g., after custom transforms).
+    pub fn pick_peaks_on_rtindex(
+        &self,
+        rt: &RtIndex,
+        min_prom: f32,
+        min_distance: usize,
+        min_width: usize,
+        pad_left: usize,          // NEW
+        pad_right: usize,         // NEW
+    ) -> Vec<RtPeak1D> {
+        let data_raw_slice: &[f32] = rt.data_raw.as_deref().unwrap_or(rt.data.as_slice());
+        pick_peaks_all_rows(
+            rt.data.as_slice(),
+            data_raw_slice,
+            rt.rows,
+            rt.cols,
+            Some(&rt.frame_times),
+            min_prom,
+            min_distance,
+            min_width,
+            pad_left,
+            pad_right,
+        )
+    }
+
+    pub fn get_dense_im_by_rtpeaks(
+        &self,
+        peaks: Vec<RtPeak1D>,
+        rt_bins: &[u32],
+        rt_frames: &[u32],
+        resolution: usize,
+        num_threads: usize,
+        mz_ppm: f32,
+        rt_extra_pad: usize,
+        maybe_sigma_scans: Option<f32>,
+        truncate: f32,
+    ) -> ImIndex {
+        build_dense_im_by_rtpeaks(
+            self,
+            peaks,
+            rt_bins,
+            rt_frames,
+            resolution,
+            num_threads,
+            mz_ppm,
+            rt_extra_pad,
+            maybe_sigma_scans,
+            truncate,
+        )
     }
 }
 
