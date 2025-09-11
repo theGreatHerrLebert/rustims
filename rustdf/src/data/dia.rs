@@ -7,7 +7,7 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
-use crate::data::utility::{build_dense_rt_by_mz, RtIndex};
+use crate::cluster::utility::{build_dense_rt_by_mz, RtIndex};
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -150,8 +150,14 @@ impl TimsDatasetDIA {
         sampled_frame
     }
 
-    pub fn get_dense_rt_by_mz(&self, resolution: usize, num_threads: usize) -> RtIndex {
-        build_dense_rt_by_mz(self, resolution, num_threads)
+    pub fn get_dense_rt_by_mz(
+        &self,
+        maybe_sigma_frames: Option<f32>,
+        truncate: f32,
+        resolution: usize,
+        num_threads: usize
+    ) -> RtIndex {
+        build_dense_rt_by_mz(self, maybe_sigma_frames, truncate, resolution, num_threads)
     }
 }
 
