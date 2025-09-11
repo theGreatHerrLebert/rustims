@@ -47,17 +47,20 @@ impl PyTimsDatasetDIA {
         PyTimsFrame { inner: self.inner.sample_fragment_signal(num_frames, window_group, max_intensity, take_probability) }
     }
 
+    #[pyo3(signature = (resolution, num_threads, truncate, maybe_sigma_frames=None))]
     pub fn build_dense_rt_by_mz(
         &self,
         resolution: usize,
         num_threads: usize,
+        truncate: f32,
+        maybe_sigma_frames: Option<f32>,
         py: Python<'_>,
     ) -> PyResult<(
         Py<PyArray1<u32>>,
         Py<PyArray1<u32>>,
         Py<PyArray2<f32>>,
     )> {
-        let rt = self.inner.get_dense_rt_by_mz(resolution, num_threads);
+        let rt = self.inner.get_dense_rt_by_mz(maybe_sigma_frames, truncate, resolution, num_threads);
 
         let bins_py   = PyArray1::from_vec_bound(py, rt.bins).unbind();
         let frames_py = PyArray1::from_vec_bound(py, rt.frames).unbind();
