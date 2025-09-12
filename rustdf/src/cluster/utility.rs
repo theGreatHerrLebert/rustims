@@ -787,22 +787,91 @@ fn fallback_peak_active(
     }]
 }
 
-fn fallback_peak_apex_window(rt_row: usize, y_raw: &[f32], half_width: usize) -> Vec<ImPeak1D> {
+/// Safe ApexWindow fallback: center at apex (max raw), use ±half_width scans,
+/// clamp to [0, n-1], and enforce a minimum width. Works for n==0/1 as well.
+///
+/// `min_width`: ensure at least this many scans (inclusive of both ends).
+fn fallback_peak_apex_window(
+    rt_row: usize,
+    y_raw: &[f32],
+    half_width: usize,
+    min_width: usize,   // e.g., 3 or 5; set to 1 to effectively disable
+) -> Vec<ImPeak1D> {
     let n = y_raw.len();
-    if n == 0 { return Vec::new(); }
-    let (scan_max, apex_raw) = y_raw.iter().copied().enumerate()
-        .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((0,0.0));
-    let left = scan_max.saturating_sub(half_width);
-    let right = (scan_max + half_width).min(n - 1);
-    let left_x = left as f32; let right_x = right as f32;
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        // Degenerate single-scan row
+        let apex_raw = y_raw[0];
+        return vec![ImPeak1D {
+            rt_row,
+            scan: 0,
+            mobility: None,
+            apex_smoothed: apex_raw,
+            apex_raw,
+            prominence: 0.0,
+            left: 0,
+            right: 0,
+            left_x: 0.0,
+            right_x: 0.0,
+            width_scans: 1,
+            area_raw: apex_raw, // treat as area of that single sample
+            subscan: 0.0,
+        }];
+    }
+
+    // Find apex (raw)
+    let (apex_idx, apex_raw) = y_raw
+        .iter()
+        .copied()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap();
+
+    // Initial window around apex, clamped
+    let mut left  = apex_idx.saturating_sub(half_width);
+    let mut right = (apex_idx + half_width).min(n - 1);
+
+    // Enforce minimum width (inclusive). If impossible, expand to whole row.
+    let mut width = right + 1 - left;
+    if width < min_width {
+        let need = min_width - width;
+        let grow_left  = need / 2;
+        let grow_right = need - grow_left;
+
+        left  = left.saturating_sub(grow_left);
+        right = (right + grow_right).min(n - 1);
+
+        // If still not enough (row too short), just use full range
+        width = right + 1 - left;
+        if width < min_width {
+            left = 0;
+            right = n - 1;
+            width = n;
+        }
+    }
+
+    let left_x  = left as f32;
+    let right_x = right as f32;
+
+    // Safe area: for n>=2 and left_x <= right_x within [0, n-1]
     let area = trapezoid_area_fractional(y_raw, left_x, right_x);
 
     vec![ImPeak1D {
-        rt_row, scan: scan_max, mobility: None,
-        apex_smoothed: apex_raw, apex_raw,
+        rt_row,
+        scan: apex_idx,
+        mobility: None,
+        apex_smoothed: apex_raw, // in fallback, we don't have extra smoothing
+        apex_raw,
         prominence: 0.0,
-        left, right, left_x, right_x,
-        width_scans: right + 1 - left, area_raw: area, subscan: 0.0,
+        left,
+        right,
+        left_x,
+        right_x,
+        width_scans: width,
+        area_raw: area,
+        subscan: 0.0,
     }]
 }
 
@@ -827,7 +896,7 @@ pub fn find_im_peaks_row_adaptive(
             FallbackMode::ActiveRange { abs_thr, rel_thr, pad, min_width } =>
                 fallback_peak_active(rt_row, y_raw, pad, min_width, abs_thr, rel_thr),
             FallbackMode::ApexWindow { half_width } =>
-                fallback_peak_apex_window(rt_row, y_raw, half_width),
+                fallback_peak_apex_window(rt_row, y_raw, half_width, 3),
         };
     }
 
