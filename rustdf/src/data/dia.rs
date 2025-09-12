@@ -4,11 +4,21 @@ use crate::data::meta::{
     read_dia_ms_ms_info, read_dia_ms_ms_windows, read_global_meta_sql, read_meta_data_sql,
     DiaMsMisInfo, DiaMsMsWindow, FrameMeta, GlobalMetaData,
 };
+use std::collections::HashMap;
+use rayon::prelude::*;
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use crate::cluster::cluster_eval::ClusterSpec;
 use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex, ClusterCloud};
+
+#[derive(Clone)]
+struct SpecPre {
+    scan_left: usize,
+    scan_right: usize,
+    mz_lo: f64,
+    mz_hi: f64,
+}
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -243,17 +253,7 @@ impl TimsDatasetDIA {
             truncate,
         )
     }
-    /// Extract raw (frame, scan, tof, intensity) points for a batch of cluster specs.
-    ///
-    /// Loads precursor frames once (RT-ordered), then distributes points to all specs whose
-    /// RT window covers that frame, with additional m/z ±ppm and scan-range filtering.
-    ///
-    /// - `specs`  : cluster specs (rt_row gives which m/z row the center came from)
-    /// - `bins`   : quantized m/z bins (from your RT index build)
-    /// - `frames_rt_sorted`: RT-sorted absolute frame IDs (same as you returned in RT index)
-    /// - `resolution`: m/z binning resolution used to produce `bins`
-    ///
-    /// Returns a `ClusterCloud` per spec in the same order.
+    /// Parallel extractor: walk frames once (in parallel), distribute points to matching specs.
     pub fn extract_cluster_clouds_batched(
         &self,
         specs: &[ClusterSpec],
@@ -262,30 +262,28 @@ impl TimsDatasetDIA {
         resolution: usize,
         num_threads: usize,
     ) -> Vec<ClusterCloud> {
-        // Materialize frames once in RT order
+
+        // 0) Materialize frames once in RT order (RAM)
         let slice = self.get_slice(frames_rt_sorted.to_vec(), num_threads);
         let frames_in_rt: Vec<&TimsFrame> = slice.frames.iter().collect();
         let ncols = frames_in_rt.len();
 
-        // Precompute per-spec constants and col→specs map
+        // 1) Precompute per-spec constants and col→specs membership
         let factor = 10f64.powi(resolution as i32);
-
-        struct SpecPre {
-            scan_left: usize,
-            scan_right: usize,
-            mz_lo: f64,
-            mz_hi: f64,
-        }
 
         let mut pres: Vec<SpecPre> = Vec::with_capacity(specs.len());
         let mut col_to_specs: Vec<Vec<usize>> = vec![Vec::new(); ncols];
 
         for (idx, sp) in specs.iter().enumerate() {
+            // center m/z from the rt_row bin
             let mz_center = (bins[sp.rt_row] as f64) / factor;
             let mz_tol = (sp.mz_ppm as f64) * 1e-6 * mz_center;
 
-            let rt_left  = sp.rt_left.min(ncols.saturating_sub(1));
-            let rt_right = sp.rt_right.min(ncols.saturating_sub(1));
+            // normalize & clamp RT window (inclusive)
+            let rt_left = sp.rt_left.min(sp.rt_right);
+            let mut rt_right = sp.rt_left.max(sp.rt_right);
+            if rt_right >= ncols { rt_right = ncols.saturating_sub(1); }
+            if rt_left > rt_right { continue; } // degenerate
 
             pres.push(SpecPre {
                 scan_left: sp.scan_left,
@@ -299,63 +297,99 @@ impl TimsDatasetDIA {
             }
         }
 
-        // Prepare outputs
-        let mut clouds: Vec<ClusterCloud> = specs.iter().map(|sp| ClusterCloud {
-            rt_left: sp.rt_left,
-            rt_right: sp.rt_right,
-            scan_left: sp.scan_left,
-            scan_right: sp.scan_right,
-            frame_ids: Vec::with_capacity(4096),
-            scans:     Vec::with_capacity(4096),
-            tofs:      Vec::with_capacity(4096),
-            intensities: Vec::with_capacity(4096),
-        }).collect();
+        // 2) Process columns in parallel.
+        // Each worker returns a sparse map: spec_idx -> Vec of tuples (fid, scan, tof, inten)
+        type Point = (u32, u32, i32, f32); // (frame_id, scan, tof, intensity)
+        type Chunk = HashMap<usize, Vec<Point>>;
 
-        // Walk frames once; distribute points to relevant specs
-        for col in 0..ncols {
-            let targets = &col_to_specs[col];
-            if targets.is_empty() { continue; }
+        let partials: Vec<Chunk> = (0..ncols)
+            .into_par_iter()
+            .map(|col| {
+                let mut out: Chunk = HashMap::new();
 
-            let fr = frames_in_rt[col];
-            let fid = frames_rt_sorted[col];
+                let targets = &col_to_specs[col];
+                if targets.is_empty() {
+                    return out; // fast skip
+                }
 
-            let mz   = &fr.ims_frame.mz;
-            let inten= &fr.ims_frame.intensity;
-            let scans_src: Option<&Vec<i32>> = Some(fr.scan.as_ref());
+                let fr = frames_in_rt[col];
+                let fid = frames_rt_sorted[col];
 
-            let tofs: &Vec<i32> = fr.tof.as_ref();
+                let mz = &fr.ims_frame.mz;
+                let inten = &fr.ims_frame.intensity;
+                // these are all &Vec<_> in your frame, so borrow as slices
+                let scans_slice: Option<&[i32]> = Some(fr.scan.as_ref());
+                let tofs_slice: &[i32] = fr.tof.as_ref();
 
-            // For each point in the frame
-            for i in 0..mz.len() {
-                let scan_ok = if let Some(sv) = scans_src {
-                    let s = sv[i];
-                    (s as usize) >=  pres[targets[0]].scan_left // quick coarse bounds check w.r.t first target;
-                    // full check is done per target below
-                } else { true };
+                // iterate points in this frame once
+                // NB: we assume all arrays are same length; if not, min length
+                let len = mz.len().min(inten.len()).min(tofs_slice.len());
+                let sv = scans_slice;
 
-                if !scan_ok { continue; }
-                let m = mz[i];
+                // Mild micro-opt: copy targets for fewer indirections in inner loop
+                for i in 0..len {
+                    let m = mz[i];
+                    // quick coarse check for at least one target’s scan range?
+                    // We’ll just do per-target checks; scan is cheap to load.
+                    let s_u32: u32 = if let Some(s) = sv { s[i] as u32 } else { 0 };
 
-                // Test against all specs covering this column
-                for &sp_idx in targets {
-                    let sp = &pres[sp_idx];
+                    // Test against all specs active for this column
+                    for &sp_idx in targets {
+                        let sp = unsafe { pres.get_unchecked(sp_idx) };
 
-                    // scan range
-                    if let Some(sv) = scans_src {
-                        let s = sv[i] as usize;
-                        if s < sp.scan_left || s > sp.scan_right { continue; }
+                        // scan filter (if available)
+                        if let Some(s) = sv {
+                            let su = s[i] as usize;
+                            if su < sp.scan_left || su > sp.scan_right {
+                                continue;
+                            }
+                        }
+                        // mz filter
+                        if m < sp.mz_lo || m > sp.mz_hi {
+                            continue;
+                        }
+
+                        // keep the point
+                        let entry = out.entry(sp_idx).or_insert_with(|| {
+                            // heuristic reserve a bit; this grows if needed
+                            Vec::with_capacity(256)
+                        });
+                        entry.push((fid, s_u32, tofs_slice[i], inten[i] as f32));
                     }
+                }
 
-                    // m/z window
-                    if m < sp.mz_lo || m > sp.mz_hi { continue; }
+                out
+            })
+            .collect();
 
-                    // keep the point
-                    let cloud = &mut clouds[sp_idx];
+        // 3) Reduce the partial maps into final per-spec clouds (no locks used above)
+        let mut clouds: Vec<ClusterCloud> = specs
+            .iter()
+            .map(|sp| ClusterCloud {
+                rt_left: sp.rt_left,
+                rt_right: sp.rt_right,
+                scan_left: sp.scan_left,
+                scan_right: sp.scan_right,
+                frame_ids: Vec::new(),
+                scans: Vec::new(),
+                tofs: Vec::new(),
+                intensities: Vec::new(),
+            })
+            .collect();
+
+        for chunk in partials {
+            for (sp_idx, mut pts) in chunk {
+                let cloud = &mut clouds[sp_idx];
+                cloud.frame_ids.reserve(pts.len());
+                cloud.scans.reserve(pts.len());
+                cloud.tofs.reserve(pts.len());
+                cloud.intensities.reserve(pts.len());
+
+                for (fid, sc, tof, it) in pts.drain(..) {
                     cloud.frame_ids.push(fid);
-                    let sc_u32 = scans_src.map(|sv| sv[i] as u32).unwrap_or(0);
-                    cloud.scans.push(sc_u32);
-                    cloud.tofs.push(tofs[i]);
-                    cloud.intensities.push(inten[i] as f32);
+                    cloud.scans.push(sc);
+                    cloud.tofs.push(tof);
+                    cloud.intensities.push(it);
                 }
             }
         }
