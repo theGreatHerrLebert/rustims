@@ -8,7 +8,7 @@ import imspy_connector
 ims = imspy_connector.py_cluster
 
 from imspy.simulation.annotation import RustWrapperObject
-from imspy.timstof.dia import RtPeak1D, ImPeak1D  # <- adjust import path to where you defined them
+from .dia import RtPeak1D, ImPeak1D  # <- adjust import path to where you defined them
 
 
 # -------------------- Core wrappers --------------------
