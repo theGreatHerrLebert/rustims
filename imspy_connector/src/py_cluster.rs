@@ -66,7 +66,9 @@ pub struct PySeparable2DFit {
 impl PySeparable2DFit {
     #[getter] pub fn rt(&self) -> PyGaussian1D { PyGaussian1D { inner: self.inner.rt.clone() } }
     #[getter] pub fn im(&self) -> PyGaussian1D { PyGaussian1D { inner: self.inner.im.clone() } }
+    #[allow(non_snake_case)]
     #[getter] pub fn A(&self) -> f32 { self.inner.A }
+    #[allow(non_snake_case)]
     #[getter] pub fn B(&self) -> f32 { self.inner.B }
 }
 
