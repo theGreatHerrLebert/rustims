@@ -4,8 +4,8 @@ from typing import List, Optional
 
 import numpy as np
 
-from imspy.timstof.cluster import ClusterResult, ClusterSpec
-from imspy.timstof.data import TimsDataset
+from .cluster import ClusterResult, ClusterSpec
+from .data import TimsDataset
 import pandas as pd
 
 import imspy_connector
