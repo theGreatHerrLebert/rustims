@@ -81,57 +81,6 @@ fn ppm_tol(mz: f32, ppm: f32) -> f32 {
 }
 
 #[inline(always)]
-fn lerp(a: f32, b: f32, t: f32) -> f32 { a + t*(b-a) }
-
-/// Safe integration over [x0,x1] on piecewise-linear y, avoids y[n] OOB.
-fn trapezoid_area_fractional(y: &[f32], mut x0: f32, mut x1: f32) -> f32 {
-    let n = y.len();
-    if n < 2 { return 0.0; }
-    let max_x = (n-1) as f32;
-    x0 = x0.clamp(0.0, max_x);
-    x1 = x1.clamp(0.0, max_x);
-    if x1 <= x0 { return 0.0; }
-
-    let i0 = x0.floor() as usize;
-    let i1 = x1.floor() as usize;
-
-    if i0 == i1 {
-        let i = i0.min(n-2);
-        let t0 = x0 - i as f32;
-        let t1 = x1 - i as f32;
-        let y0 = lerp(y[i], y[i+1], t0);
-        let y1 = lerp(y[i], y[i+1], t1);
-        return 0.5*(y0+y1)*(t1-t0);
-    }
-
-    let s0 = i0.min(n-2);
-    let s1 = i1.min(n-2);
-    let mut area = 0.0f32;
-
-    // left partial (s0)
-    let t0 = x0 - s0 as f32;
-    let yl0 = lerp(y[s0], y[s0+1], t0);
-    let yl1 = y[s0+1];
-    area += 0.5*(yl0+yl1)*(1.0 - t0);
-
-    // interiors
-    if s1 > s0 + 1 {
-        for s in (s0+1)..s1 {
-            area += 0.5*(y[s] + y[s+1]);
-        }
-    }
-
-    // right partial only if i1 <= n-2
-    if i1 <= n-2 {
-        let t1 = x1 - s1 as f32;
-        let yr0 = y[s1];
-        let yr1 = lerp(y[s1], y[s1+1], t1);
-        area += 0.5*(yr0+yr1)*t1;
-    }
-    area
-}
-
-#[inline(always)]
 fn weighted_mean_var(y: &[f32]) -> (f32, f32) {
     let mut wsum = 0.0f32;
     let mut mean = 0.0f32;
@@ -317,13 +266,11 @@ fn fit_ab_on_patch(patch: &[f32], G: &[f32]) -> (f32, f32, f32, f32) {
     let n = patch.len();
     let mut sum_p = 0.0f64;
     let mut sum_pg = 0.0f64;
-    let mut sum_p2 = 0.0f64;
     for i in 0..n {
         let p = patch[i] as f64;
         let g = G[i] as f64;
         sum_p  += p;
         sum_pg += p * g;
-        sum_p2 += p * p;
     }
     // ΣG and ΣG2 must be computed alongside G; pass them if you prefer avoiding re-scan
     let mut sum_g = 0.0f64;
@@ -367,6 +314,7 @@ fn edge_mass_fraction(p: &[f32], rows: usize, cols: usize) -> f32 {
 }
 
 /// Fit separable 2D Gaussian and compute quality metrics.
+#[allow(non_snake_case)]
 pub fn fit_separable_and_score(p: &ClusterPatch) -> (Separable2DFit, ClusterQuality) {
     let rt = gaussian_1d_from_trace(&p.rt_trace);
     let im = gaussian_1d_from_trace(&p.im_trace);

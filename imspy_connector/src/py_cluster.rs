@@ -3,7 +3,6 @@ use pyo3::{pymodule, Bound, PyResult, Python};
 use pyo3::prelude::PyModule;
 
 use numpy::{PyArray1, PyArray2};
-use numpy::ndarray::{Array1, Array2};
 
 use rustdf::cluster::cluster_eval::{
     ClusterSpec, ClusterPatch, Gaussian1D, Separable2DFit, ClusterQuality, ClusterResult,

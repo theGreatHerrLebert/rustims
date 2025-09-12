@@ -1,4 +1,3 @@
-use rustdf::cluster::cluster_eval::ClusterSpec;
 use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
