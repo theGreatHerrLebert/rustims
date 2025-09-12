@@ -205,6 +205,38 @@ IMMapType = Union[
     List[List["ImPeak1D"]],                         # row-aligned with rt_peaks
 ]
 
+import inspect
+
+def _make_cluster_spec(rp, scan_left, scan_right, mz_ppm: float, resolution: int):
+    """
+    Create a ClusterSpec from an RtPeak1D `rp` while being agnostic to the
+    exact constructor signature (mz_bin vs bin vs positional).
+    """
+    params = inspect.signature(ClusterSpec).parameters
+    kwargs = dict(
+        rt_left=int(getattr(rp, "left_padded", rp.left)),
+        rt_right=int(getattr(rp, "right_padded", rp.right)),
+        scan_left=int(scan_left),
+        scan_right=int(scan_right),
+        mz_ppm=float(mz_ppm),
+        resolution=int(resolution),
+    )
+
+    # Prefer keyword if the name exists, else try alternatives, else positional
+    if "mz_bin" in params:
+        return ClusterSpec(mz_bin=int(rp.mz_row), **kwargs)
+    if "bin" in params:
+        return ClusterSpec(bin=int(rp.mz_row), **kwargs)
+
+    # Last resort: positional ordering assumed as:
+    # (mz_bin, rt_left, rt_right, scan_left, scan_right, mz_ppm, resolution)
+    return ClusterSpec(
+        int(rp.mz_row),
+        kwargs["rt_left"], kwargs["rt_right"],
+        kwargs["scan_left"], kwargs["scan_right"],
+        kwargs["mz_ppm"], kwargs["resolution"],
+    )
+
 def _get_im_list_for_peak(
     im_peaks_by_rtrow: IMMapType,
     peak: "RtPeak1D",
@@ -272,20 +304,8 @@ def build_specs_from_peaks(
             scan_left = center - half
             scan_right = center + half
 
-        # Build the RT window. Prefer padded bounds if present; else use [left,right].
-        rt_left = int(getattr(rp, "left_padded", rp.left))
-        rt_right = int(getattr(rp, "right_padded", rp.right))
+        specs.append(_make_cluster_spec(rp, scan_left, scan_right, mz_ppm, resolution))
 
-        # Create spec. Adjust to your actual ClusterSpec ctor.
-        specs.append(ClusterSpec(
-            mz_row=rp.mz_row,
-            rt_left=rt_left,
-            rt_right=rt_right,
-            scan_left=scan_left,
-            scan_right=scan_right,
-            mz_ppm=mz_ppm,
-            resolution=resolution,
-        ))
     return specs
 
 
