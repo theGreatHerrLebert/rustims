@@ -236,35 +236,24 @@ def _make_cluster_spec(rp, scan_left, scan_right, mz_ppm: float, resolution: int
         float(mz_ppm), int(resolution),
     )
 
-def _get_im_list_for_peak(
-    im_peaks_by_rtrow: IMMapType,
-    peak: "RtPeak1D",
-    idx: int
-) -> List["ImPeak1D"]:
-    """
-    Resolve the IM-peak list for a given RT peak from whatever container
-    shape the caller passed in.
-    """
-    # case 1: dict keyed by (mz_row, rt_col)
+IMMapType = Union[
+    Dict[int, List["ImPeak1D"]],             # key = mz_row
+    Dict[Tuple[int, int], List["ImPeak1D"]], # key = (mz_row, rt_col)
+    List[List["ImPeak1D"]],                  # aligned with rt_peaks order
+]
+
+def _get_im_list_for_peak(im_peaks_by_rtrow: IMMapType, peak, idx: int) -> List["ImPeak1D"]:
     if isinstance(im_peaks_by_rtrow, dict):
-        # try tuple key first
-        key = (peak.mz_row, peak.rt_col)
-        if key in im_peaks_by_rtrow:
-            return im_peaks_by_rtrow[key]
-        # fallback: dict keyed by mz_row only
+        if (peak.mz_row, peak.rt_col) in im_peaks_by_rtrow:
+            return im_peaks_by_rtrow[(peak.mz_row, peak.rt_col)]
         if peak.mz_row in im_peaks_by_rtrow:  # type: ignore[operator]
             return im_peaks_by_rtrow[peak.mz_row]  # type: ignore[index]
         return []
-
-    # case 2: list-of-lists row-aligned with rt_peaks
     if isinstance(im_peaks_by_rtrow, list):
         if 0 <= idx < len(im_peaks_by_rtrow):
             return im_peaks_by_rtrow[idx]
         return []
-
-    # last resort
     return []
-
 
 def build_specs_from_peaks(
     rt_peaks: List["RtPeak1D"],
@@ -274,33 +263,22 @@ def build_specs_from_peaks(
     resolution: int = 2,
     default_scan_span: int = 30,
 ) -> List["ClusterSpec"]:
-    """
-    Build ClusterSpec objects by pairing each RT peak with an IM window.
-
-    We pick the IM window as the [left,right] of the strongest IM peak
-    (by area_raw) for that RT peak. If there are no IM peaks for a given
-    RT peak we fallback to a symmetric window around the RT-peak apex scan.
-
-    Compat: `im_peaks_by_rtrow` can be:
-      - dict[(mz_row, rt_col)] -> List[ImPeak1D]
-      - dict[mz_row] -> List[ImPeak1D]
-      - list[List[ImPeak1D]] (same order as rt_peaks)
-    """
     specs: List["ClusterSpec"] = []
 
+    # precompute half span for fallback
+    half = max(1, default_scan_span // 2)
+
     for i, rp in enumerate(rt_peaks):
-        # resolve IM peaks for **this** RT peak
         im_list = _get_im_list_for_peak(im_peaks_by_rtrow, rp, i)
 
         if im_list:
-            # choose the best IM peak — you can switch to apex_smoothed if preferred
             best = max(im_list, key=lambda p: p.area_raw)
             scan_left, scan_right = int(best.left), int(best.right)
         else:
-            # fallback window around the *apex scan*: use padded if you have it, else center at rt_col
-            half = max(1, default_scan_span // 2)
-            center = int(round(rp.subcol + rp.rt_col))  # subcol ~ sub-frame offset in frames; for scans this is okay as a rough center
-            scan_left = center - half
+            # Fallback: symmetric window around an approximate center
+            # (use subcol+rt_col if available; else rt_col)
+            center = int(round(getattr(rp, "subcol", 0.0) + rp.rt_col))
+            scan_left  = center - half
             scan_right = center + half
 
         specs.append(_make_cluster_spec(rp, scan_left, scan_right, mz_ppm, resolution))
