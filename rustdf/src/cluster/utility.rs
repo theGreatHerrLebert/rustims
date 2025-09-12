@@ -684,6 +684,203 @@ pub fn build_dense_im_by_rtpeaks(
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
 
+#[derive(Clone, Copy)]
+pub enum FallbackMode {
+    /// No peaks if below low_thresh
+    None,
+    /// One pseudo-peak spanning the *entire* scan range [0, cols-1]
+    FullWindow,
+    /// Span only the active scan support where y_raw >= thr,
+    /// with optional pad and min width constraints.
+    ActiveRange {
+        /// absolute floor if rel_thr yields too small
+        abs_thr: f32,        // e.g., 5.0
+        /// fraction of row_max (0..1), applied to y_raw
+        rel_thr: f32,        // e.g., 0.03
+        /// expand bounds by this many scans on each side
+        pad: usize,          // e.g., 2..4
+        /// minimum width to enforce (in scans)
+        min_width: usize,    // e.g., 6
+    },
+    /// Center around the apex with ±half_width scans
+    ApexWindow {
+        half_width: usize,   // e.g., 15
+    },
+}
+
+// --- keep your FallbackMode as you posted ---
+
+#[derive(Clone, Copy)]
+pub struct ImAdaptivePolicy {
+    pub low_thresh: f32,     // e.g., 100.0
+    pub mid_thresh: f32,     // e.g., 200.0
+    pub sigma_lo: f32,       // e.g., 4.0 scans (extra per-row smoothing)
+    pub sigma_hi: f32,       // e.g., 2.0 scans
+    pub min_prom_lo: f32,    // e.g., 0.5 * baseline
+    pub min_prom_hi: f32,    // e.g., baseline
+    pub min_width_lo: usize, // e.g., 6
+    pub min_width_hi: usize, // e.g., 3
+    pub fallback_mode: FallbackMode,
+}
+
+// ---- helpers for fallbacks ----
+fn fallback_peak_full(rt_row: usize, cols: usize, y_raw: &[f32]) -> Vec<ImPeak1D> {
+    if cols == 0 { return Vec::new(); }
+    let left_x = 0.0f32;
+    let right_x = (cols - 1) as f32;
+    let area = trapezoid_area_fractional(y_raw, left_x, right_x);
+    let (scan_max, apex_raw) = y_raw.iter().copied().enumerate()
+        .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((0,0.0));
+    vec![ImPeak1D {
+        rt_row, scan: scan_max, mobility: None,
+        apex_smoothed: apex_raw, apex_raw,
+        prominence: 0.0,
+        left: 0, right: cols - 1,
+        left_x, right_x,
+        width_scans: cols, area_raw: area, subscan: 0.0,
+    }]
+}
+
+fn fallback_peak_active(
+    rt_row: usize,
+    y_raw: &[f32],
+    pad: usize,
+    min_width: usize,
+    abs_thr: f32,
+    rel_thr: f32,
+) -> Vec<ImPeak1D> {
+    let n = y_raw.len();
+    if n == 0 { return Vec::new(); }
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    let thr = abs_thr.max(rel_thr * row_max);
+
+    let mut l = None; let mut r = None;
+    for (i, &v) in y_raw.iter().enumerate() {
+        if v >= thr { l.get_or_insert(i); r = Some(i); }
+    }
+    let (mut left, mut right) = if let (Some(l0), Some(r0)) = (l, r) {
+        (l0.saturating_sub(pad), (r0 + pad).min(n - 1))
+    } else {
+        let (scan_max, _) = y_raw.iter().copied().enumerate()
+            .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((0,0.0));
+        (scan_max, scan_max)
+    };
+    if right + 1 - left < min_width {
+        let need = min_width - (right + 1 - left);
+        let grow_left = need / 2;
+        let grow_right = need - grow_left;
+        left = left.saturating_sub(grow_left);
+        right = (right + grow_right).min(n - 1);
+    }
+
+    let left_x = left as f32; let right_x = right as f32;
+    let area = trapezoid_area_fractional(y_raw, left_x, right_x);
+    let (scan_max, apex_raw) = y_raw.iter().copied().enumerate()
+        .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((left, 0.0));
+
+    vec![ImPeak1D {
+        rt_row, scan: scan_max, mobility: None,
+        apex_smoothed: apex_raw, apex_raw,
+        prominence: 0.0,
+        left, right, left_x, right_x,
+        width_scans: right + 1 - left, area_raw: area, subscan: 0.0,
+    }]
+}
+
+fn fallback_peak_apex_window(rt_row: usize, y_raw: &[f32], half_width: usize) -> Vec<ImPeak1D> {
+    let n = y_raw.len();
+    if n == 0 { return Vec::new(); }
+    let (scan_max, apex_raw) = y_raw.iter().copied().enumerate()
+        .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((0,0.0));
+    let left = scan_max.saturating_sub(half_width);
+    let right = (scan_max + half_width).min(n - 1);
+    let left_x = left as f32; let right_x = right as f32;
+    let area = trapezoid_area_fractional(y_raw, left_x, right_x);
+
+    vec![ImPeak1D {
+        rt_row, scan: scan_max, mobility: None,
+        apex_smoothed: apex_raw, apex_raw,
+        prominence: 0.0,
+        left, right, left_x, right_x,
+        width_scans: right + 1 - left, area_raw: area, subscan: 0.0,
+    }]
+}
+
+// ---- adaptive row wrapper ----
+pub fn find_im_peaks_row_adaptive(
+    y_smoothed_base: &[f32],
+    y_raw: &[f32],
+    rt_row: usize,
+    mobility_of: MobilityFn,
+    min_distance_scans: usize,
+    policy: ImAdaptivePolicy,
+) -> Vec<ImPeak1D> {
+    let n = y_smoothed_base.len();
+    if n < 3 { return Vec::new(); }
+
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < policy.low_thresh {
+        return match policy.fallback_mode {
+            FallbackMode::None => Vec::new(),
+            FallbackMode::FullWindow =>
+                fallback_peak_full(rt_row, n, y_raw),
+            FallbackMode::ActiveRange { abs_thr, rel_thr, pad, min_width } =>
+                fallback_peak_active(rt_row, y_raw, pad, min_width, abs_thr, rel_thr),
+            FallbackMode::ApexWindow { half_width } =>
+                fallback_peak_apex_window(rt_row, y_raw, half_width),
+        };
+    }
+
+    let (sigma, min_prom, min_width_scans) = if row_max < policy.mid_thresh {
+        (policy.sigma_lo, policy.min_prom_lo, policy.min_width_lo)
+    } else {
+        (policy.sigma_hi, policy.min_prom_hi, policy.min_width_hi)
+    };
+
+    // optional extra per-row smoothing
+    let mut y_s = y_smoothed_base.to_vec();
+    if sigma > 0.0 {
+        let w = gaussian_kernel_1d(sigma, 3.0);
+        let rad = (w.len() as isize - 1) / 2;
+        let mut out = vec![0.0f32; n];
+        for s in 0..n {
+            let mut acc = 0.0f32;
+            for (k, &wk) in w.iter().enumerate() {
+                let ds = k as isize - rad;
+                let j = reflect_index(s as isize + ds, n);
+                acc += wk * y_s[j];
+            }
+            out[s] = acc;
+        }
+        y_s.copy_from_slice(&out);
+    }
+
+    find_im_peaks_row(&y_s, y_raw, rt_row, mobility_of, min_prom, min_distance_scans, min_width_scans)
+}
+
+// ---- adaptive all-rows ----
+pub fn pick_im_peaks_on_imindex_adaptive(
+    imx_data_smoothed: &[f32],       // column-major
+    imx_data_raw: Option<&[f32]>,    // column-major or None
+    rows: usize,
+    cols: usize,
+    min_distance_scans: usize,
+    mobility_of: MobilityFn,
+    policy: ImAdaptivePolicy,
+) -> Vec<Vec<ImPeak1D>> {
+    use rayon::prelude::*;
+    (0..rows).into_par_iter().map(|r| {
+        let mut y_s = Vec::with_capacity(cols);
+        let mut y_r = Vec::with_capacity(cols);
+        for s in 0..cols {
+            y_s.push(imx_data_smoothed[s * rows + r]);
+            let raw_val = imx_data_raw.map(|dr| dr[s * rows + r]).unwrap_or(y_s[s]);
+            y_r.push(raw_val);
+        }
+        find_im_peaks_row_adaptive(&y_s, &y_r, r, mobility_of, min_distance_scans, policy)
+    }).collect()
+}
+
 pub fn find_im_peaks_row(
     y_smoothed: &[f32],
     y_raw: &[f32],

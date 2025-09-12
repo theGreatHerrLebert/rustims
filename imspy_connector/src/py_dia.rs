@@ -1,12 +1,18 @@
 use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, pick_im_peaks_on_imindex, MobilityFn};
+use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, pick_im_peaks_on_imindex, pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy, FallbackMode};
 use rustdf::cluster::utility::ImIndex;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
+
+fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
+    Ok(rows.into_iter().map(|row| {
+        row.into_iter().map(|p| Py::new(py, PyImPeak1D{ inner: p }).unwrap()).collect()
+    }).collect())
+}
 
 #[pyclass]
 pub struct PyImPeak1D { pub inner: ImPeak1D }
@@ -315,6 +321,95 @@ impl PyTimsDatasetDIA {
             mob_fn,
         );
         impeaks_to_py(py, rows_rs)
+    }
+
+    /// Adaptive IM-peak picking with fallback strategies.
+    #[pyo3(signature = (
+        im_matrix,                   // np.ndarray[f32] Fortran/C, shape (rows, scans)
+        im_matrix_raw=None,          // optional raw (same shape)
+        min_distance_scans=4,
+        strategy="active_range",     // "none" | "full" | "active_range" | "apex_window"
+        low_thresh=100.0,
+        mid_thresh=200.0,
+        sigma_lo=4.0,
+        sigma_hi=2.0,
+        min_prom_lo=25.0,
+        min_prom_hi=50.0,
+        min_width_lo=6,
+        min_width_hi=3,
+        abs_thr=5.0,
+        rel_thr=0.03,
+        pad=2,
+        active_min_width=6,
+        apex_half_width=15,
+        use_mobility=false,
+    ))]
+    pub fn pick_im_peaks_on_matrix_adaptive(
+        &self,
+        im_matrix: PyReadonlyArray2<f32>,
+        im_matrix_raw: Option<PyReadonlyArray2<f32>>,
+        min_distance_scans: usize,
+        strategy: &str,
+        low_thresh: f32,
+        mid_thresh: f32,
+        sigma_lo: f32,
+        sigma_hi: f32,
+        min_prom_lo: f32,
+        min_prom_hi: f32,
+        min_width_lo: usize,
+        min_width_hi: usize,
+        abs_thr: f32,
+        rel_thr: f32,
+        pad: usize,
+        active_min_width: usize,
+        apex_half_width: usize,
+        use_mobility: bool,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
+        use numpy::ndarray::ArrayView2;
+
+        // 1) flatten to column-major
+        let a: ArrayView2<f32> = im_matrix.as_array();
+        let (rows, cols) = a.dim();
+        let mut cm = vec![0.0f32; rows * cols];
+        for s in 0..cols { for r in 0..rows { cm[s*rows + r] = a[(r,s)]; } }
+
+        let raw_cm: Option<Vec<f32>> = im_matrix_raw.map(|dr| {
+            let ar = dr.as_array();
+            let mut v = vec![0.0f32; rows * cols];
+            for s in 0..cols { for r in 0..rows { v[s*rows + r] = ar[(r,s)]; } }
+            v
+        });
+
+        // 2) mobility mapping (stub here, wire your converter if desired)
+        let _mob_fn = if use_mobility { Some(|scan: usize| scan as f32) } else { None };
+
+        // 3) build policy + fallback
+        let fallback = match strategy {
+            "none" => FallbackMode::None,
+            "full" => FallbackMode::FullWindow,
+            "active_range" => FallbackMode::ActiveRange { abs_thr, rel_thr, pad, min_width: active_min_width },
+            "apex_window" => FallbackMode::ApexWindow { half_width: apex_half_width },
+            other => return Err(pyo3::exceptions::PyValueError::new_err(format!("unknown strategy: {}", other))),
+        };
+
+        let policy = ImAdaptivePolicy {
+            low_thresh, mid_thresh,
+            sigma_lo, sigma_hi,
+            min_prom_lo, min_prom_hi,
+            min_width_lo, min_width_hi,
+            fallback_mode: fallback,
+        };
+
+        // 4) run
+        let rows_rs = pick_im_peaks_on_imindex_adaptive(
+            &cm, raw_cm.as_deref(),
+            rows, cols,
+            min_distance_scans,
+            None,
+            policy,
+        );
+        impeaks_to_py_nested(py, rows_rs)
     }
 }
 
