@@ -7,18 +7,6 @@ use rayon::prelude::*;
 use rayon::iter::IntoParallelRefIterator;
 
 #[derive(Clone, Debug)]
-pub struct ClusterCloud {
-    pub rt_left: usize,
-    pub rt_right: usize,
-    pub scan_left: usize,
-    pub scan_right: usize,
-    pub frame_ids: Vec<u32>,   // absolute frame id for each point
-    pub scans:     Vec<u32>,   // scan index per point
-    pub tofs:      Vec<i32>,   // tof index per point (read directly from frame)
-    pub intensities: Vec<f32>, // intensity per point
-}
-
-#[derive(Clone, Debug)]
 pub struct ImPeak1D {
     pub rt_row: usize,        // which row in ImIndex (i.e., which RtPeak1D)
     pub scan: usize,          // apex scan index
@@ -74,6 +62,7 @@ pub fn find_peaks_row(
     let n = y_smoothed.len();
     if n < 3 { return Vec::new(); }
 
+    // local maxima (ties go to leftmost)
     let mut cands: Vec<usize> = Vec::new();
     for i in 1..n-1 {
         let yi = y_smoothed[i];
@@ -84,6 +73,7 @@ pub fn find_peaks_row(
     for &i in &cands {
         let apex = y_smoothed[i];
 
+        // prominence baseline
         let mut l = i; let mut left_min = apex;
         while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
         let mut r = i; let mut right_min = apex;
@@ -93,21 +83,10 @@ pub fn find_peaks_row(
         let prom = apex - baseline;
         if prom < min_prom { continue; }
 
+        // half-prom crossings (flat-top safe)
         let half = baseline + 0.5 * prom;
-
-        let mut wl = i;
-        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
-        let left_cross = if wl < i && wl+1 < n {
-            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl+1];
-            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else { wl as f32 };
-
-        let mut wr = i;
-        while wr+1 < n && y_smoothed[wr] > half { wr += 1; }
-        let right_cross = if wr > i && wr < n {
-            let y0 = y_smoothed[wr-1]; let y1 = y_smoothed[wr];
-            (wr-1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else { wr as f32 };
+        let left_cross  = frac_crossing_left(y_smoothed, i, half);
+        let right_cross = frac_crossing_right(y_smoothed, i, half);
 
         let width = (right_cross - left_cross).max(0.0);
         let width_frames = width.round() as usize;
@@ -117,53 +96,47 @@ pub fn find_peaks_row(
             quad_subsample(y_smoothed[i-1], y_smoothed[i], y_smoothed[i+1]).clamp(-0.5, 0.5)
         } else { 0.0 };
 
-        if let Some(last) = peaks.last() {
-            if i.abs_diff(last.rt_col) < min_distance {
-                if apex <= last.apex_smoothed { continue; }
-                peaks.pop();
-            }
-        }
-
-        // after computing `left_cross`, `right_cross`, `left_idx`, `right_idx`:
+        // fractional area on RAW
         let left_idx  = left_cross.floor().clamp(0.0, (n-1) as f32) as usize;
         let right_idx = right_cross.ceil().clamp(0.0, (n-1) as f32) as usize;
-
-        // exact fractional area on RAW within half-prom window (no padding)
         let area = trapezoid_area_fractional(
             y_raw,
             left_cross.max(0.0),
             right_cross.min((n - 1) as f32),
         );
 
-        // NEW: padded integer window (clamped)
+        // padded integer window
         let left_padded  = left_idx.saturating_sub(pad_left);
         let right_padded = (right_idx + pad_right).min(n - 1);
-
-        // quick integer trapezoid area on RAW for the padded window
         let area_padded = _trapezoid_area(y_raw, left_padded, right_padded);
 
-        // push Peak1D (include both windows + areas)
-        peaks.push(RtPeak1D {
+        let pk = RtPeak1D {
             mz_row,
             rt_col: i,
             rt_time: frame_times.map(|rt| rt[i]).unwrap_or(i as f32),
             apex_smoothed: apex,
             apex_raw: y_raw[i],
             prominence: prom,
-
             left: left_idx,
             right: right_idx,
             left_x: left_cross,
             right_x: right_cross,
-
             width_frames,
             area_raw: area,
             subcol: sub,
-
             left_padded,
             right_padded,
             area_padded,
-        });
+        };
+
+        // >>> CHANGED: robust NMS against all conflicting kept peaks
+        nms_push(
+            &mut peaks,
+            pk,
+            |p: &RtPeak1D| p.rt_col,
+            |p: &RtPeak1D| p.apex_smoothed,
+            min_distance,
+        );
     }
 
     peaks
@@ -1116,4 +1089,103 @@ pub fn pick_im_peaks_on_imindex(
             min_prom, min_distance_scans, min_width_scans
         )
     }).collect()
+}
+
+#[inline(always)]
+fn frac_crossing_left(y: &[f32], i: usize, half: f32) -> f32 {
+    let _n = y.len();
+    // walk left until y[k] <= half and y[k+1] > half OR plateau at == half ends
+    let mut k = i;
+    if y[k] <= half { return k as f32; }
+    while k > 0 && y[k - 1] >= half { k -= 1; }
+    // Handle plateau at == half by marching further left if needed
+    while k > 0 && y[k] == half && y[k - 1] == half { k -= 1; }
+    if k == i {
+        // normal interpolation between k and k+1
+        let y0 = y[k];
+        let y1 = y.get(k + 1).copied().unwrap_or(y0);
+        if y1 != y0 { k as f32 + (half - y0) / (y1 - y0) } else { k as f32 }
+    } else if y[k] == half && k > 0 && y[k - 1] < half {
+        // edge of plateau, crossing is at the left boundary of the plateau
+        k as f32
+    } else {
+        // y[k] < half <= y[k+1]
+        let y0 = y[k];
+        let y1 = y.get(k + 1).copied().unwrap_or(y0);
+        if y1 != y0 { k as f32 + (half - y0) / (y1 - y0) } else { k as f32 }
+    }
+}
+
+#[inline(always)]
+fn frac_crossing_right(y: &[f32], i: usize, half: f32) -> f32 {
+    let n = y.len();
+    // walk right until y[k] <= half and y[k-1] > half OR plateau at == half ends
+    let mut k = i;
+    if y[k] <= half { return k as f32; }
+    while k + 1 < n && y[k + 1] >= half { k += 1; }
+    // Handle plateau at == half by marching further right if needed
+    while k + 1 < n && y[k] == half && y[k + 1] == half { k += 1; }
+    if k == i {
+        // normal interpolation between k-1 and k
+        if k == 0 { return 0.0; }
+        let y0 = y[k - 1];
+        let y1 = y[k];
+        if y1 != y0 { (k - 1) as f32 + (half - y0) / (y1 - y0) } else { k as f32 }
+    } else if y[k] == half && k + 1 < n && y[k + 1] < half {
+        // edge of plateau, crossing is at the right boundary of the plateau
+        k as f32
+    } else {
+        // y[k-1] > half >= y[k]
+        if k == 0 { return 0.0; }
+        let y0 = y[k - 1];
+        let y1 = y[k];
+        if y1 != y0 { (k - 1) as f32 + (half - y0) / (y1 - y0) } else { k as f32 }
+    }
+}
+
+#[inline(always)]
+fn nms_push<T, FPos, FHeight>(
+    store: &mut Vec<T>,
+    new_peak: T,
+    pos_of: FPos,
+    height_of: FHeight,
+    min_distance: usize,
+) -> bool
+where
+    FPos: Fn(&T) -> usize,
+    FHeight: Fn(&T) -> f32,
+{
+    let i = pos_of(&new_peak);
+    let h = height_of(&new_peak);
+
+    // Pop any existing peaks that conflict but are lower than the new one.
+    while let Some(last) = store.last() {
+        let j = pos_of(last);
+        if i.abs_diff(j) >= min_distance { break; }
+        let hj = height_of(last);
+        if h > hj {
+            store.pop();
+            continue; // keep testing against earlier peaks
+        } else {
+            return false; // new one is lower → drop it
+        }
+    }
+
+    // Also check earlier (non-adjacent) conflicts if min_distance spans more than one peak.
+    // Walk backward while within radius.
+    let mut k = store.len();
+    while k > 0 {
+        k -= 1;
+        let j = pos_of(&store[k]);
+        if i.abs_diff(j) >= min_distance { break; }
+        let hj = height_of(&store[k]);
+        if h > hj {
+            store.remove(k);
+        } else {
+            return false;
+        }
+    }
+
+    store.push(new_peak);
+    true
 }

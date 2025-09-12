@@ -9,8 +9,8 @@ use rayon::prelude::*;
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
-use crate::cluster::cluster_eval::ClusterSpec;
-use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex, ClusterCloud};
+use crate::cluster::cluster_eval::{ClusterCloud, ClusterSpec};
+use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex};
 
 #[derive(Clone)]
 struct SpecPre {
