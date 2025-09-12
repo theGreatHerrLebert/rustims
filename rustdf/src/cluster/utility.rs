@@ -68,8 +68,8 @@ pub fn find_peaks_row(
     min_prom: f32,
     min_distance: usize,
     min_width: usize,
-    pad_left: usize,          // NEW
-    pad_right: usize,         // NEW
+    pad_left: usize,
+    pad_right: usize,
 ) -> Vec<RtPeak1D> {
     let n = y_smoothed.len();
     if n < 3 { return Vec::new(); }
@@ -509,7 +509,6 @@ struct FrameBinView {
     offsets: Vec<usize>,    // CSR: len = unique_bins.len() + 1
     scan_idx: Vec<u16>,     // concatenated per-bin
     intensity: Vec<f32>,    // concatenated per-bin
-    num_scans: usize,       // GLOBAL scan axis length
 }
 
 fn build_frame_bin_view(
@@ -571,7 +570,6 @@ fn build_frame_bin_view(
         offsets,
         scan_idx: scan_sorted,
         intensity: inten_sorted,
-        num_scans: global_num_scans,
     }
 }
 
@@ -634,40 +632,51 @@ pub fn build_dense_im_by_rtpeaks(
         return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
     }
 
-    // 1) materialize precursor frames once
     let frames = data_handle
         .get_slice(frames_rt.to_vec(), num_threads)
         .to_resolution(resolution as i32, num_threads)
         .frames;
 
-    // 1.1) compute GLOBAL scan length
-    let global_num_scans: usize = {
-        // If you have metadata num_scans, use that (shown above).
-        // Or derive from data if you always have fr.scan:
-        frames.iter()
-            .flat_map(|fr| fr.scan.iter())     // Vec<i32>
-            .copied()
-            .max()
-            .map(|m| m as usize + 1)
-            .unwrap_or(0)
-    };
+    // compute GLOBAL scan length
+    let global_num_scans: usize = frames.iter()
+        .flat_map(|fr| fr.scan.iter())
+        .copied()
+        .max()
+        .map(|m| m as usize + 1)
+        .unwrap_or(0);
 
-    // 2) build minimal per-frame bin index (grouped by bin) in parallel
+    // build per-frame views
     use rayon::prelude::*;
     let views: Vec<FrameBinView> = frames.into_par_iter()
         .map(|fr| build_frame_bin_view(fr, resolution, global_num_scans))
         .collect();
 
-    let num_scans = views.first().map(|v| v.num_scans).unwrap_or(0);
-    let scans: Vec<usize> = (0..num_scans).collect();
+    let ncols = views.len();
+    if ncols == 0 || global_num_scans == 0 {
+        return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
+    }
 
-    // 3) compute per-row IM profiles in parallel
+    let cols = global_num_scans;
+    let rows = n_rows;
+    let scans: Vec<usize> = (0..cols).collect();
+
     let do_smooth = maybe_sigma_scans.unwrap_or(0.0) > 0.0;
 
     let profiles: Vec<(Vec<f32>, Vec<f32>)> = peaks.par_iter().map(|p| {
-        // RT window
-        let lo = p.left_padded.saturating_sub(rt_extra_pad);
-        let hi = (p.right_padded + rt_extra_pad).min(views.len() - 1);
+        // ---- GUARDS (important) ----
+        if p.mz_row >= bins.len() {
+            // malformed peak -> return zeros to keep shape
+            return (vec![0.0f32; cols], vec![0.0f32; cols]);
+        }
+
+        // RT window is in **column space**; clamp
+        let mut lo = p.left_padded.saturating_sub(rt_extra_pad);
+        let mut hi = p.right_padded.saturating_sub(0).saturating_add(rt_extra_pad);
+        if lo >= ncols { lo = ncols - 1; }
+        if hi >= ncols { hi = ncols - 1; }
+        if lo > hi {
+            return (vec![0.0f32; cols], vec![0.0f32; cols]);
+        }
 
         // ppm band around peak m/z
         let bin_center = bins[p.mz_row];
@@ -676,15 +685,16 @@ pub fn build_dense_im_by_rtpeaks(
         let bin_lo     = quantize_mz(mz_center - tol, resolution);
         let bin_hi     = quantize_mz(mz_center + tol, resolution);
 
-        let mut raw = vec![0.0f32; num_scans];
+        let mut raw = vec![0.0f32; cols];
 
         for t in lo..=hi {
             let v = &views[t];
             let (start, end) = bin_range(v, bin_lo, bin_hi);
-            // walk the concatenated slice
             for i in start..end {
                 let s = v.scan_idx[i] as usize;
-                raw[s] += v.intensity[i];
+                if s < cols {
+                    raw[s] += v.intensity[i];
+                }
             }
         }
 
@@ -699,9 +709,6 @@ pub fn build_dense_im_by_rtpeaks(
         (smoothed, raw)
     }).collect();
 
-    // 4) pack into column-major matrix; keep data_raw if smoothed
-    let cols = num_scans;
-    let rows = n_rows;
     let mut data = vec![0.0f32; rows * cols];
     let mut data_raw = if do_smooth { Some(vec![0.0f32; rows * cols]) } else { None };
 
