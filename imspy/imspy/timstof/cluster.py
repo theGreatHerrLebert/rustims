@@ -205,36 +205,35 @@ IMMapType = Union[
     List[List["ImPeak1D"]],                         # row-aligned with rt_peaks
 ]
 
-import inspect
+def _clamp_bounds_nonneg(left: int, right: int) -> tuple[int, int]:
+    # ensure non-negative and left <= right
+    if left < 0:  left = 0
+    if right < 0: right = 0
+    if right < left:
+        right = left
+    return left, right
 
 def _make_cluster_spec(rp, scan_left, scan_right, mz_ppm: float, resolution: int):
     """
-    Create a ClusterSpec from an RtPeak1D `rp` while being agnostic to the
-    exact constructor signature (mz_bin vs bin vs positional).
+    Create ClusterSpec with safe integer bounds (non-negative) and correct signature:
+    ClusterSpec(rt_row, rt_left, rt_right, scan_left, scan_right, mz_ppm, resolution)
     """
-    params = inspect.signature(ClusterSpec).parameters
-    kwargs = dict(
-        rt_left=int(getattr(rp, "left_padded", rp.left)),
-        rt_right=int(getattr(rp, "right_padded", rp.right)),
-        scan_left=int(scan_left),
-        scan_right=int(scan_right),
-        mz_ppm=float(mz_ppm),
-        resolution=int(resolution),
-    )
+    # Prefer padded RT bounds if present; else fall back to raw
+    rt_left  = int(getattr(rp, "left_padded",  getattr(rp, "left",  0)))
+    rt_right = int(getattr(rp, "right_padded", getattr(rp, "right", 0)))
+    scan_left  = int(scan_left)
+    scan_right = int(scan_right)
 
-    # Prefer keyword if the name exists, else try alternatives, else positional
-    if "mz_bin" in params:
-        return ClusterSpec(mz_bin=int(rp.mz_row), **kwargs)
-    if "bin" in params:
-        return ClusterSpec(bin=int(rp.mz_row), **kwargs)
+    # Clamp everything to be non-negative and left<=right
+    rt_left,  rt_right  = _clamp_bounds_nonneg(rt_left,  rt_right)
+    scan_left, scan_right = _clamp_bounds_nonneg(scan_left, scan_right)
 
-    # Last resort: positional ordering assumed as:
-    # (mz_bin, rt_left, rt_right, scan_left, scan_right, mz_ppm, resolution)
+    # rp.mz_row is the RT row index (your Python ClusterSpec calls it rt_row)
     return ClusterSpec(
         int(rp.mz_row),
-        kwargs["rt_left"], kwargs["rt_right"],
-        kwargs["scan_left"], kwargs["scan_right"],
-        kwargs["mz_ppm"], kwargs["resolution"],
+        rt_left, rt_right,
+        scan_left, scan_right,
+        float(mz_ppm), int(resolution),
     )
 
 def _get_im_list_for_peak(
