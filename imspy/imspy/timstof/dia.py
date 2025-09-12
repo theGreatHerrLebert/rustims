@@ -4,7 +4,6 @@ from typing import List, Optional
 
 import numpy as np
 
-from .cluster import ClusterResult, ClusterSpec
 from .data import TimsDataset
 import pandas as pd
 
@@ -434,11 +433,12 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
     def evaluate_clusters_separable(
             self,
-            specs: List[ClusterSpec],
+            specs: List,
             bins: "np.ndarray[np.uint32]",
             frames: "np.ndarray[np.uint32]",
             num_threads: int = 4,
-    ) -> List[ClusterResult]:
+    ) -> List:
+        from .cluster import ClusterResult
         """
         Extract RT×IM patches for given ClusterSpec, fit a separable 2D Gaussian,
         and return ClusterResult objects (spec, patch, fit, quality).
