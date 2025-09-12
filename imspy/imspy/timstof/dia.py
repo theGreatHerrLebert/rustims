@@ -391,3 +391,39 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         )
         # Wrap to Python ImPeak1D
         return [[ImPeak1D.from_py_ptr(p) for p in row] for row in peak_rows_py]
+
+    def pick_im_peaks_on_im_matrix_adaptive(
+            self,
+            im_matrix,
+            im_matrix_raw=None,
+            *,
+            strategy: str = "active_range",  # "none" | "full" | "active_range" | "apex_window"
+            low_thresh: float = 100.0,
+            mid_thresh: float = 200.0,
+            sigma_lo: float = 4.0,
+            sigma_hi: float = 2.0,
+            min_prom_lo: float = 25.0,
+            min_prom_hi: float = 50.0,
+            min_width_lo: int = 6,
+            min_width_hi: int = 3,
+            abs_thr: float = 5.0,
+            rel_thr: float = 0.03,
+            pad: int = 2,
+            active_min_width: int = 6,
+            apex_half_width: int = 15,
+            min_distance_scans: int = 4,
+            use_mobility: bool = False,
+    ):
+        rows_py = self.__dataset.pick_im_peaks_on_matrix_adaptive(
+            im_matrix, im_matrix_raw,
+            min_distance_scans,
+            strategy,
+            low_thresh, mid_thresh,
+            sigma_lo, sigma_hi,
+            min_prom_lo, min_prom_hi,
+            min_width_lo, min_width_hi,
+            abs_thr, rel_thr, pad, active_min_width,
+            apex_half_width,
+            use_mobility,
+        )
+        return [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
