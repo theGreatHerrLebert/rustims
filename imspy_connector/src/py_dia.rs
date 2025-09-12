@@ -1,12 +1,17 @@
+use rustdf::cluster::cluster_eval::ClusterSpec;
 use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, pick_im_peaks_on_imindex, pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy, FallbackMode};
+use rustdf::cluster::utility::{RtPeak1D, ImPeak1D,
+                               pick_im_peaks_on_imindex,
+                               pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy, FallbackMode};
+use rustdf::cluster::cluster_eval::evaluate_clusters_separable;
 use rustdf::cluster::utility::ImIndex;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
+use crate::py_cluster::{PyClusterResult, PyClusterSpec};
 
 fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
@@ -410,6 +415,57 @@ impl PyTimsDatasetDIA {
             policy,
         );
         impeaks_to_py_nested(py, rows_rs)
+    }
+
+    // Evaluate clusters: extract (RT×IM) patches in RAM, fit separable 2D Gaussian, return results.
+    ///
+    /// Args:
+    ///   specs: List[PyClusterSpec]
+    ///   bins:  np.ndarray[uint32]  -- from get_dense_mz_vs_rt
+    ///   frames: np.ndarray[uint32] -- RT-sorted frame IDs from get_dense_mz_vs_rt
+    ///   num_threads: usize (set to 1 if using Bruker SDK)
+    #[pyo3(signature = (specs, bins, frames, num_threads=4))]
+    pub fn evaluate_clusters_separable<'py>(
+        &self,
+        py: Python<'py>,
+        specs: Vec<Py<PyClusterSpec>>,
+        bins: PyReadonlyArray1<'py, u32>,
+        frames: PyReadonlyArray1<'py, u32>,
+        num_threads: usize,
+    ) -> PyResult<Vec<Py<PyClusterResult>>> {
+        // Borrow numpy arrays as Rust slices
+        let bins_rs: Vec<u32> = bins.as_slice()?.to_vec();
+        let frame_ids_sorted: Vec<u32> = frames.as_slice()?.to_vec();
+
+        // If you must force single-thread when using the Bruker SDK, do it here:
+        let nt =  num_threads;
+
+        // Materialize frames in RT order once
+        let frames_slice = self.inner.get_slice(frame_ids_sorted.clone(), nt);
+        let frames_in_rt_order: Vec<&mscore::timstof::frame::TimsFrame> =
+            frames_slice.frames.iter().collect();
+
+        // Specs -> Vec<ClusterSpec>
+        let specs_rs: Vec<rustdf::cluster::cluster_eval::ClusterSpec> = specs
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        // Evaluate (parallel inside)
+        let results = evaluate_clusters_separable(
+            &frames_in_rt_order,
+            &frame_ids_sorted,
+            &bins_rs,
+            &specs_rs,
+        );
+
+        // Wrap to PyClusterResult
+        let out: Vec<Py<PyClusterResult>> = results
+            .into_iter()
+            .map(|r| Py::new(py, PyClusterResult { inner: r }))
+            .collect::<PyResult<_>>()?;
+
+        Ok(out)
     }
 }
 

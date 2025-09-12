@@ -1,6 +1,10 @@
 import sqlite3
 import warnings
 from typing import List, Optional
+
+import numpy as np
+
+from imspy.timstof.cluster import ClusterResult, ClusterSpec
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 
@@ -427,3 +431,33 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             use_mobility,
         )
         return [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
+
+    def evaluate_clusters_separable(
+            self,
+            specs: List[ClusterSpec],
+            bins: "np.ndarray[np.uint32]",
+            frames: "np.ndarray[np.uint32]",
+            num_threads: int = 4,
+    ) -> List[ClusterResult]:
+        """
+        Extract RT×IM patches for given ClusterSpec, fit a separable 2D Gaussian,
+        and return ClusterResult objects (spec, patch, fit, quality).
+
+        Args:
+            specs: List[ClusterSpec] (row/column windows + mz_ppm/resolution).
+            bins:  np.ndarray[uint32] from get_dense_mz_vs_rt(_and_pick).
+            frames: np.ndarray[uint32] RT-sorted frame IDs from get_dense_mz_vs_rt(_and_pick).
+            num_threads: worker threads (will be forced to 1 for Bruker SDK).
+
+        Returns:
+            List[ClusterResult]
+        """
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, setting num_threads=1.")
+            num_threads = 1
+
+        specs_py = [s.get_py_ptr() for s in specs]
+        res_py = self.__dataset.evaluate_clusters_separable(
+            specs_py, bins, frames, num_threads
+        )
+        return [ClusterResult.from_py_ptr(r) for r in res_py]

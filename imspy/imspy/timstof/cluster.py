@@ -1,0 +1,288 @@
+# imspy/cluster.py
+from __future__ import annotations
+from typing import List, Iterable, Tuple, Optional, Dict, Any
+import numpy as np
+import pandas as pd
+
+import imspy_connector
+ims = imspy_connector.py_cluster
+
+from imspy.simulation.annotation import RustWrapperObject
+from imspy.timstof.dia import RtPeak1D, ImPeak1D  # <- adjust import path to where you defined them
+
+
+# -------------------- Core wrappers --------------------
+
+class ClusterSpec(RustWrapperObject):
+    """Python wrapper around Rust PyClusterSpec (read-only properties)."""
+    def __init__(
+        self,
+        rt_row: int,
+        rt_left: int,
+        rt_right: int,
+        scan_left: int,
+        scan_right: int,
+        mz_ppm: float,
+        resolution: int,
+    ):
+        self.__py_ptr = ims.PyClusterSpec(
+            rt_row, rt_left, rt_right, scan_left, scan_right, float(mz_ppm), int(resolution)
+        )
+
+    @property
+    def rt_row(self) -> int: return self.__py_ptr.rt_row
+    @property
+    def rt_left(self) -> int: return self.__py_ptr.rt_left
+    @property
+    def rt_right(self) -> int: return self.__py_ptr.rt_right
+    @property
+    def scan_left(self) -> int: return self.__py_ptr.scan_left
+    @property
+    def scan_right(self) -> int: return self.__py_ptr.scan_right
+    @property
+    def mz_ppm(self) -> float: return self.__py_ptr.mz_ppm
+    @property
+    def resolution(self) -> int: return self.__py_ptr.resolution
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    @classmethod
+    def from_py_ptr(cls, spec: ims.PyClusterSpec) -> "ClusterSpec":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = spec
+        return inst
+
+    def __repr__(self) -> str:
+        return (f"ClusterSpec(rt_row={self.rt_row}, rt_left={self.rt_left}, rt_right={self.rt_right}, "
+                f"scan_left={self.scan_left}, scan_right={self.scan_right}, "
+                f"mz_ppm={self.mz_ppm}, resolution={self.resolution})")
+
+
+class Gaussian1D(RustWrapperObject):
+    def __init__(self, py: ims.PyGaussian1D):
+        self.__py_ptr = py
+
+    @property
+    def mu(self) -> float: return self.__py_ptr.mu
+    @property
+    def sigma(self) -> float: return self.__py_ptr.sigma
+    @property
+    def fwhm(self) -> float: return self.__py_ptr.fwhm
+
+    def get_py_ptr(self): return self.__py_ptr
+
+    @classmethod
+    def from_py_ptr(cls, g: ims.PyGaussian1D) -> "Gaussian1D":
+        return cls(g)
+
+    def __repr__(self) -> str:
+        return f"Gaussian1D(mu={self.mu:.3f}, sigma={self.sigma:.3f}, fwhm={self.fwhm:.3f})"
+
+
+class Separable2DFit(RustWrapperObject):
+    def __init__(self, py: ims.PySeparable2DFit):
+        self.__py_ptr = py
+
+    @property
+    def rt(self) -> Gaussian1D: return Gaussian1D.from_py_ptr(self.__py_ptr.rt)
+    @property
+    def im(self) -> Gaussian1D: return Gaussian1D.from_py_ptr(self.__py_ptr.im)
+    @property
+    def A(self) -> float: return self.__py_ptr.A      # amplitude
+    @property
+    def B(self) -> float: return self.__py_ptr.B      # background
+
+    def get_py_ptr(self): return self.__py_ptr
+
+    @classmethod
+    def from_py_ptr(cls, f: ims.PySeparable2DFit) -> "Separable2DFit":
+        return cls(f)
+
+    def __repr__(self) -> str:
+        return f"Separable2DFit(rt={self.rt}, im={self.im}, A={self.A:.2f}, B={self.B:.2f})"
+
+
+class ClusterQuality(RustWrapperObject):
+    def __init__(self, py: ims.PyClusterQuality):
+        self.__py_ptr = py
+
+    @property
+    def r2(self) -> float: return self.__py_ptr.r2
+    @property
+    def mse(self) -> float: return self.__py_ptr.mse
+    @property
+    def snr_local(self) -> float: return self.__py_ptr.snr_local
+    @property
+    def edge_mass_frac(self) -> float: return self.__py_ptr.edge_mass_frac
+
+    def get_py_ptr(self): return self.__py_ptr
+
+    @classmethod
+    def from_py_ptr(cls, q: ims.PyClusterQuality) -> "ClusterQuality":
+        return cls(q)
+
+    def __repr__(self) -> str:
+        return f"ClusterQuality(r2={self.r2:.4f}, mse={self.mse:.3f}, snr={self.snr_local:.2f}, edge={self.edge_mass_frac:.3f})"
+
+
+class ClusterPatch(RustWrapperObject):
+    """Carries the raw 2D RT×IM data for a cluster selection (rows=frames, cols=scans)."""
+    def __init__(self, py: ims.PyClusterPatch):
+        self.__py_ptr = py
+
+    @property
+    def rows(self) -> int: return self.__py_ptr.rows
+    @property
+    def cols(self) -> int: return self.__py_ptr.cols
+
+    def rt_frames(self) -> np.ndarray:
+        return self.__py_ptr.rt_frames()
+    def scans(self) -> np.ndarray:
+        return self.__py_ptr.scans()
+    def rt_trace(self) -> np.ndarray:
+        return self.__py_ptr.rt_trace()
+    def im_trace(self) -> np.ndarray:
+        return self.__py_ptr.im_trace()
+    def patch(self) -> np.ndarray:
+        return self.__py_ptr.patch()
+
+    @property
+    def total_area(self) -> float: return self.__py_ptr.total_area
+    @property
+    def apex_value(self) -> float: return self.__py_ptr.apex_value
+    @property
+    def apex_pos(self) -> Tuple[int, int]: return self.__py_ptr.apex_pos
+
+    def get_py_ptr(self): return self.__py_ptr
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyClusterPatch) -> "ClusterPatch":
+        return cls(p)
+
+
+class ClusterResult(RustWrapperObject):
+    """Bundle of spec, patch, fit and quality."""
+    def __init__(self, py: ims.PyClusterResult):
+        self.__py_ptr = py
+
+    @property
+    def spec(self) -> ClusterSpec:
+        return ClusterSpec.from_py_ptr(self.__py_ptr.spec)
+    @property
+    def patch(self) -> ClusterPatch:
+        return ClusterPatch.from_py_ptr(self.__py_ptr.patch)
+    @property
+    def fit(self) -> Separable2DFit:
+        return Separable2DFit.from_py_ptr(self.__py_ptr.fit)
+    @property
+    def quality(self) -> ClusterQuality:
+        return ClusterQuality.from_py_ptr(self.__py_ptr.quality)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Compact dict for DataFrame creation."""
+        d = self.__py_ptr.to_dict()
+        # d is a Python dict returned from Rust, so just return it
+        return dict(d)
+
+    def get_py_ptr(self): return self.__py_ptr
+
+    @classmethod
+    def from_py_ptr(cls, r: ims.PyClusterResult) -> "ClusterResult":
+        return cls(r)
+
+    def __repr__(self) -> str:
+        q = self.quality
+        return f"ClusterResult({q})"
+
+
+# -------------------- Helpers --------------------
+
+def build_specs_from_peaks(
+    rt_peaks: Iterable[RtPeak1D],
+    im_peaks_by_rtrow: Dict[int, List[ImPeak1D]],
+    *,
+    mz_ppm: float = 20.0,
+    resolution: int = 2,
+    # if an rt_row has no IM peak, you can choose a default IM span:
+    default_scan_span: Optional[Tuple[int, int]] = None,
+) -> List[ClusterSpec]:
+    """
+    Convert (RtPeak1D + ImPeak1D) into ClusterSpec list.
+    - Multiple IM peaks per RT row -> multiple ClusterSpec for the same rt_row with different scan windows.
+    - If an RT row has no IM peaks, optionally use `default_scan_span` = (scan_left, scan_right).
+    """
+    out: List[ClusterSpec] = []
+    by_row: Dict[int, List[RtPeak1D]] = {}
+    for p in rt_peaks:
+        by_row.setdefault(p.mz_row, []).append(p)
+
+    for mz_row, rts in by_row.items():
+        # pick the padded RT window from each RT peak (you already compute left_padded/right_padded)
+        for rt in rts:
+            scans = im_peaks_by_rtrow.get(mz_row, [])
+            if scans:
+                for ip in scans:
+                    out.append(ClusterSpec(
+                        rt_row=int(mz_row),
+                        rt_left=int(rt.left_padded if hasattr(rt, "left_padded") else rt.left),
+                        rt_right=int(rt.right_padded if hasattr(rt, "right_padded") else rt.right),
+                        scan_left=int(ip.left),
+                        scan_right=int(ip.right),
+                        mz_ppm=float(mz_ppm),
+                        resolution=int(resolution),
+                    ))
+            elif default_scan_span is not None:
+                scan_left, scan_right = default_scan_span
+                out.append(ClusterSpec(
+                    rt_row=int(mz_row),
+                    rt_left=int(rt.left_padded if hasattr(rt, "left_padded") else rt.left),
+                    rt_right=int(rt.right_padded if hasattr(rt, "right_padded") else rt.right),
+                    scan_left=int(scan_left),
+                    scan_right=int(scan_right),
+                    mz_ppm=float(mz_ppm),
+                    resolution=int(resolution),
+                ))
+    return out
+
+
+def evaluate_clusters_separable(
+    ds_py_ptr,           # ds.get_py_ptr()
+    specs: List[ClusterSpec],
+    bins: np.ndarray,    # from get_dense_mz_vs_rt...
+    frames: np.ndarray,  # from get_dense_mz_vs_rt...
+    num_threads: int = 4
+) -> List[ClusterResult]:
+    """Thin Python bridge to the Rust method; returns high-level Python wrappers."""
+    specs_py = [s.get_py_ptr() for s in specs]
+    res_py = ds_py_ptr.evaluate_clusters_separable(specs_py, bins, frames, num_threads)
+    return [ClusterResult.from_py_ptr(r) for r in res_py]
+
+
+def results_to_df(results: List[ClusterResult]) -> pd.DataFrame:
+    """Flatten ClusterResult into a tidy DataFrame (uses Rust-side to_dict for speed/consistency)."""
+    return pd.DataFrame([r.to_dict() for r in results])
+
+
+# -------------------- (Optional) Quick sanity visual helpers --------------------
+def plot_cluster_patch(result: ClusterResult, ax=None, cmap="viridis"):
+    import matplotlib.pyplot as plt
+    p = result.patch
+    mat = p.patch()
+    if ax is None:
+        fig, ax = plt.subplots()
+    im = ax.imshow(mat, aspect="auto", origin="lower", cmap=cmap)
+    ax.set_title("Cluster patch (rows=frames, cols=scans)")
+    ax.set_xlabel("scan")
+    ax.set_ylabel("frame")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    return ax
+
+def plot_traces(result: ClusterResult, ax_rt=None, ax_im=None):
+    import matplotlib.pyplot as plt
+    p = result.patch
+    if ax_rt is None or ax_im is None:
+        fig, (ax_rt, ax_im) = plt.subplots(1, 2, figsize=(10, 3))
+    ax_rt.plot(p.rt_trace()); ax_rt.set_title("RT trace (sum over scans)")
+    ax_im.plot(p.im_trace()); ax_im.set_title("IM trace (sum over frames)")
+    return ax_rt, ax_im
