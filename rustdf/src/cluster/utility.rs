@@ -279,40 +279,64 @@ fn _trapezoid_area(y: &[f32], l: usize, r: usize) -> f32 {
 #[inline(always)]
 fn lerp(a: f32, b: f32, t: f32) -> f32 { a + t * (b - a) }
 
-/// Integrate y over [x0, x1] where x is in sample index units and y is linear between samples.
-/// Assumes 0 <= x0 < x1 <= (y.len()-1) as f32.
-fn trapezoid_area_fractional(y: &[f32], x0: f32, x1: f32) -> f32 {
+/// Safe integration of a piecewise-linear signal y over [x0, x1].
+/// x is in sample-index units, segments are [s, s+1] for s=0..n-2.
+/// Handles boundaries: no y[n] access, supports n==0/1.
+fn trapezoid_area_fractional(y: &[f32], mut x0: f32, mut x1: f32) -> f32 {
     let n = y.len();
-    debug_assert!(n >= 2 && x0 < x1 && x0 >= 0.0 && x1 <= (n - 1) as f32);
+    if n < 2 {
+        // With <2 samples, treat area as 0
+        return 0.0;
+    }
+
+    // Clamp to [0, n-1]
+    let max_x = (n - 1) as f32;
+    x0 = x0.clamp(0.0, max_x);
+    x1 = x1.clamp(0.0, max_x);
+    if x1 <= x0 { return 0.0; }
 
     let i0 = x0.floor() as usize;
     let i1 = x1.floor() as usize;
 
-    // handle if both inside same interval
+    // Both inside same segment [i0, i0+1] (ensure i0 < n-1)
     if i0 == i1 {
-        let t0 = x0 - i0 as f32;
-        let t1 = x1 - i0 as f32;
-        let y0 = lerp(y[i0], y[i0 + 1], t0);
-        let y1 = lerp(y[i0], y[i0 + 1], t1);
+        let i = i0.min(n - 2);
+        let t0 = x0 - i as f32;
+        let t1 = x1 - i as f32;
+        let y0 = lerp(y[i], y[i + 1], t0);
+        let y1 = lerp(y[i], y[i + 1], t1);
         return 0.5 * (y0 + y1) * (t1 - t0);
     }
 
-    // left partial interval
-    let t0 = x0 - i0 as f32;
-    let yl0 = lerp(y[i0], y[i0 + 1], t0);
-    let yl1 = y[i0 + 1];
-    let mut area = 0.5 * (yl0 + yl1) * (1.0 - t0);
+    // Work with segment indices s in [0..n-2]
+    let s0 = i0.min(n - 2);
+    let s1 = i1.min(n - 2);
 
-    // full interior intervals
-    for k in (i0 + 1)..i1 {
-        area += 0.5 * (y[k] + y[k + 1]); // width = 1.0
+    let mut area = 0.0f32;
+
+    // Left partial: from x0 within segment s0 up to s0+1
+    let t0 = x0 - s0 as f32;              // in [0,1)
+    let yl0 = lerp(y[s0], y[s0 + 1], t0); // value at x0
+    let yl1 = y[s0 + 1];                  // value at segment end
+    area += 0.5 * (yl0 + yl1) * (1.0 - t0);
+
+    // Full interior segments: s in (s0+1 .. s1-1)
+    // Only if there is at least one full segment strictly between left/right partials
+    if s1 > s0 + 1 {
+        for s in (s0 + 1)..s1 {
+            area += 0.5 * (y[s] + y[s + 1]); // width = 1
+        }
     }
 
-    // right partial interval
-    let t1 = x1 - i1 as f32;
-    let yr0 = y[i1];
-    let yr1 = lerp(y[i1], y[i1 + 1], t1);
-    area += 0.5 * (yr0 + yr1) * t1;
+    // Right partial: only if x1 lies *inside* some segment (i1 <= n-2)
+    if i1 <= n - 2 {
+        let t1 = x1 - s1 as f32;             // in (0,1]
+        let yr0 = y[s1];
+        let yr1 = lerp(y[s1], y[s1 + 1], t1);
+        area += 0.5 * (yr0 + yr1) * t1;
+    } else {
+        // i1 == n-1 → x1 is exactly at the last node; no right partial to add.
+    }
 
     area
 }
