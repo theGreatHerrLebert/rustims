@@ -1,8 +1,6 @@
 use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
 
-// ---------- Specs & Results ----------
-
 #[derive(Clone, Debug)]
 pub struct ClusterSpec {
     /// Row in the RT index (i.e., mz_row / bin index)
@@ -122,6 +120,7 @@ fn median_abs_dev_border(p: &[f32], rows: usize, cols: usize) -> f32 {
 }
 
 // Solve [ΣG2  ΣG;  ΣG  N] [A; B] = [ΣPG; ΣP]
+#[allow(non_snake_case)]
 fn solve_AB(sum_g2: f64, sum_g: f64, n: usize, sum_pg: f64, sum_p: f64) -> (f32, f32) {
     let n = n as f64;
     let det = sum_g2 * n - sum_g * sum_g;
@@ -253,6 +252,7 @@ fn build_sep_core(rt: &Gaussian1D, im: &Gaussian1D, rows: usize, cols: usize) ->
     let sum_g2 = sum_gt2 * sum_gs2;
 
     // Store the outer product as a flat Vec to avoid recomputation:
+    #[allow(non_snake_case)]
     let mut G = vec![0.0f32; rows*cols];
     for r in 0..rows {
         for c in 0..cols {
@@ -262,6 +262,7 @@ fn build_sep_core(rt: &Gaussian1D, im: &Gaussian1D, rows: usize, cols: usize) ->
     (G, sum_g, sum_g2)
 }
 
+#[allow(non_snake_case)]
 fn fit_ab_on_patch(patch: &[f32], G: &[f32]) -> (f32, f32, f32, f32) {
     let n = patch.len();
     let mut sum_p = 0.0f64;
@@ -280,6 +281,7 @@ fn fit_ab_on_patch(patch: &[f32], G: &[f32]) -> (f32, f32, f32, f32) {
         sum_g  += g;
         sum_g2 += g*g;
     }
+    #[allow(non_snake_case)]
     let (A, B) = solve_AB(sum_g2, sum_g, n, sum_pg, sum_p);
 
     // SSE and SST for R^2

@@ -326,3 +326,107 @@ def plot_traces(result: ClusterResult, ax_rt=None, ax_im=None):
     ax_rt.plot(p.rt_trace()); ax_rt.set_title("RT trace (sum over scans)")
     ax_im.plot(p.im_trace()); ax_im.set_title("IM trace (sum over frames)")
     return ax_rt, ax_im
+
+class ClusterCloud(RustWrapperObject):
+    """
+    Python wrapper around Rust `PyClusterCloud`.
+
+    Exposes read-only metadata (rt_left/right, scan_left/right) and
+    returns numpy arrays for frame_ids, scans, tofs, intensities.
+    """
+    def __init__(
+        self,
+        rt_left: int,
+        rt_right: int,
+        scan_left: int,
+        scan_right: int,
+        frame_ids: "np.ndarray[np.uint32]",
+        scans: "np.ndarray[np.uint32]",
+        tofs: "np.ndarray[np.uint32]",
+        intensities: "np.ndarray[np.float32]",
+    ):
+        # In practice you won't construct from Python; keeping parity with your pattern.
+        # This ctor is only here for symmetry; prefer `from_py_ptr`.
+        self.__py_ptr = ims.PyClusterCloud()  # not actually used; real instances come from Rust
+
+    @classmethod
+    def from_py_ptr(cls, cloud_py: ims.PyClusterCloud) -> "ClusterCloud":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = cloud_py
+        return inst
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    # ---- scalar metadata ----
+    @property
+    def rt_left(self) -> int:
+        return self.__py_ptr.rt_left
+
+    @property
+    def rt_right(self) -> int:
+        return self.__py_ptr.rt_right
+
+    @property
+    def scan_left(self) -> int:
+        return self.__py_ptr.scan_left
+
+    @property
+    def scan_right(self) -> int:
+        return self.__py_ptr.scan_right
+
+    # ---- vector accessors (as numpy arrays) ----
+    @property
+    def frame_ids(self) -> np.ndarray:
+        # Rust returns a PyArray1[u32]; np.asarray gives a view/copy as needed.
+        return np.asarray(self.__py_ptr.frame_ids(), dtype=np.uint32)
+
+    @property
+    def scans(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.scans(), dtype=np.uint32)
+
+    @property
+    def tofs(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.tofs(), dtype=np.uint32)
+
+    @property
+    def intensities(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.intensities(), dtype=np.float32)
+
+    def __len__(self) -> int:
+        return int(self.intensities.size)
+
+    def __repr__(self):
+        return (f"ClusterCloud(rt=[{self.rt_left},{self.rt_right}], "
+                f"scan=[{self.scan_left},{self.scan_right}], "
+                f"points={len(self)})")
+
+    # --- convenience: quick 2D rasterization (RT col × Scan) ---
+    def rasterize(self, rt_frame_ids: np.ndarray) -> np.ndarray:
+        """
+        Make a dense RT×Scan image (sum of intensities per (frame, scan)).
+        Returns array shape (scan_right-scan_left+1, rt_right-rt_left+1).
+        """
+        import numpy as _np
+        rt_left, rt_right = self.rt_left, self.rt_right
+        sc_left, sc_right = self.scan_left, self.scan_right
+        nx = rt_right - rt_left + 1
+        ny = sc_right - sc_left + 1
+
+        # map frame_id -> column
+        idx = {int(fid): i for i, fid in enumerate(_np.asarray(rt_frame_ids, dtype=_np.uint32))}
+        cols = _np.fromiter((idx.get(int(fid), -1) for fid in self.frame_ids), count=len(self), dtype=_np.int32)
+        mask = (cols >= rt_left) & (cols <= rt_right)
+        cols = cols[mask]
+        scans = self.scans[mask]
+        ints = self.intensities[mask]
+
+        # shift into local window coordinates
+        cols = cols - rt_left
+        scans = scans - sc_left
+
+        img = _np.zeros((ny, nx), dtype=_np.float32)
+        # guard against out-of-range due to any mapping mismatch
+        valid = (cols >= 0) & (cols < nx) & (scans >= 0) & (scans < ny)
+        _np.add.at(img, (scans[valid], cols[valid]), ints[valid])
+        return img

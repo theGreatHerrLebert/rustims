@@ -7,6 +7,18 @@ use rayon::prelude::*;
 use rayon::iter::IntoParallelRefIterator;
 
 #[derive(Clone, Debug)]
+pub struct ClusterCloud {
+    pub rt_left: usize,
+    pub rt_right: usize,
+    pub scan_left: usize,
+    pub scan_right: usize,
+    pub frame_ids: Vec<u32>,   // absolute frame id for each point
+    pub scans:     Vec<u32>,   // scan index per point
+    pub tofs:      Vec<i32>,   // tof index per point (read directly from frame)
+    pub intensities: Vec<f32>, // intensity per point
+}
+
+#[derive(Clone, Debug)]
 pub struct ImPeak1D {
     pub rt_row: usize,        // which row in ImIndex (i.e., which RtPeak1D)
     pub scan: usize,          // apex scan index

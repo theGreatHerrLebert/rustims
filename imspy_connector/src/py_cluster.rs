@@ -8,6 +8,34 @@ use rustdf::cluster::cluster_eval::{
     ClusterSpec, ClusterPatch, Gaussian1D, Separable2DFit, ClusterQuality, ClusterResult,
 };
 
+use rustdf::cluster::utility::ClusterCloud;
+
+#[pyclass]
+pub struct PyClusterCloud {
+    pub inner: ClusterCloud,
+}
+
+#[pymethods]
+impl PyClusterCloud {
+    #[getter] pub fn rt_left(&self) -> usize { self.inner.rt_left }
+    #[getter] pub fn rt_right(&self) -> usize { self.inner.rt_right }
+    #[getter] pub fn scan_left(&self) -> usize { self.inner.scan_left }
+    #[getter] pub fn scan_right(&self) -> usize { self.inner.scan_right }
+
+    pub fn frame_ids<'py>(&self, py: Python<'py>) -> Py<PyArray1<u32>> {
+        PyArray1::from_vec_bound(py, self.inner.frame_ids.clone()).unbind()
+    }
+    pub fn scans<'py>(&self, py: Python<'py>) -> Py<PyArray1<u32>> {
+        PyArray1::from_vec_bound(py, self.inner.scans.clone()).unbind()
+    }
+    pub fn tofs<'py>(&self, py: Python<'py>) -> Py<PyArray1<i32>> {
+        PyArray1::from_vec_bound(py, self.inner.tofs.clone()).unbind()
+    }
+    pub fn intensities<'py>(&self, py: Python<'py>) -> Py<PyArray1<f32>> {
+        PyArray1::from_vec_bound(py, self.inner.intensities.clone()).unbind()
+    }
+}
+
 /// -------- PyClusterSpec --------
 #[pyclass]
 pub struct PyClusterSpec {
@@ -184,5 +212,6 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterQuality>()?;
     m.add_class::<PyClusterPatch>()?;
     m.add_class::<PyClusterResult>()?;
+    m.add_class::<PyClusterCloud>()?;
     Ok(())
 }

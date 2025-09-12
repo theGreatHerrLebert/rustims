@@ -1,16 +1,18 @@
 use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::utility::{RtPeak1D, ImPeak1D,
-                               pick_im_peaks_on_imindex,
-                               pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy, FallbackMode};
-use rustdf::cluster::cluster_eval::evaluate_clusters_separable;
+use rustdf::cluster::utility::{
+    RtPeak1D, ImPeak1D,
+    pick_im_peaks_on_imindex, pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy,
+    FallbackMode
+};
+use rustdf::cluster::cluster_eval::{evaluate_clusters_separable, ClusterSpec};
 use rustdf::cluster::utility::ImIndex;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
-use crate::py_cluster::{PyClusterResult, PyClusterSpec};
+use crate::py_cluster::{PyClusterCloud, PyClusterResult, PyClusterSpec};
 
 fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
@@ -463,6 +465,34 @@ impl PyTimsDatasetDIA {
             .into_iter()
             .map(|r| Py::new(py, PyClusterResult { inner: r }))
             .collect::<PyResult<_>>()?;
+
+        Ok(out)
+    }
+
+    #[pyo3(signature = (specs, bins, frames, resolution, num_threads=4))]
+    pub fn extract_cluster_clouds_batched<'py>(
+        &self,
+        py: Python<'py>,
+        specs: Vec<Py<PyClusterSpec>>,
+        bins: &Bound<'py, PyArray1<u32>>,
+        frames: &Bound<'py, PyArray1<u32>>,
+        resolution: usize,
+        num_threads: usize,
+    ) -> PyResult<Vec<Py<PyClusterCloud>>> {
+        let bins_rs = bins.readonly().as_slice()?.to_vec();
+        let frame_ids_sorted = frames.readonly().as_slice()?.to_vec();
+
+        let specs_rs: Vec<ClusterSpec> = specs.into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let clouds = self.inner.extract_cluster_clouds_batched(
+            &specs_rs, &bins_rs, &frame_ids_sorted, resolution, num_threads,
+        );
+
+        let out: Vec<Py<PyClusterCloud>> = clouds.into_iter()
+            .map(|c| Py::new(py, PyClusterCloud { inner: c }).unwrap())
+            .collect();
 
         Ok(out)
     }

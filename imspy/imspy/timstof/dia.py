@@ -461,3 +461,21 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             specs_py, bins, frames, num_threads
         )
         return [ClusterResult.from_py_ptr(r) for r in res_py]
+
+    def extract_cluster_clouds_batched(
+            self,
+            specs: List,  # your existing Python wrapper for specs
+            bins: "np.ndarray[np.uint32]",
+            frames: "np.ndarray[np.uint32]",
+            resolution: int = 2,
+            num_threads: int = 4,
+    ) -> List:
+        from .cluster import ClusterCloud
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, setting num_threads=1.")
+            num_threads = 1
+        specs_py = [s.get_py_ptr() for s in specs]
+        clouds_py = self.__dataset.extract_cluster_clouds_batched(
+            specs_py, bins, frames, int(resolution), int(num_threads)
+        )
+        return [ClusterCloud.from_py_ptr(c) for c in clouds_py]

@@ -7,7 +7,8 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
-use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex};
+use crate::cluster::cluster_eval::ClusterSpec;
+use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex, ClusterCloud};
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -241,6 +242,125 @@ impl TimsDatasetDIA {
             maybe_sigma_scans,
             truncate,
         )
+    }
+    /// Extract raw (frame, scan, tof, intensity) points for a batch of cluster specs.
+    ///
+    /// Loads precursor frames once (RT-ordered), then distributes points to all specs whose
+    /// RT window covers that frame, with additional m/z ±ppm and scan-range filtering.
+    ///
+    /// - `specs`  : cluster specs (rt_row gives which m/z row the center came from)
+    /// - `bins`   : quantized m/z bins (from your RT index build)
+    /// - `frames_rt_sorted`: RT-sorted absolute frame IDs (same as you returned in RT index)
+    /// - `resolution`: m/z binning resolution used to produce `bins`
+    ///
+    /// Returns a `ClusterCloud` per spec in the same order.
+    pub fn extract_cluster_clouds_batched(
+        &self,
+        specs: &[ClusterSpec],
+        bins: &[u32],
+        frames_rt_sorted: &[u32],
+        resolution: usize,
+        num_threads: usize,
+    ) -> Vec<ClusterCloud> {
+        // Materialize frames once in RT order
+        let slice = self.get_slice(frames_rt_sorted.to_vec(), num_threads);
+        let frames_in_rt: Vec<&TimsFrame> = slice.frames.iter().collect();
+        let ncols = frames_in_rt.len();
+
+        // Precompute per-spec constants and col→specs map
+        let factor = 10f64.powi(resolution as i32);
+
+        struct SpecPre {
+            scan_left: usize,
+            scan_right: usize,
+            mz_lo: f64,
+            mz_hi: f64,
+        }
+
+        let mut pres: Vec<SpecPre> = Vec::with_capacity(specs.len());
+        let mut col_to_specs: Vec<Vec<usize>> = vec![Vec::new(); ncols];
+
+        for (idx, sp) in specs.iter().enumerate() {
+            let mz_center = (bins[sp.rt_row] as f64) / factor;
+            let mz_tol = (sp.mz_ppm as f64) * 1e-6 * mz_center;
+
+            let rt_left  = sp.rt_left.min(ncols.saturating_sub(1));
+            let rt_right = sp.rt_right.min(ncols.saturating_sub(1));
+
+            pres.push(SpecPre {
+                scan_left: sp.scan_left,
+                scan_right: sp.scan_right,
+                mz_lo: mz_center - mz_tol,
+                mz_hi: mz_center + mz_tol,
+            });
+
+            for c in rt_left..=rt_right {
+                col_to_specs[c].push(idx);
+            }
+        }
+
+        // Prepare outputs
+        let mut clouds: Vec<ClusterCloud> = specs.iter().map(|sp| ClusterCloud {
+            rt_left: sp.rt_left,
+            rt_right: sp.rt_right,
+            scan_left: sp.scan_left,
+            scan_right: sp.scan_right,
+            frame_ids: Vec::with_capacity(4096),
+            scans:     Vec::with_capacity(4096),
+            tofs:      Vec::with_capacity(4096),
+            intensities: Vec::with_capacity(4096),
+        }).collect();
+
+        // Walk frames once; distribute points to relevant specs
+        for col in 0..ncols {
+            let targets = &col_to_specs[col];
+            if targets.is_empty() { continue; }
+
+            let fr = frames_in_rt[col];
+            let fid = frames_rt_sorted[col];
+
+            let mz   = &fr.ims_frame.mz;
+            let inten= &fr.ims_frame.intensity;
+            let scans_src: Option<&Vec<i32>> = Some(fr.scan.as_ref());
+
+            let tofs: &Vec<i32> = fr.tof.as_ref();
+
+            // For each point in the frame
+            for i in 0..mz.len() {
+                let scan_ok = if let Some(sv) = scans_src {
+                    let s = sv[i];
+                    (s as usize) >=  pres[targets[0]].scan_left // quick coarse bounds check w.r.t first target;
+                    // full check is done per target below
+                } else { true };
+
+                if !scan_ok { continue; }
+                let m = mz[i];
+
+                // Test against all specs covering this column
+                for &sp_idx in targets {
+                    let sp = &pres[sp_idx];
+
+                    // scan range
+                    if let Some(sv) = scans_src {
+                        let s = sv[i] as usize;
+                        if s < sp.scan_left || s > sp.scan_right { continue; }
+                    }
+
+                    // m/z window
+                    if m < sp.mz_lo || m > sp.mz_hi { continue; }
+
+                    // keep the point
+                    let cloud = &mut clouds[sp_idx];
+                    cloud.frame_ids.push(fid);
+                    let sc_u32 = scans_src.map(|sv| sv[i] as u32).unwrap_or(0);
+                    cloud.scans.push(sc_u32);
+                    cloud.tofs.push(tofs[i]);
+                    cloud.intensities.push(inten[i] as f32);
+                }
+            }
+        }
+
+        clouds
     }
 }
 
