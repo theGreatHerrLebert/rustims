@@ -87,27 +87,46 @@ pub struct ClusterResult {
     pub patch_shape: (usize, usize),     // (frames, scans)
 }
 
+#[inline]
+fn smooth3_inplace(y: &mut [f32]) {
+    if y.len() < 3 { return; }
+    let mut prev = y[0];
+    for i in 1..y.len()-1 {
+        let cur = y[i];
+        let nxt = y[i+1];
+        y[i] = (prev + cur + nxt) / 3.0;
+        prev = cur;
+    }
+}
+
 fn ppm_to_delta_da(mz: f32, ppm: f32) -> f32 {
     mz * ppm * 1e-6
 }
 
-/// Simple, robust moment-based fit on y (>=0), over x = 0..n-1 (or provided)
 fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
     let n = y.len();
     if n == 0 {
         return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: 0.0, area: 0.0, r2: f32::NAN, n: 0 };
     }
-    // constant baseline as a robust low-percentile (10th)
+
+    // robust baseline (10th pct)
     let mut ys: Vec<f32> = y.to_vec();
     ys.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let b_idx = ((0.10 * (n as f32)).floor() as usize).min(n-1);
-    let b0 = ys[b_idx];
+    let b0 = ys[((0.10 * (n as f32)).floor() as usize).min(n-1)];
 
-    // positive part
+    // determine effective bin width for integral (assume uniform if x!=None)
+    let dx: f32 = if let Some(xx) = x {
+        if xx.len() >= 2 {
+            ((xx[xx.len()-1] - xx[0]) / (xx.len().saturating_sub(1) as f32)).abs()
+        } else { 1.0 }
+    } else { 1.0 };
+
+    // positive part moments + integral
     let mut wsum = 0.0f64;
     let mut xsum = 0.0f64;
     let mut x2sum = 0.0f64;
     let mut peak = 0.0f32;
+    let mut pos_integral = 0.0f64;
 
     for i in 0..n {
         let xi = if let Some(xx) = x { xx[i] as f64 } else { i as f64 };
@@ -116,19 +135,30 @@ fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
             wsum += yi;
             xsum += yi * xi;
             x2sum += yi * xi * xi;
-            if y[i] > peak { peak = y[i]; }
+            pos_integral += yi;
         }
+        if y[i] > peak { peak = y[i]; }
     }
 
     if wsum <= 0.0 {
-        return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: b0, area: 0.0, r2: f32::NAN, n };
+        // flat after baseline → area from raw integral (no baseline), as last resort
+        let raw_sum: f32 = y.iter().copied().sum::<f32>() * dx;
+        return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: b0, area: raw_sum, r2: f32::NAN, n };
     }
 
     let mu = (xsum / wsum) as f32;
     let var = (x2sum / wsum - (mu as f64)*(mu as f64)).max(0.0) as f32;
     let sigma = var.sqrt();
+
+    // gaussian proxy
     let height = (peak - b0).max(0.0);
-    let area = height * sigma * (std::f32::consts::TAU).sqrt() * 0.5_f32.sqrt(); // ≈ height * σ * √(2π)
+    let gauss_area = height * sigma * (std::f32::consts::TAU).sqrt() * 0.5_f32.sqrt();
+
+    // integral fallback (above baseline), scaled by bin width
+    let integ_area = (pos_integral as f32) * dx;
+
+    // use the more conservative non-zero estimate
+    let area = if gauss_area > 0.0 { gauss_area } else { integ_area };
 
     ClusterFit1D { mu, sigma, height, baseline: b0, area, r2: f32::NAN, n }
 }
@@ -222,6 +252,7 @@ fn extract_patch_and_mz_hist(
     let bins = spec.mz_hist_bins.max(10);
     let bin_w = (mz_max - mz_min) / (bins as f32);
     let mut mz_hist   = vec![0.0f32; bins];
+
     let mut mz_center = Vec::with_capacity(bins);
     for b in 0..bins {
         mz_center.push(mz_min + (b as f32 + 0.5) * bin_w);
@@ -263,6 +294,8 @@ fn extract_patch_and_mz_hist(
 
     // scans axis
     let scans_axis: Vec<usize> = (im_l..=im_r).collect();
+
+    smooth3_inplace(&mut mz_hist);
 
     (f_patch, frames, scans, frame_ids, scans_axis, mz_hist, mz_center, (mz_min, mz_max))
 }
@@ -306,22 +339,36 @@ pub fn evaluate_clusters_3d(
             };
         }
 
+        // First-pass m/z fit on smoothed histogram
         let mz_fit0 = moment_fit_1d(&mz_hist_y, Some(&mz_centers));
 
-        // Optional DA refinement
-        let need_refine = opts.refine_mz_once && mz_fit0.sigma > 0.0 && mz_fit0.area > 0.0;
+        // Heuristics for whether to tighten μ ± kσ
+        let total_mz_mass: f32 = mz_hist_y.iter().copied().sum();
+        let mz_area_min: f32 = 0.01 * total_mz_mass;     // e.g., require ≥1% of hist mass
+        let raw_min: f32 = 0.0;                          // could use > 0 or a small epsilon
+
+        let want_refine =
+            opts.refine_mz_once &&
+                mz_fit0.sigma > 0.0 &&
+                mz_fit0.area > mz_area_min &&
+                patch.iter().any(|&v| v > raw_min);          // some RT×IM signal in the patch
+
         let (patch2, frames2, scans2, frame_ids2, scans_axis2, mz_hist_y2, mz_centers2, mz_da_win2) =
-            if need_refine {
+            if want_refine {
                 let k = opts.refine_k_sigma.max(1.0);
                 let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_da_win.0);
                 let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_da_win.1);
                 if hi <= lo {
-                    // refinement collapsed; reuse original
                     (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
                 } else {
                     let mut spec2 = spec.clone();
                     spec2.mz_window_da_override = Some((lo, hi));
-                    extract_patch_and_mz_hist(ds, rt_index, &spec2)
+                    let (p2, fr2, sc2, fids2, scax2, mz_y2, mz_x2, win2) =
+                        extract_patch_and_mz_hist(ds, rt_index, &spec2);
+
+                    let mut mz_y2_mut = mz_y2;
+                    smooth3_inplace(&mut mz_y2_mut);
+                    (p2, fr2, sc2, fids2, scax2, mz_y2_mut, mz_x2, win2)
                 }
             } else {
                 (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
