@@ -17,6 +17,178 @@ pub struct MzScale {
     pub centers: Vec<f32>,  // geometric mean of edges[i..i+1], len = num_bins
 }
 
+/// find local minima indices between [l, r] (inclusive bounds are fine)
+fn find_valleys(y: &[f32], l: usize, r: usize) -> Vec<usize> {
+    if r <= l + 2 { return Vec::new(); }
+    let mut mins = Vec::new();
+    for i in (l+1)..r {
+        let yi = y[i];
+        if yi <= y[i-1] && yi <= y.get(i+1).copied().unwrap_or(yi) {
+            mins.push(i);
+        }
+    }
+    mins
+}
+
+/// Rebuild a peak around a chosen apex inside a window [win_l, win_r] using the same
+/// prominence/half-prom logic as your main code, but constrained to that window.
+/// Returns None if it fails min_prom / min_width_scans.
+fn build_peak_in_window(
+    y_s: &[f32],
+    y_r: &[f32],
+    rt_row: usize,
+    apex_idx: usize,
+    win_l: usize,
+    win_r: usize,
+    min_prom: f32,
+    min_width_scans: usize,
+    mobility_of: MobilityFn,
+) -> Option<ImPeak1D> {
+    let n = y_s.len();
+    if n == 0 || win_l >= n || win_r >= n || win_l >= win_r { return None; }
+
+    let apex = y_s[apex_idx];
+
+    // bounded prominence mins (don’t walk beyond the window)
+    let mut l = apex_idx; let mut left_min = apex;
+    while l > win_l {
+        l -= 1;
+        left_min = left_min.min(y_s[l]);
+        if y_s[l] > apex { break; }
+    }
+    let mut r = apex_idx; let mut right_min = apex;
+    while r + 1 <= win_r {
+        r += 1;
+        right_min = right_min.min(y_s[r]);
+        if y_s[r] > apex { break; }
+    }
+
+    let baseline = left_min.max(right_min);
+    let prom = apex - baseline;
+    if prom < min_prom { return None; }
+
+    // half-prom crossings, constrained
+    let half = baseline + 0.5 * prom;
+
+    // left crossing
+    let mut wl = apex_idx;
+    while wl > win_l && y_s[wl] > half { wl -= 1; }
+    let left_x = if wl < apex_idx && wl + 1 < n {
+        let y0 = y_s[wl]; let y1 = y_s[wl + 1];
+        wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+    } else { wl as f32 };
+
+    // right crossing
+    let mut wr = apex_idx;
+    while wr + 1 <= win_r && y_s[wr] > half { wr += 1; }
+    let right_x = if wr > apex_idx && wr < n {
+        let y0 = y_s[wr - 1]; let y1 = y_s[wr];
+        (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+    } else { wr as f32 };
+
+    let width = (right_x - left_x).max(0.0);
+    let width_scans = width.round() as usize;
+    if width_scans < min_width_scans { return None; }
+
+    let left_idx  = left_x.floor().clamp(0.0, (n-1) as f32) as usize;
+    let right_idx = right_x.ceil().clamp(0.0, (n-1) as f32) as usize;
+    let area = trapezoid_area_fractional(
+        y_r,
+        left_x.max(0.0),
+        right_x.min((n - 1) as f32),
+    );
+
+    let mobility = mobility_of.map(|f| f(apex_idx));
+    let sub = if apex_idx > 0 && apex_idx + 1 < n {
+        quad_subsample(y_s[apex_idx - 1], y_s[apex_idx], y_s[apex_idx + 1]).clamp(-0.5, 0.5)
+    } else { 0.0 };
+
+    Some(ImPeak1D {
+        rt_row,
+        scan: apex_idx,
+        mobility,
+        apex_smoothed: apex,
+        apex_raw: y_r[apex_idx],
+        prominence: prom,
+        left: left_idx,
+        right: right_idx,
+        left_x,
+        right_x,
+        width_scans,
+        area_raw: area,
+        subscan: sub,
+    })
+}
+
+/// Try to split a provisional peak at the deepest valley between two lobes.
+/// depth_ratio: valley must be <= depth_ratio * min(left_apex_height, right_apex_height)
+/// min_sep: minimal scans separating apex from valley/apex to accept a split
+fn maybe_split_by_valleys(
+    y_s: &[f32],
+    y_r: &[f32],
+    rt_row: usize,
+    peak: &ImPeak1D,
+    depth_ratio: f32,          // e.g., 0.6
+    min_sep: usize,            // e.g., 2
+    min_prom: f32,
+    min_width_scans: usize,
+    mobility_of: MobilityFn,
+) -> Vec<ImPeak1D> {
+    let n = y_s.len();
+    if n == 0 { return vec![peak.clone()]; }
+
+    let l = peak.left.min(n.saturating_sub(1));
+    let r = peak.right.min(n.saturating_sub(1));
+    if r <= l + 2*min_sep { return vec![peak.clone()]; }
+
+    // Find a second lobe on the right side of the current apex
+    let apex0 = peak.scan;
+    let mut apex1 = apex0;
+    let mut h1 = y_s[apex0];
+    for i in (apex0+min_sep)..=r {
+        if y_s[i] > h1 { h1 = y_s[i]; apex1 = i; }
+    }
+    if apex1 == apex0 {
+        // also try a left-side lobe
+        for i in l..apex0.saturating_sub(min_sep) {
+            if y_s[i] > h1 { h1 = y_s[i]; apex1 = i; }
+        }
+    }
+    if apex1 == apex0 { return vec![peak.clone()]; }
+
+    // Order lobes left→right
+    let (left_apex, right_apex) = if apex0 < apex1 { (apex0, apex1) } else { (apex1, apex0) };
+    if right_apex <= left_apex + 2*min_sep { return vec![peak.clone()]; }
+
+    // Deepest valley between them
+    let valleys = find_valleys(y_s, left_apex + min_sep, right_apex.saturating_sub(min_sep));
+    if valleys.is_empty() { return vec![peak.clone()]; }
+    let (v, vval) = valleys.into_iter().map(|idx| (idx, y_s[idx]))
+        .min_by(|a,b| a.1.total_cmp(&b.1)).unwrap();
+
+    let h_left  = y_s[left_apex];
+    let h_right = y_s[right_apex];
+    let thr = depth_ratio * h_left.min(h_right);
+    if vval > thr { return vec![peak.clone()]; }
+
+    // Build two sub-peaks in [l..v] and [v..r]
+    let left_peak = build_peak_in_window(
+        y_s, y_r, rt_row, left_apex,
+        l, v,
+        min_prom, min_width_scans, mobility_of,
+    );
+    let right_peak = build_peak_in_window(
+        y_s, y_r, rt_row, right_apex,
+        v, r,
+        min_prom, min_width_scans, mobility_of,
+    );
+
+    match (left_peak, right_peak) {
+        (Some(lp), Some(rp)) => vec![lp, rp],
+        _ => vec![peak.clone()],
+    }
+}
+
 impl MzScale {
     pub fn build(mz_min: f32, mz_max: f32, ppm_per_bin: f32) -> Self {
 
@@ -778,248 +950,6 @@ pub enum FallbackMode {
     },
 }
 
-// --- keep your FallbackMode as you posted ---
-
-#[derive(Clone, Copy)]
-pub struct ImAdaptivePolicy {
-    pub low_thresh: f32,     // e.g., 100.0
-    pub mid_thresh: f32,     // e.g., 200.0
-    pub sigma_lo: f32,       // e.g., 4.0 scans (extra per-row smoothing)
-    pub sigma_hi: f32,       // e.g., 2.0 scans
-    pub min_prom_lo: f32,    // e.g., 0.5 * baseline
-    pub min_prom_hi: f32,    // e.g., baseline
-    pub min_width_lo: usize, // e.g., 6
-    pub min_width_hi: usize, // e.g., 3
-    pub fallback_mode: FallbackMode,
-}
-
-// ---- helpers for fallbacks ----
-fn fallback_peak_full(rt_row: usize, cols: usize, y_raw: &[f32]) -> Vec<ImPeak1D> {
-    if cols == 0 { return Vec::new(); }
-    let left_x = 0.0f32;
-    let right_x = (cols - 1) as f32;
-    let area = trapezoid_area_fractional(y_raw, left_x, right_x);
-    let (scan_max, apex_raw) = y_raw.iter().copied().enumerate()
-        .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((0,0.0));
-    vec![ImPeak1D {
-        rt_row, scan: scan_max, mobility: None,
-        apex_smoothed: apex_raw, apex_raw,
-        prominence: 0.0,
-        left: 0, right: cols - 1,
-        left_x, right_x,
-        width_scans: cols, area_raw: area, subscan: 0.0,
-    }]
-}
-
-fn fallback_peak_active(
-    rt_row: usize,
-    y_raw: &[f32],
-    pad: usize,
-    min_width: usize,
-    abs_thr: f32,
-    rel_thr: f32,
-) -> Vec<ImPeak1D> {
-    let n = y_raw.len();
-    if n == 0 { return Vec::new(); }
-    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
-    let thr = abs_thr.max(rel_thr * row_max);
-
-    let mut l = None; let mut r = None;
-    for (i, &v) in y_raw.iter().enumerate() {
-        if v >= thr { l.get_or_insert(i); r = Some(i); }
-    }
-    let (mut left, mut right) = if let (Some(l0), Some(r0)) = (l, r) {
-        (l0.saturating_sub(pad), (r0 + pad).min(n - 1))
-    } else {
-        let (scan_max, _) = y_raw.iter().copied().enumerate()
-            .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((0,0.0));
-        (scan_max, scan_max)
-    };
-    if right + 1 - left < min_width {
-        let need = min_width - (right + 1 - left);
-        let grow_left = need / 2;
-        let grow_right = need - grow_left;
-        left = left.saturating_sub(grow_left);
-        right = (right + grow_right).min(n - 1);
-    }
-
-    let left_x = left as f32; let right_x = right as f32;
-    let area = trapezoid_area_fractional(y_raw, left_x, right_x);
-    let (scan_max, apex_raw) = y_raw.iter().copied().enumerate()
-        .max_by(|a,b| a.1.total_cmp(&b.1)).unwrap_or((left, 0.0));
-
-    vec![ImPeak1D {
-        rt_row, scan: scan_max, mobility: None,
-        apex_smoothed: apex_raw, apex_raw,
-        prominence: 0.0,
-        left, right, left_x, right_x,
-        width_scans: right + 1 - left, area_raw: area, subscan: 0.0,
-    }]
-}
-
-/// Safe ApexWindow fallback: center at apex (max raw), use ±half_width scans,
-/// clamp to [0, n-1], and enforce a minimum width. Works for n==0/1 as well.
-///
-/// `min_width`: ensure at least this many scans (inclusive of both ends).
-fn fallback_peak_apex_window(
-    rt_row: usize,
-    y_raw: &[f32],
-    half_width: usize,
-    min_width: usize,   // e.g., 3 or 5; set to 1 to effectively disable
-) -> Vec<ImPeak1D> {
-    let n = y_raw.len();
-    if n == 0 {
-        return Vec::new();
-    }
-    if n == 1 {
-        // Degenerate single-scan row
-        let apex_raw = y_raw[0];
-        return vec![ImPeak1D {
-            rt_row,
-            scan: 0,
-            mobility: None,
-            apex_smoothed: apex_raw,
-            apex_raw,
-            prominence: 0.0,
-            left: 0,
-            right: 0,
-            left_x: 0.0,
-            right_x: 0.0,
-            width_scans: 1,
-            area_raw: apex_raw, // treat as area of that single sample
-            subscan: 0.0,
-        }];
-    }
-
-    // Find apex (raw)
-    let (apex_idx, apex_raw) = y_raw
-        .iter()
-        .copied()
-        .enumerate()
-        .max_by(|a, b| a.1.total_cmp(&b.1))
-        .unwrap();
-
-    // Initial window around apex, clamped
-    let mut left  = apex_idx.saturating_sub(half_width);
-    let mut right = (apex_idx + half_width).min(n - 1);
-
-    // Enforce minimum width (inclusive). If impossible, expand to whole row.
-    let mut width = right + 1 - left;
-    if width < min_width {
-        let need = min_width - width;
-        let grow_left  = need / 2;
-        let grow_right = need - grow_left;
-
-        left  = left.saturating_sub(grow_left);
-        right = (right + grow_right).min(n - 1);
-
-        // If still not enough (row too short), just use full range
-        width = right + 1 - left;
-        if width < min_width {
-            left = 0;
-            right = n - 1;
-            width = n;
-        }
-    }
-
-    let left_x  = left as f32;
-    let right_x = right as f32;
-
-    // Safe area: for n>=2 and left_x <= right_x within [0, n-1]
-    let area = trapezoid_area_fractional(y_raw, left_x, right_x);
-
-    vec![ImPeak1D {
-        rt_row,
-        scan: apex_idx,
-        mobility: None,
-        apex_smoothed: apex_raw, // in fallback, we don't have extra smoothing
-        apex_raw,
-        prominence: 0.0,
-        left,
-        right,
-        left_x,
-        right_x,
-        width_scans: width,
-        area_raw: area,
-        subscan: 0.0,
-    }]
-}
-
-// ---- adaptive row wrapper ----
-pub fn find_im_peaks_row_adaptive(
-    y_smoothed_base: &[f32],
-    y_raw: &[f32],
-    rt_row: usize,
-    mobility_of: MobilityFn,
-    min_distance_scans: usize,
-    policy: ImAdaptivePolicy,
-) -> Vec<ImPeak1D> {
-    let n = y_smoothed_base.len();
-    if n < 3 { return Vec::new(); }
-
-    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
-    if row_max < policy.low_thresh {
-        return match policy.fallback_mode {
-            FallbackMode::None => Vec::new(),
-            FallbackMode::FullWindow =>
-                fallback_peak_full(rt_row, n, y_raw),
-            FallbackMode::ActiveRange { abs_thr, rel_thr, pad, min_width } =>
-                fallback_peak_active(rt_row, y_raw, pad, min_width, abs_thr, rel_thr),
-            FallbackMode::ApexWindow { half_width } =>
-                fallback_peak_apex_window(rt_row, y_raw, half_width, 3),
-        };
-    }
-
-    let (sigma, min_prom, min_width_scans) = if row_max < policy.mid_thresh {
-        (policy.sigma_lo, policy.min_prom_lo, policy.min_width_lo)
-    } else {
-        (policy.sigma_hi, policy.min_prom_hi, policy.min_width_hi)
-    };
-
-    // optional extra per-row smoothing
-    let mut y_s = y_smoothed_base.to_vec();
-    if sigma > 0.0 {
-        let w = gaussian_kernel_1d(sigma, 3.0);
-        let rad = (w.len() as isize - 1) / 2;
-        let mut out = vec![0.0f32; n];
-        for s in 0..n {
-            let mut acc = 0.0f32;
-            for (k, &wk) in w.iter().enumerate() {
-                let ds = k as isize - rad;
-                let j = reflect_index(s as isize + ds, n);
-                acc += wk * y_s[j];
-            }
-            out[s] = acc;
-        }
-        y_s.copy_from_slice(&out);
-    }
-
-    find_im_peaks_row(&y_s, y_raw, rt_row, mobility_of, min_prom, min_distance_scans, min_width_scans)
-}
-
-// ---- adaptive all-rows ----
-pub fn pick_im_peaks_on_imindex_adaptive(
-    imx_data_smoothed: &[f32],       // column-major
-    imx_data_raw: Option<&[f32]>,    // column-major or None
-    rows: usize,
-    cols: usize,
-    min_distance_scans: usize,
-    mobility_of: MobilityFn,
-    policy: ImAdaptivePolicy,
-) -> Vec<Vec<ImPeak1D>> {
-    use rayon::prelude::*;
-    (0..rows).into_par_iter().map(|r| {
-        let mut y_s = Vec::with_capacity(cols);
-        let mut y_r = Vec::with_capacity(cols);
-        for s in 0..cols {
-            y_s.push(imx_data_smoothed[s * rows + r]);
-            let raw_val = imx_data_raw.map(|dr| dr[s * rows + r]).unwrap_or(y_s[s]);
-            y_r.push(raw_val);
-        }
-        find_im_peaks_row_adaptive(&y_s, &y_r, r, mobility_of, min_distance_scans, policy)
-    }).collect()
-}
-
 pub fn find_im_peaks_row(
     y_smoothed: &[f32],
     y_raw: &[f32],
@@ -1092,14 +1022,13 @@ pub fn find_im_peaks_row(
             }
         }
 
-        // 6) area on raw between fractional bounds
+        // 6) build a provisional peak (same fields you already compute just above)
         let left_idx  = left_x.floor().clamp(0.0, (n-1) as f32) as usize;
         let right_idx = right_x.ceil().clamp(0.0, (n-1) as f32) as usize;
         let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n-1) as f32));
-
         let mobility = mobility_of.map(|f| f(i));
 
-        peaks.push(ImPeak1D{
+        let provisional = ImPeak1D {
             rt_row,
             scan: i,
             mobility,
@@ -1113,7 +1042,29 @@ pub fn find_im_peaks_row(
             width_scans,
             area_raw: area,
             subscan: sub,
-        });
+        };
+
+        // 7) try to split by valley; then NMS each sub-peak via robust nms_push
+        let split_peaks = maybe_split_by_valleys(
+            y_smoothed, y_raw, rt_row,
+            &provisional,
+            /*depth_ratio=*/0.6,
+            /*min_sep=*/2,
+            min_prom,
+            min_width_scans,
+            mobility_of,
+        );
+
+        for pk in split_peaks {
+            // robust NMS against all kept peaks (you already have nms_push in your file)
+            nms_push(
+                &mut peaks,
+                pk,
+                |p: &ImPeak1D| p.scan,
+                |p: &ImPeak1D| p.apex_smoothed,
+                min_distance_scans,
+            );
+        }
     }
     peaks
 }
