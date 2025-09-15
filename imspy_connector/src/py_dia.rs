@@ -1,23 +1,24 @@
 use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, pick_im_peaks_on_imindex, pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy, FallbackMode, RtIndex};
+use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn, pick_im_peaks_on_imindex, build_dense_im_by_rtpeaks_ppm};
 use rustdf::cluster::cluster_eval::{evaluate_clusters_separable, ClusterSpec};
 
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
-use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use crate::py_cluster::{PyClusterCloud, PyClusterResult, PyClusterSpec};
 use std::sync::Arc;
 
-fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
+pub fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
         row.into_iter().map(|p| Py::new(py, PyImPeak1D{ inner: p }).unwrap()).collect()
     }).collect())
 }
 
 #[pyclass]
+#[derive(Clone, Debug)]
 pub struct PyRtIndex {
     pub inner: Arc<RtIndex>,
 }
@@ -52,6 +53,46 @@ impl PyRtIndex {
     }
 }
 
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyImIndex {
+    pub inner: Arc<ImIndex>,
+}
+
+#[pymethods]
+impl PyImIndex {
+    /// IM scan indices (0..cols-1). We expose as u32 for stable dtype across platforms.
+    #[getter]
+    fn scans<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
+        // Cast usize -> u32 (safe if your scan count fits u32; typical for TIMS)
+        let scans_u32: Vec<u32> = self.inner.scans.iter().map(|&s| s as u32).collect();
+        Ok(PyArray1::from_vec_bound(py, scans_u32).unbind())
+    }
+
+    /// Dense IM matrix (smoothed if smoothing was applied), column-major, shape (rows, cols).
+    #[getter]
+    fn data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray2<f32>>> {
+        let im = &self.inner;
+        let arr_f = Array2::from_shape_vec((im.rows, im.cols).f(), im.data.clone())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
+        Ok(PyArray2::from_owned_array_bound(py, arr_f).unbind())
+    }
+
+    /// Optional raw (pre-smoothing) IM matrix, same layout/shape as `data`.
+    #[getter]
+    fn data_raw<'py>(&self, py: Python<'py>) -> Option<Py<PyArray2<f32>>> {
+        self.inner.data_raw.as_ref().map(|raw| {
+            let arr_f = Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), raw.clone())
+                .expect("internal shape invariant (rows*cols) violated");
+            PyArray2::from_owned_array_bound(py, arr_f).unbind()
+        })
+    }
+
+    /// Convenience—row/col sizes (kept for parity with PyRtIndex pattern).
+    #[getter] fn rows(&self) -> usize { self.inner.rows }
+    #[getter] fn cols(&self) -> usize { self.inner.cols }
+}
+
 
 #[pyclass]
 pub struct PyImPeak1D { pub inner: ImPeak1D }
@@ -73,7 +114,7 @@ impl PyImPeak1D {
     #[getter] fn subscan(&self) -> f32 { self.inner.subscan }
 }
 
-fn impeaks_to_py(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
+pub fn impeaks_to_py(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
         row.into_iter().map(|p| Py::new(py, PyImPeak1D{ inner: p }).unwrap()).collect()
     }).collect())
@@ -223,145 +264,65 @@ impl PyTimsDatasetDIA {
         Ok((py_rt, peaks_py))
     }
 
-    /// Given the IM matrix you just built (or build it internally), pick IM peaks per row.
-    #[pyo3(signature = (data, data_raw=None, min_prom=50.0, min_distance_scans=2, min_width_scans=2, use_mobility=false))]
-    pub fn pick_im_peaks_on_matrix(
+    // Convenience: build IM index and immediately pick IM peaks per row (simple non-adaptive)
+    #[pyo3(signature = (rt_index,peaks,num_threads=4,mz_ppm_window=10.0,rt_extra_pad=0,maybe_sigma_scans=None,truncate=3.0,min_prom=50.0,min_distance_scans=2,min_width_scans=2,use_mobility=false))]
+    pub fn build_dense_im_by_rtpeaks_ppm_and_pick(
         &self,
-        data: PyReadonlyArray2<f32>,              // Fortran-order (rows, cols)
-        data_raw: Option<PyReadonlyArray2<f32>>, // optional raw matrix
+        rt_index: PyRtIndex,
+        peaks: Vec<Py<PyRtPeak1D>>,
+        num_threads: usize,
+        mz_ppm_window: f32,
+        rt_extra_pad: usize,
+        maybe_sigma_scans: Option<f32>,
+        truncate: f32,
         min_prom: f32,
         min_distance_scans: usize,
         min_width_scans: usize,
         use_mobility: bool,
         py: Python<'_>,
-    ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
-        use numpy::ndarray::ArrayView2;
-        let a: ArrayView2<f32> = data.as_array();
-        let (rows, cols) = a.dim();
+    ) -> PyResult<(PyImIndex, Vec<Vec<Py<PyImPeak1D>>>)> {
 
-        // We need column-major; ndarray may be Fortran, but to be safe flatten explicitly:
-        let mut cm = vec![0.0f32; rows * cols];
-        for s in 0..cols {
-            for r in 0..rows {
-                cm[s * rows + r] = a[(r, s)];
-            }
-        }
+        // 1) Build
+        let peaks_rs: Vec<RtPeak1D> = peaks
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
 
-        let raw_slice: Option<Vec<f32>> = data_raw.map(|dr| {
-            let ar = dr.as_array();
-            let mut v = vec![0.0f32; rows * cols];
-            for s in 0..cols {
-                for r in 0..rows {
-                    v[s * rows + r] = ar[(r, s)];
-                }
-            }
-            v
-        });
+        let im = build_dense_im_by_rtpeaks_ppm( &self.inner,
+                                                peaks_rs,
+                                                &rt_index.inner,
+                                                num_threads,
+                                                mz_ppm_window,
+                                                rt_extra_pad,
+                                                maybe_sigma_scans,
+                                                truncate,
+        );
 
-        // Optional mobility converter via loader
+        // 2) Pick IM peaks (operate on column-major buffers already in `im`)
         let mob_fn: MobilityFn = if use_mobility {
-            // Example: simple closure using your index converter; adjust as needed:
-            Some(|scan| scan as f32) // TODO: replace with real scan->mobility
+
+        // TODO: wire your real converter here
+        Some(|scan| scan as f32)
         } else { None };
 
+        let rows = im.rows;
+        let cols = im.cols;
         let rows_rs = pick_im_peaks_on_imindex(
-            &cm,
-            raw_slice.as_deref(),
-            rows, cols,
-            min_prom, min_distance_scans, min_width_scans,
-            mob_fn,
-        );
-        impeaks_to_py(py, rows_rs)
-    }
-
-    /// Adaptive IM-peak picking with fallback strategies.
-    #[pyo3(signature = (
-        im_matrix,                   // np.ndarray[f32] Fortran/C, shape (rows, scans)
-        im_matrix_raw=None,          // optional raw (same shape)
-        min_distance_scans=4,
-        strategy="active_range",     // "none" | "full" | "active_range" | "apex_window"
-        low_thresh=100.0,
-        mid_thresh=200.0,
-        sigma_lo=4.0,
-        sigma_hi=2.0,
-        min_prom_lo=25.0,
-        min_prom_hi=50.0,
-        min_width_lo=6,
-        min_width_hi=3,
-        abs_thr=5.0,
-        rel_thr=0.03,
-        pad=2,
-        active_min_width=6,
-        apex_half_width=15,
-        use_mobility=false,
-    ))]
-    pub fn pick_im_peaks_on_matrix_adaptive(
-        &self,
-        im_matrix: PyReadonlyArray2<f32>,
-        im_matrix_raw: Option<PyReadonlyArray2<f32>>,
-        min_distance_scans: usize,
-        strategy: &str,
-        low_thresh: f32,
-        mid_thresh: f32,
-        sigma_lo: f32,
-        sigma_hi: f32,
-        min_prom_lo: f32,
-        min_prom_hi: f32,
-        min_width_lo: usize,
-        min_width_hi: usize,
-        abs_thr: f32,
-        rel_thr: f32,
-        pad: usize,
-        active_min_width: usize,
-        apex_half_width: usize,
-        use_mobility: bool,
-        py: Python<'_>,
-    ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
-        use numpy::ndarray::ArrayView2;
-
-        // 1) flatten to column-major
-        let a: ArrayView2<f32> = im_matrix.as_array();
-        let (rows, cols) = a.dim();
-        let mut cm = vec![0.0f32; rows * cols];
-        for s in 0..cols { for r in 0..rows { cm[s*rows + r] = a[(r,s)]; } }
-
-        let raw_cm: Option<Vec<f32>> = im_matrix_raw.map(|dr| {
-            let ar = dr.as_array();
-            let mut v = vec![0.0f32; rows * cols];
-            for s in 0..cols { for r in 0..rows { v[s*rows + r] = ar[(r,s)]; } }
-            v
-        });
-
-        // 2) mobility mapping (stub here, wire your converter if desired)
-        let _mob_fn = if use_mobility { Some(|scan: usize| scan as f32) } else { None };
-
-        // 3) build policy + fallback
-        let fallback = match strategy {
-            "none" => FallbackMode::None,
-            "full" => FallbackMode::FullWindow,
-            "active_range" => FallbackMode::ActiveRange { abs_thr, rel_thr, pad, min_width: active_min_width },
-            "apex_window" => FallbackMode::ApexWindow { half_width: apex_half_width },
-            other => return Err(pyo3::exceptions::PyValueError::new_err(format!("unknown strategy: {}", other))),
-        };
-
-        let policy = ImAdaptivePolicy {
-            low_thresh, mid_thresh,
-            sigma_lo, sigma_hi,
-            min_prom_lo, min_prom_hi,
-            min_width_lo, min_width_hi,
-            fallback_mode: fallback,
-        };
-
-        // 4) run
-        let rows_rs = pick_im_peaks_on_imindex_adaptive(
-            &cm, raw_cm.as_deref(),
-            rows, cols,
+            im.data.as_slice(),
+            im.data_raw.as_deref(),
+            rows,
+            cols,
+            min_prom,
             min_distance_scans,
-            None,
-            policy,
+            min_width_scans,
+            mob_fn
         );
-        impeaks_to_py_nested(py, rows_rs)
+
+        let im_py = PyImIndex { inner: Arc::new(im) };
+        let peaks_py = impeaks_to_py_nested(py, rows_rs)?;
+        Ok((im_py, peaks_py))
     }
+
 
     // Evaluate clusters: extract (RT×IM) patches in RAM, fit separable 2D Gaussian, return results.
     ///
