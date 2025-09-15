@@ -12,6 +12,82 @@ from imspy.timstof.frame import TimsFrame
 ims = imspy_connector.py_dia
 from imspy.simulation.annotation import RustWrapperObject
 
+class RtIndex(RustWrapperObject):
+    """
+    Python wrapper for Rust PyRtIndex (read-only).
+    Exposes m/z bin centers (constant-ppm grid), frame IDs/times, and the dense matrix.
+
+    Matrix layout is Fortran/column-major with shape (rows, cols) = (num_mz_bins, num_frames).
+    """
+
+    def __init__(self, *_args, **_kwargs):
+        # Not meant to be constructed directly; use from_py_ptr
+        raise RuntimeError("RtIndex cannot be constructed directly; use RtIndex.from_py_ptr(...)")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyRtIndex") -> "RtIndex":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    # --- read-only properties (NumPy arrays are views/copies from Rust getters) ---
+    @property
+    def centers(self) -> np.ndarray:
+        """m/z bin centers (float32), length == rows."""
+        return self.__py_ptr.centers
+
+    @property
+    def frame_ids(self) -> np.ndarray:
+        """RT-sorted frame IDs (uint32), length == cols."""
+        return self.__py_ptr.frame_ids
+
+    @property
+    def frame_times(self) -> np.ndarray:
+        """RT-sorted frame times (float32), same length/order as frame_ids."""
+        return self.__py_ptr.frame_times
+
+    @property
+    def data(self) -> np.ndarray:
+        """Dense matrix (float32), Fortran/column-major, shape (rows, cols)."""
+        return self.__py_ptr.data
+
+    @property
+    def data_raw(self) -> Optional[np.ndarray]:
+        """
+        UnsMoothed dense matrix if smoothing was applied in RT build, else None.
+        Fortran/column-major, shape (rows, cols).
+        """
+        return self.__py_ptr.data_raw
+
+    # --- convenience ---
+    @property
+    def rows(self) -> int:
+        return self.data.shape[0]
+
+    @property
+    def cols(self) -> int:
+        return self.data.shape[1]
+
+    def as_arrays(self):
+        """
+        Convenience unpack identical to old tuple returns (but centers are float):
+        Returns (centers, frame_ids, data[, frame_times])
+        """
+        return self.centers, self.frame_ids, self.data, self.frame_times
+
+    def __repr__(self):
+        return f"RtIndex(rows={self.rows}, cols={self.cols}, ppm_bin≈{self._ppm_hint():.3f})"
+
+    def _ppm_hint(self) -> float:
+        # Best-effort: estimate ppm per bin from first two centers
+        c = self.centers
+        if c.size >= 2 and c[0] > 0:
+            return (c[1] / c[0] - 1.0) * 1e6
+        return float("nan")
+
 
 class ImPeak1D(RustWrapperObject):
     """Python wrapper for Rust PyImPeak1D (read-only properties)."""
@@ -275,52 +351,48 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def get_py_ptr(self):
         return self.__dataset
 
-    def get_dense_mz_vs_rt(self, resolution: int = 1, num_threads: int = 4, sigma_frames = None, truncate = 3.0):
-        """Get dense m/z vs RT matrix.
-
-        Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray]: m/z values, RT values, intensity matrix.
-        """
-
-        # need to set num_threads to 1 when not using bruker sdk
-        if self.use_bruker_sdk:
-            warnings.warn("Using Bruker SDK, setting num_threads to 1.")
-            num_threads = 1
-
-        return self.__dataset.build_dense_rt_by_mz(resolution, num_threads, truncate, sigma_frames)
-
     def get_dense_mz_vs_rt_and_pick(
             self,
-            resolution: int = 1,
+            *,
+            ppm_per_bin: float = 25.0,
+            mz_pad_ppm: float = 50.0,
             num_threads: int = 4,
             sigma_frames: Optional[float] = None,
             truncate: float = 3.0,
             min_prom: float = 100.0,
             min_distance: int = 2,
             min_width: int = 2,
-            left_pad : int = 1,
-            right_pad : int = 2,
+            left_pad: int = 1,
+            right_pad: int = 2,
     ):
-        """Build dense matrix (optionally smoothed) AND pick peaks.
+        """
+        Build dense m/z×RT matrix on a constant-ppm grid (optionally smoothed) and pick RT peaks.
 
         Returns:
-            bins (np.ndarray[uint32]),
-            frames (np.ndarray[uint32]),
-            matrix (np.ndarray[float32], Fortran-contiguous),
-            peaks (List[Peak1D])
+            rt_index (RtIndex): wrapper with centers, frame_ids/times, data(, data_raw)
+            peaks (List[RtPeak1D])
         """
         if self.use_bruker_sdk:
-            warnings.warn("Using Bruker SDK, setting num_threads=1.")
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
             num_threads = 1
 
-        bins, frames, mat, peaks_py = self.__dataset.build_dense_rt_by_mz_and_pick(
-            resolution, num_threads, truncate, sigma_frames, min_prom, min_distance, min_width,
-            left_pad, right_pad
+        # Rust now returns (PyRtIndex, List[PyRtPeak1D])
+        py_rt, peaks_py = self.__dataset.build_dense_rt_by_mz_and_pick(
+            truncate,  # f32
+            sigma_frames,  # Option<f32>
+            ppm_per_bin,  # f32
+            mz_pad_ppm,  # f32
+            num_threads,  # usize
+            min_prom,  # f32
+            min_distance,  # usize
+            min_width,  # usize
+            left_pad,  # usize
+            right_pad,  # usize
         )
 
-        # Convert list of PyRtPeak1D -> list of Peak1D wrappers
+        rt_index = RtIndex.from_py_ptr(py_rt)
         peaks = [RtPeak1D.from_py_ptr(p) for p in peaks_py]
-        return bins, frames, mat, peaks
+        return rt_index, peaks
 
     def get_dense_im_by_rtpeaks(
             self,

@@ -1,24 +1,57 @@
 use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::utility::{
-    RtPeak1D, ImPeak1D,
-    pick_im_peaks_on_imindex, pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy,
-    FallbackMode
-};
+use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, pick_im_peaks_on_imindex, pick_im_peaks_on_imindex_adaptive, MobilityFn, ImAdaptivePolicy, FallbackMode, RtIndex};
 use rustdf::cluster::cluster_eval::{evaluate_clusters_separable, ClusterSpec};
-use rustdf::cluster::utility::ImIndex;
+
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use crate::py_cluster::{PyClusterCloud, PyClusterResult, PyClusterSpec};
+use std::sync::Arc;
 
 fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
         row.into_iter().map(|p| Py::new(py, PyImPeak1D{ inner: p }).unwrap()).collect()
     }).collect())
 }
+
+#[pyclass]
+pub struct PyRtIndex {
+    pub inner: Arc<RtIndex>,
+}
+
+#[pymethods]
+impl PyRtIndex {
+    #[getter]
+    fn centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.inner.scale.centers.clone()).unbind())
+    }
+    #[getter]
+    fn frame_ids<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.inner.frames.clone()).unbind())
+    }
+    #[getter]
+    fn frame_times<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.inner.frame_times.clone()).unbind())
+    }
+    #[getter]
+    fn data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray2<f32>>> {
+        let rt = &self.inner;
+        let arr_f = Array2::from_shape_vec((rt.rows, rt.cols).f(), rt.data.clone())
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
+        Ok(PyArray2::from_owned_array_bound(py, arr_f).unbind())
+    }
+    #[getter]
+    fn data_raw<'py>(&self, py: Python<'py>) -> Option<Py<PyArray2<f32>>> {
+        self.inner.data_raw.as_ref().map(|raw| {
+            let arr_f = Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), raw.clone()).unwrap();
+            PyArray2::from_owned_array_bound(py, arr_f).unbind()
+        })
+    }
+}
+
 
 #[pyclass]
 pub struct PyImPeak1D { pub inner: ImPeak1D }
@@ -166,116 +199,19 @@ impl PyTimsDatasetDIA {
         PyTimsFrame { inner: self.inner.sample_fragment_signal(num_frames, window_group, max_intensity, take_probability) }
     }
 
-    #[pyo3(signature = (resolution, num_threads, truncate, maybe_sigma_frames=None))]
-    pub fn build_dense_rt_by_mz(
-        &self,
-        resolution: usize,
-        num_threads: usize,
-        truncate: f32,
-        maybe_sigma_frames: Option<f32>,
-        py: Python<'_>,
-    ) -> PyResult<(
-        Py<PyArray1<u32>>,
-        Py<PyArray1<u32>>,
-        Py<PyArray2<f32>>,
-    )> {
-        let rt = self.inner.get_dense_rt_by_mz(maybe_sigma_frames, truncate, resolution, num_threads);
-
-        let bins_py   = PyArray1::from_vec_bound(py, rt.bins).unbind();
-        let frames_py = PyArray1::from_vec_bound(py, rt.frames).unbind();
-
-        let arr_f: Array2<f32> = Array2::from_shape_vec((rt.rows, rt.cols).f(), rt.data)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
-        let data_py = PyArray2::from_owned_array_bound(py, arr_f).unbind();
-
-        Ok((bins_py, frames_py, data_py))
-    }
-
-    #[pyo3(signature = (resolution, num_threads, truncate, maybe_sigma_frames=None, min_prom=100.0, min_distance=2, min_width=2, pad_left=1, pad_right=2))]
+    #[pyo3(signature = (truncate, maybe_sigma_frames=None, ppm_per_bin=25.0, mz_pad_ppm=50.0, num_threads=4, min_prom=100.0, min_distance=2, min_width=2, pad_left=1, pad_right=2))]
     pub fn build_dense_rt_by_mz_and_pick(
-        &self,
-        resolution: usize,
-        num_threads: usize,
-        truncate: f32,
-        maybe_sigma_frames: Option<f32>,
-        min_prom: f32,
-        min_distance: usize,
-        min_width: usize,
-        pad_left: usize,      // NEW
-        pad_right: usize,     // NEW
-        py: Python<'_>,
-    ) -> PyResult<(
-        Py<PyArray1<u32>>, // bins
-        Py<PyArray1<u32>>, // frames
-        Py<PyArray2<f32>>, // data (Fortran/column-major)
-        Vec<Py<PyRtPeak1D>>, // peaks
-    )> {
+        &self, truncate: f32, maybe_sigma_frames: Option<f32>, ppm_per_bin: f32, mz_pad_ppm: f32,
+        num_threads: usize, min_prom: f32, min_distance: usize, min_width: usize,
+        pad_left: usize, pad_right: usize, py: Python<'_>,
+    ) -> PyResult<(PyRtIndex, Vec<Py<PyRtPeak1D>>)> {
         let (rt, peaks_rs) = self.inner.pick_peaks_dense(
-            maybe_sigma_frames, truncate, resolution, num_threads,
-            min_prom, min_distance, min_width, pad_left, pad_right
+            maybe_sigma_frames, truncate, ppm_per_bin, mz_pad_ppm, num_threads,
+            min_prom, min_distance, min_width, pad_left, pad_right,
         );
-
-        let bins_py   = PyArray1::from_vec_bound(py, rt.bins).unbind();
-        let frames_py = PyArray1::from_vec_bound(py, rt.frames).unbind();
-
-        let arr_f: Array2<f32> = Array2::from_shape_vec((rt.rows, rt.cols).f(), rt.data)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
-        let data_py = PyArray2::from_owned_array_bound(py, arr_f).unbind();
-
+        let py_rt = PyRtIndex { inner: Arc::new(rt) };
         let peaks_py = peaks_to_py(py, peaks_rs)?;
-
-        Ok((bins_py, frames_py, data_py, peaks_py))
-    }
-
-    #[pyo3(signature = (peaks,rt_bins,rt_frames,resolution,num_threads,mz_ppm = 10.0, rt_extra_pad = 0,im_sigma_scans = None,truncate = 3.0))]
-    pub fn build_dense_im_by_rtpeaks(
-        &self,
-        peaks: Vec<Py<PyRtPeak1D>>,
-        rt_bins: PyReadonlyArray1<u32>,
-        rt_frames: PyReadonlyArray1<u32>,
-        resolution: usize,
-        num_threads: usize,
-        mz_ppm: f32,
-        rt_extra_pad: usize,
-        im_sigma_scans: Option<f32>,
-        truncate: f32,
-        py: Python<'_>,
-    ) -> PyResult<(
-        Py<PyArray1<u32>>,     // scans (0..num_scans-1)
-        Py<PyArray2<f32>>,     // data (rows x scans), Fortran/column-major
-    )> {
-        // 1) convert peaks to Rust
-        let peaks_rs: Vec<RtPeak1D> = py_peaks_to_rust(py, peaks);
-
-        // 2) borrow RT bins/frames from numpy
-        let bins_slice: &[u32]   = rt_bins.as_slice()?;   // safe, read-only
-        let frames_slice: &[u32] = rt_frames.as_slice()?; // safe, read-only
-
-        // 3) build IM index
-        let imx: ImIndex = self.inner.get_dense_im_by_rtpeaks(
-            peaks_rs,
-            bins_slice,
-            frames_slice,
-            resolution,
-            num_threads,
-            mz_ppm,
-            rt_extra_pad,
-            im_sigma_scans,
-            truncate,
-        );
-
-        // 4) numpy outputs
-        // scans: 0..num_scans-1 (cast to u32)
-        let scans_vec: Vec<u32> = imx.scans.iter().map(|&s| s as u32).collect();
-        let scans_py = PyArray1::from_vec_bound(py, scans_vec).unbind();
-
-        // data: (rows, cols) Fortran-order
-        let arr_f: Array2<f32> = Array2::from_shape_vec((imx.rows, imx.cols).f(), imx.data)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
-        let data_py = PyArray2::from_owned_array_bound(py, arr_f).unbind();
-
-        // Echo peaks back unchanged (already Py objects)
-        Ok((scans_py, data_py))
+        Ok((py_rt, peaks_py))
     }
 
     /// Given the IM matrix you just built (or build it internally), pick IM peaks per row.
@@ -504,15 +440,6 @@ fn peaks_to_py<'py>(py: Python<'py>, peaks: Vec<RtPeak1D>) -> PyResult<Vec<Py<Py
         out.push(Py::new(py, PyRtPeak1D { inner: p })?);
     }
     Ok(out)
-}
-
-fn py_peaks_to_rust(
-    py: Python<'_>,
-    peaks_py: Vec<Py<PyRtPeak1D>>,
-) -> Vec<RtPeak1D> {
-    peaks_py.into_iter()
-        .map(|p| p.borrow(py).inner.clone())
-        .collect()
 }
 
 #[pymodule]

@@ -5,10 +5,8 @@ use pyo3::prelude::PyModule;
 use numpy::{PyArray1, PyArray2};
 
 use rustdf::cluster::cluster_eval::{
-    ClusterSpec, ClusterPatch, Gaussian1D, Separable2DFit, ClusterQuality, ClusterResult,
+    ClusterSpec, ClusterPatch, Gaussian1D, Separable2DFit, ClusterQuality, ClusterResult, ClusterCloud
 };
-
-use rustdf::cluster::utility::ClusterCloud;
 
 #[pyclass]
 pub struct PyClusterCloud {

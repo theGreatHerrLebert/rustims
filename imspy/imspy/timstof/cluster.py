@@ -282,7 +282,6 @@ def build_specs_from_peaks(
             scan_right = center + half
 
         specs.append(_make_cluster_spec(rp, scan_left, scan_right, mz_ppm, resolution))
-
     return specs
 
 
@@ -299,7 +298,7 @@ def evaluate_clusters_separable(
     return [ClusterResult.from_py_ptr(r) for r in res_py]
 
 
-def results_to_df(results: List[ClusterResult]) -> pd.DataFrame:
+def cluster_results_to_pandas_df(results: List[ClusterResult]) -> pd.DataFrame:
     """Flatten ClusterResult into a tidy DataFrame (uses Rust-side to_dict for speed/consistency)."""
     return pd.DataFrame([r.to_dict() for r in results])
 
