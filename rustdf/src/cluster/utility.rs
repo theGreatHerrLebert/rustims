@@ -438,6 +438,7 @@ pub struct RtIndex {
     pub rows: usize,
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,
+    pub row_map: Option<Vec<usize>>,
 }
 
 fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
@@ -496,7 +497,6 @@ pub fn build_dense_rt_by_mz_ppm(
     let frames_in_col_order: Vec<&TimsFrame> = frames.iter().collect();
     debug_assert_eq!(frames_in_col_order.len(), num_frames);
 
-    use rayon::prelude::*;
     matrix.par_chunks_mut(rows).enumerate().for_each(|(col, col_slice)| {
         let frame = frames_in_col_order[col];
         let mz = &frame.ims_frame.mz;
@@ -519,6 +519,57 @@ pub fn build_dense_rt_by_mz_ppm(
         smooth_time_gaussian_colmajor(&mut matrix, rows, num_frames, sigma, truncate);
     }
 
+    // 6) compact: drop rows that are entirely zero across all frames
+    let mut keep: Vec<usize> = Vec::new();
+    keep.reserve(rows);
+    for r in 0..rows {
+        // scan across columns; early-exit on first non-zero
+        let mut any = false;
+        for c in 0..num_frames {
+            if matrix[c * rows + r] != 0.0 {
+                any = true;
+                break;
+            }
+        }
+        if any {
+            keep.push(r);
+        }
+    }
+
+    let (matrix, scale, rows, row_map) = if keep.len() < rows {
+        // re-pack matrix to new row count
+        let new_rows = keep.len();
+        let mut new_mat = vec![0.0f32; new_rows * num_frames];
+        for (new_r, &old_r) in keep.iter().enumerate() {
+            for c in 0..num_frames {
+                new_mat[c * new_rows + new_r] = matrix[c * rows + old_r];
+            }
+        }
+
+        // compact centers and edges
+        let mut new_centers = Vec::with_capacity(new_rows);
+        let mut new_edges   = Vec::with_capacity(new_rows + 1);
+        new_edges.push(scale.edges[keep[0]]);
+        for &old_r in &keep {
+            new_centers.push(scale.centers[old_r]);
+            new_edges.push(scale.edges[old_r + 1]);
+        }
+
+        let new_scale = MzScale {
+            mz_min: new_edges[0],
+            mz_max: *new_edges.last().unwrap(),
+            ppm_per_bin: scale.ppm_per_bin,
+            ratio: scale.ratio,
+            inv_ln_ratio: scale.inv_ln_ratio,
+            edges: new_edges,
+            centers: new_centers,
+        };
+
+        (new_mat, new_scale, new_rows, Some(keep))
+    } else {
+        (matrix, scale, rows, None)
+    };
+
     RtIndex {
         scale,
         frames: frame_ids_sorted,
@@ -527,6 +578,7 @@ pub fn build_dense_rt_by_mz_ppm(
         rows,
         cols: num_frames,
         data_raw,
+        row_map,
     }
 }
 

@@ -201,9 +201,18 @@ impl PyTimsDatasetDIA {
 
     #[pyo3(signature = (truncate, maybe_sigma_frames=None, ppm_per_bin=25.0, mz_pad_ppm=50.0, num_threads=4, min_prom=100.0, min_distance=2, min_width=2, pad_left=1, pad_right=2))]
     pub fn build_dense_rt_by_mz_and_pick(
-        &self, truncate: f32, maybe_sigma_frames: Option<f32>, ppm_per_bin: f32, mz_pad_ppm: f32,
-        num_threads: usize, min_prom: f32, min_distance: usize, min_width: usize,
-        pad_left: usize, pad_right: usize, py: Python<'_>,
+        &self,
+        truncate: f32,
+        maybe_sigma_frames: Option<f32>,
+        ppm_per_bin: f32,
+        mz_pad_ppm: f32,
+        num_threads: usize,
+        min_prom: f32,
+        min_distance: usize,
+        min_width: usize,
+        pad_left: usize,
+        pad_right: usize,
+        py: Python<'_>,
     ) -> PyResult<(PyRtIndex, Vec<Py<PyRtPeak1D>>)> {
         let (rt, peaks_rs) = self.inner.pick_peaks_dense(
             maybe_sigma_frames, truncate, ppm_per_bin, mz_pad_ppm, num_threads,
