@@ -202,6 +202,7 @@ impl TimsDatasetDIA {
             min_width,
             pad_left,
             pad_right,
+            Some(&rt.scale.centers),
         );
         (rt, peaks)
     }
@@ -228,6 +229,7 @@ impl TimsDatasetDIA {
             min_width,
             pad_left,
             pad_right,
+            Some(&rt.scale.centers),
         )
     }
 

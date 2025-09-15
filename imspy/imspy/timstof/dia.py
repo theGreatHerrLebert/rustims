@@ -215,6 +215,10 @@ class RtPeak1D(RustWrapperObject):
         return self.__py_ptr.mz_row
 
     @property
+    def mz_center(self) -> float:
+        return self.__py_ptr.mz_center
+
+    @property
     def rt_col(self) -> int:
         return self.__py_ptr.rt_col
 
@@ -285,7 +289,7 @@ class RtPeak1D(RustWrapperObject):
 
     def __repr__(self):
         return (
-            f"Peak1D(mz_row={self.mz_row}, rt_col={self.rt_col}, rt_time={self.rt_time:.3f}, "
+            f"Peak1D(mz_row={self.mz_row}, mz_center={self.mz_center}, rt_col={self.rt_col}, rt_time={self.rt_time:.3f}, "
             f"apex_smoothed={self.apex_smoothed:.1f}, prominence={self.prominence:.1f}, "
             f"width_frames={self.width_frames}, area_raw={self.area_raw:.1f}, left={self.left}, right={self.right}, "
             f"left_x={self.left_x:.3f}, right_x={self.right_x:.3f}, subcol={self.subcol:.3f}, "

@@ -129,6 +129,7 @@ pub struct ImPeak1D {
 #[derive(Clone, Debug)]
 pub struct RtPeak1D {
     pub mz_row: usize,
+    pub mz_center: f32,
     pub rt_col: usize,
     pub rt_time: f32,
     pub apex_smoothed: f32,
@@ -155,6 +156,7 @@ pub fn find_peaks_row(
     y_smoothed: &[f32],
     y_raw: &[f32],
     mz_row: usize,
+    mz_center: f32,
     frame_times: Option<&[f32]>,
     min_prom: f32,
     min_distance: usize,
@@ -215,6 +217,7 @@ pub fn find_peaks_row(
 
         let pk = RtPeak1D {
             mz_row,
+            mz_center,
             rt_col: i,
             rt_time: frame_times.map(|rt| rt[i]).unwrap_or(i as f32),
             apex_smoothed: apex,
@@ -255,7 +258,8 @@ pub fn pick_peaks_all_rows(
     min_distance: usize,
     min_width: usize,
     pad_left: usize,         // NEW
-    pad_right: usize,        // NEW
+    pad_right: usize,
+    centers: Option<&[f32]>, // NEW
 ) -> Vec<RtPeak1D> {
     (0..rows).into_par_iter().flat_map_iter(|r| {
         // gather strided row r
@@ -265,8 +269,12 @@ pub fn pick_peaks_all_rows(
             y_s.push(data_smoothed[r + c*rows]);
             y_r.push(data_raw     [r + c*rows]);
         }
+
+        let mz_center = centers.map(|cs| cs[r]).unwrap_or(0.0);
+
         find_peaks_row(
-            &y_s, &y_r, r, frame_times,
+            &y_s, &y_r, r, mz_center,
+            frame_times,
             min_prom, min_distance, min_width,
             pad_left, pad_right,
         )

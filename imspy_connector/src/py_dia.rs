@@ -131,6 +131,7 @@ impl PyRtPeak1D {
     #[new]
     pub fn new(
         mz_row: usize,
+        mz_center: f32,
         rt_col: usize,
         rt_time: f32,
         apex_smoothed: f32,
@@ -150,6 +151,7 @@ impl PyRtPeak1D {
         PyRtPeak1D {
             inner: RtPeak1D {
                 mz_row,
+                mz_center,
                 rt_col,
                 rt_time,
                 apex_smoothed,
@@ -172,6 +174,7 @@ impl PyRtPeak1D {
     // --- getters mirroring your style ---
 
     #[getter] pub fn mz_row(&self) -> usize { self.inner.mz_row }
+    #[getter] pub fn mz_center(&self) -> f32 { self.inner.mz_center }
     #[getter] pub fn rt_col(&self) -> usize { self.inner.rt_col }
     #[getter] pub fn rt_time(&self) -> f32 { self.inner.rt_time }
     #[getter] pub fn apex_smoothed(&self) -> f32 { self.inner.apex_smoothed }
