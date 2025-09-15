@@ -711,7 +711,7 @@ pub fn build_dense_im_by_rtpeaks_ppm(
         if lo > hi { return (vec![0.0; cols], vec![0.0; cols]); }
 
         // ppm band around bin center
-        let mz_center = scale.center(p.mz_row);
+        let mz_center = p.mz_center;
         let tol = mz_center * mz_ppm_window * 1e-6;
         let (bin_lo, bin_hi) = scale.index_range_for_mz_window(mz_center - tol, mz_center + tol);
 
