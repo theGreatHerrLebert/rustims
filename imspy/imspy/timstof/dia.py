@@ -12,6 +12,68 @@ from imspy.timstof.frame import TimsFrame
 ims = imspy_connector.py_dia
 from imspy.simulation.annotation import RustWrapperObject
 
+class ImIndex(RustWrapperObject):
+    """Python wrapper for Rust PyImIndex (IM matrix around RT-picked peaks)."""
+
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            "ImIndex objects are constructed in Rust; use ImIndex.from_py_ptr()."
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyImIndex) -> "ImIndex":
+        """Wrap an existing PyImIndex pointer coming from Rust."""
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self):
+        """Return the underlying PyImIndex pointer for Rust calls."""
+        return self.__py_ptr
+
+    # ---------- Properties matching PyImIndex getters ----------
+
+    @property
+    def scans(self) -> np.ndarray:
+        """Scan indices (0..num_scans-1) as a 1-D uint32 NumPy array."""
+        return np.asarray(self.__py_ptr.scans, dtype=np.uint32)
+
+    @property
+    def data(self) -> np.ndarray:
+        """
+        Dense IM matrix (smoothed if smoothing was applied).
+        Shape: (rows, cols), Fortran-contiguous.
+        """
+        return np.asarray(self.__py_ptr.data, dtype=np.float32, order="F")
+
+    @property
+    def data_raw(self) -> np.ndarray | None:
+        """
+        Optional raw (pre-smoothing) IM matrix, same shape/layout as `data`.
+        Returns None if no smoothing was performed.
+        """
+        raw = self.__py_ptr.data_raw
+        if raw is None:
+            return None
+        return np.asarray(raw, dtype=np.float32, order="F")
+
+    @property
+    def rows(self) -> int:
+        """Number of RT-peak rows."""
+        return self.__py_ptr.rows
+
+    @property
+    def cols(self) -> int:
+        """Number of scan columns."""
+        return self.__py_ptr.cols
+
+    def __repr__(self) -> str:
+        return (
+            f"ImIndex(rows={self.rows}, cols={self.cols}, "
+            f"scans={len(self.scans)}, "
+            f"data_shape=({self.rows}, {self.cols}))"
+        )
+
 class RtIndex(RustWrapperObject):
     """
     Python wrapper for Rust PyRtIndex (read-only).
@@ -90,29 +152,9 @@ class RtIndex(RustWrapperObject):
 
 
 class ImPeak1D(RustWrapperObject):
-    """Python wrapper for Rust PyImPeak1D (read-only properties)."""
-
-    def __init__(
-        self,
-        rt_row: int,
-        scan: int,
-        mobility: float,
-        apex_smoothed: float,
-        apex_raw: float,
-        prominence: float,
-        left: int,
-        right: int,
-        left_x: float,
-        right_x: float,
-        width_scans: int,
-        area_raw: float,
-        subscan: float,
-    ):
-        # Typically not constructed from Python; parity with pattern:
-        self.__py_ptr = ims.PyImPeak1D(
-            rt_row, scan, mobility, apex_smoothed, apex_raw, prominence,
-            left, right, left_x, right_x, width_scans, area_raw, subscan
-        )
+    """Python wrapper for Rust PyImPeak1D (read-only)."""
+    def __init__(self, *a, **k):
+        raise RuntimeError("ImPeak1D is created in Rust; use ImPeak1D.from_py_ptr().")
 
     @property
     def rt_row(self) -> int: return self.__py_ptr.rt_row
@@ -163,31 +205,8 @@ class ImPeak1D(RustWrapperObject):
 class RtPeak1D(RustWrapperObject):
     """Python wrapper for Rust PyPeak1D (read-only properties)."""
 
-    def __init__(
-        self,
-        mz_row: int,
-        rt_col: int,
-        rt_time: float,
-        apex_smoothed: float,
-        apex_raw: float,
-        prominence: float,
-        left: int,
-        right: int,
-        width_frames: int,
-        area_raw: float,
-        subcol: float,
-        right_x: float,
-        left_x: float,
-        left_padded: int = 0,
-        right_padded: int = 0,
-        area_padded: float = 0.0,
-    ):
-        # You’ll rarely construct peaks from Python, but keeping parity with your pattern:
-        self.__py_ptr = ims.PyRtPeak1D(
-            mz_row, rt_col, rt_time, apex_smoothed, apex_raw, prominence,
-            left, right, width_frames, area_raw, subcol, right_x, left_x,
-            left_padded, right_padded, area_padded
-        )
+    def __init__(self, *a, **k):
+        raise RuntimeError("RtPeak1D is created in Rust; use RtPeak1D.from_py_ptr().")
 
     # --- properties mapping 1:1 to Rust getters ---
 
@@ -394,114 +413,67 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         peaks = [RtPeak1D.from_py_ptr(p) for p in peaks_py]
         return rt_index, peaks
 
-    def get_dense_im_by_rtpeaks(
-            self,
-            peaks: List[RtPeak1D],
-            bins: "np.ndarray[np.uint32]",  # from get_dense_mz_vs_rt_and_pick
-            frames: "np.ndarray[np.uint32]",  # from get_dense_mz_vs_rt_and_pick
-            resolution: int = 1,
-            num_threads: int = 4,
-            mz_ppm: float = 10.0,
-            rt_extra_pad: int = 0,
-            im_sigma_scans: Optional[float] = None,
-            truncate: float = 3.0,
-    ):
-        """
-        Build dense IM matrix conditioned on RT peaks.
-
-        Args:
-            peaks: List of RtPeak1D (row order defines matrix row order).
-            bins:  np.ndarray[uint32], m/z bins from RT build (for mapping mz_row -> m/z).
-            frames: np.ndarray[uint32], RT-sorted frame IDs from RT build.
-            resolution: m/z quantization (same you used in RT build).
-            num_threads: worker threads (set to 1 if using Bruker SDK).
-            mz_ppm: ± ppm window around each peak's m/z center.
-            rt_extra_pad: extra frames to include beyond each peak's padded [left,right].
-            im_sigma_scans: optional Gaussian sigma (in scans) for IM smoothing.
-            truncate: gaussian truncation (sigmas).
-
-        Returns:
-            scans: np.ndarray[uint32], shape (num_scans,)
-            im_matrix: np.ndarray[float32], shape (len(peaks), num_scans), Fortran/column-major
-        """
+    def build_dense_im_by_rtpeaks_ppm(
+        self,
+        rt_index: "RtIndex",
+        peaks: List["RtPeak1D"],
+        *,
+        num_threads: int = 4,
+        mz_ppm_window: float = 10.0,
+        rt_extra_pad: int = 0,
+        im_sigma_scans: Optional[float] = None,
+        truncate: float = 3.0,
+    ) -> ImIndex:
         if self.use_bruker_sdk:
-            warnings.warn("Using Bruker SDK, setting num_threads=1.")
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
             num_threads = 1
 
-        # Extract underlying Rust peak objects for the bridge call
-        peaks_py = [p.get_py_ptr() for p in peaks]
-
-        scans, im_mat = self.__dataset.build_dense_im_by_rtpeaks(
-            peaks_py,
-            bins, frames,
-            resolution, num_threads,
-            mz_ppm, rt_extra_pad,
-            im_sigma_scans, truncate,
+        py_im = self.__dataset.build_dense_im_by_rtpeaks_ppm(
+            rt_index.get_py_ptr(),
+            [p.get_py_ptr() for p in peaks],
+            num_threads,
+            mz_ppm_window,
+            rt_extra_pad,
+            im_sigma_scans,
+            truncate,
         )
-        return scans, im_mat
+        return ImIndex.from_py_ptr(py_im)
 
-    def pick_im_peaks_on_im_matrix(
-            self,
-            im_matrix,  # np.ndarray[float32], shape (n_rows, n_scans), Fortran or C is fine
-            im_matrix_raw=None,  # optional raw matrix (same shape) if you smoothed
-            min_prom: float = 50.0,
-            min_distance_scans: int = 2,
-            min_width_scans: int = 2,
-            use_mobility: bool = False,
+    def build_dense_im_by_rtpeaks_ppm_and_pick(
+        self,
+        rt_index: "RtIndex",
+        peaks: List["RtPeak1D"],
+        *,
+        num_threads: int = 4,
+        mz_ppm_window: float = 10.0,
+        rt_extra_pad: int = 0,
+        im_sigma_scans: Optional[float] = None,
+        truncate: float = 3.0,
+        min_prom: float = 50.0,
+        min_distance_scans: int = 2,
+        min_width_scans: int = 2,
+        use_mobility: bool = False,
     ):
-        """
-        Find IM peaks per RT-peak row on the IM matrix.
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
 
-        Returns:
-            List[List[ImPeak1D]]: length = n_rows; each entry is the list of IM peaks for that row.
-        """
-        # Call into Rust; it returns List[List[PyImPeak1D]]
-        peak_rows_py = self.__dataset.pick_im_peaks_on_matrix(
-            im_matrix,
-            im_matrix_raw,
+        py_im, rows_py = self.__dataset.build_dense_im_by_rtpeaks_ppm_and_pick(
+            rt_index.get_py_ptr(),
+            [p.get_py_ptr() for p in peaks],
+            num_threads,
+            mz_ppm_window,
+            rt_extra_pad,
+            im_sigma_scans,
+            truncate,
             min_prom,
             min_distance_scans,
             min_width_scans,
             use_mobility,
         )
-        # Wrap to Python ImPeak1D
-        return [[ImPeak1D.from_py_ptr(p) for p in row] for row in peak_rows_py]
-
-    def pick_im_peaks_on_im_matrix_adaptive(
-            self,
-            im_matrix,
-            im_matrix_raw=None,
-            *,
-            strategy: str = "active_range",  # "none" | "full" | "active_range" | "apex_window"
-            low_thresh: float = 100.0,
-            mid_thresh: float = 200.0,
-            sigma_lo: float = 4.0,
-            sigma_hi: float = 2.0,
-            min_prom_lo: float = 25.0,
-            min_prom_hi: float = 50.0,
-            min_width_lo: int = 6,
-            min_width_hi: int = 3,
-            abs_thr: float = 5.0,
-            rel_thr: float = 0.03,
-            pad: int = 2,
-            active_min_width: int = 6,
-            apex_half_width: int = 15,
-            min_distance_scans: int = 4,
-            use_mobility: bool = False,
-    ):
-        rows_py = self.__dataset.pick_im_peaks_on_matrix_adaptive(
-            im_matrix, im_matrix_raw,
-            min_distance_scans,
-            strategy,
-            low_thresh, mid_thresh,
-            sigma_lo, sigma_hi,
-            min_prom_lo, min_prom_hi,
-            min_width_lo, min_width_hi,
-            abs_thr, rel_thr, pad, active_min_width,
-            apex_half_width,
-            use_mobility,
-        )
-        return [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
+        im_index = ImIndex.from_py_ptr(py_im)
+        im_peaks = [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
+        return im_index, im_peaks
 
     def evaluate_clusters_separable(
             self,

@@ -417,5 +417,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
     m.add_class::<PyRtPeak1D>()?;
     m.add_class::<PyImPeak1D>()?;
+    m.add_class::<PyRtIndex>()?;
+    m.add_class::<PyImIndex>()?;
     Ok(())
 }
