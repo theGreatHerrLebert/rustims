@@ -10,7 +10,7 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use crate::cluster::cluster_eval::{ClusterCloud, ClusterSpec};
-use crate::cluster::utility::{build_dense_rt_by_mz, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks, ImIndex};
+use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm, ImIndex};
 
 #[derive(Clone)]
 struct SpecPre {
@@ -161,14 +161,15 @@ impl TimsDatasetDIA {
         sampled_frame
     }
 
-    pub fn get_dense_rt_by_mz(
+    pub fn get_dense_rt_by_mz_ppm(
         &self,
         maybe_sigma_frames: Option<f32>,
         truncate: f32,
-        resolution: usize,
-        num_threads: usize
+        ppm_per_bin: f32,       // <— NEW: constant-ppm bin width
+        mz_pad_ppm: f32,        // (optional) pad the min/max by some ppm to avoid edge cutoffs
+        num_threads: usize,
     ) -> RtIndex {
-        build_dense_rt_by_mz(self, maybe_sigma_frames, truncate, resolution, num_threads)
+        build_dense_rt_by_mz_ppm(self, maybe_sigma_frames, truncate, ppm_per_bin, mz_pad_ppm, num_threads)
     }
 
     /// Build dense matrix, optionally smooth, then pick peaks.
@@ -177,15 +178,17 @@ impl TimsDatasetDIA {
         &self,
         maybe_sigma_frames: Option<f32>,
         truncate: f32,
-        resolution: usize,
+        ppm_per_bin: f32,       // <— NEW: constant-ppm bin width
+        mz_pad_ppm: f32,        // (optional) pad the min/max by
         num_threads: usize,
         min_prom: f32,
         min_distance: usize,
         min_width: usize,
         pad_left: usize,          // NEW
         pad_right: usize,         // NEW
+
     ) -> (RtIndex, Vec<RtPeak1D>) {
-        let rt = self.get_dense_rt_by_mz(maybe_sigma_frames, truncate, resolution, num_threads);
+        let rt = self.get_dense_rt_by_mz_ppm(maybe_sigma_frames, truncate, ppm_per_bin, mz_pad_ppm, num_threads);
         let data_raw_slice = rt.data_raw.as_deref().unwrap_or(rt.data.as_slice());
 
         let peaks = pick_peaks_all_rows(
@@ -228,26 +231,22 @@ impl TimsDatasetDIA {
         )
     }
 
-    pub fn get_dense_im_by_rtpeaks(
+    pub fn get_dense_im_by_rtpeaks_ppm(
         &self,
-        peaks: Vec<RtPeak1D>,
-        rt_bins: &[u32],
-        rt_frames: &[u32],
-        resolution: usize,
+        peaks: Vec<RtPeak1D>,      // rows
+        rt_index: &RtIndex,        // has .scale and .frames
         num_threads: usize,
-        mz_ppm: f32,
+        mz_ppm_window: f32,        // ±ppm around the peak center bin
         rt_extra_pad: usize,
         maybe_sigma_scans: Option<f32>,
         truncate: f32,
     ) -> ImIndex {
-        build_dense_im_by_rtpeaks(
+        build_dense_im_by_rtpeaks_ppm(
             self,
             peaks,
-            rt_bins,
-            rt_frames,
-            resolution,
+            rt_index,
             num_threads,
-            mz_ppm,
+            mz_ppm_window,
             rt_extra_pad,
             maybe_sigma_scans,
             truncate,
@@ -263,10 +262,16 @@ impl TimsDatasetDIA {
         num_threads: usize,
     ) -> Vec<ClusterCloud> {
 
-        // 0) Materialize frames once in RT order (RAM)
+        // 0) Materialize *precursor-only*, RT-sorted frames – same list used to build RtIndex
         let slice = self.get_slice(frames_rt_sorted.to_vec(), num_threads);
         let frames_in_rt: Vec<&TimsFrame> = slice.frames.iter().collect();
         let ncols = frames_in_rt.len();
+
+        // Sanity: we must be in the same RT space as the specs
+        debug_assert!(
+            !frames_rt_sorted.is_empty() && frames_rt_sorted.len() == ncols,
+            "frames_rt_sorted and frames_in_rt length mismatch"
+        );
 
         // 1) Precompute per-spec constants and col→specs membership
         let factor = 10f64.powi(resolution as i32);

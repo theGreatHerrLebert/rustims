@@ -147,7 +147,6 @@ fn solve_AB(sum_g2: f64, sum_g: f64, n: usize, sum_pg: f64, sum_p: f64) -> (f32,
 }
 
 // ---------- Extraction ----------
-
 /// Build a dense patch for one cluster. Uses frames already in RT order.
 /// `frames_in_rt_order[col]` must be the frame for that RT column.
 /// `bins` + `spec.rt_row` + `spec.resolution` give the m/z center.

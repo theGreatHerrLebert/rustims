@@ -1,10 +1,113 @@
+use std::u32;
 use mscore::timstof::frame::TimsFrame;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap};
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
 use crate::data::meta::FrameMeta;
 use rayon::prelude::*;
-use rayon::iter::IntoParallelRefIterator;
+
+#[derive(Clone, Debug)]
+pub struct MzScale {
+    pub mz_min: f32,
+    pub mz_max: f32,
+    pub ppm_per_bin: f32,   // e.g., 5.0 => each bin is ~5 ppm wide
+    pub ratio: f32,         // 1.0 + ppm_per_bin*1e-6
+    pub inv_ln_ratio: f32,  // 1.0 / ln(ratio) for O(1) indexing
+    pub edges: Vec<f32>,    // monotonically increasing, len = num_bins + 1
+    pub centers: Vec<f32>,  // geometric mean of edges[i..i+1], len = num_bins
+}
+
+impl MzScale {
+    pub fn build(mz_min: f32, mz_max: f32, ppm_per_bin: f32) -> Self {
+
+        let est_bins = ((mz_max / mz_min).ln() / (1.0 + ppm_per_bin * 1e-6).ln()).ceil() as usize;
+        let max_bins = 1_000_000; // tune
+        assert!(est_bins <= max_bins, "ppm_per_bin too fine for mz range ({} bins)", est_bins);
+
+        assert!(mz_min > 0.0 && mz_max > mz_min && ppm_per_bin > 0.0);
+        let ratio = 1.0 + ppm_per_bin * 1e-6;
+        let inv_ln_ratio = 1.0 / ratio.ln();
+
+        // Generate edges multiplicatively: e[k+1] = e[k] * ratio
+        let mut edges = Vec::new();
+        let mut x = mz_min;
+        edges.push(x);
+        while x < mz_max {
+            x *= ratio;
+            edges.push(x);
+            // Guard against numerical stickiness
+            if edges.len() > 10_000_000 { break; }
+        }
+        // Ensure last edge ≥ mz_max
+        if *edges.last().unwrap() < mz_max {
+            edges.push(mz_max);
+        }
+
+        let mut centers = Vec::with_capacity(edges.len().saturating_sub(1));
+        for w in edges.windows(2) {
+            let c = (w[0] * w[1]).sqrt(); // geometric center
+            centers.push(c);
+        }
+        MzScale { mz_min, mz_max, ppm_per_bin, ratio, inv_ln_ratio, edges, centers }
+    }
+
+    pub fn from_centers(centers: &[f32]) -> Self {
+        assert!(centers.len() >= 2, "need at least 2 centers");
+        for w in centers.windows(2) { assert!(w[1] > w[0]); }
+        // Estimate ratio as geometric mean of consecutive ratios
+        let mut acc = 0.0f64; let mut n = 0usize;
+        for w in centers.windows(2) {
+            acc += (w[1] as f64 / w[0] as f64).ln();
+            n += 1;
+        }
+        let ln_r = acc / (n as f64);
+        let ratio = (ln_r as f32).exp();
+        // Sanity: consecutive ratios within ~0.1% (tune as you like)
+        let tol = 1e-3;
+        for w in centers.windows(2) {
+            let r = w[1] / w[0];
+            debug_assert!(((r / ratio) - 1.0).abs() < tol, "centers not constant-ppm spaced");
+        }
+
+        let inv_ln_ratio = 1.0 / ratio.ln();
+        let sqrt_r = ratio.sqrt();
+        let mut edges = Vec::with_capacity(centers.len() + 1);
+        edges.push(centers[0] / sqrt_r);
+        for &c in centers { edges.push(c * sqrt_r); }
+        let mz_min = edges[0];
+        let mz_max = *edges.last().unwrap();
+        let ppm_per_bin = (ratio - 1.0) * 1e6;
+
+        Self { mz_min, mz_max, ppm_per_bin, ratio, inv_ln_ratio, centers: centers.to_vec(), edges }
+    }
+
+    #[inline(always)]
+    pub fn num_bins(&self) -> usize { self.centers.len() }
+
+    /// O(1) map: m/z -> bin index (usize). Returns None if outside [mz_min, mz_max].
+    #[inline(always)]
+    pub fn index_of(&self, mz: f32) -> Option<usize> {
+        if !(mz.is_finite()) || mz < self.mz_min || mz > self.mz_max { return None; }
+        let i = ((mz / self.mz_min).ln() * self.inv_ln_ratio).floor() as isize;
+        if i < 0 { return Some(0) }
+        let i = i as usize;
+        if i >= self.num_bins() { Some(self.num_bins() - 1) } else { Some(i) }
+    }
+
+    /// Return a bin‐index range that covers [mz_lo, mz_hi] (inclusive, clamped).
+    #[inline(always)]
+    pub fn index_range_for_mz_window(&self, a: f32, b: f32) -> (usize, usize) {
+        let (mz_lo, mz_hi) = if a <= b { (a, b) } else { (b, a) };
+        if mz_hi <= self.mz_min { return (0, 0); }
+        if mz_lo >= self.mz_max { return (self.num_bins()-1, self.num_bins()-1); }
+        let lo = self.index_of(mz_lo.max(self.mz_min)).unwrap_or(0);
+        let hi = self.index_of(mz_hi.min(self.mz_max)).unwrap_or(self.num_bins()-1);
+        (lo.min(hi), hi.max(lo))
+    }
+
+    #[inline(always)]
+    pub fn center(&self, idx: usize) -> f32 { self.centers[idx] }
+}
 
 #[derive(Clone, Debug)]
 pub struct ImPeak1D {
@@ -248,12 +351,6 @@ pub fn smooth_time_gaussian_colmajor(
 fn frame_rt(meta: &FrameMeta) -> f32 { meta.time as f32 }
 
 #[inline(always)]
-fn quantize_mz(mz: f32, resolution: usize) -> u32 {
-    let factor = 10f32.powi(resolution as i32);
-    (mz * factor + 0.5) as u32
-}
-
-#[inline(always)]
 fn _trapezoid_area(y: &[f32], l: usize, r: usize) -> f32 {
     if r <= l { return 0.0; }
     let mut area = 0.0f32;
@@ -334,27 +431,36 @@ fn quad_subsample(y0: f32, y1: f32, y2: f32) -> f32 {
 
 #[derive(Clone, Debug)]
 pub struct RtIndex {
-    // ascending m/z bins (quantized)
-    pub bins: Vec<MzBin>,
-    // RT-ordered frame ids
+    pub scale: MzScale,        // <— replace bins: Vec<MzBin>
     pub frames: Vec<u32>,
-    // RT-ordered frame times (seconds or minutes; same unit as FrameMeta.time)
     pub frame_times: Vec<f32>,
-    // column-major data (rows = bins, cols = frames), possibly SMOOTHED
-    pub data: Vec<f32>,
+    pub data: Vec<f32>,        // column-major [rows x cols]
     pub rows: usize,
     pub cols: usize,
-    // if smoothing was applied, keep an unsmoothed copy for quantification
     pub data_raw: Option<Vec<f32>>,
 }
 
-type MzBin = u32;
+fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
+    let mut minv = f32::INFINITY;
+    let mut maxv = f32::NEG_INFINITY;
+    for fr in frames {
+        for &mz in &fr.ims_frame.mz {
+            let mz = mz as f32;
+            if mz.is_finite() {
+                if mz < minv { minv = mz; }
+                if mz > maxv { maxv = mz; }
+            }
+        }
+    }
+    if minv.is_finite() && maxv.is_finite() && maxv > minv { Some((minv, maxv)) } else { None }
+}
 
-pub fn build_dense_rt_by_mz(
+pub fn build_dense_rt_by_mz_ppm(
     data_handle: &TimsDatasetDIA,
     maybe_sigma_frames: Option<f32>,
     truncate: f32,
-    resolution: usize,
+    ppm_per_bin: f32,       // <— NEW: constant-ppm bin width
+    mz_pad_ppm: f32,        // (optional) pad the min/max by some ppm to avoid edge cutoffs
     num_threads: usize,
 ) -> RtIndex {
     // 1) RT-sort precursor frames
@@ -368,54 +474,38 @@ pub fn build_dense_rt_by_mz(
     let frame_times: Vec<f32>      = rt_sorted_meta.iter().map(|m| frame_rt(m)).collect();
     let num_frames = frame_ids_sorted.len();
 
-    // 2) materialize at chosen resolution
+    // 2) materialize at native resolution first (same as before)
     let frames = data_handle
         .get_slice(frame_ids_sorted.clone(), num_threads)
-        .to_resolution(resolution as i32, num_threads)
+        .to_resolution(/* native or coarse, doesn't matter for ppm mapping */ 0, num_threads)
         .frames;
 
-    let mut frame_by_id: FxHashMap<u32, &TimsFrame> = FxHashMap::default();
-    for f in &frames { frame_by_id.insert(f.frame_id as u32, f); }
+    // 3) discover global mz range and build log-space scale
+    let (mut mz_min, mut mz_max) = scan_mz_range(&frames).expect("No m/z values found");
+    if mz_pad_ppm > 0.0 {
+        let f = 1.0 + mz_pad_ppm * 1e-6;
+        mz_min /= f;
+        mz_max *= f;
+    }
+    let scale = MzScale::build(mz_min.max(10.0f32), mz_max, ppm_per_bin);
+    let rows = scale.num_bins();
 
-    // 3) discover bins
-    let all_bins: FxHashSet<MzBin> = frames
-        .par_iter()
-        .map(|frame| {
-            let mut local: FxHashSet<MzBin> = FxHashSet::default();
-            for &mz in frame.ims_frame.mz.iter() {
-                local.insert(quantize_mz(mz as f32, resolution));
-            }
-            local
-        })
-        .reduce(FxHashSet::default, |mut a, b| { a.extend(b); a });
+    // 4) fill matrix [rows x cols], col-major
+    let mut matrix = vec![0.0f32; rows * num_frames];
 
-    let mut bins_sorted: Vec<MzBin> = all_bins.into_iter().collect();
-    bins_sorted.sort_unstable();
-    let num_bins = bins_sorted.len();
+    let frames_in_col_order: Vec<&TimsFrame> = frames.iter().collect();
+    debug_assert_eq!(frames_in_col_order.len(), num_frames);
 
-    let row_index: FxHashMap<MzBin, usize> = bins_sorted
-        .iter()
-        .enumerate()
-        .map(|(r, &bin)| (bin, r))
-        .collect();
-
-    // 4) allocate and fill (column-major)
-    let mut matrix = vec![0.0f32; num_bins * num_frames];
-
-    let frames_in_col_order: Vec<&TimsFrame> = frame_ids_sorted
-        .iter()
-        .map(|fid| frame_by_id[fid])
-        .collect();
-
-    matrix.par_chunks_mut(num_bins).enumerate().for_each(|(col, col_slice)| {
+    use rayon::prelude::*;
+    matrix.par_chunks_mut(rows).enumerate().for_each(|(col, col_slice)| {
         let frame = frames_in_col_order[col];
         let mz = &frame.ims_frame.mz;
         let inten = &frame.ims_frame.intensity;
 
+        // local accumulation per column (sparse → dense)
         let mut accum: FxHashMap<usize, f32> = FxHashMap::default();
         for (&m, &i) in mz.iter().zip(inten.iter()) {
-            let q = quantize_mz(m as f32, resolution);
-            if let Some(&row) = row_index.get(&q) {
+            if let Some(row) = scale.index_of(m as f32) {
                 *accum.entry(row).or_insert(0.0) += i as f32;
             }
         }
@@ -426,24 +516,18 @@ pub fn build_dense_rt_by_mz(
     let mut data_raw: Option<Vec<f32>> = None;
     if let Some(sigma) = maybe_sigma_frames {
         data_raw = Some(matrix.clone());
-        smooth_time_gaussian_colmajor(&mut matrix, num_bins, num_frames, sigma, truncate);
+        smooth_time_gaussian_colmajor(&mut matrix, rows, num_frames, sigma, truncate);
     }
 
     RtIndex {
-        bins: bins_sorted,
+        scale,
         frames: frame_ids_sorted,
         frame_times,
         data: matrix,
-        rows: num_bins,
+        rows,
         cols: num_frames,
         data_raw,
     }
-}
-
-#[inline(always)]
-fn mz_from_bin(bin: u32, resolution: usize) -> f32 {
-    let factor = 10f32.powi(resolution as i32);
-    bin as f32 / factor
 }
 
 /// light 1D Gaussian smoothing on a vector (along scans)
@@ -478,64 +562,59 @@ fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
 
 struct FrameBinView {
     _frame_id: u32,
-    unique_bins: Vec<u32>,  // sorted unique bins
-    offsets: Vec<usize>,    // CSR: len = unique_bins.len() + 1
-    scan_idx: Vec<u16>,     // concatenated per-bin
-    intensity: Vec<f32>,    // concatenated per-bin
+    unique_bins: Vec<usize>,
+    offsets: Vec<usize>,
+    scan_idx: Vec<u32>,
+    intensity: Vec<f32>,
 }
 
 fn build_frame_bin_view(
     fr: TimsFrame,
-    resolution: usize,
+    scale: &MzScale,
     global_num_scans: usize,
 ) -> FrameBinView {
     let n = fr.ims_frame.mz.len();
+    let mut bins_idx: Vec<usize> = Vec::with_capacity(n);
+    let mut scans_u:  Vec<u32>   = Vec::with_capacity(n);
+    let mut intens:   Vec<f32>   = Vec::with_capacity(n);
 
-    // ---- collect per-point data ----
-    let mut bins:    Vec<u32> = Vec::with_capacity(n);
-    let mut scans_u: Vec<u16> = Vec::with_capacity(n);
-    let mut intens:  Vec<f32> = Vec::with_capacity(n);
-
-    let scans_vec: &Vec<i32> = &fr.scan; // <-- your real field
+    let scans_vec: &Vec<i32> = &fr.scan;
     for i in 0..n {
-        bins.push(quantize_mz(fr.ims_frame.mz[i] as f32, resolution));
-        let s_val = scans_vec[i];
-        debug_assert!(s_val >= 0, "Negative scan index in frame {}", fr.frame_id);
-        let s_u16: u16 = u16::try_from(s_val).expect("scan index does not fit u16");
-        scans_u.push(
-            (s_u16 as usize).min(global_num_scans.saturating_sub(1)) as u16
-        );
-        intens.push(fr.ims_frame.intensity[i] as f32);
+        if let Some(idx) = scale.index_of(fr.ims_frame.mz[i] as f32) {
+            bins_idx.push(idx);
+            let s_val = scans_vec[i];
+            debug_assert!(s_val >= 0, "Negative scan index in frame {}", fr.frame_id);
+            let s_u32: u32 = u32::try_from(s_val).expect("scan index does not fit u16");
+            scans_u.push((s_u32 as usize).min(global_num_scans.saturating_sub(1)) as u32);
+            intens.push(fr.ims_frame.intensity[i] as f32);
+        }
     }
 
-    // ---- sort by bin and build CSR offsets ----
-    let mut idx: Vec<usize> = (0..n).collect();
-    idx.sort_unstable_by_key(|&i| bins[i]);
+    // sort by bin index and build CSR
+    let mut idx: Vec<usize> = (0..bins_idx.len()).collect();
+    idx.sort_unstable_by_key(|&i| bins_idx[i]);
 
-    let mut unique_bins: Vec<u32> = Vec::new();
-    let mut counts: Vec<usize> = Vec::new(); // temp counts per unique bin
-    let mut scan_sorted: Vec<u16> = Vec::with_capacity(n);
-    let mut inten_sorted: Vec<f32> = Vec::with_capacity(n);
+    let mut unique_bins: Vec<usize> = Vec::new();
+    let mut counts: Vec<usize> = Vec::new();
+    let mut scan_sorted: Vec<u32> = Vec::with_capacity(idx.len());
+    let mut inten_sorted: Vec<f32> = Vec::with_capacity(idx.len());
 
-    let mut cur_bin: Option<u32> = None;
+    let mut cur: Option<usize> = None;
     for &i in &idx {
-        let b = bins[i];
-        if cur_bin.map_or(true, |cb| cb != b) {
+        let b = bins_idx[i];
+        if cur.map_or(true, |c| c != b) {
             unique_bins.push(b);
             counts.push(0);
-            cur_bin = Some(b);
+            cur = Some(b);
         }
         *counts.last_mut().unwrap() += 1;
         scan_sorted.push(scans_u[i]);
         inten_sorted.push(intens[i]);
     }
 
-    // prefix-sum counts → offsets
     let mut offsets = Vec::with_capacity(unique_bins.len() + 1);
     offsets.push(0);
-    for c in &counts {
-        offsets.push(offsets.last().unwrap() + *c);
-    }
+    for c in &counts { offsets.push(offsets.last().unwrap() + *c); }
 
     FrameBinView {
         _frame_id: fr.frame_id as u32,
@@ -547,35 +626,19 @@ fn build_frame_bin_view(
 }
 
 #[inline(always)]
-fn bin_range(view: &FrameBinView, bin_lo: u32, bin_hi: u32) -> (usize, usize) {
-    use core::cmp::Ordering;
-    // lower_bound on unique_bins
-    let mut lo = 0usize;
-    let mut hi = view.unique_bins.len();
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        match view.unique_bins[mid].cmp(&bin_lo) {
-            Ordering::Less => lo = mid + 1,
-            _ => hi = mid,
-        }
-    }
-    let start_bin_ix = lo;
+fn bin_range(view: &FrameBinView, bin_lo: usize, bin_hi: usize) -> (usize, usize) {
+    let n = view.unique_bins.len();
+    if n == 0 { return (0, 0); }               // empty: nothing to return
 
-    // upper_bound on unique_bins
-    lo = 0; hi = view.unique_bins.len();
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        match view.unique_bins[mid].cmp(&bin_hi) {
-            Ordering::Greater => hi = mid,
-            _ => lo = mid + 1,
-        }
-    }
-    let end_bin_ix = lo;
+    // lower_bound(bin_lo)
+    let lb = view.unique_bins.partition_point(|&b| b < bin_lo);
+    // upper_bound(bin_hi)
+    let ub = view.unique_bins.partition_point(|&b| b <= bin_hi);
 
-    // map bin-index range → concatenated slice range
-    let start = view.offsets[start_bin_ix];
-    let end   = view.offsets[end_bin_ix];
-    (start, end) // these index scan_idx/intensity
+    // offsets is CSR with len = unique_bins.len() + 1
+    let start = view.offsets[lb];
+    let end   = view.offsets[ub];
+    (start, end)
 }
 
 #[derive(Clone, Debug)]
@@ -588,29 +651,27 @@ pub struct ImIndex {
     pub data_raw: Option<Vec<f32>>,
 }
 
-pub fn build_dense_im_by_rtpeaks(
+pub fn build_dense_im_by_rtpeaks_ppm(
     data_handle: &TimsDatasetDIA,
-    peaks: Vec<RtPeak1D>,    // rows
-    bins: &[u32],            // from RtIndex (peak.mz_row -> center bin)
-    frames_rt: &[u32],       // RT-sorted frame IDs (same order as in RT build)
-    resolution: usize,
+    peaks: Vec<RtPeak1D>,      // rows
+    rt_index: &RtIndex,        // has .scale and .frames
     num_threads: usize,
-    mz_ppm: f32,
+    mz_ppm_window: f32,        // ±ppm around the peak center bin
     rt_extra_pad: usize,
     maybe_sigma_scans: Option<f32>,
     truncate: f32,
 ) -> ImIndex {
+    let scale = &rt_index.scale;
     let n_rows = peaks.len();
     if n_rows == 0 {
         return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
     }
 
     let frames = data_handle
-        .get_slice(frames_rt.to_vec(), num_threads)
-        .to_resolution(resolution as i32, num_threads)
+        .get_slice(rt_index.frames.clone(), num_threads)
+        .to_resolution(0, num_threads)
         .frames;
 
-    // compute GLOBAL scan length
     let global_num_scans: usize = frames.iter()
         .flat_map(|fr| fr.scan.iter())
         .copied()
@@ -618,10 +679,9 @@ pub fn build_dense_im_by_rtpeaks(
         .map(|m| m as usize + 1)
         .unwrap_or(0);
 
-    // build per-frame views
     use rayon::prelude::*;
     let views: Vec<FrameBinView> = frames.into_par_iter()
-        .map(|fr| build_frame_bin_view(fr, resolution, global_num_scans))
+        .map(|fr| build_frame_bin_view(fr, scale, global_num_scans))
         .collect();
 
     let ncols = views.len();
@@ -632,34 +692,24 @@ pub fn build_dense_im_by_rtpeaks(
     let cols = global_num_scans;
     let rows = n_rows;
     let scans: Vec<usize> = (0..cols).collect();
-
     let do_smooth = maybe_sigma_scans.unwrap_or(0.0) > 0.0;
 
     let profiles: Vec<(Vec<f32>, Vec<f32>)> = peaks.par_iter().map(|p| {
-        // ---- GUARDS (important) ----
-        if p.mz_row >= bins.len() {
-            // malformed peak -> return zeros to keep shape
-            return (vec![0.0f32; cols], vec![0.0f32; cols]);
-        }
+        if p.mz_row >= scale.num_bins() { return (vec![0.0; cols], vec![0.0; cols]); }
 
-        // RT window is in **column space**; clamp
+        // RT window in column space
         let mut lo = p.left_padded.saturating_sub(rt_extra_pad);
-        let mut hi = p.right_padded.saturating_sub(0).saturating_add(rt_extra_pad);
+        let mut hi = p.right_padded.saturating_add(rt_extra_pad);
         if lo >= ncols { lo = ncols - 1; }
         if hi >= ncols { hi = ncols - 1; }
-        if lo > hi {
-            return (vec![0.0f32; cols], vec![0.0f32; cols]);
-        }
+        if lo > hi { return (vec![0.0; cols], vec![0.0; cols]); }
 
-        // ppm band around peak m/z
-        let bin_center = bins[p.mz_row];
-        let mz_center  = mz_from_bin(bin_center, resolution);
-        let tol        = mz_center * mz_ppm * 1e-6;
-        let bin_lo     = quantize_mz(mz_center - tol, resolution);
-        let bin_hi     = quantize_mz(mz_center + tol, resolution);
+        // ppm band around bin center
+        let mz_center = scale.center(p.mz_row);
+        let tol = mz_center * mz_ppm_window * 1e-6;
+        let (bin_lo, bin_hi) = scale.index_range_for_mz_window(mz_center - tol, mz_center + tol);
 
         let mut raw = vec![0.0f32; cols];
-
         for t in lo..=hi {
             let v = &views[t];
             let (start, end) = bin_range(v, bin_lo, bin_hi);
@@ -670,14 +720,11 @@ pub fn build_dense_im_by_rtpeaks(
                 }
             }
         }
-
         let smoothed = if do_smooth {
             let mut tmp = raw.clone();
             smooth_vector_gaussian(&mut tmp, maybe_sigma_scans.unwrap(), truncate);
             tmp
-        } else {
-            raw.clone()
-        };
+        } else { raw.clone() };
 
         (smoothed, raw)
     }).collect();
