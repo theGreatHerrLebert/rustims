@@ -2,13 +2,11 @@ use pyo3::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn, pick_im_peaks_on_imindex, build_dense_im_by_rtpeaks_ppm};
-use rustdf::cluster::cluster_eval::{evaluate_clusters_separable, ClusterSpec};
 
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
-use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1};
+use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
-use crate::py_cluster::{PyClusterCloud, PyClusterResult, PyClusterSpec};
 use std::sync::Arc;
 
 pub fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
@@ -105,8 +103,8 @@ impl PyImPeak1D {
     #[getter] fn apex_smoothed(&self) -> f32 { self.inner.apex_smoothed }
     #[getter] fn apex_raw(&self) -> f32 { self.inner.apex_raw }
     #[getter] fn prominence(&self) -> f32 { self.inner.prominence }
-    #[getter] fn left(&self) -> usize { self.inner.left }
-    #[getter] fn right(&self) -> usize { self.inner.right }
+    #[getter] pub fn left(&self) -> usize { self.inner.left }
+    #[getter] pub fn right(&self) -> usize { self.inner.right }
     #[getter] fn left_x(&self) -> f32 { self.inner.left_x }
     #[getter] fn right_x(&self) -> f32 { self.inner.right_x }
     #[getter] fn width_scans(&self) -> usize { self.inner.width_scans }
@@ -324,86 +322,6 @@ impl PyTimsDatasetDIA {
         let im_py = PyImIndex { inner: Arc::new(im) };
         let peaks_py = impeaks_to_py_nested(py, rows_rs)?;
         Ok((im_py, peaks_py))
-    }
-
-
-    // Evaluate clusters: extract (RT×IM) patches in RAM, fit separable 2D Gaussian, return results.
-    ///
-    /// Args:
-    ///   specs: List[PyClusterSpec]
-    ///   bins:  np.ndarray[uint32]  -- from get_dense_mz_vs_rt
-    ///   frames: np.ndarray[uint32] -- RT-sorted frame IDs from get_dense_mz_vs_rt
-    ///   num_threads: usize (set to 1 if using Bruker SDK)
-    #[pyo3(signature = (specs, bins, frames, num_threads=4))]
-    pub fn evaluate_clusters_separable<'py>(
-        &self,
-        py: Python<'py>,
-        specs: Vec<Py<PyClusterSpec>>,
-        bins: PyReadonlyArray1<'py, u32>,
-        frames: PyReadonlyArray1<'py, u32>,
-        num_threads: usize,
-    ) -> PyResult<Vec<Py<PyClusterResult>>> {
-        // Borrow numpy arrays as Rust slices
-        let bins_rs: Vec<u32> = bins.as_slice()?.to_vec();
-        let frame_ids_sorted: Vec<u32> = frames.as_slice()?.to_vec();
-
-        // If you must force single-thread when using the Bruker SDK, do it here:
-        let nt =  num_threads;
-
-        // Materialize frames in RT order once
-        let frames_slice = self.inner.get_slice(frame_ids_sorted.clone(), nt);
-        let frames_in_rt_order: Vec<&mscore::timstof::frame::TimsFrame> =
-            frames_slice.frames.iter().collect();
-
-        // Specs -> Vec<ClusterSpec>
-        let specs_rs: Vec<rustdf::cluster::cluster_eval::ClusterSpec> = specs
-            .into_iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-
-        // Evaluate (parallel inside)
-        let results = evaluate_clusters_separable(
-            &frames_in_rt_order,
-            &frame_ids_sorted,
-            &bins_rs,
-            &specs_rs,
-        );
-
-        // Wrap to PyClusterResult
-        let out: Vec<Py<PyClusterResult>> = results
-            .into_iter()
-            .map(|r| Py::new(py, PyClusterResult { inner: r }))
-            .collect::<PyResult<_>>()?;
-
-        Ok(out)
-    }
-
-    #[pyo3(signature = (specs, bins, frames, resolution, num_threads=4))]
-    pub fn extract_cluster_clouds_batched<'py>(
-        &self,
-        py: Python<'py>,
-        specs: Vec<Py<PyClusterSpec>>,
-        bins: &Bound<'py, PyArray1<u32>>,
-        frames: &Bound<'py, PyArray1<u32>>,
-        resolution: usize,
-        num_threads: usize,
-    ) -> PyResult<Vec<Py<PyClusterCloud>>> {
-        let bins_rs = bins.readonly().as_slice()?.to_vec();
-        let frame_ids_sorted = frames.readonly().as_slice()?.to_vec();
-
-        let specs_rs: Vec<ClusterSpec> = specs.into_iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-
-        let clouds = self.inner.extract_cluster_clouds_batched(
-            &specs_rs, &bins_rs, &frame_ids_sorted, resolution, num_threads,
-        );
-
-        let out: Vec<Py<PyClusterCloud>> = clouds.into_iter()
-            .map(|c| Py::new(py, PyClusterCloud { inner: c }).unwrap())
-            .collect();
-
-        Ok(out)
     }
 }
 

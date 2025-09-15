@@ -1,361 +1,326 @@
-use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
+use rayon::iter::{ ParallelIterator};
 
-#[derive(Clone, Debug)]
-pub struct ClusterCloud {
-    pub rt_left: usize,
-    pub rt_right: usize,
-    pub scan_left: usize,
-    pub scan_right: usize,
-    pub frame_ids: Vec<u32>,   // absolute frame id for each point
-    pub scans:     Vec<u32>,   // scan index per point
-    pub tofs:      Vec<i32>,   // tof index per point (read directly from frame)
-    pub intensities: Vec<f32>, // intensity per point
-}
+use crate::cluster::utility::RtIndex;
+use crate::data::dia::TimsDatasetDIA;
+use crate::data::handle::TimsData;
 
 #[derive(Clone, Debug)]
 pub struct ClusterSpec {
-    /// Row in the RT index (i.e., mz_row / bin index)
-    pub rt_row: usize,
-    /// RT frame *column* indices in the RT matrix (inclusive)
     pub rt_left: usize,
     pub rt_right: usize,
-    /// IM scan bounds (absolute scan indices, inclusive)
-    pub scan_left: usize,
-    pub scan_right: usize,
-    /// ± ppm around the bin’s m/z center to include
-    pub mz_ppm: f32,
-    /// RT-bin quantization resolution used in RtIndex (0.1 → 1, 0.01 → 2, etc.)
-    pub resolution: usize,
+    pub im_left: usize,
+    pub im_right: usize,
+    pub mz_center_hint: f32,
+    pub mz_ppm_window: f32,
+    pub extra_rt_pad: usize,
+    pub extra_im_pad: usize,
+    /// number of bins for m/z histogram fit (used for the m/z marginal)
+    pub mz_hist_bins: usize,
+
+    /// OPTIONAL: if present, overrides the ppm window during extraction
+    /// (used when you do a second pass with μ ± kσ).
+    pub mz_window_da_override: Option<(f32, f32)>,
 }
 
-#[derive(Clone, Debug)]
-pub struct ClusterPatch {
-    pub rt_frames: Vec<u32>,     // RT-ordered frame IDs in the patch
-    pub scans: Vec<u16>,         // contiguous scan axis [scan_left..scan_right]
-    pub rows: usize,             // #frames in patch
-    pub cols: usize,             // #scans in patch
-    /// Row-major: idx = r * cols + c  (r=frame, c=scan)
-    pub patch: Vec<f32>,
-    pub rt_trace: Vec<f32>,      // sum over scans → length rows
-    pub im_trace: Vec<f32>,      // sum over frames → length cols
-    pub total_area: f32,
-    pub apex_value: f32,
-    pub apex_pos: (usize, usize),
+impl Default for ClusterSpec {
+    fn default() -> Self {
+        Self {
+            rt_left: 0, rt_right: 0,
+            im_left: 0, im_right: 0,
+            mz_center_hint: 0.0,
+            mz_ppm_window: 10.0,
+            extra_rt_pad: 0, extra_im_pad: 0,
+            mz_hist_bins: 64,
+            mz_window_da_override: None,
+        }
+    }
 }
 
-#[derive(Clone, Debug)]
-pub struct Gaussian1D {
-    pub mu: f32,
-    pub sigma: f32,
-    pub fwhm: f32, // 2.35482 * sigma
+#[derive(Clone, Debug, Default)]
+pub struct ClusterFit1D {
+    pub mu: f32,       // center (index for RT/IM; Da for m/z)
+    pub sigma: f32,    // stddev (frames/scans/Da)
+    pub height: f32,   // peak amplitude above baseline
+    pub baseline: f32, // constant background
+    pub area: f32,     // height * sigma * sqrt(2π)
+    pub r2: f32,       // (optional) goodness (moment fit sets to NaN)
+    pub n: usize,
 }
 
-#[derive(Clone, Debug)]
-#[allow(non_snake_case)]
-pub struct Separable2DFit {
-    /// G(t,s) = A * exp(-(t-μt)^2/(2σt^2)) * exp(-(s-μs)^2/(2σs^2)) + B
-    pub rt: Gaussian1D,
-    pub im: Gaussian1D,
-    pub A: f32,
-    pub B: f32,
-}
-
-#[derive(Clone, Debug)]
-pub struct ClusterQuality {
-    pub r2: f32,               // 2D R^2 on the patch
-    pub mse: f32,              // mean squared error
-    pub snr_local: f32,        // apex / MAD(border)
-    pub edge_mass_frac: f32,   // mass on outer ring / total
+#[derive(Clone, Debug, Default)]
+pub struct AttachOptions {
+    pub attach_frames: bool,
+    pub attach_scans: bool,
+    pub attach_mz_axis: bool,
+    /// Also attach the 2D dense patch (frames×scans, column-major).
+    pub attach_patch_2d: bool,
 }
 
 #[derive(Clone, Debug)]
 pub struct ClusterResult {
-    pub spec: ClusterSpec,
-    pub patch: ClusterPatch,
-    pub fit: Separable2DFit,
-    pub q: ClusterQuality,
+    // windows (indices, inclusive)
+    pub rt_window: (usize, usize),
+    pub im_window: (usize, usize),
+    pub mz_window_da: (f32, f32),
+
+    // 1D fits
+    pub rt_fit: ClusterFit1D,  // μ in frame index (convert to time outside if needed)
+    pub im_fit: ClusterFit1D,  // μ in scan index
+    pub mz_fit: ClusterFit1D,  // μ in Da
+
+    // intensities
+    pub raw_sum: f32,          // ∑ over the 2D patch (already m/z-reduced)
+    pub fit_volume: f32,       // separable volume proxy (rt*im*mz) if you want (here: product of 1D areas)
+
+    // provenance
+    pub rt_peak_id: usize,
+    pub im_peak_id: usize,
+    pub mz_center_hint: f32,
+    pub frame_ids_used: Vec<u32>, // always useful
+
+    // optional attachments
+    pub frames_axis: Option<Vec<u32>>,   // frame IDs (length = frames)
+    pub scans_axis: Option<Vec<usize>>,  // scan indices (length = scans)
+    pub mz_axis: Option<Vec<f32>>,       // m/z centers of histogram bins (length = mz_hist_bins)
+    pub patch_2d_colmajor: Option<Vec<f32>>, // (frames×scans) column-major
+    pub patch_shape: (usize, usize),     // (frames, scans)
 }
 
-// ---------- Utils ----------
-
-#[inline(always)]
-fn bin_center_from_quantized(bin: u32, resolution: usize) -> f32 {
-    let factor = 10f32.powi(resolution as i32);
-    (bin as f32) / factor
-}
-
-#[inline(always)]
-fn ppm_tol(mz: f32, ppm: f32) -> f32 {
+fn ppm_to_delta_da(mz: f32, ppm: f32) -> f32 {
     mz * ppm * 1e-6
 }
 
-#[inline(always)]
-fn weighted_mean_var(y: &[f32]) -> (f32, f32) {
-    let mut wsum = 0.0f32;
-    let mut mean = 0.0f32;
-    for (i,&v) in y.iter().enumerate() {
-        let w = v.max(0.0);
-        wsum += w;
-        mean += w * (i as f32);
+/// Simple, robust moment-based fit on y (>=0), over x = 0..n-1 (or provided)
+fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
+    let n = y.len();
+    if n == 0 {
+        return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: 0.0, area: 0.0, r2: f32::NAN, n: 0 };
     }
-    if wsum <= 0.0 { return ((y.len() as f32 - 1.0)/2.0, (y.len() as f32)/6.0); }
-    mean /= wsum;
-    let mut var = 0.0f32;
-    for (i,&v) in y.iter().enumerate() {
-        let w = v.max(0.0);
-        let d = (i as f32) - mean;
-        var += w * d * d;
+    // constant baseline as a robust low-percentile (10th)
+    let mut ys: Vec<f32> = y.to_vec();
+    ys.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let b_idx = ((0.10 * (n as f32)).floor() as usize).min(n-1);
+    let b0 = ys[b_idx];
+
+    // positive part
+    let mut wsum = 0.0f64;
+    let mut xsum = 0.0f64;
+    let mut x2sum = 0.0f64;
+    let mut peak = 0.0f32;
+
+    for i in 0..n {
+        let xi = if let Some(xx) = x { xx[i] as f64 } else { i as f64 };
+        let yi = (y[i] - b0).max(0.0) as f64;
+        if yi > 0.0 {
+            wsum += yi;
+            xsum += yi * xi;
+            x2sum += yi * xi * xi;
+            if y[i] > peak { peak = y[i]; }
+        }
     }
-    var = if wsum > 0.0 { var/wsum } else { 0.0 };
-    (mean, var.max(1e-6))
+
+    if wsum <= 0.0 {
+        return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: b0, area: 0.0, r2: f32::NAN, n };
+    }
+
+    let mu = (xsum / wsum) as f32;
+    let var = (x2sum / wsum - (mu as f64)*(mu as f64)).max(0.0) as f32;
+    let sigma = var.sqrt();
+    let height = (peak - b0).max(0.0);
+    let area = height * sigma * (std::f32::consts::TAU).sqrt() * 0.5_f32.sqrt(); // ≈ height * σ * √(2π)
+
+    ClusterFit1D { mu, sigma, height, baseline: b0, area, r2: f32::NAN, n }
 }
 
-fn median_abs_dev_border(p: &[f32], rows: usize, cols: usize) -> f32 {
-    if rows==0 || cols==0 { return 1.0; }
-    let mut ring: Vec<f32> = Vec::with_capacity(rows*2 + cols*2);
-    let row0 = 0usize; let row1 = rows-1;
-    let col0 = 0usize; let col1 = cols-1;
-
-    for c in 0..cols { ring.push(p[row0*cols + c]); }
-    for c in 0..cols { ring.push(p[row1*cols + c]); }
-    for r in 0..rows { ring.push(p[r*cols + col0]); }
-    for r in 0..rows { ring.push(p[r*cols + col1]); }
-
-    if ring.is_empty() { return 1.0; }
-    ring.sort_by(|a,b| a.total_cmp(b));
-    let med = ring[ring.len()/2];
-    let mut dev: Vec<f32> = ring.into_iter().map(|v| (v-med).abs()).collect();
-    dev.sort_by(|a,b| a.total_cmp(b));
-    let mad = dev[dev.len()/2].max(1e-3);
-    mad
+#[derive(Clone, Debug)]
+pub struct EvalOptions {
+    pub attach: AttachOptions,
+    pub refine_mz_once: bool,   // do a second pass with μ±kσ
+    pub refine_k_sigma: f32,    // 3.0 by default
 }
 
-// Solve [ΣG2  ΣG;  ΣG  N] [A; B] = [ΣPG; ΣP]
-#[allow(non_snake_case)]
-fn solve_AB(sum_g2: f64, sum_g: f64, n: usize, sum_pg: f64, sum_p: f64) -> (f32, f32) {
-    let n = n as f64;
-    let det = sum_g2 * n - sum_g * sum_g;
-    if det.abs() < 1e-12 { return (0.0, 0.0); }
-    let inv00 =  n / det;
-    let inv01 = -sum_g / det;
-    let inv10 = -sum_g / det;
-    let inv11 =  sum_g2 / det;
-    let A = (inv00 * sum_pg + inv01 * sum_p) as f32;
-    let B = (inv10 * sum_pg + inv11 * sum_p) as f32;
-    (A, B)
+impl Default for EvalOptions {
+    fn default() -> Self {
+        Self {
+            attach: AttachOptions {
+                attach_frames: true,
+                attach_scans: true,
+                attach_mz_axis: true,
+                attach_patch_2d: false,
+            },
+            refine_mz_once: false,
+            refine_k_sigma: 3.0,
+        }
+    }
 }
 
-// ---------- Extraction ----------
-/// Build a dense patch for one cluster. Uses frames already in RT order.
-/// `frames_in_rt_order[col]` must be the frame for that RT column.
-/// `bins` + `spec.rt_row` + `spec.resolution` give the m/z center.
-/// We include points with |mz - center| <= ppm_tol and scan in [scan_left, scan_right].
-pub fn extract_patch_for_cluster(
-    frames_in_rt_order: &[&TimsFrame],
-    frame_ids_sorted: &[u32],
-    bins: &[u32],
+fn extract_patch_and_mz_hist(
+    ds: &TimsDatasetDIA,
+    rt_index: &RtIndex,
     spec: &ClusterSpec,
-) -> ClusterPatch {
-    let rt_left = spec.rt_left.min(frame_ids_sorted.len().saturating_sub(1));
-    let rt_right = spec.rt_right.min(frame_ids_sorted.len().saturating_sub(1));
-    let rows = if rt_right >= rt_left { rt_right - rt_left + 1 } else { 0 };
-    let scan_left = spec.scan_left;
-    let scan_right = spec.scan_right;
-    let cols = if scan_right >= scan_left { scan_right - scan_left + 1 } else { 0 };
-
-    let mut patch = vec![0.0f32; rows * cols];
-    let rt_frames: Vec<u32> = frame_ids_sorted[rt_left..=rt_right].to_vec();
-    let scans: Vec<u16> = (scan_left..=scan_right).map(|s| s as u16).collect();
-
-    if rows == 0 || cols == 0 {
-        return ClusterPatch {
-            rt_frames, scans, rows, cols, patch,
-            rt_trace: vec![], im_trace: vec![],
-            total_area: 0.0, apex_value: 0.0, apex_pos: (0,0),
-        };
+) -> (Vec<f32>, usize, usize, Vec<u32>, Vec<usize>, Vec<f32>, Vec<f32>, (f32,f32))
+{
+    // --- RT window (frame index in RT order) ---
+    let cols_total = rt_index.cols;
+    if cols_total == 0 {
+        return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
+    }
+    let rt_l0 = spec.rt_left.saturating_sub(spec.extra_rt_pad);
+    let rt_r0 = spec.rt_right.saturating_add(spec.extra_rt_pad);
+    let rt_l  = rt_l0.min(cols_total - 1);
+    let rt_r  = rt_r0.min(cols_total - 1);
+    if rt_l > rt_r {
+        return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     }
 
-    let mz_center = bin_center_from_quantized(bins[spec.rt_row] as u32, spec.resolution);
-    let tol = ppm_tol(mz_center, spec.mz_ppm);
+    let frame_ids: Vec<u32> = rt_index.frames[rt_l..=rt_r].to_vec();
+    let frames = frame_ids.len();
 
-    for (r, col) in (rt_left..=rt_right).enumerate() {
-        let fr = frames_in_rt_order[col];
-        let mzs = &fr.ims_frame.mz;
-        let ints = &fr.ims_frame.intensity;
-        let scans_src: Option<&Vec<i32>> = Some(fr.scan.as_ref());
+    // Materialize frames once
+    // (use your usual threading policy here if needed)
+    let slice = ds.get_slice(frame_ids.clone(), /*num_threads=*/1);
 
-        // cheap fallback if scan vector absent: round-robin assign
-        let fallback_scan = |i: usize| -> i32 {
-            let n = fr.ims_frame.mz.len().max(1);
-            (i % n) as i32
-        };
+    // Determine a safe scan max within the selected frames
+    let global_scan_max = slice.frames.iter()
+        .flat_map(|fr| fr.scan.iter().copied())
+        .max()
+        .unwrap_or(0)
+        .max(0) as usize; // ensure non-negative
 
-        for (i, (&mz, &y)) in mzs.iter().zip(ints.iter()).enumerate() {
-            if (mz as f32 - mz_center).abs() <= tol {
-                let sc = scans_src.map(|v| v[i]).unwrap_or_else(|| fallback_scan(i));
-                if sc >= scan_left as i32 && sc <= scan_right as i32 {
-                    let c = (sc as usize) - scan_left;
-                    patch[r * cols + c] += y.clone() as f32;
-                }
-            }
+    // --- IM window (absolute scan indices) ---
+    let im_l0 = spec.im_left.saturating_sub(spec.extra_im_pad);
+    let im_r0 = spec.im_right.saturating_add(spec.extra_im_pad);
+    let im_l  = im_l0.min(global_scan_max);
+    let im_r  = im_r0.min(global_scan_max);
+    if im_l > im_r || frames == 0 {
+        return (Vec::new(), frames, 0, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
+    }
+    let scans = im_r - im_l + 1;
+
+    // --- m/z window (Da) ---
+    let (mz_min, mz_max) = if let Some(win) = spec.mz_window_da_override {
+        win
+    } else {
+        let mz0 = spec.mz_center_hint;
+        let d   = ppm_to_delta_da(mz0, spec.mz_ppm_window);
+        (mz0 - d, mz0 + d)
+    };
+    if !(mz_min.is_finite() && mz_max.is_finite()) || mz_max <= mz_min {
+        return (Vec::new(), frames, scans, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
+    }
+
+    // --- allocate outputs ---
+    let mut f_patch = vec![0.0f32; frames * scans]; // column-major: [s * frames + f]
+    let bins = spec.mz_hist_bins.max(10);
+    let bin_w = (mz_max - mz_min) / (bins as f32);
+    let mut mz_hist   = vec![0.0f32; bins];
+    let mut mz_center = Vec::with_capacity(bins);
+    for b in 0..bins {
+        mz_center.push(mz_min + (b as f32 + 0.5) * bin_w);
+    }
+
+    // --- accumulate ---
+    for (fi, fr) in slice.frames.into_iter().enumerate() {
+        let mz  = &fr.ims_frame.mz;
+        let intensity = &fr.ims_frame.intensity;
+        let scv = &fr.scan;
+
+        for k in 0..mz.len() {
+            let da = mz[k] as f32;
+            if da < mz_min || da > mz_max { continue; }
+
+            let sc_i = scv[k];
+            if sc_i < 0 { continue; }
+            let sc = sc_i as usize;
+            if sc < im_l || sc > im_r { continue; }
+
+            let val = intensity[k] as f32;
+
+            // 2D patch (frames×scans), column-major by scans
+            let s_local = sc - im_l;
+            f_patch[s_local * frames + fi] += val;
+
+            // m/z histogram
+            let mut b = ((da - mz_min) / (mz_max - mz_min) * (bins as f32)).floor() as isize;
+            if b < 0 { b = 0; }
+            if b as usize >= bins { b = (bins as isize) - 1; }
+            mz_hist[b as usize] += val;
         }
     }
 
-    // marginals & stats
-    let mut rt_trace = vec![0.0f32; rows];
-    let mut im_trace = vec![0.0f32; cols];
-    let mut total = 0.0f32;
-    let mut apex = 0.0f32;
-    let mut apex_pos = (0usize, 0usize);
+    // scans axis (absolute)
+    let scans_axis: Vec<usize> = (im_l..=im_r).collect();
 
-    for r in 0..rows {
-        let row_slice = &patch[r * cols .. (r+1) * cols];
-        let sum_r: f32 = row_slice.iter().copied().sum();
-        rt_trace[r] = sum_r;
-        total += sum_r;
-        for c in 0..cols {
-            let v = row_slice[c];
-            im_trace[c] += v;
-            if v > apex {
-                apex = v;
-                apex_pos = (r, c);
-            }
-        }
-    }
-
-    ClusterPatch {
-        rt_frames, scans, rows, cols, patch,
-        rt_trace, im_trace, total_area: total,
-        apex_value: apex, apex_pos
-    }
+    (f_patch, frames, scans, frame_ids, scans_axis, mz_hist, mz_center, (mz_min, mz_max))
 }
 
-// ---------- Separable Fit (RT×IM) ----------
-
-fn gaussian_1d_from_trace(trace: &[f32]) -> Gaussian1D {
-    let (mu, var) = weighted_mean_var(trace);
-    let sigma = var.sqrt().max(1e-3);
-    let fwhm = 2.354820045f32 * sigma;
-    Gaussian1D { mu, sigma, fwhm }
+/// Product of 1D areas as a separable-volume proxy.
+fn separable_volume(rt: &ClusterFit1D, im: &ClusterFit1D, mz: &ClusterFit1D) -> f32 {
+    // NOTE: areas here already include height * σ * √(2π) (constant baseline excluded)
+    rt.area * im.area * mz.area.max(0.0)
 }
 
-fn build_sep_core(rt: &Gaussian1D, im: &Gaussian1D, rows: usize, cols: usize) -> (Vec<f32>, f64, f64) {
-    // g_t[r], g_s[c], G[r,c] = g_t[r]*g_s[c]
-    let mut g_t = vec![0.0f32; rows];
-    let mut g_s = vec![0.0f32; cols];
-    let inv2_rt = 0.5f32 / (rt.sigma*rt.sigma);
-    let inv2_im = 0.5f32 / (im.sigma*im.sigma);
-    for r in 0..rows {
-        let d = r as f32 - rt.mu;
-        g_t[r] = (-d*d*inv2_rt).exp();
-    }
-    for c in 0..cols {
-        let d = c as f32 - im.mu;
-        g_s[c] = (-d*d*inv2_im).exp();
-    }
-    // ΣG and ΣG2 (for normal equations of A,B)
-    let sum_g: f64 = g_t.iter().map(|&gt| gt as f64).sum::<f64>() *
-        g_s.iter().map(|&gs| gs as f64).sum::<f64>();
-    // ΣG2 = (Σ g_t^2) * (Σ g_s^2)
-    let sum_gt2: f64 = g_t.iter().map(|&gt| (gt as f64)*(gt as f64)).sum();
-    let sum_gs2: f64 = g_s.iter().map(|&gs| (gs as f64)*(gs as f64)).sum();
-    let sum_g2 = sum_gt2 * sum_gs2;
-
-    // Store the outer product as a flat Vec to avoid recomputation:
-    #[allow(non_snake_case)]
-    let mut G = vec![0.0f32; rows*cols];
-    for r in 0..rows {
-        for c in 0..cols {
-            G[r*cols + c] = g_t[r] * g_s[c];
-        }
-    }
-    (G, sum_g, sum_g2)
-}
-
-#[allow(non_snake_case)]
-fn fit_ab_on_patch(patch: &[f32], G: &[f32]) -> (f32, f32, f32, f32) {
-    let n = patch.len();
-    let mut sum_p = 0.0f64;
-    let mut sum_pg = 0.0f64;
-    for i in 0..n {
-        let p = patch[i] as f64;
-        let g = G[i] as f64;
-        sum_p  += p;
-        sum_pg += p * g;
-    }
-    // ΣG and ΣG2 must be computed alongside G; pass them if you prefer avoiding re-scan
-    let mut sum_g = 0.0f64;
-    let mut sum_g2 = 0.0f64;
-    for &g in G {
-        let g = g as f64;
-        sum_g  += g;
-        sum_g2 += g*g;
-    }
-    #[allow(non_snake_case)]
-    let (A, B) = solve_AB(sum_g2, sum_g, n, sum_pg, sum_p);
-
-    // SSE and SST for R^2
-    let mut sse = 0.0f64;
-    for i in 0..n {
-        let pred = A as f64 * (G[i] as f64) + B as f64;
-        let e = (patch[i] as f64) - pred;
-        sse += e * e;
-    }
-    let mean_p = sum_p / (n as f64);
-    let mut sst = 0.0f64;
-    for i in 0..n {
-        let d = (patch[i] as f64) - mean_p;
-        sst += d * d;
-    }
-    let r2 = if sst > 0.0 { 1.0 - (sse / sst) } else { 0.0 };
-    (A, B, r2 as f32, (sse/(n as f64)) as f32) // return A,B,R2,MSE
-}
-
-fn edge_mass_fraction(p: &[f32], rows: usize, cols: usize) -> f32 {
-    if rows==0 || cols==0 { return 0.0; }
-    let mut edge = 0.0f32;
-    let mut tot = 0.0f32;
-    for r in 0..rows {
-        for c in 0..cols {
-            let v = p[r*cols + c];
-            tot += v;
-            if r==0 || r==rows-1 || c==0 || c==cols-1 { edge += v; }
-        }
-    }
-    if tot <= 0.0 { 0.0 } else { edge / tot }
-}
-
-/// Fit separable 2D Gaussian and compute quality metrics.
-#[allow(non_snake_case)]
-pub fn fit_separable_and_score(p: &ClusterPatch) -> (Separable2DFit, ClusterQuality) {
-    let rt = gaussian_1d_from_trace(&p.rt_trace);
-    let im = gaussian_1d_from_trace(&p.im_trace);
-
-    let (G, _sum_g, _sum_g2) = build_sep_core(&rt, &im, p.rows, p.cols);
-    let (A, B, r2, mse) = fit_ab_on_patch(&p.patch, &G);
-
-    let mad = median_abs_dev_border(&p.patch, p.rows, p.cols);
-    let snr = if mad > 0.0 { p.apex_value / mad } else { 0.0 };
-    let edge_frac = edge_mass_fraction(&p.patch, p.rows, p.cols);
-
-    let fit = Separable2DFit { rt, im, A, B };
-    let q = ClusterQuality { r2, mse, snr_local: snr, edge_mass_frac: edge_frac };
-    (fit, q)
-}
-
-// ---------- Top-level: extract + fit many clusters ----------
-
-/// Evaluate many clusters: extract patches **in RAM**, fit separable 2D Gaussian, score.
-pub fn evaluate_clusters_separable(
-    frames_in_rt_order: &[&TimsFrame], // same order you used to build RtIndex
-    frame_ids_sorted: &[u32],
-    bins: &[u32],
+pub fn evaluate_clusters_3d(
+    ds: &TimsDatasetDIA,
+    rt_index: &RtIndex,
     specs: &[ClusterSpec],
+    opts: EvalOptions,
 ) -> Vec<ClusterResult> {
-    specs.par_iter().map(|spec| {
-        let patch = extract_patch_for_cluster(frames_in_rt_order, frame_ids_sorted, bins, spec);
-        let (fit, q) = fit_separable_and_score(&patch);
-        ClusterResult { spec: spec.clone(), patch, fit, q }
+    specs.par_iter().enumerate().map(|(cid, spec)| {
+        // --- 1st pass ---
+        let (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win) =
+            extract_patch_and_mz_hist(ds, rt_index, spec);
+
+        let mz_fit0 = moment_fit_1d(&mz_hist_y, Some(&mz_centers));
+
+        // Optional DA refinement
+        let need_refine = opts.refine_mz_once && mz_fit0.sigma > 0.0 && mz_fit0.area > 0.0;
+        let (patch2, frames2, scans2, frame_ids2, scans_axis2, mz_hist_y2, mz_centers2, mz_da_win2) =
+            if need_refine {
+                let k = opts.refine_k_sigma.max(1.0);
+                let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_da_win.0);
+                let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_da_win.1);
+                let mut spec2 = spec.clone();
+                spec2.mz_window_da_override = Some((lo, hi));
+                extract_patch_and_mz_hist(ds, rt_index, &spec2)
+            } else {
+                (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
+            };
+
+        // RT/IM marginals
+        let mut rt_marg = vec![0.0f32; frames2];
+        let mut im_marg = vec![0.0f32; scans2];
+        for s in 0..scans2 {
+            for f in 0..frames2 {
+                let v = patch2[s * frames2 + f];
+                rt_marg[f] += v;
+                im_marg[s] += v;
+            }
+        }
+
+        let rt_fit = moment_fit_1d(&rt_marg, None);
+        let im_fit = moment_fit_1d(&im_marg, None);
+        let mz_fit = moment_fit_1d(&mz_hist_y2, Some(&mz_centers2));
+
+        let raw_sum: f32 = patch2.iter().copied().sum();
+        let fit_volume = separable_volume(&rt_fit, &im_fit, &mz_fit);
+
+        ClusterResult {
+            rt_window: (spec.rt_left, spec.rt_right),
+            im_window: (spec.im_left, spec.im_right),
+            mz_window_da: mz_da_win2,
+            rt_fit, im_fit, mz_fit,
+            raw_sum, fit_volume,
+            rt_peak_id: cid,   // you can wire real IDs when you build specs from peaks
+            im_peak_id: cid,
+            mz_center_hint: spec.mz_center_hint,
+            frame_ids_used: frame_ids2.clone(),
+            frames_axis: if opts.attach.attach_frames { Some(frame_ids2) } else { None },
+            scans_axis:  if opts.attach.attach_scans  { Some(scans_axis2) } else { None },
+            mz_axis:     if opts.attach.attach_mz_axis{ Some(mz_centers2) } else { None },
+            patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch2) } else { None },
+            patch_shape: (frames2, scans2),
+        }
     }).collect()
 }

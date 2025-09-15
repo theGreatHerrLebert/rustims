@@ -1,9 +1,10 @@
 import sqlite3
 import warnings
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 
+from .cluster import ClusterResult, ClusterSpec, EvalOptions
 from .data import TimsDataset
 import pandas as pd
 
@@ -479,51 +480,23 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         im_peaks = [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
         return im_index, im_peaks
 
-    def evaluate_clusters_separable(
+    def evaluate_clusters_3d(
             self,
-            specs: List,
-            bins: "np.ndarray[np.uint32]",
-            frames: "np.ndarray[np.uint32]",
-            num_threads: int = 4,
-    ) -> List:
-        from .cluster import ClusterResult
+            rt_index: "RtIndex",
+            specs: Sequence[ClusterSpec],
+            opts: Optional[EvalOptions] = None,
+    ) -> List[ClusterResult]:
         """
-        Extract RT×IM patches for given ClusterSpec, fit a separable 2D Gaussian,
-        and return ClusterResult objects (spec, patch, fit, quality).
+        Evaluate a list of ClusterSpec against the dataset.
 
-        Args:
-            specs: List[ClusterSpec] (row/column windows + mz_ppm/resolution).
-            bins:  np.ndarray[uint32] from get_dense_mz_vs_rt(_and_pick).
-            frames: np.ndarray[uint32] RT-sorted frame IDs from get_dense_mz_vs_rt(_and_pick).
-            num_threads: worker threads (will be forced to 1 for Bruker SDK).
-
-        Returns:
-            List[ClusterResult]
+        Returns a list of ClusterResult. Use EvalOptions(AttachOptions(...)) to
+        attach axes/patch if you need raw data alongside fits.
         """
-        if self.use_bruker_sdk:
-            warnings.warn("Using Bruker SDK, setting num_threads=1.")
-            num_threads = 1
-
         specs_py = [s.get_py_ptr() for s in specs]
-        res_py = self.__dataset.evaluate_clusters_separable(
-            specs_py, bins, frames, num_threads
-        )
+        if opts is None:
+            opts_py = ims.PyEvalOptions(ims.PyAttachOptions(True, True, True, False), False, 3.0)
+        else:
+            opts_py = opts.get_py_ptr()
+
+        res_py = self.__dataset.evaluate_clusters_3d(rt_index.get_py_ptr(), specs_py, opts_py)
         return [ClusterResult.from_py_ptr(r) for r in res_py]
-
-    def extract_cluster_clouds_batched(
-            self,
-            specs: List,  # your existing Python wrapper for specs
-            bins: "np.ndarray[np.uint32]",
-            frames: "np.ndarray[np.uint32]",
-            resolution: int = 2,
-            num_threads: int = 4,
-    ) -> List:
-        from .cluster import ClusterCloud
-        if self.use_bruker_sdk:
-            warnings.warn("Using Bruker SDK, setting num_threads=1.")
-            num_threads = 1
-        specs_py = [s.get_py_ptr() for s in specs]
-        clouds_py = self.__dataset.extract_cluster_clouds_batched(
-            specs_py, bins, frames, int(resolution), int(num_threads)
-        )
-        return [ClusterCloud.from_py_ptr(c) for c in clouds_py]

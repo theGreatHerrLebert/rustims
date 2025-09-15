@@ -1,215 +1,158 @@
-use pyo3::prelude::*;
-use pyo3::{pymodule, Bound, PyResult, Python};
-use pyo3::prelude::PyModule;
-
-use numpy::{PyArray1, PyArray2};
-
-use rustdf::cluster::cluster_eval::{
-    ClusterSpec, ClusterPatch, Gaussian1D, Separable2DFit, ClusterQuality, ClusterResult, ClusterCloud
-};
+use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
+use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions};
+use pyo3::prelude::{PyModule, PyModuleMethods};
+use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 
 #[pyclass]
-pub struct PyClusterCloud {
-    pub inner: ClusterCloud,
-}
-
-#[pymethods]
-impl PyClusterCloud {
-    #[getter] pub fn rt_left(&self) -> usize { self.inner.rt_left }
-    #[getter] pub fn rt_right(&self) -> usize { self.inner.rt_right }
-    #[getter] pub fn scan_left(&self) -> usize { self.inner.scan_left }
-    #[getter] pub fn scan_right(&self) -> usize { self.inner.scan_right }
-
-    pub fn frame_ids<'py>(&self, py: Python<'py>) -> Py<PyArray1<u32>> {
-        PyArray1::from_vec_bound(py, self.inner.frame_ids.clone()).unbind()
-    }
-    pub fn scans<'py>(&self, py: Python<'py>) -> Py<PyArray1<u32>> {
-        PyArray1::from_vec_bound(py, self.inner.scans.clone()).unbind()
-    }
-    pub fn tofs<'py>(&self, py: Python<'py>) -> Py<PyArray1<i32>> {
-        PyArray1::from_vec_bound(py, self.inner.tofs.clone()).unbind()
-    }
-    pub fn intensities<'py>(&self, py: Python<'py>) -> Py<PyArray1<f32>> {
-        PyArray1::from_vec_bound(py, self.inner.intensities.clone()).unbind()
-    }
-}
-
-/// -------- PyClusterSpec --------
-#[pyclass]
-pub struct PyClusterSpec {
-    pub inner: ClusterSpec,
-}
+#[derive(Clone, Debug)]
+pub struct PyClusterSpec { pub inner: ClusterSpec }
 
 #[pymethods]
 impl PyClusterSpec {
     #[new]
     #[pyo3(signature = (
-        rt_row, rt_left, rt_right, scan_left, scan_right, mz_ppm, resolution
+        rt_left, rt_right,
+        im_left, im_right,
+        mz_center_hint, mz_ppm_window,
+        extra_rt_pad=0, extra_im_pad=0, mz_hist_bins=64
     ))]
-    pub fn new(
-        rt_row: usize,
-        rt_left: usize,
-        rt_right: usize,
-        scan_left: usize,
-        scan_right: usize,
-        mz_ppm: f32,
-        resolution: usize,
+    fn new(
+        rt_left: usize, rt_right: usize,
+        im_left: usize, im_right: usize,
+        mz_center_hint: f32, mz_ppm_window: f32,
+        extra_rt_pad: usize, extra_im_pad: usize, mz_hist_bins: usize,
     ) -> Self {
-        let inner = ClusterSpec {
-            rt_row, rt_left, rt_right, scan_left, scan_right, mz_ppm, resolution
-        };
-        Self { inner }
+        Self { inner: ClusterSpec {
+            rt_left, rt_right, im_left, im_right,
+            mz_center_hint, mz_ppm_window,
+            extra_rt_pad, extra_im_pad, mz_hist_bins,
+            mz_window_da_override: None,
+        }}
     }
-
-    // Read-only getters (Pythonic ergonomics)
-    #[getter] pub fn rt_row(&self) -> usize { self.inner.rt_row }
-    #[getter] pub fn rt_left(&self) -> usize { self.inner.rt_left }
-    #[getter] pub fn rt_right(&self) -> usize { self.inner.rt_right }
-    #[getter] pub fn scan_left(&self) -> usize { self.inner.scan_left }
-    #[getter] pub fn scan_right(&self) -> usize { self.inner.scan_right }
-    #[getter] pub fn mz_ppm(&self) -> f32 { self.inner.mz_ppm }
-    #[getter] pub fn resolution(&self) -> usize { self.inner.resolution }
 }
 
-/// -------- PyGaussian1D --------
 #[pyclass]
-pub struct PyGaussian1D {
-    pub inner: Gaussian1D,
-}
-#[pymethods]
-impl PyGaussian1D {
-    #[getter] pub fn mu(&self) -> f32 { self.inner.mu }
-    #[getter] pub fn sigma(&self) -> f32 { self.inner.sigma }
-    #[getter] pub fn fwhm(&self) -> f32 { self.inner.fwhm }
-}
-
-/// -------- PySeparable2DFit --------
-#[pyclass]
-pub struct PySeparable2DFit {
-    pub inner: Separable2DFit,
-}
-#[pymethods]
-impl PySeparable2DFit {
-    #[getter] pub fn rt(&self) -> PyGaussian1D { PyGaussian1D { inner: self.inner.rt.clone() } }
-    #[getter] pub fn im(&self) -> PyGaussian1D { PyGaussian1D { inner: self.inner.im.clone() } }
-    #[allow(non_snake_case)]
-    #[getter] pub fn A(&self) -> f32 { self.inner.A }
-    #[allow(non_snake_case)]
-    #[getter] pub fn B(&self) -> f32 { self.inner.B }
-}
-
-/// -------- PyClusterQuality --------
-#[pyclass]
-pub struct PyClusterQuality {
-    pub inner: ClusterQuality,
-}
-#[pymethods]
-impl PyClusterQuality {
-    #[getter] pub fn r2(&self) -> f32 { self.inner.r2 }
-    #[getter] pub fn mse(&self) -> f32 { self.inner.mse }
-    #[getter] pub fn snr_local(&self) -> f32 { self.inner.snr_local }
-    #[getter] pub fn edge_mass_frac(&self) -> f32 { self.inner.edge_mass_frac }
-}
-
-/// -------- PyClusterPatch --------
-#[pyclass]
-pub struct PyClusterPatch {
-    pub inner: ClusterPatch,
-}
+#[derive(Clone, Debug, Default)]
+pub struct PyAttachOptions { pub inner: AttachOptions }
 
 #[pymethods]
-impl PyClusterPatch {
-    #[getter] pub fn rows(&self) -> usize { self.inner.rows }
-    #[getter] pub fn cols(&self) -> usize { self.inner.cols }
-
-    pub fn rt_frames(&self, py: Python<'_>) -> Py<PyArray1<u32>> {
-        PyArray1::from_vec_bound(py, self.inner.rt_frames.clone()).unbind()
-    }
-
-    pub fn scans(&self, py: Python<'_>) -> Py<PyArray1<u16>> {
-        PyArray1::from_vec_bound(py, self.inner.scans.clone()).unbind()
-    }
-
-    pub fn rt_trace(&self, py: Python<'_>) -> Py<PyArray1<f32>> {
-        PyArray1::from_vec_bound(py, self.inner.rt_trace.clone()).unbind()
-    }
-
-    pub fn im_trace(&self, py: Python<'_>) -> Py<PyArray1<f32>> {
-        PyArray1::from_vec_bound(py, self.inner.im_trace.clone()).unbind()
-    }
-
-    pub fn patch(&self, py: Python<'_>) -> Py<PyArray2<f32>> {
-        use numpy::ndarray::Array2;
-        let arr: Array2<f32> = Array2::from_shape_vec(
-            (self.inner.rows, self.inner.cols),
-            self.inner.patch.clone()
-        ).expect("shape error in patch");
-        PyArray2::from_owned_array_bound(py, arr).unbind()
-    }
-
-    #[getter] pub fn total_area(&self) -> f32 { self.inner.total_area }
-    #[getter] pub fn apex_value(&self) -> f32 { self.inner.apex_value }
-
-    #[getter]
-    pub fn apex_pos(&self) -> (usize, usize) {
-        self.inner.apex_pos
+impl PyAttachOptions {
+    #[new]
+    #[pyo3(signature = (attach_frames=true, attach_scans=true, attach_mz_axis=true, attach_patch_2d=false))]
+    fn new(
+        attach_frames: bool,
+        attach_scans: bool,
+        attach_mz_axis: bool,
+        attach_patch_2d: bool,
+    ) -> Self {
+        Self { inner: AttachOptions { attach_frames, attach_scans, attach_mz_axis, attach_patch_2d } }
     }
 }
 
-/// -------- PyClusterResult --------
 #[pyclass]
-pub struct PyClusterResult {
-    pub inner: ClusterResult,
+#[derive(Clone, Debug)]
+pub struct PyEvalOptions { pub inner: EvalOptions }
+
+#[pymethods]
+impl PyEvalOptions {
+    #[new]
+    #[pyo3(signature = (attach, refine_mz_once=false, refine_k_sigma=3.0))]
+    fn new(attach: PyAttachOptions, refine_mz_once: bool, refine_k_sigma: f32) -> Self {
+        Self { inner: EvalOptions { attach: attach.inner, refine_mz_once, refine_k_sigma } }
+    }
 }
+
+#[pyclass]
+#[derive(Clone, Debug, Default)]
+pub struct PyClusterFit1D { pub inner: ClusterFit1D }
+
+#[pymethods]
+impl PyClusterFit1D {
+    #[getter] fn mu(&self) -> f32 { self.inner.mu }
+    #[getter] fn sigma(&self) -> f32 { self.inner.sigma }
+    #[getter] fn height(&self) -> f32 { self.inner.height }
+    #[getter] fn baseline(&self) -> f32 { self.inner.baseline }
+    #[getter] fn area(&self) -> f32 { self.inner.area }
+    #[getter] fn r2(&self) -> f32 { self.inner.r2 }
+    #[getter] fn n(&self) -> usize { self.inner.n }
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyClusterResult { pub inner: ClusterResult }
 
 #[pymethods]
 impl PyClusterResult {
-    #[getter] pub fn spec(&self) -> PyClusterSpec { PyClusterSpec { inner: self.inner.spec.clone() } }
-    #[getter] pub fn patch(&self) -> PyClusterPatch { PyClusterPatch { inner: self.inner.patch.clone() } }
-    #[getter] pub fn fit(&self) -> PySeparable2DFit { PySeparable2DFit { inner: self.inner.fit.clone() } }
-    #[getter] pub fn quality(&self) -> PyClusterQuality { PyClusterQuality { inner: self.inner.q.clone() } }
+    #[getter] fn rt_window(&self) -> (usize, usize) { self.inner.rt_window }
+    #[getter] fn im_window(&self) -> (usize, usize) { self.inner.im_window }
+    #[getter] fn mz_window_da(&self) -> (f32, f32) { self.inner.mz_window_da }
 
-    /// Convenience dict for Pandas
-    pub fn to_dict(&self) -> PyResult<Py<PyAny>> {
-        Python::with_gil(|py| {
-            let q = &self.inner.q;
-            let rt = &self.inner.fit.rt;
-            let im = &self.inner.fit.im;
-            let d = pyo3::types::PyDict::new_bound(py);
-            d.set_item("rt_row", self.inner.spec.rt_row)?;
-            d.set_item("rt_left", self.inner.spec.rt_left)?;
-            d.set_item("rt_right", self.inner.spec.rt_right)?;
-            d.set_item("scan_left", self.inner.spec.scan_left)?;
-            d.set_item("scan_right", self.inner.spec.scan_right)?;
-            d.set_item("mz_ppm", self.inner.spec.mz_ppm)?;
-            d.set_item("resolution", self.inner.spec.resolution)?;
-            d.set_item("rows", self.inner.patch.rows)?;
-            d.set_item("cols", self.inner.patch.cols)?;
-            d.set_item("total_area", self.inner.patch.total_area)?;
-            d.set_item("apex_value", self.inner.patch.apex_value)?;
-            d.set_item("r2", q.r2)?;
-            d.set_item("mse", q.mse)?;
-            d.set_item("snr_local", q.snr_local)?;
-            d.set_item("edge_mass_frac", q.edge_mass_frac)?;
-            d.set_item("rt_mu", rt.mu)?;
-            d.set_item("rt_sigma", rt.sigma)?;
-            d.set_item("rt_fwhm", rt.fwhm)?;
-            d.set_item("im_mu", im.mu)?;
-            d.set_item("im_sigma", im.sigma)?;
-            d.set_item("im_fwhm", im.fwhm)?;
-            Ok(d.into())
-        })
+    #[getter] fn rt_fit(&self) -> PyClusterFit1D { PyClusterFit1D { inner: self.inner.rt_fit.clone() } }
+    #[getter] fn im_fit(&self) -> PyClusterFit1D { PyClusterFit1D { inner: self.inner.im_fit.clone() } }
+    #[getter] fn mz_fit(&self) -> PyClusterFit1D { PyClusterFit1D { inner: self.inner.mz_fit.clone() } }
+
+    #[getter] fn raw_sum(&self) -> f32 { self.inner.raw_sum }
+    #[getter] fn fit_volume(&self) -> f32 { self.inner.fit_volume }
+
+    #[getter] fn rt_peak_id(&self) -> usize { self.inner.rt_peak_id }
+    #[getter] fn im_peak_id(&self) -> usize { self.inner.im_peak_id }
+    #[getter] fn mz_center_hint(&self) -> f32 { self.inner.mz_center_hint }
+
+    #[getter] fn frame_ids_used(&self) -> Vec<u32> { self.inner.frame_ids_used.clone() }
+
+    #[getter] fn frames_axis(&self) -> Option<Vec<u32>> { self.inner.frames_axis.clone() }
+    #[getter] fn scans_axis(&self) -> Option<Vec<usize>> { self.inner.scans_axis.clone() }
+    #[getter] fn mz_axis(&self) -> Option<Vec<f32>> { self.inner.mz_axis.clone() }
+
+    #[getter] fn patch_shape(&self) -> (usize, usize) { self.inner.patch_shape }
+    #[getter] fn patch_2d_colmajor(&self) -> Option<Vec<f32>> { self.inner.patch_2d_colmajor.clone() }
+}
+
+#[pyfunction]
+#[pyo3(signature = (rt_peaks, im_rows, mz_ppm_window=15.0, extra_rt_pad=0, extra_im_pad=0, mz_hist_bins=64))]
+pub fn make_cluster_specs_from_peaks(
+    py: Python<'_>,
+    rt_peaks: Vec<Py<PyRtPeak1D>>,
+    im_rows: Vec<Vec<Py<PyImPeak1D>>>, // same row order as rt_peaks
+    mz_ppm_window: f32,
+    extra_rt_pad: usize,
+    extra_im_pad: usize,
+    mz_hist_bins: usize,
+) -> PyResult<Vec<Py<PyClusterSpec>>> {
+    let mut specs_py = Vec::new();
+    for (row_idx, rt_p) in rt_peaks.into_iter().enumerate() {
+        let rt = rt_p.borrow(py);
+        let mz_center = rt.mz_center();
+        let rt_l = rt.left_padded().saturating_sub(extra_rt_pad);
+        let rt_r = rt.right_padded() + extra_rt_pad;
+
+        for im_p in &im_rows[row_idx] {
+            let im = im_p.borrow(py);
+            let im_l = im.left().saturating_sub(extra_im_pad);
+            let im_r = im.right() + extra_im_pad;
+
+            let spec = ClusterSpec {
+                rt_left: rt_l, rt_right: rt_r,
+                im_left: im_l, im_right: im_r,
+                mz_center_hint: mz_center,
+                mz_ppm_window,
+                extra_rt_pad: 0, extra_im_pad: 0,
+                mz_hist_bins,
+                mz_window_da_override: None,
+            };
+            specs_py.push(Py::new(py, PyClusterSpec { inner: spec })?);
+        }
     }
+    Ok(specs_py)
 }
 
 #[pymodule]
 pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterSpec>()?;
-    m.add_class::<PyGaussian1D>()?;
-    m.add_class::<PySeparable2DFit>()?;
-    m.add_class::<PyClusterQuality>()?;
-    m.add_class::<PyClusterPatch>()?;
+    m.add_class::<PyAttachOptions>()?;
+    m.add_class::<PyEvalOptions>()?;
+    m.add_class::<PyClusterFit1D>()?;
     m.add_class::<PyClusterResult>()?;
-    m.add_class::<PyClusterCloud>()?;
+    m.add_function(wrap_pyfunction!(make_cluster_specs_from_peaks, m)?)?;
     Ok(())
 }
