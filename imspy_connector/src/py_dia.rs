@@ -8,6 +8,8 @@ use crate::py_tims_slice::PyTimsSlice;
 use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use std::sync::Arc;
+use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
+use crate::py_cluster::{PyClusterResult, PyClusterSpec, PyEvalOptions};
 
 pub fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
@@ -322,6 +324,41 @@ impl PyTimsDatasetDIA {
         let im_py = PyImIndex { inner: Arc::new(im) };
         let peaks_py = impeaks_to_py_nested(py, rows_rs)?;
         Ok((im_py, peaks_py))
+    }
+
+    // ... existing methods ...
+
+    /// Evaluate 3D clusters (RT × IM with m/z marginal) for the given specs.
+    ///
+    /// Python signature:
+    ///   evaluate_clusters_3d(rt_index, specs, opts=None) -> List[PyClusterResult]
+    #[pyo3(signature = (rt_index, specs, opts=None))]
+    pub fn evaluate_clusters_3d<'py>(
+        &self,
+        py: Python<'py>,
+        rt_index: PyRtIndex,
+        specs: Vec<Py<PyClusterSpec>>,
+        opts: Option<PyEvalOptions>,
+    ) -> PyResult<Vec<Py<PyClusterResult>>> {
+        // Convert inputs
+        let rt_rs = &rt_index.inner; // Arc<RtIndex>
+        let specs_rs: Vec<ClusterSpec> = specs
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+        let eval_opts: EvalOptions = opts.map(|o| o.inner).unwrap_or_default();
+
+        // Core evaluation
+        let results_rs: Vec<ClusterResult> =
+            evaluate_clusters_3d(&self.inner, rt_rs, &specs_rs, eval_opts);
+
+        // Wrap back to Python
+        let results_py: Vec<Py<PyClusterResult>> = results_rs
+            .into_iter()
+            .map(|r| Py::new(py, PyClusterResult { inner: r }))
+            .collect::<PyResult<_>>()?;
+
+        Ok(results_py)
     }
 }
 
