@@ -3,8 +3,6 @@ use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, 
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 
-// --- add to your existing block ---
-
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyClusterSpec { pub inner: ClusterSpec }
