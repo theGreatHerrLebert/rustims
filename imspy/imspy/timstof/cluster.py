@@ -8,11 +8,10 @@ import imspy_connector
 ims = imspy_connector.py_cluster
 
 from imspy.simulation.annotation import RustWrapperObject
-from .dia import RtPeak1D, ImPeak1D  # <- adjust import path to where you defined them
 
 # --- Thin wrappers -----------------------------------------------------------
 
-class ClusterSpec:
+class ClusterSpec(RustWrapperObject):
     """Thin wrapper for Rust PyClusterSpec."""
     def __init__(self, *args, **kwargs):
         # prefer from_py_ptr; constructing directly uses the rust ctor:
@@ -70,7 +69,7 @@ class ClusterSpec:
                 f"mz_bins={self.mz_hist_bins})")
 
 
-class AttachOptions:
+class AttachOptions(RustWrapperObject):
     """Thin wrapper for Rust PyAttachOptions."""
     def __init__(
         self,
@@ -109,7 +108,7 @@ class AttachOptions:
                 f"mz_axis={self.attach_mz_axis}, patch_2d={self.attach_patch_2d})")
 
 
-class EvalOptions:
+class EvalOptions(RustWrapperObject):
     """Thin wrapper for Rust PyEvalOptions."""
     def __init__(
         self,
@@ -147,7 +146,7 @@ class EvalOptions:
         return f"EvalOptions(refine_mz_once={self.refine_mz_once}, k={self.refine_k_sigma})"
 
 
-class ClusterFit1D:
+class ClusterFit1D(RustWrapperObject):
     """Thin wrapper for Rust ClusterFit1D (read-only)."""
     def __init__(self, *a, **k):
         raise RuntimeError("ClusterFit1D is created in Rust; use ClusterFit1D.from_py_ptr().")
@@ -178,7 +177,7 @@ class ClusterFit1D:
         return f"Fit1D(mu={self.mu:.3f}, σ={self.sigma:.3f}, h={self.height:.1f}, base={self.baseline:.1f}, area={self.area:.1f})"
 
 
-class ClusterResult:
+class ClusterResult(RustWrapperObject):
     """Thin wrapper for Rust ClusterResult (read-only)."""
     def __init__(self, *a, **k):
         raise RuntimeError("ClusterResult is created in Rust; use ClusterResult.from_py_ptr().")
