@@ -161,7 +161,7 @@ fn extract_patch_and_mz_hist(
     spec: &ClusterSpec,
 ) -> (Vec<f32>, usize, usize, Vec<u32>, Vec<usize>, Vec<f32>, Vec<f32>, (f32,f32))
 {
-    // --- RT window (frame index in RT order) ---
+    // --- RT window ---
     let cols_total = rt_index.cols;
     if cols_total == 0 {
         return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
@@ -176,27 +176,34 @@ fn extract_patch_and_mz_hist(
 
     let frame_ids: Vec<u32> = rt_index.frames[rt_l..=rt_r].to_vec();
     let frames = frame_ids.len();
+    if frames == 0 {
+        return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
+    }
 
-    // Materialize frames once
-    // (use your usual threading policy here if needed)
+    // Materialize
     let slice = ds.get_slice(frame_ids.clone(), /*num_threads=*/1);
 
-    // Determine a safe scan max within the selected frames
+    // --- IM window (absolute scans) ---
     let global_scan_max = slice.frames.iter()
         .flat_map(|fr| fr.scan.iter().copied())
         .max()
         .unwrap_or(0)
-        .max(0) as usize; // ensure non-negative
+        .max(0) as usize;
 
-    // --- IM window (absolute scan indices) ---
     let im_l0 = spec.im_left.saturating_sub(spec.extra_im_pad);
     let im_r0 = spec.im_right.saturating_add(spec.extra_im_pad);
     let im_l  = im_l0.min(global_scan_max);
     let im_r  = im_r0.min(global_scan_max);
-    if im_l > im_r || frames == 0 {
+
+    if im_l > im_r {
+        // No scans in range → empty, but keep frames for provenance.
         return (Vec::new(), frames, 0, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     }
+
     let scans = im_r - im_l + 1;
+    if scans == 0 {
+        return (Vec::new(), frames, 0, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
+    }
 
     // --- m/z window (Da) ---
     let (mz_min, mz_max) = if let Some(win) = spec.mz_window_da_override {
@@ -206,12 +213,12 @@ fn extract_patch_and_mz_hist(
         let d   = ppm_to_delta_da(mz0, spec.mz_ppm_window);
         (mz0 - d, mz0 + d)
     };
-    if !(mz_min.is_finite() && mz_max.is_finite()) || mz_max <= mz_min {
+    if !mz_min.is_finite() || !mz_max.is_finite() || mz_max <= mz_min {
         return (Vec::new(), frames, scans, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
     }
 
     // --- allocate outputs ---
-    let mut f_patch = vec![0.0f32; frames * scans]; // column-major: [s * frames + f]
+    let mut f_patch = vec![0.0f32; frames * scans]; // [s * frames + f]
     let bins = spec.mz_hist_bins.max(10);
     let bin_w = (mz_max - mz_min) / (bins as f32);
     let mut mz_hist   = vec![0.0f32; bins];
@@ -226,6 +233,10 @@ fn extract_patch_and_mz_hist(
         let intensity = &fr.ims_frame.intensity;
         let scv = &fr.scan;
 
+        // Guard: equal length assumptions
+        debug_assert_eq!(mz.len(), intensity.len());
+        debug_assert_eq!(mz.len(), scv.len());
+
         for k in 0..mz.len() {
             let da = mz[k] as f32;
             if da < mz_min || da > mz_max { continue; }
@@ -237,19 +248,20 @@ fn extract_patch_and_mz_hist(
 
             let val = intensity[k] as f32;
 
-            // 2D patch (frames×scans), column-major by scans
+            // 2D patch
             let s_local = sc - im_l;
+            // (frames > 0, scans > 0 by construction)
             f_patch[s_local * frames + fi] += val;
 
             // m/z histogram
             let mut b = ((da - mz_min) / (mz_max - mz_min) * (bins as f32)).floor() as isize;
             if b < 0 { b = 0; }
-            if b as usize >= bins { b = (bins as isize) - 1; }
+            if (b as usize) >= bins { b = (bins as isize) - 1; }
             mz_hist[b as usize] += val;
         }
     }
 
-    // scans axis (absolute)
+    // scans axis
     let scans_axis: Vec<usize> = (im_l..=im_r).collect();
 
     (f_patch, frames, scans, frame_ids, scans_axis, mz_hist, mz_center, (mz_min, mz_max))
@@ -268,9 +280,31 @@ pub fn evaluate_clusters_3d(
     opts: EvalOptions,
 ) -> Vec<ClusterResult> {
     specs.par_iter().enumerate().map(|(cid, spec)| {
-        // --- 1st pass ---
         let (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win) =
             extract_patch_and_mz_hist(ds, rt_index, spec);
+
+        // Early-out: empty extraction → empty result (but keep windows + provenance)
+        if frames == 0 || scans == 0 {
+            return ClusterResult {
+                rt_window: (spec.rt_left, spec.rt_right),
+                im_window: (spec.im_left, spec.im_right),
+                mz_window_da: mz_da_win,
+                rt_fit: ClusterFit1D::default(),
+                im_fit: ClusterFit1D::default(),
+                mz_fit: ClusterFit1D::default(),
+                raw_sum: 0.0,
+                fit_volume: 0.0,
+                rt_peak_id: cid,
+                im_peak_id: cid,
+                mz_center_hint: spec.mz_center_hint,
+                frame_ids_used: frame_ids.clone(),
+                frames_axis: if opts.attach.attach_frames { Some(frame_ids) } else { None },
+                scans_axis: if opts.attach.attach_scans { Some(scans_axis) } else { None },
+                mz_axis: if opts.attach.attach_mz_axis { Some(mz_centers.clone()) } else { None },
+                patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch) } else { None },
+                patch_shape: (frames, scans),
+            };
+        }
 
         let mz_fit0 = moment_fit_1d(&mz_hist_y, Some(&mz_centers));
 
@@ -281,14 +315,42 @@ pub fn evaluate_clusters_3d(
                 let k = opts.refine_k_sigma.max(1.0);
                 let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_da_win.0);
                 let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_da_win.1);
-                let mut spec2 = spec.clone();
-                spec2.mz_window_da_override = Some((lo, hi));
-                extract_patch_and_mz_hist(ds, rt_index, &spec2)
+                if hi <= lo {
+                    // refinement collapsed; reuse original
+                    (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
+                } else {
+                    let mut spec2 = spec.clone();
+                    spec2.mz_window_da_override = Some((lo, hi));
+                    extract_patch_and_mz_hist(ds, rt_index, &spec2)
+                }
             } else {
                 (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
             };
 
-        // RT/IM marginals
+        // Guard again (refined window could be empty)
+        if frames2 == 0 || scans2 == 0 {
+            return ClusterResult {
+                rt_window: (spec.rt_left, spec.rt_right),
+                im_window: (spec.im_left, spec.im_right),
+                mz_window_da: mz_da_win2,
+                rt_fit: ClusterFit1D::default(),
+                im_fit: ClusterFit1D::default(),
+                mz_fit: ClusterFit1D::default(),
+                raw_sum: 0.0,
+                fit_volume: 0.0,
+                rt_peak_id: cid,
+                im_peak_id: cid,
+                mz_center_hint: spec.mz_center_hint,
+                frame_ids_used: frame_ids2.clone(),
+                frames_axis: if opts.attach.attach_frames { Some(frame_ids2) } else { None },
+                scans_axis: if opts.attach.attach_scans { Some(scans_axis2) } else { None },
+                mz_axis: if opts.attach.attach_mz_axis { Some(mz_centers2.clone()) } else { None },
+                patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch2) } else { None },
+                patch_shape: (frames2, scans2),
+            };
+        }
+
+        // RT/IM marginals (safe: frames2>0 && scans2>0)
         let mut rt_marg = vec![0.0f32; frames2];
         let mut im_marg = vec![0.0f32; scans2];
         for s in 0..scans2 {
@@ -312,13 +374,13 @@ pub fn evaluate_clusters_3d(
             mz_window_da: mz_da_win2,
             rt_fit, im_fit, mz_fit,
             raw_sum, fit_volume,
-            rt_peak_id: cid,   // you can wire real IDs when you build specs from peaks
+            rt_peak_id: cid,
             im_peak_id: cid,
             mz_center_hint: spec.mz_center_hint,
             frame_ids_used: frame_ids2.clone(),
             frames_axis: if opts.attach.attach_frames { Some(frame_ids2) } else { None },
             scans_axis:  if opts.attach.attach_scans  { Some(scans_axis2) } else { None },
-            mz_axis:     if opts.attach.attach_mz_axis{ Some(mz_centers2) } else { None },
+            mz_axis:     if opts.attach.attach_mz_axis{ Some(mz_centers2.clone()) } else { None },
             patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch2) } else { None },
             patch_shape: (frames2, scans2),
         }

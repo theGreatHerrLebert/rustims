@@ -8,6 +8,7 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
+use crate::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
 use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm, ImIndex};
 
 pub struct TimsDatasetDIA {
@@ -243,6 +244,17 @@ impl TimsDatasetDIA {
             maybe_sigma_scans,
             truncate,
         )
+    }
+
+    /// Evaluate 3D clusters (RT × IM with m/z marginal) for the given specs.
+    /// This forwards to cluster_eval::evaluate_clusters_3d and returns the results.
+    pub fn evaluate_clusters_3d(
+        &self,
+        rt_index: &RtIndex,
+        specs: &[ClusterSpec],
+        opts: EvalOptions,
+    ) -> Vec<ClusterResult> {
+        evaluate_clusters_3d(self, rt_index, specs, opts)
     }
 }
 
