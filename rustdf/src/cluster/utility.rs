@@ -675,7 +675,6 @@ pub fn build_dense_im_by_rtpeaks_ppm(
 
     let frames = data_handle
         .get_slice(rt_index.frames.clone(), num_threads)
-        .to_resolution(0, num_threads)
         .frames;
 
     let global_num_scans: usize = frames.iter()
@@ -685,9 +684,11 @@ pub fn build_dense_im_by_rtpeaks_ppm(
         .map(|m| m as usize + 1)
         .unwrap_or(0);
 
-    use rayon::prelude::*;
-    let views: Vec<FrameBinView> = frames.into_par_iter()
-        .map(|fr| build_frame_bin_view(fr, scale, global_num_scans))
+
+    let ncols = frames.len();
+    let views: Vec<FrameBinView> = (0..ncols)
+        .into_par_iter()
+        .map(|i| build_frame_bin_view(frames[i].clone(), scale, global_num_scans))
         .collect();
 
     let ncols = views.len();
