@@ -3,6 +3,8 @@ use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, 
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 
+// --- add to your existing block ---
+
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyClusterSpec { pub inner: ClusterSpec }
@@ -26,8 +28,41 @@ impl PyClusterSpec {
             rt_left, rt_right, im_left, im_right,
             mz_center_hint, mz_ppm_window,
             extra_rt_pad, extra_im_pad, mz_hist_bins,
+            // if you have this field in ClusterSpec:
             mz_window_da_override: None,
         }}
+    }
+
+    // --- getters used by your Python thin wrapper ---
+    #[getter] fn rt_left(&self) -> usize { self.inner.rt_left }
+    #[getter] fn rt_right(&self) -> usize { self.inner.rt_right }
+    #[getter] fn im_left(&self) -> usize { self.inner.im_left }
+    #[getter] fn im_right(&self) -> usize { self.inner.im_right }
+    #[getter] fn mz_center_hint(&self) -> f32 { self.inner.mz_center_hint }
+    #[getter] fn mz_ppm_window(&self) -> f32 { self.inner.mz_ppm_window }
+    #[getter] fn extra_rt_pad(&self) -> usize { self.inner.extra_rt_pad }
+    #[getter] fn extra_im_pad(&self) -> usize { self.inner.extra_im_pad }
+    #[getter] fn mz_hist_bins(&self) -> usize { self.inner.mz_hist_bins }
+
+    // (optional) expose DA override if you kept it in ClusterSpec
+    #[getter]
+    fn mz_window_da_override(&self) -> Option<(f32, f32)> {
+        self.inner.mz_window_da_override
+    }
+    #[setter]
+    fn set_mz_window_da_override(&mut self, val: Option<(f32, f32)>) {
+        self.inner.mz_window_da_override = val;
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ClusterSpec(rt=[{},{}], im=[{},{}], mz≈{:.5}±{}ppm, pads(rt={},im={}), mz_bins={})",
+            self.inner.rt_left, self.inner.rt_right,
+            self.inner.im_left, self.inner.im_right,
+            self.inner.mz_center_hint, self.inner.mz_ppm_window,
+            self.inner.extra_rt_pad, self.inner.extra_im_pad,
+            self.inner.mz_hist_bins
+        )
     }
 }
 
@@ -39,13 +74,17 @@ pub struct PyAttachOptions { pub inner: AttachOptions }
 impl PyAttachOptions {
     #[new]
     #[pyo3(signature = (attach_frames=true, attach_scans=true, attach_mz_axis=true, attach_patch_2d=false))]
-    fn new(
-        attach_frames: bool,
-        attach_scans: bool,
-        attach_mz_axis: bool,
-        attach_patch_2d: bool,
-    ) -> Self {
+    fn new(attach_frames: bool, attach_scans: bool, attach_mz_axis: bool, attach_patch_2d: bool) -> Self {
         Self { inner: AttachOptions { attach_frames, attach_scans, attach_mz_axis, attach_patch_2d } }
+    }
+    #[getter] fn attach_frames(&self) -> bool { self.inner.attach_frames }
+    #[getter] fn attach_scans(&self) -> bool { self.inner.attach_scans }
+    #[getter] fn attach_mz_axis(&self) -> bool { self.inner.attach_mz_axis }
+    #[getter] fn attach_patch_2d(&self) -> bool { self.inner.attach_patch_2d }
+    fn __repr__(&self) -> String {
+        format!("AttachOptions(frames={}, scans={}, mz_axis={}, patch_2d={})",
+                self.inner.attach_frames, self.inner.attach_scans,
+                self.inner.attach_mz_axis, self.inner.attach_patch_2d)
     }
 }
 
@@ -59,6 +98,13 @@ impl PyEvalOptions {
     #[pyo3(signature = (attach, refine_mz_once=false, refine_k_sigma=3.0))]
     fn new(attach: PyAttachOptions, refine_mz_once: bool, refine_k_sigma: f32) -> Self {
         Self { inner: EvalOptions { attach: attach.inner, refine_mz_once, refine_k_sigma } }
+    }
+    #[getter] fn refine_mz_once(&self) -> bool { self.inner.refine_mz_once }
+    #[getter] fn refine_k_sigma(&self) -> f32 { self.inner.refine_k_sigma }
+    fn __repr__(&self) -> String {
+        format!("EvalOptions({}, refine_mz_once={}, k_sigma={})",
+                PyAttachOptions{ inner: self.inner.attach.clone() }.__repr__(),
+                self.inner.refine_mz_once, self.inner.refine_k_sigma)
     }
 }
 
