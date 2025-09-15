@@ -176,6 +176,9 @@ class ClusterFit1D(RustWrapperObject):
     def __repr__(self) -> str:
         return f"Fit1D(mu={self.mu:.3f}, σ={self.sigma:.3f}, h={self.height:.1f}, base={self.baseline:.1f}, area={self.area:.1f})"
 
+    def get_py_ptr(self):
+        return self.__py_ptr
+
 
 class ClusterResult(RustWrapperObject):
     """Thin wrapper for Rust ClusterResult (read-only)."""
