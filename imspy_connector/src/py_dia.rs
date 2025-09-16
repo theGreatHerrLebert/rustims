@@ -332,13 +332,14 @@ impl PyTimsDatasetDIA {
     ///
     /// Python signature:
     ///   evaluate_clusters_3d(rt_index, specs, opts=None) -> List[PyClusterResult]
-    #[pyo3(signature = (rt_index, specs, opts=None))]
+    #[pyo3(signature = (rt_index, specs, opts=None, num_threads=4))]
     pub fn evaluate_clusters_3d<'py>(
         &self,
         py: Python<'py>,
         rt_index: PyRtIndex,
         specs: Vec<Py<PyClusterSpec>>,
         opts: Option<PyEvalOptions>,
+        num_threads: usize,
     ) -> PyResult<Vec<Py<PyClusterResult>>> {
         // Convert inputs
         let rt_rs = &rt_index.inner; // Arc<RtIndex>
@@ -350,7 +351,7 @@ impl PyTimsDatasetDIA {
 
         // Core evaluation
         let results_rs: Vec<ClusterResult> =
-            evaluate_clusters_3d(&self.inner, rt_rs, &specs_rs, eval_opts);
+            evaluate_clusters_3d(&self.inner, rt_rs, &specs_rs, eval_opts, num_threads);
 
         // Wrap back to Python
         let results_py: Vec<Py<PyClusterResult>> = results_rs
