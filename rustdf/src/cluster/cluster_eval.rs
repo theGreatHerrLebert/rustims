@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use rayon::iter::{ ParallelIterator};
-
+use crate::cluster::feature::{build_local_mz_histogram, cosine, estimate_charge_from_hist, integrate_isotope_series, AveragineLut};
 use crate::cluster::utility::RtIndex;
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
@@ -477,4 +477,83 @@ fn empty_result_with_axes(
         patch_2d_colmajor: None,
         patch_shape: shape,
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct Feature {
+    pub rt_mu: f32, pub rt_sigma: f32,
+    pub im_mu: f32, pub im_sigma: f32,
+    pub mz_mono: f32, pub z: u8,
+    pub iso_i: [f32;8], pub avg_score: f32, pub z_conf: f32,
+    pub raw_sum: f32, pub fit_volume: f32,
+    pub source_cluster_id: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct BuildOpts {
+    pub ppm_narrow: f32,     // 8..10
+    pub k_max: usize,        // ≤8
+    pub min_raw_sum: f32,
+    pub num_threads: usize,
+    pub charge_hist_ppm_window: Option<f32>, // default 20 ppm
+    pub charge_hist_bins: Option<usize>,     // default 21 bins
+}
+
+pub fn build_features_fast(
+    ds: &TimsDatasetDIA,
+    rt_index: &RtIndex,
+    clusters: &[ClusterResult],
+    lut: &AveragineLut,
+    opts: &BuildOpts,
+) -> Vec<Feature> {
+    // Preload precursor frames once in RT order
+    let frames_ids = rt_index.frames.clone();
+    let frames = ds.get_slice(frames_ids, opts.num_threads).frames
+        .into_iter().map(std::sync::Arc::new).collect::<Vec<_>>();
+
+    use rayon::prelude::*;
+    clusters.par_iter().enumerate().filter_map(|(cid, c)| {
+        if c.raw_sum < opts.min_raw_sum { return None; }
+
+        // Build a tiny histogram around the fitted mono m/z
+        // (small and cheap: 21 bins, ±20 ppm is a good default)
+        let (mz_axis, mz_hist) = build_local_mz_histogram(
+            &frames,
+            c.rt_window,
+            c.im_window,
+            c.mz_fit.mu,
+            opts.charge_hist_ppm_window.unwrap_or(20.0),
+            opts.charge_hist_bins.unwrap_or(21),
+        );
+        if mz_axis.is_empty() { return None; }
+
+        let (z_hat, z_conf) = match estimate_charge_from_hist(&mz_axis, &mz_hist) {
+            Some(zc) => zc,
+            None => return None,
+        };
+        if z_hat == 0 { return None; }
+
+        let isotopes = integrate_isotope_series(
+            &frames,
+            c.rt_window,
+            c.im_window,
+            c.mz_fit.mu,
+            z_hat,
+            opts.ppm_narrow,
+            opts.k_max,
+        );
+
+        let mass = (c.mz_fit.mu - 1.00727646688f32) * (z_hat as f32);
+        let templ = lut.lookup(mass, z_hat);
+        let avg_score = cosine(&isotopes, &templ);
+
+        Some(Feature {
+            rt_mu: c.rt_fit.mu, rt_sigma: c.rt_fit.sigma,
+            im_mu: c.im_fit.mu, im_sigma: c.im_fit.sigma,
+            mz_mono: c.mz_fit.mu, z: z_hat,
+            iso_i: isotopes, avg_score, z_conf,
+            raw_sum: c.raw_sum, fit_volume: c.fit_volume,
+            source_cluster_id: cid,
+        })
+    }).collect()
 }

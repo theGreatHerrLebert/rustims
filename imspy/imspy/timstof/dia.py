@@ -501,3 +501,28 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
         res_py = self.__dataset.evaluate_clusters_3d(rt_index.get_py_ptr(), specs_py, opts_py, num_threads)
         return [ClusterResult.from_py_ptr(r) for r in res_py]
+
+    def build_features_fast(
+            self,
+            rt_index: RtIndex,
+            clusters: Sequence[ClusterResult],
+            lut: "AveragineLut",
+            opts: "BuildOpts",
+    ) -> List["Feature"]:
+
+        from .feature import Feature
+
+        """
+        Fast feature builder:
+          - uses preloaded precursor frames (internal)
+          - narrow m/z extraction per isotope
+          - optional charge-from-hist estimation inside Rust
+        Returns list of Feature objects.
+        """
+        py_feats = self.__dataset.build_features_fast(
+            rt_index.get_py_ptr(),
+            [c.get_py_ptr() for c in clusters],
+            lut.get_py_ptr(),
+            opts.get_py_ptr(),
+        )
+        return [Feature.from_py_ptr(p) for p in py_feats]
