@@ -85,13 +85,6 @@ impl Dsu {
     }
 }
 
-// --- Helpers -----------------------------------------------------------------
-
-#[inline]
-fn ppm_from_delta(delta_da: f32, center_da: f32) -> f32 {
-    if center_da <= 0.0 { f32::INFINITY } else { delta_da.abs() * 1.0e6 / center_da }
-}
-
 #[inline]
 fn ppm_between(a_da: f32, b_da: f32) -> f32 {
     let dm = (a_da - b_da).abs();
