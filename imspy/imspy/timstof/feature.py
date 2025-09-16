@@ -62,25 +62,6 @@ class Feature(RustWrapperObject):
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
-class AveragineLut(RustWrapperObject):
-    def __init__(self, mass_min: float, mass_max: float, step: float,
-                 z_min: int, z_max: int, k: int = 6, resolution: int = 3, num_threads: int = 4):
-        self.__py_ptr = ims.PyAveragineLut(mass_min, mass_max, step, z_min, z_max, k, resolution, num_threads)
-
-    @property
-    def masses(self) -> np.ndarray: return np.asarray(self.__py_ptr.masses, dtype=np.float32)
-    @property
-    def z_min(self) -> int:         return self.__py_ptr.z_min
-    @property
-    def z_max(self) -> int:         return self.__py_ptr.z_max
-    @property
-    def k(self)    -> int:          return self.__py_ptr.k
-
-    def lookup(self, neutral_mass: float, z: int) -> np.ndarray:
-        return np.asarray(self.__py_ptr.lookup(neutral_mass, z), dtype=np.float32)
-
-    def __repr__(self) -> str: return repr(self.__py_ptr)
-
 class Envelope(RustWrapperObject):
     def __init__(self, *a, **k):
         raise RuntimeError("Envelope is created in Rust; use Envelope.from_py_ptr().")
@@ -88,8 +69,10 @@ class Envelope(RustWrapperObject):
     @classmethod
     def from_py_ptr(cls, p: "ims.PyEnvelope") -> "Envelope":
         inst = cls.__new__(cls)
-        inst._RustWrapperObject__py_ptr = p
+        inst.__py_ptr = p
         return inst
+
+    def get_py_ptr(self) -> "ims.PyEnvelope": return self.__py_ptr
 
     @property
     def id(self) -> int: return self.__py_ptr.id
@@ -97,44 +80,45 @@ class Envelope(RustWrapperObject):
     def cluster_ids(self) -> np.ndarray:
         return np.asarray(self.__py_ptr.cluster_ids, dtype=np.int64)
     @property
-    def rt_bounds(self) -> Tuple[int,int]: return tuple(self.__py_ptr.rt_bounds)
+    def rt_bounds(self) -> tuple[int,int]: return tuple(self.__py_ptr.rt_bounds)
     @property
-    def im_bounds(self) -> Tuple[int,int]: return tuple(self.__py_ptr.im_bounds)
+    def im_bounds(self) -> tuple[int,int]: return tuple(self.__py_ptr.im_bounds)
     @property
     def mz_center(self) -> float: return float(self.__py_ptr.mz_center)
     @property
     def mz_span_da(self) -> float: return float(self.__py_ptr.mz_span_da)
     @property
     def charge_hint(self) -> Optional[int]:
-        # Option[u8] maps to None or int in Python already:
         return self.__py_ptr.charge_hint
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
+
 class GroupingOutput(RustWrapperObject):
     def __init__(self, *a, **k):
-        raise RuntimeError("GroupingOutput is created in Rust; use from_py_ptr.")
+        raise RuntimeError("Use group_clusters_into_envelopes(...).")
 
     @classmethod
     def from_py_ptr(cls, p: "ims.PyGroupingOutput") -> "GroupingOutput":
         inst = cls.__new__(cls)
-        inst._RustWrapperObject__py_ptr = p
+        inst.__py_ptr = p
         return inst
 
+    def get_py_ptr(self) -> "ims.PyGroupingOutput": return self.__py_ptr
+
     @property
-    def envelopes(self) -> List[Envelope]:
+    def envelopes(self) -> list[Envelope]:
         return [Envelope.from_py_ptr(e) for e in self.__py_ptr.envelopes]
+
     @property
-    def assignment(self) -> np.ndarray:
-        # Vec<Option<usize>> shows up as list[Optional[int]]
-        # Convert to object dtype to keep None values
-        return np.asarray(self.__py_ptr.assignment, dtype=object)
+    def assignment(self) -> list[Optional[int]]:
+        return list(self.__py_ptr.assignment)
+
     @property
-    def provisional(self) -> List[np.ndarray]:
-        return [np.asarray(v, dtype=np.int64) for v in self.__py_ptr.provisional]
+    def provisional(self) -> list[list[int]]:
+        return [list(x) for x in self.__py_ptr.provisional]
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
-
 
 class GroupingParams(RustWrapperObject):
     def __init__(
