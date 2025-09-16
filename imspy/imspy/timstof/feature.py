@@ -125,7 +125,13 @@ class Feature(RustWrapperObject):
     @property
     def n_members(self) -> int:   return self.__py_ptr.n_members
 
+    def get_py_ptr(self) -> "ims.PyFeature": return self.__py_ptr
+
+    def from_py_ptr(cls, obj):
+        ims.PyFeature.from_py_ptr(cls, obj)
+
     def __repr__(self) -> str: return repr(self.__py_ptr)
+
 
 
 class GroupingParams(RustWrapperObject):
@@ -278,22 +284,4 @@ class AveragineLut(RustWrapperObject):
 
     def __repr__(self) -> str:
         return f"AveragineLut(grid={len(self.masses)}, z=[{self.z_min}..{self.z_max}], k={self.k})"
-
-def build_features_from_envelopes(
-    envelopes: Sequence[Envelope],
-    clusters: Sequence["ClusterResult"],
-    params: FeatureBuildParams,
-    averagine_lut: AveragineLut,
-    num_threads: int = 4
-) -> List[Feature]:
-    envelopes_py = [e.get_py_ptr() for e in envelopes]
-    clusters_py = [c.get_py_ptr() for c in clusters]
-    out_py = ims.build_features_from_envelopes_py(
-        envelopes_py,
-        clusters_py,
-        params.__py_ptr,
-        averagine_lut.get_py_ptr(),
-        int(num_threads)
-    )
-    return [Feature.from_py_ptr(f) for f in out_py]
 
