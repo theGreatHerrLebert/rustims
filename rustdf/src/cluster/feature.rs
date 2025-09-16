@@ -143,24 +143,39 @@ fn summarize_super(group:&[usize], cl:&[ClusterResult]) -> Super {
     }
 }
 
+#[inline]
+fn expand(w:(usize,usize), pad:usize) -> (usize,usize) {
+    (w.0.saturating_sub(pad), w.1.saturating_add(pad))
+}
+
+#[inline]
+fn overlap1d(a:(usize,usize), b:(usize,usize)) -> usize {
+    if a.1 < b.0 || b.1 < a.0 { 0 } else { a.1.min(b.1) - a.0.max(b.0) + 1 }
+}
+
 fn is_isotopic_link(u:&Super, v:&Super, p:&GroupingParams) -> bool {
-    // (rt/im as above)
+    // require some RT/IM co-location, with padding
+    let rt_ok = overlap1d(expand(u.rt_bounds, p.rt_pad_overlap),
+                          expand(v.rt_bounds, p.rt_pad_overlap)) > 0;
+    let im_ok = overlap1d(expand(u.im_bounds, p.im_pad_overlap),
+                          expand(v.im_bounds, p.im_pad_overlap)) > 0;
+    if !(rt_ok && im_ok) { return false; }
+
     let dm = (u.mz_center - v.mz_center).abs();
 
-    // same-peak duplicate path:
+    // duplicates path
     let center = ((u.mz_center + v.mz_center) * 0.5).max(1e-6);
-    let ppm_close = 1.0e6 * dm / center <= p.mz_ppm_tol;
+    if 1.0e6 * dm / center <= p.mz_ppm_tol { return true; }
 
-    // isotopic path (allow one skipped isotope too)
-    let mut iso_ok = false;
+    // isotopic path (allow ±1 skipped)
     for z in p.z_min..=p.z_max {
         let d1 = 1.003355f32 / (z as f32);
         let tol = (d1 * (p.iso_ppm_tol * 1e-6)).max(p.iso_abs_da);
         if (dm - d1).abs() <= tol || (dm - 2.0*d1).abs() <= tol {
-            iso_ok = true; break;
+            return true;
         }
     }
-    ppm_close || iso_ok
+    false
 }
 // --- Envelope construction ----------------------------------------------------
 
@@ -217,9 +232,8 @@ fn grow_best_envelope(seed:usize, nodes:&[Super], adj:&[Vec<usize>],
     cand.sort_unstable_by(|&a,&b| nodes[a].mz_center.partial_cmp(&nodes[b].mz_center).unwrap());
 
     for z in p.z_min..=p.z_max {
-        let target = 1.003355f32 / (z as f32);
-        // ppm on Δm, with a small absolute floor (e.g., 20 mDa)
-        let delta_abs = (target * (p.iso_ppm_tol * 1e-6)).max(0.02);
+        let d1  = 1.003355f32 / (z as f32);
+        let tol = (d1 * (p.iso_ppm_tol * 1e-6)).max(p.iso_abs_da);
 
         let mut chain: Vec<usize> = vec![];
         for &sid in &cand {
@@ -228,7 +242,7 @@ fn grow_best_envelope(seed:usize, nodes:&[Super], adj:&[Vec<usize>],
             } else {
                 let prev = *chain.last().unwrap();
                 let dm = (nodes[sid].mz_center - nodes[prev].mz_center).abs();
-                if (dm - target).abs() <= delta_abs {
+                if (dm - d1).abs() <= tol || (dm - 2.0*d1).abs() <= tol {
                     chain.push(sid);
                 }
             }
