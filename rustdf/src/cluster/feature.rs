@@ -223,9 +223,9 @@ fn grow_best_envelope(seed:usize, nodes:&[Super], adj:&[Vec<usize>],
 
     for z in p.z_min..=p.z_max {
         let target = 1.003355f32 / (z as f32);
-        let delta_abs = 0.15f32; // generous; tune if needed
+        // ppm on Δm, with a small absolute floor (e.g., 20 mDa)
+        let delta_abs = (target * (p.iso_ppm_tol * 1e-6)).max(0.02);
 
-        // simple greedy chain by Δm~target
         let mut chain: Vec<usize> = vec![];
         for &sid in &cand {
             if chain.is_empty() {
@@ -257,16 +257,30 @@ pub fn group_clusters_into_envelopes(
     clusters: &[ClusterResult],
     p: &GroupingParams,
 ) -> GroupingOutput {
-    let m = clusters.len();
-    if m == 0 {
-        return GroupingOutput { envelopes: vec![], assignment: vec![], provisional: vec![] };
+
+    // Keep only clusters with a usable m/z fit & signal
+    let good_ids: Vec<usize> = clusters.iter().enumerate()
+        .filter(|(_, c)| c.raw_sum > 0.0 &&
+            c.mz_fit.mu.is_finite() && c.mz_fit.mu > 50.0 &&
+            c.mz_fit.sigma.is_finite() && c.mz_fit.sigma > 0.0)
+        .map(|(i, _)| i)
+        .collect();
+
+    if good_ids.is_empty() {
+        return GroupingOutput { envelopes: vec![], assignment: vec![None; clusters.len()], provisional: vec![] };
     }
+
+    // Work on a compact Vec of “good” clusters
+    let compact_vec: Vec<ClusterResult> = good_ids.iter().map(|&i| clusters[i].clone()).collect();
+    let compact: &[ClusterResult] = &compact_vec;
+
+    let m = compact.len();
 
     // A) DSU to merge near-duplicates
     let mut dsu = Dsu::new(m);
     for i in 0..m {
         for j in (i+1)..m {
-            if is_near_duplicate(&clusters[i], &clusters[j]) {
+            if is_near_duplicate(&compact[i], &compact[j]) {
                 dsu.union(i, j);
             }
         }
@@ -274,7 +288,7 @@ pub fn group_clusters_into_envelopes(
 
     // B) Super nodes
     let groups = dsu.groups(); // provisional (for inspection)
-    let super_nodes: Vec<Super> = groups.iter().map(|g| summarize_super(g, clusters)).collect();
+    let super_nodes: Vec<Super> = groups.iter().map(|g| summarize_super(g, compact)).collect();
 
     // C) Isotopic adjacency between supers
     let n = super_nodes.len();
