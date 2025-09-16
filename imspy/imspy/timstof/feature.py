@@ -206,4 +206,3 @@ class AveragineLut(RustWrapperObject):
 
     def __repr__(self) -> str:
         return f"AveragineLut(grid={len(self.masses)}, z=[{self.z_min}..{self.z_max}], k={self.k})"
-
