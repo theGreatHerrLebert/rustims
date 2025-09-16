@@ -12,18 +12,20 @@ pub struct PyFeatureBuildParams { pub inner: FeatureBuildParams }
 #[pymethods]
 impl PyFeatureBuildParams {
     #[new]
-    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members))]
+    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice))]
     pub fn new(
         ppm_narrow: f32,
         k_max: usize,
         min_cosine: f32,
         min_members: usize,
+        max_points_per_slice: usize,
     ) -> Self {
         Self { inner: FeatureBuildParams {
             ppm_narrow,
             k_max,
             min_cosine,
             min_members,
+            max_points_per_slice,
         }}
     }
 
@@ -32,12 +34,13 @@ impl PyFeatureBuildParams {
     #[getter] fn k_max(&self)           -> usize { self.inner.k_max }
     #[getter] fn min_cosine(&self)      -> f32 { self.inner.min_cosine }
     #[getter] fn min_members(&self)     -> usize { self.inner.min_members }
+    #[getter] fn max_points_per_slice(&self) -> usize { self.inner.max_points_per_slice }
 
     fn __repr__(&self) -> String {
         format!(
-            "FeatureBuildParams(ppm_narrow={}, k_max={}, min_cosine={}, min_members={})",
+            "FeatureBuildParams(ppm_narrow={}, k_max={}, min_cosine={}, min_members={}, max_points_per_slice={})",
             self.inner.ppm_narrow, self.inner.k_max,
-            self.inner.min_cosine, self.inner.min_members
+            self.inner.min_cosine, self.inner.min_members, self.inner.max_points_per_slice
         )
     }
 }
