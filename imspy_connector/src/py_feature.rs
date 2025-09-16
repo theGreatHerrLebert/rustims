@@ -201,22 +201,6 @@ impl PyAveragineLut {
     }
 }
 
-#[pyfunction]
-pub fn py_group_clusters_into_envelopes(
-    py: Python<'_>,
-    clusters: Vec<Py<PyClusterResult>>,
-    params: PyGroupingParams,
-) -> PyResult<PyGroupingOutput> {
-    // unwrap cluster inners
-    let mut rs: Vec<ClusterResult> = Vec::with_capacity(clusters.len());
-    for c in clusters {
-        let r = c.borrow(py);
-        rs.push(r.inner.clone());
-    }
-    let out = group_clusters_into_envelopes(&rs, &params.inner);
-    Ok(PyGroupingOutput { inner: out })
-}
-
 #[pymodule]
 pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFeature>()?;
@@ -224,6 +208,6 @@ pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGroupingParams>()?;
     m.add_class::<PyEnvelope>()?;
     m.add_class::<PyGroupingOutput>()?;
-    m.add_function(wrap_pyfunction!(py_group_clusters_into_envelopes, m)?)?;
+    m.add_function(wrap_pyfunction!(group_clusters_into_envelopes_py, m)?)?;
     Ok(())
 }
