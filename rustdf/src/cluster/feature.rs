@@ -105,6 +105,127 @@ fn is_near_duplicate(ci:&ClusterResult, cj:&ClusterResult) -> bool {
     rt && im && mz_close
 }
 
+// ---- Fast bucketing for near-duplicate DSU ---------------------------------
+
+#[inline]
+fn logppm_bin(mz: f32, ppm: f32) -> i32 {
+    // Bin in log space so ppm distances become translationally invariant.
+    let step = (1.0 + ppm * 1e-6).ln();
+    (mz.ln() / step).floor() as i32
+}
+
+/// Build a DSU of near-duplicates in ~O(n), by bucketing in (RT, IM, m/z).
+/// Uses your existing `is_near_duplicate` for exact checks.
+fn make_neardup_groups(cl: &[ClusterResult], rt_pad: usize, im_pad: usize) -> Dsu {
+    use std::collections::HashMap;
+
+    // Coarse bins ~ half the overlap pad (>=1)
+    let rt_bin = (rt_pad.max(1) as i32 / 2).max(1);
+    let im_bin = (im_pad.max(1) as i32 / 2).max(1);
+    let ppm_bin = 3.0_f32; // match `is_near_duplicate`'s 3 ppm gate
+
+    // Bucket: (br, bi, bz) -> Vec<idx>
+    let mut buckets: HashMap<(i32,i32,i32), Vec<usize>> = HashMap::new();
+    for (i, c) in cl.iter().enumerate() {
+        let br = (c.rt_fit.mu as i32) / rt_bin;
+        let bi = (c.im_fit.mu as i32) / im_bin;
+        let bz = logppm_bin(c.mz_fit.mu, ppm_bin);
+        buckets.entry((br, bi, bz)).or_default().push(i);
+    }
+
+    // DSU and neighbor probing
+    let mut dsu = Dsu::new(cl.len());
+
+    // To avoid double work when probing neighbors,
+    // iterate keys into a Vec so we can probe exact neighbor coords.
+    let keys: Vec<(i32,i32,i32)> = buckets.keys().copied().collect();
+
+    for &(br, bi, bz) in &keys {
+        let ids = &buckets[&(br, bi, bz)];
+
+        // 1) Within the same cell (small K)
+        for a in 0..ids.len() {
+            for b in (a+1)..ids.len() {
+                let i = ids[a]; let j = ids[b];
+                if is_near_duplicate(&cl[i], &cl[j]) { dsu.union(i, j); }
+            }
+        }
+
+        // 2) Neighbor cells (3x3x3 – only forward to avoid double visiting)
+        for dr in 0..=1 {
+            for di in -1..=1 {
+                for dz in -1..=1 {
+                    if dr==0 && di<=0 && dz<=0 { continue; } // forward-only
+                    let key = (br+dr, bi+di, bz+dz);
+                    if let Some(nids) = buckets.get(&key) {
+                        for &i in ids {
+                            for &j in nids {
+                                let (a,b) = if i<j { (i,j) } else { (j,i) };
+                                if is_near_duplicate(&cl[a], &cl[b]) { dsu.union(a, b); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    dsu
+}
+
+// ---- Isotopic adjacency in ~O(n) per charge (sorted two-pointer) -----------
+
+fn two_pointer_join(idx:&[usize], nodes:&[Super], delta:f32, tol:f32,
+                    rt_pad:usize, im_pad:usize, adj:&mut [Vec<usize>]) {
+    let m: Vec<f32> = idx.iter().map(|&i| nodes[i].mz_center).collect();
+    let mut j = 0usize;
+
+    for i in 0..idx.len() {
+        let mi = m[i];
+        let mut lo = mi + delta - tol;
+        if lo < 0.0 { lo = 0.0; }
+        while j < idx.len() && m[j] < lo { j += 1; }
+
+        let mut k = j;
+        let hi = mi + delta + tol;
+        while k < idx.len() && m[k] <= hi {
+            let u = idx[i];
+            let v = idx[k];
+            if u != v {
+                // Require some RT/IM co-location (with padding), like your link fn:
+                let rt_ok = overlap1d(expand(nodes[u].rt_bounds, rt_pad),
+                                      expand(nodes[v].rt_bounds, rt_pad)) > 0;
+                let im_ok = overlap1d(expand(nodes[u].im_bounds, im_pad),
+                                      expand(nodes[v].im_bounds, im_pad)) > 0;
+                if rt_ok && im_ok {
+                    adj[u].push(v);
+                    adj[v].push(u);
+                }
+            }
+            k += 1;
+        }
+    }
+}
+
+fn iso_edges_sorted(nodes: &[Super], p: &GroupingParams) -> Vec<Vec<usize>> {
+    let mut idx: Vec<usize> = (0..nodes.len()).collect();
+    idx.sort_unstable_by(|&a,&b| nodes[a].mz_center.partial_cmp(&nodes[b].mz_center).unwrap());
+
+    let mut adj = vec![Vec::<usize>::new(); nodes.len()];
+
+    for z in p.z_min..=p.z_max {
+        let d1  = 1.003355f32 / (z as f32);
+        let tol = (d1 * (p.iso_ppm_tol * 1e-6)).max(p.iso_abs_da);
+
+        // first-neighbor isotope
+        two_pointer_join(&idx, nodes, d1,      tol, p.rt_pad_overlap, p.im_pad_overlap, &mut adj);
+        // optionally allow skip-one isotope too (kept from your logic)
+        two_pointer_join(&idx, nodes, 2.0*d1,  tol, p.rt_pad_overlap, p.im_pad_overlap, &mut adj);
+    }
+
+    adj
+}
+
 // --- Super nodes --------------------------------------------------------------
 
 struct Super {
@@ -153,32 +274,7 @@ fn overlap1d(a:(usize,usize), b:(usize,usize)) -> usize {
     if a.1 < b.0 || b.1 < a.0 { 0 } else { a.1.min(b.1) - a.0.max(b.0) + 1 }
 }
 
-fn is_isotopic_link(u:&Super, v:&Super, p:&GroupingParams) -> bool {
-    // require some RT/IM co-location, with padding
-    let rt_ok = overlap1d(expand(u.rt_bounds, p.rt_pad_overlap),
-                          expand(v.rt_bounds, p.rt_pad_overlap)) > 0;
-    let im_ok = overlap1d(expand(u.im_bounds, p.im_pad_overlap),
-                          expand(v.im_bounds, p.im_pad_overlap)) > 0;
-    if !(rt_ok && im_ok) { return false; }
-
-    let dm = (u.mz_center - v.mz_center).abs();
-
-    // duplicates path
-    let center = ((u.mz_center + v.mz_center) * 0.5).max(1e-6);
-    if 1.0e6 * dm / center <= p.mz_ppm_tol { return true; }
-
-    // isotopic path (allow ±1 skipped)
-    for z in p.z_min..=p.z_max {
-        let d1 = 1.003355f32 / (z as f32);
-        let tol = (d1 * (p.iso_ppm_tol * 1e-6)).max(p.iso_abs_da);
-        if (dm - d1).abs() <= tol || (dm - 2.0*d1).abs() <= tol {
-            return true;
-        }
-    }
-    false
-}
 // --- Envelope construction ----------------------------------------------------
-
 fn envelope_from_supers(eid: usize, supers: &[usize], super_nodes: &[Super], charge_hint: Option<u8>) -> Envelope {
     let mut rt_min = usize::MAX; let mut rt_max = 0;
     let mut im_min = usize::MAX; let mut im_max = 0;
@@ -285,15 +381,7 @@ pub fn group_clusters_into_envelopes(
 
     let m = compact.len();
 
-    // A) DSU to merge near-duplicates
-    let mut dsu = Dsu::new(m);
-    for i in 0..m {
-        for j in (i+1)..m {
-            if is_near_duplicate(&compact[i], &compact[j]) {
-                dsu.union(i, j);
-            }
-        }
-    }
+    let dsu = make_neardup_groups(compact, p.rt_pad_overlap, p.im_pad_overlap);
 
     // B) Super nodes
     let groups = dsu.groups(); // provisional (for inspection)
@@ -301,15 +389,7 @@ pub fn group_clusters_into_envelopes(
 
     // C) Isotopic adjacency between supers
     let n = super_nodes.len();
-    let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
-    for u in 0..n {
-        for v in (u+1)..n {
-            if is_isotopic_link(&super_nodes[u], &super_nodes[v], p) {
-                adj[u].push(v);
-                adj[v].push(u);
-            }
-        }
-    }
+    let adj: Vec<Vec<usize>> = iso_edges_sorted(&super_nodes, p);
 
     // D) Greedy seed order (strongest first)
     let mut seeds: Vec<usize> = (0..n).collect();
