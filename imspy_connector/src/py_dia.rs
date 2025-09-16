@@ -363,7 +363,7 @@ impl PyTimsDatasetDIA {
         Ok(results_py)
     }
     #[pyo3(signature = (rt_index, clusters, lut, opts))]
-    pub fn build_features_fast_py(
+    pub fn build_features_fast(
         &self,
         rt_index: &PyRtIndex,
         clusters: Vec<Py<PyClusterResult>>,
