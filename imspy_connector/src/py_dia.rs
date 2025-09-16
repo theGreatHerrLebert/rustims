@@ -8,9 +8,8 @@ use crate::py_tims_slice::PyTimsSlice;
 use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use std::sync::Arc;
-use rustdf::cluster::cluster_eval::{build_features_fast, evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
+use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
 use crate::py_cluster::{PyClusterResult, PyClusterSpec, PyEvalOptions};
-use crate::py_feature::{PyAveragineLut, PyBuildOpts, PyFeature};
 
 pub fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
@@ -361,36 +360,6 @@ impl PyTimsDatasetDIA {
             .collect::<PyResult<_>>()?;
 
         Ok(results_py)
-    }
-    #[pyo3(signature = (rt_index, clusters, lut, opts))]
-    pub fn build_features_fast(
-        &self,
-        rt_index: &PyRtIndex,
-        clusters: Vec<Py<PyClusterResult>>,
-        lut: &PyAveragineLut,
-        opts: &PyBuildOpts,
-        py: Python<'_>,
-    ) -> PyResult<Vec<Py<PyFeature>>> {
-        // Extract raw Rust structs
-        let rs_clusters: Vec<ClusterResult> = clusters
-            .into_iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-
-        let feats = build_features_fast(
-            &self.inner,
-            &rt_index.inner,
-            &rs_clusters,
-            &lut.inner,
-            &opts.inner,
-        );
-
-        // Wrap back to Python
-        let mut out = Vec::with_capacity(feats.len());
-        for f in feats {
-            out.push(Py::new(py, PyFeature { inner: f })?);
-        }
-        Ok(out)
     }
 }
 
