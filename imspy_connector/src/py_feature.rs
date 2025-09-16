@@ -61,6 +61,7 @@ impl PyEnvelope {
     #[getter] fn im_bounds(&self) -> (usize, usize) { self.inner.im_bounds }
     #[getter] fn mz_center(&self) -> f32 { self.inner.mz_center }
     #[getter] fn mz_span_da(&self) -> f32 { self.inner.mz_span_da }
+    #[getter] fn charge_hint(&self) -> Option<u8> { self.inner.charge_hint }
 
     fn __repr__(&self) -> String {
         let (rt_l, rt_r) = self.inner.rt_bounds;

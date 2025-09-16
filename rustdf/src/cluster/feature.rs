@@ -118,7 +118,6 @@ struct Super {
     rt_bounds: (usize,usize),
     im_bounds: (usize,usize),
     mz_center: f32,     // raw_sum-weighted
-    mz_span: f32,
     raw_sum: f32,
 }
 
@@ -146,7 +145,6 @@ fn summarize_super(group:&[usize], cl:&[ClusterResult]) -> Super {
         rt_bounds: (rt_l, rt_r),
         im_bounds: (im_l, im_r),
         mz_center: if wsum>0.0 { mz_w/wsum } else { (mz_min+mz_max)*0.5 },
-        mz_span: if mz_max.is_finite() && mz_min.is_finite() { mz_max - mz_min } else { 0.0 },
         raw_sum,
     }
 }
@@ -171,7 +169,7 @@ fn is_isotopic_link(u:&Super, v:&Super, p:&GroupingParams) -> bool {
 
 // --- Envelope construction ----------------------------------------------------
 
-fn envelope_from_supers(eid: usize, supers: &[usize], super_nodes: &[Super]) -> Envelope {
+fn envelope_from_supers(eid: usize, supers: &[usize], super_nodes: &[Super], charge_hint: Option<u8>) -> Envelope {
     let mut rt_min = usize::MAX; let mut rt_max = 0;
     let mut im_min = usize::MAX; let mut im_max = 0;
     let mut mz_weighted = 0.0f64;
@@ -204,6 +202,7 @@ fn envelope_from_supers(eid: usize, supers: &[usize], super_nodes: &[Super]) -> 
         im_bounds: (im_min, im_max),
         mz_center,
         mz_span_da: mz_hi - mz_lo,
+        charge_hint,
     }
 }
 
@@ -305,7 +304,7 @@ pub fn group_clusters_into_envelopes(
 
         let eid = envelopes.len();
         for &sid in &best.members { taken[sid] = true; }
-        let env = envelope_from_supers(eid, &best.members, &super_nodes);
+        let env = envelope_from_supers(eid, &best.members, &super_nodes, Some(best.z));
         // write assignment for original clusters
         for &sid in &best.members {
             for &cid in &super_nodes[sid].member_cids {
@@ -319,7 +318,7 @@ pub fn group_clusters_into_envelopes(
     for sid in 0..n {
         if !taken[sid] {
             let eid = envelopes.len();
-            let env = envelope_from_supers(eid, &[sid], &super_nodes);
+            let env = envelope_from_supers(eid, &[sid], &super_nodes, None);
             for &cid in &super_nodes[sid].member_cids {
                 assignment[cid] = Some(eid);
             }
@@ -340,6 +339,7 @@ pub struct Envelope {
     pub im_bounds: (usize, usize),
     pub mz_center: f32,            // weighted center (by raw_sum)
     pub mz_span_da: f32,           // span across members (for info)
+    pub charge_hint: Option<u8>, // new
 }
 
 #[derive(Clone, Debug)]

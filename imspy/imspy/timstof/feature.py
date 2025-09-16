@@ -68,6 +68,10 @@ class Envelope(RustWrapperObject):
     def mz_center(self) -> float: return self.__py_ptr.mz_center
     @property
     def mz_span_da(self) -> float: return self.__py_ptr.mz_span_da
+    @property
+    def charge_hint(self) -> Optional[int]:
+        z = self.__py_ptr.charge_hint
+        return z if z >= 0 else None
 
     def __repr__(self) -> str:
         return repr(self.__py_ptr)
