@@ -4,6 +4,62 @@ use mscore::timstof::frame::TimsFrame;
 use mscore::algorithm::isotope::generate_averagine_spectra;
 use crate::cluster::cluster_eval::ClusterResult;
 
+#[derive(Copy, Clone, Debug)]
+struct ScanSlice {
+    scan: usize,   // absolute scan index
+    start: usize,  // inclusive
+    end: usize,    // exclusive
+}
+
+// Build contiguous (scan, start, end) slices. Assumes points are sorted by scan first.
+#[inline]
+fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
+    let scv = &fr.scan;           // &[i32]
+    let mut out: Vec<ScanSlice> = Vec::new();
+    if scv.is_empty() { return out; }
+
+    let mut s_cur = scv[0];
+    let mut i_start = 0usize;
+
+    for i in 1..scv.len() {
+        if scv[i] != s_cur {
+            if s_cur >= 0 {
+                out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: i });
+            }
+            s_cur = scv[i];
+            i_start = i;
+        }
+    }
+    if s_cur >= 0 {
+        out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: scv.len() });
+    }
+    out
+}
+
+#[inline]
+fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] < xf { lo = mid + 1; } else { hi = mid; }
+    }
+    lo
+}
+
+#[inline]
+fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] <= xf { lo = mid + 1; } else { hi = mid; }
+    }
+    lo
+}
+
 #[derive(Clone, Debug)]
 pub struct FeatureBuildParams {
     pub k_max: usize,          // up to 8
@@ -173,7 +229,9 @@ pub fn build_features_from_envelopes(
             // 3) integrate isotope stripes
             let iso_raw = integrate_isotope_series(
                 frames, env.rt_bounds, env.im_bounds,
-                mz_mono, z, fp.ppm_narrow, k_keep, fp.max_points_per_slice);
+                mz_mono, z, fp.ppm_narrow, k_keep,
+                fp.max_points_per_slice,
+            );
 
             // L2 normalize
             let mut iso = [0f32; 8];
@@ -212,32 +270,6 @@ pub fn build_features_from_envelopes(
             })
         })
         .collect()
-}
-
-#[inline]
-fn lower_bound(mz: &[f64], x: f32) -> usize {
-    // first idx with mz[idx] >= x
-    let mut lo = 0usize;
-    let mut hi = mz.len();
-    let xf = x as f64;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        if mz[mid] < xf { lo = mid + 1; } else { hi = mid; }
-    }
-    lo
-}
-
-#[inline]
-fn upper_bound(mz: &[f64], x: f32) -> usize {
-    // first idx with mz[idx] > x
-    let mut lo = 0usize;
-    let mut hi = mz.len();
-    let xf = x as f64;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        if mz[mid] <= xf { lo = mid + 1; } else { hi = mid; }
-    }
-    lo
 }
 
 #[inline]
@@ -684,7 +716,7 @@ pub fn integrate_isotope_series(
     z: u8,
     ppm_narrow: f32,
     k_max: usize,
-    // optional: sampling throttle (0 = off)
+    // optional: set to 0 to disable; else thin very large per-scan slices
     max_points_per_slice: usize,
 ) -> [f32; 8] {
     let mut isotopes = [0f32; 8];
@@ -701,7 +733,7 @@ pub fn integrate_isotope_series(
 
     let dmz = 1.003355f32 / (z as f32);
 
-    // Precompute isotope m/z windows
+    // Precompute isotope windows
     let mut lo_k = [0f32; 8];
     let mut hi_k = [0f32; 8];
     for k in 0..k_keep {
@@ -711,89 +743,68 @@ pub fn integrate_isotope_series(
         hi_k[k] = mz_k + d;
         if !lo_k[k].is_finite() || !hi_k[k].is_finite() || hi_k[k] <= lo_k[k] {
             lo_k[k] = 1.0;
-            hi_k[k] = 0.0; // empty window
+            hi_k[k] = 0.0; // mark empty
         }
     }
 
-    // Decide parallelism based on span
+    // Parallelize over frames if the RT span is large
     let rt_span = rt_r - rt_l + 1;
-    let parallel = rt_span >= 256; // heuristic; tune as you like
+    let parallel = rt_span >= 256;
 
     let reducer = |range: std::ops::Range<usize>| -> [f32; 8] {
         let mut local = [0f32; 8];
+
         for f in range {
             let fr = &frames[f];
             let mz  = &fr.ims_frame.mz;         // &[f64]
-            let it  = &fr.ims_frame.intensity;  // &[f32/f64]; you cast to f32 below
-            let scv = &fr.scan;                 // &[i32] or similar
+            let it  = &fr.ims_frame.intensity;  // &[f32/f64]
+            let _scv = &fr.scan;                 // &[i32]
 
-            // Fast path assumes mz is sorted ascending (it should be).
-            // If not guaranteed, you can detect monotonicity once and fall back.
+            if mz.is_empty() { continue; }
 
-            // For k=0 do binary searches; then advance l/r monotonically for k>0
-            let mut l = lower_bound(mz, lo_k[0]);
-            let mut r = upper_bound(mz, hi_k[0]);
+            // Build (scan, start, end) slices once per frame
+            let slices = build_scan_slices(fr);
 
-            // Optionally thin really large slices
-            let mut stride0 = 1usize;
-            if max_points_per_slice > 0 {
-                let len0 = r.saturating_sub(l);
-                if len0 > max_points_per_slice {
-                    stride0 = ((len0 + max_points_per_slice - 1) / max_points_per_slice).max(1);
-                }
-            }
+            // iterate only scans in [im_l, im_r]
+            for sl in slices.iter() {
+                let s = sl.scan;
+                if s < im_l || s > im_r { continue; }
 
-            // k = 0
-            if lo_k[0] <= hi_k[0] {
-                let mut i = l;
-                while i < r {
-                    let s = scv[i];
-                    if s >= 0 {
-                        let su = s as usize;
-                        if su >= im_l && su <= im_r {
-                            local[0] += it[i] as f32;
+                let start = sl.start;
+                let end   = sl.end;
+
+                // For each isotope window, do bounds inside [start, end)
+                for k in 0..k_keep {
+                    if hi_k[k] <= lo_k[k] { continue; }
+
+                    let l = lower_bound_in(mz, start, end, lo_k[k]);
+                    let r = upper_bound_in(mz, start, end, hi_k[k]);
+                    if l >= r { continue; }
+
+                    // Optional thinning for huge slices
+                    let mut stride = 1usize;
+                    if max_points_per_slice > 0 {
+                        let len = r - l;
+                        if len > max_points_per_slice {
+                            stride = ((len + max_points_per_slice - 1) / max_points_per_slice).max(1);
                         }
                     }
-                    i += stride0;
-                }
-            }
 
-            // subsequent k: slide window forward (no binary search)
-            for k in 1..k_keep {
-                // advance l while mz[l] < lo_k[k]
-                while l < mz.len() && mz[l] < lo_k[k] as f64 { l += 1; }
-                // advance r while mz[r] <= hi_k[k]
-                while r < mz.len() && mz[r] <= hi_k[k] as f64 { r += 1; }
-
-                if l >= r { continue; }
-
-                let mut stride = 1usize;
-                if max_points_per_slice > 0 {
-                    let lenk = r - l;
-                    if lenk > max_points_per_slice {
-                        stride = ((lenk + max_points_per_slice - 1) / max_points_per_slice).max(1);
+                    let mut i = l;
+                    while i < r {
+                        // scv[i] must equal s in this slice; no need to re-check im bounds
+                        local[k] += it[i] as f32;
+                        i += stride;
                     }
-                }
-
-                let mut i = l;
-                while i < r {
-                    let s = scv[i];
-                    if s >= 0 {
-                        let su = s as usize;
-                        if su >= im_l && su <= im_r {
-                            local[k] += it[i] as f32;
-                        }
-                    }
-                    i += stride;
                 }
             }
         }
+
         local
     };
 
     let acc = if parallel {
-        // split into ~#CPUs chunks
-        let chunks = 8usize; // heuristic; rayon will schedule
+        let chunks = 8usize;
         let chunk = (rt_span + chunks - 1) / chunks;
         (0..chunks)
             .into_par_iter()
@@ -807,7 +818,6 @@ pub fn integrate_isotope_series(
         reducer(rt_l..(rt_r + 1))
     };
 
-    // write back
     for k in 0..k_keep { isotopes[k] = acc[k]; }
     isotopes
 }
