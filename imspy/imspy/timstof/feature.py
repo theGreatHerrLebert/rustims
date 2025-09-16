@@ -22,8 +22,43 @@ class FeatureBuildParams(RustWrapperObject):
 
     def get_py_ptr(self) -> "ims.PyFeatureBuildParams": return self.__py_ptr
 
-    def from_py_ptr(cls, obj):
-        ims.PyFeatureBuildParams.from_py_ptr(cls, obj)
+    @classmethod
+    def from_py_ptr(cls, obj: "ims.PyFeatureBuildParams") -> "FeatureBuildParams":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = obj
+        return inst
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
+
+
+class Feature(RustWrapperObject):
+    def __init__(self, *a, **k):
+        raise RuntimeError("Feature is created in Rust; use Feature.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyFeature") -> "Feature":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self) -> "ims.PyFeature": return self.__py_ptr
+
+    @property
+    def envelope_id(self) -> int: return self.__py_ptr.envelope_id
+    @property
+    def charge(self) -> int:      return self.__py_ptr.charge
+    @property
+    def mz_mono(self) -> float:   return float(self.__py_ptr.mz_mono)
+    @property
+    def rt_bounds(self) -> tuple[int,int]: return (self.__py_ptr.rt_left, self.__py_ptr.rt_right)
+    @property
+    def im_bounds(self) -> tuple[int,int]: return (self.__py_ptr.im_left, self.__py_ptr.im_right)
+    @property
+    def cosine(self) -> float:    return float(self.__py_ptr.cosine)
+    @property
+    def n_members(self) -> int:   return self.__py_ptr.n_members
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
@@ -100,39 +135,6 @@ class GroupingOutput(RustWrapperObject):
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
-class Feature(RustWrapperObject):
-    def __init__(self, *a, **k):
-        raise RuntimeError("Feature is created in Rust; use Feature.from_py_ptr().")
-
-    @classmethod
-    def from_py_ptr(cls, p: "ims.PyFeature") -> "Feature":
-        inst = cls.__new__(cls)
-        inst._RustWrapperObject__py_ptr = p
-        return inst
-
-    @property
-    def envelope_id(self) -> int: return self.__py_ptr.envelope_id
-    @property
-    def charge(self) -> int:      return self.__py_ptr.charge
-    @property
-    def mz_mono(self) -> float:   return float(self.__py_ptr.mz_mono)
-    @property
-    def rt_bounds(self) -> Tuple[int,int]: return (self.__py_ptr.rt_left, self.__py_ptr.rt_right)
-    @property
-    def im_bounds(self) -> Tuple[int,int]: return (self.__py_ptr.im_left, self.__py_ptr.im_right)
-    @property
-    def cosine(self) -> float:    return float(self.__py_ptr.cosine)
-    @property
-    def n_members(self) -> int:   return self.__py_ptr.n_members
-
-    def get_py_ptr(self) -> "ims.PyFeature": return self.__py_ptr
-
-    def from_py_ptr(cls, obj):
-        ims.PyFeature.from_py_ptr(cls, obj)
-
-    def __repr__(self) -> str: return repr(self.__py_ptr)
-
-
 
 class GroupingParams(RustWrapperObject):
     def __init__(
@@ -164,70 +166,6 @@ class GroupingParams(RustWrapperObject):
 
     def get_py_ptr(self):
         return self.__py_ptr
-
-    def __repr__(self) -> str:
-        return repr(self.__py_ptr)
-
-
-class Envelope(RustWrapperObject):
-    def __init__(self, *a, **k):
-        raise RuntimeError("Envelope is created in Rust; use Envelope.from_py_ptr().")
-
-    @classmethod
-    def from_py_ptr(cls, p: "ims.PyEnvelope") -> "Envelope":
-        inst = cls.__new__(cls)
-        inst.__py_ptr = p
-        return inst
-
-    def get_py_ptr(self):
-        return self.__py_ptr
-
-    @property
-    def id(self) -> int: return self.__py_ptr.id
-    @property
-    def cluster_ids(self) -> np.ndarray:
-        return np.asarray(self.__py_ptr.cluster_ids, dtype=np.int64)
-    @property
-    def rt_bounds(self) -> Tuple[int,int]: return tuple(self.__py_ptr.rt_bounds)
-    @property
-    def im_bounds(self) -> Tuple[int,int]: return tuple(self.__py_ptr.im_bounds)
-    @property
-    def mz_center(self) -> float: return self.__py_ptr.mz_center
-    @property
-    def mz_span_da(self) -> float: return self.__py_ptr.mz_span_da
-    @property
-    def charge_hint(self) -> Optional[int]:
-        z = self.__py_ptr.charge_hint
-        return z if z >= 0 else None
-
-    def __repr__(self) -> str:
-        return repr(self.__py_ptr)
-
-
-class GroupingOutput(RustWrapperObject):
-    def __init__(self, *a, **k):
-        raise RuntimeError("Use group_clusters_into_envelopes(...).")
-
-    @classmethod
-    def from_py_ptr(cls, p: "ims.PyGroupingOutput") -> "GroupingOutput":
-        inst = cls.__new__(cls)
-        inst.__py_ptr = p
-        return inst
-
-    def get_py_ptr(self):
-        return self.__py_ptr
-
-    @property
-    def envelopes(self) -> List[Envelope]:
-        return [Envelope.from_py_ptr(e) for e in self.__py_ptr.envelopes]
-
-    @property
-    def assignment(self) -> List[Optional[int]]:
-        return list(self.__py_ptr.assignment)
-
-    @property
-    def provisional(self) -> List[List[int]]:
-        return [list(x) for x in self.__py_ptr.provisional]
 
     def __repr__(self) -> str:
         return repr(self.__py_ptr)
