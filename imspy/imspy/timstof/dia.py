@@ -485,6 +485,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             rt_index: "RtIndex",
             specs: Sequence[ClusterSpec],
             opts: Optional[EvalOptions] = None,
+            num_threads: int = 4,
     ) -> List[ClusterResult]:
         """
         Evaluate a list of ClusterSpec against the dataset.
@@ -498,5 +499,5 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         else:
             opts_py = opts.get_py_ptr()
 
-        res_py = self.__dataset.evaluate_clusters_3d(rt_index.get_py_ptr(), specs_py, opts_py)
+        res_py = self.__dataset.evaluate_clusters_3d(rt_index.get_py_ptr(), specs_py, opts_py, num_threads)
         return [ClusterResult.from_py_ptr(r) for r in res_py]
