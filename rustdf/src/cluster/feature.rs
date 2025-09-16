@@ -22,142 +22,312 @@ pub struct GroupingOutput {
     pub provisional: Vec<Vec<usize>>,
 }
 
-pub fn group_clusters_into_envelopes(
-    clusters: &[ClusterResult],
-    params: &GroupingParams,
-) -> GroupingOutput {
-    let n = clusters.len();
-    if n == 0 {
-        return GroupingOutput { envelopes: Vec::new(), assignment: Vec::new(), provisional: Vec::new() };
+#[derive(Clone, Debug)]
+pub struct Dsu {
+    parent: Vec<usize>,
+    size:   Vec<usize>,
+}
+
+impl Dsu {
+    #[inline]
+    pub fn new(n: usize) -> Self {
+        let mut parent = Vec::with_capacity(n);
+        let mut size   = Vec::with_capacity(n);
+        for i in 0..n { parent.push(i); size.push(1); }
+        Self { parent, size }
     }
 
-    // Build adjacency via simple O(n^2) pass (fast enough if you pre-filter “good” clusters;
-    // otherwise swap to bucketed by RT and m/z).
-    let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for i in 0..n {
-        let ci = &clusters[i];
-        let rti = expand(ci.rt_window, params.rt_pad_overlap);
-        let imi = expand(ci.im_window, params.im_pad_overlap);
-        let mzi = ci.mz_fit.mu;
-
-        for j in (i+1)..n {
-            let cj = &clusters[j];
-            let rtj = expand(cj.rt_window, params.rt_pad_overlap);
-            let imj = expand(cj.im_window, params.im_pad_overlap);
-            let mzj = cj.mz_fit.mu;
-
-            // RT/IM overlap tests
-            let rt_ov = overlap1d(rti, rtj) > 0;
-            let im_ov = overlap1d(imi, imj) > 0;
-            if !(rt_ov && im_ov) { continue; }
-
-            // m/z compatible (ppm close OR isotopic offset)
-            if !mz_compatible(mzi, mzj, params.mz_ppm_tol, params.iso_ppm_tol, params.z_min, params.z_max) {
-                continue;
-            }
-
-            neighbors[i].push(j);
-            neighbors[j].push(i);
+    #[inline]
+    pub fn find(&mut self, mut x: usize) -> usize {
+        // path compression
+        let mut p = self.parent[x];
+        while p != self.parent[p] {
+            p = self.parent[p];
         }
+        // compress along the way
+        while x != self.parent[x] {
+            let next = self.parent[x];
+            self.parent[x] = p;
+            x = next;
+        }
+        p
     }
 
-    // Provisional groups = connected components
-    let mut seen = vec![false; n];
-    let mut provisional: Vec<Vec<usize>> = Vec::new();
-    for s in 0..n {
-        if seen[s] { continue; }
-        let mut stack = vec![s];
-        let mut comp = Vec::new();
-        seen[s] = true;
-        while let Some(u) = stack.pop() {
-            comp.push(u);
-            for &v in &neighbors[u] {
-                if !seen[v] {
-                    seen[v] = true;
-                    stack.push(v);
+    #[inline]
+    pub fn union(&mut self, a: usize, b: usize) -> bool {
+        let mut ra = self.find(a);
+        let mut rb = self.find(b);
+        if ra == rb { return false; }
+        // union by size
+        if self.size[ra] < self.size[rb] { std::mem::swap(&mut ra, &mut rb); }
+        self.parent[rb] = ra;
+        self.size[ra] += self.size[rb];
+        true
+    }
+
+    /// Collect components as Vec<Vec<usize>> (each is a set of indices).
+    pub fn groups(mut self) -> Vec<Vec<usize>> {
+        // canonical root for each index
+        let n = self.parent.len();
+        let mut root_of = vec![0usize; n];
+        for i in 0..n { root_of[i] = self.find(i); }
+
+        // map root -> list
+        use std::collections::HashMap;
+        let mut buckets: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, r) in root_of.into_iter().enumerate() {
+            buckets.entry(r).or_default().push(i);
+        }
+        let mut out: Vec<Vec<usize>> = buckets.into_values().collect();
+        out.sort_by_key(|g| g.len());
+        out
+    }
+}
+
+// --- Helpers -----------------------------------------------------------------
+
+#[inline]
+fn ppm_from_delta(delta_da: f32, center_da: f32) -> f32 {
+    if center_da <= 0.0 { f32::INFINITY } else { delta_da.abs() * 1.0e6 / center_da }
+}
+
+#[inline]
+fn ppm_between(a_da: f32, b_da: f32) -> f32 {
+    let dm = (a_da - b_da).abs();
+    let center = ((a_da + b_da) * 0.5).max(1e-6);
+    1.0e6 * dm / center
+}
+
+fn frac_overlap(a:(usize,usize), b:(usize,usize)) -> f32 {
+    let l = a.0.max(b.0);
+    let r = a.1.min(b.1);
+    if r < l { 0.0 } else { (r - l + 1) as f32 / ((a.1-a.0+1).max(b.1-b.0+1) as f32) }
+}
+
+fn is_near_duplicate(ci:&ClusterResult, cj:&ClusterResult) -> bool {
+    let rt = frac_overlap(ci.rt_window, cj.rt_window) >= 0.6;
+    let im = frac_overlap(ci.im_window, cj.im_window) >= 0.6;
+    let mz_close = ppm_between(ci.mz_fit.mu, cj.mz_fit.mu) <= 3.0; // tight
+    rt && im && mz_close
+}
+
+// --- Super nodes --------------------------------------------------------------
+
+struct Super {
+    member_cids: Vec<usize>,
+    rt_bounds: (usize,usize),
+    im_bounds: (usize,usize),
+    mz_center: f32,     // raw_sum-weighted
+    mz_span: f32,
+    raw_sum: f32,
+}
+
+fn summarize_super(group:&[usize], cl:&[ClusterResult]) -> Super {
+    let mut rt_l = usize::MAX; let mut rt_r = 0usize;
+    let mut im_l = usize::MAX; let mut im_r = 0usize;
+    let mut wsum = 0f32; let mut mz_w = 0f32;
+    let mut mz_min = f32::INFINITY; let mut mz_max = f32::NEG_INFINITY;
+    let mut raw_sum = 0f32;
+
+    for &cid in group {
+        let c = &cl[cid];
+        rt_l = rt_l.min(c.rt_window.0);
+        rt_r = rt_r.max(c.rt_window.1);
+        im_l = im_l.min(c.im_window.0);
+        im_r = im_r.max(c.im_window.1);
+        let w = c.raw_sum.max(1.0);
+        wsum += w; mz_w += w * c.mz_fit.mu;
+        mz_min = mz_min.min(c.mz_fit.mu);
+        mz_max = mz_max.max(c.mz_fit.mu);
+        raw_sum += c.raw_sum;
+    }
+    Super {
+        member_cids: group.to_vec(),
+        rt_bounds: (rt_l, rt_r),
+        im_bounds: (im_l, im_r),
+        mz_center: if wsum>0.0 { mz_w/wsum } else { (mz_min+mz_max)*0.5 },
+        mz_span: if mz_max.is_finite() && mz_min.is_finite() { mz_max - mz_min } else { 0.0 },
+        raw_sum,
+    }
+}
+
+// isotopic link between supers (uses Super everywhere; no SuperNode)
+fn is_isotopic_link(u:&Super, v:&Super, p:&GroupingParams) -> bool {
+    let rt_ok = frac_overlap(u.rt_bounds, v.rt_bounds) >= 0.25;
+    let im_ok = frac_overlap(u.im_bounds, v.im_bounds) >= 0.25;
+    if !(rt_ok && im_ok) { return false; }
+
+    let dm = (u.mz_center - v.mz_center).abs();
+    // either ppm-close or near Δm=1.003355/z within iso_ppm_tol ppm
+    let ppm_ok = ppm_between(u.mz_center, v.mz_center) <= p.mz_ppm_tol;
+
+    let mut iso_ok = false;
+    for z in p.z_min..=p.z_max {
+        let target = 1.003355f32 / (z as f32);
+        if ppm_from_delta((dm - target).abs(), target) <= p.iso_ppm_tol { iso_ok = true; break; }
+    }
+    ppm_ok || iso_ok
+}
+
+// --- Envelope construction ----------------------------------------------------
+
+fn envelope_from_supers(eid: usize, supers: &[usize], super_nodes: &[Super]) -> Envelope {
+    let mut rt_min = usize::MAX; let mut rt_max = 0;
+    let mut im_min = usize::MAX; let mut im_max = 0;
+    let mut mz_weighted = 0.0f64;
+    let mut wsum = 0.0f64;
+    let mut mz_lo = f32::MAX;
+    let mut mz_hi = f32::MIN;
+    let mut member_cids = Vec::new();
+
+    for &sid in supers {
+        let s = &super_nodes[sid];
+        rt_min = rt_min.min(s.rt_bounds.0);
+        rt_max = rt_max.max(s.rt_bounds.1);
+        im_min = im_min.min(s.im_bounds.0);
+        im_max = im_max.max(s.im_bounds.1);
+        mz_lo = mz_lo.min(s.mz_center);
+        mz_hi = mz_hi.max(s.mz_center);
+
+        mz_weighted += (s.mz_center as f64) * (s.raw_sum as f64);
+        wsum += s.raw_sum as f64;
+
+        member_cids.extend_from_slice(&s.member_cids);
+    }
+
+    let mz_center = if wsum > 0.0 { (mz_weighted / wsum) as f32 } else { (mz_lo + mz_hi) * 0.5 };
+
+    Envelope {
+        id: eid,
+        cluster_ids: member_cids,
+        rt_bounds: (rt_min, rt_max),
+        im_bounds: (im_min, im_max),
+        mz_center,
+        mz_span_da: mz_hi - mz_lo,
+    }
+}
+
+// Greedy grower; note `p` (not `params`)
+struct Grown { members: Vec<usize>, z: u8 }
+
+fn grow_best_envelope(seed:usize, nodes:&[Super], adj:&[Vec<usize>],
+                      p:&GroupingParams, taken:&[bool]) -> Grown {
+    let mut best = Grown{members: vec![], z: 0};
+
+    // consider seed + neighbors
+    let mut cand: Vec<usize> = std::iter::once(seed)
+        .chain(adj[seed].iter().copied())
+        .filter(|&sid| !taken[sid])
+        .collect();
+
+    cand.sort_unstable_by(|&a,&b| nodes[a].mz_center.partial_cmp(&nodes[b].mz_center).unwrap());
+
+    for z in p.z_min..=p.z_max {
+        let target = 1.003355f32 / (z as f32);
+        let delta_abs = 0.15f32; // generous; tune if needed
+
+        // simple greedy chain by Δm~target
+        let mut chain: Vec<usize> = vec![];
+        for &sid in &cand {
+            if chain.is_empty() {
+                chain.push(sid);
+            } else {
+                let prev = *chain.last().unwrap();
+                let dm = (nodes[sid].mz_center - nodes[prev].mz_center).abs();
+                if (dm - target).abs() <= delta_abs {
+                    chain.push(sid);
                 }
             }
         }
-        provisional.push(comp);
+
+        let sum_raw = chain.iter().map(|&sid| nodes[sid].raw_sum).sum::<f32>();
+        let better = chain.len() > best.members.len()
+            || (chain.len() == best.members.len()
+            && sum_raw > best.members.iter().map(|&sid| nodes[sid].raw_sum).sum::<f32>());
+
+        if better && chain.len() >= 2 {
+            best = Grown { members: chain, z };
+        }
+    }
+    best
+}
+
+// --- Main grouping (clean, single-pass envelope build) -----------------------
+
+pub fn group_clusters_into_envelopes(
+    clusters: &[ClusterResult],
+    p: &GroupingParams,
+) -> GroupingOutput {
+    let m = clusters.len();
+    if m == 0 {
+        return GroupingOutput { envelopes: vec![], assignment: vec![], provisional: vec![] };
     }
 
-    // Build envelope summaries for provisional comps
-    let mut envs_tmp = Vec::with_capacity(provisional.len());
-    for comp in &provisional {
-        let (rtb, imb, mzc, mzspan) =
-            summarize_envelope(comp, clusters, params.rt_pad_overlap, params.im_pad_overlap);
-        envs_tmp.push((rtb, imb, mzc, mzspan));
-    }
-
-    // Resolution: score each cluster→provisional envelope and pick the best one.
-    // Score = RT overlap fraction * IM overlap fraction * m/z weight (Gaussian-ish).
-    let mut best_env_for_cluster: Vec<Option<(usize, f32)>> = vec![None; n];
-
-    for (eid_tmp, comp) in provisional.iter().enumerate() {
-        let (rtb, imb, mzc, _span) = envs_tmp[eid_tmp];
-        let rtw = (rtb.1 - rtb.0 + 1).max(1) as f32;
-        let imw = (imb.1 - imb.0 + 1).max(1) as f32;
-        for &cid in comp {
-            let c = &clusters[cid];
-
-            let rto = overlap1d(c.rt_window, rtb) as f32 / rtw;
-            let imo = overlap1d(c.im_window, imb) as f32 / imw;
-
-            // m/z closeness weight (not ppm, a soft Gaussian on Da)
-            let dm = (c.mz_fit.mu - mzc).abs();
-            let mz_w = (- (dm * 200.0).powi(2)).exp(); // ~ very sharp around center; tweak if needed
-
-            let score = rto * imo * mz_w;
-            if let Some((_, cur)) = best_env_for_cluster[cid] {
-                if score > cur { best_env_for_cluster[cid] = Some((eid_tmp, score)); }
-            } else {
-                best_env_for_cluster[cid] = Some((eid_tmp, score));
+    // A) DSU to merge near-duplicates
+    let mut dsu = Dsu::new(m);
+    for i in 0..m {
+        for j in (i+1)..m {
+            if is_near_duplicate(&clusters[i], &clusters[j]) {
+                dsu.union(i, j);
             }
         }
     }
 
-    // Final envelopes: collapse provisional IDs that actually got any members after resolution.
-    // Map provisional eid_tmp -> final eid
-    let mut map_tmp_to_final: Vec<Option<usize>> = vec![None; provisional.len()];
-    let mut final_envs: Vec<Envelope> = Vec::new();
+    // B) Super nodes
+    let groups = dsu.groups(); // provisional (for inspection)
+    let super_nodes: Vec<Super> = groups.iter().map(|g| summarize_super(g, clusters)).collect();
 
-    // Collect members
-    let mut members_by_tmp: Vec<Vec<usize>> = vec![Vec::new(); provisional.len()];
-    for cid in 0..n {
-        if let Some((eid_tmp, _)) = best_env_for_cluster[cid] {
-            members_by_tmp[eid_tmp].push(cid);
+    // C) Isotopic adjacency between supers
+    let n = super_nodes.len();
+    let mut adj: Vec<Vec<usize>> = vec![vec![]; n];
+    for u in 0..n {
+        for v in (u+1)..n {
+            if is_isotopic_link(&super_nodes[u], &super_nodes[v], p) {
+                adj[u].push(v);
+                adj[v].push(u);
+            }
         }
     }
 
-    for (eid_tmp, members) in members_by_tmp.into_iter().enumerate() {
-        if members.is_empty() { continue; }
-        let final_id = final_envs.len();
-        map_tmp_to_final[eid_tmp] = Some(final_id);
+    // D) Greedy seed order (strongest first)
+    let mut seeds: Vec<usize> = (0..n).collect();
+    seeds.sort_unstable_by(|&a,&b| super_nodes[b].raw_sum.partial_cmp(&super_nodes[a].raw_sum).unwrap());
 
-        let (rtb, imb, mzc, mzspan) =
-            summarize_envelope(&members, clusters, /*store bounds without extra pad*/0, 0);
+    // E) Grow envelopes + assign
+    let mut taken = vec![false; n];
+    let mut envelopes: Vec<Envelope> = vec![];
+    let mut assignment = vec![None; m];
 
-        final_envs.push(Envelope {
-            id: final_id,
-            cluster_ids: members,
-            rt_bounds: rtb,
-            im_bounds: imb,
-            mz_center: mzc,
-            mz_span_da: mzspan,
-        });
-    }
+    for seed in seeds {
+        if taken[seed] { continue; }
+        let best = grow_best_envelope(seed, &super_nodes, &adj, p, &taken);
+        if best.members.is_empty() { continue; }
 
-    // Final assignment vector
-    let mut assignment = vec![None; n];
-    for cid in 0..n {
-        if let Some((eid_tmp, _)) = best_env_for_cluster[cid] {
-            if let Some(eid) = map_tmp_to_final[eid_tmp] {
+        let eid = envelopes.len();
+        for &sid in &best.members { taken[sid] = true; }
+        let env = envelope_from_supers(eid, &best.members, &super_nodes);
+        // write assignment for original clusters
+        for &sid in &best.members {
+            for &cid in &super_nodes[sid].member_cids {
                 assignment[cid] = Some(eid);
             }
         }
+        envelopes.push(env);
     }
 
-    GroupingOutput { envelopes: final_envs, assignment, provisional }
+    // F) Leftover singletons as one-member envelopes (optional, keeps total coverage)
+    for sid in 0..n {
+        if !taken[sid] {
+            let eid = envelopes.len();
+            let env = envelope_from_supers(eid, &[sid], &super_nodes);
+            for &cid in &super_nodes[sid].member_cids {
+                assignment[cid] = Some(eid);
+            }
+            envelopes.push(env);
+        }
+    }
+
+    GroupingOutput { envelopes, assignment, provisional: groups }
 }
 
 /// A logical group (envelope) of clusters that likely belong together.
@@ -170,59 +340,6 @@ pub struct Envelope {
     pub im_bounds: (usize, usize),
     pub mz_center: f32,            // weighted center (by raw_sum)
     pub mz_span_da: f32,           // span across members (for info)
-}
-
-#[inline] fn ppm(delta_da: f32, center_da: f32) -> f32 {
-    if center_da <= 0.0 { f32::INFINITY } else { delta_da.abs() * 1.0e6 / center_da }
-}
-
-#[inline] fn overlap1d(a: (usize,usize), b: (usize,usize)) -> usize {
-    let (al, ar) = a; let (bl, br) = b;
-    if ar < bl || br < al { 0 } else { ar.min(br) - al.max(bl) + 1 }
-}
-
-#[inline] fn expand(w: (usize,usize), pad: usize) -> (usize,usize) {
-    (w.0.saturating_sub(pad), w.1.saturating_add(pad))
-}
-
-/// Check if two m/z centers are “compatible”: either within ppm tolerance
-/// or near an isotopic spacing 1.003355 / z for z in [z_min..z_max] within iso_ppm_tol.
-fn mz_compatible(a_da: f32, b_da: f32, mz_ppm_tol: f32, iso_ppm_tol: f32, z_min: u8, z_max: u8) -> bool {
-    let dm = (a_da - b_da).abs();
-    if ppm(dm, (a_da + b_da)*0.5) <= mz_ppm_tol { return true; }
-    for z in z_min..=z_max {
-        let target = 1.003355f32 / (z as f32);
-        if ppm((dm - target).abs(), a_da) <= iso_ppm_tol { return true; }
-    }
-    false
-}
-
-/// Compact bounds/center for a set of clusters (optionally with extra padding for the bounds)
-fn summarize_envelope(
-    cid_list: &[usize],
-    clusters: &[ClusterResult],
-    rt_pad_overlap: usize,
-    im_pad_overlap: usize,
-) -> ( (usize,usize), (usize,usize), f32, f32 ) {
-    let mut rt_min = usize::MAX; let mut rt_max = 0usize;
-    let mut im_min = usize::MAX; let mut im_max = 0usize;
-    let mut wsum = 0.0f32; let mut msum = 0.0f32;
-    let mut mz_lo = f32::INFINITY; let mut mz_hi = f32::NEG_INFINITY;
-
-    for &cid in cid_list {
-        let c = &clusters[cid];
-        let (r0, r1) = expand(c.rt_window, rt_pad_overlap);
-        let (i0, i1) = expand(c.im_window, im_pad_overlap);
-        rt_min = rt_min.min(r0); rt_max = rt_max.max(r1);
-        im_min = im_min.min(i0); im_max = im_max.max(i1);
-        let w = (c.raw_sum.max(1.0)).ln_1p(); // robust weight
-        wsum += w; msum += w * c.mz_fit.mu;
-        mz_lo = mz_lo.min(c.mz_fit.mu);
-        mz_hi = mz_hi.max(c.mz_fit.mu);
-    }
-    let mz_center = if wsum > 0.0 { msum / wsum } else { (mz_lo + mz_hi) * 0.5 };
-    let mz_span_da = (mz_hi - mz_lo).max(0.0);
-    ((rt_min, rt_max), (im_min, im_max), mz_center, mz_span_da)
 }
 
 #[derive(Clone, Debug)]
