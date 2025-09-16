@@ -12,7 +12,7 @@ pub struct PyGroupingParams { pub inner: GroupingParams }
 #[pymethods]
 impl PyGroupingParams {
     #[new]
-    #[pyo3(signature = (rt_pad_overlap, im_pad_overlap, mz_ppm_tol, iso_ppm_tol, z_min, z_max))]
+    #[pyo3(signature = (rt_pad_overlap, im_pad_overlap, mz_ppm_tol, iso_ppm_tol, z_min, z_max, iso_abs_da=0.05))]
     fn new(
         rt_pad_overlap: usize,
         im_pad_overlap: usize,
@@ -20,6 +20,7 @@ impl PyGroupingParams {
         iso_ppm_tol: f32,
         z_min: u8,
         z_max: u8,
+        iso_abs_da: f32,
     ) -> Self {
         Self { inner: GroupingParams {
             rt_pad_overlap,
@@ -28,6 +29,7 @@ impl PyGroupingParams {
             iso_ppm_tol,
             z_min,
             z_max,
+            iso_abs_da,
         }}
     }
 

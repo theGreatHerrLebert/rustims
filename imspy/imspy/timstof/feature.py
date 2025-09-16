@@ -19,6 +19,7 @@ class GroupingParams(RustWrapperObject):
         iso_ppm_tol: float,
         z_min: int,
         z_max: int,
+        iso_abs_da: float = 0.03
     ):
         self.__py_ptr = ims.PyGroupingParams(
             int(rt_pad_overlap),
@@ -27,6 +28,7 @@ class GroupingParams(RustWrapperObject):
             float(iso_ppm_tol),
             int(z_min),
             int(z_max),
+            float(iso_abs_da)
         )
 
     @classmethod

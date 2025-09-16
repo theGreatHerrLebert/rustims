@@ -11,6 +11,7 @@ pub struct GroupingParams {
     pub iso_ppm_tol: f32,          // e.g. 10.0 (tolerance for Δm ~ 1.003355/z)
     pub z_min: u8,                 // e.g. 1
     pub z_max: u8,                 // e.g. 6
+    pub iso_abs_da: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -149,24 +150,25 @@ fn summarize_super(group:&[usize], cl:&[ClusterResult]) -> Super {
     }
 }
 
-// isotopic link between supers (uses Super everywhere; no SuperNode)
 fn is_isotopic_link(u:&Super, v:&Super, p:&GroupingParams) -> bool {
-    let rt_ok = frac_overlap(u.rt_bounds, v.rt_bounds) >= 0.25;
-    let im_ok = frac_overlap(u.im_bounds, v.im_bounds) >= 0.25;
-    if !(rt_ok && im_ok) { return false; }
-
+    // (rt/im as above)
     let dm = (u.mz_center - v.mz_center).abs();
-    // either ppm-close or near Δm=1.003355/z within iso_ppm_tol ppm
-    let ppm_ok = ppm_between(u.mz_center, v.mz_center) <= p.mz_ppm_tol;
 
+    // same-peak duplicate path:
+    let center = ((u.mz_center + v.mz_center) * 0.5).max(1e-6);
+    let ppm_close = 1.0e6 * dm / center <= p.mz_ppm_tol;
+
+    // isotopic path (allow one skipped isotope too)
     let mut iso_ok = false;
     for z in p.z_min..=p.z_max {
-        let target = 1.003355f32 / (z as f32);
-        if ppm_from_delta((dm - target).abs(), target) <= p.iso_ppm_tol { iso_ok = true; break; }
+        let d1 = 1.003355f32 / (z as f32);
+        let tol = (d1 * (p.iso_ppm_tol * 1e-6)).max(p.iso_abs_da);
+        if (dm - d1).abs() <= tol || (dm - 2.0*d1).abs() <= tol {
+            iso_ok = true; break;
+        }
     }
-    ppm_ok || iso_ok
+    ppm_close || iso_ok
 }
-
 // --- Envelope construction ----------------------------------------------------
 
 fn envelope_from_supers(eid: usize, supers: &[usize], super_nodes: &[Super], charge_hint: Option<u8>) -> Envelope {
