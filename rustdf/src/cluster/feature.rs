@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use std::sync::Arc;
 use mscore::timstof::frame::TimsFrame;
 use mscore::algorithm::isotope::generate_averagine_spectra;
@@ -139,65 +140,75 @@ pub fn build_features_from_envelopes(
 ) -> Vec<Feature> {
     const PROTON: f32 = 1.007_276_466_88_f32;
 
-    let mut feats = Vec::with_capacity(envelopes.len());
+    let k_keep = fp.k_max.min(8);
 
-    for env in envelopes {
-        // 1) charge
-        let z = if let Some(z) = env.charge_hint {
-            z
-        } else {
-            let mzs: Vec<f32> = env.cluster_ids.iter()
-                .map(|&cid| clusters[cid].mz_fit.mu)
-                .filter(|v| v.is_finite())
-                .collect();
-            infer_charge_from_members(&mzs, gp.z_min, gp.z_max).unwrap_or(gp.z_min)
-        };
-        if z == 0 { continue; }
+    envelopes
+        .par_iter()
+        .filter_map(|env| {
+            // 1) charge
+            let z = if let Some(z) = env.charge_hint {
+                z
+            } else {
+                // build once per env; small vec is fine
+                let mut mzs: Vec<f32> = Vec::with_capacity(env.cluster_ids.len());
+                for &cid in &env.cluster_ids {
+                    let m = clusters[cid].mz_fit.mu;
+                    if m.is_finite() { mzs.push(m); }
+                }
+                infer_charge_from_members(&mzs, gp.z_min, gp.z_max).unwrap_or(gp.z_min)
+            };
+            if z == 0 { return None; }
 
-        // 2) mono m/z seed = min member m/z (robust)
-        let mz_mono = env.cluster_ids.iter()
-            .map(|&cid| clusters[cid].mz_fit.mu)
-            .fold(f32::INFINITY, |a,b| a.min(b));
-        if !mz_mono.is_finite() || mz_mono <= 50.0 { continue; }
+            // 2) monoisotopic m/z = min member m/z
+            let mut mz_mono = f32::INFINITY;
+            for &cid in &env.cluster_ids {
+                let m = clusters[cid].mz_fit.mu;
+                if m.is_finite() { mz_mono = mz_mono.min(m); }
+            }
+            if !mz_mono.is_finite() || mz_mono <= 50.0 { return None; }
 
-        // 3) integrate stripes
-        let iso_raw = integrate_isotope_series(
-            frames, env.rt_bounds, env.im_bounds,
-            mz_mono, z, fp.ppm_narrow, fp.k_max);
+            // 3) integrate isotope stripes
+            let iso_raw = integrate_isotope_series(
+                frames, env.rt_bounds, env.im_bounds,
+                mz_mono, z, fp.ppm_narrow, k_keep);
 
-        // L2 normalize
-        let mut iso = [0f32; 8];
-        let mut norm = 0f32;
-        for i in 0..fp.k_max.min(8) { iso[i] = iso_raw[i]; norm += iso[i]*iso[i]; }
-        if norm > 0.0 { let s = norm.sqrt(); for i in 0..8 { iso[i] /= s; } }
+            // L2 normalize
+            let mut iso = [0f32; 8];
+            let mut norm = 0f32;
+            for i in 0..k_keep { iso[i] = iso_raw[i]; norm += iso[i]*iso[i]; }
+            if norm > 0.0 {
+                let s = norm.sqrt();
+                for x in &mut iso { *x /= s; }
+            }
 
-        // 4) averagine match
-        let neutral = (mz_mono - PROTON) * (z as f32);
-        let avg = lut.lookup(neutral, z);
-        let cos = cosine(&iso, &avg);
+            // 4) averagine cosine
+            let neutral = (mz_mono - PROTON) * (z as f32);
+            let avg = lut.lookup(neutral, z);
+            let cos = cosine(&iso, &avg);
 
-        // 5) accept?
-        if cos < fp.min_cosine { continue; }
+            if cos < fp.min_cosine { return None; }
 
-        // aggregate raw_sum over members (optional; may use iso_raw[0] too)
-        let raw_sum = env.cluster_ids.iter().map(|&cid| clusters[cid].raw_sum).sum::<f32>();
+            // 5) aggregate raw_sum
+            let mut raw_sum = 0f32;
+            for &cid in &env.cluster_ids {
+                raw_sum += clusters[cid].raw_sum;
+            }
 
-        feats.push(Feature{
-            envelope_id: env.id,
-            charge: z,
-            mz_mono,
-            neutral_mass: neutral,
-            rt_bounds: env.rt_bounds,
-            im_bounds: env.im_bounds,
-            mz_center: env.mz_center,
-            n_members: env.cluster_ids.len(),
-            iso,
-            cos_averagine: cos,
-            raw_sum,
-        });
-    }
-
-    feats
+            Some(Feature{
+                envelope_id: env.id,
+                charge: z,
+                mz_mono,
+                neutral_mass: neutral,
+                rt_bounds: env.rt_bounds,
+                im_bounds: env.im_bounds,
+                mz_center: env.mz_center,
+                n_members: env.cluster_ids.len(),
+                iso,
+                cos_averagine: cos,
+                raw_sum,
+            })
+        })
+        .collect()
 }
 
 #[inline]
