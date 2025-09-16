@@ -1,9 +1,46 @@
 use pyo3::prelude::*;
 use pyo3::{pyclass, pymethods, Bound, pyfunction, wrap_pyfunction};
-use rustdf::cluster::cluster_eval::{Feature};
+use rustdf::cluster::feature::{Feature, FeatureBuildParams};
 use rustdf::cluster::feature::{group_clusters_into_envelopes, AveragineLut, Envelope, GroupingOutput, GroupingParams};
 use rustdf::cluster::cluster_eval::ClusterResult;
 use crate::py_cluster::PyClusterResult;
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyFeatureBuildParams { pub inner: FeatureBuildParams }
+
+#[pymethods]
+impl PyFeatureBuildParams {
+    #[new]
+    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members))]
+    pub fn new(
+        ppm_narrow: f32,
+        k_max: usize,
+        min_cosine: f32,
+        min_members: usize,
+    ) -> Self {
+        Self { inner: FeatureBuildParams {
+            ppm_narrow,
+            k_max,
+            min_cosine,
+            min_members,
+        }}
+    }
+
+    // getters
+    #[getter] fn ppm_narrow(&self)      -> f32 { self.inner.ppm_narrow }
+    #[getter] fn k_max(&self)           -> usize { self.inner.k_max }
+    #[getter] fn min_cosine(&self)      -> f32 { self.inner.min_cosine }
+    #[getter] fn min_members(&self)     -> usize { self.inner.min_members }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FeatureBuildParams(ppm_narrow={}, k_max={}, min_cosine={}, min_members={})",
+            self.inner.ppm_narrow, self.inner.k_max,
+            self.inner.min_cosine, self.inner.min_members
+        )
+    }
+}
 
 #[pyclass]
 #[derive(Clone, Debug)]
@@ -129,33 +166,29 @@ pub fn group_clusters_into_envelopes_py(
     Ok(PyGroupingOutput { inner: out })
 }
 
+
 #[pyclass]
 #[derive(Clone, Debug)]
-pub struct PyFeature {
-    pub inner: Feature,
-}
+pub struct PyFeature { pub inner: Feature }
 
 #[pymethods]
 impl PyFeature {
-    #[getter] fn rt_mu(&self) -> f32 { self.inner.rt_mu }
-    #[getter] fn rt_sigma(&self) -> f32 { self.inner.rt_sigma }
-    #[getter] fn im_mu(&self) -> f32 { self.inner.im_mu }
-    #[getter] fn im_sigma(&self) -> f32 { self.inner.im_sigma }
-    #[getter] fn mz_mono(&self) -> f32 { self.inner.mz_mono }
-    #[getter] fn z(&self) -> u8 { self.inner.z }
-    #[getter] fn iso_i(&self) -> Vec<f32> { self.inner.iso_i.to_vec() }
-    #[getter] fn avg_score(&self) -> f32 { self.inner.avg_score }
-    #[getter] fn z_conf(&self) -> f32 { self.inner.z_conf }
-    #[getter] fn raw_sum(&self) -> f32 { self.inner.raw_sum }
-    #[getter] fn fit_volume(&self) -> f32 { self.inner.fit_volume }
-    #[getter] fn source_cluster_id(&self) -> usize { self.inner.source_cluster_id }
+    #[getter] fn envelope_id(&self) -> usize { self.inner.envelope_id }          // if present
+    #[getter] fn charge(&self)      -> u8    { self.inner.charge }               // e.g. z
+    #[getter] fn mz_mono(&self)     -> f32   { self.inner.mz_mono }              // monoisotopic m/z     // if you store apex
+    #[getter] fn rt_left(&self)     -> usize { self.inner.rt_bounds.0 }
+    #[getter] fn rt_right(&self)    -> usize { self.inner.rt_bounds.1 }
+    #[getter] fn im_left(&self)     -> usize { self.inner.im_bounds.0 }
+    #[getter] fn im_right(&self)    -> usize { self.inner.im_bounds.1 }     // total/area
+    #[getter] fn cosine(&self)      -> f32   { self.inner.cos_averagine }               // averagine score
+    #[getter] fn n_members(&self)   -> usize { self.inner.n_members }            // clusters linked
 
     fn __repr__(&self) -> String {
-        format!(
-            "Feature(rt=μ{:.2} σ{:.2}, im=μ{:.2} σ{:.2}, mz_mono={:.5}, z={}, avg={:.3}, raw_sum={:.1})",
-            self.inner.rt_mu, self.inner.rt_sigma,
-            self.inner.im_mu, self.inner.im_sigma,
-            self.inner.mz_mono, self.inner.z, self.inner.avg_score, self.inner.raw_sum
+        format!("Feature(z={}, mz_mono={:.6}, rt=({},{}) im=({},{}) cos={:.3})",
+                self.charge(), self.mz_mono(),
+                self.rt_left(), self.rt_right(),
+                self.im_left(), self.im_right(),
+                self.cosine()
         )
     }
 }
@@ -211,6 +244,7 @@ pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGroupingParams>()?;
     m.add_class::<PyEnvelope>()?;
     m.add_class::<PyGroupingOutput>()?;
+    m.add_class::<PyFeatureBuildParams>()?;
     m.add_function(wrap_pyfunction!(group_clusters_into_envelopes_py, m)?)?;
     Ok(())
 }

@@ -501,3 +501,56 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
         res_py = self.__dataset.evaluate_clusters_3d(rt_index.get_py_ptr(), specs_py, opts_py, num_threads)
         return [ClusterResult.from_py_ptr(r) for r in res_py]
+
+    """
+    /// Build features from envelopes using preloaded precursor frames internally.
+    pub fn build_features_from_envelopes(
+        &self,
+        envelopes: Vec<PyEnvelope>,
+        clusters: Vec<PyClusterResult>,
+        lut: PyAveragineLut,
+        gp: PyGroupingParams,
+        fp: PyFeatureBuildParams,
+    ) -> PyResult<Vec<PyFeature>> {
+        // Unwrap inner
+        let envs: Vec<Envelope> = envelopes.into_iter().map(|e| e.inner).collect();
+        let clus: Vec<ClusterResult> = clusters.into_iter().map(|c| c.inner).collect();
+
+        // Call the Rust method on TimsDatasetDIA
+        let feats: Vec<Feature> = self
+            .inner
+            .build_features_from_envelopes(
+                &envs,
+                &clus,
+                &lut.inner,
+                &gp.inner,
+                &fp.inner,
+            );
+
+        // Wrap back for Python
+        Ok(feats.into_iter().map(|f| PyFeature { inner: f }).collect())
+    }
+    """
+    def build_features_from_envelopes(
+        self,
+        envelopes: Sequence["Envelope"],
+        clusters: Sequence["ClusterResult"],
+        lut: "AveragineLut",
+        gp: "GroupingParams",
+        fp: "FeatureBuildParams",
+    ) -> List["Feature"]:
+        from .feature import Feature
+        envelopes_py = [e.get_py_ptr() for e in envelopes]
+        clusters_py = [c.get_py_ptr() for c in clusters]
+        lut_py = lut.get_py_ptr()
+        gp_py = gp.get_py_ptr()
+        fp_py = fp.get_py_ptr()
+
+        feats_py = self.__dataset.build_features_from_envelopes(
+            envelopes_py,
+            clusters_py,
+            lut_py,
+            gp_py,
+            fp_py,
+        )
+        return [Feature.from_py_ptr(f) for f in feats_py]

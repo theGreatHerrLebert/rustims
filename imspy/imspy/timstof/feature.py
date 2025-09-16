@@ -1,12 +1,126 @@
-# imspy/feature.py
+
 from __future__ import annotations
-from typing import List, Sequence, Dict, Any, Tuple, Optional
+from typing import List, Sequence, Tuple, Optional
 import numpy as np
-import pandas as pd
 
 import imspy_connector
-ims = imspy_connector.py_feature  # PyAveragineLut, PyFeature
+ims = imspy_connector.py_feature
 from imspy.simulation.annotation import RustWrapperObject
+
+class FeatureBuildParams(RustWrapperObject):
+    def __init__(self, ppm_narrow: float, k_max: int, min_cosine: float, min_members: int):
+        self.__py_ptr = ims.PyFeatureBuildParams(ppm_narrow, k_max, min_cosine, min_members)
+
+    @property
+    def ppm_narrow(self) -> float:   return self.__py_ptr.ppm_narrow
+    @property
+    def k_max(self) -> int:          return self.__py_ptr.k_max
+    @property
+    def min_cosine(self) -> float:   return self.__py_ptr.min_cosine
+    @property
+    def min_members(self) -> int:    return self.__py_ptr.min_members
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
+
+class AveragineLut(RustWrapperObject):
+    def __init__(self, mass_min: float, mass_max: float, step: float,
+                 z_min: int, z_max: int, k: int = 6, resolution: int = 3, num_threads: int = 4):
+        self.__py_ptr = ims.PyAveragineLut(mass_min, mass_max, step, z_min, z_max, k, resolution, num_threads)
+
+    @property
+    def masses(self) -> np.ndarray: return np.asarray(self.__py_ptr.masses, dtype=np.float32)
+    @property
+    def z_min(self) -> int:         return self.__py_ptr.z_min
+    @property
+    def z_max(self) -> int:         return self.__py_ptr.z_max
+    @property
+    def k(self)    -> int:          return self.__py_ptr.k
+
+    def lookup(self, neutral_mass: float, z: int) -> np.ndarray:
+        return np.asarray(self.__py_ptr.lookup(neutral_mass, z), dtype=np.float32)
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
+
+class Envelope(RustWrapperObject):
+    def __init__(self, *a, **k):
+        raise RuntimeError("Envelope is created in Rust; use Envelope.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyEnvelope") -> "Envelope":
+        inst = cls.__new__(cls)
+        inst._RustWrapperObject__py_ptr = p
+        return inst
+
+    @property
+    def id(self) -> int: return self.__py_ptr.id
+    @property
+    def cluster_ids(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.cluster_ids, dtype=np.int64)
+    @property
+    def rt_bounds(self) -> Tuple[int,int]: return tuple(self.__py_ptr.rt_bounds)
+    @property
+    def im_bounds(self) -> Tuple[int,int]: return tuple(self.__py_ptr.im_bounds)
+    @property
+    def mz_center(self) -> float: return float(self.__py_ptr.mz_center)
+    @property
+    def mz_span_da(self) -> float: return float(self.__py_ptr.mz_span_da)
+    @property
+    def charge_hint(self) -> Optional[int]:
+        # Option[u8] maps to None or int in Python already:
+        return self.__py_ptr.charge_hint
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
+
+class GroupingOutput(RustWrapperObject):
+    def __init__(self, *a, **k):
+        raise RuntimeError("GroupingOutput is created in Rust; use from_py_ptr.")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyGroupingOutput") -> "GroupingOutput":
+        inst = cls.__new__(cls)
+        inst._RustWrapperObject__py_ptr = p
+        return inst
+
+    @property
+    def envelopes(self) -> List[Envelope]:
+        return [Envelope.from_py_ptr(e) for e in self.__py_ptr.envelopes]
+    @property
+    def assignment(self) -> np.ndarray:
+        # Vec<Option<usize>> shows up as list[Optional[int]]
+        # Convert to object dtype to keep None values
+        return np.asarray(self.__py_ptr.assignment, dtype=object)
+    @property
+    def provisional(self) -> List[np.ndarray]:
+        return [np.asarray(v, dtype=np.int64) for v in self.__py_ptr.provisional]
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
+
+class Feature(RustWrapperObject):
+    def __init__(self, *a, **k):
+        raise RuntimeError("Feature is created in Rust; use Feature.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyFeature") -> "Feature":
+        inst = cls.__new__(cls)
+        inst._RustWrapperObject__py_ptr = p
+        return inst
+
+    @property
+    def envelope_id(self) -> int: return self.__py_ptr.envelope_id
+    @property
+    def charge(self) -> int:      return self.__py_ptr.charge
+    @property
+    def mz_mono(self) -> float:   return float(self.__py_ptr.mz_mono)
+    @property
+    def rt_bounds(self) -> Tuple[int,int]: return (self.__py_ptr.rt_left, self.__py_ptr.rt_right)
+    @property
+    def im_bounds(self) -> Tuple[int,int]: return (self.__py_ptr.im_left, self.__py_ptr.im_right)
+    @property
+    def cosine(self) -> float:    return float(self.__py_ptr.cosine)
+    @property
+    def n_members(self) -> int:   return self.__py_ptr.n_members
+
+    def __repr__(self) -> str: return repr(self.__py_ptr)
 
 
 class GroupingParams(RustWrapperObject):
@@ -159,77 +273,3 @@ class AveragineLut(RustWrapperObject):
 
     def __repr__(self) -> str:
         return f"AveragineLut(grid={len(self.masses)}, z=[{self.z_min}..{self.z_max}], k={self.k})"
-
-
-class Feature(RustWrapperObject):
-    """Thin wrapper over Rust PyFeature (read-only)."""
-    def __init__(self, *a, **k):
-        raise RuntimeError("Features are constructed in Rust; use Feature.from_py_ptr().")
-
-    @classmethod
-    def from_py_ptr(cls, p: "ims.PyFeature") -> "Feature":
-        inst = cls.__new__(cls)
-        inst.__py_ptr = p
-        return inst
-
-    def get_py_ptr(self):
-        return self.__py_ptr
-
-    # scalar fields
-    @property
-    def rt_mu(self) -> float: return self.__py_ptr.rt_mu
-    @property
-    def rt_sigma(self) -> float: return self.__py_ptr.rt_sigma
-    @property
-    def im_mu(self) -> float: return self.__py_ptr.im_mu
-    @property
-    def im_sigma(self) -> float: return self.__py_ptr.im_sigma
-    @property
-    def mz_mono(self) -> float: return self.__py_ptr.mz_mono
-    @property
-    def z(self) -> int: return self.__py_ptr.z
-    @property
-    def avg_score(self) -> float: return self.__py_ptr.avg_score
-    @property
-    def z_conf(self) -> float: return self.__py_ptr.z_conf
-    @property
-    def raw_sum(self) -> float: return self.__py_ptr.raw_sum
-    @property
-    def fit_volume(self) -> float: return self.__py_ptr.fit_volume
-    @property
-    def source_cluster_id(self) -> int: return self.__py_ptr.source_cluster_id
-
-    # isotopic vector
-    @property
-    def iso_i(self) -> np.ndarray:
-        return np.asarray(self.__py_ptr.iso_i, dtype=np.float32)
-
-    def __repr__(self) -> str:
-        return (f"Feature(rt=μ{self.rt_mu:.2f} σ{self.rt_sigma:.2f}, "
-                f"im=μ{self.im_mu:.2f} σ{self.im_sigma:.2f}, "
-                f"mz_mono={self.mz_mono:.5f}, z={self.z}, "
-                f"avg={self.avg_score:.3f}, raw={self.raw_sum:.1f})")
-
-
-def features_to_dataframe(feats: Sequence[Feature]) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    for i, f in enumerate(feats):
-        iso = f.iso_i
-        row = dict(
-            feature_id=i,
-            rt_mu=f.rt_mu, rt_sigma=f.rt_sigma,
-            im_mu=f.im_mu, im_sigma=f.im_sigma,
-            mz_mono=f.mz_mono, z=f.z,
-            avg_score=f.avg_score, z_conf=f.z_conf,
-            raw_sum=f.raw_sum, fit_volume=f.fit_volume,
-            source_cluster_id=f.source_cluster_id,
-        )
-        # expand iso_i (up to 8)
-        for k in range(min(8, len(iso))):
-            row[f"iso{k}"] = float(iso[k])
-        rows.append(row)
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df["log1p_raw_sum"] = np.log1p(df["raw_sum"])
-        df["log1p_fit_volume"] = np.log1p(df["fit_volume"])
-    return df

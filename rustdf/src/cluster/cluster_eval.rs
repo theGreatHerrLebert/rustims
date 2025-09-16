@@ -477,13 +477,3 @@ fn empty_result_with_axes(
         patch_shape: shape,
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct Feature {
-    pub rt_mu: f32, pub rt_sigma: f32,
-    pub im_mu: f32, pub im_sigma: f32,
-    pub mz_mono: f32, pub z: u8,
-    pub iso_i: [f32;8], pub avg_score: f32, pub z_conf: f32,
-    pub raw_sum: f32, pub fit_volume: f32,
-    pub source_cluster_id: usize,
-}

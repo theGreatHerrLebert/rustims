@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use crate::data::acquisition::AcquisitionMode;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
 use crate::data::meta::{
@@ -9,6 +10,7 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use crate::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
+use crate::cluster::feature::{build_features_from_envelopes, AveragineLut, Envelope, Feature, FeatureBuildParams, GroupingParams};
 use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm, ImIndex};
 
 pub struct TimsDatasetDIA {
@@ -256,6 +258,90 @@ impl TimsDatasetDIA {
         num_threads: usize,
     ) -> Vec<ClusterResult> {
         evaluate_clusters_3d(self, rt_index, specs, opts, num_threads)
+    }
+
+    /// Build features by:
+    ///  1) determining global RT span from envelopes (in precursor RT indices),
+    ///  2) loading those precursor frames into RAM,
+    ///  3) shifting envelope RT bounds to the local window, and
+    ///  4) calling the existing `build_features_from_envelopes`.
+    pub fn build_features_from_envelopes(
+        &self,
+        envelopes: &[Envelope],
+        clusters: &[ClusterResult],
+        lut: &AveragineLut,
+        gp: &GroupingParams,
+        fp: &FeatureBuildParams,
+    ) -> Vec<Feature> {
+        if envelopes.is_empty() {
+            return Vec::new();
+        }
+
+        // --- 1) Map precursor RT index -> frame_id ---------------------------
+        // We assume the grouping/envelopes use *precursor-only* RT indexing.
+        // Build a compact lookup: precursor_rt_idx -> frame_id.
+        let mut ms1_frame_ids: Vec<u32> = Vec::new();
+        ms1_frame_ids.reserve(self.meta_data.len());
+        for fm in &self.meta_data {
+            if fm.ms_ms_type == 0 {
+                ms1_frame_ids.push(fm.id as u32);
+            }
+        }
+        if ms1_frame_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // --- 2) Global RT span across envelopes (still in precursor indices) -
+        let mut rt_min = usize::MAX;
+        let mut rt_max = 0usize;
+        for e in envelopes {
+            rt_min = rt_min.min(e.rt_bounds.0);
+            rt_max = rt_max.max(e.rt_bounds.1);
+        }
+        if rt_min == usize::MAX || rt_min > rt_max {
+            return Vec::new();
+        }
+
+        // Clamp to available precursor frames
+        let last_rt = ms1_frame_ids.len().saturating_sub(1);
+        rt_min = rt_min.min(last_rt);
+        rt_max = rt_max.min(last_rt);
+        if rt_min > rt_max {
+            return Vec::new();
+        }
+
+        // --- 3) Preload frames into RAM --------------------------------------
+        let span = rt_max - rt_min + 1;
+        let mut frames: Vec<Arc<TimsFrame>> = Vec::with_capacity(span);
+        for rt_idx in rt_min..=rt_max {
+            let fid = ms1_frame_ids[rt_idx];
+            let fr = self.loader.get_frame(fid);
+            // If you want Arc<TimsFrame> without copy, ensure get_frame returns an owned TimsFrame
+            // and wrap it. If it already returns Arc<TimsFrame>, drop the Arc::new.
+            frames.push(Arc::new(fr));
+        }
+
+        // --- 4) Rewrite envelopes into local RT coordinates -------------------
+        let mut loc_envs: Vec<Envelope> = Vec::with_capacity(envelopes.len());
+        for e in envelopes {
+            let (gl, gr) = e.rt_bounds;
+            // shift to local window [0..span)
+            let l = gl.saturating_sub(rt_min).min(span - 1);
+            let r = gr.saturating_sub(rt_min).min(span - 1);
+            let mut e2 = e.clone();
+            e2.rt_bounds = if l <= r { (l, r) } else { (l, l) }; // guard
+            loc_envs.push(e2);
+        }
+
+        // --- 5) Delegate to the existing builder -----------------------------
+        build_features_from_envelopes(
+            &frames,       // contiguous local RT window
+            &loc_envs,     // envelopes in local RT indices
+            clusters,
+            lut,
+            gp,
+            fp,
+        )
     }
 }
 

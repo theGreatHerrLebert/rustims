@@ -9,7 +9,9 @@ use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use std::sync::Arc;
 use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
+use rustdf::cluster::feature::{Envelope, Feature};
 use crate::py_cluster::{PyClusterResult, PyClusterSpec, PyEvalOptions};
+use crate::py_feature::{PyAveragineLut, PyEnvelope, PyFeature, PyFeatureBuildParams, PyGroupingParams};
 
 pub fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
@@ -326,8 +328,6 @@ impl PyTimsDatasetDIA {
         Ok((im_py, peaks_py))
     }
 
-    // ... existing methods ...
-
     /// Evaluate 3D clusters (RT × IM with m/z marginal) for the given specs.
     ///
     /// Python signature:
@@ -360,6 +360,33 @@ impl PyTimsDatasetDIA {
             .collect::<PyResult<_>>()?;
 
         Ok(results_py)
+    }
+    /// Build features from envelopes using preloaded precursor frames internally.
+    pub fn build_features_from_envelopes(
+        &self,
+        envelopes: Vec<PyEnvelope>,
+        clusters: Vec<PyClusterResult>,
+        lut: PyAveragineLut,
+        gp: PyGroupingParams,
+        fp: PyFeatureBuildParams,
+    ) -> PyResult<Vec<PyFeature>> {
+        // Unwrap inner
+        let envs: Vec<Envelope> = envelopes.into_iter().map(|e| e.inner).collect();
+        let clus: Vec<ClusterResult> = clusters.into_iter().map(|c| c.inner).collect();
+
+        // Call the Rust method on TimsDatasetDIA
+        let feats: Vec<Feature> = self
+            .inner
+            .build_features_from_envelopes(
+                &envs,
+                &clus,
+                &lut.inner,
+                &gp.inner,
+                &fp.inner,
+            );
+
+        // Wrap back for Python
+        Ok(feats.into_iter().map(|f| PyFeature { inner: f }).collect())
     }
 }
 
