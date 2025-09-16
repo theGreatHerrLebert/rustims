@@ -253,8 +253,9 @@ impl TimsDatasetDIA {
         rt_index: &RtIndex,
         specs: &[ClusterSpec],
         opts: EvalOptions,
+        num_threads: usize,
     ) -> Vec<ClusterResult> {
-        evaluate_clusters_3d(self, rt_index, specs, opts)
+        evaluate_clusters_3d(self, rt_index, specs, opts, num_threads)
     }
 }
 

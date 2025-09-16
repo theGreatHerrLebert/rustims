@@ -87,18 +87,6 @@ pub struct ClusterResult {
     pub patch_shape: (usize, usize),     // (frames, scans)
 }
 
-#[inline]
-fn smooth3_inplace(y: &mut [f32]) {
-    if y.len() < 3 { return; }
-    let mut prev = y[0];
-    for i in 1..y.len()-1 {
-        let cur = y[i];
-        let nxt = y[i+1];
-        y[i] = (prev + cur + nxt) / 3.0;
-        prev = cur;
-    }
-}
-
 fn ppm_to_delta_da(mz: f32, ppm: f32) -> f32 {
     mz * ppm * 1e-6
 }
@@ -185,219 +173,227 @@ impl Default for EvalOptions {
     }
 }
 
-fn extract_patch_and_mz_hist(
-    ds: &TimsDatasetDIA,
-    rt_index: &RtIndex,
-    spec: &ClusterSpec,
-) -> (Vec<f32>, usize, usize, Vec<u32>, Vec<usize>, Vec<f32>, Vec<f32>, (f32,f32))
-{
-    // --- RT window ---
-    let cols_total = rt_index.cols;
-    if cols_total == 0 {
-        return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
-    }
-    let rt_l0 = spec.rt_left.saturating_sub(spec.extra_rt_pad);
-    let rt_r0 = spec.rt_right.saturating_add(spec.extra_rt_pad);
-    let rt_l  = rt_l0.min(cols_total - 1);
-    let rt_r  = rt_r0.min(cols_total - 1);
-    if rt_l > rt_r {
-        return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
-    }
-
-    let frame_ids: Vec<u32> = rt_index.frames[rt_l..=rt_r].to_vec();
-    let frames = frame_ids.len();
-    if frames == 0 {
-        return (Vec::new(), 0, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
-    }
-
-    // Materialize
-    let slice = ds.get_slice(frame_ids.clone(), /*num_threads=*/1);
-
-    // --- IM window (absolute scans) ---
-    let global_scan_max = slice.frames.iter()
-        .flat_map(|fr| fr.scan.iter().copied())
-        .max()
-        .unwrap_or(0)
-        .max(0) as usize;
-
-    let im_l0 = spec.im_left.saturating_sub(spec.extra_im_pad);
-    let im_r0 = spec.im_right.saturating_add(spec.extra_im_pad);
-    let im_l  = im_l0.min(global_scan_max);
-    let im_r  = im_r0.min(global_scan_max);
-
-    if im_l > im_r {
-        // No scans in range → empty, but keep frames for provenance.
-        return (Vec::new(), frames, 0, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
-    }
-
-    let scans = im_r - im_l + 1;
-    if scans == 0 {
-        return (Vec::new(), frames, 0, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
-    }
-
-    // --- m/z window (Da) ---
-    let (mz_min, mz_max) = if let Some(win) = spec.mz_window_da_override {
-        win
-    } else {
-        let mz0 = spec.mz_center_hint;
-        let d   = ppm_to_delta_da(mz0, spec.mz_ppm_window);
-        (mz0 - d, mz0 + d)
-    };
-    if !mz_min.is_finite() || !mz_max.is_finite() || mz_max <= mz_min {
-        return (Vec::new(), frames, scans, frame_ids, Vec::new(), Vec::new(), Vec::new(), (0.0, 0.0));
-    }
-
-    // --- allocate outputs ---
-    let mut f_patch = vec![0.0f32; frames * scans]; // [s * frames + f]
-    let bins = spec.mz_hist_bins.max(10);
-    let bin_w = (mz_max - mz_min) / (bins as f32);
-    let mut mz_hist   = vec![0.0f32; bins];
-
-    let mut mz_center = Vec::with_capacity(bins);
-    for b in 0..bins {
-        mz_center.push(mz_min + (b as f32 + 0.5) * bin_w);
-    }
-
-    // --- accumulate ---
-    for (fi, fr) in slice.frames.into_iter().enumerate() {
-        let mz  = &fr.ims_frame.mz;
-        let intensity = &fr.ims_frame.intensity;
-        let scv = &fr.scan;
-
-        // Guard: equal length assumptions
-        debug_assert_eq!(mz.len(), intensity.len());
-        debug_assert_eq!(mz.len(), scv.len());
-
-        for k in 0..mz.len() {
-            let da = mz[k] as f32;
-            if da < mz_min || da > mz_max { continue; }
-
-            let sc_i = scv[k];
-            if sc_i < 0 { continue; }
-            let sc = sc_i as usize;
-            if sc < im_l || sc > im_r { continue; }
-
-            let val = intensity[k] as f32;
-
-            // 2D patch
-            let s_local = sc - im_l;
-            // (frames > 0, scans > 0 by construction)
-            f_patch[s_local * frames + fi] += val;
-
-            // m/z histogram
-            let mut b = ((da - mz_min) / (mz_max - mz_min) * (bins as f32)).floor() as isize;
-            if b < 0 { b = 0; }
-            if (b as usize) >= bins { b = (bins as isize) - 1; }
-            mz_hist[b as usize] += val;
-        }
-    }
-
-    // scans axis
-    let scans_axis: Vec<usize> = (im_l..=im_r).collect();
-
-    smooth3_inplace(&mut mz_hist);
-
-    (f_patch, frames, scans, frame_ids, scans_axis, mz_hist, mz_center, (mz_min, mz_max))
-}
-
 /// Product of 1D areas as a separable-volume proxy.
 fn separable_volume(rt: &ClusterFit1D, im: &ClusterFit1D, mz: &ClusterFit1D) -> f32 {
     // NOTE: areas here already include height * σ * √(2π) (constant baseline excluded)
     rt.area * im.area * mz.area.max(0.0)
 }
 
+/// Evaluate clusters (RT×IM with m/z marginal) but **preload all required frames once**
+/// using the dataset handle. No per-cluster I/O.
 pub fn evaluate_clusters_3d(
     ds: &TimsDatasetDIA,
     rt_index: &RtIndex,
     specs: &[ClusterSpec],
     opts: EvalOptions,
+    num_threads: usize,          // will be clamped to 1 if your backend needs it
 ) -> Vec<ClusterResult> {
+    // ---------------------------
+    // 0) Figure out which frames we actually need (union of all RT windows)
+    // ---------------------------
+    let cols = rt_index.cols;
+    if cols == 0 || specs.is_empty() {
+        return Vec::new();
+    }
+
+    // mark used frames
+    let mut used = vec![false; cols];
+    for s in specs {
+        let l = s.rt_left.min(cols - 1);
+        let r = s.rt_right.min(cols - 1);
+        if l <= r {
+            for i in l..=r { used[i] = true; }
+        }
+    }
+
+    // compress to a single ordered list of frame IDs (RT order)
+    let mut used_indices = Vec::with_capacity(cols);
+    let mut used_frame_ids = Vec::with_capacity(cols);
+    for (i, &u) in used.iter().enumerate() {
+        if u {
+            used_indices.push(i);
+            used_frame_ids.push(rt_index.frames[i]);
+        }
+    }
+    if used_frame_ids.is_empty() {
+        // nothing to do
+        return specs.iter().enumerate().map(|(cid, spec)| ClusterResult {
+            rt_window: (spec.rt_left, spec.rt_right),
+            im_window: (spec.im_left, spec.im_right),
+            mz_window_da: (0.0, 0.0),
+            rt_fit: ClusterFit1D::default(),
+            im_fit: ClusterFit1D::default(),
+            mz_fit: ClusterFit1D::default(),
+            raw_sum: 0.0,
+            fit_volume: 0.0,
+            rt_peak_id: cid,
+            im_peak_id: cid,
+            mz_center_hint: spec.mz_center_hint,
+            frame_ids_used: Vec::new(),
+            frames_axis: None, scans_axis: None, mz_axis: None,
+            patch_2d_colmajor: None, patch_shape: (0, 0),
+        }).collect();
+    }
+
+    // ---------------------------
+    // 1) Materialize **once** from disk
+    // ---------------------------
+    let slice = ds.get_slice(used_frame_ids.clone(), /*num_threads=*/num_threads);
+
+    // Map: global rt_col -> local index in `slice.frames`
+    // Since we preserved RT order, local position is the order in used_indices.
+    // Build a quick lookup vector of length `cols` with Option<local_pos>.
+    let mut glob2loc = vec![None::<usize>; cols];
+    for (loc, &glob) in used_indices.iter().enumerate() {
+        glob2loc[glob] = Some(loc);
+    }
+
+    // For convenience
+    let frames_total_local = slice.frames.len(); // == used_frame_ids.len()
+    debug_assert_eq!(frames_total_local, used_frame_ids.len());
+
+    // ---------------------------
+    // 2) Per-cluster extraction from the preloaded frames (no I/O)
+    // ---------------------------
     specs.par_iter().enumerate().map(|(cid, spec)| {
-        let (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win) =
-            extract_patch_and_mz_hist(ds, rt_index, spec);
-
-        // Early-out: empty extraction → empty result (but keep windows + provenance)
-        if frames == 0 || scans == 0 {
-            return ClusterResult {
-                rt_window: (spec.rt_left, spec.rt_right),
-                im_window: (spec.im_left, spec.im_right),
-                mz_window_da: mz_da_win,
-                rt_fit: ClusterFit1D::default(),
-                im_fit: ClusterFit1D::default(),
-                mz_fit: ClusterFit1D::default(),
-                raw_sum: 0.0,
-                fit_volume: 0.0,
-                rt_peak_id: cid,
-                im_peak_id: cid,
-                mz_center_hint: spec.mz_center_hint,
-                frame_ids_used: frame_ids.clone(),
-                frames_axis: if opts.attach.attach_frames { Some(frame_ids) } else { None },
-                scans_axis: if opts.attach.attach_scans { Some(scans_axis) } else { None },
-                mz_axis: if opts.attach.attach_mz_axis { Some(mz_centers.clone()) } else { None },
-                patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch) } else { None },
-                patch_shape: (frames, scans),
-            };
+        // RT bounds → local slice bounds
+        let l_glob = spec.rt_left.min(cols - 1);
+        let r_glob = spec.rt_right.min(cols - 1);
+        if l_glob > r_glob {
+            return empty_result(cid, spec, (0.0, 0.0));
         }
 
-        // First-pass m/z fit on smoothed histogram
-        let mz_fit0 = moment_fit_1d(&mz_hist_y, Some(&mz_centers));
+        let l_loc = match glob2loc[l_glob] { Some(x) => x, None => return empty_result(cid, spec, (0.0,0.0)) };
+        let r_loc = match glob2loc[r_glob] { Some(x) => x, None => return empty_result(cid, spec, (0.0,0.0)) };
+        if l_loc > r_loc || r_loc >= frames_total_local {
+            return empty_result(cid, spec, (0.0, 0.0));
+        }
 
-        // Heuristics for whether to tighten μ ± kσ
-        let total_mz_mass: f32 = mz_hist_y.iter().copied().sum();
-        let mz_area_min: f32 = 0.01 * total_mz_mass;     // e.g., require ≥1% of hist mass
-        let raw_min: f32 = 0.0;                          // could use > 0 or a small epsilon
+        let frames = r_loc - l_loc + 1;
 
-        let want_refine =
-            opts.refine_mz_once &&
-                mz_fit0.sigma > 0.0 &&
-                mz_fit0.area > mz_area_min &&
-                patch.iter().any(|&v| v > raw_min);          // some RT×IM signal in the patch
+        // IM bounds (absolute scans); clamp to what exists across this local range
+        // Discover max scan in the local range
+        let mut scan_max_abs: usize = 0;
+        for fr in &slice.frames[l_loc..=r_loc] {
+            if let Some(&mx) = fr.scan.iter().max() {
+                if mx > scan_max_abs as i32 { scan_max_abs = mx as usize; }
+            }
+        }
+        let im_l = spec.im_left.min(scan_max_abs);
+        let im_r = spec.im_right.min(scan_max_abs);
+        if im_l > im_r || frames == 0 {
+            return empty_result_with_axes(cid, spec, (0.0, 0.0),
+                                          used_frame_ids[l_loc..=r_loc].to_vec(),
+                                          None, None, (frames, 0), &opts);
+        }
+        let scans = im_r - im_l + 1;
 
-        let (patch2, frames2, scans2, frame_ids2, scans_axis2, mz_hist_y2, mz_centers2, mz_da_win2) =
-            if want_refine {
-                let k = opts.refine_k_sigma.max(1.0);
-                let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_da_win.0);
-                let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_da_win.1);
-                if hi <= lo {
-                    (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
-                } else {
-                    let mut spec2 = spec.clone();
-                    spec2.mz_window_da_override = Some((lo, hi));
-                    let (p2, fr2, sc2, fids2, scax2, mz_y2, mz_x2, win2) =
-                        extract_patch_and_mz_hist(ds, rt_index, &spec2);
+        // m/z window
+        let (mz_min, mz_max) = if let Some(win) = spec.mz_window_da_override {
+            win
+        } else {
+            let d = ppm_to_delta_da(spec.mz_center_hint, spec.mz_ppm_window);
+            (spec.mz_center_hint - d, spec.mz_center_hint + d)
+        };
+        if !mz_min.is_finite() || !mz_max.is_finite() || mz_max <= mz_min {
+            return empty_result_with_axes(cid, spec, (mz_min, mz_max),
+                                          used_frame_ids[l_loc..=r_loc].to_vec(),
+                                          Some((im_l, im_r)), None, (frames, scans), &opts);
+        }
 
-                    let mut mz_y2_mut = mz_y2;
-                    smooth3_inplace(&mut mz_y2_mut);
-                    (p2, fr2, sc2, fids2, scax2, mz_y2_mut, mz_x2, win2)
-                }
+        // allocate outputs
+        let mut patch = vec![0.0f32; frames * scans]; // [s * frames + f]
+        let bins = spec.mz_hist_bins.max(10);
+        let bin_w = (mz_max - mz_min) / bins as f32;
+        let mut mz_hist = vec![0.0f32; bins];
+        let mut mz_centers = Vec::with_capacity(bins);
+        for b in 0..bins {
+            mz_centers.push(mz_min + (b as f32 + 0.5) * bin_w);
+        }
+
+        // accumulate from preloaded frames
+        for (fi, fr) in slice.frames[l_loc..=r_loc].iter().enumerate() {
+            let mz  = &fr.ims_frame.mz;
+            let it  = &fr.ims_frame.intensity;
+            let sc  = &fr.scan;
+            debug_assert_eq!(mz.len(), it.len());
+            debug_assert_eq!(mz.len(), sc.len());
+
+            for k in 0..mz.len() {
+                let da = mz[k] as f32;
+                if da < mz_min || da > mz_max { continue; }
+
+                let s_abs = sc[k];
+                if s_abs < 0 { continue; }
+                let s_abs = s_abs as usize;
+                if s_abs < im_l || s_abs > im_r { continue; }
+
+                let val = it[k] as f32;
+                let s_local = s_abs - im_l;
+                patch[s_local * frames + fi] += val;
+
+                // mz hist
+                let mut b = ((da - mz_min) / (mz_max - mz_min) * bins as f32).floor() as isize;
+                if b < 0 { b = 0; }
+                if b as usize >= bins { b = bins as isize - 1; }
+                mz_hist[b as usize] += val;
+            }
+        }
+
+        // optional refine pass
+        let mz_fit0 = moment_fit_1d(&mz_hist, Some(&mz_centers));
+        let want_refine = opts.refine_mz_once && mz_fit0.sigma > 0.0 && mz_fit0.area > 0.0;
+
+        let (patch2, frames2, scans2, mz_hist2, mz_centers2, mz_win2) = if want_refine {
+            let k = opts.refine_k_sigma.max(1.0);
+            let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_min);
+            let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_max);
+            if hi <= lo {
+                (patch, frames, scans, mz_hist, mz_centers, (mz_min, mz_max))
             } else {
-                (patch, frames, scans, frame_ids, scans_axis, mz_hist_y, mz_centers, mz_da_win)
-            };
+                // re-accumulate within refined m/z window (cheap pass over same frames)
+                let mut patch_r = vec![0.0f32; frames * scans];
+                let mut mz_hist_r = vec![0.0f32; bins];
+                for (fi, fr) in slice.frames[l_loc..=r_loc].iter().enumerate() {
+                    let mz  = &fr.ims_frame.mz;
+                    let it  = &fr.ims_frame.intensity;
+                    let sc  = &fr.scan;
+                    for k in 0..mz.len() {
+                        let da = mz[k] as f32;
+                        if da < lo || da > hi { continue; }
+                        let s_abs = sc[k];
+                        if s_abs < 0 { continue; }
+                        let s_abs = s_abs as usize;
+                        if s_abs < im_l || s_abs > im_r { continue; }
+                        let val = it[k] as f32;
+                        let s_local = s_abs - im_l;
+                        patch_r[s_local * frames + fi] += val;
 
-        // Guard again (refined window could be empty)
+                        let mut b = ((da - lo) / (hi - lo) * bins as f32).floor() as isize;
+                        if b < 0 { b = 0; }
+                        if b as usize >= bins { b = bins as isize - 1; }
+                        mz_hist_r[b as usize] += val;
+                    }
+                }
+                let mut mz_centers_r = Vec::with_capacity(bins);
+                let bw = (hi - lo) / bins as f32;
+                for b in 0..bins { mz_centers_r.push(lo + (b as f32 + 0.5) * bw); }
+                (patch_r, frames, scans, mz_hist_r, mz_centers_r, (lo, hi))
+            }
+        } else {
+            (patch, frames, scans, mz_hist, mz_centers, (mz_min, mz_max))
+        };
+
         if frames2 == 0 || scans2 == 0 {
-            return ClusterResult {
-                rt_window: (spec.rt_left, spec.rt_right),
-                im_window: (spec.im_left, spec.im_right),
-                mz_window_da: mz_da_win2,
-                rt_fit: ClusterFit1D::default(),
-                im_fit: ClusterFit1D::default(),
-                mz_fit: ClusterFit1D::default(),
-                raw_sum: 0.0,
-                fit_volume: 0.0,
-                rt_peak_id: cid,
-                im_peak_id: cid,
-                mz_center_hint: spec.mz_center_hint,
-                frame_ids_used: frame_ids2.clone(),
-                frames_axis: if opts.attach.attach_frames { Some(frame_ids2) } else { None },
-                scans_axis: if opts.attach.attach_scans { Some(scans_axis2) } else { None },
-                mz_axis: if opts.attach.attach_mz_axis { Some(mz_centers2.clone()) } else { None },
-                patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch2) } else { None },
-                patch_shape: (frames2, scans2),
-            };
+            return empty_result_with_axes(
+                cid, spec, mz_win2,
+                used_frame_ids[l_loc..=r_loc].to_vec(),
+                Some((im_l, im_r)), Some(mz_centers2.clone()),
+                (frames2, scans2), &opts
+            );
         }
 
-        // RT/IM marginals (safe: frames2>0 && scans2>0)
+        // marginals
         let mut rt_marg = vec![0.0f32; frames2];
         let mut im_marg = vec![0.0f32; scans2];
         for s in 0..scans2 {
@@ -410,26 +406,75 @@ pub fn evaluate_clusters_3d(
 
         let rt_fit = moment_fit_1d(&rt_marg, None);
         let im_fit = moment_fit_1d(&im_marg, None);
-        let mz_fit = moment_fit_1d(&mz_hist_y2, Some(&mz_centers2));
-
+        let mz_fit = moment_fit_1d(&mz_hist2, Some(&mz_centers2));
         let raw_sum: f32 = patch2.iter().copied().sum();
         let fit_volume = separable_volume(&rt_fit, &im_fit, &mz_fit);
 
         ClusterResult {
             rt_window: (spec.rt_left, spec.rt_right),
             im_window: (spec.im_left, spec.im_right),
-            mz_window_da: mz_da_win2,
+            mz_window_da: mz_win2,
             rt_fit, im_fit, mz_fit,
             raw_sum, fit_volume,
             rt_peak_id: cid,
             im_peak_id: cid,
             mz_center_hint: spec.mz_center_hint,
-            frame_ids_used: frame_ids2.clone(),
-            frames_axis: if opts.attach.attach_frames { Some(frame_ids2) } else { None },
-            scans_axis:  if opts.attach.attach_scans  { Some(scans_axis2) } else { None },
+            frame_ids_used: used_frame_ids[l_loc..=r_loc].to_vec(),
+            frames_axis: if opts.attach.attach_frames { Some(used_frame_ids[l_loc..=r_loc].to_vec()) } else { None },
+            scans_axis:  if opts.attach.attach_scans  { Some((im_l..=im_r).collect()) } else { None },
             mz_axis:     if opts.attach.attach_mz_axis{ Some(mz_centers2.clone()) } else { None },
             patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch2) } else { None },
             patch_shape: (frames2, scans2),
         }
     }).collect()
+}
+
+#[inline]
+fn empty_result(cid: usize, spec: &ClusterSpec, mz_win: (f32,f32)) -> ClusterResult {
+    ClusterResult {
+        rt_window: (spec.rt_left, spec.rt_right),
+        im_window: (spec.im_left, spec.im_right),
+        mz_window_da: mz_win,
+        rt_fit: ClusterFit1D::default(),
+        im_fit: ClusterFit1D::default(),
+        mz_fit: ClusterFit1D::default(),
+        raw_sum: 0.0, fit_volume: 0.0,
+        rt_peak_id: cid, im_peak_id: cid,
+        mz_center_hint: spec.mz_center_hint,
+        frame_ids_used: Vec::new(),
+        frames_axis: None, scans_axis: None, mz_axis: None,
+        patch_2d_colmajor: None, patch_shape: (0, 0),
+    }
+}
+
+#[inline]
+fn empty_result_with_axes(
+    cid: usize,
+    spec: &ClusterSpec,
+    mz_win: (f32,f32),
+    frames_axis: Vec<u32>,
+    scans_bounds: Option<(usize,usize)>,
+    mz_axis: Option<Vec<f32>>,
+    shape: (usize,usize),
+    opts: &EvalOptions,
+) -> ClusterResult {
+    ClusterResult {
+        rt_window: (spec.rt_left, spec.rt_right),
+        im_window: (spec.im_left, spec.im_right),
+        mz_window_da: mz_win,
+        rt_fit: ClusterFit1D::default(),
+        im_fit: ClusterFit1D::default(),
+        mz_fit: ClusterFit1D::default(),
+        raw_sum: 0.0, fit_volume: 0.0,
+        rt_peak_id: cid, im_peak_id: cid,
+        mz_center_hint: spec.mz_center_hint,
+        frame_ids_used: frames_axis.clone(),
+        frames_axis: if opts.attach.attach_frames { Some(frames_axis) } else { None },
+        scans_axis:  if opts.attach.attach_scans  {
+            scans_bounds.map(|(l,r)| (l..=r).collect())
+        } else { None },
+        mz_axis: if opts.attach.attach_mz_axis { mz_axis } else { None },
+        patch_2d_colmajor: None,
+        patch_shape: shape,
+    }
 }
