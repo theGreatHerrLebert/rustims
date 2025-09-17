@@ -1,4 +1,3 @@
-use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
 use rayon::iter::{ ParallelIterator};
 use crate::cluster::utility::RtIndex;
@@ -85,44 +84,6 @@ pub struct ClusterResult {
     pub mz_axis: Option<Vec<f32>>,       // m/z centers of histogram bins (length = mz_hist_bins)
     pub patch_2d_colmajor: Option<Vec<f32>>, // (frames×scans) column-major
     pub patch_shape: (usize, usize),     // (frames, scans)
-}
-
-#[derive(Copy, Clone, Debug)]
-struct ScanSlice { scan: usize, start: usize, end: usize }
-
-#[inline]
-fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
-    let scv = &fr.scan;
-    let mut out = Vec::new();
-    if scv.is_empty() { return out; }
-    let mut s_cur = scv[0];
-    let mut i_start = 0usize;
-    for i in 1..scv.len() {
-        if scv[i] != s_cur {
-            if s_cur >= 0 {
-                out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: i });
-            }
-            s_cur = scv[i];
-            i_start = i;
-        }
-    }
-    if s_cur >= 0 {
-        out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: scv.len() });
-    }
-    out
-}
-
-#[inline]
-fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
-    let mut lo = start; let mut hi = end; let xf = x as f64;
-    while lo < hi { let mid = (lo + hi) >> 1; if mz[mid] < xf { lo = mid + 1; } else { hi = mid; } }
-    lo
-}
-#[inline]
-fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
-    let mut lo = start; let mut hi = end; let xf = x as f64;
-    while lo < hi { let mid = (lo + hi) >> 1; if mz[mid] <= xf { lo = mid + 1; } else { hi = mid; } }
-    lo
 }
 
 fn ppm_to_delta_da(mz: f32, ppm: f32) -> f32 {
@@ -278,10 +239,6 @@ pub fn evaluate_clusters_3d(
     // ---------------------------
     let slice = ds.get_slice(used_frame_ids.clone(), /*num_threads=*/num_threads);
 
-    // Build per-frame scan slices ONCE (reused by all clusters + refine pass)
-    let scan_slices_per_frame: Vec<Vec<ScanSlice>> =
-        slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
-
     // Map: global rt_col -> local index in `slice.frames`
     // Since we preserved RT order, local position is the order in used_indices.
     // Build a quick lookup vector of length `cols` with Option<local_pos>.
@@ -353,51 +310,32 @@ pub fn evaluate_clusters_3d(
             mz_centers.push(mz_min + (b as f32 + 0.5) * bin_w);
         }
 
-        // accumulate from preloaded frames using scan slices + binary search per slice
-        let inv_bin_w = 1.0f32 / bin_w;
-        for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
-            .iter()
-            .zip(&scan_slices_per_frame[l_loc..=r_loc])
-            .enumerate()
-        {
+        // accumulate from preloaded frames
+        for (fi, fr) in slice.frames[l_loc..=r_loc].iter().enumerate() {
             let mz  = &fr.ims_frame.mz;
             let it  = &fr.ims_frame.intensity;
+            let sc  = &fr.scan;
+            debug_assert_eq!(mz.len(), it.len());
+            debug_assert_eq!(mz.len(), sc.len());
 
-            for sl in slices {
-                let s_abs = sl.scan;
+            for k in 0..mz.len() {
+                let da = mz[k] as f32;
+                if da < mz_min || da > mz_max { continue; }
+
+                let s_abs = sc[k];
+                if s_abs < 0 { continue; }
+                let s_abs = s_abs as usize;
                 if s_abs < im_l || s_abs > im_r { continue; }
 
-                // bounds inside this scan's contiguous [start,end)
-                let l = lower_bound_in(mz, sl.start, sl.end, mz_min);
-                let r = upper_bound_in(mz, sl.start, sl.end, mz_max);
-                if l >= r { continue; }
-
-                // Optional thinning for huge windows (keeps worst cases tame)
-                let mut stride = 1usize;
-                // tune this guard or expose as an option:
-                const MAX_POINTS_PER_SLICE: usize = 10_000;
-                let len = r - l;
-                if len > MAX_POINTS_PER_SLICE {
-                    stride = ((len + MAX_POINTS_PER_SLICE - 1) / MAX_POINTS_PER_SLICE).max(1);
-                }
-
+                let val = it[k] as f32;
                 let s_local = s_abs - im_l;
-                let base = s_local * frames + fi;
-                let _win = mz_max - mz_min;
+                patch[s_local * frames + fi] += val;
 
-                let mut i = l;
-                while i < r {
-                    let val = it[i] as f32;
-                    // RT×IM patch (column-major)
-                    patch[base] += val;
-
-                    // m/z hist bin (avoid branches; clamp once)
-                    let pos = ((mz[i] as f32 - mz_min) * inv_bin_w * bins as f32).floor() as isize;
-                    let b = if pos < 0 { 0 } else if (pos as usize) >= bins { bins - 1 } else { pos as usize };
-                    mz_hist[b] += val;
-
-                    i += stride;
-                }
+                // mz hist
+                let mut b = ((da - mz_min) / (mz_max - mz_min) * bins as f32).floor() as isize;
+                if b < 0 { b = 0; }
+                if b as usize >= bins { b = bins as isize - 1; }
+                mz_hist[b as usize] += val;
             }
         }
 
@@ -415,55 +353,30 @@ pub fn evaluate_clusters_3d(
                 // re-accumulate within refined m/z window (cheap pass over same frames)
                 let mut patch_r = vec![0.0f32; frames * scans];
                 let mut mz_hist_r = vec![0.0f32; bins];
+                for (fi, fr) in slice.frames[l_loc..=r_loc].iter().enumerate() {
+                    let mz  = &fr.ims_frame.mz;
+                    let it  = &fr.ims_frame.intensity;
+                    let sc  = &fr.scan;
+                    for k in 0..mz.len() {
+                        let da = mz[k] as f32;
+                        if da < lo || da > hi { continue; }
+                        let s_abs = sc[k];
+                        if s_abs < 0 { continue; }
+                        let s_abs = s_abs as usize;
+                        if s_abs < im_l || s_abs > im_r { continue; }
+                        let val = it[k] as f32;
+                        let s_local = s_abs - im_l;
+                        patch_r[s_local * frames + fi] += val;
 
-                // prepare centers for refined window
+                        let mut b = ((da - lo) / (hi - lo) * bins as f32).floor() as isize;
+                        if b < 0 { b = 0; }
+                        if b as usize >= bins { b = bins as isize - 1; }
+                        mz_hist_r[b as usize] += val;
+                    }
+                }
                 let mut mz_centers_r = Vec::with_capacity(bins);
                 let bw = (hi - lo) / bins as f32;
                 for b in 0..bins { mz_centers_r.push(lo + (b as f32 + 0.5) * bw); }
-
-                // SAME fast path as primary accumulation, but with [lo,hi]
-                let inv_bw = 1.0f32 / bw;
-                for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
-                    .iter()
-                    .zip(&scan_slices_per_frame[l_loc..=r_loc])
-                    .enumerate()
-                {
-                    let mz  = &fr.ims_frame.mz;
-                    let it  = &fr.ims_frame.intensity;
-
-                    for sl in slices {
-                        let s_abs = sl.scan;
-                        if s_abs < im_l || s_abs > im_r { continue; }
-
-                        // bounds inside this scan's contiguous [start,end)
-                        let l = lower_bound_in(mz, sl.start, sl.end, lo);
-                        let r = upper_bound_in(mz, sl.start, sl.end, hi);
-                        if l >= r { continue; }
-
-                        // optional thinning (same constant as primary path)
-                        let mut stride = 1usize;
-                        const MAX_POINTS_PER_SLICE: usize = 10_000;
-                        let len = r - l;
-                        if len > MAX_POINTS_PER_SLICE {
-                            stride = ((len + MAX_POINTS_PER_SLICE - 1) / MAX_POINTS_PER_SLICE).max(1);
-                        }
-
-                        let s_local = s_abs - im_l;
-                        let base = s_local * frames + fi;
-
-                        let mut i = l;
-                        while i < r {
-                            let val = it[i] as f32;
-                            patch_r[base] += val;
-
-                            let pos = ((mz[i] as f32 - lo) * inv_bw * bins as f32).floor() as isize;
-                            let b = if pos < 0 { 0 } else if (pos as usize) >= bins { bins - 1 } else { pos as usize };
-                            mz_hist_r[b] += val;
-
-                            i += stride;
-                        }
-                    }
-                }
                 (patch_r, frames, scans, mz_hist_r, mz_centers_r, (lo, hi))
             }
         } else {
