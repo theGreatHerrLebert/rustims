@@ -194,6 +194,8 @@ class ClusterResult(RustWrapperObject):
     def get_py_ptr(self):
         return self.__py_ptr
 
+    @property
+    def cluster_id(self) -> int: return self.__py_ptr.id
     # windows / meta
     @property
     def rt_window(self) -> Tuple[int, int]: return tuple(self.__py_ptr.rt_window)
@@ -262,7 +264,8 @@ class ClusterResult(RustWrapperObject):
     def __repr__(self) -> str:
         (rt_l, rt_r) = self.rt_window
         (im_l, im_r) = self.im_window
-        return (f"ClusterResult(rt=[{rt_l},{rt_r}], im=[{im_l},{im_r}], "
+        return (f"ClusterResult(id={self.cluster_id}, "
+                f"rt=[{rt_l},{rt_r}], im=[{im_l},{im_r}], "
                 f"mz=({self.mz_window_da[0]:.4f},{self.mz_window_da[1]:.4f}), "
                 f"sum={self.raw_sum:.1f})")
 

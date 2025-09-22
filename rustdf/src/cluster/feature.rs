@@ -99,6 +99,8 @@ pub struct Feature {
     pub iso: [f32; 8],           // L2-normalized observed
     pub cos_averagine: f32,
     pub raw_sum: f32,
+    pub member_cluster_ids: Vec<usize>,
+    pub repr_cluster_id: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -287,6 +289,20 @@ pub fn build_features_from_envelopes(
                 let mut raw_sum = 0f32;
                 for &cid in &env.cluster_ids { raw_sum += clusters[cid].raw_sum; }
 
+                let member_ids = env.cluster_ids.clone();
+
+                // pick a representative cluster id (max raw_sum among members)
+                let repr_cluster_id = member_ids
+                    .iter()
+                    .copied()
+                    .max_by(|&a, &b| {
+                        clusters[a].raw_sum
+                            .partial_cmp(&clusters[b].raw_sum)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    // safe fallback: use first member if something is NaN/empty
+                    .unwrap_or_else(|| member_ids[0]);
+
                 return Some(Feature{
                     envelope_id: env.id,
                     charge: 0,
@@ -299,6 +315,8 @@ pub fn build_features_from_envelopes(
                     iso,
                     cos_averagine: f32::NAN,
                     raw_sum,
+                    member_cluster_ids: member_ids,
+                    repr_cluster_id,
                 });
             }
 
@@ -342,6 +360,21 @@ pub fn build_features_from_envelopes(
                 iso,
                 cos_averagine: cos,
                 raw_sum,
+                member_cluster_ids: env.cluster_ids.clone(),
+                repr_cluster_id: {
+                    let member_ids = &env.cluster_ids;
+                    // pick a representative cluster id (max raw_sum among members)
+                    member_ids
+                        .iter()
+                        .copied()
+                        .max_by(|&a, &b| {
+                            clusters[a].raw_sum
+                                .partial_cmp(&clusters[b].raw_sum)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        // safe fallback: use first member if something is NaN/empty
+                        .unwrap_or_else(|| member_ids[0])
+                },
             })
         })
         .collect()

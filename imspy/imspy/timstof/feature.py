@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import List, Sequence, Tuple, Optional
+from typing import Sequence, Optional
 import numpy as np
 
 import imspy_connector
@@ -60,10 +60,14 @@ class Feature(RustWrapperObject):
     def cosine(self) -> float:    return float(self.__py_ptr.cosine)
     @property
     def n_members(self) -> int:   return self.__py_ptr.n_members
+    @property
+    def cluster_ids(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.cluster_ids, dtype=np.int64)
+    @property
+    def repr_cluster_id(self) -> int: return self.__py_ptr.repr_cluster_id
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
-    def __repr__(self) -> str: return repr(self.__py_ptr)
 
 class Envelope(RustWrapperObject):
     def __init__(self, *a, **k):

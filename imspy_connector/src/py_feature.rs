@@ -188,14 +188,16 @@ impl PyFeature {
     #[getter] fn im_left(&self)     -> usize { self.inner.im_bounds.0 }
     #[getter] fn im_right(&self)    -> usize { self.inner.im_bounds.1 }     // total/area
     #[getter] fn cosine(&self)      -> f32   { self.inner.cos_averagine }               // averagine score
-    #[getter] fn n_members(&self)   -> usize { self.inner.n_members }            // clusters linked
+    #[getter] fn n_members(&self)   -> usize { self.inner.n_members }
+    #[getter] fn cluster_ids(&self) -> Vec<usize> { self.inner.member_cluster_ids.clone() }// clusters linked
+    #[getter] fn repr_cluster_id(&self)   -> usize   { self.inner.repr_cluster_id }            // sum of raw intensities
 
     fn __repr__(&self) -> String {
-        format!("Feature(z={}, mz_mono={:.6}, rt=({},{}) im=({},{}) cos={:.3})",
+        format!("Feature(z={}, mz_mono={:.6}, rt=({},{}) im=({},{}) cos={:.3}), clusters={})",
                 self.charge(), self.mz_mono(),
                 self.rt_left(), self.rt_right(),
                 self.im_left(), self.im_right(),
-                self.cosine()
+                self.cosine(), self.n_members()
         )
     }
 }

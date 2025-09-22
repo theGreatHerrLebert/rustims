@@ -127,6 +127,7 @@ pub struct PyClusterResult { pub inner: ClusterResult }
 
 #[pymethods]
 impl PyClusterResult {
+    #[getter] fn id(&self) -> usize { self.inner.id }
     #[getter] fn rt_window(&self) -> (usize, usize) { self.inner.rt_window }
     #[getter] fn im_window(&self) -> (usize, usize) { self.inner.im_window }
     #[getter] fn mz_window_da(&self) -> (f32, f32) { self.inner.mz_window_da }
