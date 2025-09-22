@@ -1434,10 +1434,37 @@ fn pack_features_greedy(cands: &mut Vec<FeatureCand>) -> Vec<FeatureCand> {
     picked
 }
 
-// --- main entry (parallel over boxes) ----------------------------------------
+// helper: connected components over adjacency
+fn connected_components(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut seen = vec![false; n];
+    let mut comps: Vec<Vec<usize>> = Vec::new();
+    for s in 0..n {
+        if seen[s] { continue; }
+        let mut stack = vec![s];
+        let mut comp = Vec::new();
+        seen[s] = true;
+        while let Some(u) = stack.pop() {
+            comp.push(u);
+            for &v in &adj[u] {
+                if !seen[v] {
+                    seen[v] = true;
+                    stack.push(v);
+                }
+            }
+        }
+        comps.push(comp);
+    }
+    comps
+}
 
-/// Replace the greedy chain grower with global DP+packing inside each DSU box.
-/// Keeps the DSU pre-grouping to keep boxes small.
+/// Replace the greedy chain grower with global DP+packing inside each **isotopic** box.
+/// Pipeline:
+///   - DSU collapse near-duplicates -> super nodes
+///   - build isotopic adjacency between supers (Δm ≈ 1.003355/z within tol)
+///   - connected components on that graph = boxes
+///   - map each box back to original cluster ids
+///   - per-box: seeds -> DP -> greedy packing -> envelopes
 pub fn group_clusters_into_envelopes_global(
     clusters: &[ClusterResult],
     p: &GroupingParams,
@@ -1456,25 +1483,53 @@ pub fn group_clusters_into_envelopes_global(
         return GroupingOutput { envelopes: vec![], assignment: vec![None; clusters.len()], provisional: vec![] };
     }
 
-    // compact copy and DSU boxes (near-dup collapse like before)
+    // A) Compact copy for fast work + DSU near-duplicate collapse
     let compact_vec: Vec<ClusterResult> = good_ids.iter().map(|&i| clusters[i].clone()).collect();
     let compact: &[ClusterResult] = &compact_vec;
+
     let dsu = make_neardup_groups(compact, p.rt_pad_overlap, p.im_pad_overlap);
-    let boxes = dsu.groups(); // indices in compact space
+    let near_groups = dsu.groups(); // groups are indices in "compact" space
+
+    // B) Build "super nodes" by summarizing each near-duplicate group
+    let super_nodes: Vec<Super> = near_groups.iter()
+        .map(|g| summarize_super(g, compact, &good_ids))
+        .collect();
+
+    // Early out: if no supers, nothing to do
+    if super_nodes.is_empty() {
+        return GroupingOutput { envelopes: vec![], assignment: vec![None; clusters.len()], provisional: vec![] };
+    }
+
+    // C) Build isotopic adjacency between supers (uses your tolerance/charge grid)
+    let adj: Vec<Vec<usize>> = iso_edges_sorted(&super_nodes, p);
+
+    // D) Connected components over isotopic graph -> true "boxes"
+    let super_boxes: Vec<Vec<usize>> = connected_components(&adj);
 
     let mut envelopes: Vec<Envelope> = Vec::new();
     let mut assignment = vec![None; clusters.len()];
 
-    for bx in boxes {
-        if bx.is_empty() { continue; }
-        // map to original ids
-        let box_orig: Vec<usize> = bx.iter().map(|&cid_c| good_ids[cid_c]).collect();
+    // E) For each isotopic box, collect original cluster ids, then run DP+packing
+    for sbox in super_boxes {
+        // Gather all original cluster ids inside this super-node component
+        let mut box_orig: Vec<usize> = Vec::new();
+        for &sid in &sbox {
+            box_orig.extend_from_slice(&super_nodes[sid].member_cids);
+        }
+        // Deduplicate & sort for stability
+        box_orig.sort_unstable();
+        box_orig.dedup();
 
-        // 1) seeds
+        if box_orig.is_empty() {
+            continue;
+        }
+
+        // 1) seeds from the box members
         let seeds = propose_seeds_for_box(&box_orig, clusters, p.z_min, p.z_max);
         if seeds.is_empty() {
-            // fallback: singleton envelopes
+            // fallback: singletons (retain coverage)
             for &cid in &box_orig {
+                if assignment[cid].is_some() { continue; }
                 let eid = envelopes.len();
                 envelopes.push(Envelope{
                     id: eid,
@@ -1490,7 +1545,7 @@ pub fn group_clusters_into_envelopes_global(
             continue;
         }
 
-        // 2) per-seed DP
+        // 2) per-seed DP candidates
         let mut cands: Vec<FeatureCand> = seeds.iter()
             .map(|s| dp_assign_for_seed(s, &box_orig, clusters, k_max, lut))
             .filter(|f| !f.assigned.is_empty() && f.score.is_finite())
@@ -1499,6 +1554,7 @@ pub fn group_clusters_into_envelopes_global(
         if cands.is_empty() {
             // fallback as above
             for &cid in &box_orig {
+                if assignment[cid].is_some() { continue; }
                 let eid = envelopes.len();
                 envelopes.push(Envelope{
                     id: eid,
@@ -1514,14 +1570,16 @@ pub fn group_clusters_into_envelopes_global(
             continue;
         }
 
-        // 3) pack features greedily
+        // 3) Greedy set packing across candidates (avoid reusing the same cluster)
         let chosen = pack_features_greedy(&mut cands);
 
-        // 4) emit envelopes + assignment
+        // 4) Emit envelopes & write assignments
         for feat in chosen {
             let eid = envelopes.len();
             let mut member_ids: Vec<usize> = feat.assigned.iter().map(|(cid,_)| *cid).collect();
             member_ids.sort_unstable();
+            member_ids.dedup();
+
             let mz_lo = feat.seed.mz_mono;
             let mz_hi = feat.seed.mz_mono + (feat.env_k.saturating_sub(1) as f32) * feat.seed.delta;
 
@@ -1535,9 +1593,11 @@ pub fn group_clusters_into_envelopes_global(
                 charge_hint: Some(feat.seed.z),
             });
 
-            for cid in member_ids { assignment[cid] = Some(eid); }
+            for cid in member_ids {
+                assignment[cid] = Some(eid);
+            }
         }
     }
 
-    GroupingOutput { envelopes, assignment, provisional: vec![] }
+    GroupingOutput { envelopes, assignment, provisional: near_groups }
 }
