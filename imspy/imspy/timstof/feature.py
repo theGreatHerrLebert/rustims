@@ -170,6 +170,36 @@ def group_clusters_into_envelopes(
     out_py = ims.group_clusters_into_envelopes_py(clusters_py, params.get_py_ptr())
     return GroupingOutput.from_py_ptr(out_py)
 
+"""
+#[pyfunction]
+pub fn group_clusters_into_envelopes_global_py(
+    py: Python<'_>,
+    clusters: Vec<Py<PyClusterResult>>,
+    params: PyGroupingParams,
+    averagine_lut: PyAveragineLut,
+    k_max: usize,
+) -> PyResult<PyGroupingOutput> {
+    // unwrap ClusterResult inners
+    let mut rs: Vec<ClusterResult> = Vec::with_capacity(clusters.len());
+    for c in clusters {
+        let r = c.borrow(py);
+        rs.push(r.inner.clone());
+    }
+    let out = group_clusters_into_envelopes_global(&rs, &params.inner, &averagine_lut.inner, k_max);
+    Ok(PyGroupingOutput { inner: out })
+}
+"""
+
+def group_clusters_into_envelopes_global(
+    clusters: Sequence["ClusterResult"],
+    params: GroupingParams,
+    averagine_lut: AveragineLut,
+    k_max: int,
+) -> GroupingOutput:
+    clusters_py = [c.get_py_ptr() for c in clusters]
+    out_py = ims.group_clusters_into_envelopes_global_py(clusters_py, params.get_py_ptr(), averagine_lut.get_py_ptr(), int(k_max))
+    return GroupingOutput.from_py_ptr(out_py)
+
 class AveragineLut(RustWrapperObject):
     """Thin wrapper over Rust PyAveragineLut."""
     def __init__(

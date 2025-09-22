@@ -1072,3 +1072,460 @@ pub fn estimate_charge_from_hist(mz_axis: &[f32], mz_hist: &[f32]) -> Option<(u8
         Some((best_z, conf))
     }
 }
+
+// --- NEW: global (per-box) lattice + DP + packing ----------------------------
+
+#[derive(Clone, Debug)]
+struct Seed {
+    z: u8,
+    mz_mono: f32,       // m0
+    delta: f32,         // 1.003355/z
+}
+
+/// A candidate feature built from one seed (before global packing)
+#[derive(Clone, Debug)]
+struct FeatureCand {
+    seed: Seed,
+    // assignment: cluster index -> Some(k) or None (kept only for assigned members)
+    assigned: Vec<(usize /*cluster id*/, usize /*slot k*/)>,
+
+    // bookkeeping
+    score: f32,
+    rt_bounds: (usize,usize),
+    im_bounds: (usize,usize),
+    mz_center: f32,
+    // observed envelope (unnormalized) length K<=8
+    #[allow(dead_code)]
+    env_obs: [f32; 8],
+    env_k: usize,
+}
+
+/// Per-pair score weights (tweak!)
+const ALPHA_MZ: f32 = 1.0;
+const ALPHA_RT: f32 = 0.6;
+const ALPHA_IM: f32 = 0.6;
+const BETA_GAP: f32 = 0.4;      // penalty per internal missing slot
+const BETA_JUMP: f32 = 0.25;    // penalty for jumping over a slot when assigning next
+const MAX_K: usize = 8;
+
+// Soft Huber on ppm
+#[inline]
+fn huber_ppm(ppm: f32, t: f32) -> f32 {
+    // returns a [0..1] similarity; 1 at 0 ppm, ~0 near large ppm
+    let a = t.max(1.0);
+    if ppm <= a { 1.0 - (ppm / a) } else { (a / ppm).max(0.0).min(1.0) }
+}
+
+#[inline]
+fn jaccard_overlap(a: (usize,usize), b: (usize,usize)) -> f32 {
+    let l = a.0.max(b.0);
+    let r = a.1.min(b.1);
+    if r < l { return 0.0; }
+    let inter = (r - l + 1) as f32;
+    let la = (a.1 - a.0 + 1) as f32;
+    let lb = (b.1 - b.0 + 1) as f32;
+    inter / (la + lb - inter).max(1.0)
+}
+
+#[inline]
+fn pair_score(
+    c: &ClusterResult,
+    k: usize,
+    seed: &Seed,
+    feat_rt_bounds: (usize,usize),
+    feat_im_bounds: (usize,usize),
+) -> f32 {
+    let m0 = seed.mz_mono;
+    let mk = m0 + (k as f32) * seed.delta;
+    let ppm = ppm_between(c.mz_fit.mu, mk).abs();
+    let s_mz = huber_ppm(ppm, 8.0);                 // 8 ppm soft-ish
+
+    let s_rt = jaccard_overlap(c.rt_window, feat_rt_bounds);
+    let s_im = jaccard_overlap(c.im_window, feat_im_bounds);
+
+    // weight by log(1+intensity) to stabilize huge peaks
+    let w = (1.0 + c.raw_sum).ln();
+
+    w * (ALPHA_MZ * s_mz + ALPHA_RT * s_rt + ALPHA_IM * s_im)
+}
+
+/// Build basic feature RT/IM bounds from members used so far (or seed estimate).
+#[inline]
+fn union_bounds(rt:(usize,usize), im:(usize,usize), c:&ClusterResult) -> ((usize,usize),(usize,usize)) {
+    ((rt.0.min(c.rt_window.0), rt.1.max(c.rt_window.1)),
+     (im.0.min(c.im_window.0), im.1.max(c.im_window.1)))
+}
+
+/// From cluster μ’s inside box, propose a few (z, m0) seeds.
+fn propose_seeds_for_box(
+    box_ids: &[usize],
+    clusters: &[ClusterResult],
+    z_min: u8, z_max: u8,
+) -> Vec<Seed> {
+    if box_ids.len() < 2 { return Vec::new(); }
+
+    // 1) z candidates from μ spacings
+    let mut mzs: Vec<f32> = box_ids.iter().map(|&i| clusters[i].mz_fit.mu).collect();
+    mzs.sort_by(|a,b| a.partial_cmp(b).unwrap());
+    let z_guess = infer_charge_from_members(&mzs, z_min, z_max);
+
+    let mut z_list: Vec<u8> = Vec::new();
+    if let Some(z) = z_guess { z_list.push(z); }
+    // add neighbors if ambiguous or small box
+    for z in z_min..=z_max {
+        if z_list.len() >= 3 { break; }
+        if !z_list.contains(&z) { z_list.push(z); }
+    }
+
+    // 2) m0 per z via LS on lattice offset (1–2 small iterations)
+    let mut seeds = Vec::new();
+    for &z in &z_list {
+        let d = 1.003355f32 / (z as f32);
+        // initial m0 near smallest μ
+        let mut m0 = mzs[0];
+        for _ in 0..2 {
+            // estimate nearest slot for each μ, then re-fit m0 = mean(μ_i - j_i * d)
+            let mut sum = 0.0f32; let mut cnt = 0usize;
+            for &m in &mzs {
+                let j = ((m - m0) / d).round() as i32;
+                sum += m - (j as f32) * d; cnt += 1;
+            }
+            if cnt > 0 { m0 = sum / (cnt as f32); }
+        }
+        // add ±0.5Δ neighbors to cover off-by-one
+        seeds.push(Seed{z, mz_mono:m0, delta:d});
+        seeds.push(Seed{z, mz_mono:m0 - 0.5*d, delta:d});
+        seeds.push(Seed{z, mz_mono:m0 + 0.5*d, delta:d});
+    }
+
+    // de-dup close m0 per z
+    seeds.sort_by(|a,b| a.z.cmp(&b.z).then_with(|| a.mz_mono.partial_cmp(&b.mz_mono).unwrap()));
+    let mut uniq = Vec::new();
+    for s in seeds {
+        if uniq.last().map_or(true, |p:&Seed| p.z!=s.z || (ppm_between(p.mz_mono,s.mz_mono) > 2.0)) {
+            uniq.push(s);
+        }
+    }
+    uniq
+}
+
+/// DP assignment for one seed: best chain with gaps penalized.
+/// Returns FeatureCand with assignment and score.
+fn dp_assign_for_seed(
+    seed: &Seed,
+    box_ids: &[usize],
+    clusters: &[ClusterResult],
+    k_max: usize,
+    lut: &AveragineLut,
+) -> FeatureCand {
+    let k_lim = k_max.min(MAX_K);
+    // sort by μ
+    let mut ids = box_ids.to_vec();
+    ids.sort_by(|&a,&b| clusters[a].mz_fit.mu.partial_cmp(&clusters[b].mz_fit.mu).unwrap());
+
+    // precompute nearest lattice index for each cluster
+    let mut nearest_k: Vec<usize> = Vec::with_capacity(ids.len());
+    for &cid in &ids {
+        let m = clusters[cid].mz_fit.mu;
+        let j = ((m - seed.mz_mono) / seed.delta).round();
+        let k = j.clamp(0.0, k_lim as f32 - 1.0) as usize;
+        nearest_k.push(k);
+    }
+
+    // DP state: best score up to i with last used slot = k_used (or k_used = usize::MAX for none)
+    // We implement as: for each (i, k_used+1) small array; backpointers compressed.
+    let none = usize::MAX;
+    let mut dp: Vec<Vec<f32>> = vec![vec![f32::NEG_INFINITY; k_lim+1]; ids.len()+1];
+    let mut back: Vec<Vec<(usize,usize,bool)>> = vec![vec![(0,none,false); k_lim+1]; ids.len()+1];
+    // base
+    dp[0][k_lim] = 0.0; // k_lim stands for "none yet"
+
+    // running feature bounds to score RT/IM overlap progressively:
+    // we approximate by using global union bounds at the moment of scoring a pair.
+    // For DP, we can't mutate; so we approximate with union to seed-centered proxy:
+    // start with the tightest: use first/last cluster encountered later when reconstructing.
+    // For scoring inside DP, use the candidate cluster window itself (works surprisingly well).
+    for i in 0..ids.len() {
+        for prev in 0..=k_lim {
+            let cur_best = dp[i][prev];
+            if !cur_best.is_finite() { continue; }
+
+            // 1) skip cluster i
+            if cur_best > dp[i+1][prev] {
+                dp[i+1][prev] = cur_best;
+                back[i+1][prev] = (prev, none, false);
+            }
+
+            // 2) try assign cluster i to k = nearest or neighbors (k±1) if ≥ prev+1 (monotone)
+            let cid = ids[i];
+            let k0 = nearest_k[i] as isize;
+            for dk in [-1isize, 0, 1] {
+                let kk = k0 + dk;
+                if kk < 0 || kk >= k_lim as isize { continue; }
+                let k = kk as usize;
+
+                // enforce monotone increasing slots (and one per slot)
+                let last_slot = if prev==k_lim { none } else { prev };
+                if last_slot != none && k <= last_slot { continue; }
+
+                // gap penalty if we jump more than 1 slot
+                let gap = if last_slot==none { 0 } else { k as isize - last_slot as isize - 1 };
+                let gap_pen = if gap > 0 { (gap as f32) * BETA_JUMP } else { 0.0 };
+
+                // pair score: use overlap vs the candidate's own windows as proxy
+                let ps = pair_score(&clusters[cid], k, seed, clusters[cid].rt_window, clusters[cid].im_window);
+
+                let cand = cur_best + ps - gap_pen;
+                if cand > dp[i+1][k] {
+                    dp[i+1][k] = cand;
+                    back[i+1][k] = (prev, cid, true);
+                }
+            }
+        }
+    }
+
+    // best terminal
+    let mut best_val = f32::NEG_INFINITY;
+    let mut best_k = k_lim;
+    for k in 0..=k_lim {
+        if dp[ids.len()][k] > best_val { best_val = dp[ids.len()][k]; best_k = k; }
+    }
+
+    // reconstruct assignment, union bounds, env
+    let mut assigned_rev: Vec<(usize,usize)> = Vec::new();
+    let mut rtb = (usize::MAX, 0usize);
+    let mut imb = (usize::MAX, 0usize);
+
+    let mut i = ids.len();
+    let mut kcur = best_k;
+    while i > 0 {
+        let (kprev, cid, took) = back[i][kcur];
+        if took {
+            // we assigned ids[i-1] == cid to slot = kcur
+            assigned_rev.push((cid, kcur));
+            let c = &clusters[cid];
+            let u = union_bounds(rtb, imb, c);
+            rtb = u.0; imb = u.1;
+            kcur = kprev;
+        } else {
+            // skipped
+            kcur = kprev;
+        }
+        i -= 1;
+    }
+    assigned_rev.reverse();
+
+    if rtb.0 == usize::MAX { rtb = (0,0); }
+    if imb.0 == usize::MAX { imb = (0,0); }
+
+    // internal gap penalty on occupied slot range
+    let mut occ = vec![false; k_lim];
+    for &(_,k) in &assigned_rev { occ[k] = true; }
+    let (mut kmin, mut kmax) = (usize::MAX, 0usize);
+    for k in 0..k_lim { if occ[k] { kmin = kmin.min(k); kmax = kmax.max(k); } }
+    let mut internal_gaps = 0usize;
+    if kmin != usize::MAX && kmax > kmin {
+        for k in (kmin+1)..kmax { if !occ[k] { internal_gaps += 1; } }
+    }
+    let gap_pen_total = (internal_gaps as f32) * BETA_GAP;
+
+    // observed envelope vector from raw_sum aggregated per slot
+    let mut env_obs = [0f32; 8];
+    for &(cid,k) in &assigned_rev {
+        env_obs[k.min(7)] += clusters[cid].raw_sum.max(0.0);
+    }
+    let env_k = k_lim;
+
+    // shape gain vs averagine (with ±1 shift), weight by coverage
+    let shape_gain = envelope_shape_gain(&env_obs, env_k, seed, &assigned_rev, clusters, lut);
+
+    // final score
+    let score = best_val - gap_pen_total + shape_gain;
+
+    // center ~ average μ of assigned
+    let mut mz_center = 0f32; let mut wsum = 0f32;
+    for &(cid,_) in &assigned_rev {
+        let c = &clusters[cid];
+        let w = c.raw_sum.max(1.0);
+        mz_center += w * c.mz_fit.mu; wsum += w;
+    }
+    if wsum > 0.0 { mz_center /= wsum; }
+
+    FeatureCand {
+        seed: seed.clone(),
+        assigned: assigned_rev,
+        score,
+        rt_bounds: rtb,
+        im_bounds: imb,
+        mz_center,
+        env_obs,
+        env_k,
+    }
+}
+
+#[inline]
+fn envelope_shape_gain(
+    env_obs: &[f32;8],
+    k: usize,
+    seed: &Seed,
+    assigned: &[(usize,usize)],
+    _clusters: &[ClusterResult],
+    lut: &AveragineLut,
+) -> f32 {
+    if k == 0 { return 0.0; }
+    // neutral mass from seed m0 and z
+    let neutral = (seed.mz_mono - 1.007_276_466_88_f32) * (seed.z as f32);
+
+    // expected (unit L2) from LUT
+    let exp = lut.lookup(neutral, seed.z);
+    // observed → L2 normalize (avoid all-zero)
+    let mut obs = [0f32; 8];
+    let mut nn = 0f32;
+    for i in 0..k.min(8) { obs[i] = env_obs[i]; nn += obs[i]*obs[i]; }
+    if nn > 0.0 {
+        let s = nn.sqrt();
+        for i in 0..k.min(8) { obs[i] /= s; }
+    } else {
+        return 0.0;
+    }
+
+    // allow small shift {-1,0,1}
+    let shifts = [-1, 0, 1];
+    let mut best = 0.0f32;
+    for &sft in &shifts {
+        best = best.max(cosine_aligned(&obs, &exp, k.min(8), sft));
+    }
+
+    // coverage factor: fraction of occupied slots inside [kmin..kmax]
+    let mut occ = vec![false; k.min(8)];
+    for &(_,kk) in assigned { if kk < occ.len() { occ[kk] = true; } }
+    let mut kmin = usize::MAX; let mut kmax = 0usize; let mut used = 0usize;
+    for i in 0..occ.len() { if occ[i] { kmin = kmin.min(i); kmax = kmax.max(i); used += 1; } }
+    let cov = if kmin==usize::MAX { 0.0 } else { used as f32 / (kmax - kmin + 1) as f32 };
+
+    // scale shape gain modestly to avoid dominating lattice score
+    0.8f32 * best * cov
+}
+
+/// Greedy set packing across candidates: pick highest score, drop those that share any cluster.
+fn pack_features_greedy(cands: &mut Vec<FeatureCand>) -> Vec<FeatureCand> {
+    cands.sort_by(|a,b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    let mut used: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut picked = Vec::new();
+    'next: for f in cands.iter() {
+        for &(cid,_) in &f.assigned {
+            if used.contains(&cid) { continue 'next; }
+        }
+        for &(cid,_) in &f.assigned { used.insert(cid); }
+        picked.push(f.clone());
+    }
+    picked
+}
+
+// --- main entry (parallel over boxes) ----------------------------------------
+
+/// Replace the greedy chain grower with global DP+packing inside each DSU box.
+/// Keeps the DSU pre-grouping to keep boxes small.
+pub fn group_clusters_into_envelopes_global(
+    clusters: &[ClusterResult],
+    p: &GroupingParams,
+    lut: &AveragineLut,
+    k_max: usize,
+) -> GroupingOutput {
+    // 0) keep only usable clusters (same filter as before)
+    let good_ids: Vec<usize> = clusters.iter().enumerate()
+        .filter(|(_, c)| c.raw_sum > 0.0 &&
+            c.mz_fit.mu.is_finite() && c.mz_fit.mu > 50.0 &&
+            c.mz_fit.sigma.is_finite() && c.mz_fit.sigma > 0.0)
+        .map(|(i, _)| i)
+        .collect();
+
+    if good_ids.is_empty() {
+        return GroupingOutput { envelopes: vec![], assignment: vec![None; clusters.len()], provisional: vec![] };
+    }
+
+    // compact copy and DSU boxes (near-dup collapse like before)
+    let compact_vec: Vec<ClusterResult> = good_ids.iter().map(|&i| clusters[i].clone()).collect();
+    let compact: &[ClusterResult] = &compact_vec;
+    let dsu = make_neardup_groups(compact, p.rt_pad_overlap, p.im_pad_overlap);
+    let boxes = dsu.groups(); // indices in compact space
+
+    let mut envelopes: Vec<Envelope> = Vec::new();
+    let mut assignment = vec![None; clusters.len()];
+
+    for bx in boxes {
+        if bx.len() == 0 { continue; }
+        // map to original ids
+        let box_orig: Vec<usize> = bx.iter().map(|&cid_c| good_ids[cid_c]).collect();
+
+        // 1) seeds
+        let seeds = propose_seeds_for_box(&box_orig, clusters, p.z_min, p.z_max);
+        if seeds.is_empty() {
+            // fallback: singleton envelopes
+            for &cid in &box_orig {
+                let eid = envelopes.len();
+                envelopes.push(Envelope{
+                    id: eid,
+                    cluster_ids: vec![cid],
+                    rt_bounds: clusters[cid].rt_window,
+                    im_bounds: clusters[cid].im_window,
+                    mz_center: clusters[cid].mz_fit.mu,
+                    mz_span_da: 0.0,
+                    charge_hint: None,
+                });
+                assignment[cid] = Some(eid);
+            }
+            continue;
+        }
+
+        // 2) per-seed DP
+        let mut cands: Vec<FeatureCand> = seeds.iter()
+            .map(|s| dp_assign_for_seed(s, &box_orig, clusters, k_max, lut))
+            .filter(|f| !f.assigned.is_empty() && f.score.is_finite())
+            .collect();
+
+        if cands.is_empty() {
+            // fallback as above
+            for &cid in &box_orig {
+                let eid = envelopes.len();
+                envelopes.push(Envelope{
+                    id: eid,
+                    cluster_ids: vec![cid],
+                    rt_bounds: clusters[cid].rt_window,
+                    im_bounds: clusters[cid].im_window,
+                    mz_center: clusters[cid].mz_fit.mu,
+                    mz_span_da: 0.0,
+                    charge_hint: None,
+                });
+                assignment[cid] = Some(eid);
+            }
+            continue;
+        }
+
+        // 3) pack features greedily
+        let chosen = pack_features_greedy(&mut cands);
+
+        // 4) emit envelopes + assignment
+        for feat in chosen {
+            let eid = envelopes.len();
+            let mut member_ids: Vec<usize> = feat.assigned.iter().map(|(cid,_)| *cid).collect();
+            member_ids.sort_unstable();
+            let mz_lo = feat.seed.mz_mono;
+            let mz_hi = feat.seed.mz_mono + (feat.env_k.saturating_sub(1) as f32) * feat.seed.delta;
+
+            envelopes.push(Envelope{
+                id: eid,
+                cluster_ids: member_ids.clone(),
+                rt_bounds: feat.rt_bounds,
+                im_bounds: feat.im_bounds,
+                mz_center: feat.mz_center,
+                mz_span_da: (mz_hi - mz_lo).abs(),
+                charge_hint: Some(feat.seed.z),
+            });
+
+            for cid in member_ids { assignment[cid] = Some(eid); }
+        }
+    }
+
+    GroupingOutput { envelopes, assignment, provisional: vec![] }
+}
