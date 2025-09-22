@@ -498,15 +498,15 @@ struct Super {
     raw_sum: f32,
 }
 
-fn summarize_super(group:&[usize], cl:&[ClusterResult]) -> Super {
+fn summarize_super(group: &[usize], compact: &[ClusterResult], good_ids: &[usize]) -> Super {
     let mut rt_l = usize::MAX; let mut rt_r = 0usize;
     let mut im_l = usize::MAX; let mut im_r = 0usize;
     let mut wsum = 0f32; let mut mz_w = 0f32;
     let mut mz_min = f32::INFINITY; let mut mz_max = f32::NEG_INFINITY;
     let mut raw_sum = 0f32;
 
-    for &cid in group {
-        let c = &cl[cid];
+    for &cid_c in group {
+        let c = &compact[cid_c];           // read metrics from compact
         rt_l = rt_l.min(c.rt_window.0);
         rt_r = rt_r.max(c.rt_window.1);
         im_l = im_l.min(c.im_window.0);
@@ -517,8 +517,12 @@ fn summarize_super(group:&[usize], cl:&[ClusterResult]) -> Super {
         mz_max = mz_max.max(c.mz_fit.mu);
         raw_sum += c.raw_sum;
     }
+
+    // store original ids
+    let member_cids: Vec<usize> = group.iter().map(|&cid_c| good_ids[cid_c]).collect();
+
     Super {
-        member_cids: group.to_vec(),
+        member_cids,
         rt_bounds: (rt_l, rt_r),
         im_bounds: (im_l, im_r),
         mz_center: if wsum>0.0 { mz_w/wsum } else { (mz_min+mz_max)*0.5 },
@@ -641,13 +645,11 @@ pub fn group_clusters_into_envelopes(
     let compact_vec: Vec<ClusterResult> = good_ids.iter().map(|&i| clusters[i].clone()).collect();
     let compact: &[ClusterResult] = &compact_vec;
 
-    let m = compact.len();
-
     let dsu = make_neardup_groups(compact, p.rt_pad_overlap, p.im_pad_overlap);
 
     // B) Super nodes
     let groups = dsu.groups(); // provisional (for inspection)
-    let super_nodes: Vec<Super> = groups.iter().map(|g| summarize_super(g, compact)).collect();
+    let super_nodes: Vec<Super> = groups.iter().map(|g| summarize_super(g, compact, &good_ids)).collect();
 
     // C) Isotopic adjacency between supers
     let n = super_nodes.len();
@@ -660,7 +662,7 @@ pub fn group_clusters_into_envelopes(
     // E) Grow envelopes + assign
     let mut taken = vec![false; n];
     let mut envelopes: Vec<Envelope> = vec![];
-    let mut assignment = vec![None; m];
+    let mut assignment = vec![None; clusters.len()];
 
     for seed in seeds {
         if taken[seed] { continue; }

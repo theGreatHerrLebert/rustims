@@ -59,6 +59,7 @@ pub struct AttachOptions {
 
 #[derive(Clone, Debug)]
 pub struct ClusterResult {
+    pub id: usize,
     // windows (indices, inclusive)
     pub rt_window: (usize, usize),
     pub im_window: (usize, usize),
@@ -461,6 +462,7 @@ pub fn evaluate_clusters_3d(
         let fit_volume = separable_volume(&rt_fit, &im_fit, &mz_fit);
 
         ClusterResult {
+            id: cid,
             rt_window: (spec.rt_left, spec.rt_right),
             im_window: (spec.im_left, spec.im_right),
             mz_window_da: mz_win2,
@@ -482,6 +484,7 @@ pub fn evaluate_clusters_3d(
 #[inline]
 fn empty_result(cid: usize, spec: &ClusterSpec, mz_win: (f32,f32)) -> ClusterResult {
     ClusterResult {
+        id: cid,
         rt_window: (spec.rt_left, spec.rt_right),
         im_window: (spec.im_left, spec.im_right),
         mz_window_da: mz_win,
@@ -509,6 +512,7 @@ fn empty_result_with_axes(
     opts: &EvalOptions,
 ) -> ClusterResult {
     ClusterResult {
+        id: cid,
         rt_window: (spec.rt_left, spec.rt_right),
         im_window: (spec.im_left, spec.im_right),
         mz_window_da: mz_win,
