@@ -341,8 +341,14 @@ pub fn build_features_from_envelopes(
             // ---- 4) averagine cosine gate ----
             let neutral = (mz_mono - PROTON) * (z as f32);
             let avg = lut.lookup(neutral, z);
-            let cos = cosine(&iso, &avg);
-            if cos < fp.min_cosine { return None; }
+
+            let shifts = [-1, 0, 1];
+            let mut best_cos = 0.0f32;
+            for &s in &shifts {
+                best_cos = best_cos.max(cosine_aligned(&iso, &avg, lut.k, s));
+            }
+            if best_cos < fp.min_cosine { return None; }
+            let cos = best_cos;
 
             // ---- 5) aggregate raw_sum over members ----
             let mut raw_sum = 0f32;
@@ -811,12 +817,34 @@ impl AveragineLut {
         self.envs[zi * per_z + i]
     }
 }
-
 #[inline]
-pub fn cosine(a: &[f32;8], b: &[f32;8]) -> f32 {
-    let mut dot = 0f32; let mut na = 0f32; let mut nb = 0f32;
-    for i in 0..8 { dot += a[i]*b[i]; na += a[i]*a[i]; nb += b[i]*b[i]; }
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na.sqrt()*nb.sqrt()) }
+fn cosine_aligned(a: &[f32; 8], b: &[f32; 8], k: usize, shift: isize) -> f32 {
+    // overlap: indices i with 0<=i<k and 0<=i+shift<k
+    let k = k.min(8) as isize;
+    let i0 = 0isize.max(-shift);
+    let i1 = k.min(k - shift); // exclusive
+    if i0 >= i1 { return 0.0; }
+
+    let mut dot = 0f32;
+    let mut na  = 0f32;
+    let mut nb  = 0f32;
+
+    for i in i0..i1 {
+        let ii = i as usize;
+        let jj = (i + shift) as usize;
+        let xa = a[ii];
+        let xb = b[jj];
+        dot += xa * xb;
+        na  += xa * xa;
+        nb  += xb * xb;
+    }
+
+    if na == 0.0 || nb == 0.0 { return 0.0; }
+
+    // Light coverage factor: proportion of peaks actually overlapped
+    let overlap = (i1 - i0) as f32;
+    let cov = overlap / (k as f32);
+    cov * (dot / (na.sqrt() * nb.sqrt()))
 }
 
 #[inline]
