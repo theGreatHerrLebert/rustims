@@ -1138,9 +1138,8 @@ fn pair_score(
     let mk = m0 + (k as f32) * seed.delta;
     let ppm = ppm_between(c.mz_fit.mu, mk).abs();
 
-    // Choose one of the following two — Gaussian recommended
-    // let s_mz = huber_ppm(ppm, 12.0);      // slightly looser than 8 ppm
-    let s_mz = gauss_ppm(ppm, 12.0);         // smooth tolerance in ppm
+    // smooth ppm tolerance
+    let s_mz = gauss_ppm(ppm, 12.0);
 
     let s_rt = jaccard_overlap(c.rt_window, feat_rt_bounds);
     let s_im = jaccard_overlap(c.im_window, feat_im_bounds);
@@ -1158,7 +1157,50 @@ fn union_bounds(rt:(usize,usize), im:(usize,usize), c:&ClusterResult) -> ((usize
      (im.0.min(c.im_window.0), im.1.max(c.im_window.1)))
 }
 
-/// From cluster μ’s inside box, propose a few (z, m0) seeds.
+/// Identify plausible charges from neighbor pair spacings (Δm ≈ 1.003355/z or 2×).
+#[inline]
+fn plausible_zs_from_pairs(
+    box_ids: &[usize],
+    clusters: &[ClusterResult],
+    z_min: u8, z_max: u8,
+    ppm_tol: f32,   // e.g. 15.0
+    abs_da: f32,    // e.g. 0.002
+) -> Vec<u8> {
+    if box_ids.len() < 2 { return Vec::new(); }
+
+    // collect μ's
+    let mut m: Vec<f32> = box_ids.iter().map(|&i| clusters[i].mz_fit.mu).collect();
+    m.sort_by(|a,b| a.partial_cmp(b).unwrap());
+
+    // neighbor deltas (cheap & robust)
+    let mut deltas = Vec::with_capacity(m.len().saturating_sub(1));
+    for w in m.windows(2) {
+        let dm = (w[1] - w[0]).abs();
+        if dm > 0.0 { deltas.push(dm); }
+    }
+    if deltas.is_empty() { return Vec::new(); }
+
+    // count support per z
+    let mut scored: Vec<(u8, usize)> = Vec::new();
+    for z in z_min..=z_max {
+        let d1 = 1.003_355_f32 / (z as f32);
+        let mut hits = 0usize;
+        for &dm in &deltas {
+            // ppm gate around d1 and around 2*d1 (skip-one)
+            let ppm1 = 1.0e6 * (dm - d1).abs() / ((dm + d1) * 0.5).max(1e-6);
+            let ppm2 = 1.0e6 * (dm - 2.0*d1).abs() / ((dm + 2.0*d1) * 0.5).max(1e-6);
+            if ppm1 <= ppm_tol || (dm - d1).abs() <= abs_da { hits += 1; continue; }
+            if ppm2 <= ppm_tol || (dm - 2.0*d1).abs() <= abs_da { hits += 1; }
+        }
+        if hits > 0 { scored.push((z, hits)); }
+    }
+
+    // sort by support; return top few
+    scored.sort_by(|a,b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    scored.into_iter().take(3).map(|(z,_)| z).collect()
+}
+
+/// From cluster μ’s inside box, propose a few (z, m0) seeds (only with plausible z’s).
 fn propose_seeds_for_box(
     box_ids: &[usize],
     clusters: &[ClusterResult],
@@ -1166,45 +1208,38 @@ fn propose_seeds_for_box(
 ) -> Vec<Seed> {
     if box_ids.len() < 2 { return Vec::new(); }
 
-    // 1) z candidates from μ spacings
+    // plausible charges from pair spacings
+    let z_list = plausible_zs_from_pairs(box_ids, clusters, z_min, z_max, 15.0, 0.002);
+    if z_list.is_empty() { return Vec::new(); }
+
+    // sorted μ’s for LS m0
     let mut mzs: Vec<f32> = box_ids.iter().map(|&i| clusters[i].mz_fit.mu).collect();
     mzs.sort_by(|a,b| a.partial_cmp(b).unwrap());
-    let z_guess = infer_charge_from_members(&mzs, z_min, z_max);
 
-    let mut z_list: Vec<u8> = Vec::new();
-    if let Some(z) = z_guess { z_list.push(z); }
-    // add neighbors if ambiguous or small box
-    for z in z_min..=z_max {
-        if z_list.len() >= 3 { break; }
-        if !z_list.contains(&z) { z_list.push(z); }
-    }
-
-    // 2) m0 per z via LS on lattice offset (1–2 small iterations)
     let mut seeds = Vec::new();
     for &z in &z_list {
         let d = 1.003355f32 / (z as f32);
-        // initial m0 near smallest μ
+        // initial m0 near smallest μ; refine twice
         let mut m0 = mzs[0];
         for _ in 0..2 {
-            // estimate nearest slot for each μ, then re-fit m0 = mean(μ_i - j_i * d)
             let mut sum = 0.0f32; let mut cnt = 0usize;
             for &m in &mzs {
-                let j = ((m - m0) / d).round() as i32;
-                sum += m - (j as f32) * d; cnt += 1;
+                let j = ((m - m0) / d).round();
+                sum += m - j as f32 * d; cnt += 1;
             }
             if cnt > 0 { m0 = sum / (cnt as f32); }
         }
         // add ±0.5Δ neighbors to cover off-by-one
-        seeds.push(Seed{z, mz_mono:m0, delta:d});
-        seeds.push(Seed{z, mz_mono:m0 - 0.5*d, delta:d});
-        seeds.push(Seed{z, mz_mono:m0 + 0.5*d, delta:d});
+        seeds.push(Seed{ z, mz_mono:m0,         delta:d });
+        seeds.push(Seed{ z, mz_mono:m0 - 0.5*d, delta:d });
+        seeds.push(Seed{ z, mz_mono:m0 + 0.5*d, delta:d });
     }
 
-    // de-dup close m0 per z
+    // de-dup close m0 per z (2 ppm)
     seeds.sort_by(|a,b| a.z.cmp(&b.z).then_with(|| a.mz_mono.partial_cmp(&b.mz_mono).unwrap()));
     let mut uniq = Vec::new();
     for s in seeds {
-        if uniq.last().map_or(true, |p:&Seed| p.z!=s.z || (ppm_between(p.mz_mono,s.mz_mono) > 2.0)) {
+        if uniq.last().map_or(true, |p:&Seed| p.z!=s.z || ppm_between(p.mz_mono,s.mz_mono) > 2.0) {
             uniq.push(s);
         }
     }
@@ -1226,12 +1261,14 @@ fn k_limit_for_seed(seed: &Seed, box_ids: &[usize], clusters: &[ClusterResult], 
 
 /// DP assignment for one seed: best chain with gaps penalized.
 /// Returns FeatureCand with assignment and score.
+/// NOTE: we enforce min_members ≥ 2 (else empty assignment).
 fn dp_assign_for_seed(
     seed: &Seed,
     box_ids: &[usize],
     clusters: &[ClusterResult],
     k_max: usize,
     lut: &AveragineLut,
+    min_members: usize,
 ) -> FeatureCand {
     let k_lim = k_limit_for_seed(seed, box_ids, clusters, k_max);
     // sort by μ
@@ -1329,6 +1366,20 @@ fn dp_assign_for_seed(
         i -= 1;
     }
     assigned_rev.reverse();
+
+    // enforce min-members ≥ 2
+    if assigned_rev.len() < min_members {
+        return FeatureCand{
+            seed: seed.clone(),
+            assigned: Vec::new(),
+            score: f32::NEG_INFINITY,
+            rt_bounds: (0,0),
+            im_bounds: (0,0),
+            mz_center: 0.0,
+            env_obs: [0.0;8],
+            env_k: k_lim,
+        };
+    }
 
     if rtb.0 == usize::MAX { rtb = (0,0); }
     if imb.0 == usize::MAX { imb = (0,0); }
@@ -1495,7 +1546,6 @@ pub fn group_clusters_into_envelopes_global(
         .map(|g| summarize_super(g, compact, &good_ids))
         .collect();
 
-    // Early out: if no supers, nothing to do
     if super_nodes.is_empty() {
         return GroupingOutput { envelopes: vec![], assignment: vec![None; clusters.len()], provisional: vec![] };
     }
@@ -1516,18 +1566,14 @@ pub fn group_clusters_into_envelopes_global(
         for &sid in &sbox {
             box_orig.extend_from_slice(&super_nodes[sid].member_cids);
         }
-        // Deduplicate & sort for stability
         box_orig.sort_unstable();
         box_orig.dedup();
-
-        if box_orig.is_empty() {
-            continue;
-        }
+        if box_orig.is_empty() { continue; }
 
         // 1) seeds from the box members
         let seeds = propose_seeds_for_box(&box_orig, clusters, p.z_min, p.z_max);
         if seeds.is_empty() {
-            // fallback: singletons (retain coverage)
+            // fallback: singletons (retain coverage), uncharged
             for &cid in &box_orig {
                 if assignment[cid].is_some() { continue; }
                 let eid = envelopes.len();
@@ -1545,14 +1591,14 @@ pub fn group_clusters_into_envelopes_global(
             continue;
         }
 
-        // 2) per-seed DP candidates
+        // 2) per-seed DP candidates (DP unchanged; filter to >=2 members here)
         let mut cands: Vec<FeatureCand> = seeds.iter()
-            .map(|s| dp_assign_for_seed(s, &box_orig, clusters, k_max, lut))
-            .filter(|f| !f.assigned.is_empty() && f.score.is_finite())
+            .map(|s| dp_assign_for_seed(s, &box_orig, clusters, k_max, lut, 2))
+            .filter(|f| f.assigned.len() >= 2 && f.score.is_finite())
             .collect();
 
         if cands.is_empty() {
-            // fallback as above
+            // fallback singletons (uncharged)
             for &cid in &box_orig {
                 if assignment[cid].is_some() { continue; }
                 let eid = envelopes.len();
@@ -1580,6 +1626,7 @@ pub fn group_clusters_into_envelopes_global(
             member_ids.sort_unstable();
             member_ids.dedup();
 
+            let single = member_ids.len() == 1;
             let mz_lo = feat.seed.mz_mono;
             let mz_hi = feat.seed.mz_mono + (feat.env_k.saturating_sub(1) as f32) * feat.seed.delta;
 
@@ -1590,14 +1637,32 @@ pub fn group_clusters_into_envelopes_global(
                 im_bounds: feat.im_bounds,
                 mz_center: feat.mz_center,
                 mz_span_da: (mz_hi - mz_lo).abs(),
-                charge_hint: Some(feat.seed.z),
+                charge_hint: if single { None } else { Some(feat.seed.z) }, // None for singletons
             });
 
             for cid in member_ids {
                 assignment[cid] = Some(eid);
             }
         }
+
+        // F) After finishing this box: sweep up any leftover clusters in the box as uncharged singletons
+        for &cid in &box_orig {
+            if assignment[cid].is_none() {
+                let eid = envelopes.len();
+                envelopes.push(Envelope{
+                    id: eid,
+                    cluster_ids: vec![cid],
+                    rt_bounds: clusters[cid].rt_window,
+                    im_bounds: clusters[cid].im_window,
+                    mz_center: clusters[cid].mz_fit.mu,
+                    mz_span_da: 0.0,
+                    charge_hint: None, // unknown charge state
+                });
+                assignment[cid] = Some(eid);
+            }
+        }
     }
 
+    // Done with all boxes
     GroupingOutput { envelopes, assignment, provisional: near_groups }
 }
