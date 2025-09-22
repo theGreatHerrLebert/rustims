@@ -1078,8 +1078,8 @@ pub fn estimate_charge_from_hist(mz_axis: &[f32], mz_hist: &[f32]) -> Option<(u8
 #[derive(Clone, Debug)]
 struct Seed {
     z: u8,
-    mz_mono: f32,       // m0
-    delta: f32,         // 1.003355/z
+    mz_mono: f32,   // m0
+    delta: f32,     // 1.003355/z
 }
 
 /// A candidate feature built from one seed (before global packing)
@@ -1104,16 +1104,15 @@ struct FeatureCand {
 const ALPHA_MZ: f32 = 1.0;
 const ALPHA_RT: f32 = 0.6;
 const ALPHA_IM: f32 = 0.6;
-const BETA_GAP: f32 = 0.4;      // penalty per internal missing slot
-const BETA_JUMP: f32 = 0.25;    // penalty for jumping over a slot when assigning next
+const BETA_GAP: f32 = 0.4;         // penalty per internal missing slot
+const BETA_JUMP: f32 = 0.25;       // penalty for jumping over slots when assigning next
+const BONUS_CONTIG: f32 = 0.15;    // small nudge to extend a contiguous chain (k = last+1)
 const MAX_K: usize = 8;
 
-// Soft Huber on ppm
+// Smooth Gaussian on ppm (recommended)
 #[inline]
-fn huber_ppm(ppm: f32, t: f32) -> f32 {
-    // returns a [0..1] similarity; 1 at 0 ppm, ~0 near large ppm
-    let a = t.max(1.0);
-    if ppm <= a { 1.0 - (ppm / a) } else { (a / ppm).max(0.0).min(1.0) }
+fn gauss_ppm(ppm: f32, sigma_ppm: f32) -> f32 {
+    (-0.5 * (ppm / sigma_ppm).powi(2)).exp()
 }
 
 #[inline]
@@ -1138,7 +1137,10 @@ fn pair_score(
     let m0 = seed.mz_mono;
     let mk = m0 + (k as f32) * seed.delta;
     let ppm = ppm_between(c.mz_fit.mu, mk).abs();
-    let s_mz = huber_ppm(ppm, 8.0);                 // 8 ppm soft-ish
+
+    // Choose one of the following two — Gaussian recommended
+    // let s_mz = huber_ppm(ppm, 12.0);      // slightly looser than 8 ppm
+    let s_mz = gauss_ppm(ppm, 12.0);         // smooth tolerance in ppm
 
     let s_rt = jaccard_overlap(c.rt_window, feat_rt_bounds);
     let s_im = jaccard_overlap(c.im_window, feat_im_bounds);
@@ -1209,6 +1211,19 @@ fn propose_seeds_for_box(
     uniq
 }
 
+/// Compute a dynamic slot limit per seed based on the mass span of the box.
+fn k_limit_for_seed(seed: &Seed, box_ids: &[usize], clusters: &[ClusterResult], k_max: usize) -> usize {
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for &cid in box_ids {
+        let m = clusters[cid].mz_fit.mu;
+        lo = lo.min(m); hi = hi.max(m);
+    }
+    if !lo.is_finite() || !hi.is_finite() || hi <= lo { return 2; }
+    let span = hi - lo;
+    let slots = 1 + (span / seed.delta).floor() as usize; // inclusive count
+    slots.clamp(2, MAX_K.min(k_max.max(2)))
+}
+
 /// DP assignment for one seed: best chain with gaps penalized.
 /// Returns FeatureCand with assignment and score.
 fn dp_assign_for_seed(
@@ -1218,7 +1233,7 @@ fn dp_assign_for_seed(
     k_max: usize,
     lut: &AveragineLut,
 ) -> FeatureCand {
-    let k_lim = k_max.min(MAX_K);
+    let k_lim = k_limit_for_seed(seed, box_ids, clusters, k_max);
     // sort by μ
     let mut ids = box_ids.to_vec();
     ids.sort_by(|&a,&b| clusters[a].mz_fit.mu.partial_cmp(&clusters[b].mz_fit.mu).unwrap());
@@ -1233,18 +1248,15 @@ fn dp_assign_for_seed(
     }
 
     // DP state: best score up to i with last used slot = k_used (or k_used = usize::MAX for none)
-    // We implement as: for each (i, k_used+1) small array; backpointers compressed.
     let none = usize::MAX;
     let mut dp: Vec<Vec<f32>> = vec![vec![f32::NEG_INFINITY; k_lim+1]; ids.len()+1];
     let mut back: Vec<Vec<(usize,usize,bool)>> = vec![vec![(0,none,false); k_lim+1]; ids.len()+1];
     // base
     dp[0][k_lim] = 0.0; // k_lim stands for "none yet"
 
-    // running feature bounds to score RT/IM overlap progressively:
-    // we approximate by using global union bounds at the moment of scoring a pair.
-    // For DP, we can't mutate; so we approximate with union to seed-centered proxy:
-    // start with the tightest: use first/last cluster encountered later when reconstructing.
-    // For scoring inside DP, use the candidate cluster window itself (works surprisingly well).
+    // allow a slightly wider neighborhood around the nearest slot
+    const DK_TRY: [isize; 5] = [-2, -1, 0, 1, 2];
+
     for i in 0..ids.len() {
         for prev in 0..=k_lim {
             let cur_best = dp[i][prev];
@@ -1256,10 +1268,10 @@ fn dp_assign_for_seed(
                 back[i+1][prev] = (prev, none, false);
             }
 
-            // 2) try assign cluster i to k = nearest or neighbors (k±1) if ≥ prev+1 (monotone)
+            // 2) try assign cluster i to k in {k0+[-2..2]} if ≥ prev+1 (monotone)
             let cid = ids[i];
             let k0 = nearest_k[i] as isize;
-            for dk in [-1isize, 0, 1] {
+            for &dk in &DK_TRY {
                 let kk = k0 + dk;
                 if kk < 0 || kk >= k_lim as isize { continue; }
                 let k = kk as usize;
@@ -1272,10 +1284,13 @@ fn dp_assign_for_seed(
                 let gap = if last_slot==none { 0 } else { k as isize - last_slot as isize - 1 };
                 let gap_pen = if gap > 0 { (gap as f32) * BETA_JUMP } else { 0.0 };
 
+                // small bonus for extending a contiguous chain
+                let contig_bonus = if last_slot!=none && k == last_slot + 1 { BONUS_CONTIG } else { 0.0 };
+
                 // pair score: use overlap vs the candidate's own windows as proxy
                 let ps = pair_score(&clusters[cid], k, seed, clusters[cid].rt_window, clusters[cid].im_window);
 
-                let cand = cur_best + ps - gap_pen;
+                let cand = cur_best + ps - gap_pen + contig_bonus;
                 if cand > dp[i+1][k] {
                     dp[i+1][k] = cand;
                     back[i+1][k] = (prev, cid, true);
@@ -1382,12 +1397,9 @@ fn envelope_shape_gain(
     let mut obs = [0f32; 8];
     let mut nn = 0f32;
     for i in 0..k.min(8) { obs[i] = env_obs[i]; nn += obs[i]*obs[i]; }
-    if nn > 0.0 {
-        let s = nn.sqrt();
-        for i in 0..k.min(8) { obs[i] /= s; }
-    } else {
-        return 0.0;
-    }
+    if nn <= 0.0 { return 0.0; }
+    let s = nn.sqrt();
+    for i in 0..k.min(8) { obs[i] /= s; }
 
     // allow small shift {-1,0,1}
     let shifts = [-1, 0, 1];
@@ -1454,7 +1466,7 @@ pub fn group_clusters_into_envelopes_global(
     let mut assignment = vec![None; clusters.len()];
 
     for bx in boxes {
-        if bx.len() == 0 { continue; }
+        if bx.is_empty() { continue; }
         // map to original ids
         let box_orig: Vec<usize> = bx.iter().map(|&cid_c| good_ids[cid_c]).collect();
 
