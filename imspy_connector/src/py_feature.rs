@@ -12,13 +12,15 @@ pub struct PyFeatureBuildParams { pub inner: FeatureBuildParams }
 #[pymethods]
 impl PyFeatureBuildParams {
     #[new]
-    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice))]
+    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice, min_hist_conf=0.7, allow_unknown_charge=false))]
     pub fn new(
         ppm_narrow: f32,
         k_max: usize,
         min_cosine: f32,
         min_members: usize,
         max_points_per_slice: usize,
+        min_hist_conf: f32,
+        allow_unknown_charge: bool,
     ) -> Self {
         Self { inner: FeatureBuildParams {
             ppm_narrow,
@@ -26,6 +28,8 @@ impl PyFeatureBuildParams {
             min_cosine,
             min_members,
             max_points_per_slice,
+            min_hist_conf,
+            allow_unknown_charge,
         }}
     }
 

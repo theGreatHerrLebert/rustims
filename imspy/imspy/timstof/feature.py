@@ -7,9 +7,10 @@ import imspy_connector
 ims = imspy_connector.py_feature
 from imspy.simulation.annotation import RustWrapperObject
 
+
 class FeatureBuildParams(RustWrapperObject):
-    def __init__(self, ppm_narrow: float, k_max: int, min_cosine: float, min_members: int, max_points_per_slice: int = 0):
-        self.__py_ptr = ims.PyFeatureBuildParams(ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice)
+    def __init__(self, ppm_narrow: float, k_max: int, min_cosine: float, min_members: int, max_points_per_slice: int = 0, min_hist_conf: float = 0.0, allow_unknown_charge: bool = True):
+        self.__py_ptr = ims.PyFeatureBuildParams(ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice, min_hist_conf, allow_unknown_charge)
 
     @property
     def ppm_narrow(self) -> float:   return self.__py_ptr.ppm_narrow

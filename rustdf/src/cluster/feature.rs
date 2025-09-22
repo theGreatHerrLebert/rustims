@@ -60,15 +60,30 @@ fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
     lo
 }
 
+#[inline]
+fn estimate_charge_from_env_hist(
+    frames: &[Arc<TimsFrame>],
+    rt_bounds: (usize, usize),
+    im_bounds: (usize, usize),
+    mz_mono_hint: f32,
+    win_ppm: f32,     // e.g. 20.0
+    bins: usize,      // e.g. 21
+) -> Option<(u8, f32)> {
+    let (axis, hist) = build_local_mz_histogram(frames, rt_bounds, im_bounds, mz_mono_hint, win_ppm, bins);
+    if axis.is_empty() { return None; }
+    estimate_charge_from_hist(&axis, &hist)
+}
+
+// ---- add to FeatureBuildParams ----
 #[derive(Clone, Debug)]
 pub struct FeatureBuildParams {
-    pub k_max: usize,          // up to 8
-    pub ppm_narrow: f32,       // e.g. 10.0
-    pub min_members: usize,    // envelope must have ≥ this many clusters to try charge infer
-    pub min_cosine: f32,       // filter weak fits
-    /// If > 0, when a per-frame isotope slice exceeds this many points,
-    /// iterate with a stride = ceil(len / max_points_per_slice).
-    pub max_points_per_slice: usize, // set 0 to disable
+    pub k_max: usize,
+    pub ppm_narrow: f32,
+    pub min_members: usize,
+    pub min_cosine: f32,
+    pub max_points_per_slice: usize,
+    pub min_hist_conf: f32,
+    pub allow_unknown_charge: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -195,7 +210,7 @@ pub fn build_features_from_envelopes(
     clusters: &[ClusterResult],         // to pull members’ mz/raw_sum
     lut: &AveragineLut,
     gp: &GroupingParams,                // for z range
-    fp: &FeatureBuildParams,
+    fp: &FeatureBuildParams,            // now includes min_hist_conf, allow_unknown_charge
 ) -> Vec<Feature> {
     const PROTON: f32 = 1.007_276_466_88_f32;
 
@@ -204,29 +219,90 @@ pub fn build_features_from_envelopes(
     envelopes
         .par_iter()
         .filter_map(|env| {
-            // 1) charge
-            let z = if let Some(z) = env.charge_hint {
-                z
-            } else {
-                // build once per env; small vec is fine
-                let mut mzs: Vec<f32> = Vec::with_capacity(env.cluster_ids.len());
-                for &cid in &env.cluster_ids {
-                    let m = clusters[cid].mz_fit.mu;
-                    if m.is_finite() { mzs.push(m); }
-                }
-                infer_charge_from_members(&mzs, gp.z_min, gp.z_max).unwrap_or(gp.z_min)
-            };
-            if z == 0 { return None; }
-
-            // 2) monoisotopic m/z = min member m/z
+            // ---- 1) robust mono seed from members (min μ over members) ----
             let mut mz_mono = f32::INFINITY;
             for &cid in &env.cluster_ids {
                 let m = clusters[cid].mz_fit.mu;
                 if m.is_finite() { mz_mono = mz_mono.min(m); }
             }
-            if !mz_mono.is_finite() || mz_mono <= 50.0 { return None; }
+            if !mz_mono.is_finite() || mz_mono <= 50.0 {
+                return None;
+            }
 
-            // 3) integrate isotope stripes
+            // ---- 2) charge inference (hint -> members -> histogram -> unknown) ----
+            let z_opt: Option<u8> = if let Some(z) = env.charge_hint {
+                Some(z)
+            } else {
+                // 2a) neighbor-delta from member μ's if we have enough members
+                let mut z_from_members = None;
+                if env.cluster_ids.len() >= fp.min_members.max(2) {
+                    let mut mzs: Vec<f32> = Vec::with_capacity(env.cluster_ids.len());
+                    for &cid in &env.cluster_ids {
+                        let m = clusters[cid].mz_fit.mu;
+                        if m.is_finite() { mzs.push(m); }
+                    }
+                    z_from_members = infer_charge_from_members(&mzs, gp.z_min, gp.z_max);
+                }
+
+                // 2b) fallback: m/z histogram spacing around mono seed within RT×IM
+                if z_from_members.is_none() {
+                    // pick a conservative window for spacing detection:
+                    // widen a bit beyond the integration ppm, but clamp to a sane range
+                    let win_ppm = (fp.ppm_narrow * 2.0).clamp(12.0, 40.0);
+                    if let Some((zh, conf)) = estimate_charge_from_env_hist(
+                        frames, env.rt_bounds, env.im_bounds, mz_mono, win_ppm, 21
+                    ) {
+                        if conf >= fp.min_hist_conf { Some(zh) } else { None }
+                    } else {
+                        None
+                    }
+                } else {
+                    z_from_members
+                }
+            };
+
+            // Decide how to proceed
+            let z: u8 = match z_opt {
+                Some(zz) if zz > 0 => zz,
+                _ => {
+                    if fp.allow_unknown_charge {
+                        0 // keep feature with unknown charge; integrate mono only
+                    } else {
+                        return None; // drop if we require a known charge
+                    }
+                }
+            };
+
+            // ---- 3) integrate isotope stripes ----
+            if z == 0 {
+                // unknown charge: integrate mono only with a neutral “z=1” spacing (k=1)
+                let iso_raw = integrate_isotope_series(
+                    frames, env.rt_bounds, env.im_bounds,
+                    mz_mono, /*z_for_window*/ 1, fp.ppm_narrow, 1,
+                    fp.max_points_per_slice,
+                );
+                let mut iso = [0f32; 8];
+                iso[0] = iso_raw[0];
+
+                let mut raw_sum = 0f32;
+                for &cid in &env.cluster_ids { raw_sum += clusters[cid].raw_sum; }
+
+                return Some(Feature{
+                    envelope_id: env.id,
+                    charge: 0,
+                    mz_mono,
+                    neutral_mass: f32::NAN,
+                    rt_bounds: env.rt_bounds,
+                    im_bounds: env.im_bounds,
+                    mz_center: env.mz_center,
+                    n_members: env.cluster_ids.len(),
+                    iso,
+                    cos_averagine: f32::NAN,
+                    raw_sum,
+                });
+            }
+
+            // known charge → integrate k peaks using that z
             let iso_raw = integrate_isotope_series(
                 frames, env.rt_bounds, env.im_bounds,
                 mz_mono, z, fp.ppm_narrow, k_keep,
@@ -242,14 +318,13 @@ pub fn build_features_from_envelopes(
                 for x in &mut iso { *x /= s; }
             }
 
-            // 4) averagine cosine
+            // ---- 4) averagine cosine gate ----
             let neutral = (mz_mono - PROTON) * (z as f32);
             let avg = lut.lookup(neutral, z);
             let cos = cosine(&iso, &avg);
-
             if cos < fp.min_cosine { return None; }
 
-            // 5) aggregate raw_sum
+            // ---- 5) aggregate raw_sum over members ----
             let mut raw_sum = 0f32;
             for &cid in &env.cluster_ids {
                 raw_sum += clusters[cid].raw_sum;
