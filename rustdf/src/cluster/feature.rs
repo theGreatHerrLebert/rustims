@@ -290,7 +290,9 @@ pub fn build_features_from_envelopes(
                 for &cid in &env.cluster_ids { raw_sum += clusters[cid].raw_sum; }
 
                 let member_ids = env.cluster_ids.clone();
-
+                if member_ids.is_empty() {
+                    return None; // or skip making a Feature
+                }
                 // pick a representative cluster id (max raw_sum among members)
                 let repr_cluster_id = member_ids
                     .iter()
@@ -849,11 +851,14 @@ pub fn integrate_isotope_series(
     for k in 0..k_keep {
         let mz_k = mz_mono + (k as f32) * dmz;
         let d = mz_k * ppm_narrow * 1e-6;
-        lo_k[k] = mz_k - d;
-        hi_k[k] = mz_k + d;
-        if !lo_k[k].is_finite() || !hi_k[k].is_finite() || hi_k[k] <= lo_k[k] {
+        let (lo, hi) = (mz_k - d, mz_k + d);
+        if lo.is_finite() && hi.is_finite() && hi > lo {
+            lo_k[k] = lo;
+            hi_k[k] = hi;
+        } else {
+            // mark empty window
             lo_k[k] = 1.0;
-            hi_k[k] = 0.0; // mark empty
+            hi_k[k] = 0.0;
         }
     }
 
@@ -868,8 +873,6 @@ pub fn integrate_isotope_series(
             let fr = &frames[f];
             let mz  = &fr.ims_frame.mz;         // &[f64]
             let it  = &fr.ims_frame.intensity;  // &[f32/f64]
-            let _scv = &fr.scan;                 // &[i32]
-
             if mz.is_empty() { continue; }
 
             // Build (scan, start, end) slices once per frame
@@ -891,7 +894,7 @@ pub fn integrate_isotope_series(
                     let r = upper_bound_in(mz, start, end, hi_k[k]);
                     if l >= r { continue; }
 
-                    // Optional thinning for huge slices
+                    // Optional thinning with compensation
                     let mut stride = 1usize;
                     if max_points_per_slice > 0 {
                         let len = r - l;
@@ -899,11 +902,12 @@ pub fn integrate_isotope_series(
                             stride = ((len + max_points_per_slice - 1) / max_points_per_slice).max(1);
                         }
                     }
+                    let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
                     let mut i = l;
                     while i < r {
-                        // scv[i] must equal s in this slice; no need to re-check im bounds
-                        local[k] += it[i] as f32;
+                        // scv[i] == s within this slice; IM bounds already satisfied
+                        local[k] += (it[i] as f32) * weight;   // ← compensate for thinning
                         i += stride;
                     }
                 }
