@@ -115,10 +115,11 @@ class EvalOptions(RustWrapperObject):
         attach: AttachOptions | None = None,
         refine_mz_once: bool = False,
         refine_k_sigma: float = 3.0,
+        refine_im_once: bool = False,
     ):
         if attach is None:
             attach = AttachOptions()
-        self.__py_ptr = ims.PyEvalOptions(attach.get_py_ptr(), bool(refine_mz_once), float(refine_k_sigma))
+        self.__py_ptr = ims.PyEvalOptions(attach.get_py_ptr(), bool(refine_mz_once), float(refine_k_sigma), bool(refine_im_once))
 
     @classmethod
     def from_py_ptr(cls, p: "ims.PyEvalOptions") -> "EvalOptions":

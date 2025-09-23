@@ -93,9 +93,9 @@ pub struct PyEvalOptions { pub inner: EvalOptions }
 #[pymethods]
 impl PyEvalOptions {
     #[new]
-    #[pyo3(signature = (attach, refine_mz_once=false, refine_k_sigma=3.0))]
-    fn new(attach: PyAttachOptions, refine_mz_once: bool, refine_k_sigma: f32) -> Self {
-        Self { inner: EvalOptions { attach: attach.inner, refine_mz_once, refine_k_sigma } }
+    #[pyo3(signature = (attach, refine_mz_once=false, refine_k_sigma=3.0, refine_im_once=false))]
+    fn new(attach: PyAttachOptions, refine_mz_once: bool, refine_k_sigma: f32, refine_im_once: bool) -> Self {
+        Self { inner: EvalOptions { attach: attach.inner, refine_mz_once, refine_k_sigma, refine_im_once } }
     }
     #[getter] fn refine_mz_once(&self) -> bool { self.inner.refine_mz_once }
     #[getter] fn refine_k_sigma(&self) -> f32 { self.inner.refine_k_sigma }

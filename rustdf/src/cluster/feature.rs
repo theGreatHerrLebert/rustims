@@ -6,8 +6,6 @@ use crate::cluster::cluster_eval::ClusterResult;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-// Global cache for (frame_ptr -> Vec<ScanSlice>)
-// Safe & simple: Mutex-protected HashMap keyed by Arc address.
 static SLICES_CACHE: OnceLock<Mutex<HashMap<usize, Arc<Vec<ScanSlice>>>>> = OnceLock::new();
 
 #[inline]
