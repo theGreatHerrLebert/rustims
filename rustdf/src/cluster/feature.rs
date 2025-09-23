@@ -3,6 +3,24 @@ use std::sync::Arc;
 use mscore::timstof::frame::TimsFrame;
 use mscore::algorithm::isotope::generate_averagine_spectra;
 use crate::cluster::cluster_eval::ClusterResult;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+// Global cache for (frame_ptr -> Vec<ScanSlice>)
+// Safe & simple: Mutex-protected HashMap keyed by Arc address.
+static SLICES_CACHE: OnceLock<Mutex<HashMap<usize, Arc<Vec<ScanSlice>>>>> = OnceLock::new();
+
+#[inline]
+fn cached_scan_slices(fr: &Arc<TimsFrame>) -> Arc<Vec<ScanSlice>> {
+    let key = Arc::as_ptr(fr) as usize;
+    let map = SLICES_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(v) = map.lock().unwrap().get(&key) {
+        return v.clone();
+    }
+    let built = Arc::new(build_scan_slices(fr));
+    map.lock().unwrap().insert(key, built.clone());
+    built
+}
 
 #[derive(Copy, Clone, Debug)]
 struct ScanSlice {
@@ -784,7 +802,7 @@ impl AveragineLut {
                 for i in 0..k.min(sp.intensity.len()) {
                     v[i] = sp.intensity[i] as f32;
                 }
-                let norm = (v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>()).sqrt() as f32;
+                let norm = v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt() as f32;
                 if norm > 0.0 { for x in &mut v { *x /= norm; } }
                 envs.push(v);
             }
@@ -826,7 +844,6 @@ pub fn integrate_isotope_series(
     z: u8,
     ppm_narrow: f32,
     k_max: usize,
-    // optional: set to 0 to disable; else thin very large per-scan slices
     max_points_per_slice: usize,
 ) -> [f32; 8] {
     let mut isotopes = [0f32; 8];
@@ -843,7 +860,7 @@ pub fn integrate_isotope_series(
 
     let dmz = 1.003355f32 / (z as f32);
 
-    // Precompute isotope windows
+    // Precompute isotope windows (μ ± ppm)
     let mut lo_k = [0f32; 8];
     let mut hi_k = [0f32; 8];
     for k in 0..k_keep {
@@ -857,10 +874,10 @@ pub fn integrate_isotope_series(
         }
     }
 
-    // Parallelize over frames if the RT span is large
     let rt_span = rt_r - rt_l + 1;
     let parallel = rt_span >= 256;
 
+    // Reducer over an RT range. Uses cached scan slices + thinning compensation.
     let reducer = |range: std::ops::Range<usize>| -> [f32; 8] {
         let mut local = [0f32; 8];
 
@@ -868,12 +885,9 @@ pub fn integrate_isotope_series(
             let fr = &frames[f];
             let mz  = &fr.ims_frame.mz;         // &[f64]
             let it  = &fr.ims_frame.intensity;  // &[f32/f64]
-            let _scv = &fr.scan;                 // &[i32]
-
             if mz.is_empty() { continue; }
 
-            // Build (scan, start, end) slices once per frame
-            let slices = build_scan_slices(fr);
+            let slices = cached_scan_slices(fr);
 
             // iterate only scans in [im_l, im_r]
             for sl in slices.iter() {
@@ -891,7 +905,7 @@ pub fn integrate_isotope_series(
                     let r = upper_bound_in(mz, start, end, hi_k[k]);
                     if l >= r { continue; }
 
-                    // Optional thinning for huge slices
+                    // Optional thinning with exact compensation
                     let mut stride = 1usize;
                     if max_points_per_slice > 0 {
                         let len = r - l;
@@ -899,11 +913,12 @@ pub fn integrate_isotope_series(
                             stride = ((len + max_points_per_slice - 1) / max_points_per_slice).max(1);
                         }
                     }
+                    let weight = stride as f32;
 
                     let mut i = l;
                     while i < r {
-                        // scv[i] must equal s in this slice; no need to re-check im bounds
-                        local[k] += it[i] as f32;
+                        // scan index matches within this slice; no re-check needed
+                        local[k] += (it[i] as f32) * weight;
                         i += stride;
                     }
                 }
@@ -914,15 +929,11 @@ pub fn integrate_isotope_series(
     };
 
     let acc = if parallel {
-        let chunks = 8usize;
-        let chunk = (rt_span + chunks - 1) / chunks;
-        (0..chunks)
+        use rayon::prelude::*;
+        // Parallelize naturally over frame indices with Rayon; balanced even for awkward spans.
+        (rt_l..=rt_r)
             .into_par_iter()
-            .map(|c| {
-                let a = rt_l + c * chunk;
-                let b = (a + chunk).min(rt_r + 1);
-                if a >= b { [0f32; 8] } else { reducer(a..b) }
-            })
+            .map(|f| reducer(f..(f+1)))
             .reduce(|| [0f32; 8], |mut a, b| { for k in 0..8 { a[k] += b[k]; } a })
     } else {
         reducer(rt_l..(rt_r + 1))
@@ -939,11 +950,11 @@ pub fn integrate_isotope_series(
 #[inline]
 pub fn build_local_mz_histogram(
     frames: &[Arc<TimsFrame>], // RT-sorted, preloaded
-    rt_bounds: (usize, usize),                                    // inclusive frame indices
-    im_bounds: (usize, usize),                                    // inclusive absolute scan indices
+    rt_bounds: (usize, usize),            // inclusive frame indices
+    im_bounds: (usize, usize),            // inclusive absolute scan indices
     mz_center: f32,
-    win_ppm: f32,                                                 // e.g. 20.0
-    bins: usize,                                                  // e.g. 21
+    win_ppm: f32,                         // e.g. 20.0
+    bins: usize,                          // e.g. 21
 ) -> (Vec<f32>, Vec<f32>) {
     let bins = bins.max(10);
     let d_da = mz_center * win_ppm * 1e-6;
@@ -953,44 +964,61 @@ pub fn build_local_mz_histogram(
         return (Vec::new(), Vec::new());
     }
 
-    // axis centers
+    // Axis centers
     let width = (hi - lo) / (bins as f32);
     let mut axis = Vec::with_capacity(bins);
     for b in 0..bins {
         axis.push(lo + (b as f32 + 0.5) * width);
     }
 
-    let (rt_l, rt_r) = {
-        let n = frames.len();
-        (rt_bounds.0.min(n.saturating_sub(1)), rt_bounds.1.min(n.saturating_sub(1)))
-    };
+    let n = frames.len();
+    let rt_l = rt_bounds.0.min(n.saturating_sub(1));
+    let rt_r = rt_bounds.1.min(n.saturating_sub(1));
     if rt_l > rt_r { return (axis, vec![0.0; bins]); }
 
     let (im_l, im_r) = im_bounds;
     if im_l > im_r { return (axis, vec![0.0; bins]); }
 
-    // accumulate
+    // Accumulate using per-scan slices and per-slice binary bounds.
     let mut y = vec![0.0f32; bins];
+
+    // Cap per-slice points for speed (compensated by stride).
+    const MAX_POINTS_PER_SLICE: usize = 10_000;
+
     for f in rt_l..=rt_r {
         let fr = &frames[f];
-        let mz  = &fr.ims_frame.mz;
-        let it  = &fr.ims_frame.intensity;
-        let scv = &fr.scan;
+        let mz  = &fr.ims_frame.mz;        // &[f64]
+        let it  = &fr.ims_frame.intensity; // &[f32/f64]
+        if mz.is_empty() { continue; }
 
-        let len = mz.len();
-        for i in 0..len {
-            let m = mz[i] as f32;
-            if m < lo || m > hi { continue; }
-            let s = scv[i];
-            if s < 0 { continue; }
-            let su = s as usize;
-            if su < im_l || su > im_r { continue; }
+        let slices = cached_scan_slices(fr);
 
-            // bin
-            let mut b = ((m - lo) / (hi - lo) * (bins as f32)).floor() as isize;
-            if b < 0 { b = 0; }
-            if (b as usize) >= bins { b = (bins as isize) - 1; }
-            y[b as usize] += it[i] as f32;
+        for sl in slices.iter() {
+            let s = sl.scan;
+            if s < im_l || s > im_r { continue; }
+
+            // Bound to [lo, hi] in this slice
+            let l = lower_bound_in(mz, sl.start, sl.end, lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, hi);
+            if l >= r { continue; }
+
+            let mut stride = 1usize;
+            let len = r - l;
+            if len > MAX_POINTS_PER_SLICE {
+                stride = ((len + MAX_POINTS_PER_SLICE - 1) / MAX_POINTS_PER_SLICE).max(1);
+            }
+            let weight = stride as f32;
+
+            let mut i = l;
+            while i < r {
+                let m = mz[i] as f32;
+                // bin m (lo..hi) into 0..bins-1
+                let mut b = ((m - lo) / (hi - lo) * (bins as f32)).floor() as isize;
+                if b < 0 { b = 0; }
+                if (b as usize) >= bins { b = (bins as isize) - 1; }
+                y[b as usize] += (it[i] as f32) * weight;
+                i += stride;
+            }
         }
     }
 
