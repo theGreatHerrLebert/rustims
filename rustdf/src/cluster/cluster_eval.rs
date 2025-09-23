@@ -136,64 +136,166 @@ fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
 #[inline]
 fn ppm_to_delta_da(mz: f32, ppm: f32) -> f32 { mz * ppm * 1e-6 }
 
+#[inline]
+fn mean_and_var(y: &[f32]) -> (f32, f32) {
+    if y.is_empty() { return (0.0, 0.0); }
+    let n = y.len() as f32;
+    let mean = y.iter().copied().sum::<f32>() / n;
+    let var = y.iter().map(|v| {
+        let d = *v - mean;
+        d*d
+    }).sum::<f32>() / n.max(1.0);
+    (mean, var)
+}
+
+#[inline]
+fn refine_height_baseline_ls(y: &[f32], x: Option<&[f32]>, mu: f32, sigma: f32, b0: f32, height0: f32)
+                             -> (f32, f32) {
+    if y.is_empty() || sigma <= 0.0 { return (height0.max(0.0), b0); }
+    let n = y.len();
+    let mut s_gg = 0.0f64;
+    let mut s_g1 = 0.0f64;
+    let s_11 = n as f64;
+    let mut s_yg = 0.0f64;
+    let mut s_y1 = 0.0f64;
+
+    for i in 0..n {
+        let xi = if let Some(xx) = x { xx[i] } else { i as f32 };
+        let z = (xi - mu) as f64 / (sigma as f64);
+        let g = (-0.5f64 * z * z).exp(); // Gaussian shape (unit height)
+        let yi = y[i] as f64;
+
+        s_gg += g * g;
+        s_g1 += g;
+        s_yg += yi * g;
+        s_y1 += yi;
+    }
+
+    // Solve [ [s_11, s_g1], [s_g1, s_gg] ] * [b, h]^T = [s_y1, s_yg]^T
+    let det = s_11 * s_gg - s_g1 * s_g1;
+    if det.abs() < 1e-12 {
+        return (height0.max(0.0), b0);
+    }
+    let b = ( s_gg * s_y1 - s_g1 * s_yg) / det;
+    let h = (-s_g1 * s_y1 + s_11 * s_yg) / det;
+
+    (h as f32, b as f32)
+}
+
 fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
     let n = y.len();
     if n == 0 {
         return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: 0.0, area: 0.0, r2: f32::NAN, n: 0 };
     }
 
-    // robust baseline (10th pct)
+    // --- robust baseline (10th percentile of y) ---
     let mut ys: Vec<f32> = y.to_vec();
     ys.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let b0 = ys[((0.10 * (n as f32)).floor() as usize).min(n-1)];
 
-    // determine effective bin width for integral (assume uniform if x!=None)
-    let dx: f32 = if let Some(xx) = x {
-        if xx.len() >= 2 {
-            ((xx[xx.len()-1] - xx[0]) / (xx.len().saturating_sub(1) as f32)).abs()
-        } else { 1.0 }
-    } else { 1.0 };
-
-    // positive part moments + integral
+    // --- moments over positive part (y - b0)+ and trapezoidal integral if x provided ---
     let mut wsum = 0.0f64;
     let mut xsum = 0.0f64;
     let mut x2sum = 0.0f64;
     let mut peak = 0.0f32;
-    let mut pos_integral = 0.0f64;
+
+    let mut pos_integral_trap = 0.0f64;   // trapezoid on (y-b0)+ for non-uniform x
+    let mut pos_integral_unit = 0.0f64;   // sum on (y-b0)+ for unit spacing
 
     for i in 0..n {
-        let xi = if let Some(xx) = x { xx[i] as f64 } else { i as f64 };
-        let yi = (y[i] - b0).max(0.0) as f64;
-        if yi > 0.0 {
-            wsum += yi;
-            xsum += yi * xi;
-            x2sum += yi * xi * xi;
-            pos_integral += yi;
+        let xi_f64 = if let Some(xx) = x { xx[i] as f64 } else { i as f64 };
+        let yi_pos = (y[i] - b0).max(0.0) as f64;
+
+        if yi_pos > 0.0 {
+            wsum += yi_pos;
+            xsum += yi_pos * xi_f64;
+            x2sum += yi_pos * xi_f64 * xi_f64;
+            pos_integral_unit += yi_pos;
         }
         if y[i] > peak { peak = y[i]; }
+
+        if let Some(xx) = x {
+            if i > 0 {
+                let dx_i = (xx[i] as f64 - xx[i-1] as f64).abs();
+                let y_prev = (y[i-1] - b0).max(0.0) as f64;
+                pos_integral_trap += 0.5f64 * (yi_pos + y_prev) * dx_i;
+            }
+        }
     }
 
+    // --- handle degenerate positive-part case ---
     if wsum <= 0.0 {
-        // flat after baseline → area from raw integral (no baseline), as last resort
-        let raw_sum: f32 = y.iter().copied().sum::<f32>() * dx;
-        return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: b0, area: raw_sum, r2: f32::NAN, n };
+        // Nothing above baseline: fall back to raw integral (non-negative)
+        let area = if let Some(xx) = x {
+            // trapezoid on raw y (no baseline subtraction)
+            let mut raw = 0.0f64;
+            for i in 1..n {
+                let dx_i = (xx[i] as f64 - xx[i-1] as f64).abs();
+                raw += 0.5f64 * ((y[i] as f64) + (y[i-1] as f64)) * dx_i;
+            }
+            raw.max(0.0) as f32
+        } else {
+            y.iter().copied().map(|v| v.max(0.0)).sum::<f32>()
+        };
+
+        return ClusterFit1D {
+            mu: 0.0, sigma: 0.0, height: 0.0, baseline: b0, area,
+            r2: f32::NAN, n
+        };
     }
 
+    // --- moment estimates of μ and σ over positive part ---
     let mu = (xsum / wsum) as f32;
     let var = (x2sum / wsum - (mu as f64)*(mu as f64)).max(0.0) as f32;
     let sigma = var.sqrt();
 
-    // gaussian proxy
-    let height = (peak - b0).max(0.0);
-    let gauss_area = height * sigma * (std::f32::consts::TAU).sqrt() * 0.5_f32.sqrt();
+    // If σ collapsed, return integral-only with baseline b0
+    if !sigma.is_finite() || sigma <= 0.0 {
+        let integ_area = if x.is_some() {
+            pos_integral_trap.max(0.0) as f32
+        } else {
+            pos_integral_unit as f32
+        };
+        return ClusterFit1D {
+            mu, sigma: 0.0, height: 0.0, baseline: b0,
+            area: integ_area, r2: f32::NAN, n
+        };
+    }
 
-    // integral fallback (above baseline), scaled by bin width
-    let integ_area = (pos_integral as f32) * dx;
+    // --- initial height from peak over baseline ---
+    let height0 = (peak - b0).max(0.0);
 
-    // use the more conservative non-zero estimate
-    let area = if gauss_area > 0.0 { gauss_area } else { integ_area };
+    // --- refine (height, baseline) by LS with μ,σ fixed ---
+    let (height_ref, baseline_ref) = refine_height_baseline_ls(y, x, mu, sigma, b0, height0);
+    let height = height_ref.max(0.0);
+    let baseline = baseline_ref;
 
-    ClusterFit1D { mu, sigma, height, baseline: b0, area, r2: f32::NAN, n }
+    // --- areas: Gaussian proxy and trapezoidal positive-part integral ---
+    let gauss_area = height * sigma * (std::f32::consts::TAU).sqrt(); // height * σ * √(2π)
+    let integ_area = if x.is_some() {
+        pos_integral_trap.max(0.0) as f32
+    } else {
+        pos_integral_unit as f32
+    };
+
+    // Policy: prefer trapezoidal area when x is provided; otherwise take the safer of the two
+    let area = if x.is_some() { integ_area } else { gauss_area.max(integ_area) };
+
+    // --- r² of (baseline + height * exp(-0.5 * ((x-mu)/σ)^2)) against raw y ---
+    let (_m, y_var) = mean_and_var(y);
+    let mut ss_res = 0.0f64;
+    let ss_tot = (y_var as f64) * (n as f64);
+
+    for i in 0..n {
+        let xi = if let Some(xx) = x { xx[i] } else { i as f32 };
+        let z = (xi - mu) / sigma;
+        let y_hat = baseline + height * (-0.5f32 * z * z).exp();
+        let e = (y[i] - y_hat) as f64;
+        ss_res += e * e;
+    }
+    let r2 = if sigma > 0.0 && ss_tot > 0.0 { (1.0 - (ss_res / ss_tot)) as f32 } else { f32::NAN };
+
+    ClusterFit1D { mu, sigma, height, baseline, area, r2, n }
 }
 
 #[derive(Clone, Debug)]
@@ -447,6 +549,7 @@ pub fn evaluate_clusters_3d(
         // marginals
         let mut rt_marg = vec![0.0f32; frames2];
         let mut im_marg = vec![0.0f32; scans2];
+
         for s in 0..scans2 {
             let row = &patch2[s * frames2 .. (s+1) * frames2];
             for (f, &v) in row.iter().enumerate() {
@@ -455,8 +558,18 @@ pub fn evaluate_clusters_3d(
             }
         }
 
-        let rt_fit = moment_fit_1d(&rt_marg, None);
-        let im_fit = moment_fit_1d(&im_marg, None);
+        // Build RT times for the exact local frames (global indices via used_indices)
+        let rt_times: Vec<f32> = used_indices[l_loc..=r_loc]
+            .iter()
+            .map(|&glob_idx| rt_index.frame_times[glob_idx]) // <- needs rt_index.times
+            .collect();
+
+        // Build IM axis explicitly (scan numbers are ints; cast to f32)
+        let im_axis: Vec<f32> = (im_l..=im_r).map(|s| s as f32).collect();
+
+        let rt_fit = moment_fit_1d(&rt_marg, Some(&rt_times));
+        let im_fit = moment_fit_1d(&im_marg, Some(&im_axis));
+
         let mz_fit = moment_fit_1d(&mz_hist2, Some(&mz_centers2));
         let raw_sum: f32 = patch2.iter().copied().sum();
         let fit_volume = separable_volume(&rt_fit, &im_fit, &mz_fit);
