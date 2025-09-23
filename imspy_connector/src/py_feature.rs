@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::{pyclass, pymethods, Bound, pyfunction, wrap_pyfunction};
 use rustdf::cluster::feature::{Feature, FeatureBuildParams};
-use rustdf::cluster::feature::{group_clusters_into_envelopes, group_clusters_into_envelopes_global, AveragineLut, Envelope, GroupingOutput, GroupingParams};
+use rustdf::cluster::feature::{group_clusters_into_envelopes, AveragineLut, Envelope, GroupingOutput, GroupingParams};
 use rustdf::cluster::cluster_eval::ClusterResult;
 use crate::py_cluster::PyClusterResult;
 
@@ -172,26 +172,6 @@ pub fn group_clusters_into_envelopes_py(
     let out = group_clusters_into_envelopes(&rs, &params.inner);
     Ok(PyGroupingOutput { inner: out })
 }
-
-#[pyfunction]
-pub fn group_clusters_into_envelopes_global_py(
-    py: Python<'_>,
-    clusters: Vec<Py<PyClusterResult>>,
-    params: PyGroupingParams,
-    averagine_lut: PyAveragineLut,
-    k_max: usize,
-) -> PyResult<PyGroupingOutput> {
-    // unwrap ClusterResult inners
-    let mut rs: Vec<ClusterResult> = Vec::with_capacity(clusters.len());
-    for c in clusters {
-        let r = c.borrow(py);
-        rs.push(r.inner.clone());
-    }
-    let out = group_clusters_into_envelopes_global(&rs, &params.inner, &averagine_lut.inner, k_max);
-    Ok(PyGroupingOutput { inner: out })
-}
-
-
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyFeature { pub inner: Feature }
@@ -273,6 +253,5 @@ pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGroupingOutput>()?;
     m.add_class::<PyFeatureBuildParams>()?;
     m.add_function(wrap_pyfunction!(group_clusters_into_envelopes_py, m)?)?;
-    m.add_function(wrap_pyfunction!(group_clusters_into_envelopes_global_py, m)?)?;
     Ok(())
 }
