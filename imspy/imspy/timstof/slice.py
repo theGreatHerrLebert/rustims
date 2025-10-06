@@ -12,6 +12,42 @@ from imspy.timstof.frame import TimsSpectrum
 import imspy_connector
 ims = imspy_connector.py_tims_slice
 
+def _coerce_1d(name, arr, dtype, *, allow_nan=False) -> NDArray:
+    """
+    Normalize any array-like to 1D, contiguous NumPy array with exact dtype.
+    Raises a helpful ValueError if conversion is unsafe or NAs are present in ints.
+    """
+    # Prefer pandas->NumPy zero-copy if possible
+    to_numpy = getattr(arr, "to_numpy", None)
+    if callable(to_numpy):
+        a = to_numpy(dtype=dtype, copy=False)
+    else:
+        a = np.asarray(arr)
+
+    # Flatten if accidental 2D column/row vector slipped in
+    if a.ndim == 2 and 1 in a.shape:
+        a = a.reshape(-1)
+    elif a.ndim != 1:
+        raise ValueError(f"{name}: expected 1D array, got shape {a.shape}")
+
+    # Detect NA for integer targets *before* forcing int dtype (pandas nullable Int64 etc.)
+    if np.issubdtype(dtype, np.integer):
+        # Use a float view to test for NaN without failing on ints
+        af = np.asarray(a, dtype=np.float64)
+        if np.isnan(af).any():
+            raise ValueError(f"{name}: integer array contains NA/NaN values; clean or fill before passing.")
+
+    try:
+        a = np.asarray(a, dtype=dtype)
+    except Exception as e:
+        raise ValueError(f"{name}: cannot convert to dtype {np.dtype(dtype)}; "
+                         f"got {getattr(arr, 'dtype', type(arr))}") from e
+
+    # Enforce C-contiguity for numpy -> PyArray.as_slice()
+    if not a.flags.c_contiguous:
+        a = np.ascontiguousarray(a)
+
+    return a
 
 class TimsSlice:
     def __init__(self,
@@ -33,10 +69,24 @@ class TimsSlice:
             mz (NDArray[np.float64]): m/z.
             intensity (NDArray[np.float64]): Intensity.
         """
+        # Normalize everything to exactly what the Rust binding expects:
+        frame_id        = _coerce_1d("frame_id",        frame_id,        np.int32)
+        scan            = _coerce_1d("scan",            scan,            np.int32)
+        tof             = _coerce_1d("tof",             tof,             np.int32)
+        retention_time  = _coerce_1d("retention_time",  retention_time,  np.float64)
+        mobility        = _coerce_1d("mobility",        mobility,        np.float64)
+        mz              = _coerce_1d("mz",              mz,              np.float64)
+        intensity       = _coerce_1d("intensity",       intensity,       np.float64)
 
-        assert len(frame_id) == len(scan) == len(tof) == len(retention_time) == len(mobility) == len(mz) == len(
-            intensity), "All arrays must have the same length."
+        n = len(frame_id)
+        if not (len(scan) == len(tof) == len(retention_time) == len(mobility) == len(mz) == len(intensity) == n):
+            raise ValueError(
+                f"All arrays must have the same length; got "
+                f"frame_id={n}, scan={len(scan)}, tof={len(tof)}, rt={len(retention_time)}, "
+                f"mob={len(mobility)}, mz={len(mz)}, intensity={len(intensity)}"
+            )
 
+        # Hand off to Rust (now guaranteed 1D, contiguous, exact dtype)
         self.__slice_ptr = ims.PyTimsSlice(
             frame_id, scan, tof, retention_time, mobility, mz, intensity
         )
