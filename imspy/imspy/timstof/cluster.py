@@ -5,6 +5,9 @@ import numpy as np
 import pandas as pd
 
 import imspy_connector
+
+from imspy.timstof.slice import TimsSlice
+
 ims = imspy_connector.py_cluster
 from imspy.simulation.annotation import RustWrapperObject
 
@@ -48,6 +51,17 @@ class RawPoints(RustWrapperObject):
             "tof": self.tof,
             "frame": self.frame,
         })
+
+    def to_tims_slice(self) -> "TimsSlice":
+        return TimsSlice(
+            frame_id=self.frame.astype(np.uint32),
+            scan=self.scan.astype(np.uint32),
+            tof=self.tof.astype(np.int32),
+            retention_time=self.rt.astype(np.float32),
+            mobility=self.im.astype(np.float32),
+            mz=self.mz.astype(np.float32),
+            intensity=self.intensity.astype(np.float32),
+        )
 
     def __len__(self) -> int:
         return int(self.mz.shape[0])
