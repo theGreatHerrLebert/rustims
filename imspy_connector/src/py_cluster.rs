@@ -4,6 +4,26 @@ use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 
 #[pyclass]
+#[derive(Clone, Debug, Default)]
+pub struct PyRawPoints { pub inner: rustdf::cluster::cluster_eval::RawPoints }
+
+#[pymethods]
+impl PyRawPoints {
+    #[getter] fn mz(&self) -> Vec<f32> { self.inner.mz.clone() }
+    #[getter] fn rt(&self) -> Vec<f32> { self.inner.rt.clone() }
+    #[getter] fn im(&self) -> Vec<f32> { self.inner.im.clone() }
+    #[getter] fn scan(&self) -> Vec<u32> { self.inner.scan.clone() }
+    #[getter] fn intensity(&self) -> Vec<f32> { self.inner.intensity.clone() }
+    #[getter] fn tof(&self) -> Vec<i32> { self.inner.tof.clone() }
+    #[getter] fn frame(&self) -> Vec<u32> { self.inner.frame.clone() }
+
+    fn __repr__(&self) -> String {
+        let n = self.inner.mz.len();
+        format!("RawPoints(n={})", n)
+    }
+}
+
+#[pyclass]
 #[derive(Clone, Debug)]
 pub struct PyClusterSpec { pub inner: ClusterSpec }
 
@@ -71,18 +91,44 @@ pub struct PyAttachOptions { pub inner: AttachOptions }
 #[pymethods]
 impl PyAttachOptions {
     #[new]
-    #[pyo3(signature = (attach_frames=true, attach_scans=true, attach_mz_axis=true, attach_patch_2d=false))]
-    fn new(attach_frames: bool, attach_scans: bool, attach_mz_axis: bool, attach_patch_2d: bool) -> Self {
-        Self { inner: AttachOptions { attach_frames, attach_scans, attach_mz_axis, attach_patch_2d } }
+    #[pyo3(signature = (
+        attach_frames=true,
+        attach_scans=true,
+        attach_mz_axis=true,
+        attach_points=false,
+        max_points=None
+    ))]
+    fn new(
+        attach_frames: bool,
+        attach_scans: bool,
+        attach_mz_axis: bool,
+        attach_points: bool,
+        max_points: Option<usize>,
+    ) -> Self {
+        Self { inner: AttachOptions {
+            attach_frames,
+            attach_scans,
+            attach_mz_axis,
+            attach_points,
+            max_points,
+        }}
     }
+
     #[getter] fn attach_frames(&self) -> bool { self.inner.attach_frames }
     #[getter] fn attach_scans(&self) -> bool { self.inner.attach_scans }
     #[getter] fn attach_mz_axis(&self) -> bool { self.inner.attach_mz_axis }
-    #[getter] fn attach_patch_2d(&self) -> bool { self.inner.attach_patch_2d }
+    #[getter] fn attach_points(&self) -> bool { self.inner.attach_points }
+    #[getter] fn max_points(&self) -> Option<usize> { self.inner.max_points }
+
     fn __repr__(&self) -> String {
-        format!("AttachOptions(frames={}, scans={}, mz_axis={}, patch_2d={})",
-                self.inner.attach_frames, self.inner.attach_scans,
-                self.inner.attach_mz_axis, self.inner.attach_patch_2d)
+        format!(
+            "AttachOptions(frames={}, scans={}, mz_axis={}, points={}, max_points={:?})",
+            self.inner.attach_frames,
+            self.inner.attach_scans,
+            self.inner.attach_mz_axis,
+            self.inner.attach_points,
+            self.inner.max_points
+        )
     }
 }
 
@@ -94,15 +140,32 @@ pub struct PyEvalOptions { pub inner: EvalOptions }
 impl PyEvalOptions {
     #[new]
     #[pyo3(signature = (attach, refine_mz_once=false, refine_k_sigma=3.0, refine_im_once=false))]
-    fn new(attach: PyAttachOptions, refine_mz_once: bool, refine_k_sigma: f32, refine_im_once: bool) -> Self {
-        Self { inner: EvalOptions { attach: attach.inner, refine_mz_once, refine_k_sigma, refine_im_once } }
+    fn new(
+        attach: PyAttachOptions,
+        refine_mz_once: bool,
+        refine_k_sigma: f32,
+        refine_im_once: bool
+    ) -> Self {
+        Self { inner: EvalOptions {
+            attach: attach.inner,
+            refine_mz_once,
+            refine_k_sigma,
+            refine_im_once
+        } }
     }
+
     #[getter] fn refine_mz_once(&self) -> bool { self.inner.refine_mz_once }
     #[getter] fn refine_k_sigma(&self) -> f32 { self.inner.refine_k_sigma }
+    #[getter] fn refine_im_once(&self) -> bool { self.inner.refine_im_once }
+
     fn __repr__(&self) -> String {
-        format!("EvalOptions({}, refine_mz_once={}, k_sigma={})",
-                PyAttachOptions{ inner: self.inner.attach.clone() }.__repr__(),
-                self.inner.refine_mz_once, self.inner.refine_k_sigma)
+        format!(
+            "EvalOptions({}, refine_mz_once={}, k_sigma={}, refine_im_once={})",
+            PyAttachOptions { inner: self.inner.attach.clone() }.__repr__(),
+            self.inner.refine_mz_once,
+            self.inner.refine_k_sigma,
+            self.inner.refine_im_once
+        )
     }
 }
 
@@ -149,8 +212,23 @@ impl PyClusterResult {
     #[getter] fn scans_axis(&self) -> Option<Vec<usize>> { self.inner.scans_axis.clone() }
     #[getter] fn mz_axis(&self) -> Option<Vec<f32>> { self.inner.mz_axis.clone() }
 
-    #[getter] fn patch_shape(&self) -> (usize, usize) { self.inner.patch_shape }
-    #[getter] fn patch_2d_colmajor(&self) -> Option<Vec<f32>> { self.inner.patch_2d_colmajor.clone() }
+    // NEW: expose raw points as a nested class, or None
+    #[getter]
+    fn raw_points(&self) -> Option<PyRawPoints> {
+        self.inner.raw_points.as_ref().map(|rp| PyRawPoints { inner: rp.clone() })
+    }
+
+    fn __repr__(&self) -> String {
+        let n_pts = self.inner.raw_points.as_ref().map(|p| p.mz.len()).unwrap_or(0);
+        format!(
+            "ClusterResult(id={}, rt=[{},{}], im=[{},{}], mz=[{:.5},{:.5}], points={})",
+            self.inner.id,
+            self.inner.rt_window.0, self.inner.rt_window.1,
+            self.inner.im_window.0, self.inner.im_window.1,
+            self.inner.mz_window_da.0, self.inner.mz_window_da.1,
+            n_pts
+        )
+    }
 }
 
 #[pyfunction]
@@ -198,6 +276,7 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyEvalOptions>()?;
     m.add_class::<PyClusterFit1D>()?;
     m.add_class::<PyClusterResult>()?;
+    m.add_class::<PyRawPoints>()?;
     m.add_function(wrap_pyfunction!(make_cluster_specs_from_peaks, m)?)?;
     Ok(())
 }

@@ -6,10 +6,54 @@ import pandas as pd
 
 import imspy_connector
 ims = imspy_connector.py_cluster
-
 from imspy.simulation.annotation import RustWrapperObject
 
-# --- Thin wrappers -----------------------------------------------------------
+class RawPoints(RustWrapperObject):
+    """Thin wrapper around Rust RawPoints (SoA)."""
+    def __init__(self, *a, **k):
+        raise RuntimeError("RawPoints is created in Rust; use via ClusterResult.raw_points.")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyRawPoints") -> "RawPoints":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    # numpy accessors
+    @property
+    def mz(self) -> np.ndarray:        return np.asarray(self.__py_ptr.mz, dtype=np.float32)
+    @property
+    def rt(self) -> np.ndarray:        return np.asarray(self.__py_ptr.rt, dtype=np.float32)
+    @property
+    def im(self) -> np.ndarray:        return np.asarray(self.__py_ptr.im, dtype=np.float32)   # mobility (1/K0) if provided
+    @property
+    def scan(self) -> np.ndarray:      return np.asarray(self.__py_ptr.scan, dtype=np.uint32)
+    @property
+    def intensity(self) -> np.ndarray: return np.asarray(self.__py_ptr.intensity, dtype=np.float32)
+    @property
+    def tof(self) -> np.ndarray:       return np.asarray(self.__py_ptr.tof, dtype=np.int32)
+    @property
+    def frame(self) -> np.ndarray:     return np.asarray(self.__py_ptr.frame, dtype=np.uint32)
+
+    def to_dataframe(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            "mz": self.mz,
+            "rt": self.rt,
+            "im": self.im,
+            "scan": self.scan,
+            "intensity": self.intensity,
+            "tof": self.tof,
+            "frame": self.frame,
+        })
+
+    def __len__(self) -> int:
+        return int(self.mz.shape[0])
+
+    def __repr__(self) -> str:
+        return f"RawPoints(n={len(self)})"
 
 class ClusterSpec(RustWrapperObject):
     """Thin wrapper for Rust PyClusterSpec."""
@@ -76,13 +120,15 @@ class AttachOptions(RustWrapperObject):
         attach_frames: bool = True,
         attach_scans: bool = True,
         attach_mz_axis: bool = True,
-        attach_patch_2d: bool = False,
+        attach_points: bool = False,
+        max_points: Optional[int] = None,
     ):
         self.__py_ptr = ims.PyAttachOptions(
             bool(attach_frames),
             bool(attach_scans),
             bool(attach_mz_axis),
-            bool(attach_patch_2d),
+            bool(attach_points),
+            None if max_points is None else int(max_points),
         )
 
     @classmethod
@@ -100,12 +146,17 @@ class AttachOptions(RustWrapperObject):
     def attach_scans(self) -> bool: return self.__py_ptr.attach_scans
     @property
     def attach_mz_axis(self) -> bool: return self.__py_ptr.attach_mz_axis
+
+    # NEW:
     @property
-    def attach_patch_2d(self) -> bool: return self.__py_ptr.attach_patch_2d
+    def attach_points(self) -> bool: return self.__py_ptr.attach_points
+    @property
+    def max_points(self) -> Optional[int]: return self.__py_ptr.max_points
 
     def __repr__(self) -> str:
         return (f"AttachOptions(frames={self.attach_frames}, scans={self.attach_scans}, "
-                f"mz_axis={self.attach_mz_axis}, patch_2d={self.attach_patch_2d})")
+                f"mz_axis={self.attach_mz_axis}, points={self.attach_points}, "
+                f"max_points={self.max_points})")
 
 
 class EvalOptions(RustWrapperObject):
@@ -119,7 +170,12 @@ class EvalOptions(RustWrapperObject):
     ):
         if attach is None:
             attach = AttachOptions()
-        self.__py_ptr = ims.PyEvalOptions(attach.get_py_ptr(), bool(refine_mz_once), float(refine_k_sigma), bool(refine_im_once))
+        self.__py_ptr = ims.PyEvalOptions(
+            attach.get_py_ptr(),
+            bool(refine_mz_once),
+            float(refine_k_sigma),
+            bool(refine_im_once)
+        )
 
     @classmethod
     def from_py_ptr(cls, p: "ims.PyEvalOptions") -> "EvalOptions":
@@ -131,20 +187,15 @@ class EvalOptions(RustWrapperObject):
         return self.__py_ptr
 
     @property
-    def attach(self) -> AttachOptions:
-        # PyEvalOptions exposes fields via getters on the Rust side (assumed).
-        # If not, keep as stored object.
-        # Here we return a *view* by wrapping the same pointer.
-        # If PyEvalOptions doesn't have a getter, omit this property.
-        raise AttributeError("AttachOptions view not exposed; use the object you constructed.")
-
-    @property
     def refine_mz_once(self) -> bool: return self.__py_ptr.refine_mz_once
     @property
     def refine_k_sigma(self) -> float: return self.__py_ptr.refine_k_sigma
+    @property
+    def refine_im_once(self) -> bool: return self.__py_ptr.refine_im_once
 
     def __repr__(self) -> str:
-        return f"EvalOptions(refine_mz_once={self.refine_mz_once}, k={self.refine_k_sigma})"
+        return (f"EvalOptions(refine_mz_once={self.refine_mz_once}, "
+                f"k={self.refine_k_sigma}, refine_im_once={self.refine_im_once})")
 
 
 class ClusterFit1D(RustWrapperObject):
@@ -207,11 +258,11 @@ class ClusterResult(RustWrapperObject):
 
     # fits
     @property
-    def rt_fit(self) -> ClusterFit1D: return ClusterFit1D.from_py_ptr(self.__py_ptr.rt_fit)
+    def rt_fit(self) -> "ClusterFit1D": return ClusterFit1D.from_py_ptr(self.__py_ptr.rt_fit)
     @property
-    def im_fit(self) -> ClusterFit1D: return ClusterFit1D.from_py_ptr(self.__py_ptr.im_fit)
+    def im_fit(self) -> "ClusterFit1D": return ClusterFit1D.from_py_ptr(self.__py_ptr.im_fit)
     @property
-    def mz_fit(self) -> ClusterFit1D: return ClusterFit1D.from_py_ptr(self.__py_ptr.mz_fit)
+    def mz_fit(self) -> "ClusterFit1D": return ClusterFit1D.from_py_ptr(self.__py_ptr.mz_fit)
 
     # intensity summaries
     @property
@@ -227,7 +278,7 @@ class ClusterResult(RustWrapperObject):
     @property
     def mz_center_hint(self) -> float: return self.__py_ptr.mz_center_hint
 
-    # attached axes / patch (optional)
+    # attached axes
     @property
     def frame_ids_used(self) -> np.ndarray:
         return np.asarray(self.__py_ptr.frame_ids_used, dtype=np.uint32)
@@ -247,28 +298,20 @@ class ClusterResult(RustWrapperObject):
         ma = self.__py_ptr.mz_axis
         return None if ma is None else np.asarray(ma, dtype=np.float32)
 
+    # NEW: raw points
     @property
-    def patch_2d(self) -> Optional[np.ndarray]:
-        """Return (frames×scans) matrix as Fortran-order view if attached, else None."""
-        buf = self.__py_ptr.patch_2d_colmajor
-        if buf is None:
-            return None
-        frames, scans = self.__py_ptr.patch_shape
-        # column-major layout → reshape with order="F"
-        arr = np.asarray(buf, dtype=np.float32)
-        return arr.reshape((frames, scans), order="F")
-
-    @property
-    def patch_shape(self) -> Tuple[int, int]:
-        return tuple(self.__py_ptr.patch_shape)
+    def raw_points(self) -> Optional[RawPoints]:
+        rp = self.__py_ptr.raw_points
+        return None if rp is None else RawPoints.from_py_ptr(rp)
 
     def __repr__(self) -> str:
         (rt_l, rt_r) = self.rt_window
         (im_l, im_r) = self.im_window
+        npts = 0 if self.raw_points is None else len(self.raw_points)
         return (f"ClusterResult(id={self.cluster_id}, "
                 f"rt=[{rt_l},{rt_r}], im=[{im_l},{im_r}], "
                 f"mz=({self.mz_window_da[0]:.4f},{self.mz_window_da[1]:.4f}), "
-                f"sum={self.raw_sum:.1f})")
+                f"sum={self.raw_sum:.1f}, points={npts})")
 
 
 # --- Convenience function: build specs from peaks (fully wrapped) ------------

@@ -1,9 +1,20 @@
 use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
-use rayon::iter::{ ParallelIterator};
+use rayon::iter::ParallelIterator;
 use crate::cluster::utility::RtIndex;
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
+
+#[derive(Clone, Debug, Default)]
+pub struct RawPoints {
+    pub mz: Vec<f32>,
+    pub rt: Vec<f32>,       // frame time per point
+    pub im: Vec<f32>,       // store scan as f32 (or 1/K0 if you have a converter)
+    pub scan: Vec<u32>,     // absolute scan index in frame
+    pub intensity: Vec<f32>,
+    pub tof: Vec<i32>,      // if available in TimsFrame
+    pub frame: Vec<u32>,    // frame id per point
+}
 
 #[derive(Clone, Debug)]
 pub struct ClusterSpec {
@@ -53,8 +64,10 @@ pub struct AttachOptions {
     pub attach_frames: bool,
     pub attach_scans: bool,
     pub attach_mz_axis: bool,
-    /// Also attach the 2D dense patch (frames×scans, column-major).
-    pub attach_patch_2d: bool,
+    /// NEW: attach raw points bundle (SoA)
+    pub attach_points: bool,
+    /// Optional cap on attached points (uniform thinning if exceeded)
+    pub max_points: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,13 +79,13 @@ pub struct ClusterResult {
     pub mz_window_da: (f32, f32),
 
     // 1D fits
-    pub rt_fit: ClusterFit1D,  // μ in frame index (convert to time outside if needed)
+    pub rt_fit: ClusterFit1D,  // μ in frame time units (we fit on rtIndex.frame_times)
     pub im_fit: ClusterFit1D,  // μ in scan index
     pub mz_fit: ClusterFit1D,  // μ in Da
 
     // intensities
-    pub raw_sum: f32,          // ∑ over the 2D patch (already m/z-reduced)
-    pub fit_volume: f32,       // separable volume proxy (rt*im*mz) if you want (here: product of 1D areas)
+    pub raw_sum: f32,          // ∑ intensities over final RT×IM×m/z window
+    pub fit_volume: f32,       // separable volume proxy (product of 1D areas)
 
     // provenance
     pub rt_peak_id: usize,
@@ -84,8 +97,9 @@ pub struct ClusterResult {
     pub frames_axis: Option<Vec<u32>>,   // frame IDs (length = frames)
     pub scans_axis: Option<Vec<usize>>,  // scan indices (length = scans)
     pub mz_axis: Option<Vec<f32>>,       // m/z centers of histogram bins (length = mz_hist_bins)
-    pub patch_2d_colmajor: Option<Vec<f32>>, // (frames×scans) column-major
-    pub patch_shape: (usize, usize),     // (frames, scans)
+
+    // raw point payload (optional)
+    pub raw_points: Option<RawPoints>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -162,7 +176,7 @@ fn refine_height_baseline_ls(y: &[f32], x: Option<&[f32]>, mu: f32, sigma: f32, 
     for i in 0..n {
         let xi = if let Some(xx) = x { xx[i] } else { i as f32 };
         let z = (xi - mu) as f64 / (sigma as f64);
-        let g = (-0.5f64 * z * z).exp(); // Gaussian shape (unit height)
+        let g = (-0.5f64 * z * z).exp();
         let yi = y[i] as f64;
 
         s_gg += g * g;
@@ -171,7 +185,6 @@ fn refine_height_baseline_ls(y: &[f32], x: Option<&[f32]>, mu: f32, sigma: f32, 
         s_y1 += yi;
     }
 
-    // Solve [ [s_11, s_g1], [s_g1, s_gg] ] * [b, h]^T = [s_y1, s_yg]^T
     let det = s_11 * s_gg - s_g1 * s_g1;
     if det.abs() < 1e-12 {
         return (height0.max(0.0), b0);
@@ -182,25 +195,30 @@ fn refine_height_baseline_ls(y: &[f32], x: Option<&[f32]>, mu: f32, sigma: f32, 
     (h as f32, b as f32)
 }
 
+#[inline]
+fn thin_stride(total: usize, cap: usize) -> usize {
+    if cap == 0 || total <= cap { 1 } else { (total + cap - 1) / cap }
+}
+
 fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
     let n = y.len();
     if n == 0 {
         return ClusterFit1D { mu: 0.0, sigma: 0.0, height: 0.0, baseline: 0.0, area: 0.0, r2: f32::NAN, n: 0 };
     }
 
-    // --- robust baseline (10th percentile of y) ---
+    // robust baseline (10th percentile of y)
     let mut ys: Vec<f32> = y.to_vec();
     ys.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let b0 = ys[((0.10 * (n as f32)).floor() as usize).min(n-1)];
 
-    // --- moments over positive part (y - b0)+ and trapezoidal integral if x provided ---
+    // moments over positive part
     let mut wsum = 0.0f64;
     let mut xsum = 0.0f64;
     let mut x2sum = 0.0f64;
     let mut peak = 0.0f32;
 
-    let mut pos_integral_trap = 0.0f64;   // trapezoid on (y-b0)+ for non-uniform x
-    let mut pos_integral_unit = 0.0f64;   // sum on (y-b0)+ for unit spacing
+    let mut pos_integral_trap = 0.0f64;
+    let mut pos_integral_unit = 0.0f64;
 
     for i in 0..n {
         let xi_f64 = if let Some(xx) = x { xx[i] as f64 } else { i as f64 };
@@ -223,11 +241,8 @@ fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
         }
     }
 
-    // --- handle degenerate positive-part case ---
     if wsum <= 0.0 {
-        // Nothing above baseline: fall back to raw integral (non-negative)
         let area = if let Some(xx) = x {
-            // trapezoid on raw y (no baseline subtraction)
             let mut raw = 0.0f64;
             for i in 1..n {
                 let dx_i = (xx[i] as f64 - xx[i-1] as f64).abs();
@@ -244,12 +259,10 @@ fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
         };
     }
 
-    // --- moment estimates of μ and σ over positive part ---
     let mu = (xsum / wsum) as f32;
     let var = (x2sum / wsum - (mu as f64)*(mu as f64)).max(0.0) as f32;
     let sigma = var.sqrt();
 
-    // If σ collapsed, return integral-only with baseline b0
     if !sigma.is_finite() || sigma <= 0.0 {
         let integ_area = if x.is_some() {
             pos_integral_trap.max(0.0) as f32
@@ -262,30 +275,22 @@ fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
         };
     }
 
-    // --- initial height from peak over baseline ---
-    let height0 = (peak - b0).max(0.0);
-
-    // --- refine (height, baseline) by LS with μ,σ fixed ---
+    let height0 = (y.iter().copied().fold(f32::NEG_INFINITY, f32::max) - b0).max(0.0);
     let (height_ref, baseline_ref) = refine_height_baseline_ls(y, x, mu, sigma, b0, height0);
     let height = height_ref.max(0.0);
     let baseline = baseline_ref;
 
-    // --- areas: Gaussian proxy and trapezoidal positive-part integral ---
-    let gauss_area = height * sigma * (std::f32::consts::TAU).sqrt(); // height * σ * √(2π)
+    let gauss_area = height * sigma * (std::f32::consts::TAU).sqrt();
     let integ_area = if x.is_some() {
         pos_integral_trap.max(0.0) as f32
     } else {
         pos_integral_unit as f32
     };
-
-    // Policy: prefer trapezoidal area when x is provided; otherwise take the safer of the two
     let area = if x.is_some() { integ_area } else { gauss_area.max(integ_area) };
 
-    // --- r² of (baseline + height * exp(-0.5 * ((x-mu)/σ)^2)) against raw y ---
     let (_m, y_var) = mean_and_var(y);
     let mut ss_res = 0.0f64;
     let ss_tot = (y_var as f64) * (n as f64);
-
     for i in 0..n {
         let xi = if let Some(xx) = x { xx[i] } else { i as f32 };
         let z = (xi - mu) / sigma;
@@ -303,7 +308,7 @@ pub struct EvalOptions {
     pub attach: AttachOptions,
     pub refine_mz_once: bool,   // do a second pass with μ±kσ
     pub refine_k_sigma: f32,    // 3.0 by default
-    pub refine_im_once: bool,   // do a second pass with μ±kσ (not implemented yet)
+    pub refine_im_once: bool,   // do a second pass with μ±kσ (scans)
 }
 
 impl Default for EvalOptions {
@@ -313,7 +318,8 @@ impl Default for EvalOptions {
                 attach_frames: true,
                 attach_scans: true,
                 attach_mz_axis: true,
-                attach_patch_2d: false,
+                attach_points: false,
+                max_points: None,
             },
             refine_im_once: false,
             refine_mz_once: false,
@@ -324,13 +330,95 @@ impl Default for EvalOptions {
 
 /// Product of 1D areas as a separable-volume proxy.
 fn separable_volume(rt: &ClusterFit1D, im: &ClusterFit1D, mz: &ClusterFit1D) -> f32 {
-    // NOTE: areas here already include height * σ * √(2π) (constant baseline excluded)
     rt.area * im.area * mz.area.max(0.0)
 }
 
-/// Evaluate clusters (RT×IM with m/z marginal) but **preload all required frames once**
-/// using the dataset handle. No per-cluster I/O.
-/// Requires: EvalOptions { refine_im_once: bool, refine_mz_once: bool, refine_k_sigma: f32, ... }
+/// Collect raw points (SoA) within final windows; uniform thinning if `max_points` set.
+fn collect_raw_points_for_cluster(
+    slice_frames: &[TimsFrame],
+    scan_slices_per_frame: &[Vec<ScanSlice>],
+    l_loc: usize, r_loc: usize,              // local frame bounds
+    im_l: usize, im_r: usize,                // scan bounds (absolute per frame)
+    mz_lo: f32, mz_hi: f32,                  // m/z window in Da
+    rt_times_local: &[f32],                  // rt_index.frame_times mapped to l_loc..=r_loc
+    frame_ids_local: &[u32],                 // rt_index.frames mapped to l_loc..=r_loc
+    max_points: Option<usize>,               // optional cap (thin uniformly)
+) -> RawPoints {
+    // Count first for capacity + thinning stride
+    let mut total = 0usize;
+    for (fi, slices) in scan_slices_per_frame[l_loc..=r_loc].iter().enumerate() {
+        let fr = &slice_frames[l_loc + fi];
+        let mz = &fr.ims_frame.mz;
+        for sl in slices {
+            if sl.scan < im_l || sl.scan > im_r { continue; }
+            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            total += r.saturating_sub(l);
+        }
+    }
+    let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
+
+    let mut pts = RawPoints {
+        mz: Vec::with_capacity(total / stride + 8),
+        rt: Vec::with_capacity(total / stride + 8),
+        im: Vec::with_capacity(total / stride + 8),
+        scan: Vec::with_capacity(total / stride + 8),
+        intensity: Vec::with_capacity(total / stride + 8),
+        tof: Vec::with_capacity(total / stride + 8),
+        frame: Vec::with_capacity(total / stride + 8),
+    };
+
+    if total == 0 { return pts; }
+
+    let mut seen = 0usize;
+    for (fi, slices) in scan_slices_per_frame[l_loc..=r_loc].iter().enumerate() {
+        let fr = &slice_frames[l_loc + fi];
+
+        let mz   = &fr.ims_frame.mz;         // Vec<f64>
+        let it   = &fr.ims_frame.intensity;  // Vec<f32 or f64 depending on your loader
+        let ims  = &fr.ims_frame.mobility;   // Vec<f64> (per-point mobility / 1/K0)
+        let tofs = &fr.tof;                  // Vec<i32>  (per-point TOF)
+        // (scv is not needed here for values; we use it only for scan-slice bounds)
+
+        // Make sure all arrays are aligned; clamp to the shortest length to be safe.
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+
+        let rt_val = rt_times_local[fi];
+        let frame_id = frame_ids_local[fi];
+
+        for sl in slices {
+            let s_abs = sl.scan;
+            if s_abs < im_l || s_abs > im_r { continue; }
+
+            // Binary search within this scan-run, then clamp r to aligned length.
+            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            if r > len_all { r = len_all; }
+            if l >= r { continue; }
+
+            let mut i = l;
+            while i < r {
+                if stride == 1 || (seen % stride == 0) {
+                    pts.mz.push(mz[i] as f32);
+                    pts.rt.push(rt_val);
+                    pts.im.push(ims[i] as f32);          // use mobility from the frame
+                    pts.scan.push(s_abs as u32);         // keep scan index as separate axis
+                    // If your intensity is f64, cast; if it's f32, this is a no-op.
+                    pts.intensity.push(it[i] as f32);
+                    pts.frame.push(frame_id);
+                    pts.tof.push(tofs[i]);               // per-point TOF
+                }
+                seen += 1;
+                i += 1;
+            }
+        }
+    }
+
+    pts
+}
+
+/// Evaluate clusters (RT×IM with m/z marginal) with a single frame preload.
+/// Returns ClusterResult objects; optional raw points attached, no dense 2D patch.
 pub fn evaluate_clusters_3d(
     ds: &TimsDatasetDIA,
     rt_index: &RtIndex,
@@ -398,7 +486,7 @@ pub fn evaluate_clusters_3d(
             return empty_result_with_axes(
                 cid, spec, (0.0, 0.0),
                 used_frame_ids[l_loc..=r_loc].to_vec(),
-                None, None, (frames, 0), &opts
+                None, None, &opts
             );
         }
         let scans0 = im_r0 - im_l0 + 1;
@@ -414,20 +502,19 @@ pub fn evaluate_clusters_3d(
             return empty_result_with_axes(
                 cid, spec, (mz_min, mz_max),
                 used_frame_ids[l_loc..=r_loc].to_vec(),
-                Some((im_l0, im_r0)), None, (frames, scans0), &opts
+                Some((im_l0, im_r0)), None, &opts
             );
         }
 
-        // --- alloc (first pass) ---
-        let mut patch = vec![0.0f32; frames * scans0]; // col-major: [s * frames + f]
+        // --- First pass accumulation: RT/IM marginals + m/z histogram ---
         let bins = spec.mz_hist_bins.max(10);
         let bin_w = (mz_max - mz_min) / bins as f32;
-        let mut mz_hist = vec![0.0f32; bins];
-        let mz_centers = (0..bins).map(|b| mz_min + (b as f32 + 0.5) * bin_w).collect::<Vec<_>>();
-
-        // ---------- accumulation (first pass) ----------
-        const MAX_POINTS_PER_SLICE: usize = 10_000;
         let inv_win = 1.0f32 / (mz_max - mz_min);
+        let mut rt_marg = vec![0.0f32; frames];
+        let mut im_marg = vec![0.0f32; scans0];
+        let mut mz_hist = vec![0.0f32; bins];
+
+        const MAX_POINTS_PER_SLICE: usize = 10_000;
 
         for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
             .iter()
@@ -452,16 +539,16 @@ pub fn evaluate_clusters_3d(
                 let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
                 let s_local = s_abs - im_l0;
-                let base = s_local * frames + fi;
 
                 let mut i = l;
                 while i < r {
                     let val = (it[i] as f32) * weight;
 
-                    // RT×IM patch
-                    patch[base] += val;
+                    // RT/IM marginals
+                    rt_marg[fi] += val;
+                    im_marg[s_local] += val;
 
-                    // m/z hist (clamped)
+                    // m/z hist
                     let pos = ((mz[i] as f32 - mz_min) * inv_win * bins as f32).floor();
                     let b = if pos < 0.0 { 0 } else {
                         let pi = pos as usize;
@@ -474,22 +561,24 @@ pub fn evaluate_clusters_3d(
             }
         }
 
-        // --- optional m/z refine ---
+        // Optional m/z refine (μ±kσ) -> recalc hist and marginals in restricted window
+        let mz_centers = (0..bins).map(|b| mz_min + (b as f32 + 0.5) * bin_w).collect::<Vec<_>>();
         let mz_fit0 = moment_fit_1d(&mz_hist, Some(&mz_centers));
         let want_mz_refine = opts.refine_mz_once && mz_fit0.sigma > 0.0 && mz_fit0.area > 0.0;
 
-        let (patch2, frames2, scans2, mz_hist2, mz_centers2, mz_win2) = if want_mz_refine {
+        let (rt_marg2, im_marg2, mz_hist2, mz_centers2, mz_win2) = if want_mz_refine {
             let k = opts.refine_k_sigma.max(1.0);
             let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_min);
             let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_max);
             if hi <= lo {
-                (patch, frames, scans0, mz_hist, mz_centers, (mz_min, mz_max))
+                (rt_marg, im_marg, mz_hist, mz_centers, (mz_min, mz_max))
             } else {
-                let mut patch_r = vec![0.0f32; frames * scans0];
+                let mut rt_acc = vec![0.0f32; frames];
+                let mut im_acc = vec![0.0f32; scans0];
                 let mut mz_hist_r = vec![0.0f32; bins];
 
-                let bw = (hi - lo) / bins as f32;
                 let inv_win_r = 1.0f32 / (hi - lo);
+                let bw = (hi - lo) / bins as f32;
                 let mz_centers_r = (0..bins).map(|b| lo + (b as f32 + 0.5) * bw).collect::<Vec<_>>();
 
                 for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
@@ -515,12 +604,13 @@ pub fn evaluate_clusters_3d(
                         let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
                         let s_local = s_abs - im_l0;
-                        let base = s_local * frames + fi;
 
                         let mut i = l;
                         while i < r {
                             let val = (it[i] as f32) * weight;
-                            patch_r[base] += val;
+
+                            rt_acc[fi] += val;
+                            im_acc[s_local] += val;
 
                             let pos = ((mz[i] as f32 - lo) * inv_win_r * bins as f32).floor();
                             let b = if pos < 0.0 { 0 } else {
@@ -534,52 +624,31 @@ pub fn evaluate_clusters_3d(
                     }
                 }
 
-                (patch_r, frames, scans0, mz_hist_r, mz_centers_r, (lo, hi))
+                (rt_acc, im_acc, mz_hist_r, mz_centers_r, (lo, hi))
             }
         } else {
-            (patch, frames, scans0, mz_hist, mz_centers, (mz_min, mz_max))
+            (rt_marg, im_marg, mz_hist, mz_centers, (mz_min, mz_max))
         };
 
-        if frames2 == 0 || scans2 == 0 {
-            return empty_result_with_axes(
-                cid, spec, mz_win2,
-                used_frame_ids[l_loc..=r_loc].to_vec(),
-                Some((im_l0, im_r0)), Some(mz_centers2.clone()),
-                (frames2, scans2), &opts
-            );
-        }
-
-        // --- marginals (first pass) ---
-        let mut rt_marg = vec![0.0f32; frames2];
-        let mut im_marg = vec![0.0f32; scans2];
-        for s in 0..scans2 {
-            let row = &patch2[s * frames2 .. (s+1) * frames2];
-            for (f, &v) in row.iter().enumerate() {
-                rt_marg[f] += v;
-                im_marg[s] += v;
-            }
-        }
-
-        // --- axes for fitting ---
+        // First-pass IM fit used for optional IM refine
         let rt_times: Vec<f32> = used_indices[l_loc..=r_loc]
             .iter()
             .map(|&glob_idx| rt_index.frame_times[glob_idx])
             .collect();
+
         let im_axis0: Vec<f32> = (im_l0..=im_r0).map(|s| s as f32).collect();
+        let im_fit0 = moment_fit_1d(&im_marg2, Some(&im_axis0));
+        let want_im_refine = opts.refine_im_once && im_fit0.sigma > 0.0 && scans0 > 1;
 
-        // --- first-pass fits ---
-        let _rt_fit0 = moment_fit_1d(&rt_marg, Some(&rt_times));
-        let im_fit0 = moment_fit_1d(&im_marg, Some(&im_axis0));
-
-        // --- optional IM refine μ±kσ (in scan units) ---
-        let want_im_refine = opts.refine_im_once && im_fit0.sigma > 0.0 && scans2 > 1;
-        let (patch3, frames3, scans3, im_l, im_r) = if want_im_refine {
+        // Optional IM refine (μ±kσ) -> recalc RT/IM marginals within restricted scans
+        let (rt_marg3, im_marg3, im_l, im_r) = if want_im_refine {
             let k = opts.refine_k_sigma.max(1.0);
             let lo_s = (im_fit0.mu - k * im_fit0.sigma).floor().max(im_l0 as f32) as usize;
             let hi_s = (im_fit0.mu + k * im_fit0.sigma).ceil().min(im_r0 as f32) as usize;
             if lo_s < hi_s {
                 let scans_r = hi_s - lo_s + 1;
-                let mut patch_r = vec![0.0f32; frames2 * scans_r];
+                let mut rt_acc = vec![0.0f32; frames];
+                let mut im_acc = vec![0.0f32; scans_r];
 
                 for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
                     .iter()
@@ -588,6 +657,7 @@ pub fn evaluate_clusters_3d(
                 {
                     let mz  = &fr.ims_frame.mz;
                     let it  = &fr.ims_frame.intensity;
+
                     for sl in slices {
                         let s_abs = sl.scan;
                         if s_abs < lo_s || s_abs > hi_s { continue; }
@@ -602,44 +672,58 @@ pub fn evaluate_clusters_3d(
                         } else { 1 };
                         let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
-                        let s_local = s_abs - lo_s; // new origin
-                        let base = s_local * frames2 + fi;
+                        let s_local = s_abs - lo_s;
 
                         let mut i = l;
                         while i < r {
-                            patch_r[base] += (it[i] as f32) * weight;
+                            let val = (it[i] as f32) * weight;
+                            rt_acc[fi] += val;
+                            im_acc[s_local] += val;
                             i += stride;
                         }
                     }
                 }
 
-                (patch_r, frames2, scans_r, lo_s, hi_s)
+                (rt_acc, im_acc, lo_s, hi_s)
             } else {
-                (patch2, frames2, scans2, im_l0, im_r0)
+                (rt_marg2, im_marg2, im_l0, im_r0)
             }
         } else {
-            (patch2, frames2, scans2, im_l0, im_r0)
+            (rt_marg2, im_marg2, im_l0, im_r0)
         };
 
-        // --- marginals (second/final pass) ---
-        let mut rt_marg2 = vec![0.0f32; frames3];
-        let mut im_marg2 = vec![0.0f32; scans3];
-        for s in 0..scans3 {
-            let row = &patch3[s * frames3 .. (s+1) * frames3];
-            for (f, &v) in row.iter().enumerate() {
-                rt_marg2[f] += v;
-                im_marg2[s] += v;
-            }
-        }
-
-        // --- final fits ---
+        // Final fits
         let im_axis: Vec<f32> = (im_l..=im_r).map(|s| s as f32).collect();
-        let rt_fit = moment_fit_1d(&rt_marg2, Some(&rt_times));
-        let im_fit = moment_fit_1d(&im_marg2, Some(&im_axis));
+        let rt_fit = moment_fit_1d(&rt_marg3, Some(&rt_times));
+        let im_fit = moment_fit_1d(&im_marg3, Some(&im_axis));
         let mz_fit = moment_fit_1d(&mz_hist2, Some(&mz_centers2));
 
-        let raw_sum: f32 = patch3.iter().copied().sum();
+        // Raw sum = sum over either marginal
+        let raw_sum: f32 = rt_marg3.iter().copied().sum();
+
+        // Fit volume proxy
         let fit_volume = separable_volume(&rt_fit, &im_fit, &mz_fit);
+
+        // Attach optional raw points using the final windows
+        let frames_axis_vec = used_frame_ids[l_loc..=r_loc].to_vec();
+        let scans_axis_vec: Vec<usize> = (im_l..=im_r).collect();
+        let rt_times_local: Vec<f32> = used_indices[l_loc..=r_loc]
+            .iter()
+            .map(|&glob_idx| rt_index.frame_times[glob_idx])
+            .collect();
+
+        let raw_points = if opts.attach.attach_points {
+            Some(collect_raw_points_for_cluster(
+                &slice.frames,
+                &scan_slices_per_frame,
+                l_loc, r_loc,
+                im_l, im_r,
+                mz_win2.0, mz_win2.1,
+                &rt_times_local,
+                &frames_axis_vec,
+                opts.attach.max_points,
+            ))
+        } else { None };
 
         ClusterResult {
             id: cid,
@@ -651,12 +735,11 @@ pub fn evaluate_clusters_3d(
             rt_peak_id: cid,
             im_peak_id: cid,
             mz_center_hint: spec.mz_center_hint,
-            frame_ids_used: used_frame_ids[l_loc..=r_loc].to_vec(),
-            frames_axis: if opts.attach.attach_frames { Some(used_frame_ids[l_loc..=r_loc].to_vec()) } else { None },
-            scans_axis:  if opts.attach.attach_scans  { Some((im_l..=im_r).collect()) } else { None },
+            frame_ids_used: frames_axis_vec.clone(),
+            frames_axis: if opts.attach.attach_frames { Some(frames_axis_vec) } else { None },
+            scans_axis:  if opts.attach.attach_scans  { Some(scans_axis_vec) } else { None },
             mz_axis:     if opts.attach.attach_mz_axis{ Some(mz_centers2.clone()) } else { None },
-            patch_2d_colmajor: if opts.attach.attach_patch_2d { Some(patch3) } else { None },
-            patch_shape: (frames3, scans3),
+            raw_points,
         }
     }).collect()
 }
@@ -676,7 +759,7 @@ fn empty_result(cid: usize, spec: &ClusterSpec, mz_win: (f32,f32)) -> ClusterRes
         mz_center_hint: spec.mz_center_hint,
         frame_ids_used: Vec::new(),
         frames_axis: None, scans_axis: None, mz_axis: None,
-        patch_2d_colmajor: None, patch_shape: (0, 0),
+        raw_points: None,
     }
 }
 
@@ -688,7 +771,6 @@ fn empty_result_with_axes(
     frames_axis: Vec<u32>,
     scans_bounds: Option<(usize,usize)>,
     mz_axis: Option<Vec<f32>>,
-    shape: (usize,usize),
     opts: &EvalOptions,
 ) -> ClusterResult {
     ClusterResult {
@@ -708,7 +790,6 @@ fn empty_result_with_axes(
             scans_bounds.map(|(l,r)| (l..=r).collect())
         } else { None },
         mz_axis: if opts.attach.attach_mz_axis { mz_axis } else { None },
-        patch_2d_colmajor: None,
-        patch_shape: shape,
+        raw_points: None,
     }
 }
