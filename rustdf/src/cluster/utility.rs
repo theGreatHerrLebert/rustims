@@ -6,6 +6,144 @@ use crate::data::handle::TimsData;
 use crate::data::meta::FrameMeta;
 use rayon::prelude::*;
 
+/// How to turn an IM peak into extraction bounds.
+#[derive(Clone, Copy, Debug)]
+pub enum ImBoundStrategy {
+    /// Use the classic half-prominence integer bounds stored on the peak.
+    HalfProm,
+
+    /// Center at apex + subscan, span ±k * sigma (sigma estimated from FWHM).
+    /// Ensures at least `min_width` scans and clamps to [0, n_scans-1].
+    KSigma {
+        k: f32,              // e.g., 2.5–4.0
+        min_width: usize,    // e.g., 5–9
+    },
+
+    /// Simple integer padding around the stored half-prom bounds.
+    Padded {
+        pad_left: usize,     // extra scans to include on the left
+        pad_right: usize,    // extra scans to include on the right
+        min_width: usize,    // floor on width after padding
+    },
+
+    /// Active range by threshold (like fallback), useful for very broad features.
+    ActiveRange {
+        abs_thr: f32,        // absolute floor
+        rel_thr: f32,        // fraction of row max (0..1) on RAW profile
+        pad: usize,          // expand both sides by this many scans
+        min_width: usize,    // enforce minimum width
+    },
+}
+
+#[inline(always)]
+fn sigma_from_fwhm(width_scans: usize) -> f32 {
+    // FWHM = 2*sqrt(2*ln2) * sigma ≈ 2.354820045* sigma
+    // Use max with a small epsilon to avoid zero width corner-cases.
+    const INV_2SQRT2LN2: f32 = 1.0 / 2.354820045f32;
+    (width_scans.max(1) as f32) * INV_2SQRT2LN2
+}
+
+/// Compute IM extraction bounds for a given peak under a chosen strategy.
+/// Returns (left, right) as integer scan indices inclusive, clamped to [0, n_scans-1].
+pub fn im_bounds_for_peak(
+    y_raw_row: &[f32],     // RAW IM profile for this row (for ActiveRange)
+    peak: &ImPeak1D,
+    n_scans: usize,
+    strategy: ImBoundStrategy,
+) -> (usize, usize) {
+    if n_scans == 0 { return (0, 0); }
+
+    match strategy {
+        ImBoundStrategy::HalfProm => {
+            let l = peak.left.min(n_scans.saturating_sub(1));
+            let r = peak.right.min(n_scans.saturating_sub(1));
+            if l <= r { (l, r) } else { (r, l) }
+        }
+
+        ImBoundStrategy::KSigma { k, min_width } => {
+            // Center at apex + subscan
+            let mu = (peak.scan as f32 + peak.subscan)
+                .clamp(0.0, (n_scans.saturating_sub(1)) as f32);
+            // Estimate σ from FWHM-ish width at half prominence
+            let sigma = sigma_from_fwhm(peak.width_scans).max(0.5);
+            let half = (k.max(0.5) * sigma).ceil() as isize;
+
+            let mut l = (mu.floor() as isize - half).max(0) as usize;
+            let mut r = (mu.ceil()  as isize + half).min((n_scans - 1) as isize) as usize;
+
+            // Enforce minimum width (inclusive)
+            if r + 1 - l < min_width && min_width > 1 {
+                let need = min_width - (r + 1 - l);
+                let grow_left  = need / 2;
+                let grow_right = need - grow_left;
+
+                l = l.saturating_sub(grow_left);
+                r = (r + grow_right).min(n_scans - 1);
+
+                // If still too short (row is tiny), just take the whole range
+                if r + 1 - l < min_width {
+                    l = 0; r = n_scans - 1;
+                }
+            }
+            (l.min(r), r.max(l))
+        }
+
+        ImBoundStrategy::Padded { pad_left, pad_right, min_width } => {
+            let mut l = peak.left.saturating_sub(pad_left).min(n_scans.saturating_sub(1));
+            let mut r = (peak.right + pad_right).min(n_scans.saturating_sub(1));
+            if r + 1 - l < min_width && min_width > 1 {
+                let need = min_width - (r + 1 - l);
+                let grow_left  = need / 2;
+                let grow_right = need - grow_left;
+                l = l.saturating_sub(grow_left);
+                r = (r + grow_right).min(n_scans - 1);
+                if r + 1 - l < min_width {
+                    l = 0; r = n_scans - 1;
+                }
+            }
+            (l.min(r), r.max(l))
+        }
+
+        ImBoundStrategy::ActiveRange { abs_thr, rel_thr, pad, min_width } => {
+            let n = y_raw_row.len().min(n_scans);
+            if n == 0 { return (0, 0); }
+            let row_max = y_raw_row.iter().copied().fold(0.0f32, f32::max);
+            let thr = abs_thr.max(rel_thr.clamp(0.0, 1.0) * row_max);
+
+            let mut l_opt: Option<usize> = None;
+            let mut r_opt: Option<usize> = None;
+            for (i, &v) in y_raw_row.iter().take(n).enumerate() {
+                if v >= thr {
+                    if l_opt.is_none() { l_opt = Some(i); }
+                    r_opt = Some(i);
+                }
+            }
+            let (mut l, mut r) = match (l_opt, r_opt) {
+                (Some(l0), Some(r0)) => {
+                    (l0.saturating_sub(pad), (r0 + pad).min(n - 1))
+                }
+                _ => {
+                    // Fallback: center around apex
+                    let apex = peak.scan.min(n.saturating_sub(1));
+                    (apex, apex)
+                }
+            };
+
+            if r + 1 - l < min_width && min_width > 1 {
+                let need = min_width - (r + 1 - l);
+                let grow_left  = need / 2;
+                let grow_right = need - grow_left;
+                l = l.saturating_sub(grow_left);
+                r = (r + grow_right).min(n - 1);
+                if r + 1 - l < min_width {
+                    l = 0; r = n - 1;
+                }
+            }
+            (l.min(r), r.max(l))
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MzScale {
     pub mz_min: f32,
