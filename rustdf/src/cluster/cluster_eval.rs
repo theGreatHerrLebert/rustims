@@ -306,9 +306,13 @@ fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
 #[derive(Clone, Debug)]
 pub struct EvalOptions {
     pub attach: AttachOptions,
-    pub refine_mz_once: bool,   // do a second pass with μ±kσ
-    pub refine_k_sigma: f32,    // 3.0 by default
-    pub refine_im_once: bool,   // do a second pass with μ±kσ (scans)
+    pub refine_mz_once: bool,
+    pub refine_k_sigma: f32,    // still used for m/z refinement only
+    /// None  -> keep requested/padded IM window from ClusterSpec
+    /// Some(k) -> use envelope of requested window and [μ - kσ, μ + kσ] from first-pass IM fit
+    pub im_k_sigma: Option<f32>,
+    /// NEW: enforce a minimum width in scans for the final IM window (default 1)
+    pub im_min_width: usize,
 }
 
 impl Default for EvalOptions {
@@ -321,9 +325,10 @@ impl Default for EvalOptions {
                 attach_points: false,
                 max_points: None,
             },
-            refine_im_once: false,
             refine_mz_once: false,
             refine_k_sigma: 3.0,
+            im_k_sigma: None,
+            im_min_width: 1,
         }
     }
 }
@@ -417,6 +422,53 @@ fn collect_raw_points_for_cluster(
     pts
 }
 
+#[inline]
+fn final_im_bounds_from_fit(
+    requested: (usize, usize),  // (im_l0, im_r0) after padding
+    scan_domain: (usize, usize),// (0, max_scan_abs)
+    im_fit: &ClusterFit1D,      // fit from first-pass marginal in requested window
+    k_opt: Option<f32>,         // opts.im_k_sigma
+    min_width: usize,           // opts.im_min_width
+) -> (usize, usize) {
+    let (l_req, r_req) = requested;
+    let (scan_l, scan_r) = scan_domain;
+
+    let (mut l, mut r) = if let Some(k) = k_opt {
+        if im_fit.sigma.is_finite() && im_fit.sigma > 0.0 {
+            let lo = (im_fit.mu - k.max(0.5) * im_fit.sigma).floor() as isize;
+            let hi = (im_fit.mu + k.max(0.5) * im_fit.sigma).ceil()  as isize;
+            let lo = lo.clamp(scan_l as isize, scan_r as isize) as usize;
+            let hi = hi.clamp(scan_l as isize, scan_r as isize) as usize;
+
+            // Envelope of requested and μ±kσ (so we never shrink the user's request)
+            (lo.min(l_req), hi.max(r_req))
+        } else {
+            (l_req, r_req)
+        }
+    } else {
+        (l_req, r_req)
+    };
+
+    if r < l { std::mem::swap(&mut l, &mut r); }
+
+    // Enforce minimum width
+    let width = r + 1 - l;
+    if width < min_width {
+        let need = min_width - width;
+        let grow_l = need / 2;
+        let grow_r = need - grow_l;
+        l = l.saturating_sub(grow_l);
+        r = (r + grow_r).min(scan_r);
+        if r + 1 - l < min_width {
+            // if still too small because the row is short, expand to the row
+            l = scan_l;
+            r = scan_r;
+        }
+    }
+
+    (l, r)
+}
+
 /// Evaluate clusters (RT×IM with m/z marginal) with a single frame preload.
 /// Returns ClusterResult objects; optional raw points attached, no dense 2D patch.
 pub fn evaluate_clusters_3d(
@@ -471,25 +523,23 @@ pub fn evaluate_clusters_3d(
         if l_loc > r_loc || r_loc >= frames_total_local { return empty_result(cid, spec, (0.0, 0.0)); }
         let frames = r_loc - l_loc + 1;
 
-        // --- IM bounds with padding ---
+        // --- IM bounds with padding (requested window) ---
         let mut scan_max_abs: usize = 0;
         for fr in &slice.frames[l_loc..=r_loc] {
             if let Some(&mx) = fr.scan.iter().max() {
                 if mx > scan_max_abs as i32 { scan_max_abs = mx as usize; }
             }
         }
-        let im_l_req = spec.im_left.saturating_sub(spec.extra_im_pad);
-        let im_r_req = spec.im_right.saturating_add(spec.extra_im_pad);
-        let im_l0 = im_l_req.min(scan_max_abs);
-        let im_r0 = im_r_req.min(scan_max_abs);
-        if im_l0 > im_r0 || frames == 0 {
+        let im_l_req = spec.im_left.saturating_sub(spec.extra_im_pad).min(scan_max_abs);
+        let im_r_req = spec.im_right.saturating_add(spec.extra_im_pad).min(scan_max_abs);
+        if im_l_req > im_r_req || frames == 0 {
             return empty_result_with_axes(
                 cid, spec, (0.0, 0.0),
                 used_frame_ids[l_loc..=r_loc].to_vec(),
                 None, None, &opts
             );
         }
-        let scans0 = im_r0 - im_l0 + 1;
+        let scans0 = im_r_req - im_l_req + 1;
 
         // --- m/z window ---
         let (mz_min, mz_max) = if let Some(w) = spec.mz_window_da_override {
@@ -502,11 +552,11 @@ pub fn evaluate_clusters_3d(
             return empty_result_with_axes(
                 cid, spec, (mz_min, mz_max),
                 used_frame_ids[l_loc..=r_loc].to_vec(),
-                Some((im_l0, im_r0)), None, &opts
+                Some((im_l_req, im_r_req)), None, &opts
             );
         }
 
-        // --- First pass accumulation: RT/IM marginals + m/z histogram ---
+        // --- First pass accumulation: RT/IM marginals + m/z histogram within requested IM window ---
         let bins = spec.mz_hist_bins.max(10);
         let bin_w = (mz_max - mz_min) / bins as f32;
         let inv_win = 1.0f32 / (mz_max - mz_min);
@@ -526,7 +576,7 @@ pub fn evaluate_clusters_3d(
 
             for sl in slices {
                 let s_abs = sl.scan;
-                if s_abs < im_l0 || s_abs > im_r0 { continue; }
+                if s_abs < im_l_req || s_abs > im_r_req { continue; }
 
                 let l = lower_bound_in(mz, sl.start, sl.end, mz_min);
                 let r = upper_bound_in(mz, sl.start, sl.end, mz_max);
@@ -538,7 +588,7 @@ pub fn evaluate_clusters_3d(
                 } else { 1 };
                 let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
-                let s_local = s_abs - im_l0;
+                let s_local = s_abs - im_l_req;
 
                 let mut i = l;
                 while i < r {
@@ -561,12 +611,12 @@ pub fn evaluate_clusters_3d(
             }
         }
 
-        // Optional m/z refine (μ±kσ) -> recalc hist and marginals in restricted window
+        // --- Optional m/z refine (μ±kσ) and re-accumulate in restricted m/z; still within requested IM window ---
         let mz_centers = (0..bins).map(|b| mz_min + (b as f32 + 0.5) * bin_w).collect::<Vec<_>>();
         let mz_fit0 = moment_fit_1d(&mz_hist, Some(&mz_centers));
         let want_mz_refine = opts.refine_mz_once && mz_fit0.sigma > 0.0 && mz_fit0.area > 0.0;
 
-        let (rt_marg2, im_marg2, mz_hist2, mz_centers2, mz_win2) = if want_mz_refine {
+        let (_rt_marg2, im_marg2, mz_hist2, mz_centers2, mz_win2) = if want_mz_refine {
             let k = opts.refine_k_sigma.max(1.0);
             let lo = (mz_fit0.mu - k * mz_fit0.sigma).max(mz_min);
             let hi = (mz_fit0.mu + k * mz_fit0.sigma).min(mz_max);
@@ -591,7 +641,7 @@ pub fn evaluate_clusters_3d(
 
                     for sl in slices {
                         let s_abs = sl.scan;
-                        if s_abs < im_l0 || s_abs > im_r0 { continue; }
+                        if s_abs < im_l_req || s_abs > im_r_req { continue; }
 
                         let l = lower_bound_in(mz, sl.start, sl.end, lo);
                         let r = upper_bound_in(mz, sl.start, sl.end, hi);
@@ -603,7 +653,7 @@ pub fn evaluate_clusters_3d(
                         } else { 1 };
                         let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
-                        let s_local = s_abs - im_l0;
+                        let s_local = s_abs - im_l_req;
 
                         let mut i = l;
                         while i < r {
@@ -630,81 +680,73 @@ pub fn evaluate_clusters_3d(
             (rt_marg, im_marg, mz_hist, mz_centers, (mz_min, mz_max))
         };
 
-        // First-pass IM fit used for optional IM refine
+        // --- First-pass IM fit on requested window (after m/z refine stage) ---
         let rt_times: Vec<f32> = used_indices[l_loc..=r_loc]
             .iter()
             .map(|&glob_idx| rt_index.frame_times[glob_idx])
             .collect();
-
-        let im_axis0: Vec<f32> = (im_l0..=im_r0).map(|s| s as f32).collect();
+        let im_axis0: Vec<f32> = (im_l_req..=im_r_req).map(|s| s as f32).collect();
         let im_fit0 = moment_fit_1d(&im_marg2, Some(&im_axis0));
-        let want_im_refine = opts.refine_im_once && im_fit0.sigma > 0.0 && scans0 > 1;
 
-        // Optional IM refine (μ±kσ) -> recalc RT/IM marginals within restricted scans
-        let (rt_marg3, im_marg3, im_l, im_r) = if want_im_refine {
-            let k = opts.refine_k_sigma.max(1.0);
-            let lo_s = (im_fit0.mu - k * im_fit0.sigma).floor().max(im_l0 as f32) as usize;
-            let hi_s = (im_fit0.mu + k * im_fit0.sigma).ceil().min(im_r0 as f32) as usize;
-            if lo_s < hi_s {
-                let scans_r = hi_s - lo_s + 1;
-                let mut rt_acc = vec![0.0f32; frames];
-                let mut im_acc = vec![0.0f32; scans_r];
+        // --- Unified final IM window selection (envelope of requested and μ±kσ) ---
+        let (im_l, im_r) = final_im_bounds_from_fit(
+            (im_l_req, im_r_req),
+            (0usize, scan_max_abs),
+            &im_fit0,
+            opts.im_k_sigma,
+            opts.im_min_width,
+        );
+        let scans_final = im_r - im_l + 1;
 
-                for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
-                    .iter()
-                    .zip(&scan_slices_per_frame[l_loc..=r_loc])
-                    .enumerate()
-                {
-                    let mz  = &fr.ims_frame.mz;
-                    let it  = &fr.ims_frame.intensity;
+        // --- Re-accumulate RT/IM marginals inside the FINAL IM window (single path) ---
+        let mut rt_marg3 = vec![0.0f32; frames];
+        let mut im_marg3 = vec![0.0f32; scans_final];
 
-                    for sl in slices {
-                        let s_abs = sl.scan;
-                        if s_abs < lo_s || s_abs > hi_s { continue; }
+        for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
+            .iter()
+            .zip(&scan_slices_per_frame[l_loc..=r_loc])
+            .enumerate()
+        {
+            let mz  = &fr.ims_frame.mz;
+            let it  = &fr.ims_frame.intensity;
 
-                        let l = lower_bound_in(mz, sl.start, sl.end, mz_win2.0);
-                        let r = upper_bound_in(mz, sl.start, sl.end, mz_win2.1);
-                        if l >= r { continue; }
+            for sl in slices {
+                let s_abs = sl.scan;
+                if s_abs < im_l || s_abs > im_r { continue; }
 
-                        let len = r - l;
-                        let stride = if len > MAX_POINTS_PER_SLICE {
-                            ((len + MAX_POINTS_PER_SLICE - 1) / MAX_POINTS_PER_SLICE).max(1)
-                        } else { 1 };
-                        let weight = if stride > 1 { stride as f32 } else { 1.0 };
+                let l = lower_bound_in(mz, sl.start, sl.end, mz_win2.0);
+                let r = upper_bound_in(mz, sl.start, sl.end, mz_win2.1);
+                if l >= r { continue; }
 
-                        let s_local = s_abs - lo_s;
+                let len = r - l;
+                let stride = if len > MAX_POINTS_PER_SLICE {
+                    ((len + MAX_POINTS_PER_SLICE - 1) / MAX_POINTS_PER_SLICE).max(1)
+                } else { 1 };
+                let weight = if stride > 1 { stride as f32 } else { 1.0 };
 
-                        let mut i = l;
-                        while i < r {
-                            let val = (it[i] as f32) * weight;
-                            rt_acc[fi] += val;
-                            im_acc[s_local] += val;
-                            i += stride;
-                        }
-                    }
+                let s_local = s_abs - im_l;
+
+                let mut i = l;
+                while i < r {
+                    let val = (it[i] as f32) * weight;
+                    rt_marg3[fi] += val;
+                    im_marg3[s_local] += val;
+                    i += stride;
                 }
-
-                (rt_acc, im_acc, lo_s, hi_s)
-            } else {
-                (rt_marg2, im_marg2, im_l0, im_r0)
             }
-        } else {
-            (rt_marg2, im_marg2, im_l0, im_r0)
-        };
+        }
 
-        // Final fits
+        // --- Final fits ---
         let im_axis: Vec<f32> = (im_l..=im_r).map(|s| s as f32).collect();
         let rt_fit = moment_fit_1d(&rt_marg3, Some(&rt_times));
         let im_fit = moment_fit_1d(&im_marg3, Some(&im_axis));
         let mz_fit = moment_fit_1d(&mz_hist2, Some(&mz_centers2));
 
-        // Raw sum = sum over either marginal
+        // --- Summaries ---
         let raw_sum: f32 = rt_marg3.iter().copied().sum();
-
-        // Fit volume proxy
         let fit_volume = separable_volume(&rt_fit, &im_fit, &mz_fit);
 
-        // Attach optional raw points using the final windows
+        // --- Axes & attachments (use FINAL IM window) ---
         let frames_axis_vec = used_frame_ids[l_loc..=r_loc].to_vec();
         let scans_axis_vec: Vec<usize> = (im_l..=im_r).collect();
         let rt_times_local: Vec<f32> = used_indices[l_loc..=r_loc]
@@ -728,7 +770,7 @@ pub fn evaluate_clusters_3d(
         ClusterResult {
             id: cid,
             rt_window: (spec.rt_left, spec.rt_right),
-            im_window: (spec.im_left, spec.im_right),
+            im_window: (im_l, im_r), // final window
             mz_window_da: mz_win2,
             rt_fit, im_fit, mz_fit,
             raw_sum, fit_volume,

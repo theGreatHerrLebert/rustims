@@ -139,32 +139,42 @@ pub struct PyEvalOptions { pub inner: EvalOptions }
 #[pymethods]
 impl PyEvalOptions {
     #[new]
-    #[pyo3(signature = (attach, refine_mz_once=false, refine_k_sigma=3.0, refine_im_once=false))]
+    #[pyo3(signature = (
+        attach,
+        refine_mz_once=false,
+        refine_k_sigma=3.0,
+        im_k_sigma=None,
+        im_min_width=1
+    ))]
     fn new(
         attach: PyAttachOptions,
         refine_mz_once: bool,
         refine_k_sigma: f32,
-        refine_im_once: bool
+        im_k_sigma: Option<f32>,
+        im_min_width: usize,
     ) -> Self {
         Self { inner: EvalOptions {
             attach: attach.inner,
             refine_mz_once,
             refine_k_sigma,
-            refine_im_once
-        } }
+            im_k_sigma,
+            im_min_width,
+        }}
     }
 
     #[getter] fn refine_mz_once(&self) -> bool { self.inner.refine_mz_once }
     #[getter] fn refine_k_sigma(&self) -> f32 { self.inner.refine_k_sigma }
-    #[getter] fn refine_im_once(&self) -> bool { self.inner.refine_im_once }
+    #[getter] fn im_k_sigma(&self) -> Option<f32> { self.inner.im_k_sigma }
+    #[getter] fn im_min_width(&self) -> usize { self.inner.im_min_width }
 
     fn __repr__(&self) -> String {
         format!(
-            "EvalOptions({}, refine_mz_once={}, k_sigma={}, refine_im_once={})",
+            "EvalOptions({}, refine_mz_once={}, k_sigma={}, im_k_sigma={:?}, im_min_width={})",
             PyAttachOptions { inner: self.inner.attach.clone() }.__repr__(),
             self.inner.refine_mz_once,
             self.inner.refine_k_sigma,
-            self.inner.refine_im_once
+            self.inner.im_k_sigma,
+            self.inner.im_min_width
         )
     }
 }

@@ -180,7 +180,8 @@ class EvalOptions(RustWrapperObject):
         attach: AttachOptions | None = None,
         refine_mz_once: bool = False,
         refine_k_sigma: float = 3.0,
-        refine_im_once: bool = False,
+        im_k_sigma: float | None = None,
+        im_min_width: int = 1,
     ):
         if attach is None:
             attach = AttachOptions()
@@ -188,7 +189,8 @@ class EvalOptions(RustWrapperObject):
             attach.get_py_ptr(),
             bool(refine_mz_once),
             float(refine_k_sigma),
-            bool(refine_im_once)
+            None if im_k_sigma is None else float(im_k_sigma),
+            int(im_min_width),
         )
 
     @classmethod
@@ -201,15 +203,27 @@ class EvalOptions(RustWrapperObject):
         return self.__py_ptr
 
     @property
-    def refine_mz_once(self) -> bool: return self.__py_ptr.refine_mz_once
+    def refine_mz_once(self) -> bool:
+        return self.__py_ptr.refine_mz_once
+
     @property
-    def refine_k_sigma(self) -> float: return self.__py_ptr.refine_k_sigma
+    def refine_k_sigma(self) -> float:
+        return self.__py_ptr.refine_k_sigma
+
     @property
-    def refine_im_once(self) -> bool: return self.__py_ptr.refine_im_once
+    def im_k_sigma(self) -> float | None:
+        return self.__py_ptr.im_k_sigma
+
+    @property
+    def im_min_width(self) -> int:
+        return self.__py_ptr.im_min_width
 
     def __repr__(self) -> str:
-        return (f"EvalOptions(refine_mz_once={self.refine_mz_once}, "
-                f"k={self.refine_k_sigma}, refine_im_once={self.refine_im_once})")
+        return (
+            f"EvalOptions(refine_mz_once={self.refine_mz_once}, "
+            f"k={self.refine_k_sigma}, im_k_sigma={self.im_k_sigma}, "
+            f"im_min_width={self.im_min_width})"
+        )
 
 
 class ClusterFit1D(RustWrapperObject):
