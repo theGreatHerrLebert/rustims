@@ -2,7 +2,7 @@ use pyo3::prelude::*;
 use mscore::data::spectrum::{MsType};
 use mscore::timstof::slice::{TimsPlane, TimsSlice, TimsSliceVectorized};
 use pyo3::types::{PyList};
-use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
 use crate::py_mz_spectrum::{PyTimsSpectrum};
 
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
@@ -17,37 +17,30 @@ pub struct PyTimsSlice {
 #[pymethods]
 impl PyTimsSlice {
     #[new]
-    pub unsafe fn new(
-        _py: Python,
-        frame_ids: &Bound<'_, PyArray1<i32>>,
-        scans: &Bound<'_, PyArray1<i32>>,
-        tofs: &Bound<'_, PyArray1<i32>>,
-        retention_times: &Bound<'_, PyArray1<f64>>,
-        mobilities: &Bound<'_, PyArray1<f64>>,
-        mzs: &Bound<'_, PyArray1<f64>>,
-        intensities: &Bound<'_, PyArray1<f64>>,
+    pub fn new(
+        frame_ids: PyReadonlyArray1<i32>,
+        scans: PyReadonlyArray1<i32>,
+        tofs: PyReadonlyArray1<i32>,
+        retention_times: PyReadonlyArray1<f64>,
+        mobilities: PyReadonlyArray1<f64>,
+        mzs: PyReadonlyArray1<f64>,
+        intensities: PyReadonlyArray1<f64>,
     ) -> PyResult<Self> {
+        // These fail early with a clear message if arrays aren't 1D, wrong dtype, or non-contiguous
         let frame_ids_vec = frame_ids.as_slice()?.to_vec();
         let scans_vec = scans.as_slice()?.to_vec();
         let tofs_vec = tofs.as_slice()?.to_vec();
-        let retention_times_vec = retention_times.as_slice()?.to_vec();
-        let mobilities_vec = mobilities.as_slice()?.to_vec();
-        let mzs_vec = mzs.as_slice()?.to_vec();
-        let intensities_vec = intensities.as_slice()?.to_vec();
+        let rt_vec = retention_times.as_slice()?.to_vec();
+        let im_vec = mobilities.as_slice()?.to_vec();
+        let mz_vec = mzs.as_slice()?.to_vec();
+        let inten_vec = intensities.as_slice()?.to_vec();
 
-        // Now call your Rust function from_flat_slice
         let tims_slice = TimsSlice::from_flat_slice(
-            frame_ids_vec,
-            scans_vec,
-            tofs_vec,
-            retention_times_vec,
-            mobilities_vec,
-            mzs_vec,
-            intensities_vec
+            frame_ids_vec, scans_vec, tofs_vec, rt_vec, im_vec, mz_vec, inten_vec
         );
-
-        Ok(PyTimsSlice { inner: tims_slice })
+        Ok(Self { inner: tims_slice })
     }
+
     #[getter]
     pub fn first_frame_id(&self) -> i32 { self.inner.frames.first().unwrap().frame_id }
 
