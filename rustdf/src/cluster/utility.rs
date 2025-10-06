@@ -5,9 +5,6 @@ use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
 use crate::data::meta::FrameMeta;
 use rayon::prelude::*;
-use std::cell::RefCell;
-
-thread_local! { static ACCUM: RefCell<FxHashMap<usize,f32>> = RefCell::new(FxHashMap::default()); }
 
 #[derive(Clone, Debug)]
 pub struct MzScale {
@@ -22,28 +19,38 @@ pub struct MzScale {
 
 impl MzScale {
     pub fn build(mz_min: f32, mz_max: f32, ppm_per_bin: f32) -> Self {
+
+        let est_bins = ((mz_max / mz_min).ln() / (1.0 + ppm_per_bin * 1e-6).ln()).ceil() as usize;
+        let max_bins = 1_000_000; // tune
+        assert!(est_bins <= max_bins, "ppm_per_bin too fine for mz range ({} bins)", est_bins);
+
         assert!(mz_min > 0.0 && mz_max > mz_min && ppm_per_bin > 0.0);
-        let mz_min64 = mz_min as f64;
-        let mz_max64 = mz_max as f64;
-        let ratio64  = 1.0 + (ppm_per_bin as f64) * 1e-6;
-        let est_bins = ((mz_max64 / mz_min64).ln() / ratio64.ln()).ceil() as usize;
-        assert!(est_bins <= 1_000_000, "ppm_per_bin too fine ({} bins)", est_bins);
+        let ratio = 1.0 + ppm_per_bin * 1e-6;
+        let inv_ln_ratio = 1.0 / ratio.ln();
 
-        let mut edges = Vec::with_capacity(est_bins + 2);
-        let mut x = mz_min64;
-        edges.push(x as f32);
-        for _ in 0..=est_bins {
-            x *= ratio64;
-            edges.push(x.min(mz_max64) as f32);
-            if x >= mz_max64 { break; }
+        // Generate edges multiplicatively: e[k+1] = e[k] * ratio
+        let mut edges = Vec::new();
+        let mut x = mz_min;
+        edges.push(x);
+        while x < mz_max {
+            x *= ratio;
+            edges.push(x);
+            // Guard against numerical stickiness
+            if edges.len() > 10_000_000 { break; }
         }
-        if *edges.last().unwrap() < mz_max { edges.push(mz_max); }
+        // Ensure last edge ≥ mz_max
+        if *edges.last().unwrap() < mz_max {
+            edges.push(mz_max);
+        }
 
-        let centers = edges.windows(2).map(|w| (w[0] as f64 * w[1] as f64).sqrt() as f32).collect();
-        let ratio = ratio64 as f32;
-        let inv_ln_ratio = 1.0f32 / (ratio.ln());
-        Self { mz_min, mz_max, ppm_per_bin, ratio, inv_ln_ratio, edges, centers }
+        let mut centers = Vec::with_capacity(edges.len().saturating_sub(1));
+        for w in edges.windows(2) {
+            let c = (w[0] * w[1]).sqrt(); // geometric center
+            centers.push(c);
+        }
+        MzScale { mz_min, mz_max, ppm_per_bin, ratio, inv_ln_ratio, edges, centers }
     }
+
     pub fn from_centers(centers: &[f32]) -> Self {
         assert!(centers.len() >= 2, "need at least 2 centers");
         for w in centers.windows(2) { assert!(w[1] > w[0]); }
@@ -501,16 +508,14 @@ pub fn build_dense_rt_by_mz_ppm(
         let mz = &frame.ims_frame.mz;
         let inten = &frame.ims_frame.intensity;
 
-        ACCUM.with(|acc_cell| {
-            let mut acc = acc_cell.borrow_mut();
-            acc.clear();
-            for (&m, &i) in mz.iter().zip(inten) {
-                if let Some(row) = scale.index_of(m as f32) {
-                    *acc.entry(row).or_insert(0.0) += i as f32;
-                }
+        // local accumulation per column (sparse → dense)
+        let mut accum: FxHashMap<usize, f32> = FxHashMap::default();
+        for (&m, &i) in mz.iter().zip(inten.iter()) {
+            if let Some(row) = scale.index_of(m as f32) {
+                *accum.entry(row).or_insert(0.0) += i as f32;
             }
-            for (&row, &val) in acc.iter() { col_slice[row] += val; }
-        });
+        }
+        for (row, val) in accum { col_slice[row] += val; }
     });
 
     // 5) optional smoothing; keep raw if applied
@@ -570,7 +575,7 @@ struct FrameBinView {
 }
 
 fn build_frame_bin_view(
-    fr: &TimsFrame,
+    fr: TimsFrame,
     scale: &MzScale,
     global_num_scans: usize,
 ) -> FrameBinView {
@@ -683,7 +688,7 @@ pub fn build_dense_im_by_rtpeaks_ppm(
     let ncols = frames.len();
     let views: Vec<FrameBinView> = (0..ncols)
         .into_par_iter()
-        .map(|i| build_frame_bin_view(&frames[i], scale, global_num_scans))
+        .map(|i| build_frame_bin_view(frames[i].clone(), scale, global_num_scans))
         .collect();
 
     let ncols = views.len();
