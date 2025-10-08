@@ -2,6 +2,7 @@ use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction
 use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
+use rayon::prelude::*;
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
@@ -252,29 +253,68 @@ pub fn make_cluster_specs_from_peaks(
     extra_im_pad: usize,
     mz_hist_bins: usize,
 ) -> PyResult<Vec<Py<PyClusterSpec>>> {
-    let mut specs_py = Vec::new();
-    for (row_idx, rt_p) in rt_peaks.into_iter().enumerate() {
+    // 1) Snapshot the few needed values from Python objects under the GIL
+    //    to Rust-owned plain types we can use without the GIL.
+    #[derive(Clone, Copy)]
+    struct RtRowSnap {
+        rt_l: usize,
+        rt_r: usize,
+        mz_center: f32,
+    }
+    #[derive(Clone, Copy)]
+    struct ImSnap {
+        im_l: usize,
+        im_r: usize,
+    }
+
+    let mut rt_rows: Vec<RtRowSnap> = Vec::with_capacity(rt_peaks.len());
+    let mut im_rows_snap: Vec<Vec<ImSnap>> = Vec::with_capacity(im_rows.len());
+
+    for (row_idx, rt_p) in rt_peaks.iter().enumerate() {
         let rt = rt_p.borrow(py);
         let mz_center = rt.mz_center();
         let rt_l = rt.left_padded().saturating_sub(extra_rt_pad);
-        let rt_r = rt.right_padded() + extra_rt_pad;
+        let rt_r = rt.right_padded().saturating_add(extra_rt_pad);
+        rt_rows.push(RtRowSnap { rt_l, rt_r, mz_center });
 
+        let mut row_vec: Vec<ImSnap> = Vec::with_capacity(im_rows[row_idx].len());
         for im_p in &im_rows[row_idx] {
             let im = im_p.borrow(py);
             let im_l = im.left().saturating_sub(extra_im_pad);
-            let im_r = im.right() + extra_im_pad;
-
-            let spec = ClusterSpec {
-                rt_left: rt_l, rt_right: rt_r,
-                im_left: im_l, im_right: im_r,
-                mz_center_hint: mz_center,
-                mz_ppm_window,
-                extra_rt_pad: 0, extra_im_pad: 0,
-                mz_hist_bins,
-                mz_window_da_override: None,
-            };
-            specs_py.push(Py::new(py, PyClusterSpec { inner: spec })?);
+            let im_r = im.right().saturating_add(extra_im_pad);
+            row_vec.push(ImSnap { im_l, im_r });
         }
+        im_rows_snap.push(row_vec);
+    }
+
+    // 2) Release GIL and build ClusterSpec in parallel
+    let specs: Vec<ClusterSpec> = py.allow_threads(|| {
+        rt_rows
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(row_idx, rt)| {
+                im_rows_snap[row_idx]
+                    .iter()
+                    .map(move |im| ClusterSpec {
+                        rt_left: rt.rt_l,
+                        rt_right: rt.rt_r,
+                        im_left: im.im_l,
+                        im_right: im.im_r,
+                        mz_center_hint: rt.mz_center,
+                        mz_ppm_window,
+                        extra_rt_pad: 0,
+                        extra_im_pad: 0,
+                        mz_hist_bins,
+                        mz_window_da_override: None,
+                    })
+            })
+            .collect()
+    });
+
+    // 3) Reacquire GIL only to wrap specs into Python objects
+    let mut specs_py = Vec::with_capacity(specs.len());
+    for s in specs {
+        specs_py.push(Py::new(py, PyClusterSpec { inner: s })?);
     }
     Ok(specs_py)
 }
