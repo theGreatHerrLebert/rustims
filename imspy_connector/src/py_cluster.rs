@@ -145,7 +145,10 @@ impl PyEvalOptions {
         refine_mz_once=false,
         refine_k_sigma=3.0,
         im_k_sigma=None,
-        im_min_width=1
+        im_min_width=1,
+        min_num_points=5,
+        max_rt_width=50,
+        max_im_width=50,
     ))]
     fn new(
         attach: PyAttachOptions,
@@ -153,6 +156,9 @@ impl PyEvalOptions {
         refine_k_sigma: f32,
         im_k_sigma: Option<f32>,
         im_min_width: usize,
+        min_num_points: usize,
+        max_rt_width: usize,
+        max_im_width: usize,
     ) -> Self {
         Self { inner: EvalOptions {
             attach: attach.inner,
@@ -160,7 +166,9 @@ impl PyEvalOptions {
             refine_k_sigma,
             im_k_sigma,
             im_min_width,
-            min_num_points: None
+            min_num_points: Some(min_num_points),
+            max_rt_width: Some(max_rt_width),
+            max_im_width: Some(max_im_width),
         }}
     }
 
