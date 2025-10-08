@@ -313,6 +313,7 @@ pub struct EvalOptions {
     pub im_k_sigma: Option<f32>,
     /// NEW: enforce a minimum width in scans for the final IM window (default 1)
     pub im_min_width: usize,
+    pub min_num_points: Option<usize>, // minimum points to attempt a fit
 }
 
 impl Default for EvalOptions {
@@ -329,6 +330,7 @@ impl Default for EvalOptions {
             refine_k_sigma: 3.0,
             im_k_sigma: None,
             im_min_width: 1,
+            min_num_points: Some(25), // at least 25 points to fit
         }
     }
 }
@@ -702,6 +704,9 @@ pub fn evaluate_clusters_3d(
         let mut rt_marg3 = vec![0.0f32; frames];
         let mut im_marg3 = vec![0.0f32; scans_final];
 
+        // NEW: exact count of raw points in the *final* (RT×IM×m/z) window
+        let mut pts_total: usize = 0;
+
         for (fi, (fr, slices)) in slice.frames[l_loc..=r_loc]
             .iter()
             .zip(&scan_slices_per_frame[l_loc..=r_loc])
@@ -718,6 +723,9 @@ pub fn evaluate_clusters_3d(
                 let r = upper_bound_in(mz, sl.start, sl.end, mz_win2.1);
                 if l >= r { continue; }
 
+                // Count all raw points in the final window (no thinning)
+                pts_total += r - l;
+
                 let len = r - l;
                 let stride = if len > MAX_POINTS_PER_SLICE {
                     ((len + MAX_POINTS_PER_SLICE - 1) / MAX_POINTS_PER_SLICE).max(1)
@@ -733,6 +741,21 @@ pub fn evaluate_clusters_3d(
                     im_marg3[s_local] += val;
                     i += stride;
                 }
+            }
+        }
+
+        // NEW: Early exit if not enough support points
+        if let Some(min_pts) = opts.min_num_points {
+            if pts_total < min_pts {
+                return empty_result_with_axes(
+                    cid,
+                    spec,
+                    mz_win2,
+                    used_frame_ids[l_loc..=r_loc].to_vec(),
+                    Some((im_l, im_r)),
+                    Some(mz_centers2.clone()),
+                    &opts,
+                );
             }
         }
 

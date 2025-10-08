@@ -160,6 +160,7 @@ impl PyEvalOptions {
             refine_k_sigma,
             im_k_sigma,
             im_min_width,
+            min_num_points: None
         }}
     }
 

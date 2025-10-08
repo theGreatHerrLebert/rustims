@@ -181,7 +181,7 @@ class EvalOptions(RustWrapperObject):
         refine_mz_once: bool = False,
         refine_k_sigma: float = 3.0,
         im_k_sigma: float | None = None,
-        im_min_width: int = 1,
+        im_min_width: int = 7,
     ):
         if attach is None:
             attach = AttachOptions()
