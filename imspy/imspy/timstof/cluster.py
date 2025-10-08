@@ -181,10 +181,7 @@ class EvalOptions(RustWrapperObject):
         refine_mz_once: bool = False,
         refine_k_sigma: float = 3.0,
         im_k_sigma: float | None = None,
-        im_min_width: int = 7,
-        min_num_points: int = 15,
-        max_rt_width: int = 100,
-        max_im_width: int = 100,
+        im_min_width: int = 1,
     ):
         if attach is None:
             attach = AttachOptions()
@@ -194,9 +191,6 @@ class EvalOptions(RustWrapperObject):
             float(refine_k_sigma),
             None if im_k_sigma is None else float(im_k_sigma),
             int(im_min_width),
-            int(min_num_points),
-            int(max_rt_width),
-            int(max_im_width),
         )
 
     @classmethod
