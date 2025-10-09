@@ -333,6 +333,12 @@ class ClusterResult(RustWrapperObject):
     def im_peak_id(self) -> int: return self.__py_ptr.im_peak_id
     @property
     def mz_center_hint(self) -> float: return self.__py_ptr.mz_center_hint
+    @property
+    def ms_level(self) -> int: return self.__py_ptr.ms_level
+    @property
+    def window_group(self) -> Optional[int]:
+        wg = self.__py_ptr.window_group
+        return None if wg is None else int(wg)
 
     # attached axes
     @property
