@@ -373,7 +373,11 @@ class ClusterResult(RustWrapperObject):
         return (f"ClusterResult(id={self.cluster_id}, "
                 f"rt=[{rt_l},{rt_r}], im=[{im_l},{im_r}], "
                 f"mz=({self.mz_window_da[0]:.4f},{self.mz_window_da[1]:.4f}), "
-                f"sum={self.raw_sum:.1f}, points={npts})")
+                f"sum={self.raw_sum:.1f}, points={npts}, "
+                f"rt_fit={self.rt_fit}, im_fit={self.im_fit}, mz_fit={self.mz_fit}, "
+                f"rt_peak_id={self.rt_peak_id}, im_peak_id={self.im_peak_id}, "
+                f"mz_center_hint={self.mz_center_hint:.4f}, ms_level={self.ms_level}, "
+                f"window_group={self.window_group})")
 
 
 # --- Convenience function: build specs from peaks (fully wrapped) ------------
