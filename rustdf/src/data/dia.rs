@@ -5,13 +5,21 @@ use crate::data::meta::{
     read_dia_ms_ms_info, read_dia_ms_ms_windows, read_global_meta_sql, read_meta_data_sql,
     DiaMsMisInfo, DiaMsMsWindow, FrameMeta, GlobalMetaData,
 };
-
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use crate::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
-use crate::cluster::feature::{build_features_from_envelopes, AveragineLut, Envelope, Feature, FeatureBuildParams, GroupingParams};
-use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm, ImIndex};
+use crate::cluster::feature::{build_features_from_envelopes, AveragineLut, Envelope, Feature,
+                              FeatureBuildParams, GroupingParams};
+use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm, ImIndex, build_dense_rt_by_mz_ppm_for_group, build_dense_im_by_rtpeaks_ppm_for_group};
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiaGroupBounds {
+    pub mz_lo: f32,
+    pub mz_hi: f32,
+    pub scan_lo: usize,
+    pub scan_hi: usize,
+}
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -74,6 +82,45 @@ impl TimsDatasetDIA {
             dia_ms_mis_info,
             dia_ms_ms_windows,
         }
+    }
+
+    pub fn group_bounds(&self, window_group: u32) -> Option<DiaGroupBounds> {
+        // DiaFrameMsMsWindows has one row per group (Bruker schema); if multiple, fuse conservatively.
+        let mut mz_lo = f32::INFINITY;
+        let mut mz_hi = f32::NEG_INFINITY;
+        let mut scan_lo = usize::MAX;
+        let mut scan_hi = 0usize;
+
+        let mut found = false;
+        for w in &self.dia_ms_ms_windows {
+            if w.window_group == window_group {
+                found = true;
+                let lo = (w.isolation_mz - 0.5 * w.isolation_width) as f32;
+                let hi = (w.isolation_mz + 0.5 * w.isolation_width) as f32;
+                mz_lo = mz_lo.min(lo);
+                mz_hi = mz_hi.max(hi);
+                scan_lo = scan_lo.min(w.scan_num_begin as usize);
+                scan_hi = scan_hi.max(w.scan_num_end as usize);
+            }
+        }
+        if !found || !mz_lo.is_finite() || !mz_hi.is_finite() || mz_hi <= mz_lo {
+            return None;
+        }
+        Some(DiaGroupBounds { mz_lo, mz_hi, scan_lo, scan_hi })
+    }
+
+    pub fn frame_ids_for_group(&self, window_group: u32) -> Vec<u32> {
+        let mut fids: Vec<u32> = self.dia_ms_mis_info
+            .iter()
+            .filter(|x| x.window_group == window_group)
+            .map(|x| x.frame_id)
+            .collect();
+        // sort by RT time to be safe
+        fids.sort_unstable_by_key(|fid| {
+            self.meta_data.iter().find(|m| m.id as u32 == *fid)
+                .map(|m| m.time as i64).unwrap_or(0)
+        });
+        fids
     }
 
     pub fn sample_precursor_signal(
@@ -200,6 +247,82 @@ impl TimsDatasetDIA {
         (rt, peaks)
     }
 
+    /// Build m/z × RT for a specific DIA window group (fragments only).
+    /// If `clamp_to_group` is true, use the instrument window m/z for the scale.
+    pub fn get_dense_rt_by_mz_ppm_for_group(
+        &self,
+        window_group: u32,
+        maybe_sigma_frames: Option<f32>,
+        truncate: f32,
+        ppm_per_bin: f32,
+        mz_pad_ppm: f32,
+        clamp_to_group: bool,
+        num_threads: usize,
+    ) -> RtIndex {
+        let frame_ids = self.frame_ids_for_group(window_group);
+
+        let clamp = if clamp_to_group {
+            self.group_bounds(window_group).map(|b| (b.mz_lo, b.mz_hi))
+        } else {
+            None
+        };
+
+        build_dense_rt_by_mz_ppm_for_group(
+            self,
+            frame_ids,
+            ppm_per_bin,
+            mz_pad_ppm,
+            maybe_sigma_frames,
+            truncate,
+            clamp,
+            num_threads,
+        )
+    }
+
+    /// Build + pick RT peaks for a specific DIA window group.
+    pub fn pick_peaks_dense_for_group(
+        &self,
+        window_group: u32,
+        maybe_sigma_frames: Option<f32>,
+        truncate: f32,
+        ppm_per_bin: f32,
+        mz_pad_ppm: f32,
+        clamp_to_group: bool,
+        num_threads: usize,
+        min_prom: f32,
+        min_distance: usize,
+        min_width: usize,
+        pad_left: usize,
+        pad_right: usize,
+    ) -> (RtIndex, Vec<RtPeak1D>) {
+        let rt = self.get_dense_rt_by_mz_ppm_for_group(
+            window_group,
+            maybe_sigma_frames,
+            truncate,
+            ppm_per_bin,
+            mz_pad_ppm,
+            clamp_to_group,
+            num_threads,
+        );
+
+        let data_raw_slice = rt.data_raw.as_deref().unwrap_or(rt.data.as_slice());
+
+        let peaks = pick_peaks_all_rows(
+            rt.data.as_slice(),
+            data_raw_slice,
+            rt.rows,
+            rt.cols,
+            Some(&rt.frame_times),
+            min_prom,
+            min_distance,
+            min_width,
+            pad_left,
+            pad_right,
+            Some(&rt.scale.centers),
+        );
+        (rt, peaks)
+    }
+
     /// Peak picking on an already built RtIndex (e.g., after custom transforms).
     pub fn pick_peaks_on_rtindex(
         &self,
@@ -245,6 +368,41 @@ impl TimsDatasetDIA {
             rt_extra_pad,
             maybe_sigma_scans,
             truncate,
+        )
+    }
+
+    /// Build IM matrix for a DIA group using that group’s RT peaks and frames.
+    /// `rt_index_group` must be the RT index you built for the SAME group.
+    pub fn get_dense_im_by_rtpeaks_ppm_for_group(
+        &self,
+        rt_index_group: &RtIndex,   // from `get_dense_rt_by_mz_ppm_for_group`
+        peaks: Vec<RtPeak1D>,       // those peaks (rows)
+        window_group: u32,
+        num_threads: usize,
+        mz_ppm_window: f32,
+        rt_extra_pad: usize,
+        maybe_sigma_scans: Option<f32>,
+        truncate: f32,
+        clamp_scans_to_group: bool,
+    ) -> ImIndex {
+        // Scan clamp from instrument windows (optional)
+        let scan_clamp = if clamp_scans_to_group {
+            self.group_bounds(window_group).map(|b| (b.scan_lo, b.scan_hi))
+        } else { None };
+
+        let frame_ids = self.frame_ids_for_group(window_group);
+
+        build_dense_im_by_rtpeaks_ppm_for_group(
+            self,
+            peaks,
+            frame_ids,
+            &rt_index_group.scale,   // use the SAME m/z scale to stay consistent
+            num_threads,
+            mz_ppm_window,
+            rt_extra_pad,
+            maybe_sigma_scans,
+            truncate,
+            scan_clamp,
         )
     }
 

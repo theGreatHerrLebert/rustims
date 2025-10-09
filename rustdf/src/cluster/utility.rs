@@ -1381,3 +1381,202 @@ where
     store.push(new_peak);
     true
 }
+
+/// Build a constant-ppm m/z × RT matrix for a specific **set of frames** (e.g. one DIA window group).
+/// - `frame_ids_sorted`: frames in RT order (caller decides the order)
+/// - `clamp_mz_to_group`: if Some(lo,hi), clamp mz scale to this range; else infer from frames
+pub fn build_dense_rt_by_mz_ppm_for_group(
+    data_handle: &TimsDatasetDIA,
+    frame_ids_sorted: Vec<u32>,
+    ppm_per_bin: f32,
+    mz_pad_ppm: f32,
+    maybe_sigma_frames: Option<f32>,
+    truncate: f32,
+    clamp_mz_to_group: Option<(f32, f32)>,
+    num_threads: usize,
+) -> RtIndex {
+    // 1) RT times (in the provided order)
+    let frame_times: Vec<f32> = frame_ids_sorted.iter().map(|fid| {
+        data_handle
+            .meta_data
+            .iter()
+            .find(|m| m.id as u32 == *fid)
+            .map(|m| m.time as f32)
+            .unwrap_or(0.0)
+    }).collect();
+    let num_frames = frame_ids_sorted.len();
+
+    // 2) materialize frames
+    let frames = data_handle
+        .get_slice(frame_ids_sorted.clone(), num_threads)
+        .frames;
+
+    // 3) m/z range: clamp or scan
+    let (mut mz_min, mut mz_max) = if let Some((lo, hi)) = clamp_mz_to_group {
+        assert!(lo.is_finite() && hi.is_finite() && hi > lo, "invalid group m/z clamp");
+        (lo, hi)
+    } else {
+        // NOTE: now calls the local function, not `super::...`
+        scan_mz_range(&frames).expect("No m/z values found for group")
+    };
+
+    if mz_pad_ppm > 0.0 {
+        let f = 1.0 + mz_pad_ppm * 1e-6;
+        mz_min /= f;
+        mz_max *= f;
+    }
+
+    let scale = MzScale::build(mz_min.max(10.0f32), mz_max, ppm_per_bin);
+    let rows = scale.num_bins();
+
+    // 4) fill matrix [rows x num_frames], column-major
+    let mut matrix = vec![0.0f32; rows * num_frames];
+
+    matrix.par_chunks_mut(rows).enumerate().for_each(|(col, col_slice)| {
+        let frame = &frames[col];
+        let mz = &frame.ims_frame.mz;
+        let inten = &frame.ims_frame.intensity;
+
+        // sparse → dense per column
+        let mut accum: FxHashMap<usize, f32> = FxHashMap::default();
+        for (&m, &i) in mz.iter().zip(inten.iter()) {
+            if let Some(row) = scale.index_of(m as f32) {
+                *accum.entry(row).or_insert(0.0) += i as f32;
+            }
+        }
+        for (row, val) in accum {
+            col_slice[row] += val;
+        }
+    });
+
+    // 5) optional RT smoothing; keep raw if applied
+    let mut data_raw: Option<Vec<f32>> = None;
+    if let Some(sigma) = maybe_sigma_frames {
+        data_raw = Some(matrix.clone());
+        smooth_time_gaussian_colmajor(&mut matrix, rows, num_frames, sigma, truncate);
+    }
+
+    RtIndex {
+        scale,
+        frames: frame_ids_sorted,
+        frame_times,
+        data: matrix,
+        rows,
+        cols: num_frames,
+        data_raw,
+    }
+}
+
+/// Like `build_dense_im_by_rtpeaks_ppm`, but limited to a specific set of frames (e.g., a DIA window group)
+/// and a local scan axis derived from `scan_clamp = Some((scan_lo, scan_hi))`.
+pub fn build_dense_im_by_rtpeaks_ppm_for_group(
+    data_handle: &TimsDatasetDIA,
+    peaks: Vec<RtPeak1D>,          // rows
+    frame_ids_sorted: Vec<u32>,    // columns are drawn from these frames (RT order)
+    scale: &MzScale,               // m/z scale from the group’s RT index (use the same!)
+    num_threads: usize,
+    mz_ppm_window: f32,            // ±ppm around each peak’s m/z center
+    rt_extra_pad: usize,           // extra RT columns to include around each peak’s padded RT window
+    maybe_sigma_scans: Option<f32>,
+    truncate: f32,
+    scan_clamp: Option<(usize, usize)>, // e.g. Some((scan_lo, scan_hi)) from DIA group
+) -> ImIndex {
+    let n_rows = peaks.len();
+    if n_rows == 0 {
+        return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
+    }
+
+    // Materialize the group’s frames in the given order.
+    let frames = data_handle.get_slice(frame_ids_sorted.clone(), num_threads).frames;
+
+    // Determine the global scan maxima (to guard) and the local scan window for the group.
+    let global_num_scans: usize = frames.iter()
+        .flat_map(|fr| fr.scan.iter())
+        .copied()
+        .max()
+        .map(|m| m as usize + 1)
+        .unwrap_or(0);
+
+    // Local scan clamp (map physical scan -> local [0..cols-1])
+    let (scan_lo, scan_hi) = scan_clamp.unwrap_or((0, global_num_scans.saturating_sub(1)));
+    let scan_lo = scan_lo.min(global_num_scans.saturating_sub(1));
+    let scan_hi = scan_hi.min(global_num_scans.saturating_sub(1));
+    let cols = if scan_hi >= scan_lo { scan_hi - scan_lo + 1 } else { 0 };
+    if cols == 0 {
+        return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
+    }
+    let scans: Vec<usize> = (0..cols).map(|k| scan_lo + k).collect();
+
+    // Build compact per-frame bin views (same as your current path).
+    // We’ll reuse them but remap scan indices into the local [0..cols-1] range on the fly.
+    let ncols_rt = frames.len();
+    let views: Vec<FrameBinView> = (0..ncols_rt)
+        .into_par_iter()
+        .map(|i| build_frame_bin_view(frames[i].clone(), scale, global_num_scans))
+        .collect();
+
+    if views.is_empty() {
+        return ImIndex { peaks, scans, data: vec![], rows: 0, cols, data_raw: None };
+    }
+
+    // Build per-row IM profiles
+    let do_smooth = maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+    let profiles: Vec<(Vec<f32>, Vec<f32>)> = peaks
+        .par_iter()
+        .map(|p| {
+            if p.mz_row >= scale.num_bins() { return (vec![0.0; cols], vec![0.0; cols]); }
+
+            // RT bounds in column space (over the group frames)
+            let mut lo_rt = p.left_padded.saturating_sub(rt_extra_pad);
+            let mut hi_rt = p.right_padded.saturating_add(rt_extra_pad);
+            if lo_rt >= ncols_rt { lo_rt = ncols_rt.saturating_sub(1); }
+            if hi_rt >= ncols_rt { hi_rt = ncols_rt.saturating_sub(1); }
+            if lo_rt > hi_rt { return (vec![0.0; cols], vec![0.0; cols]); }
+
+            // m/z band (±ppm around the peak’s m/z center)
+            let mz_center = p.mz_center;
+            let tol = mz_center * mz_ppm_window * 1e-6;
+            let (bin_lo, bin_hi) = scale.index_range_for_mz_window(mz_center - tol, mz_center + tol);
+
+            let mut raw = vec![0.0f32; cols];
+            for t in lo_rt..=hi_rt {
+                let v = &views[t];
+                let (start, end) = bin_range(v, bin_lo, bin_hi);
+                for i in start..end {
+                    let s_phys = v.scan_idx[i] as usize;
+                    if s_phys < global_num_scans && s_phys >= scan_lo && s_phys <= scan_hi {
+                        let s_local = s_phys - scan_lo;
+                        raw[s_local] += v.intensity[i];
+                    }
+                }
+            }
+
+            // Optional IM smoothing per row
+            let smoothed = if do_smooth {
+                let mut tmp = raw.clone();
+                smooth_vector_gaussian(&mut tmp, maybe_sigma_scans.unwrap(), truncate);
+                tmp
+            } else {
+                raw.clone()
+            };
+
+            (smoothed, raw)
+        })
+        .collect();
+
+    // Column-major stack
+    let rows = n_rows;
+    let mut data = vec![0.0f32; rows * cols];
+    let mut data_raw = if do_smooth { Some(vec![0.0f32; rows * cols]) } else { None };
+
+    for (r, (sm, raw)) in profiles.into_iter().enumerate() {
+        for s in 0..cols {
+            data[s * rows + r] = sm[s];
+            if let Some(ref mut dr) = data_raw {
+                dr[s * rows + r] = raw[s];
+            }
+        }
+    }
+
+    ImIndex { peaks, scans, data, rows, cols, data_raw }
+}

@@ -418,6 +418,52 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         peaks = [RtPeak1D.from_py_ptr(p) for p in peaks_py]
         return rt_index, peaks
 
+    def get_dense_mz_vs_rt_by_window_group_and_pick(
+            self,
+            window_group: int,
+            maybe_sigma_frames: Optional[float] = None,
+            truncate: float = 3.0,
+            ppm_per_bin: float = 25.0,
+            mz_pad_ppm: float = 50.0,
+            clamp_to_group: bool = True,
+            num_threads: int = 4,
+            min_prom: float = 100.0,
+            min_distance: int = 2,
+            min_width: int = 2,
+            pad_left: int = 1,
+            pad_right: int = 2,
+    ):
+        """
+        Build dense m/z×RT matrix on a constant-ppm grid (optionally smoothed) for a specific window group and pick RT peaks.
+
+        Returns:
+            rt_index (RtIndex): wrapper with centers, frame_ids/times, data(, data_raw)
+            peaks (List[RtPeak1D])
+        """
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        # Rust now returns (PyRtIndex, List[PyRtPeak1D])
+        py_rt, peaks_py = self.__dataset.build_dense_rt_by_mz_and_window_group_and_pick(
+            window_group,
+            maybe_sigma_frames,
+            truncate,  # f32
+            ppm_per_bin,  # f32
+            mz_pad_ppm,  # f32
+            clamp_to_group,
+            num_threads,  # usize
+            min_prom,  # f32
+            min_distance,  # usize
+            min_width,  # usize
+            pad_left,  # usize
+            pad_right,  # usize
+        )
+
+        rt_index = RtIndex.from_py_ptr(py_rt)
+        peaks = [RtPeak1D.from_py_ptr(p) for p in peaks_py]
+        return rt_index, peaks
+
     def build_dense_im_by_rtpeaks_ppm(
         self,
         rt_index: "RtIndex",

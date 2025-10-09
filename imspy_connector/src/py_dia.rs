@@ -268,6 +268,31 @@ impl PyTimsDatasetDIA {
         let peaks_py = peaks_to_py(py, peaks_rs)?;
         Ok((py_rt, peaks_py))
     }
+    #[pyo3(signature = (window_group,maybe_sigma_frames=None,truncate=3.0,ppm_per_bin=25.0,mz_pad_ppm=50.0,clamp_to_group=true,num_threads=4,min_prom=100.0,min_distance=2,min_width=2,pad_left=1,pad_right=2))]
+    pub fn build_dense_rt_by_mz_and_window_group_and_pick(
+        &self,
+        window_group: u32,
+        maybe_sigma_frames: Option<f32>,
+        truncate: f32,
+        ppm_per_bin: f32,
+        mz_pad_ppm: f32,
+        clamp_to_group: bool,
+        num_threads: usize,
+        min_prom: f32,
+        min_distance: usize,
+        min_width: usize,
+        pad_left: usize,
+        pad_right: usize,
+        py: Python<'_>,
+    ) -> PyResult<(PyRtIndex, Vec<Py<PyRtPeak1D>>)> {
+        let (rt, peaks_rs) = self.inner.pick_peaks_dense_for_group(
+            window_group, maybe_sigma_frames, truncate, ppm_per_bin, mz_pad_ppm, clamp_to_group,
+            num_threads, min_prom, min_distance, min_width, pad_left, pad_right,
+        );
+        let py_rt = PyRtIndex { inner: Arc::new(rt) };
+        let peaks_py = peaks_to_py(py, peaks_rs)?;
+        Ok((py_rt, peaks_py))
+    }
 
     // Convenience: build IM index and immediately pick IM peaks per row (simple non-adaptive)
     #[pyo3(signature = (rt_index,peaks,num_threads=4,mz_ppm_window=10.0,rt_extra_pad=0,maybe_sigma_scans=None,truncate=3.0,min_prom=50.0,min_distance_scans=2,min_width_scans=2,use_mobility=false))]
