@@ -251,22 +251,30 @@ impl PyClusterResult {
     #[getter] fn frames_axis(&self) -> Option<Vec<u32>> { self.inner.frames_axis.clone() }
     #[getter] fn scans_axis(&self) -> Option<Vec<usize>> { self.inner.scans_axis.clone() }
     #[getter] fn mz_axis(&self) -> Option<Vec<f32>> { self.inner.mz_axis.clone() }
-
-    // NEW: expose raw points as a nested class, or None
-    #[getter]
-    fn raw_points(&self) -> Option<PyRawPoints> {
+    #[getter] fn raw_points(&self) -> Option<PyRawPoints> {
         self.inner.raw_points.as_ref().map(|rp| PyRawPoints { inner: rp.clone() })
+    }
+    #[getter] fn ms_level(&self) -> u8 {
+        self.inner.ms_level
+    }
+
+    #[getter] fn window_group(&self) -> Option<u32> {
+        self.inner.window_group
     }
 
     fn __repr__(&self) -> String {
         let n_pts = self.inner.raw_points.as_ref().map(|p| p.mz.len()).unwrap_or(0);
         format!(
-            "ClusterResult(id={}, rt=[{},{}], im=[{},{}], mz=[{:.5},{:.5}], points={})",
+            "ClusterResult#{}(rt=[{},{}], im=[{},{}], mz=[{:.5},{:.5}] Da, rt_peak_id={}, im_peak_id={}, mz_hint={:.5}, points={}, ms_level={})",
             self.inner.id,
             self.inner.rt_window.0, self.inner.rt_window.1,
             self.inner.im_window.0, self.inner.im_window.1,
             self.inner.mz_window_da.0, self.inner.mz_window_da.1,
-            n_pts
+            self.inner.rt_peak_id,
+            self.inner.im_peak_id,
+            self.inner.mz_center_hint,
+            n_pts,
+            self.inner.ms_level
         )
     }
 }
