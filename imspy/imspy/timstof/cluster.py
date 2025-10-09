@@ -182,6 +182,8 @@ class EvalOptions(RustWrapperObject):
         refine_k_sigma: float = 3.0,
         im_k_sigma: float | None = None,
         im_min_width: int = 1,
+        max_rt_span_frames: int = 50,
+        max_im_span_scans: int = 100,
     ):
         if attach is None:
             attach = AttachOptions()
@@ -191,6 +193,8 @@ class EvalOptions(RustWrapperObject):
             float(refine_k_sigma),
             None if im_k_sigma is None else float(im_k_sigma),
             int(im_min_width),
+            int(max_rt_span_frames),
+            int(max_im_span_scans),
         )
 
     @classmethod

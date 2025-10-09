@@ -307,12 +307,18 @@ fn moment_fit_1d(y: &[f32], x: Option<&[f32]>) -> ClusterFit1D {
 pub struct EvalOptions {
     pub attach: AttachOptions,
     pub refine_mz_once: bool,
-    pub refine_k_sigma: f32,    // still used for m/z refinement only
-    /// None  -> keep requested/padded IM window from ClusterSpec
-    /// Some(k) -> use envelope of requested window and [μ - kσ, μ + kσ] from first-pass IM fit
+    pub refine_k_sigma: f32,
+    /// If Some(k): envelope(requested, μ±kσ) for IM
     pub im_k_sigma: Option<f32>,
-    /// NEW: enforce a minimum width in scans for the final IM window (default 1)
+    /// Enforce a minimum width in scans for the final IM window (default 1)
     pub im_min_width: usize,
+
+    /// NEW: hard caps (inclusive length) on requested windows
+    /// If None, no cap applied.
+    pub max_rt_span_frames: Option<usize>,  // e.g., Some(200)
+    pub max_im_span_scans: Option<usize>,   // e.g., Some(100)
+    /// How to center caps before the first pass (we don't know μ yet).
+    pub cap_anchor: CapAnchor,              // see enum below
 }
 
 impl Default for EvalOptions {
@@ -329,8 +335,19 @@ impl Default for EvalOptions {
             refine_k_sigma: 3.0,
             im_k_sigma: None,
             im_min_width: 1,
+
+            max_rt_span_frames: None,
+            max_im_span_scans: None,
+            cap_anchor: CapAnchor::RequestedMid,
         }
     }
+}
+
+/// Where to center the pre-fit cap when we don’t have μ yet.
+#[derive(Clone, Copy, Debug)]
+pub enum CapAnchor {
+    /// Center cap on (l+r)/2 (robust and cheap).
+    RequestedMid,
 }
 
 /// Product of 1D areas as a separable-volume proxy.
@@ -469,6 +486,46 @@ fn final_im_bounds_from_fit(
     (l, r)
 }
 
+#[inline]
+fn cap_window_symmetric(
+    domain: (usize, usize),   // e.g., (0, cols-1)
+    mut l: usize,
+    mut r: usize,
+    cap_len_inclusive: usize, // inclusive length (e.g., 200 means ≤200 frames)
+    anchor: usize,            // center around this index as best as possible
+) -> (usize, usize) {
+    if l > r { std::mem::swap(&mut l, &mut r); }
+    let want = cap_len_inclusive.max(1);
+    let len  = r + 1 - l;
+    if len <= want { return (l, r); }
+
+    // desired half widths
+    let half_left  = want / 2;
+    let half_right = want - half_left;
+
+    // place around anchor, but stay inside [l,r] and domain
+    let dom_l = domain.0;
+    let dom_r = domain.1;
+
+    let mut new_l = anchor.saturating_sub(half_left);
+    let mut new_r = anchor.saturating_add(half_right - 1);
+
+    // clamp to initial request
+    new_l = new_l.clamp(l, r);
+    new_r = new_r.clamp(l, r);
+
+    // ensure inclusive length and clamp to domain
+    let mut need = want.saturating_sub(new_r + 1 - new_l);
+    while need > 0 && new_l > l { new_l -= 1; need -= 1; }
+    while need > 0 && new_r < r { new_r += 1; need -= 1; }
+
+    // still ensure domain
+    new_l = new_l.clamp(dom_l, dom_r);
+    new_r = new_r.clamp(dom_l, dom_r);
+    if new_r < new_l { new_r = new_l; }
+    (new_l, new_r)
+}
+
 /// Evaluate clusters (RT×IM with m/z marginal) with a single frame preload.
 /// Returns ClusterResult objects; optional raw points attached, no dense 2D patch.
 pub fn evaluate_clusters_3d(
@@ -518,9 +575,27 @@ pub fn evaluate_clusters_3d(
         let r_glob = spec.rt_right.min(cols - 1);
         if l_glob > r_glob { return empty_result(cid, spec, (0.0, 0.0)); }
 
-        let l_loc = match glob2loc[l_glob] { Some(x) => x, None => return empty_result(cid, spec, (0.0, 0.0)) };
-        let r_loc = match glob2loc[r_glob] { Some(x) => x, None => return empty_result(cid, spec, (0.0, 0.0)) };
-        if l_loc > r_loc || r_loc >= frames_total_local { return empty_result(cid, spec, (0.0, 0.0)); }
+        let l_loc0 = match glob2loc[l_glob] { Some(x) => x, None => return empty_result(cid, spec, (0.0, 0.0)) };
+        let r_loc0 = match glob2loc[r_glob] { Some(x) => x, None => return empty_result(cid, spec, (0.0, 0.0)) };
+        if l_loc0 > r_loc0 || r_loc0 >= frames_total_local {
+            return empty_result(cid, spec, (0.0, 0.0));
+        }
+
+        // (optional) cap RT span
+        let (l_loc, r_loc) = if let Some(max_rt) = opts.max_rt_span_frames {
+            let anchor = match opts.cap_anchor {
+                CapAnchor::RequestedMid => (l_loc0 + r_loc0) / 2,
+            };
+            cap_window_symmetric(
+                (0, frames_total_local.saturating_sub(1)),
+                l_loc0, r_loc0,
+                max_rt,
+                anchor,
+            )
+        } else {
+            (l_loc0, r_loc0)
+        };
+
         let frames = r_loc - l_loc + 1;
 
         // --- IM bounds with padding (requested window) ---
@@ -530,8 +605,26 @@ pub fn evaluate_clusters_3d(
                 if mx > scan_max_abs as i32 { scan_max_abs = mx as usize; }
             }
         }
-        let im_l_req = spec.im_left.saturating_sub(spec.extra_im_pad).min(scan_max_abs);
-        let im_r_req = spec.im_right.saturating_add(spec.extra_im_pad).min(scan_max_abs);
+
+        let im_l_req0 = spec.im_left.saturating_sub(spec.extra_im_pad).min(scan_max_abs);
+        let im_r_req0 = spec.im_right.saturating_add(spec.extra_im_pad).min(scan_max_abs);
+
+        let (im_l_req, im_r_req) = if let Some(max_im) = opts.max_im_span_scans {
+            // center on requested midpoint before we know μ
+            let anchor = (im_l_req0 + im_r_req0) / 2;
+            cap_window_symmetric((0, scan_max_abs), im_l_req0, im_r_req0, max_im, anchor)
+        } else {
+            (im_l_req0, im_r_req0)
+        };
+
+        if im_l_req > im_r_req || frames == 0 {
+            return empty_result_with_axes(
+                cid, spec, (0.0, 0.0),
+                used_frame_ids[l_loc..=r_loc].to_vec(),
+                None, None, &opts
+            );
+        }
+
         if im_l_req > im_r_req || frames == 0 {
             return empty_result_with_axes(
                 cid, spec, (0.0, 0.0),
@@ -696,6 +789,19 @@ pub fn evaluate_clusters_3d(
             opts.im_k_sigma,
             opts.im_min_width,
         );
+
+        let (im_l, im_r) = if let Some(max_im) = opts.max_im_span_scans {
+            // Now we *do* have an estimate of μ; center the cap near μ if finite.
+            let anchor = if im_fit0.mu.is_finite() {
+                im_fit0.mu.clamp(0.0, scan_max_abs as f32) as usize
+            } else {
+                (im_l + im_r) / 2
+            };
+            cap_window_symmetric((0, scan_max_abs), im_l, im_r, max_im, anchor)
+        } else {
+            (im_l, im_r)
+        };
+
         let scans_final = im_r - im_l + 1;
 
         // --- Re-accumulate RT/IM marginals inside the FINAL IM window (single path) ---

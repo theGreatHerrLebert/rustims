@@ -1,5 +1,5 @@
 use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
-use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions};
+use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 use rayon::prelude::*;
@@ -145,7 +145,9 @@ impl PyEvalOptions {
         refine_mz_once=false,
         refine_k_sigma=3.0,
         im_k_sigma=None,
-        im_min_width=1
+        im_min_width=1,
+        max_rt_span_frames=100,
+        max_im_span_scans=100,
     ))]
     fn new(
         attach: PyAttachOptions,
@@ -153,6 +155,8 @@ impl PyEvalOptions {
         refine_k_sigma: f32,
         im_k_sigma: Option<f32>,
         im_min_width: usize,
+        max_rt_span_frames: usize,
+        max_im_span_scans: usize,
     ) -> Self {
         Self { inner: EvalOptions {
             attach: attach.inner,
@@ -160,6 +164,9 @@ impl PyEvalOptions {
             refine_k_sigma,
             im_k_sigma,
             im_min_width,
+            max_rt_span_frames: Some(max_rt_span_frames),
+            max_im_span_scans: Some( max_im_span_scans),
+            cap_anchor: CapAnchor::RequestedMid,
         }}
     }
 
