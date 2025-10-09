@@ -421,7 +421,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def get_dense_mz_vs_rt_by_window_group_and_pick(
             self,
             window_group: int,
-            maybe_sigma_frames: Optional[float] = None,
+            sigma_frames: Optional[float] = None,
             truncate: float = 3.0,
             ppm_per_bin: float = 25.0,
             mz_pad_ppm: float = 50.0,
@@ -447,7 +447,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         # Rust now returns (PyRtIndex, List[PyRtPeak1D])
         py_rt, peaks_py = self.__dataset.build_dense_rt_by_mz_and_window_group_and_pick(
             window_group,
-            maybe_sigma_frames,
+            sigma_frames,
             truncate,  # f32
             ppm_per_bin,  # f32
             mz_pad_ppm,  # f32
