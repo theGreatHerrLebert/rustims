@@ -353,6 +353,78 @@ impl PyTimsDatasetDIA {
         Ok((im_py, peaks_py))
     }
 
+    #[pyo3(signature = (
+    window_group,
+    rt_index,
+    peaks,
+    num_threads=4,
+    mz_ppm_window=10.0,
+    rt_extra_pad=0,
+    maybe_sigma_scans=None,
+    truncate=3.0,
+    min_prom=50.0,
+    min_distance_scans=2,
+    min_width_scans=2,
+    clamp_scans_to_group=true,
+    use_mobility=false
+    ))]
+    pub fn build_dense_im_by_rtpeaks_ppm_for_group_and_pick(
+        &self,
+        window_group: u32,
+        rt_index: PyRtIndex,
+        peaks: Vec<Py<PyRtPeak1D>>,
+        num_threads: usize,
+        mz_ppm_window: f32,
+        rt_extra_pad: usize,
+        maybe_sigma_scans: Option<f32>,
+        truncate: f32,
+        min_prom: f32,
+        min_distance_scans: usize,
+        min_width_scans: usize,
+        clamp_scans_to_group: bool,
+        use_mobility: bool,
+        py: Python<'_>,
+    ) -> PyResult<(PyImIndex, Vec<Vec<Py<PyImPeak1D>>>)> {
+        // 1) unwrap peaks into Rust
+        let peaks_rs: Vec<RtPeak1D> = peaks.into_iter().map(|p| p.borrow(py).inner.clone()).collect();
+
+        // 2) build group IM index
+        let im = self.inner.get_dense_im_by_rtpeaks_ppm_for_group(
+            &rt_index.inner,
+            peaks_rs,
+            window_group,
+            num_threads,
+            mz_ppm_window,
+            rt_extra_pad,
+            maybe_sigma_scans,
+            truncate,
+            clamp_scans_to_group,
+        );
+
+        // 3) IM peak picking (same as MS1 method)
+        let mob_fn: MobilityFn = if use_mobility {
+            // TODO: replace with a real scan->1/K0 converter if desired
+            Some(|scan| scan as f32)
+        } else {
+            None
+        };
+
+        let rows_rs = pick_im_peaks_on_imindex(
+            im.data.as_slice(),
+            im.data_raw.as_deref(),
+            im.rows,
+            im.cols,
+            min_prom,
+            min_distance_scans,
+            min_width_scans,
+            mob_fn,
+        );
+
+        let im_py = PyImIndex { inner: Arc::new(im) };
+        let rows_py = impeaks_to_py_nested(py, rows_rs)?;
+        Ok((im_py, rows_py))
+    }
+
     /// Evaluate 3D clusters (RT × IM with m/z marginal) for the given specs.
     ///
     /// Python signature:

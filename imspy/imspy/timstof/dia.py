@@ -526,6 +526,46 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         im_peaks = [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
         return im_index, im_peaks
 
+    def build_dense_im_by_rtpeaks_ppm_for_group_and_pick(
+        self,
+        window_group: int,
+        rt_index: "RtIndex",
+        peaks: List["RtPeak1D"],
+        *,
+        num_threads: int = 4,
+        mz_ppm_window: float = 10.0,
+        rt_extra_pad: int = 0,
+        im_sigma_scans: Optional[float] = None,
+        truncate: float = 3.0,
+        min_prom: float = 50.0,
+        min_distance_scans: int = 2,
+        min_width_scans: int = 2,
+        clamp_scans_to_group: bool = True,
+        use_mobility: bool = False,
+    ):
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_im, rows_py = self.__dataset.build_dense_im_by_rtpeaks_ppm_for_group_and_pick(
+            window_group,
+            rt_index.get_py_ptr(),
+            [p.get_py_ptr() for p in peaks],
+            num_threads,
+            mz_ppm_window,
+            rt_extra_pad,
+            im_sigma_scans,
+            truncate,
+            min_prom,
+            min_distance_scans,
+            min_width_scans,
+            clamp_scans_to_group,
+            use_mobility,
+        )
+        im_index = ImIndex.from_py_ptr(py_im)
+        im_peaks = [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows_py]
+        return im_index, im_peaks
+
     def evaluate_clusters_3d(
             self,
             rt_index: "RtIndex",
