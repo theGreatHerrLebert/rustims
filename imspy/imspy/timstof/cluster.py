@@ -390,3 +390,224 @@ def make_cluster_specs_from_peaks(
         mz_ppm_window, extra_rt_pad, extra_im_pad, mz_hist_bins
     )
     return [ClusterSpec.from_py_ptr(p) for p in out_py]
+
+# --- I/O helpers --------------------------------------------------------------
+
+def save_clusters(
+    path: str,
+    clusters: Sequence["ClusterResult"],
+    *,
+    fmt: str | None = None,
+    compress: bool = True,
+    strip_points: bool = True,
+    strip_axes: bool = False,
+) -> None:
+    """
+    Save a list of ClusterResult to disk.
+
+    Parameters
+    ----------
+    path : str
+        Output path. If `fmt` is None, we infer from extension:
+        - .json  -> JSON (pretty)
+        - .bin   -> bincode (no compression)
+        - .zst / .bin.zst -> bincode + zstd
+    fmt : {"json","bin"} | None
+        Explicit format. If None, inferred from `path`.
+    compress : bool
+        Only relevant for bincode; ignored for JSON. If True, use zstd.
+    strip_points : bool
+        Drop raw_points before saving (recommended; files get much smaller).
+    strip_axes : bool
+        Drop frames_axis/scans_axis/mz_axis before saving.
+    """
+    # Pull the underlying PyO3 objects
+    py_list = [c.get_py_ptr() for c in clusters]
+
+    # Infer format unless given
+    f = (fmt or "").lower()
+    ext = path.lower()
+    if not f:
+        if ext.endswith(".json"):
+            f = "json"
+        elif ext.endswith(".zst") or ext.endswith(".bin.zst"):
+            f = "bin"
+            compress = True
+        elif ext.endswith(".bin"):
+            f = "bin"
+        else:
+            # default to compressed bin if unknown
+            f = "bin"
+            if not ext.endswith(".bin") and not ext.endswith(".zst"):
+                path = path + ".bin.zst"
+                compress = True
+
+    if f == "json":
+        ims.save_clusters_json(path, py_list, strip_points, strip_axes, False)
+    elif f == "bin":
+        ims.save_clusters_bin(path, py_list, compress, strip_points, strip_axes)
+    else:
+        raise ValueError(f"Unknown fmt={fmt!r}. Use 'json' or 'bin'.")
+
+
+def load_clusters(path: str) -> list["ClusterResult"]:
+    """
+    Load clusters from disk. Format inferred from extension.
+    Returns a list of ClusterResult wrappers.
+    """
+    ext = path.lower()
+    if ext.endswith(".json"):
+        out_py = ims.load_clusters_json(path)
+    elif ext.endswith(".zst") or ext.endswith(".bin.zst") or ext.endswith(".bin"):
+        out_py = ims.load_clusters_bin(path)
+    else:
+        # Try bincode+zstd first, then JSON path if user omitted extension
+        try:
+            out_py = ims.load_clusters_bin(path)
+        except Exception:
+            out_py = ims.load_clusters_json(path)
+
+    return [ClusterResult.from_py_ptr(p) for p in out_py]
+
+
+def clusters_to_dataframe(results, rt_index=None):
+    """
+    Convert a list of ClusterResult into a tidy DataFrame.
+
+    If `rt_index` is provided (your wrapped RtIndex), we compute an
+    approximate `rt_time_mu` by mapping the local-μ frame within each
+    cluster to the global frame_time via `frame_ids_used`.
+
+    Columns (selection):
+      - windows: rt_left/right, im_left/right, mz_min/max
+      - rt_* / im_* / mz_*: mu, sigma, height, baseline, area, n
+      - intensities: raw_sum, fit_volume (with log1p_* convenience columns)
+      - mz_center_hint, mz_ppm_error
+      - axes/meta: frames, scans, has_frames_axis, has_scans_axis, has_mz_axis
+      - raw points: has_points, n_points
+      - (optional) rt_time_mu
+    """
+    import numpy as np
+    import pandas as pd
+
+    rows = []
+
+    # Optional: frame_id -> frame_time lookup from RtIndex
+    frame_time_lookup = None
+    if rt_index is not None:
+        fid = np.asarray(rt_index.frame_ids, dtype=np.uint32)
+        fti = np.asarray(rt_index.frame_times, dtype=np.float32)
+        frame_time_lookup = {int(fid[i]): float(fti[i]) for i in range(len(fid))}
+
+    for cid, cr in enumerate(results):
+        # windows
+        rt_left, rt_right = cr.rt_window
+        im_left, im_right = cr.im_window
+        mz_min, mz_max = cr.mz_window_da
+
+        # fits
+        rt = cr.rt_fit
+        im = cr.im_fit
+        mz = cr.mz_fit
+
+        # axes presence / sizes
+        fa = cr.frames_axis
+        sa = cr.scans_axis
+        ma = cr.mz_axis
+
+        has_frames_axis = fa is not None
+        has_scans_axis = sa is not None
+        has_mz_axis = ma is not None
+
+        # robust frame/scan counts:
+        # - prefer attached axes if present, else fall back to window length
+        frames = int(len(cr.frame_ids_used))  # always present and aligned to local frames
+        scans = int(len(sa)) if has_scans_axis else int(max(im_right - im_left + 1, 0))
+
+        # raw points summary
+        rp = cr.raw_points
+        has_points = rp is not None
+        n_points = int(len(rp)) if has_points else 0
+
+        # ppm error against hint (guard divide)
+        mz_center_hint = float(cr.mz_center_hint)
+        if np.isfinite(mz_center_hint) and mz_center_hint > 0.0:
+            mz_ppm_error = (float(mz.mu) - mz_center_hint) / mz_center_hint * 1e6
+        else:
+            mz_ppm_error = np.nan
+
+        # optional absolute RT time at μ (use frame_ids_used to map local μ)
+        rt_time_mu = np.nan
+        if frame_time_lookup is not None and frames > 0 and np.isfinite(rt.mu):
+            mu_local = int(np.clip(round(rt.mu), 0, max(frames - 1, 0)))
+            frame_ids = np.asarray(cr.frame_ids_used, dtype=np.uint32)
+            if 0 <= mu_local < len(frame_ids):
+                fid_mu = int(frame_ids[mu_local])
+                rt_time_mu = frame_time_lookup.get(fid_mu, np.nan)
+
+        rows.append({
+            # IDs / provenance
+            "cluster_id": cid,
+            "rt_peak_id": cr.rt_peak_id,
+            "im_peak_id": cr.im_peak_id,
+
+            # windows
+            "rt_left": rt_left, "rt_right": rt_right,
+            "im_left": im_left, "im_right": im_right,
+            "mz_min": mz_min, "mz_max": mz_max,
+
+            # rt fit (frames)
+            "rt_mu_frame": float(rt.mu),
+            "rt_sigma_frames": float(rt.sigma),
+            "rt_height": float(rt.height),
+            "rt_baseline": float(rt.baseline),
+            "rt_area": float(rt.area),
+            "rt_n": int(rt.n),
+
+            # im fit (scans)
+            "im_mu_scan": float(im.mu),
+            "im_sigma_scans": float(im.sigma),
+            "im_height": float(im.height),
+            "im_baseline": float(im.baseline),
+            "im_area": float(im.area),
+            "im_n": int(im.n),
+
+            # mz fit (Da)
+            "mz_mu_da": float(mz.mu),
+            "mz_sigma_da": float(mz.sigma),
+            "mz_height": float(mz.height),
+            "mz_baseline": float(mz.baseline),
+            "mz_area": float(mz.area),
+            "mz_n": int(mz.n),
+
+            # intensity summaries
+            "raw_sum": float(cr.raw_sum),
+            "fit_volume": float(cr.fit_volume),
+
+            # hints / deltas
+            "mz_center_hint": mz_center_hint,
+            "mz_ppm_error": float(mz_ppm_error),
+
+            # axes/meta
+            "frames": frames,
+            "scans": scans,
+            "has_frames_axis": bool(has_frames_axis),
+            "has_scans_axis": bool(has_scans_axis),
+            "has_mz_axis": bool(has_mz_axis),
+
+            # raw points
+            "has_points": bool(has_points),
+            "n_points": n_points,
+
+            # optional absolute RT time
+            "rt_time_mu": float(rt_time_mu),
+        })
+
+    df = pd.DataFrame(rows)
+
+    # handy derived logs for plotting
+    for col in ("raw_sum", "fit_volume", "rt_area", "im_area", "mz_area"):
+        if col in df.columns:
+            df[f"log1p_{col}"] = np.log1p(df[col].clip(lower=0))
+
+    return df

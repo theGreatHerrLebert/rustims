@@ -3,6 +3,7 @@ use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, 
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 use rayon::prelude::*;
+use rustdf::cluster::io as cio;
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
@@ -327,6 +328,64 @@ pub fn make_cluster_specs_from_peaks(
     Ok(specs_py)
 }
 
+#[pyfunction]
+#[pyo3(signature = (path, clusters, strip_points=false, strip_axes=false, compressed=false))]
+#[allow(unused_variables)]
+fn save_clusters_json(
+    path: &str,
+    clusters: Vec<Py<PyClusterResult>>,
+    strip_points: bool,
+    strip_axes: bool,
+    compressed: bool,   // kept for parity; ignored for JSON
+) -> PyResult<()> {
+    let mut rust_clusters: Vec<ClusterResult> = clusters
+        .into_iter()
+        .map(|c| Python::with_gil(|py| c.borrow(py).inner.clone()))
+        .collect();
+    if strip_points || strip_axes {
+        rust_clusters = rustdf::cluster::io::strip_heavy(rust_clusters, !strip_points, !strip_axes);
+    }
+    cio::save_json(path, &rust_clusters)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+fn load_clusters_json(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyClusterResult>>> {
+    let clusters = cio::load_json(path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+    clusters.into_iter()
+        .map(|c| Py::new(py, PyClusterResult { inner: c }))
+        .collect()
+}
+#[pyfunction]
+#[pyo3(signature = (path, clusters, compress=true, strip_points=false, strip_axes=false))]
+fn save_clusters_bin(
+    path: &str,
+    clusters: Vec<Py<PyClusterResult>>,
+    compress: bool,
+    strip_points: bool,
+    strip_axes: bool,
+) -> PyResult<()> {
+    let mut rust_clusters: Vec<ClusterResult> = clusters
+        .into_iter()
+        .map(|c| Python::with_gil(|py| c.borrow(py).inner.clone()))
+        .collect();
+    if strip_points || strip_axes {
+        rust_clusters = rustdf::cluster::io::strip_heavy(rust_clusters, !strip_points, !strip_axes);
+    }
+    cio::save_bincode(path, &rust_clusters, compress)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+fn load_clusters_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyClusterResult>>> {
+    let clusters = cio::load_bincode(path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+    clusters.into_iter()
+        .map(|c| Py::new(py, PyClusterResult { inner: c }))
+        .collect()
+}
+
 #[pymodule]
 pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterSpec>()?;
@@ -336,5 +395,9 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterResult>()?;
     m.add_class::<PyRawPoints>()?;
     m.add_function(wrap_pyfunction!(make_cluster_specs_from_peaks, m)?)?;
+    m.add_function(wrap_pyfunction!(save_clusters_json, m)?)?;
+    m.add_function(wrap_pyfunction!(load_clusters_json, m)?)?;
+    m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     Ok(())
 }

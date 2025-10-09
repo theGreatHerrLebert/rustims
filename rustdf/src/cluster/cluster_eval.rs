@@ -4,8 +4,10 @@ use rayon::iter::ParallelIterator;
 use crate::cluster::utility::RtIndex;
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
+// cluster_eval.rs (or wherever these live)
+use serde::{Serialize, Deserialize};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RawPoints {
     pub mz: Vec<f32>,
     pub rt: Vec<f32>,       // frame time per point
@@ -48,7 +50,7 @@ impl Default for ClusterSpec {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ClusterFit1D {
     pub mu: f32,       // center (index for RT/IM; Da for m/z)
     pub sigma: f32,    // stddev (frames/scans/Da)
@@ -70,7 +72,7 @@ pub struct AttachOptions {
     pub max_points: Option<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterResult {
     pub id: usize,
     // windows (indices, inclusive)
