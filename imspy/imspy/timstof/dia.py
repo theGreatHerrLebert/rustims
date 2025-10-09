@@ -430,8 +430,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             min_prom: float = 100.0,
             min_distance: int = 2,
             min_width: int = 2,
-            pad_left: int = 1,
-            pad_right: int = 2,
+            left_pad: int = 0,
+            right_pad: int = 0,
     ):
         """
         Build dense m/z×RT matrix on a constant-ppm grid (optionally smoothed) for a specific window group and pick RT peaks.
@@ -456,8 +456,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             min_prom,  # f32
             min_distance,  # usize
             min_width,  # usize
-            pad_left,  # usize
-            pad_right,  # usize
+            left_pad,  # usize
+            right_pad,  # usize
         )
 
         rt_index = RtIndex.from_py_ptr(py_rt)
