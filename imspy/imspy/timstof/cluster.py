@@ -184,6 +184,8 @@ class EvalOptions(RustWrapperObject):
         im_min_width: int = 1,
         max_rt_span_frames: int = 50,
         max_im_span_scans: int = 100,
+        ms_level: int = 0,
+        window_group_hint: None | int = None,
     ):
         if attach is None:
             attach = AttachOptions()
@@ -195,6 +197,8 @@ class EvalOptions(RustWrapperObject):
             int(im_min_width),
             int(max_rt_span_frames),
             int(max_im_span_scans),
+            int(ms_level),
+            None if window_group_hint is None else int(window_group_hint),
         )
 
     @classmethod
@@ -222,11 +226,31 @@ class EvalOptions(RustWrapperObject):
     def im_min_width(self) -> int:
         return self.__py_ptr.im_min_width
 
+    @property
+    def max_rt_span_frames(self) -> int:
+        return self.__py_ptr.max_rt_span_frames
+
+    @property
+    def max_im_span_scans(self) -> int:
+        return self.__py_ptr.max_im_span_scans
+
+    @property
+    def ms_level(self) -> int:
+        return self.__py_ptr.ms_level
+
+    @property
+    def window_group_hint(self) -> Optional[int]:
+        return self.__py_ptr.window_group_hint
+
     def __repr__(self) -> str:
         return (
             f"EvalOptions(refine_mz_once={self.refine_mz_once}, "
             f"k={self.refine_k_sigma}, im_k_sigma={self.im_k_sigma}, "
-            f"im_min_width={self.im_min_width})"
+            f"im_min_width={self.im_min_width}, "
+            f"max_rt_span_frames={self.max_rt_span_frames}, "
+            f"max_im_span_scans={self.max_im_span_scans}, "
+            f"ms_level={self.ms_level}, "f"window_group_hint={self.window_group_hint}, "
+            f"attach={AttachOptions.from_py_ptr(self.__py_ptr.attach)})"
         )
 
 

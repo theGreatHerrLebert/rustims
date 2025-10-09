@@ -149,6 +149,8 @@ impl PyEvalOptions {
         im_min_width=1,
         max_rt_span_frames=100,
         max_im_span_scans=100,
+        ms_level=0,
+        window_group_hint=None
     ))]
     fn new(
         attach: PyAttachOptions,
@@ -158,6 +160,8 @@ impl PyEvalOptions {
         im_min_width: usize,
         max_rt_span_frames: usize,
         max_im_span_scans: usize,
+        ms_level: u8,
+        window_group_hint: Option<u32>,
     ) -> Self {
         Self { inner: EvalOptions {
             attach: attach.inner,
@@ -168,6 +172,8 @@ impl PyEvalOptions {
             max_rt_span_frames: Some(max_rt_span_frames),
             max_im_span_scans: Some( max_im_span_scans),
             cap_anchor: CapAnchor::RequestedMid,
+            ms_level,
+            window_group_hint,
         }}
     }
 
@@ -175,6 +181,21 @@ impl PyEvalOptions {
     #[getter] fn refine_k_sigma(&self) -> f32 { self.inner.refine_k_sigma }
     #[getter] fn im_k_sigma(&self) -> Option<f32> { self.inner.im_k_sigma }
     #[getter] fn im_min_width(&self) -> usize { self.inner.im_min_width }
+    #[getter] fn max_rt_span_frames(&self) -> Option<usize> { self.inner.max_rt_span_frames }
+    #[getter] fn max_im_span_scans(&self) -> Option<usize> {
+        self.inner.max_im_span_scans
+    }
+
+    #[getter] fn ms_level(&self) -> u8 { self.inner.ms_level }
+    #[getter] fn window_group_hint(&self) -> Option<u32> { self.inner.window_group_hint }
+    #[getter] fn cap_anchor(&self) -> String {
+        match self.inner.cap_anchor {
+            CapAnchor::RequestedMid => "RequestedMid".to_string(),
+        }
+    }
+    #[getter] fn attach(&self) -> PyAttachOptions {
+        PyAttachOptions { inner: self.inner.attach.clone() }
+    }
 
     fn __repr__(&self) -> String {
         format!(

@@ -102,6 +102,8 @@ pub struct ClusterResult {
 
     // raw point payload (optional)
     pub raw_points: Option<RawPoints>,
+    pub ms_level: u8,
+    pub window_group: Option<u32>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -321,6 +323,8 @@ pub struct EvalOptions {
     pub max_im_span_scans: Option<usize>,   // e.g., Some(100)
     /// How to center caps before the first pass (we don't know μ yet).
     pub cap_anchor: CapAnchor,              // see enum below
+    pub ms_level: u8,          // if Some, stamp onto results
+    pub window_group_hint: Option<u32>,     // if Some, stamp onto results
 }
 
 impl Default for EvalOptions {
@@ -341,6 +345,8 @@ impl Default for EvalOptions {
             max_rt_span_frames: None,
             max_im_span_scans: None,
             cap_anchor: CapAnchor::RequestedMid,
+            ms_level: 0,
+            window_group_hint: None,
         }
     }
 }
@@ -890,6 +896,8 @@ pub fn evaluate_clusters_3d(
             scans_axis:  if opts.attach.attach_scans  { Some(scans_axis_vec) } else { None },
             mz_axis:     if opts.attach.attach_mz_axis{ Some(mz_centers2.clone()) } else { None },
             raw_points,
+            ms_level: opts.ms_level,
+            window_group: opts.window_group_hint,
         }
     }).collect()
 }
@@ -910,6 +918,8 @@ fn empty_result(cid: usize, spec: &ClusterSpec, mz_win: (f32,f32)) -> ClusterRes
         frame_ids_used: Vec::new(),
         frames_axis: None, scans_axis: None, mz_axis: None,
         raw_points: None,
+        ms_level: 0,
+        window_group: None,
     }
 }
 
@@ -941,5 +951,7 @@ fn empty_result_with_axes(
         } else { None },
         mz_axis: if opts.attach.attach_mz_axis { mz_axis } else { None },
         raw_points: None,
+        ms_level: opts.ms_level,
+        window_group: opts.window_group_hint,
     }
 }
