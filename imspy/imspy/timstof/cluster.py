@@ -351,6 +351,7 @@ class ClusterResult(RustWrapperObject):
 def make_cluster_specs_from_peaks(
     rt_peaks: Sequence["RtPeak1D"],
     im_rows: Sequence[Sequence["ImPeak1D"]],
+    im_scans: List[int],
     *,
     mz_ppm_window: float = 15.0,
     extra_rt_pad: int = 0,
@@ -364,6 +365,7 @@ def make_cluster_specs_from_peaks(
     ----
     rt_peaks : sequence of RtPeak1D, length = R
     im_rows  : sequence (length R) of sequences of ImPeak1D (one list per RT row)
+    im_scans : list of int, the IM scan indices corresponding to the im_rows
     mz_ppm_window : ±ppm window around each rt_peak.mz_center_hint
     extra_rt_pad  : extra frames to include around the RT padded window
     extra_im_pad  : extra scans to include around the IM window
@@ -372,6 +374,9 @@ def make_cluster_specs_from_peaks(
     Returns
     -------
     List[ClusterSpec]
+
+    Args:
+        im_scans:
     """
     if len(rt_peaks) != len(im_rows):
         raise ValueError("rt_peaks and im_rows must have the same length (row-aligned).")
@@ -381,7 +386,7 @@ def make_cluster_specs_from_peaks(
     im_py = [[q.get_py_ptr() for q in row] for row in im_rows]
 
     out_py = ims.make_cluster_specs_from_peaks(
-        rt_py, im_py,
+        rt_py, im_py, im_scans,
         mz_ppm_window, extra_rt_pad, extra_im_pad, mz_hist_bins
     )
     return [ClusterSpec.from_py_ptr(p) for p in out_py]

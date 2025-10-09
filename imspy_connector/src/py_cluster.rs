@@ -250,29 +250,26 @@ impl PyClusterResult {
 }
 
 #[pyfunction]
-#[pyo3(signature = (rt_peaks, im_rows, mz_ppm_window=15.0, extra_rt_pad=0, extra_im_pad=0, mz_hist_bins=64))]
+#[pyo3(signature = (rt_peaks, im_rows, im_scans=None, mz_ppm_window=15.0, extra_rt_pad=0, extra_im_pad=0, mz_hist_bins=64))]
 pub fn make_cluster_specs_from_peaks(
     py: Python<'_>,
     rt_peaks: Vec<Py<PyRtPeak1D>>,
-    im_rows: Vec<Vec<Py<PyImPeak1D>>>, // same row order as rt_peaks
+    im_rows: Vec<Vec<Py<PyImPeak1D>>>,   // same row order as rt_peaks
+    im_scans: Option<Vec<u32>>,          // <-- NEW: IM axis (absolute scan numbers)
     mz_ppm_window: f32,
     extra_rt_pad: usize,
     extra_im_pad: usize,
     mz_hist_bins: usize,
 ) -> PyResult<Vec<Py<PyClusterSpec>>> {
-    // 1) Snapshot the few needed values from Python objects under the GIL
-    //    to Rust-owned plain types we can use without the GIL.
+
     #[derive(Clone, Copy)]
-    struct RtRowSnap {
-        rt_l: usize,
-        rt_r: usize,
-        mz_center: f32,
-    }
+    struct RtRowSnap { rt_l: usize, rt_r: usize, mz_center: f32 }
+
     #[derive(Clone, Copy)]
-    struct ImSnap {
-        im_l: usize,
-        im_r: usize,
-    }
+    struct ImSnap { im_l: usize, im_r: usize }
+
+    // If provided, convert to usize and we’ll use it to map indices->absolute scans
+    let im_scans_abs: Option<Vec<usize>> = im_scans.map(|v| v.into_iter().map(|x| x as usize).collect());
 
     let mut rt_rows: Vec<RtRowSnap> = Vec::with_capacity(rt_peaks.len());
     let mut im_rows_snap: Vec<Vec<ImSnap>> = Vec::with_capacity(im_rows.len());
@@ -287,38 +284,42 @@ pub fn make_cluster_specs_from_peaks(
         let mut row_vec: Vec<ImSnap> = Vec::with_capacity(im_rows[row_idx].len());
         for im_p in &im_rows[row_idx] {
             let im = im_p.borrow(py);
-            let im_l = im.left().saturating_sub(extra_im_pad);
-            let im_r = im.right().saturating_add(extra_im_pad);
+
+            // indices within the IM row
+            let i_l = im.left().saturating_sub(extra_im_pad);
+            let i_r = im.right().saturating_add(extra_im_pad);
+
+            // map to absolute scan numbers if axis available; else keep indices (MS1)
+            let (im_l, im_r) = if let Some(ref axis) = im_scans_abs {
+                let il = i_l.min(axis.len().saturating_sub(1));
+                let ir = i_r.min(axis.len().saturating_sub(1));
+                (axis[il], axis[ir])
+            } else {
+                (i_l, i_r)
+            };
+
             row_vec.push(ImSnap { im_l, im_r });
         }
         im_rows_snap.push(row_vec);
     }
 
-    // 2) Release GIL and build ClusterSpec in parallel
     let specs: Vec<ClusterSpec> = py.allow_threads(|| {
-        rt_rows
-            .par_iter()
-            .enumerate()
-            .flat_map_iter(|(row_idx, rt)| {
-                im_rows_snap[row_idx]
-                    .iter()
-                    .map(move |im| ClusterSpec {
-                        rt_left: rt.rt_l,
-                        rt_right: rt.rt_r,
-                        im_left: im.im_l,
-                        im_right: im.im_r,
-                        mz_center_hint: rt.mz_center,
-                        mz_ppm_window,
-                        extra_rt_pad: 0,
-                        extra_im_pad: 0,
-                        mz_hist_bins,
-                        mz_window_da_override: None,
-                    })
+        rt_rows.par_iter().enumerate().flat_map_iter(|(row_idx, rt)| {
+            im_rows_snap[row_idx].iter().map(move |im| ClusterSpec {
+                rt_left: rt.rt_l,
+                rt_right: rt.rt_r,
+                im_left: im.im_l,      // now absolute if axis provided
+                im_right: im.im_r,     // now absolute if axis provided
+                mz_center_hint: rt.mz_center,
+                mz_ppm_window,
+                extra_rt_pad: 0,
+                extra_im_pad: 0,
+                mz_hist_bins,
+                mz_window_da_override: None,
             })
-            .collect()
+        }).collect()
     });
 
-    // 3) Reacquire GIL only to wrap specs into Python objects
     let mut specs_py = Vec::with_capacity(specs.len());
     for s in specs {
         specs_py.push(Py::new(py, PyClusterSpec { inner: s })?);
