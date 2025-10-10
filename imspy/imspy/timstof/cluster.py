@@ -536,7 +536,7 @@ def build_precursor_fragment_annotation(
     ms2_py = [c.get_py_ptr() for c in ms2]
     cand_py = [c.get_py_ptr() for c in candidates]
 
-    out_py = ims.build_precursor_fragment_annotation(
+    out_py = ims.build_precursor_fragment_annotation_py(
         ms1_py, ms2_py, cand_py,
         float(min_score),
         ims.MatchCardinality.OneToOne if one_to_one else ims.MatchCardinality.OneToMany,
