@@ -261,11 +261,17 @@ impl PyClusterResult {
     #[getter] fn window_group(&self) -> Option<u32> {
         self.inner.window_group
     }
+    #[getter]
+    fn window_groups_covering_mz(&self) -> Option<Vec<u32>> {
+        self.inner.window_groups_covering_mz.clone()
+    }
 
     fn __repr__(&self) -> String {
         let n_pts = self.inner.raw_points.as_ref().map(|p| p.mz.len()).unwrap_or(0);
         format!(
-            "ClusterResult#{}(rt=[{},{}], im=[{},{}], mz=[{:.5},{:.5}] Da, rt_peak_id={}, im_peak_id={}, mz_hint={:.5}, points={}, ms_level={})",
+            "ClusterResult#{}(rt=[{},{}], im=[{},{}], mz=[{:.5},{:.5}] Da,\
+             rt_peak_id={}, im_peak_id={}, mz_hint={:.5}, points={}, ms_level={}, window_group={:?},
+                window_groups_covering_mz={:?})",
             self.inner.id,
             self.inner.rt_window.0, self.inner.rt_window.1,
             self.inner.im_window.0, self.inner.im_window.1,
@@ -274,7 +280,9 @@ impl PyClusterResult {
             self.inner.im_peak_id,
             self.inner.mz_center_hint,
             n_pts,
-            self.inner.ms_level
+            self.inner.ms_level,
+            self.inner.window_group,
+            self.inner.window_groups_covering_mz
         )
     }
 }

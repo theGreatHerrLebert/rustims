@@ -340,6 +340,11 @@ class ClusterResult(RustWrapperObject):
         wg = self.__py_ptr.window_group
         return None if wg is None else int(wg)
 
+    @property
+    def window_groups_covering_mz(self) -> Optional[np.ndarray]:
+        wgc = self.__py_ptr.window_groups_covering_mz
+        return None if wgc is None else np.asarray(wgc, dtype=np.uint32)
+
     # attached axes
     @property
     def frame_ids_used(self) -> np.ndarray:
@@ -377,7 +382,12 @@ class ClusterResult(RustWrapperObject):
                 f"rt_fit={self.rt_fit}, im_fit={self.im_fit}, mz_fit={self.mz_fit}, "
                 f"rt_peak_id={self.rt_peak_id}, im_peak_id={self.im_peak_id}, "
                 f"mz_center_hint={self.mz_center_hint:.4f}, ms_level={self.ms_level}, "
-                f"window_group={self.window_group})")
+                f"window_group={self.window_group}, "
+                f"window_groups_covering_mz={self.window_groups_covering_mz}, "
+                f"frames_axis={'yes' if self.frames_axis is not None else 'no'}, "
+                f"scans_axis={'yes' if self.scans_axis is not None else 'no'}, "
+                f"mz_axis={'yes' if self.mz_axis is not None else 'no'}, "
+                f"raw_points={'yes' if self.raw_points is not None else 'no'})")
 
 
 # --- Convenience function: build specs from peaks (fully wrapped) ------------

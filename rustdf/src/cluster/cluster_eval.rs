@@ -104,6 +104,8 @@ pub struct ClusterResult {
     pub raw_points: Option<RawPoints>,
     pub ms_level: u8,
     pub window_group: Option<u32>,
+    // for MS1 only; union of DIA groups whose isolation bands include the precursor m/z
+    pub window_groups_covering_mz: Option<Vec<u32>>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -898,6 +900,7 @@ pub fn evaluate_clusters_3d(
             raw_points,
             ms_level: opts.ms_level,
             window_group: opts.window_group_hint,
+            window_groups_covering_mz: None,
         }
     }).collect()
 }
@@ -920,6 +923,7 @@ fn empty_result(cid: usize, spec: &ClusterSpec, mz_win: (f32,f32)) -> ClusterRes
         raw_points: None,
         ms_level: 0,
         window_group: None,
+        window_groups_covering_mz: None,
     }
 }
 
@@ -953,5 +957,87 @@ fn empty_result_with_axes(
         raw_points: None,
         ms_level: opts.ms_level,
         window_group: opts.window_group_hint,
+        window_groups_covering_mz: None,
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct LinkCandidate { pub ms1_idx: usize, pub ms2_idx: usize, pub score: f32 }
+
+/// Jaccard overlap on RT indices (inclusive windows)
+#[inline]
+fn rt_jaccard(a: (usize,usize), b: (usize,usize)) -> f32 {
+    let (al,ar) = a; let (bl,br) = b;
+    if ar < bl || br < al { return 0.0; }
+    let inter = (ar.min(br) + 1).saturating_sub(al.max(bl));
+    let union = (ar.max(br) + 1).saturating_sub(al.min(bl));
+    (inter as f32) / (union as f32)
+}
+
+/// |Δ apex RT| in seconds (needs frame_times)
+#[inline]
+fn rt_apex_delta_sec(ms1: &ClusterResult, ms2: &ClusterResult) -> f32 {
+    let a = ms1.rt_fit.mu; // already in seconds if you fit with frame_times
+    let b = ms2.rt_fit.mu;
+    (a - b).abs()
+}
+
+/// |Δ IM apex| in scans (TIMS co-mobility cue)
+#[inline]
+fn im_apex_delta_scans(ms1: &ClusterResult, ms2: &ClusterResult) -> f32 {
+    (ms1.im_fit.mu - ms2.im_fit.mu).abs()
+}
+
+/// Link MS2→MS1 with group compatibility and co-elution.
+/// Returns sorted candidates (best score first).
+pub fn link_ms2_to_ms1(
+    ms1: &[ClusterResult],         // ms_level==1
+    ms2: &[ClusterResult],         // ms_level==2, with window_group = Some(g)
+    min_rt_jaccard: f32,           // e.g. 0.1–0.2
+    max_rt_apex_sec: f32,          // e.g. 5.0–10.0
+    max_im_apex_scans: Option<f32>,// e.g. Some(5.0) or None to ignore
+) -> Vec<LinkCandidate> {
+
+    use std::collections::{HashMap};
+
+    // index MS1 by group for quick lookup
+    let mut group2ms1: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, c) in ms1.iter().enumerate() {
+        if let Some(ref gs) = c.window_groups_covering_mz {
+            for &g in gs { group2ms1.entry(g).or_default().push(i); }
+        }
+    }
+
+    // For each MS2 cluster, check compatible MS1 list
+    let mut out: Vec<LinkCandidate> = Vec::new();
+    for (j, c2) in ms2.iter().enumerate() {
+        let g = match c2.window_group { Some(x) => x, None => continue };
+        let Some(cands) = group2ms1.get(&g) else { continue };
+        for &i in cands {
+            let c1 = &ms1[i];
+
+            // RT overlap and apex proximity
+            let jacc = rt_jaccard(c1.rt_window, c2.rt_window);
+            if jacc < min_rt_jaccard { continue; }
+            let d_rt = rt_apex_delta_sec(c1, c2);
+            if d_rt > max_rt_apex_sec { continue; }
+
+            // Optional TIMS co-mobility cue
+            if let Some(max_d_im) = max_im_apex_scans {
+                if im_apex_delta_scans(c1, c2) > max_d_im { continue; }
+            }
+
+            // Simple score: Jaccard boosted and penalized by apex deltas
+            let score = jacc * 1.0
+                * (1.0 / (1.0 + d_rt))                       // smaller better
+                * (if let Some(max_d_im) = max_im_apex_scans {
+                1.0 / (1.0 + im_apex_delta_scans(c1, c2) / (max_d_im + 1e-3))
+            } else { 1.0 });
+
+            out.push(LinkCandidate { ms1_idx: i, ms2_idx: j, score });
+        }
+    }
+
+    out.sort_by(|a,b| b.score.total_cmp(&a.score));
+    out
 }
