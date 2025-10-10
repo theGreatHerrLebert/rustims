@@ -1,10 +1,10 @@
-use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction, PyErr};
+use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
 use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 use rayon::prelude::*;
 use rustdf::cluster::io as cio;
-use rustdf::cluster::matching::build_precursor_fragment_annotation;
+use rustdf::cluster::matching::{build_precursor_fragment_annotation, MatchCardinality};
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
@@ -304,22 +304,29 @@ impl PyLinkCandidate {
 }
 
 #[pyfunction]
-#[pyo3(signature = (ms1, ms2, candidates, min_score=0.0))]
+#[pyo3(signature = (ms1, ms2, candidates, min_score=0.0, one_to_one=false, top_k_per_ms2=8, top_k_per_ms1=None))]
 pub fn build_precursor_fragment_annotation_py(
     py: Python<'_>,
     ms1: Vec<Py<PyClusterResult>>,
     ms2: Vec<Py<PyClusterResult>>,
     candidates: Vec<Py<PyLinkCandidate>>,
     min_score: f32,
+    one_to_one: bool,
+    top_k_per_ms2: usize,
+    top_k_per_ms1: Option<usize>,
 ) -> PyResult<Vec<(Py<PyClusterResult>, Vec<Py<PyClusterResult>>)>> {
     let ms1_r: Vec<ClusterResult> = ms1.iter().map(|p| p.borrow(py).inner.clone()).collect();
     let ms2_r: Vec<ClusterResult> = ms2.iter().map(|p| p.borrow(py).inner.clone()).collect();
     let cand_r: Vec<LinkCandidate> = candidates.iter().map(|p| p.borrow(py).inner.clone()).collect();
 
-    let grouped = build_precursor_fragment_annotation(&ms1_r, &ms2_r, &cand_r, min_score)
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("build failed: {}", e)))?;
+    let card = if one_to_one { MatchCardinality::OneToOne } else { MatchCardinality::OneToMany };
 
-    // pack back into Py objects
+    let grouped = py.allow_threads(|| {
+        build_precursor_fragment_annotation(
+            &ms1_r, &ms2_r, &cand_r, min_score, card, top_k_per_ms2, top_k_per_ms1
+        )
+    });
+
     let mut out = Vec::with_capacity(grouped.len());
     for (p, frags) in grouped {
         let p_py = Py::new(py, PyClusterResult { inner: p })?;

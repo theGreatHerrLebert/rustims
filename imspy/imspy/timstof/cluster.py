@@ -505,6 +505,9 @@ def build_precursor_fragment_annotation(
     candidates: Sequence["LinkCandidate"],
     *,
     min_score: float = 0.0,
+    one_to_one: bool = False,
+    top_k_per_ms2: int = 8,
+    top_k_per_ms1: Optional[int] = None,
 ) -> List[Tuple["ClusterResult", List["ClusterResult"]]]:
     """
     Build precursor-fragment annotations from MS1/MS2 clusters and link candidates.
@@ -515,6 +518,9 @@ def build_precursor_fragment_annotation(
     ms2 : sequence of ClusterResult (MS2 clusters)
     candidates : sequence of LinkCandidate (from link_ms2_to_ms1)
     min_score : minimum score threshold for accepting a link
+    one_to_one : if True, enforce one-to-one matching; else one-to-many
+    top_k_per_ms2 : maximum number of MS1 links to retain per MS2 cluster
+    top_k_per_ms1 : optional maximum number of MS2 links to retain per MS1 cluster
 
     Returns
     -------
@@ -522,16 +528,22 @@ def build_precursor_fragment_annotation(
 
     Note
     ----
-    Each MS1 cluster may appear at most once as a precursor in the output.
-    Each MS2 cluster may appear multiple times as a fragment if linked to multiple precursors.
+    This function does not modify the input ClusterResult objects.
+    The returned precursor ClusterResult objects are the same as those in `ms1`.
+    The returned fragment lists contain references to the original `ms2` objects.
     """
     ms1_py = [c.get_py_ptr() for c in ms1]
     ms2_py = [c.get_py_ptr() for c in ms2]
     cand_py = [c.get_py_ptr() for c in candidates]
 
-    out_py = ims.build_precursor_fragment_annotation_py(
-        ms1_py, ms2_py, cand_py, float(min_score)
+    out_py = ims.build_precursor_fragment_annotation(
+        ms1_py, ms2_py, cand_py,
+        float(min_score),
+        ims.MatchCardinality.OneToOne if one_to_one else ims.MatchCardinality.OneToMany,
+        int(top_k_per_ms2),
+        None if top_k_per_ms1 is None else int(top_k_per_ms1),
     )
+
     out = []
     for (p, frags) in out_py:
         p_wrapped = ClusterResult.from_py_ptr(p)
