@@ -1,9 +1,10 @@
-use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
-use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor};
+use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction, PyErr};
+use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 use rayon::prelude::*;
 use rustdf::cluster::io as cio;
+use rustdf::cluster::matching::build_precursor_fragment_annotation;
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
@@ -303,39 +304,29 @@ impl PyLinkCandidate {
 }
 
 #[pyfunction]
-pub fn build_precursor_fragment_annotation(
+#[pyo3(signature = (ms1, ms2, candidates, min_score=0.0))]
+pub fn build_precursor_fragment_annotation_py(
     py: Python<'_>,
     ms1: Vec<Py<PyClusterResult>>,
     ms2: Vec<Py<PyClusterResult>>,
     candidates: Vec<Py<PyLinkCandidate>>,
     min_score: f32,
 ) -> PyResult<Vec<(Py<PyClusterResult>, Vec<Py<PyClusterResult>>)>> {
-    let rust_ms1: Vec<ClusterResult> = ms1
-        .into_iter()
-        .map(|c| c.borrow(py).inner.clone())
-        .collect();
-    let rust_ms2: Vec<ClusterResult> = ms2
-        .into_iter()
-        .map(|c| c.borrow(py).inner.clone())
-        .collect();
-    let rust_candidates: Vec<rustdf::cluster::cluster_eval::LinkCandidate> = candidates
-        .into_iter()
-        .map(|c| c.borrow(py).inner.clone())
-        .collect();
-    let annotated = rustdf::cluster::matching::build_precursor_fragment_annotation(
-        &rust_ms1,
-        &rust_ms2,
-        &rust_candidates,
-        min_score,
-    );
-    let mut out: Vec<(Py<PyClusterResult>, Vec<Py<PyClusterResult>>)> = Vec::with_capacity(annotated.len());
-    for (prec, frags) in annotated {
-        let prec_py = Py::new(py, PyClusterResult { inner: prec })?;
-        let mut frags_py: Vec<Py<PyClusterResult>> = Vec::with_capacity(frags.len());
-        for f in frags {
-            frags_py.push(Py::new(py, PyClusterResult { inner: f })?);
-        }
-        out.push((prec_py, frags_py));
+    let ms1_r: Vec<ClusterResult> = ms1.iter().map(|p| p.borrow(py).inner.clone()).collect();
+    let ms2_r: Vec<ClusterResult> = ms2.iter().map(|p| p.borrow(py).inner.clone()).collect();
+    let cand_r: Vec<LinkCandidate> = candidates.iter().map(|p| p.borrow(py).inner.clone()).collect();
+
+    let grouped = build_precursor_fragment_annotation(&ms1_r, &ms2_r, &cand_r, min_score)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("build failed: {}", e)))?;
+
+    // pack back into Py objects
+    let mut out = Vec::with_capacity(grouped.len());
+    for (p, frags) in grouped {
+        let p_py = Py::new(py, PyClusterResult { inner: p })?;
+        let frags_py = frags.into_iter()
+            .map(|f| Py::new(py, PyClusterResult { inner: f }))
+            .collect::<PyResult<Vec<_>>>()?;
+        out.push((p_py, frags_py));
     }
     Ok(out)
 }
@@ -535,6 +526,6 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(link_ms2_to_ms1, m)?)?;
-    m.add_function(wrap_pyfunction!(build_precursor_fragment_annotation, m)?)?;
+    m.add_function(wrap_pyfunction!(build_precursor_fragment_annotation_py, m)?)?;
     Ok(())
 }
