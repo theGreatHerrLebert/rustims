@@ -503,17 +503,18 @@ def build_precursor_fragment_annotation(
     ms1: Sequence["ClusterResult"],
     ms2: Sequence["ClusterResult"],
     candidates: Sequence["LinkCandidate"],
-    min_score: float = 0.01,
+    *,
+    min_score: float = 0.0,
 ) -> List[Tuple["ClusterResult", List["ClusterResult"]]]:
     """
-    Build a precursor -> fragments annotation from link candidates.
+    Build precursor-fragment annotations from MS1/MS2 clusters and link candidates.
 
     Args
     ----
     ms1 : sequence of ClusterResult (MS1 clusters)
     ms2 : sequence of ClusterResult (MS2 clusters)
     candidates : sequence of LinkCandidate (from link_ms2_to_ms1)
-    min_score : minimum score to include a link
+    min_score : minimum score threshold for accepting a link
 
     Returns
     -------
@@ -521,14 +522,14 @@ def build_precursor_fragment_annotation(
 
     Note
     ----
-    Each MS1 cluster appears at most once as a precursor; MS2 clusters may appear
-    multiple times as fragments if linked to multiple precursors.
+    Each MS1 cluster may appear at most once as a precursor in the output.
+    Each MS2 cluster may appear multiple times as a fragment if linked to multiple precursors.
     """
     ms1_py = [c.get_py_ptr() for c in ms1]
     ms2_py = [c.get_py_ptr() for c in ms2]
     cand_py = [c.get_py_ptr() for c in candidates]
 
-    out_py = ims.build_precursor_fragment_annotation(
+    out_py = ims.build_precursor_fragment_annotation_py(
         ms1_py, ms2_py, cand_py, float(min_score)
     )
     out = []
