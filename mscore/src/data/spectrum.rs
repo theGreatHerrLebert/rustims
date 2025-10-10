@@ -107,6 +107,15 @@ impl MzSpectrum {
     /// assert_eq!(spectrum.intensity, vec![10.0, 20.0]);
     /// ```
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>) -> Self {
+        // make sure that mz and intensity have the same length as well as are sorted by mz in ascending order
+        assert_eq!(mz.len(), intensity.len(), "mz and intensity must have the same length");
+
+        let mut combined: Vec<(f64, f64)> = mz.into_iter().zip(intensity.into_iter()).collect();
+
+        combined.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        let (mz, intensity): (Vec<f64>, Vec<f64>) = combined.into_iter().unzip();
+
         MzSpectrum {mz, intensity}
     }
 
