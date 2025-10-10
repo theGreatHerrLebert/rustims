@@ -8,6 +8,7 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
+use rustc_hash::FxHashMap;
 use crate::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
 use crate::cluster::feature::{build_features_from_envelopes, AveragineLut, Envelope, Feature,
                               FeatureBuildParams, GroupingParams};
@@ -323,6 +324,42 @@ impl TimsDatasetDIA {
         (rt, peaks)
     }
 
+    /// Merge each group's isolation m/z bands into disjoint intervals.
+    pub fn group_mz_unions(&self) -> FxHashMap<u32, Vec<(f32,f32)>> {
+        let mut mp: FxHashMap<u32, Vec<(f32,f32)>> = FxHashMap::default();
+        for w in &self.dia_ms_ms_windows {
+            let lo = (w.isolation_mz - 0.5 * w.isolation_width) as f32;
+            let hi = (w.isolation_mz + 0.5 * w.isolation_width) as f32;
+            mp.entry(w.window_group).or_default().push((lo.min(hi), lo.max(hi)));
+        }
+        for v in mp.values_mut() {
+            v.sort_by(|a,b| a.0.total_cmp(&b.0));
+            let mut merged: Vec<(f32,f32)> = Vec::new();
+            for (lo,hi) in v.drain(..) {
+                if let Some(last) = merged.last_mut() {
+                    if lo <= last.1 { last.1 = last.1.max(hi); } else { merged.push((lo,hi)); }
+                } else { merged.push((lo,hi)); }
+            }
+            *v = merged;
+        }
+        mp
+    }
+
+    #[inline]
+    pub fn groups_covering_mz(
+        &self,
+        mz: f32,
+        unions: &FxHashMap<u32, Vec<(f32,f32)>>
+    ) -> Vec<u32> {
+        let mut out = Vec::new();
+        for (g, bands) in unions {
+            if bands.iter().any(|&(lo,hi)| mz >= lo && mz <= hi) {
+                out.push(*g);
+            }
+        }
+        out
+    }
+
     /// Peak picking on an already built RtIndex (e.g., after custom transforms).
     pub fn pick_peaks_on_rtindex(
         &self,
@@ -415,7 +452,9 @@ impl TimsDatasetDIA {
         opts: EvalOptions,
         num_threads: usize,
     ) -> Vec<ClusterResult> {
-        evaluate_clusters_3d(self, rt_index, specs, opts, num_threads)
+        let mut cluster_result = evaluate_clusters_3d(self, rt_index, specs, opts, num_threads);
+        annotate_precursor_groups(self, &mut cluster_result);
+        cluster_result
     }
 
     /// Build features by:
@@ -555,5 +594,20 @@ impl IndexConverter for TimsDatasetDIA {
         self.loader
             .get_index_converter()
             .inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+    }
+}
+
+/// Annotate MS1 clusters in-place.
+pub fn annotate_precursor_groups(ds: &TimsDatasetDIA, clusters: &mut [ClusterResult]) {
+    let unions = ds.group_mz_unions();
+    for c in clusters.iter_mut() {
+        if c.ms_level == 1 {
+            let mz_prec = if c.mz_fit.mu.is_finite() && c.mz_fit.mu > 0.0 {
+                c.mz_fit.mu
+            } else {
+                c.mz_center_hint
+            };
+            c.window_groups_covering_mz = Some(ds.groups_covering_mz(mz_prec, &unions));
+        }
     }
 }
