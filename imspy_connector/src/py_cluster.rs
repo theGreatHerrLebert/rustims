@@ -295,10 +295,49 @@ impl PyLinkCandidate {
     #[getter] fn ms1_idx(&self) -> usize { self.inner.ms1_idx }
     #[getter] fn ms2_idx(&self) -> usize { self.inner.ms2_idx }
     #[getter] fn score(&self) -> f32 { self.inner.score }
+    #[getter] fn group(&self) -> u32 { self.inner.group }
     fn __repr__(&self) -> String {
         format!("LinkCandidate(ms1_idx={}, ms2_idx={}, score={:.5})",
             self.inner.ms1_idx, self.inner.ms2_idx, self.inner.score)
     }
+}
+
+#[pyfunction]
+pub fn build_precursor_fragment_annotation(
+    py: Python<'_>,
+    ms1: Vec<Py<PyClusterResult>>,
+    ms2: Vec<Py<PyClusterResult>>,
+    candidates: Vec<Py<PyLinkCandidate>>,
+    min_score: f32,
+) -> PyResult<Vec<(Py<PyClusterResult>, Vec<Py<PyClusterResult>>)>> {
+    let rust_ms1: Vec<ClusterResult> = ms1
+        .into_iter()
+        .map(|c| c.borrow(py).inner.clone())
+        .collect();
+    let rust_ms2: Vec<ClusterResult> = ms2
+        .into_iter()
+        .map(|c| c.borrow(py).inner.clone())
+        .collect();
+    let rust_candidates: Vec<rustdf::cluster::cluster_eval::LinkCandidate> = candidates
+        .into_iter()
+        .map(|c| c.borrow(py).inner.clone())
+        .collect();
+    let annotated = rustdf::cluster::matching::build_precursor_fragment_annotation(
+        &rust_ms1,
+        &rust_ms2,
+        &rust_candidates,
+        min_score,
+    );
+    let mut out: Vec<(Py<PyClusterResult>, Vec<Py<PyClusterResult>>)> = Vec::with_capacity(annotated.len());
+    for (prec, frags) in annotated {
+        let prec_py = Py::new(py, PyClusterResult { inner: prec })?;
+        let mut frags_py: Vec<Py<PyClusterResult>> = Vec::with_capacity(frags.len());
+        for f in frags {
+            frags_py.push(Py::new(py, PyClusterResult { inner: f })?);
+        }
+        out.push((prec_py, frags_py));
+    }
+    Ok(out)
 }
 
 #[pyfunction]

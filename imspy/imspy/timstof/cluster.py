@@ -409,9 +409,11 @@ class LinkCandidate:
     def ms2_idx(self) -> int: return self.__py_ptr.ms2_idx
     @property
     def score(self) -> float: return self.__py_ptr.score
+    @property
+    def group(self) -> int: return self.__py_ptr.group
 
     def __repr__(self) -> str:
-        return f"LinkCandidate(ms1_idx={self.ms1_idx}, ms2_idx={self.ms2_idx}, score={self.score:.5f})"
+        return f"LinkCandidate(ms1_idx={self.ms1_idx}, ms2_idx={self.ms2_idx}, score={self.score:.5f}, group={self.group})"
 
 def link_ms2_to_ms1(
     ms1: Sequence["ClusterResult"],

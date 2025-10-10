@@ -962,7 +962,12 @@ fn empty_result_with_axes(
 }
 
 #[derive(Clone, Debug)]
-pub struct LinkCandidate { pub ms1_idx: usize, pub ms2_idx: usize, pub score: f32 }
+pub struct LinkCandidate {
+    pub ms1_idx: usize,
+    pub ms2_idx: usize,
+    pub score: f32,
+    pub group:   u32,  // window group of the MS2 cluster
+}
 
 /// Jaccard overlap on RT indices (inclusive windows)
 #[inline]
@@ -1034,7 +1039,7 @@ pub fn link_ms2_to_ms1(
                 1.0 / (1.0 + im_apex_delta_scans(c1, c2) / (max_d_im + 1e-3))
             } else { 1.0 });
 
-            out.push(LinkCandidate { ms1_idx: i, ms2_idx: j, score });
+            out.push(LinkCandidate { ms1_idx: i, ms2_idx: j, score, group: g } );
         }
     }
 
