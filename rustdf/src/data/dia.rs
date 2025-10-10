@@ -443,6 +443,29 @@ impl TimsDatasetDIA {
         )
     }
 
+    pub fn group_scan_unions(&self) -> FxHashMap<u32, Vec<(usize,usize)>> {
+        let mut mp: FxHashMap<u32, Vec<(usize,usize)>> = FxHashMap::default();
+        for w in &self.dia_ms_ms_windows {
+            let lo = w.scan_num_begin as usize;
+            let hi = w.scan_num_end   as usize;
+            let (lo, hi) = (lo.min(hi), lo.max(hi));
+            mp.entry(w.window_group).or_default().push((lo, hi));
+        }
+        // merge overlaps
+        for v in mp.values_mut() {
+            v.sort_by(|a,b| a.0.cmp(&b.0));
+            let mut merged: Vec<(usize,usize)> = Vec::new();
+            for (lo,hi) in v.drain(..) {
+                if let Some(last) = merged.last_mut() {
+                    if lo <= last.1 { last.1 = last.1.max(hi); }
+                    else { merged.push((lo,hi)); }
+                } else { merged.push((lo,hi)); }
+            }
+            *v = merged;
+        }
+        mp
+    }
+
     /// Evaluate 3D clusters (RT × IM with m/z marginal) for the given specs.
     /// This forwards to cluster_eval::evaluate_clusters_3d and returns the results.
     pub fn evaluate_clusters_3d(
@@ -597,17 +620,57 @@ impl IndexConverter for TimsDatasetDIA {
     }
 }
 
-/// Annotate MS1 clusters in-place.
 pub fn annotate_precursor_groups(ds: &TimsDatasetDIA, clusters: &mut [ClusterResult]) {
-    let unions = ds.group_mz_unions();
+    let mz_unions   = ds.group_mz_unions();
+    let scan_unions = ds.group_scan_unions();
+
+    let ppm_tol: f32 = 15.0;   // tune
+    let scan_pad: usize = 3;   // tune (accounts for slight index jitter)
+
     for c in clusters.iter_mut() {
-        if c.ms_level == 1 {
+        // treat “no window_group” as precursor-like
+        if c.window_group.is_none() {
             let mz_prec = if c.mz_fit.mu.is_finite() && c.mz_fit.mu > 0.0 {
                 c.mz_fit.mu
             } else {
                 c.mz_center_hint
             };
-            c.window_groups_covering_mz = Some(ds.groups_covering_mz(mz_prec, &unions));
+
+            let (sl, sr) = c.im_window; // FINAL IM window (absolute scans)
+            let groups = groups_covering_precursor_2d(
+                mz_prec, sl, sr, &mz_unions, &scan_unions, ppm_tol, scan_pad,
+            );
+            c.window_groups_covering_mz = Some(groups);
         }
     }
+}
+fn ppm_da(mz: f32, ppm: f32) -> f32 { mz * ppm * 1e-6 }
+pub fn groups_covering_precursor_2d(
+    mz: f32,
+    scan_l: usize, scan_r: usize,
+    mz_unions: &FxHashMap<u32, Vec<(f32,f32)>>,
+    scan_unions: &FxHashMap<u32, Vec<(usize,usize)>>,
+    ppm_tol: f32,
+    scan_pad: usize,
+) -> Vec<u32> {
+    let da = ppm_da(mz, ppm_tol);
+    let (loq, hiq) = (mz - da, mz + da);
+    let (sl, sr) = (scan_l.saturating_sub(scan_pad), scan_r.saturating_add(scan_pad));
+
+    let mut out = Vec::new();
+    for (g, bands_mz) in mz_unions {
+        // m/z overlap?
+        let mz_ok = bands_mz.iter().any(|&(lo,hi)| hiq >= lo && loq <= hi);
+
+        // scan overlap? (if scan unions exist for this group)
+        let scan_ok = if let Some(bands_sc) = scan_unions.get(g) {
+            bands_sc.iter().any(|&(slo,shi)| sr >= slo && sl <= shi)
+        } else {
+            // if no scan info, be permissive or set false — your call; permissive is typical
+            true
+        };
+
+        if mz_ok && scan_ok { out.push(*g); }
+    }
+    out
 }
