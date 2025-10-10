@@ -499,6 +499,45 @@ def make_cluster_specs_from_peaks(
     )
     return [ClusterSpec.from_py_ptr(p) for p in out_py]
 
+def build_precursor_fragment_annotation(
+    ms1: Sequence["ClusterResult"],
+    ms2: Sequence["ClusterResult"],
+    candidates: Sequence["LinkCandidate"],
+    min_score: float = 0.01,
+) -> List[Tuple["ClusterResult", List["ClusterResult"]]]:
+    """
+    Build a precursor -> fragments annotation from link candidates.
+
+    Args
+    ----
+    ms1 : sequence of ClusterResult (MS1 clusters)
+    ms2 : sequence of ClusterResult (MS2 clusters)
+    candidates : sequence of LinkCandidate (from link_ms2_to_ms1)
+    min_score : minimum score to include a link
+
+    Returns
+    -------
+    List of (precursor ClusterResult, list of fragment ClusterResult)
+
+    Note
+    ----
+    Each MS1 cluster appears at most once as a precursor; MS2 clusters may appear
+    multiple times as fragments if linked to multiple precursors.
+    """
+    ms1_py = [c.get_py_ptr() for c in ms1]
+    ms2_py = [c.get_py_ptr() for c in ms2]
+    cand_py = [c.get_py_ptr() for c in candidates]
+
+    out_py = ims.build_precursor_fragment_annotation(
+        ms1_py, ms2_py, cand_py, float(min_score)
+    )
+    out = []
+    for (p, frags) in out_py:
+        p_wrapped = ClusterResult.from_py_ptr(p)
+        frags_wrapped = [ClusterResult.from_py_ptr(f) for f in frags]
+        out.append((p_wrapped, frags_wrapped))
+    return out
+
 # --- I/O helpers --------------------------------------------------------------
 
 def save_clusters(
