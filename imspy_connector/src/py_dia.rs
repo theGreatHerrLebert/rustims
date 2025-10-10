@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use rustdf::data::dia::TimsDatasetDIA;
+use rustdf::data::dia::{annotate_precursor_groups, TimsDatasetDIA};
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn, pick_im_peaks_on_imindex, build_dense_im_by_rtpeaks_ppm};
 
@@ -447,8 +447,10 @@ impl PyTimsDatasetDIA {
         let eval_opts: EvalOptions = opts.map(|o| o.inner).unwrap_or_default();
 
         // Core evaluation
-        let results_rs: Vec<ClusterResult> =
+        let mut results_rs: Vec<ClusterResult> =
             evaluate_clusters_3d(&self.inner, rt_rs, &specs_rs, eval_opts, num_threads);
+
+        annotate_precursor_groups(&self.inner, &mut results_rs);
 
         // Wrap back to Python
         let results_py: Vec<Py<PyClusterResult>> = results_rs
