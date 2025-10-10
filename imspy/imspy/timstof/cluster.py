@@ -517,20 +517,19 @@ def build_precursor_fragment_annotation(
     ms1 : sequence of ClusterResult (MS1 clusters)
     ms2 : sequence of ClusterResult (MS2 clusters)
     candidates : sequence of LinkCandidate (from link_ms2_to_ms1)
-    min_score : minimum score threshold for accepting a link
-    one_to_one : if True, enforce one-to-one matching; else one-to-many
-    top_k_per_ms2 : maximum number of MS1 links to retain per MS2 cluster
-    top_k_per_ms1 : optional maximum number of MS2 links to retain per MS1 cluster
+    min_score : minimum score to consider a candidate link
+    one_to_one : if True, enforce one-to-one mapping (greedy by score)
+    top_k_per_ms2 : max number of MS1 links to keep per MS2 cluster
+    top_k_per_ms1 : optional max number of MS2 links to keep per MS1 cluster
 
     Returns
     -------
-    List of (precursor ClusterResult, list of fragment ClusterResult)
+    List of (ms1_cluster, [ms2_clusters]) tuples
 
     Note
     ----
-    This function does not modify the input ClusterResult objects.
-    The returned precursor ClusterResult objects are the same as those in `ms1`.
-    The returned fragment lists contain references to the original `ms2` objects.
+    Each MS1 cluster may appear at most once in the output list.
+    An MS1 cluster may have zero or more linked MS2 clusters.
     """
     ms1_py = [c.get_py_ptr() for c in ms1]
     ms2_py = [c.get_py_ptr() for c in ms2]
@@ -539,16 +538,15 @@ def build_precursor_fragment_annotation(
     out_py = ims.build_precursor_fragment_annotation_py(
         ms1_py, ms2_py, cand_py,
         float(min_score),
-        ims.MatchCardinality.OneToOne if one_to_one else ims.MatchCardinality.OneToMany,
+        bool(one_to_one),
         int(top_k_per_ms2),
         None if top_k_per_ms1 is None else int(top_k_per_ms1),
     )
-
     out = []
-    for (p, frags) in out_py:
-        p_wrapped = ClusterResult.from_py_ptr(p)
-        frags_wrapped = [ClusterResult.from_py_ptr(f) for f in frags]
-        out.append((p_wrapped, frags_wrapped))
+    for (pms1, pms2_list) in out_py:
+        cms1 = ClusterResult.from_py_ptr(pms1)
+        cms2_list = [ClusterResult.from_py_ptr(p) for p in pms2_list]
+        out.append((cms1, cms2_list))
     return out
 
 # --- I/O helpers --------------------------------------------------------------
