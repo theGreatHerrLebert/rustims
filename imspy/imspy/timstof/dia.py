@@ -596,6 +596,16 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         """
         return self.__dataset.group_mz_unions()
 
+    def groups_covering_mz(self, mz: float) -> List[int]:
+        """Get window groups covering a specific m/z.
+
+        Args:
+            mz (float): m/z value.
+        Returns:
+            List[int]: List of window groups covering the m/z.
+        """
+        return self.__dataset.groups_covering_mz(mz)
+
     """
     /// Build features from envelopes using preloaded precursor frames internally.
     pub fn build_features_from_envelopes(

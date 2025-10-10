@@ -299,6 +299,11 @@ impl PyTimsDatasetDIA {
         map.into_iter().collect()
     }
 
+    pub fn groups_covering_mz(&self, mz: f32) -> Vec<u32> {
+        let unions = self.inner.group_mz_unions();
+        self.inner.groups_covering_mz(mz, &unions)
+    }
+
     // Convenience: build IM index and immediately pick IM peaks per row (simple non-adaptive)
     #[pyo3(signature = (rt_index,peaks,num_threads=4,mz_ppm_window=10.0,rt_extra_pad=0,maybe_sigma_scans=None,truncate=3.0,min_prom=50.0,min_distance_scans=2,min_width_scans=2,use_mobility=false))]
     pub fn build_dense_im_by_rtpeaks_ppm_and_pick(
