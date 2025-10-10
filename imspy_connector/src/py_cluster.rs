@@ -437,6 +437,50 @@ fn load_clusters_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyClusterRes
         .collect()
 }
 
+/*
+/// Link MS2→MS1 with group compatibility and co-elution.
+/// Returns sorted candidates (best score first).
+pub fn link_ms2_to_ms1(
+    ms1: &[ClusterResult],         // ms_level==1
+    ms2: &[ClusterResult],         // ms_level==2, with window_group = Some(g)
+    min_rt_jaccard: f32,           // e.g. 0.1–0.2
+    max_rt_apex_sec: f32,          // e.g. 5.0–10.0
+    max_im_apex_scans: Option<f32>,// e.g. Some(5.0) or None to ignore
+) -> Vec<LinkCandidate> {
+ */
+
+#[pyfunction]
+#[pyo3(signature = (ms1, ms2, min_rt_jaccard=0.1, max_rt_apex_sec=5.0, max_im_apex_scans=None))]
+pub fn link_ms2_to_ms1(
+    py: Python<'_>,
+    ms1: Vec<Py<PyClusterResult>>,
+    ms2: Vec<Py<PyClusterResult>>,
+    min_rt_jaccard: f32,
+    max_rt_apex_sec: f32,
+    max_im_apex_scans: Option<f32>,
+) -> PyResult<Vec<Py<PyLinkCandidate>>> {
+    let rust_ms1: Vec<ClusterResult> = ms1
+        .into_iter()
+        .map(|c| c.borrow(py).inner.clone())
+        .collect();
+    let rust_ms2: Vec<ClusterResult> = ms2
+        .into_iter()
+        .map(|c| c.borrow(py).inner.clone())
+        .collect();
+    let links = rustdf::cluster::cluster_eval::link_ms2_to_ms1(
+        &rust_ms1,
+        &rust_ms2,
+        min_rt_jaccard,
+        max_rt_apex_sec,
+        max_im_apex_scans,
+    );
+    let mut links_py: Vec<Py<PyLinkCandidate>> = Vec::with_capacity(links.len());
+    for l in links {
+        links_py.push(Py::new(py, PyLinkCandidate { inner: l })?);
+    }
+    Ok(links_py)
+}
+
 #[pymodule]
 pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterSpec>()?;
@@ -450,5 +494,7 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_clusters_json, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
+    m.add_class::<PyLinkCandidate>()?;
+    m.add_function(wrap_pyfunction!(link_ms2_to_ms1, m)?)?;
     Ok(())
 }

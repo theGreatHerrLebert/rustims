@@ -413,6 +413,44 @@ class LinkCandidate:
     def __repr__(self) -> str:
         return f"LinkCandidate(ms1_idx={self.ms1_idx}, ms2_idx={self.ms2_idx}, score={self.score:.5f})"
 
+def link_ms2_to_ms1(
+    ms1: Sequence["ClusterResult"],
+    ms2: Sequence["ClusterResult"],
+    *,
+    min_rt_jaccard: float = 0.1,
+    max_rt_apex_sec: float = 5.0,
+    max_im_apex_scans: Optional[float] = None,
+) -> List["LinkCandidate"]:
+    """
+    Link MS2 clusters to MS1 clusters based on RT/IM overlap and apex proximity.
+
+    Args
+    ----
+    ms1 : sequence of ClusterResult (MS1 clusters)
+    ms2 : sequence of ClusterResult (MS2 clusters)
+    min_rt_jaccard : minimum Jaccard index for RT overlap (0.0-1.0)
+    max_rt_apex_sec : maximum RT difference between apexes (in seconds)
+    max_im_apex_scans : optional maximum IM scan difference between apexes
+
+    Returns
+    -------
+    List[LinkCandidate]
+
+    Note
+    ----
+    This function assumes that the RT units in the ClusterResult are in seconds.
+    If your RT units are in frames, you need to convert `max_rt_apex_sec` accordingly.
+    """
+    ms1_py = [c.get_py_ptr() for c in ms1]
+    ms2_py = [c.get_py_ptr() for c in ms2]
+
+    out_py = ims.link_ms2_to_ms1(
+        ms1_py, ms2_py,
+        float(min_rt_jaccard),
+        float(max_rt_apex_sec),
+        None if max_im_apex_scans is None else float(max_im_apex_scans),
+    )
+    return [LinkCandidate.from_py_ptr(p) for p in out_py]
 
 # --- Convenience function: build specs from peaks (fully wrapped) ------------
 
