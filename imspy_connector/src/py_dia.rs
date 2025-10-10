@@ -294,6 +294,11 @@ impl PyTimsDatasetDIA {
         Ok((py_rt, peaks_py))
     }
 
+    pub fn group_mz_unions(&self) -> std::collections::HashMap<u32, Vec<(f32,f32)>> {
+        let map =self.inner.group_mz_unions();
+        map.into_iter().collect()
+    }
+
     // Convenience: build IM index and immediately pick IM peaks per row (simple non-adaptive)
     #[pyo3(signature = (rt_index,peaks,num_threads=4,mz_ppm_window=10.0,rt_extra_pad=0,maybe_sigma_scans=None,truncate=3.0,min_prom=50.0,min_distance_scans=2,min_width_scans=2,use_mobility=false))]
     pub fn build_dense_im_by_rtpeaks_ppm_and_pick(
@@ -489,7 +494,7 @@ impl PyTimsDatasetDIA {
     }
 }
 
-fn peaks_to_py<'py>(py: Python<'py>, peaks: Vec<RtPeak1D>) -> PyResult<Vec<Py<PyRtPeak1D>>> {
+fn peaks_to_py(py: Python, peaks: Vec<RtPeak1D>) -> PyResult<Vec<Py<PyRtPeak1D>>> {
     let mut out = Vec::with_capacity(peaks.len());
     for p in peaks {
         out.push(Py::new(py, PyRtPeak1D { inner: p })?);

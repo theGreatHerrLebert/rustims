@@ -287,6 +287,20 @@ impl PyClusterResult {
     }
 }
 
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyLinkCandidate { pub inner: rustdf::cluster::cluster_eval::LinkCandidate }
+#[pymethods]
+impl PyLinkCandidate {
+    #[getter] fn ms1_idx(&self) -> usize { self.inner.ms1_idx }
+    #[getter] fn ms2_idx(&self) -> usize { self.inner.ms2_idx }
+    #[getter] fn score(&self) -> f32 { self.inner.score }
+    fn __repr__(&self) -> String {
+        format!("LinkCandidate(ms1_idx={}, ms2_idx={}, score={:.5})",
+            self.inner.ms1_idx, self.inner.ms2_idx, self.inner.score)
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (rt_peaks, im_rows, im_scans=None, mz_ppm_window=15.0, extra_rt_pad=0, extra_im_pad=0, mz_hist_bins=64))]
 pub fn make_cluster_specs_from_peaks(

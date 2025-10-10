@@ -389,6 +389,30 @@ class ClusterResult(RustWrapperObject):
                 f"mz_axis={'yes' if self.mz_axis is not None else 'no'}, "
                 f"raw_points={'yes' if self.raw_points is not None else 'no'})")
 
+class LinkCandidate:
+    """Thin wrapper for Rust LinkCandidate (read-only)."""
+    def __init__(self, *a, **k):
+        raise RuntimeError("LinkCandidate is created in Rust; use LinkCandidate.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: "ims.PyLinkCandidate") -> "LinkCandidate":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    @property
+    def ms1_idx(self) -> int: return self.__py_ptr.ms1_idx
+    @property
+    def ms2_idx(self) -> int: return self.__py_ptr.ms2_idx
+    @property
+    def score(self) -> float: return self.__py_ptr.score
+
+    def __repr__(self) -> str:
+        return f"LinkCandidate(ms1_idx={self.ms1_idx}, ms2_idx={self.ms2_idx}, score={self.score:.5f})"
+
 
 # --- Convenience function: build specs from peaks (fully wrapped) ------------
 

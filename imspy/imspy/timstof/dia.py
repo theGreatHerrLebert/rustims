@@ -588,6 +588,14 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         res_py = self.__dataset.evaluate_clusters_3d(rt_index.get_py_ptr(), specs_py, opts_py, num_threads)
         return [ClusterResult.from_py_ptr(r) for r in res_py]
 
+    def group_mz_unions(self) -> dict[int, List[tuple[float, float]]]:
+        """Get m/z unions for each window group.
+
+        Returns:
+            dict[int, List[tuple[float, float]]]: Dictionary mapping window group to list of (min_mz, max_mz) tuples.
+        """
+        return self.__dataset.group_mz_unions()
+
     """
     /// Build features from envelopes using preloaded precursor frames internally.
     pub fn build_features_from_envelopes(
