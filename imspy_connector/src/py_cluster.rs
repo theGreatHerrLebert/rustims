@@ -528,12 +528,13 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterFit1D>()?;
     m.add_class::<PyClusterResult>()?;
     m.add_class::<PyRawPoints>()?;
+    m.add_class::<PyLinkCandidate>()?;
     m.add_function(wrap_pyfunction!(make_cluster_specs_from_peaks, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_json, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_json, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
-    m.add_class::<PyLinkCandidate>()?;
     m.add_function(wrap_pyfunction!(link_ms2_to_ms1, m)?)?;
+    m.add_function(wrap_pyfunction!(build_precursor_fragment_annotation, m)?)?;
     Ok(())
 }
