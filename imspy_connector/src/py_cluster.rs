@@ -4,7 +4,7 @@ use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
 use rayon::prelude::*;
 use rustdf::cluster::io as cio;
-use rustdf::cluster::matching::{build_precursor_fragment_annotation, MatchCardinality};
+use rustdf::cluster::matching::{build_precursor_fragment_annotation};
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
@@ -306,26 +306,21 @@ impl PyLinkCandidate {
 }
 
 #[pyfunction]
-#[pyo3(signature = (ms1, ms2, candidates, min_score=0.0, one_to_one=false, top_k_per_ms2=8, top_k_per_ms1=None))]
+#[pyo3(signature = (ms1, ms2, candidates, min_score=0.0))]
 pub fn build_precursor_fragment_annotation_py(
     py: Python<'_>,
     ms1: Vec<Py<PyClusterResult>>,
     ms2: Vec<Py<PyClusterResult>>,
     candidates: Vec<Py<PyLinkCandidate>>,
     min_score: f32,
-    one_to_one: bool,
-    top_k_per_ms2: usize,
-    top_k_per_ms1: Option<usize>,
 ) -> PyResult<Vec<(Py<PyClusterResult>, Vec<Py<PyClusterResult>>)>> {
     let ms1_r: Vec<ClusterResult> = ms1.iter().map(|p| p.borrow(py).inner.clone()).collect();
     let ms2_r: Vec<ClusterResult> = ms2.iter().map(|p| p.borrow(py).inner.clone()).collect();
     let cand_r: Vec<LinkCandidate> = candidates.iter().map(|p| p.borrow(py).inner.clone()).collect();
 
-    let card = if one_to_one { MatchCardinality::OneToOne } else { MatchCardinality::OneToMany };
-
     let grouped = py.allow_threads(|| {
         build_precursor_fragment_annotation(
-            &ms1_r, &ms2_r, &cand_r, min_score, card, top_k_per_ms2, top_k_per_ms1
+            &ms1_r, &ms2_r, &cand_r, min_score,
         )
     });
 

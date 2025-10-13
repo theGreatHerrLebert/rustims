@@ -511,9 +511,6 @@ def build_precursor_fragment_annotation(
     candidates: Sequence["LinkCandidate"],
     *,
     min_score: float = 0.0,
-    one_to_one: bool = False,
-    top_k_per_ms2: int = 8,
-    top_k_per_ms1: Optional[int] = None,
 ) -> List[Tuple["ClusterResult", List["ClusterResult"]]]:
     """
     Build precursor-fragment annotations from MS1/MS2 clusters and link candidates.
@@ -544,9 +541,6 @@ def build_precursor_fragment_annotation(
     out_py = ims.build_precursor_fragment_annotation_py(
         ms1_py, ms2_py, cand_py,
         float(min_score),
-        bool(one_to_one),
-        int(top_k_per_ms2),
-        None if top_k_per_ms1 is None else int(top_k_per_ms1),
     )
     out = []
     for (pms1, pms2_list) in out_py:
