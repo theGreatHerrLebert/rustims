@@ -1,30 +1,21 @@
-// rustdf/src/cluster/matching.rs
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::cmp::Ordering;
 use crate::cluster::cluster_eval::{ClusterResult, LinkCandidate};
 
-/// Strategy toggle
-#[derive(Clone, Copy, Debug)]
-pub enum MatchCardinality {
-    /// Each MS2 assigned to at most one MS1, MS1 can take many MS2 (typical precursor→fragments)
-    OneToMany,
-    /// Classical 1↔1 matching
-    OneToOne,
-}
+// Internal knobs (kept here to avoid binding changes)
+const CARDINALITY_ONE_TO_ONE: bool = false; // false => one-to-many
+const TOP_K_PER_MS2: usize = 32;             // speed guard
+const TOP_K_PER_MS1: Option<usize> = Some(512);
 
-/// Fast, non-optimal greedy matcher. Parallel across window groups.
-/// - culls to top_k_per_ms2 (and optionally per MS1) to keep it snappy
-pub fn assign_ms2_to_ms1_greedy_parallel(
+pub fn build_precursor_fragment_annotation(
     ms1: &[ClusterResult],
     ms2: &[ClusterResult],
     candidates: &[LinkCandidate],
     min_score: f32,
-    cardinality: MatchCardinality,
-    top_k_per_ms2: usize,          // e.g. 8
-    top_k_per_ms1: Option<usize>,  // e.g. Some(32) or None to skip
-) -> Vec<LinkCandidate> {
-    // group -> MS2 list
+) -> Vec<(ClusterResult, Vec<ClusterResult>)> {
+
+    // --- Group MS2 + MS1 by DIA window group for parallelism ----------------
     let mut group_to_ms2: HashMap<u32, Vec<usize>> = HashMap::new();
     for (j, c2) in ms2.iter().enumerate() {
         if let Some(g) = c2.window_group {
@@ -32,7 +23,6 @@ pub fn assign_ms2_to_ms1_greedy_parallel(
         }
     }
 
-    // group -> MS1 list (covering_mz includes g)
     let mut group_to_ms1: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, c1) in ms1.iter().enumerate() {
         if let Some(gs) = &c1.window_groups_covering_mz {
@@ -42,15 +32,17 @@ pub fn assign_ms2_to_ms1_greedy_parallel(
         }
     }
 
-    // group -> edges (already filtered by group compatibility)
+    // Pre-filter edges to compatible groups
     let mut grouped_edges: HashMap<u32, Vec<LinkCandidate>> = HashMap::new();
     for e in candidates {
         if e.score < min_score { continue; }
-        let Some(g) = ms2.get(e.ms2_idx).and_then(|c| c.window_group) else { continue; };
-        // Keep only edges whose MS1 is actually compatible with this group
-        if let Some(ms1s) = group_to_ms1.get(&g) {
-            if ms1s.contains(&e.ms1_idx) {
-                grouped_edges.entry(g).or_default().push(e.clone());
+        // Need the group from the MS2 cluster (safer than trusting e.group blindly)
+        if let Some(g) = ms2.get(e.ms2_idx).and_then(|c| c.window_group) {
+            // Also ensure the MS1 is actually compatible with that group
+            if let Some(ms1s) = group_to_ms1.get(&g) {
+                if ms1s.iter().any(|&idx| idx == e.ms1_idx) {
+                    grouped_edges.entry(g).or_default().push(e.clone());
+                }
             }
         }
     }
@@ -68,21 +60,26 @@ pub fn assign_ms2_to_ms1_greedy_parallel(
         }
     }
 
-    // Solve per group in parallel
-    work.par_iter()
+    // Solve each group in parallel
+    let selected: Vec<LinkCandidate> = work.par_iter()
         .map(|(_g, ms1_list, ms2_list, edges)| {
-            // 1) CULL: top-K per MS2 (and optional per MS1)
+            // Convert lists to sets for O(1) membership checks
+            let ms1_set: HashSet<usize> = ms1_list.iter().copied().collect();
+            let ms2_set: HashSet<usize> = ms2_list.iter().copied().collect();
+
+            // 1) Top-K cull per MS2 (and optional per MS1) to keep things fast
             let mut by_ms2: HashMap<usize, Vec<LinkCandidate>> = HashMap::new();
             for e in edges {
+                if !ms1_set.contains(&e.ms1_idx) || !ms2_set.contains(&e.ms2_idx) { continue; }
                 by_ms2.entry(e.ms2_idx).or_default().push(e.clone());
             }
             for v in by_ms2.values_mut() {
                 v.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
-                if v.len() > top_k_per_ms2 { v.truncate(top_k_per_ms2); }
+                if v.len() > TOP_K_PER_MS2 { v.truncate(TOP_K_PER_MS2); }
             }
             let mut culled: Vec<LinkCandidate> = by_ms2.into_values().flatten().collect();
 
-            if let Some(k) = top_k_per_ms1 {
+            if let Some(k) = TOP_K_PER_MS1 {
                 let mut by_ms1: HashMap<usize, Vec<LinkCandidate>> = HashMap::new();
                 for e in &culled { by_ms1.entry(e.ms1_idx).or_default().push(e.clone()); }
                 let mut culled2 = Vec::with_capacity(culled.len());
@@ -94,7 +91,7 @@ pub fn assign_ms2_to_ms1_greedy_parallel(
                 culled = culled2;
             }
 
-            // 2) GREEDY: sort by score desc, accept if available
+            // 2) Greedy accept best-first
             culled.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
 
             let mut used_ms2: HashSet<usize> = HashSet::new();
@@ -103,39 +100,20 @@ pub fn assign_ms2_to_ms1_greedy_parallel(
 
             for e in culled {
                 if e.score < min_score { continue; }
-                if !ms2_list.contains(&e.ms2_idx) { continue; }
-                if !ms1_list.contains(&e.ms1_idx) { continue; }
+                if !ms2_set.contains(&e.ms2_idx) { continue; }
+                if !ms1_set.contains(&e.ms1_idx) { continue; }
 
-                // enforce cardinality
                 if used_ms2.contains(&e.ms2_idx) { continue; }
-                if matches!(cardinality, MatchCardinality::OneToOne) && used_ms1.contains(&e.ms1_idx) {
-                    continue;
-                }
+                if CARDINALITY_ONE_TO_ONE && used_ms1.contains(&e.ms1_idx) { continue; }
 
                 out.push(e.clone());
                 used_ms2.insert(e.ms2_idx);
-                if matches!(cardinality, MatchCardinality::OneToOne) {
-                    used_ms1.insert(e.ms1_idx);
-                }
+                if CARDINALITY_ONE_TO_ONE { used_ms1.insert(e.ms1_idx); }
             }
             out
         })
         .flatten()
-        .collect()
-}
-
-pub fn build_precursor_fragment_annotation(
-    ms1: &[ClusterResult],
-    ms2: &[ClusterResult],
-    candidates: &[LinkCandidate],
-    min_score: f32,
-    cardinality: MatchCardinality,   // OneToMany is typical for DIA
-    top_k_per_ms2: usize,            // e.g. 8
-    top_k_per_ms1: Option<usize>,    // e.g. Some(32)
-) -> Vec<(ClusterResult, Vec<ClusterResult>)> {
-    let selected = assign_ms2_to_ms1_greedy_parallel(
-        ms1, ms2, candidates, min_score, cardinality, top_k_per_ms2, top_k_per_ms1
-    );
+        .collect();
 
     // Group selected links by MS1, order fragments by score desc
     let mut score_map: HashMap<(usize, usize), f32> = HashMap::new();
@@ -151,11 +129,11 @@ pub fn build_precursor_fragment_annotation(
             let sb = *score_map.get(&(i_ms1, b)).unwrap_or(&0.0);
             sb.partial_cmp(&sa).unwrap_or(Ordering::Equal)
         });
-        let frags = idxs.into_iter().map(|j| ms2[j].clone()).collect();
+        let frags = idxs.into_iter().map(|j| ms2[j].clone()).collect::<Vec<_>>();
         out.push((ms1[i_ms1].clone(), frags));
     }
 
-    // sort precursor blocks by precursor strength
+    // Sort precursor blocks by precursor strength (raw_sum)
     out.sort_by(|a, b| b.0.raw_sum.partial_cmp(&a.0.raw_sum).unwrap_or(Ordering::Equal));
     out
 }
