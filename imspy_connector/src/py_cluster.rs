@@ -290,11 +290,13 @@ impl PyClusterResult {
 
 #[pyclass]
 #[derive(Clone, Debug)]
-pub struct PyLinkCandidate { pub inner: rustdf::cluster::cluster_eval::LinkCandidate }
+pub struct PyLinkCandidate { pub inner: LinkCandidate }
 #[pymethods]
 impl PyLinkCandidate {
     #[getter] fn ms1_idx(&self) -> usize { self.inner.ms1_idx }
     #[getter] fn ms2_idx(&self) -> usize { self.inner.ms2_idx }
+    #[getter] fn ms1_id(&self) -> usize { self.inner.ms1_id }
+    #[getter] fn ms2_id(&self) -> usize { self.inner.ms2_id }
     #[getter] fn score(&self) -> f32 { self.inner.score }
     #[getter] fn group(&self) -> u32 { self.inner.group }
     fn __repr__(&self) -> String {
