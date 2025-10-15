@@ -11,6 +11,7 @@ def simulate_peptide_occurrences(
         sample_occurrences: bool = True,
         intensity_value: float = 1e6,
         mixture_contribution: float = 1.0,
+        intensity_bias: float = 0.0,
 ) -> pd.DataFrame:
     """Simulate peptide occurrences.
 
@@ -23,6 +24,7 @@ def simulate_peptide_occurrences(
         sample_occurrences: Sample occurrences.
         intensity_value: Intensity value.
         mixture_contribution: Mixture contribution.
+        intensity_bias: Intensity bias, how many copies each peptide has at least.
 
     Returns:
         pd.DataFrame: Peptides DataFrame.
@@ -38,7 +40,7 @@ def simulate_peptide_occurrences(
             min_val=intensity_min,
             max_val=intensity_max,
             mixture_contribution=mixture_contribution,
-        )
+        ) + intensity_bias
     else:
-        peptides['events'] = intensity_value * mixture_contribution
+        peptides['events'] = intensity_value * mixture_contribution + intensity_bias
     return peptides

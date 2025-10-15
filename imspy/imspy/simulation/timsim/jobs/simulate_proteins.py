@@ -154,12 +154,14 @@ def get_tenzer_hokey():
     return targets_closed_form
 
 
-def assign_events(df, upscale_factor=int(1e5)):
+def assign_events(df, upscale_factor=int(1e5), intensity_bias: float = 0.0) -> pd.DataFrame:
     num_samples = len(df)
     indices = np.random.uniform(1, 1e4, num_samples).astype(np.int32)
     num_events = upscale_factor * get_tenzer_hokey()[indices]
     df["events"] = num_events
     df["total_events"] = df["events"]
+    df["events"] = (df["events"] + intensity_bias).astype(np.int32)
+    df["total_events"] = (df["total_events"] + intensity_bias).astype(np.int32)
     return df
 
 
@@ -179,6 +181,7 @@ def simulate_proteins(
         sample_proteins: bool = True,
         digest: bool = True,
         remove_degenerate_peptides: bool = False,
+        intensity_bias: float = 0.0,
 ) -> pd.DataFrame:
     """
     Simulate proteins.
@@ -199,6 +202,7 @@ def simulate_proteins(
         sample_proteins (bool): Whether to sample proteins from the FASTA file.
         digest (bool): Whether to digest proteins into peptides.
         remove_degenerate_peptides (bool): Whether to remove peptides that map to multiple proteins.
+        intensity_bias (float): Intensity bias, how many copies each peptide has at least.
 
     Returns:
         pd.DataFrame: Proteins DataFrame.
@@ -254,7 +258,7 @@ def simulate_proteins(
 
     # Assign protein IDs and events
     sample["protein_id"] = list(range(0, len(sample)))
-    sample = assign_events(sample, int(upscale_factor))
+    sample = assign_events(sample, int(upscale_factor), intensity_bias=intensity_bias)
 
     if remove_degenerate_peptides:
         # Pass 1: Count occurrences of each item
