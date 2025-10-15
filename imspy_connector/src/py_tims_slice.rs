@@ -57,8 +57,15 @@ impl PyTimsSlice {
     #[getter]
     pub fn frame_count(&self) -> i32 { self.inner.frames.len() as i32 }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
-        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, num_threads) }
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64,
+                         frame_id_min: i32, frame_id_max: i32,
+                         rt_min: f64, rt_max: f64,
+                         intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.filter_ranged(
+            mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max,
+            frame_id_min, frame_id_max, rt_min, rt_max,
+            intensity_min, intensity_max, num_threads)
+        }
     }
 
     pub fn filter_ranged_ms_type_specific(&self,
