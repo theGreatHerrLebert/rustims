@@ -154,6 +154,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no_sample_occurrences", dest="sample_occurrences", action="store_false",
                         help="Whether or not sample peptide occurrences should be assigned randomly (default: True)")
     parser.set_defaults(sample_occurrences=True)
+    parser.add_argument("--abundance_bias", type=float, help="Abundance bias, how many copies each protein has at least (default: 0.0)",
+                        default=0.0)
 
     # Retention time, Ion Mobility, and Intensity variance settings
     parser.add_argument("--re_scale_rt", type=bool, default=False,
@@ -294,6 +296,7 @@ def get_default_settings() -> dict:
         'num_sample_peptides': 25_000,
         'num_peptides_total': 250_000,
         'n_proteins': 20_000,
+        'abundance_bias': 0.0,
         'missed_cleavages': 2,
         'min_len': 7,
         'max_len': 30,
@@ -631,6 +634,7 @@ def main():
                 verbose=not args.silent_mode,
                 digest=args.digest_proteins,
                 remove_degenerate_peptides=args.remove_degenerate_peptides,
+                intensity_bias=args.abundance_bias,
             )
 
             # JOB 1: Simulate peptides
