@@ -422,9 +422,9 @@ impl TimsDatasetDIA {
         truncate: f32,
         clamp_scans_to_group: bool,
     ) -> ImIndex {
-        // Scan clamp from instrument windows (optional)
-        let scan_clamp = if clamp_scans_to_group {
-            self.group_bounds(window_group).map(|b| (b.scan_lo, b.scan_hi))
+        // NEW: use disjoint unions instead of (min,max)
+        let scan_ranges = if clamp_scans_to_group {
+            self.group_scan_unions().get(&window_group).cloned()
         } else { None };
 
         let frame_ids = self.frame_ids_for_group(window_group);
@@ -439,7 +439,7 @@ impl TimsDatasetDIA {
             rt_extra_pad,
             maybe_sigma_scans,
             truncate,
-            scan_clamp,
+            scan_ranges,
         )
     }
 

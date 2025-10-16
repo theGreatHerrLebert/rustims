@@ -1468,7 +1468,8 @@ pub fn build_dense_rt_by_mz_ppm_for_group(
 }
 
 /// Like `build_dense_im_by_rtpeaks_ppm`, but limited to a specific set of frames (e.g., a DIA window group)
-/// and a local scan axis derived from `scan_clamp = Some((scan_lo, scan_hi))`.
+/// and a local IM axis built from *disjoint scan ranges*. The returned `ImIndex.scans`
+/// are **global physical scan numbers** in compact order.
 pub fn build_dense_im_by_rtpeaks_ppm_for_group(
     data_handle: &TimsDatasetDIA,
     peaks: Vec<RtPeak1D>,          // rows
@@ -1479,7 +1480,7 @@ pub fn build_dense_im_by_rtpeaks_ppm_for_group(
     rt_extra_pad: usize,           // extra RT columns to include around each peak’s padded RT window
     maybe_sigma_scans: Option<f32>,
     truncate: f32,
-    scan_clamp: Option<(usize, usize)>, // e.g. Some((scan_lo, scan_hi)) from DIA group
+    scan_ranges: Option<Vec<(usize, usize)>>, // <-- unions (merged+sorted), None => no clamp
 ) -> ImIndex {
     let n_rows = peaks.len();
     if n_rows == 0 {
@@ -1487,9 +1488,14 @@ pub fn build_dense_im_by_rtpeaks_ppm_for_group(
     }
 
     // Materialize the group’s frames in the given order.
-    let frames = data_handle.get_slice(frame_ids_sorted.clone(), num_threads).frames;
+    let slice = data_handle.get_slice(frame_ids_sorted.clone(), num_threads);
+    let frames = slice.frames;
+    let ncols_rt = frames.len();
+    if ncols_rt == 0 {
+        return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
+    }
 
-    // Determine the global scan maxima (to guard) and the local scan window for the group.
+    // Determine global maximum scan id across these frames (guarding only).
     let global_num_scans: usize = frames.iter()
         .flat_map(|fr| fr.scan.iter())
         .copied()
@@ -1497,43 +1503,64 @@ pub fn build_dense_im_by_rtpeaks_ppm_for_group(
         .map(|m| m as usize + 1)
         .unwrap_or(0);
 
-    // Local scan clamp (map physical scan -> local [0..cols-1])
-    let (scan_lo, scan_hi) = scan_clamp.unwrap_or((0, global_num_scans.saturating_sub(1)));
-    let scan_lo = scan_lo.min(global_num_scans.saturating_sub(1));
-    let scan_hi = scan_hi.min(global_num_scans.saturating_sub(1));
-    let cols = if scan_hi >= scan_lo { scan_hi - scan_lo + 1 } else { 0 };
+    // --- Build compact IM axis from unions; keep labels as *global* scans ----
+    // phys2local maps physical scan -> Some(local index) if included, else None.
+    let (scans_compact, phys2local): (Vec<usize>, Vec<Option<usize>>) = if let Some(ranges) = scan_ranges {
+        // Expect ranges merged and sorted; if not guaranteed upstream, merge here.
+        let mut scans = Vec::new();
+        let mut max_phys = 0usize;
+        for (lo, hi) in ranges {
+            if lo > hi { continue; }
+            max_phys = max_phys.max(hi);
+            for s in lo..=hi { scans.push(s); }
+        }
+        if scans.is_empty() {
+            return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
+        }
+        let mut phys2local = vec![None; max_phys + 1];
+        for (local, &s_phys) in scans.iter().enumerate() {
+            if s_phys < phys2local.len() {
+                phys2local[s_phys] = Some(local);
+            }
+        }
+        (scans, phys2local)
+    } else {
+        // No clamp: include all physical scans that appear in the slice
+        let n = global_num_scans;
+        let scans: Vec<usize> = (0..n).collect();
+        let phys2local: Vec<Option<usize>> = (0..n).map(Some).collect();
+        (scans, phys2local)
+    };
+
+    let cols = scans_compact.len();
     if cols == 0 {
         return ImIndex { peaks, scans: vec![], data: vec![], rows: 0, cols: 0, data_raw: None };
     }
-    let scans: Vec<usize> = (0..cols).map(|k| scan_lo + k).collect();
 
-    // Build compact per-frame bin views (same as your current path).
-    // We’ll reuse them but remap scan indices into the local [0..cols-1] range on the fly.
-    let ncols_rt = frames.len();
+    // Per-frame bin views over the *same* m/z scale.
     let views: Vec<FrameBinView> = (0..ncols_rt)
         .into_par_iter()
         .map(|i| build_frame_bin_view(frames[i].clone(), scale, global_num_scans))
         .collect();
 
-    if views.is_empty() {
-        return ImIndex { peaks, scans, data: vec![], rows: 0, cols, data_raw: None };
-    }
-
-    // Build per-row IM profiles
     let do_smooth = maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+
+    // Build per-row IM profiles over the compact axis.
     let profiles: Vec<(Vec<f32>, Vec<f32>)> = peaks
         .par_iter()
         .map(|p| {
-            if p.mz_row >= scale.num_bins() { return (vec![0.0; cols], vec![0.0; cols]); }
+            if p.mz_row >= scale.num_bins() {
+                return (vec![0.0; cols], vec![0.0; cols]);
+            }
 
-            // RT bounds in column space (over the group frames)
+            // RT bounds in *group* column space (cap to slice).
             let mut lo_rt = p.left_padded.saturating_sub(rt_extra_pad);
             let mut hi_rt = p.right_padded.saturating_add(rt_extra_pad);
             if lo_rt >= ncols_rt { lo_rt = ncols_rt.saturating_sub(1); }
             if hi_rt >= ncols_rt { hi_rt = ncols_rt.saturating_sub(1); }
             if lo_rt > hi_rt { return (vec![0.0; cols], vec![0.0; cols]); }
 
-            // m/z band (±ppm around the peak’s m/z center)
+            // m/z band (±ppm)
             let mz_center = p.mz_center;
             let tol = mz_center * mz_ppm_window * 1e-6;
             let (bin_lo, bin_hi) = scale.index_range_for_mz_window(mz_center - tol, mz_center + tol);
@@ -1544,10 +1571,9 @@ pub fn build_dense_im_by_rtpeaks_ppm_for_group(
                 let (start, end) = bin_range(v, bin_lo, bin_hi);
                 for i in start..end {
                     let s_phys = v.scan_idx[i] as usize;
-                    if s_phys < global_num_scans && s_phys >= scan_lo && s_phys <= scan_hi {
-                        let s_local = s_phys - scan_lo;
-                        raw[s_local] += v.intensity[i];
-                    }
+                    // keep only if in our unions
+                    let Some(s_local) = phys2local.get(s_phys).and_then(|&x| x) else { continue };
+                    raw[s_local] += v.intensity[i];
                 }
             }
 
@@ -1578,5 +1604,6 @@ pub fn build_dense_im_by_rtpeaks_ppm_for_group(
         }
     }
 
-    ImIndex { peaks, scans, data, rows, cols, data_raw }
+    // IMPORTANT: `scans` = global physical scan numbers in compact order
+    ImIndex { peaks, scans: scans_compact, data, rows, cols, data_raw }
 }
