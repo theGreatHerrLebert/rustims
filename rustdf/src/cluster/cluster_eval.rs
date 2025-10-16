@@ -1,7 +1,7 @@
 use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
 use rayon::iter::ParallelIterator;
-use crate::cluster::utility::RtIndex;
+use crate::cluster::utility::{ImPeak1D, RtIndex, RtPeak1D};
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
 // cluster_eval.rs (or wherever these live)
@@ -1057,4 +1057,83 @@ pub fn link_ms2_to_ms1(
 
     out.sort_by(|a,b| b.score.total_cmp(&a.score));
     out
+}
+
+#[derive(Clone, Copy)]
+struct RtRowSnap { rt_l: usize, rt_r: usize, mz_center: f32 }
+
+#[derive(Clone, Copy)]
+struct ImSnap { im_l: usize, im_r: usize }
+
+/// Build one `ClusterSpec` per (RT peak row, IM peak) pair.
+/// - `im_scans_abs`: if provided, maps IM **indices** to **absolute** scans.
+/// - Pads RT/IM windows and clamps to the available axes.
+/// - Produces `mz_hist_bins` bins for the m/z marginal.
+pub fn make_cluster_specs_from_peaks_rs(
+    rt_peaks: &[RtPeak1D],
+    im_rows: &[Vec<ImPeak1D>],       // same row order/length as rt_peaks
+    im_scans_abs: Option<&[usize]>,  // absolute scan axis; None => keep indices
+    mz_ppm_window: f32,
+    extra_rt_pad: usize,
+    extra_im_pad: usize,
+    mz_hist_bins: usize,
+) -> Vec<ClusterSpec> {
+    assert_eq!(
+        rt_peaks.len(),
+        im_rows.len(),
+        "im_rows must have same number of rows as rt_peaks"
+    );
+
+    // Precompute per-row RT windows and m/z centers
+    let rt_rows: Vec<RtRowSnap> = rt_peaks
+        .iter()
+        .map(|rt| {
+            let rt_l = rt.left_padded.saturating_sub(extra_rt_pad);
+            let rt_r = rt.right_padded.saturating_add(extra_rt_pad);
+            RtRowSnap { rt_l, rt_r, mz_center: rt.mz_center }
+        })
+        .collect();
+
+    // Build IM windows per row (optionally mapped to absolute scans)
+    let im_rows_snap: Vec<Vec<ImSnap>> = im_rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|im| {
+                    // starting from IM **indices** stored on the peak
+                    let mut il = im.left.saturating_sub(extra_im_pad);
+                    let mut ir = im.right.saturating_add(extra_im_pad);
+
+                    if let Some(axis) = im_scans_abs {
+                        // clamp to axis, then map to absolute
+                        il = il.min(axis.len().saturating_sub(1));
+                        ir = ir.min(axis.len().saturating_sub(1));
+                        ImSnap { im_l: axis[il], im_r: axis[ir] }
+                    } else {
+                        ImSnap { im_l: il, im_r: ir }
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    // One spec per (row, im_peak_j)
+    rt_rows
+        .par_iter()
+        .enumerate()
+        .flat_map_iter(|(row_idx, rt)| {
+            im_rows_snap[row_idx].iter().map(move |im| ClusterSpec {
+                rt_left: rt.rt_l,
+                rt_right: rt.rt_r,
+                im_left: im.im_l,
+                im_right: im.im_r,
+                mz_center_hint: rt.mz_center,
+                mz_ppm_window,
+                extra_rt_pad: 0,    // already applied above
+                extra_im_pad: 0,    // already applied above
+                mz_hist_bins,
+                mz_window_da_override: None,
+            })
+        })
+        .collect()
 }

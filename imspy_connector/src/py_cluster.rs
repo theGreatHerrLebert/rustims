@@ -1,10 +1,10 @@
 use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
-use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate};
+use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate, make_cluster_specs_from_peaks_rs};
 use pyo3::prelude::{PyModule, PyModuleMethods};
 use crate::py_dia::{PyImPeak1D, PyRtPeak1D};
-use rayon::prelude::*;
 use rustdf::cluster::io as cio;
 use rustdf::cluster::matching::{build_precursor_fragment_annotation};
+use rustdf::cluster::utility::{ImPeak1D, RtPeak1D};
 
 #[pyclass]
 #[derive(Clone, Debug, Default)]
@@ -340,77 +340,43 @@ pub fn build_precursor_fragment_annotation_py(
 pub fn make_cluster_specs_from_peaks(
     py: Python<'_>,
     rt_peaks: Vec<Py<PyRtPeak1D>>,
-    im_rows: Vec<Vec<Py<PyImPeak1D>>>,   // same row order as rt_peaks
-    im_scans: Option<Vec<u32>>,          // <-- NEW: IM axis (absolute scan numbers)
+    im_rows: Vec<Vec<Py<PyImPeak1D>>>,
+    im_scans: Option<Vec<u32>>,
     mz_ppm_window: f32,
     extra_rt_pad: usize,
     extra_im_pad: usize,
     mz_hist_bins: usize,
 ) -> PyResult<Vec<Py<PyClusterSpec>>> {
+    // 1) Borrow Rust-side views
+    let rt_vec: Vec<RtPeak1D> = rt_peaks.iter()
+        .map(|p| p.borrow(py).inner.clone()) // or .to_owned() depending on your Py* wrappers
+        .collect();
 
-    #[derive(Clone, Copy)]
-    struct RtRowSnap { rt_l: usize, rt_r: usize, mz_center: f32 }
+    let im_rows_vec: Vec<Vec<ImPeak1D>> = im_rows.iter()
+        .map(|row| row.iter().map(|p| p.borrow(py).inner.clone()).collect())
+        .collect();
 
-    #[derive(Clone, Copy)]
-    struct ImSnap { im_l: usize, im_r: usize }
+    let im_axis_abs: Option<Vec<usize>> = im_scans.map(|v| v.into_iter().map(|x| x as usize).collect());
 
-    // If provided, convert to usize and we’ll use it to map indices->absolute scans
-    let im_scans_abs: Option<Vec<usize>> = im_scans.map(|v| v.into_iter().map(|x| x as usize).collect());
-
-    let mut rt_rows: Vec<RtRowSnap> = Vec::with_capacity(rt_peaks.len());
-    let mut im_rows_snap: Vec<Vec<ImSnap>> = Vec::with_capacity(im_rows.len());
-
-    for (row_idx, rt_p) in rt_peaks.iter().enumerate() {
-        let rt = rt_p.borrow(py);
-        let mz_center = rt.mz_center();
-        let rt_l = rt.left_padded().saturating_sub(extra_rt_pad);
-        let rt_r = rt.right_padded().saturating_add(extra_rt_pad);
-        rt_rows.push(RtRowSnap { rt_l, rt_r, mz_center });
-
-        let mut row_vec: Vec<ImSnap> = Vec::with_capacity(im_rows[row_idx].len());
-        for im_p in &im_rows[row_idx] {
-            let im = im_p.borrow(py);
-
-            // indices within the IM row
-            let i_l = im.left().saturating_sub(extra_im_pad);
-            let i_r = im.right().saturating_add(extra_im_pad);
-
-            // map to absolute scan numbers if axis available; else keep indices (MS1)
-            let (im_l, im_r) = if let Some(ref axis) = im_scans_abs {
-                let il = i_l.min(axis.len().saturating_sub(1));
-                let ir = i_r.min(axis.len().saturating_sub(1));
-                (axis[il], axis[ir])
-            } else {
-                (i_l, i_r)
-            };
-
-            row_vec.push(ImSnap { im_l, im_r });
-        }
-        im_rows_snap.push(row_vec);
-    }
-
-    let specs: Vec<ClusterSpec> = py.allow_threads(|| {
-        rt_rows.par_iter().enumerate().flat_map_iter(|(row_idx, rt)| {
-            im_rows_snap[row_idx].iter().map(move |im| ClusterSpec {
-                rt_left: rt.rt_l,
-                rt_right: rt.rt_r,
-                im_left: im.im_l,      // now absolute if axis provided
-                im_right: im.im_r,     // now absolute if axis provided
-                mz_center_hint: rt.mz_center,
-                mz_ppm_window,
-                extra_rt_pad: 0,
-                extra_im_pad: 0,
-                mz_hist_bins,
-                mz_window_da_override: None,
-            })
-        }).collect()
+    // 2) Build specs off the GIL
+    let specs = py.allow_threads(|| {
+        make_cluster_specs_from_peaks_rs(
+            &rt_vec,
+            &im_rows_vec,
+            im_axis_abs.as_deref(),
+            mz_ppm_window,
+            extra_rt_pad,
+            extra_im_pad,
+            mz_hist_bins,
+        )
     });
 
-    let mut specs_py = Vec::with_capacity(specs.len());
+    // 3) Wrap back into Python objects
+    let mut out = Vec::with_capacity(specs.len());
     for s in specs {
-        specs_py.push(Py::new(py, PyClusterSpec { inner: s })?);
+        out.push(pyo3::Py::new(py, PyClusterSpec { inner: s })?);
     }
-    Ok(specs_py)
+    Ok(out)
 }
 
 #[pyfunction]
