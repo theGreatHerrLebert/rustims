@@ -69,6 +69,9 @@ class Feature(RustWrapperObject):
         return np.asarray(self.__py_ptr.cluster_ids, dtype=np.int64)
     @property
     def repr_cluster_id(self) -> int: return self.__py_ptr.repr_cluster_id
+    @property
+    def iso(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.iso, dtype=np.float32)
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
