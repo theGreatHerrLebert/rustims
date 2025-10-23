@@ -15,7 +15,7 @@ pub struct PyFeatureBuildParams { pub inner: FeatureBuildParams }
 #[pymethods]
 impl PyFeatureBuildParams {
     #[new]
-    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice, min_hist_conf=0.7, allow_unknown_charge=false))]
+    #[pyo3(signature = (ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice, min_hist_conf=0.7, allow_unknown_charge=false, recover_missing=false, recover_ppm=None, min_iso_abs=100.0, min_iso_frac_of_sum=0.01))]
     pub fn new(
         ppm_narrow: f32,
         k_max: usize,
@@ -24,6 +24,10 @@ impl PyFeatureBuildParams {
         max_points_per_slice: usize,
         min_hist_conf: f32,
         allow_unknown_charge: bool,
+        recover_missing: bool,
+        recover_ppm: Option<f32>,
+        min_iso_abs: f32,
+        min_iso_frac_of_sum: f32,
     ) -> Self {
         Self { inner: FeatureBuildParams {
             ppm_narrow,
@@ -33,6 +37,10 @@ impl PyFeatureBuildParams {
             max_points_per_slice,
             min_hist_conf,
             allow_unknown_charge,
+            recover_missing,
+            recover_ppm,
+            min_iso_abs,
+            min_iso_frac_of_sum,
         }}
     }
 
@@ -44,13 +52,18 @@ impl PyFeatureBuildParams {
     #[getter] fn max_points_per_slice(&self) -> usize { self.inner.max_points_per_slice }
     #[getter] fn min_hist_conf(&self) -> f32 { self.inner.min_hist_conf }
     #[getter] fn allow_unknown_charge(&self) -> bool { self.inner.allow_unknown_charge }
+    #[getter] fn recover_missing(&self) -> bool { self.inner.recover_missing }
+    #[getter] fn recover_ppm(&self) -> Option<f32> { self.inner.recover_ppm }
+    #[getter] fn min_iso_abs(&self) -> f32 { self.inner.min_iso_abs }
+    #[getter] fn min_iso_frac_of_sum(&self) -> f32 { self.inner.min_iso_frac_of_sum }
 
     fn __repr__(&self) -> String {
         format!(
-            "FeatureBuildParams(ppm_narrow={}, k_max={}, min_cosine={}, min_members={}, max_points_per_slice={}, min_hist_conf={}, allow_unknown_charge={})",
+            "FeatureBuildParams(ppm_narrow={}, k_max={}, min_cosine={}, min_members={}, max_points_per_slice={}, min_hist_conf={}, allow_unknown_charge={}, recover_missing={}, recover_ppm={:?}, min_iso_abs={}, min_iso_frac_of_sum={})",
             self.inner.ppm_narrow, self.inner.k_max,
             self.inner.min_cosine, self.inner.min_members, self.inner.max_points_per_slice,
-            self.inner.min_hist_conf, self.inner.allow_unknown_charge
+            self.inner.min_hist_conf, self.inner.allow_unknown_charge, self.inner.recover_missing,
+            self.inner.recover_ppm, self.inner.min_iso_abs, self.inner.min_iso_frac_of_sum
         )
     }
 }
@@ -200,6 +213,8 @@ impl PyFeature {
     #[getter] fn mz_center(&self)  -> f32 { self.inner.mz_center }
     #[getter] fn raw_sum(&self)    -> f32 { self.inner.raw_sum }
     #[getter] fn iso(&self)        -> Vec<f32> { self.inner.iso.to_vec() }
+    #[getter] fn present_mask(&self) -> Vec<u8> { self.inner.present_mask.to_vec() }
+    #[getter] fn k_detected(&self)  -> usize { self.inner.k_detected }
 
     fn __repr__(&self) -> String {
         format!(
@@ -270,7 +285,7 @@ pub fn build_features_from_envelopes_py(
     let mut rs_frames: Vec<Arc<TimsFrame>> = Vec::with_capacity(frames.len());
     for f in frames {
         let fr = f.borrow(py);
-        rs_frames.push(Arc::from(fr.inner.clone())); // or Arc::clone if stored as Arc
+        rs_frames.push(Arc::new(fr.inner.clone()));
     }
     // unwrap envelopes
     let mut rs_env: Vec<Envelope> = Vec::with_capacity(envelopes.len());

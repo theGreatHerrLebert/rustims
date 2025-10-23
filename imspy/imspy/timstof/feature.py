@@ -9,8 +9,16 @@ from imspy.simulation.annotation import RustWrapperObject
 
 
 class FeatureBuildParams(RustWrapperObject):
-    def __init__(self, ppm_narrow: float, k_max: int, min_cosine: float, min_members: int, max_points_per_slice: int = 0, min_hist_conf: float = 0.0, allow_unknown_charge: bool = True):
-        self.__py_ptr = ims.PyFeatureBuildParams(ppm_narrow, k_max, min_cosine, min_members, max_points_per_slice, min_hist_conf, allow_unknown_charge)
+    def __init__(self, ppm_narrow: float, k_max: int, min_cosine: float, min_members: int,
+                 max_points_per_slice: int = 0, min_hist_conf: float = 0.0,
+                 allow_unknown_charge: bool = True, recover_missing: bool = False,
+                    recover_ppm: Optional[float] = None, min_iso_abs: float = 0.0,
+                    min_iso_frac_of_sum: float = 0.0):
+        self.__py_ptr = ims.PyFeatureBuildParams(ppm_narrow, k_max, min_cosine,
+                                                 min_members, max_points_per_slice,
+                                                 min_hist_conf, allow_unknown_charge,
+                                                    recover_missing, recover_ppm,
+                                                    min_iso_abs, min_iso_frac_of_sum)
 
     @property
     def ppm_narrow(self) -> float:   return self.__py_ptr.ppm_narrow
@@ -26,6 +34,14 @@ class FeatureBuildParams(RustWrapperObject):
     def min_hist_conf(self) -> float: return self.__py_ptr.min_hist_conf
     @property
     def allow_unknown_charge(self) -> bool: return self.__py_ptr.allow_unknown_charge
+    @property
+    def recover_missing(self) -> bool: return self.__py_ptr.recover_missing
+    @property
+    def recover_ppm(self) -> Optional[float]: return self.__py_ptr.recover_ppm
+    @property
+    def min_iso_abs(self) -> float: return self.__py_ptr.min_iso_abs
+    @property
+    def min_iso_frac_of_sum(self) -> float: return self.__py_ptr.min_iso_frac_of_sum
 
     def get_py_ptr(self) -> "ims.PyFeatureBuildParams": return self.__py_ptr
 
@@ -72,6 +88,11 @@ class Feature(RustWrapperObject):
     @property
     def iso(self) -> np.ndarray:
         return np.asarray(self.__py_ptr.iso, dtype=np.float32)
+    @property
+    def present_mask(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.present_mask, dtype=np.uint8)
+    @property
+    def k_detected(self) -> int: return self.__py_ptr.k_detected
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
@@ -94,6 +115,8 @@ class Feature(RustWrapperObject):
             # arrays as plain Python lists for easy JSON/DF serialization
             "cluster_ids": [int(x) for x in self.cluster_ids.tolist()],
             "iso": [float(x) for x in getattr(self, "iso", np.asarray([], np.float32)).tolist()],
+            "present_mask": [int(x) for x in self.present_mask.tolist()],
+            "k_detected": int(self.k_detected),
         }
 
 

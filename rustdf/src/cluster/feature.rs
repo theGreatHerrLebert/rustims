@@ -100,6 +100,10 @@ pub struct FeatureBuildParams {
     pub max_points_per_slice: usize,
     pub min_hist_conf: f32,
     pub allow_unknown_charge: bool,
+    pub recover_missing: bool,           // integrate raw & mark isotopes not backed by clusters
+    pub recover_ppm: Option<f32>,        // optional override for recovery ppm (defaults to ppm_narrow)
+    pub min_iso_abs: f32,                // minimal absolute raw intensity to call a recovered peak
+    pub min_iso_frac_of_sum: f32,        // or minimal fraction of total iso_raw sum
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +121,9 @@ pub struct Feature {
     pub raw_sum: f32,
     pub member_cluster_ids: Vec<usize>,
     pub repr_cluster_id: usize,
+    // NEW: recovery metadata
+    pub present_mask: [u8; 8],   // 0=absent, 1=has cluster support, 2=recovered-from-raw-only
+    pub k_detected: usize,       // number of isotopes called present (1 or 2)
 }
 
 #[derive(Clone, Debug)]
@@ -293,21 +300,37 @@ pub fn build_features_from_envelopes(
 
             // ---- 3) integrate isotope stripes ----
             if z == 0 {
-                // unknown charge: integrate mono only with a neutral “z=1” spacing (k=1)
+                // unknown charge: integrate mono only with neutral z=1 window
                 let iso_raw = integrate_isotope_series(
                     frames, env.rt_bounds, env.im_bounds,
                     mz_mono, /*z_for_window*/ 1, fp.ppm_narrow, 1,
                     fp.max_points_per_slice,
                 );
+
                 let mut iso = [0f32; 8];
                 iso[0] = iso_raw[0];
+
+                // NEW: present mask & k_detected (mono only)
+                let (present_mask, k_detected) = build_present_mask(
+                    clusters,
+                    &env.cluster_ids,
+                    env.rt_bounds,
+                    env.im_bounds,
+                    mz_mono,
+                    /*z_for_window*/ 1,
+                    /*k_keep*/ 1,
+                    &iso_raw,
+                    fp.recover_ppm.unwrap_or(fp.ppm_narrow),
+                    fp.min_iso_abs,
+                    fp.min_iso_frac_of_sum,
+                    fp.recover_missing,
+                );
 
                 let mut raw_sum = 0f32;
                 for &cid in &env.cluster_ids { raw_sum += clusters[cid].raw_sum; }
 
                 let member_ids = env.cluster_ids.clone();
 
-                // pick a representative cluster id (max raw_sum among members)
                 let repr_cluster_id = member_ids
                     .iter()
                     .copied()
@@ -316,7 +339,6 @@ pub fn build_features_from_envelopes(
                             .partial_cmp(&clusters[b].raw_sum)
                             .unwrap_or(std::cmp::Ordering::Equal)
                     })
-                    // safe fallback: use first member if something is NaN/empty
                     .unwrap_or_else(|| member_ids[0]);
 
                 return Some(Feature{
@@ -333,6 +355,9 @@ pub fn build_features_from_envelopes(
                     raw_sum,
                     member_cluster_ids: member_ids,
                     repr_cluster_id,
+                    // NEW fields
+                    present_mask,
+                    k_detected,
                 });
             }
 
@@ -343,7 +368,7 @@ pub fn build_features_from_envelopes(
                 fp.max_points_per_slice,
             );
 
-            // L2 normalize
+            // L2 normalize (existing)
             let mut iso = [0f32; 8];
             let mut norm = 0f32;
             for i in 0..k_keep { iso[i] = iso_raw[i]; norm += iso[i]*iso[i]; }
@@ -352,13 +377,29 @@ pub fn build_features_from_envelopes(
                 for x in &mut iso { *x /= s; }
             }
 
-            // ---- 4) averagine cosine gate ----
+            // ---- 4) averagine cosine gate ---- (existing)
             let neutral = (mz_mono - PROTON) * (z as f32);
             let avg = lut.lookup(neutral, z);
             let cos = cosine(&iso, &avg);
             if cos < fp.min_cosine { return None; }
 
-            // ---- 5) aggregate raw_sum over members ----
+            // NEW: present mask & k_detected across the k integrated isotopes
+            let (present_mask, k_detected) = build_present_mask(
+                clusters,
+                &env.cluster_ids,
+                env.rt_bounds,
+                env.im_bounds,
+                mz_mono,
+                z,
+                k_keep,
+                &iso_raw,
+                fp.recover_ppm.unwrap_or(fp.ppm_narrow),
+                fp.min_iso_abs,
+                fp.min_iso_frac_of_sum,
+                fp.recover_missing,
+            );
+
+            // ---- 5) aggregate raw_sum over members ---- (existing)
             let mut raw_sum = 0f32;
             for &cid in &env.cluster_ids {
                 raw_sum += clusters[cid].raw_sum;
@@ -379,7 +420,6 @@ pub fn build_features_from_envelopes(
                 member_cluster_ids: env.cluster_ids.clone(),
                 repr_cluster_id: {
                     let member_ids = &env.cluster_ids;
-                    // pick a representative cluster id (max raw_sum among members)
                     member_ids
                         .iter()
                         .copied()
@@ -388,9 +428,11 @@ pub fn build_features_from_envelopes(
                                 .partial_cmp(&clusters[b].raw_sum)
                                 .unwrap_or(std::cmp::Ordering::Equal)
                         })
-                        // safe fallback: use first member if something is NaN/empty
                         .unwrap_or_else(|| member_ids[0])
                 },
+                // NEW fields
+                present_mask,
+                k_detected,
             })
         })
         .collect()
@@ -401,6 +443,75 @@ fn ppm_between(a_da: f32, b_da: f32) -> f32 {
     let dm = (a_da - b_da).abs();
     let center = ((a_da + b_da) * 0.5).max(1e-6);
     1.0e6 * dm / center
+}
+
+#[inline]
+fn build_present_mask(
+    clusters: &[ClusterResult],
+    member_cids: &[usize],
+    rt: (usize, usize),
+    im: (usize, usize),
+    mz_mono: f32,
+    z_for_window: u8,          // use 1 for unknown z (mono only), else actual z
+    k_keep: usize,             // how many isotopes we integrated
+    iso_raw: &[f32; 8],        // raw (unnormalized) integrals from integrate_isotope_series
+    ppm_for_mask: f32,         // fp.recover_ppm.unwrap_or(fp.ppm_narrow)
+    min_iso_abs: f32,          // fp.min_iso_abs
+    min_iso_frac_of_sum: f32,  // fp.min_iso_frac_of_sum
+    allow_recover: bool,       // fp.recover_missing
+) -> ([u8; 8], usize) {
+    let mut mask = [0u8; 8];
+
+    if k_keep == 0 { return (mask, 0); }
+
+    let dmz = 1.003_355_f32 / (z_for_window as f32).max(1.0);
+    let sum_iso: f32 = (0..k_keep).map(|k| iso_raw[k]).sum();
+
+    for k in 0..k_keep {
+        let mz_k = mz_mono + (k as f32) * dmz;
+
+        // cluster-backed?
+        if has_cluster_near_mz(clusters, member_cids, mz_k, ppm_for_mask, rt, im) {
+            mask[k] = 1; // backed by a detected cluster
+            continue;
+        }
+
+        // allow raw-only recovery?
+        if allow_recover {
+            let strong_abs = iso_raw[k] >= min_iso_abs;
+            let strong_frac = sum_iso > 0.0 && iso_raw[k] >= min_iso_frac_of_sum * sum_iso;
+            if strong_abs || strong_frac {
+                mask[k] = 2; // recovered from raw integration only
+            }
+        }
+    }
+
+    let k_detected = (0..k_keep).filter(|&k| mask[k] != 0).count();
+    (mask, k_detected)
+}
+
+#[inline]
+fn has_cluster_near_mz(
+    clusters: &[ClusterResult],
+    member_ids: &[usize],
+    mz_k: f32,
+    ppm: f32,
+    rt: (usize,usize),
+    im: (usize,usize),
+) -> bool {
+    let tol = mz_k * ppm * 1e-6;
+    let lo = mz_k - tol;
+    let hi = mz_k + tol;
+    for &cid in member_ids {
+        let c = &clusters[cid];
+        // m/z gate
+        if c.mz_fit.mu < lo || c.mz_fit.mu > hi { continue; }
+        // RT/IM overlap
+        if overlap1d(rt, c.rt_window) == 0 { continue; }
+        if overlap1d(im, c.im_window) == 0 { continue; }
+        return true;
+    }
+    false
 }
 
 fn frac_overlap(a:(usize,usize), b:(usize,usize)) -> f32 {
