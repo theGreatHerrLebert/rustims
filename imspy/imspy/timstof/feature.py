@@ -72,6 +72,27 @@ class Feature(RustWrapperObject):
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
+    def to_dict(self) -> dict:
+        """Flat, DataFrame-friendly representation."""
+        return {
+            "envelope_id": int(self.envelope_id),
+            "charge": int(self.charge),
+            "mz_mono": float(self.mz_mono),
+            "neutral_mass": float(getattr(self, "neutral_mass", float("nan"))),
+            "mz_center": float(getattr(self, "mz_center", float("nan"))),
+            "rt_left": int(self.rt_bounds[0]),
+            "rt_right": int(self.rt_bounds[1]),
+            "im_left": int(self.im_bounds[0]),
+            "im_right": int(self.im_bounds[1]),
+            "cosine": float(self.cosine),
+            "n_members": int(self.n_members),
+            "raw_sum": float(getattr(self, "raw_sum", float("nan"))),
+            "repr_cluster_id": int(self.repr_cluster_id),
+            # arrays as plain Python lists for easy JSON/DF serialization
+            "cluster_ids": [int(x) for x in self.cluster_ids.tolist()],
+            "iso": [float(x) for x in getattr(self, "iso", np.asarray([], np.float32)).tolist()],
+        }
+
 
 class Envelope(RustWrapperObject):
     def __init__(self, *a, **k):
@@ -103,6 +124,20 @@ class Envelope(RustWrapperObject):
         return self.__py_ptr.charge_hint
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": int(self.id),
+            "cluster_ids": [int(x) for x in self.cluster_ids.tolist()],
+            "n_members": int(len(self.cluster_ids)),
+            "rt_left": int(self.rt_bounds[0]),
+            "rt_right": int(self.rt_bounds[1]),
+            "im_left": int(self.im_bounds[0]),
+            "im_right": int(self.im_bounds[1]),
+            "mz_center": float(self.mz_center),
+            "mz_span_da": float(self.mz_span_da),
+            "charge_hint": (None if self.charge_hint is None else int(self.charge_hint)),
+        }
 
 
 class GroupingOutput(RustWrapperObject):
