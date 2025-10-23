@@ -9,11 +9,19 @@ from imspy.simulation.annotation import RustWrapperObject
 
 
 class FeatureBuildParams(RustWrapperObject):
-    def __init__(self, ppm_narrow: float, k_max: int, min_cosine: float, min_members: int,
-                 max_points_per_slice: int = 0, min_hist_conf: float = 0.0,
-                 allow_unknown_charge: bool = True, recover_missing: bool = False,
-                    recover_ppm: Optional[float] = None, min_iso_abs: float = 0.0,
-                    min_iso_frac_of_sum: float = 0.0):
+    def __init__(
+            self,
+            ppm_narrow: float,
+            k_max: int,
+            min_cosine: float,
+            min_members: int,
+            max_points_per_slice: int = 0,
+            min_hist_conf: float = 0.0,
+            allow_unknown_charge: bool = True,
+            recover_missing: bool = False,
+            recover_ppm: Optional[float] = None,
+            min_iso_abs: float = 0.0,
+            min_iso_frac_of_sum: float = 0.0):
         self.__py_ptr = ims.PyFeatureBuildParams(ppm_narrow, k_max, min_cosine,
                                                  min_members, max_points_per_slice,
                                                  min_hist_conf, allow_unknown_charge,
