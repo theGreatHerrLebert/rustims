@@ -101,6 +101,12 @@ class Feature(RustWrapperObject):
         return np.asarray(self.__py_ptr.present_mask, dtype=np.uint8)
     @property
     def k_detected(self) -> int: return self.__py_ptr.k_detected
+    @property
+    def raw_sum(self) -> float:   return float(self.__py_ptr.raw_sum)
+    @property
+    def neutral_mass(self) -> float: return float(self.__py_ptr.neutral_mass)
+    @property
+    def mz_center(self) -> float: return float(self.__py_ptr.mz_center)
 
     def __repr__(self) -> str: return repr(self.__py_ptr)
 
