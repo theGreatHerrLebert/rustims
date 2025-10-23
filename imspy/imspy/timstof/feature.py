@@ -22,6 +22,10 @@ class FeatureBuildParams(RustWrapperObject):
     def min_members(self) -> int:    return self.__py_ptr.min_members
     @property
     def max_points_per_slice(self) -> int: return self.__py_ptr.max_points_per_slice
+    @property
+    def min_hist_conf(self) -> float: return self.__py_ptr.min_hist_conf
+    @property
+    def allow_unknown_charge(self) -> bool: return self.__py_ptr.allow_unknown_charge
 
     def get_py_ptr(self) -> "ims.PyFeatureBuildParams": return self.__py_ptr
 
@@ -214,3 +218,40 @@ class AveragineLut(RustWrapperObject):
 
     def __repr__(self) -> str:
         return f"AveragineLut(grid={len(self.masses)}, z=[{self.z_min}..{self.z_max}], k={self.k})"
+
+def build_features_from_envelopes(
+    frames: Sequence["TimsFrame"],    # your existing frame wrapper
+    envelopes: Sequence[Envelope],
+    clusters: Sequence["ClusterResult"],
+    lut: AveragineLut,
+    gp: GroupingParams,
+    fp: FeatureBuildParams,
+) -> list[Feature]:
+    frames_py = [f.get_py_ptr() for f in frames]
+    envs_py   = [e.get_py_ptr() for e in envelopes]
+    cl_py     = [c.get_py_ptr() for c in clusters]
+    feats_py = ims.build_features_from_envelopes_py(
+        frames_py, envs_py, cl_py, lut.get_py_ptr(), gp.get_py_ptr(), fp.get_py_ptr()
+    )
+    return [Feature.from_py_ptr(f) for f in feats_py]
+
+def integrate_isotope_series(
+    frames, rt_bounds, im_bounds, mz_mono, z, ppm_narrow, k_max, max_points_per_slice=0
+) -> np.ndarray:
+    frames_py = [f.get_py_ptr() for f in frames]
+    v = ims.integrate_isotope_series_py(
+        frames_py, rt_bounds, im_bounds, float(mz_mono), int(z),
+        float(ppm_narrow), int(k_max), int(max_points_per_slice)
+    )
+    return np.asarray(v, dtype=np.float32)
+
+def build_local_mz_histogram(frames, rt_bounds, im_bounds, mz_center, win_ppm, bins):
+    frames_py = [f.get_py_ptr() for f in frames]
+    axis, y = ims.build_local_mz_histogram_py(
+        frames_py, rt_bounds, im_bounds, float(mz_center), float(win_ppm), int(bins)
+    )
+    return np.asarray(axis, dtype=np.float32), np.asarray(y, dtype=np.float32)
+
+def estimate_charge_from_hist(mz_axis: np.ndarray, mz_hist: np.ndarray):
+    return ims.estimate_charge_from_hist_py(list(map(float, mz_axis)), list(map(float, mz_hist)))
+
