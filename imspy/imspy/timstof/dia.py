@@ -13,6 +13,115 @@ from imspy.timstof.frame import TimsFrame
 ims = imspy_connector.py_dia
 from imspy.simulation.annotation import RustWrapperObject
 
+class MzScanWindowGrid(RustWrapperObject):
+    """Python wrapper for ims.PyMzScanWindowGrid."""
+
+    def __init__(self, *a, **k):
+        raise RuntimeError("Use MzScanWindowGrid.from_py_ptr()")
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyMzScanWindowGrid) -> "MzScanWindowGrid":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    @classmethod
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    # --- properties mapped to Rust getters ---
+    @property
+    def rt_range_frames(self) -> tuple[int, int]:
+        return self.__py_ptr.rt_range_frames
+
+    @property
+    def rt_range_sec(self) -> tuple[float, float]:
+        return self.__py_ptr.rt_range_sec
+
+    @property
+    def rows(self) -> int:
+        return self.__py_ptr.rows
+
+    @property
+    def cols(self) -> int:
+        return self.__py_ptr.cols
+
+    @property
+    def scans(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.scans, dtype=np.uint32)
+
+    @property
+    def data(self) -> np.ndarray:
+        # Fortran order on Rust side; keep order='F' for cheap reshape-friendly view
+        return np.asarray(self.__py_ptr.data, dtype=np.float32, order="F")
+
+    @property
+    def data_raw(self) -> np.ndarray | None:
+        raw = self.__py_ptr.data_raw
+        if raw is None:
+            return None
+        return np.asarray(raw, dtype=np.float32, order="F")
+
+    def __repr__(self) -> str:
+        (l, r) = self.rt_range_frames
+        (t0, t1) = self.rt_range_sec
+        return f"MzScanWindowGrid(frames=({l},{r}), rt=({t0:.3f},{t1:.3f})s, shape=({self.rows},{self.cols}))"
+
+class MzScanPlan(RustWrapperObject):
+    """Python wrapper for ims.PyMzScanPlan (iterable over MzScanWindowGrid)."""
+
+    def __init__(self, *a, **k):
+        raise RuntimeError("Use TimsDatasetDIA.plan_mz_scan_windows(...) or MzScanPlan.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyMzScanPlan) -> "MzScanPlan":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    # ---- metadata from Rust getters on the plan ----
+    @property
+    def rows(self) -> int:
+        return self.__py_ptr.rows
+
+    @property
+    def global_num_scans(self) -> int:
+        return self.__py_ptr.global_num_scans
+
+    @property
+    def num_windows(self) -> int:
+        return self.__py_ptr.num_windows
+
+    @property
+    def frame_times(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.frame_times, dtype=np.float32)
+
+    @property
+    def frame_ids(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.frame_ids, dtype=np.uint32)
+
+    @property
+    def mz_centers(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.mz_centers, dtype=np.float32)
+
+    def bounds(self, i: int) -> tuple[int, int] | None:
+        return self.__py_ptr.bounds(i)
+
+    # ---- materialization / iteration ----
+    def get(self, i: int) -> MzScanWindowGrid | None:
+        w = self.__py_ptr.get(i)
+        if w is None:
+            return None
+        return MzScanWindowGrid.from_py_ptr(w)
+
+    def __iter__(self):
+        # The Rust class implements __iter__/__next__, yielding PyMzScanWindowGrid.
+        for w in self.__py_ptr:
+            yield MzScanWindowGrid.from_py_ptr(w)
+
 class ImIndex(RustWrapperObject):
     """Python wrapper for Rust PyImIndex (IM matrix around RT-picked peaks)."""
 
@@ -606,35 +715,6 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         """
         return self.__dataset.groups_covering_mz(mz)
 
-    """
-    /// Build features from envelopes using preloaded precursor frames internally.
-    pub fn build_features_from_envelopes(
-        &self,
-        envelopes: Vec<PyEnvelope>,
-        clusters: Vec<PyClusterResult>,
-        lut: PyAveragineLut,
-        gp: PyGroupingParams,
-        fp: PyFeatureBuildParams,
-    ) -> PyResult<Vec<PyFeature>> {
-        // Unwrap inner
-        let envs: Vec<Envelope> = envelopes.into_iter().map(|e| e.inner).collect();
-        let clus: Vec<ClusterResult> = clusters.into_iter().map(|c| c.inner).collect();
-
-        // Call the Rust method on TimsDatasetDIA
-        let feats: Vec<Feature> = self
-            .inner
-            .build_features_from_envelopes(
-                &envs,
-                &clus,
-                &lut.inner,
-                &gp.inner,
-                &fp.inner,
-            );
-
-        // Wrap back for Python
-        Ok(feats.into_iter().map(|f| PyFeature { inner: f }).collect())
-    }
-    """
     def build_features_from_envelopes(
         self,
         envelopes: Sequence["Envelope"],
@@ -658,3 +738,33 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             fp_py,
         )
         return [Feature.from_py_ptr(f) for f in feats_py]
+
+    def plan_mz_scan_windows(
+        self,
+        *,
+        ppm_per_bin: float,
+        mz_pad_ppm: float,
+        rt_window_sec: float,
+        rt_hop_sec: float,
+        num_threads: int = 4,
+        im_sigma_scans: Optional[float] = None,
+        truncate: float = 3.0,
+        precompute_views: bool = False,
+    ) -> MzScanPlan:
+        """Build a planner for sliding RT windows with a constant-ppm m/z grid."""
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_plan = ims.PyMzScanPlan(
+            self.__dataset,        # pass the PyTimsDatasetDIA handle
+            ppm_per_bin,
+            mz_pad_ppm,
+            rt_window_sec,
+            rt_hop_sec,
+            num_threads,
+            im_sigma_scans,
+            truncate,
+            precompute_views,
+        )
+        return MzScanPlan.from_py_ptr(py_plan)

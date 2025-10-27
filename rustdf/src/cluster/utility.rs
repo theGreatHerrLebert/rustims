@@ -586,7 +586,7 @@ pub struct RtIndex {
     pub data_raw: Option<Vec<f32>>,
 }
 
-fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
+pub fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
     let mut minv = f32::INFINITY;
     let mut maxv = f32::NEG_INFINITY;
     for fr in frames {
@@ -675,7 +675,7 @@ pub fn build_dense_rt_by_mz_ppm(
 }
 
 /// light 1D Gaussian smoothing on a vector (along scans)
-fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
+pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
     if v.is_empty() || sigma <= 0.0 { return; }
     let radius = (truncate * sigma).ceil() as i32;
     let two_sigma2 = 2.0 * sigma * sigma;
@@ -704,15 +704,16 @@ fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
     v.copy_from_slice(&out);
 }
 
-struct FrameBinView {
-    _frame_id: u32,
-    unique_bins: Vec<usize>,
-    offsets: Vec<usize>,
-    scan_idx: Vec<u32>,
-    intensity: Vec<f32>,
+#[derive(Clone, Debug)]
+pub struct FrameBinView {
+    pub _frame_id: u32,
+    pub unique_bins: Vec<usize>,
+    pub offsets: Vec<usize>,
+    pub scan_idx: Vec<u32>,
+    pub intensity: Vec<f32>,
 }
 
-fn build_frame_bin_view(
+pub fn build_frame_bin_view(
     fr: TimsFrame,
     scale: &MzScale,
     global_num_scans: usize,
