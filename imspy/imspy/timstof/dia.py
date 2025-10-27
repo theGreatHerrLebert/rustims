@@ -363,12 +363,27 @@ class ImPeak1D(RustWrapperObject):
     def __init__(self, *a, **k):
         raise RuntimeError("ImPeak1D is created in Rust; use ImPeak1D.from_py_ptr().")
 
+    # --- Back-compat (Rust getter rt_row() now forwards to mz_row) ---
     @property
     def rt_row(self) -> int: return self.__py_ptr.rt_row
+
+    # --- New preferred / extra context fields ---
+    @property
+    def mz_row(self) -> int: return self.__py_ptr.mz_row
+    @property
+    def parent_rt_peak_row(self) -> int: return self.__py_ptr.parent_rt_peak_row
+    @property
+    def rt_bounds(self) -> tuple[int, int]: return self.__py_ptr.rt_bounds
+    @property
+    def frame_id_bounds(self) -> tuple[int, int]: return self.__py_ptr.frame_id_bounds
+    @property
+    def window_group(self) -> int | None: return self.__py_ptr.window_group
+
+    # --- Existing fields (note: mobility is Optional now) ---
     @property
     def scan(self) -> int: return self.__py_ptr.scan
     @property
-    def mobility(self) -> float: return self.__py_ptr.mobility
+    def mobility(self) -> float | None: return self.__py_ptr.mobility
     @property
     def apex_smoothed(self) -> float: return self.__py_ptr.apex_smoothed
     @property
@@ -400,12 +415,20 @@ class ImPeak1D(RustWrapperObject):
         return inst
 
     def __repr__(self):
+        rt_lo, rt_hi = self.rt_bounds
+        fid_lo, fid_hi = self.frame_id_bounds
         return (
-            f"ImPeak1D(rt_row={self.rt_row}, scan={self.scan}, mobility={self.mobility}, "
-            f"apex_smoothed={self.apex_smoothed:.1f}, prominence={self.prominence:.1f}, "
-            f"width_scans={self.width_scans}, area_raw={self.area_raw:.1f}, "
-            f"left={self.left}, right={self.right}, left_x={self.left_x:.3f}, "
-            f"right_x={self.right_x:.3f}, subscan={self.subscan:.3f})"
+            "ImPeak1D(mz_row={mz_row}, rt_row={rt_row}, scan={scan}, mobility={mob}, "
+            "apex_smoothed={apx:.1f}, prominence={prom:.1f}, width_scans={w}, area_raw={area:.1f}, "
+            "left={l}, right={r}, left_x={lx:.3f}, right_x={rx:.3f}, subscan={sub:.3f}, "
+            "parent_rt_peak_row={pr}, rt_bounds=({rtl},{rth}), frame_id_bounds=({fl},{fh}), "
+            "window_group={wg})"
+        ).format(
+            mz_row=self.mz_row, rt_row=self.rt_row, scan=self.scan, mob=self.mobility,
+            apx=self.apex_smoothed, prom=self.prominence, w=self.width_scans, area=self.area_raw,
+            l=self.left, r=self.right, lx=self.left_x, rx=self.right_x, sub=self.subscan,
+            pr=self.parent_rt_peak_row, rtl=rt_lo, rth=rt_hi, fl=fid_lo, fh=fid_hi,
+            wg=self.window_group,
         )
 
 

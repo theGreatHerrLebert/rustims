@@ -472,7 +472,7 @@ impl PyMzScanPlan {
     }
 
     /// plan[i] or plan[i:j:k]
-    fn __getitem__(&self, py: Python<'_>, idx: &PyAny) -> PyResult<PyObject> {
+    fn __getitem__(&self, py: Python<'_>, idx: &Bound<PyAny>) -> PyResult<PyObject> {
         // Try integer first (supports negative)
         if let Ok(i_signed) = idx.extract::<isize>() {
             let n = self.windows_idx.len() as isize;
@@ -758,7 +758,24 @@ pub struct PyImPeak1D { pub inner: ImPeak1D }
 
 #[pymethods]
 impl PyImPeak1D {
-    #[getter] fn rt_row(&self) -> usize { self.inner.rt_row }
+    /// Back-compat name: row index in the IM matrix (m/z bin)
+    #[getter] fn rt_row(&self) -> usize { self.inner.mz_row }
+
+    /// Prefer this going forward (same value as rt_row)
+    #[getter] fn mz_row(&self) -> usize { self.inner.mz_row }
+
+    /// Row provenance (row in RtIndex.peaks used to build the IM row)
+    #[getter] fn parent_rt_peak_row(&self) -> usize { self.inner.parent_rt_peak_row }
+
+    /// RT column bounds (inclusive) in the source RT grid for this row
+    #[getter] fn rt_bounds(&self) -> (usize, usize) { self.inner.rt_bounds }
+
+    /// Materialized frame-id bounds (inclusive) backing rt_bounds
+    #[getter] fn frame_id_bounds(&self) -> (u32, u32) { self.inner.frame_id_bounds }
+
+    /// Optional DIA window group id (if applicable)
+    #[getter] fn window_group(&self) -> Option<u32> { self.inner.window_group }
+
     #[getter] fn scan(&self) -> usize { self.inner.scan }
     #[getter] fn mobility(&self) -> Option<f32> { self.inner.mobility }
     #[getter] fn apex_smoothed(&self) -> f32 { self.inner.apex_smoothed }
