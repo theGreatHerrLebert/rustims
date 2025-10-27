@@ -2,6 +2,8 @@ use pyo3::prelude::*;
 use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use std::sync::Arc;
+use pyo3::exceptions;
+use pyo3::types::{PyList, PySlice};
 use rayon::prelude::*;
 use rustdf::data::dia::{annotate_precursor_groups, TimsDatasetDIA};
 use rustdf::data::handle::TimsData;
@@ -174,6 +176,65 @@ impl PyMzScanPlan {
         let i = slf.cur; slf.cur += 1;
         let grid = slf.build_window(py, i)?;
         Ok(Some(Py::new(py, PyMzScanWindowGrid { inner: grid })?))
+    }
+    // Python len(plan)
+    fn __len__(&self) -> usize { self.windows_idx.len() }
+
+    /// Bounds in *frame IDs* for window i (precursor space)
+    pub fn bounds_frame_ids(&self, i: usize) -> Option<(u32, u32)> {
+        self.windows_idx.get(i).map(|(lo, hi)| (self.frame_ids_sorted[*lo], self.frame_ids_sorted[*hi]))
+    }
+
+    /// Overall precursor frame-id bounds across the plan
+    #[getter]
+    fn precursor_frame_id_bounds(&self) -> Option<(u32, u32)> {
+        if self.frame_ids_sorted.is_empty() {
+            None
+        } else {
+            Some((self.frame_ids_sorted[0], *self.frame_ids_sorted.last().unwrap()))
+        }
+    }
+
+    /// plan[i] or plan[i:j:k]
+    fn __getitem__(&self, py: Python<'_>, idx: &PyAny) -> PyResult<PyObject> {
+        // Try integer first (supports negative)
+        if let Ok(i_signed) = idx.extract::<isize>() {
+            let n = self.windows_idx.len() as isize;
+            let j = if i_signed < 0 { n + i_signed } else { i_signed };
+            if j < 0 || j >= n {
+                return Err(exceptions::PyIndexError::new_err("index out of range"));
+            }
+            let grid = self.build_window(py, j as usize)?;
+            let obj = Py::new(py, PyMzScanWindowGrid { inner: grid })?;
+            return Ok(obj.into_py(py));
+        }
+
+        // Then try slice
+        if let Ok(slice) = idx.downcast::<PySlice>() {
+            let indices = slice.indices(self.windows_idx.len() as isize)?;
+            let (start, stop, step) = (indices.start, indices.stop, indices.step);
+            let out = PyList::empty_bound(py);
+
+            let mut i = start;
+            if step > 0 {
+                while i < stop {
+                    let grid = self.build_window(py, i as usize)?;
+                    out.append(Py::new(py, PyMzScanWindowGrid { inner: grid })?)?;
+                    i += step;
+                }
+            } else if step < 0 {
+                while i > stop {
+                    let grid = self.build_window(py, i as usize)?;
+                    out.append(Py::new(py, PyMzScanWindowGrid { inner: grid })?)?;
+                    i += step; // step is negative
+                }
+            }
+            return Ok(out.into_py(py));
+        }
+
+        Err(exceptions::PyTypeError::new_err(
+            "indices must be int or slice",
+        ))
     }
 }
 

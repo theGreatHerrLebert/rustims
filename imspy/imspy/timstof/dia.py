@@ -122,6 +122,25 @@ class MzScanPlan(RustWrapperObject):
         for w in self.__py_ptr:
             yield MzScanWindowGrid.from_py_ptr(w)
 
+    # passthroughs
+    def __len__(self) -> int:
+        return self.__py_ptr.__len__()  # or just len(self.__py_ptr)
+
+    def __getitem__(self, key):
+        """Return MzScanWindowGrid or list[MzScanWindowGrid] depending on index/slice."""
+        res = self.__py_ptr.__getitem__(key)
+        if isinstance(res, list):
+            return [MzScanWindowGrid.from_py_ptr(w) for w in res]
+        return MzScanWindowGrid.from_py_ptr(res)
+
+    # new helpers
+    def bounds_frame_ids(self, i: int) -> tuple[int, int] | None:
+        return self.__py_ptr.bounds_frame_ids(i)
+
+    @property
+    def precursor_frame_id_bounds(self) -> tuple[int, int] | None:
+        return self.__py_ptr.precursor_frame_id_bounds
+
 class ImIndex(RustWrapperObject):
     """Python wrapper for Rust PyImIndex (IM matrix around RT-picked peaks)."""
 
