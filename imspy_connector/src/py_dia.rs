@@ -19,6 +19,282 @@ use crate::py_cluster::{PyClusterResult, PyClusterSpec, PyEvalOptions};
 use crate::py_feature::{PyAveragineLut, PyEnvelope, PyFeature, PyFeatureBuildParams, PyGroupingParams};
 
 #[pyclass]
+pub struct PyMzScanPlanGroup {
+    ds: Py<PyAny>,
+    window_group: u32,
+
+    // planned axes + schedule
+    scale: MzScale,
+    frame_ids_sorted: Vec<u32>,
+    frame_times: Vec<f32>,
+    windows_idx: Vec<(usize, usize)>,
+    rows: usize,
+    global_num_scans: usize,
+
+    // exec params
+    maybe_sigma_scans: Option<f32>,
+    truncate: f32,
+    num_threads: usize,
+
+    // optional accel
+    views: Option<Vec<FrameBinView>>,
+
+    // iterator state
+    cur: usize,
+}
+
+#[pymethods]
+impl PyMzScanPlanGroup {
+    #[new]
+    #[pyo3(signature = (
+        ds,
+        window_group,
+        ppm_per_bin,
+        mz_pad_ppm,
+        rt_window_sec,
+        rt_hop_sec,
+        num_threads=4,
+        maybe_sigma_scans=None,
+        truncate=3.0,
+        precompute_views=false,
+        clamp_mz_to_group=true
+    ))]
+    pub fn new(
+        py: Python<'_>,
+        ds: Py<PyAny>,
+        window_group: u32,
+        ppm_per_bin: f32,
+        mz_pad_ppm: f32,
+        rt_window_sec: f32,
+        rt_hop_sec: f32,
+        num_threads: usize,
+        maybe_sigma_scans: Option<f32>,
+        truncate: f32,
+        precompute_views: bool,
+        clamp_mz_to_group: bool,
+    ) -> PyResult<Self> {
+        // --- collect frames/times and discover scale
+        let (frame_ids_sorted, frame_times, scale, rows, global_num_scans, views) = {
+            let ds_bound = ds.bind(py);
+            let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.downcast()?;
+            let ds_ref = ds_obj.borrow();
+
+            // 1) RT-sort MS2 frames for this group (from DiaFrameMsMsInfo)
+            let (frame_ids_sorted, frame_times) =
+                ds_ref.fragment_frame_ids_and_times_for_group(window_group);
+
+            // 2) materialize frames once to discover mz range + global scan max
+            let frames = ds_ref.inner.get_slice(frame_ids_sorted.clone(), num_threads).frames;
+
+            // 3) m/z range: prefer DIA-window clamp; else scan actual frames
+            let (mut mz_min, mut mz_max) = if clamp_mz_to_group {
+                ds_ref
+                    .mz_bounds_for_group(window_group)
+                    .or_else(|| scan_mz_range(&frames))
+                    .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("no m/z found for group"))?
+            } else {
+                scan_mz_range(&frames).ok_or_else(|| {
+                    pyo3::exceptions::PyRuntimeError::new_err("no m/z found for group")
+                })?
+            };
+
+            if mz_pad_ppm > 0.0 {
+                let f = 1.0 + mz_pad_ppm * 1e-6;
+                mz_min /= f; mz_max *= f;
+            }
+            let scale = MzScale::build(mz_min.max(10.0), mz_max, ppm_per_bin);
+            let rows = scale.num_bins();
+
+            // 4) global scan axis size
+            let global_num_scans = ds_ref.max_global_num_scans();
+
+            // 5) optional precomputed per-frame views
+            let views = if precompute_views {
+                Some((0..frames.len())
+                    .into_par_iter()
+                    .map(|i| build_frame_bin_view(frames[i].clone(), &scale, global_num_scans))
+                    .collect())
+            } else { None };
+
+            (frame_ids_sorted, frame_times, scale, rows, global_num_scans, views)
+        };
+
+        // 6) Build RT window schedule (same logic as MS1 plan)
+        let fps = if frame_times.len() < 2 { 1.0 } else {
+            let mut d: Vec<f32> = frame_times.windows(2).map(|w| w[1] - w[0]).collect();
+            d.sort_by(|a,b| a.partial_cmp(&b).unwrap());
+            1.0 / d[d.len()/2].max(1e-6)
+        };
+        let mut win_len = (rt_window_sec * fps).max(1.0).round() as usize;
+        let hop_len = (rt_hop_sec   * fps).max(1.0).round() as usize;
+        let n_frames = frame_ids_sorted.len().max(1);
+        win_len = win_len.min(n_frames);
+        let hop_len = hop_len.max(1);
+
+        let mut windows_idx: Vec<(usize, usize)> = Vec::new();
+        let mut start = 0usize;
+        while start < n_frames {
+            let end = (start + win_len - 1).min(n_frames - 1);
+            windows_idx.push((start, end));
+            if end + 1 >= n_frames { break; }
+            start = (start + hop_len).min(n_frames - 1);
+            if start == 0 { break; }
+        }
+
+        Ok(Self {
+            ds,
+            window_group,
+            scale,
+            frame_ids_sorted,
+            frame_times,
+            windows_idx,
+            rows,
+            global_num_scans,
+            maybe_sigma_scans,
+            truncate,
+            num_threads,
+            views,
+            cur: 0,
+        })
+    }
+
+    // ---- Introspection (parity with PyMzScanPlan)
+    #[getter] fn rows(&self) -> usize { self.rows }
+    #[getter] fn global_num_scans(&self) -> usize { self.global_num_scans }
+    #[getter] fn num_windows(&self) -> usize { self.windows_idx.len() }
+    #[getter] fn window_group(&self) -> u32 { self.window_group }
+
+    #[getter]
+    fn frame_times<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.frame_times.clone()).unbind())
+    }
+    #[getter]
+    fn frame_ids<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.frame_ids_sorted.clone()).unbind())
+    }
+    #[getter]
+    fn mz_centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.scale.centers.clone()).unbind())
+    }
+
+    pub fn bounds(&self, i: usize) -> Option<(usize, usize)> {
+        self.windows_idx.get(i).copied()
+    }
+    pub fn bounds_frame_ids(&self, i: usize) -> Option<(u32, u32)> {
+        self.windows_idx.get(i).map(|(lo, hi)| (self.frame_ids_sorted[*lo], self.frame_ids_sorted[*hi]))
+    }
+    #[getter]
+    fn fragment_frame_id_bounds(&self) -> Option<(u32, u32)> {
+        if self.frame_ids_sorted.is_empty() { None } else { Some((self.frame_ids_sorted[0], *self.frame_ids_sorted.last().unwrap())) }
+    }
+
+    // --- Python iteration protocol + __getitem__ (Bound<PyAny> to avoid deprecation)
+    fn __iter__(mut slf: PyRefMut<'_, Self>) -> PyRefMut<'_, Self> { slf.cur = 0; slf }
+    fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<Py<PyMzScanWindowGrid>>> {
+        if slf.cur >= slf.windows_idx.len() { return Ok(None); }
+        let i = slf.cur; slf.cur += 1;
+        let grid = slf.build_window(py, i)?;
+        Ok(Some(Py::new(py, PyMzScanWindowGrid { inner: grid })?))
+    }
+    fn __len__(&self) -> usize { self.windows_idx.len() }
+
+    fn __getitem__(&self, py: Python<'_>, idx: &Bound<PyAny>) -> PyResult<PyObject> {
+        if let Ok(i_signed) = idx.extract::<isize>() {
+            let n = self.windows_idx.len() as isize;
+            let j = if i_signed < 0 { n + i_signed } else { i_signed };
+            if j < 0 || j >= n { return Err(exceptions::PyIndexError::new_err("index out of range")); }
+            let grid = self.build_window(py, j as usize)?;
+            let obj = Py::new(py, PyMzScanWindowGrid { inner: grid })?;
+            return Ok(obj.into_py(py));
+        }
+        if let Ok(slice) = idx.downcast::<PySlice>() {
+            let indices = slice.indices(self.windows_idx.len() as isize)?;
+            let (start, stop, step) = (indices.start, indices.stop, indices.step);
+            let out = PyList::empty_bound(py);
+            let mut i = start;
+            if step > 0 {
+                while i < stop {
+                    let grid = self.build_window(py, i as usize)?;
+                    out.append(Py::new(py, PyMzScanWindowGrid { inner: grid })?)?;
+                    i += step;
+                }
+            } else if step < 0 {
+                while i > stop {
+                    let grid = self.build_window(py, i as usize)?;
+                    out.append(Py::new(py, PyMzScanWindowGrid { inner: grid })?)?;
+                    i += step;
+                }
+            }
+            return Ok(out.into_py(py));
+        }
+        Err(exceptions::PyTypeError::new_err("indices must be int or slice"))
+    }
+}
+
+impl PyMzScanPlanGroup {
+    fn build_window(&self, py: Python<'_>, i: usize) -> PyResult<MzScanWindowGrid> {
+        let (lo, hi) = self.windows_idx[i];
+        let rows = self.rows;
+        let cols = self.global_num_scans;
+        let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+
+        // Views for this window (group frames only)
+        let views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
+            (lo..=hi).map(|k| views[k].clone()).collect()
+        } else {
+            let fids = self.frame_ids_sorted[lo..=hi].to_vec();
+            let frames = {
+                let ds_bound = self.ds.bind(py);
+                let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.downcast()?;
+                let ds_ref = ds_obj.borrow();
+                ds_ref.inner.get_slice(fids, self.num_threads).frames
+            };
+            frames.into_par_iter()
+                .map(|fr| build_frame_bin_view(fr, &self.scale, cols))
+                .collect()
+        };
+
+        // Accumulate onto the **global** scan axis (same as MS1 plan)
+        let mut raw = vec![0.0f32; rows * cols];
+        for v in &views_local {
+            for b_i in 0..v.unique_bins.len() {
+                let row = v.unique_bins[b_i];
+                let start = v.offsets[b_i];
+                let end   = v.offsets[b_i + 1];
+                for j in start..end {
+                    let s_phys = v.scan_idx[j] as usize;
+                    if s_phys < cols {
+                        raw[s_phys * rows + row] += v.intensity[j];
+                    }
+                }
+            }
+        }
+
+        let data = if do_smooth {
+            let mut sm = raw.clone();
+            for r in 0..rows {
+                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
+                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
+                for c in 0..cols { sm[c * rows + r] = y[c]; }
+            }
+            sm
+        } else {
+            raw.clone()
+        };
+
+        Ok(MzScanWindowGrid {
+            rt_range_frames: (lo, hi),
+            rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
+            scans: (0..cols).collect(),
+            data,
+            rows,
+            cols,
+            data_raw: if do_smooth { Some(raw) } else { None },
+        })
+    }
+}
+
+#[pyclass]
 pub struct PyMzScanPlan {
     ds: Py<PyAny>,                 // keeps dataset alive; downcast when needed
 
@@ -899,6 +1175,26 @@ impl PyTimsDatasetDIA {
         v.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap());
         let (ids, times): (Vec<_>, Vec<_>) = v.into_iter().unzip();
         (ids, times)
+    }
+
+    /// List available DIA window groups (sorted).
+    pub fn dia_window_groups(&self) -> Vec<u32> {
+        self.inner.dia_window_groups()
+    }
+
+    /// RT-sorted fragment frames and their times for a specific group.
+    pub fn fragment_frame_ids_and_times_for_group(&self, window_group: u32) -> (Vec<u32>, Vec<f32>) {
+        self.inner.fragment_frame_ids_and_times_for_group_core(window_group)
+    }
+
+    /// Merged scan unions for this group (global scan numbers, inclusive).
+    pub fn scan_unions_for_group(&self, window_group: u32) -> Option<Vec<(usize, usize)>> {
+        self.inner.scan_unions_for_window_group_core(window_group)
+    }
+
+    /// Optional: m/z clamp from DIA windows (isolation mz ± width/2 merged across windows).
+    pub fn mz_bounds_for_group(&self, window_group: u32) -> Option<(f32, f32)> {
+        self.inner.mz_bounds_for_window_group_core(window_group)
     }
 }
 

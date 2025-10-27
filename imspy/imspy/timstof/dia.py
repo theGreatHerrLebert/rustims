@@ -71,6 +71,80 @@ class MzScanWindowGrid(RustWrapperObject):
         (t0, t1) = self.rt_range_sec
         return f"MzScanWindowGrid(frames=({l},{r}), rt=({t0:.3f},{t1:.3f})s, shape=({self.rows},{self.cols}))"
 
+class MzScanPlanGroup(RustWrapperObject):
+    """Python wrapper for ims.PyMzScanPlanGroup (iterable over MzScanWindowGrid)."""
+
+    def __init__(self, *a, **k):
+        raise RuntimeError("Use TimsDatasetDIA.plan_mz_scan_windows_for_group(...) or MzScanPlanGroup.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyMzScanPlanGroup) -> "MzScanPlanGroup":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    # ---- metadata exposed by Rust getters ----
+    @property
+    def rows(self) -> int:
+        return self.__py_ptr.rows
+
+    @property
+    def global_num_scans(self) -> int:
+        return self.__py_ptr.global_num_scans
+
+    @property
+    def num_windows(self) -> int:
+        return self.__py_ptr.num_windows
+
+    @property
+    def window_group(self) -> int:
+        return self.__py_ptr.window_group
+
+    @property
+    def frame_times(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.frame_times, dtype=np.float32)
+
+    @property
+    def frame_ids(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.frame_ids, dtype=np.uint32)
+
+    @property
+    def mz_centers(self) -> np.ndarray:
+        return np.asarray(self.__py_ptr.mz_centers, dtype=np.float32)
+
+    def bounds(self, i: int) -> tuple[int, int] | None:
+        return self.__py_ptr.bounds(i)
+
+    def bounds_frame_ids(self, i: int) -> tuple[int, int] | None:
+        return self.__py_ptr.bounds_frame_ids(i)
+
+    @property
+    def fragment_frame_id_bounds(self) -> tuple[int, int] | None:
+        return self.__py_ptr.fragment_frame_id_bounds
+
+    # ---- materialization / iteration ----
+    def get(self, i: int) -> MzScanWindowGrid | None:
+        w = self.__py_ptr.get(i)
+        if w is None:
+            return None
+        return MzScanWindowGrid.from_py_ptr(w)
+
+    def __iter__(self):
+        for w in self.__py_ptr:
+            yield MzScanWindowGrid.from_py_ptr(w)
+
+    def __len__(self) -> int:
+        return self.__py_ptr.__len__()
+
+    def __getitem__(self, key):
+        res = self.__py_ptr.__getitem__(key)
+        if isinstance(res, list):
+            return [MzScanWindowGrid.from_py_ptr(w) for w in res]
+        return MzScanWindowGrid.from_py_ptr(res)
+
 class MzScanPlan(RustWrapperObject):
     """Python wrapper for ims.PyMzScanPlan (iterable over MzScanWindowGrid)."""
 
@@ -791,3 +865,43 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             precompute_views,
         )
         return MzScanPlan.from_py_ptr(py_plan)
+
+    def plan_mz_scan_windows_for_group(
+        self,
+        window_group: int,
+        *,
+        ppm_per_bin: float,
+        mz_pad_ppm: float,
+        rt_window_sec: float,
+        rt_hop_sec: float,
+        num_threads: int = 4,
+        im_sigma_scans: Optional[float] = None,
+        truncate: float = 3.0,
+        precompute_views: bool = False,
+        clamp_mz_to_group: bool = True,
+    ) -> MzScanPlanGroup:
+        """
+        Build a planner for sliding RT windows on fragment (MS2) frames belonging
+        to a specific DIA window group, using a constant-ppm m/z grid.
+
+        Returns:
+            MzScanPlanGroup: iterable of MzScanWindowGrid
+        """
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_plan = ims.PyMzScanPlanGroup(
+            self.__dataset,          # PyTimsDatasetDIA handle
+            int(window_group),
+            float(ppm_per_bin),
+            float(mz_pad_ppm),
+            float(rt_window_sec),
+            float(rt_hop_sec),
+            int(num_threads),
+            im_sigma_scans,          # None or float
+            float(truncate),
+            bool(precompute_views),
+            bool(clamp_mz_to_group),
+        )
+        return MzScanPlanGroup.from_py_ptr(py_plan)
