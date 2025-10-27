@@ -1215,5 +1215,6 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyImIndex>()?;
     m.add_class::<PyMzScanWindowGrid>()?;
     m.add_class::<PyMzScanPlan>()?;
+    m.add_class::<PyMzScanPlanGroup>()?;
     Ok(())
 }
