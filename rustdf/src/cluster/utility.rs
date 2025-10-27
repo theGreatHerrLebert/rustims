@@ -319,6 +319,9 @@ pub fn find_peaks_row(
     let n = y_smoothed.len();
     if n < 3 { return Vec::new(); }
 
+    let row_max = y_smoothed.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom { return Vec::new(); }
+
     // local maxima (ties go to leftmost)
     let mut cands: Vec<usize> = Vec::new();
     for i in 1..n-1 {
@@ -1149,6 +1152,7 @@ pub fn find_im_peaks_row_adaptive(
     if n < 3 { return Vec::new(); }
 
     let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+
     if row_max < policy.low_thresh {
         return match policy.fallback_mode {
             FallbackMode::None => Vec::new(),
@@ -1232,6 +1236,9 @@ pub fn find_im_peaks_row(
 ) -> Vec<ImPeak1D> {
     let n = y_smoothed.len();
     if n < 3 { return Vec::new(); }
+
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom { return Vec::new(); }
 
     // 1) strict local maxima on smoothed
     let mut cands = Vec::new();
