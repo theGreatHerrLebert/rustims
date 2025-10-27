@@ -62,6 +62,10 @@ class MzScanWindowGrid(RustWrapperObject):
             return None
         return np.asarray(raw, dtype=np.float32, order="F")
 
+    def pick_im_peaks(self, **kw):
+        rows = self.__py_ptr.pick_im_peaks(**kw)
+        return [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows]
+
     def __repr__(self) -> str:
         (l, r) = self.rt_range_frames
         (t0, t1) = self.rt_range_sec

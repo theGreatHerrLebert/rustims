@@ -353,6 +353,46 @@ impl PyMzScanWindowGrid {
             tl, tr, self.inner.rows, self.inner.cols
         )
     }
+
+    /// Pick 1D IM peaks in each m/z row of this window.
+    /// Returns a nested list: List[List[PyImPeak1D]] with outer index = row (m/z bin).
+    #[pyo3(signature = (
+        min_prom=50.0,
+        min_distance_scans=2,
+        min_width_scans=2,
+        use_mobility=false
+    ))]
+    pub fn pick_im_peaks<'py>(
+        &self,
+        py: Python<'py>,
+        min_prom: f32,
+        min_distance_scans: usize,
+        min_width_scans: usize,
+        use_mobility: bool,
+    ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
+        let rows = self.inner.rows;
+        let cols = self.inner.cols;
+
+        let mob_fn: MobilityFn = if use_mobility {
+            // TODO: swap in your real scan->1/K0 converter if you have it
+            Some(|scan| scan as f32)
+        } else {
+            None
+        };
+
+        let rows_rs = pick_im_peaks_on_imindex(
+            self.inner.data.as_slice(),
+            self.inner.data_raw.as_deref(),
+            rows,
+            cols,
+            min_prom,
+            min_distance_scans,
+            min_width_scans,
+            mob_fn
+        );
+
+        impeaks_to_py_nested(py, rows_rs)
+    }
 }
 pub fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
