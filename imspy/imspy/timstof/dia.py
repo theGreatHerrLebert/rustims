@@ -62,6 +62,14 @@ class MzScanWindowGrid(RustWrapperObject):
             return None
         return np.asarray(raw, dtype=np.float32, order="F")
 
+    @property
+    def frame_id_bounds(self) -> tuple[int, int]:
+        return self.__py_ptr.frame_id_bounds
+
+    @property
+    def window_group(self) -> int | None:
+        return self.__py_ptr.window_group
+
     def pick_im_peaks(self, **kw):
         rows = self.__py_ptr.pick_im_peaks(**kw)
         return [[ImPeak1D.from_py_ptr(p) for p in row] for row in rows]
@@ -69,7 +77,10 @@ class MzScanWindowGrid(RustWrapperObject):
     def __repr__(self) -> str:
         (l, r) = self.rt_range_frames
         (t0, t1) = self.rt_range_sec
-        return f"MzScanWindowGrid(frames=({l},{r}), rt=({t0:.3f},{t1:.3f})s, shape=({self.rows},{self.cols}))"
+        (fid_lo, fid_hi) = self.frame_id_bounds
+        wg = self.window_group
+        return (f"MzScanWindowGrid(frames=({l},{r}) ids=({fid_lo},{fid_hi}) "
+                f"group={wg}, rt=({t0:.3f},{t1:.3f})s, shape=({self.rows},{self.cols}))")
 
 class MzScanPlanGroup(RustWrapperObject):
     """Python wrapper for ims.PyMzScanPlanGroup (iterable over MzScanWindowGrid)."""

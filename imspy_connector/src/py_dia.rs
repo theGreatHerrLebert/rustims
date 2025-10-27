@@ -8,7 +8,11 @@ use rayon::prelude::*;
 use rustdf::data::dia::{annotate_precursor_groups, TimsDatasetDIA};
 use rustdf::data::handle::TimsData;
 
-use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn, pick_im_peaks_on_imindex, build_dense_im_by_rtpeaks_ppm, smooth_vector_gaussian, MzScale, scan_mz_range, FrameBinView, build_frame_bin_view};
+use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn,
+                               pick_im_peaks_on_imindex, build_dense_im_by_rtpeaks_ppm,
+                               smooth_vector_gaussian, MzScale, scan_mz_range,
+                               FrameBinView, build_frame_bin_view
+};
 
 use rustdf::cluster::im_centric::{MzScanWindowGrid};
 use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
@@ -282,9 +286,17 @@ impl PyMzScanPlanGroup {
             raw.clone()
         };
 
+        let (lo, hi) = self.windows_idx[i];
+        let frame_id_bounds = (
+            self.frame_ids_sorted[lo],
+            self.frame_ids_sorted[hi],
+        );
+
         Ok(MzScanWindowGrid {
             rt_range_frames: (lo, hi),
             rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
+            frame_id_bounds,                           // NEW
+            window_group: Some(self.window_group),     // NEW
             scans: (0..cols).collect(),
             data,
             rows,
@@ -565,9 +577,17 @@ impl PyMzScanPlan {
             raw.clone()
         };
 
+        let (lo, hi) = self.windows_idx[i];
+        let frame_id_bounds = (
+            self.frame_ids_sorted[lo],
+            self.frame_ids_sorted[hi],
+        );
+
         Ok(MzScanWindowGrid {
             rt_range_frames: (lo, hi),
             rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
+            frame_id_bounds,           // NEW
+            window_group: None,        // NEW
             scans: (0..cols).collect(),
             data,
             rows,
@@ -596,6 +616,12 @@ impl PyMzScanWindowGrid {
 
     #[getter]
     fn cols(&self) -> usize { self.inner.cols }
+
+    #[getter]
+    fn frame_id_bounds(&self) -> (u32, u32) { self.inner.frame_id_bounds }
+
+    #[getter]
+    fn window_group(&self) -> Option<u32> { self.inner.window_group }
 
     /// Global scan axis (0..global_num_scans-1) as u32 for stable dtype.
     #[getter]
@@ -646,26 +672,51 @@ impl PyMzScanWindowGrid {
         min_width_scans: usize,
         use_mobility: bool,
     ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
+        use rustdf::cluster::utility::{find_im_peaks_row, ImRowContext, MobilityFn};
+
         let rows = self.inner.rows;
         let cols = self.inner.cols;
 
         let mob_fn: MobilityFn = if use_mobility {
-            // TODO: swap in your real scan->1/K0 converter if you have it
+            // TODO: plug your real scan->1/K0 converter
             Some(|scan| scan as f32)
         } else {
             None
         };
 
-        let rows_rs = pick_im_peaks_on_imindex(
-            self.inner.data.as_slice(),
-            self.inner.data_raw.as_deref(),
-            rows,
-            cols,
-            min_prom,
-            min_distance_scans,
-            min_width_scans,
-            mob_fn
-        );
+        // Build per-row contexts from the window metadata once.
+        let ctx_template = ImRowContext {
+            mz_row: 0, // will overwrite per row
+            parent_rt_peak_row: 0, // no RT-peak parent in IM-centric path
+            rt_bounds: self.inner.rt_range_frames,         // <- window’s frame-index range
+            frame_id_bounds: self.inner.frame_id_bounds,   // <- actual frame IDs
+            window_group: self.inner.window_group,         // <- DIA group if any
+        };
+
+        // For each m/z row, gather the scan profile and run the row picker with context.
+        let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|r| {
+            // Gather this row across scans (column-major)
+            let mut y_s = Vec::with_capacity(cols);
+            let mut y_r = Vec::with_capacity(cols);
+            for s in 0..cols {
+                let val_s = self.inner.data[s * rows + r];
+                y_s.push(val_s);
+                let val_r = self.inner.data_raw
+                    .as_ref()
+                    .map(|dr| dr[s * rows + r])
+                    .unwrap_or(val_s);
+                y_r.push(val_r);
+            }
+
+            let mut ctx = ctx_template;
+            ctx.mz_row = r;
+            ctx.parent_rt_peak_row = r; // IM-centric: use row index as provenance
+
+            find_im_peaks_row(
+                &y_s, &y_r, &ctx, mob_fn,
+                min_prom, min_distance_scans, min_width_scans
+            )
+        }).collect();
 
         impeaks_to_py_nested(py, rows_rs)
     }

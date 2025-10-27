@@ -14,8 +14,10 @@ pub struct MzScanGrid {
 
 #[derive(Clone, Debug)]
 pub struct MzScanWindowGrid {
-    pub rt_range_frames: (usize, usize),
-    pub rt_range_sec:    (f32, f32),
+    pub rt_range_frames: (usize, usize),   // existing: local frame-index range (within the plan)
+    pub rt_range_sec:    (f32, f32),       // existing
+    pub frame_id_bounds: (u32, u32),       // NEW: actual frame IDs [lo, hi]
+    pub window_group:    Option<u32>,      // NEW: DIA group provenance
     pub scans: Vec<usize>,
     pub data: Vec<f32>,     // column-major (rows, cols)
     pub rows: usize,
