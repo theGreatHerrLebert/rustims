@@ -772,9 +772,9 @@ def clusters_to_dataframe(results, rt_index=None):
 
 from collections.abc import Iterable
 from typing import List, Sequence, Union
-from .dia import ImPeak1D  # your wrapper class
 
 def _is_impeak1d(x) -> bool:
+    from .dia import ImPeak1D  # your wrapper class
     return isinstance(x, ImPeak1D)
 
 def _is_nested(seq) -> bool:
@@ -790,13 +790,14 @@ def _is_nested(seq) -> bool:
 
 def stitch_im_peaks(
     peaks: Union[
-        Sequence[ImPeak1D],
-        Sequence[Sequence[Sequence[ImPeak1D]]]
+        Sequence['ImPeak1D'],
+        Sequence[Sequence[Sequence['ImPeak1D']]]
     ],
     min_overlap_frames: int = 1,
     max_scan_delta: int = 1,
     jaccard_min: float = 0.0,
-) -> List[ImPeak1D]:
+) -> List['ImPeak1D']:
+    from .dia import ImPeak1D  # your wrapper class
     """
     Stitch IM 1D peaks across overlapping RT windows.
 
