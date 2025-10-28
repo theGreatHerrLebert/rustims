@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+use std::collections::BTreeMap;
 use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
 use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate, make_cluster_specs_from_peaks_rs};
 use pyo3::prelude::{PyModule, PyModuleMethods};
@@ -481,6 +483,180 @@ pub fn link_ms2_to_ms1(
     Ok(links_py)
 }
 
+#[derive(Clone, Copy, Debug)]
+struct StitchParams {
+    min_overlap_frames: usize, // e.g. 1–3
+    max_scan_delta: usize,     // e.g. 1–2
+    jaccard_min: f32,          // set 0.0 to disable
+}
+
+#[inline]
+fn rt_overlap(a: (usize, usize), b: (usize, usize)) -> usize {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    hi.saturating_sub(lo).saturating_add(1)
+}
+
+#[inline]
+fn jaccard(a: (usize, usize), b: (usize, usize)) -> f32 {
+    let inter = rt_overlap(a, b) as f32;
+    if inter <= 0.0 { return 0.0; }
+    let len_a = (a.1 - a.0 + 1) as f32;
+    let len_b = (b.1 - b.0 + 1) as f32;
+    inter / (len_a + len_b - inter)
+}
+
+#[inline]
+fn compatible(p: &ImPeak1D, q: &ImPeak1D, s: &StitchParams) -> bool {
+    if p.mz_row != q.mz_row { return false; }
+    if p.window_group != q.window_group { return false; } // never cross groups
+    if (p.scan as isize - q.scan as isize).abs() as usize > s.max_scan_delta { return false; }
+    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
+    if ov < s.min_overlap_frames { return false; }
+    if s.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < s.jaccard_min { return false; }
+    true
+}
+
+#[inline]
+fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
+    // union RT + frame-id bounds
+    a.rt_bounds = (a.rt_bounds.0.min(b.rt_bounds.0), a.rt_bounds.1.max(b.rt_bounds.1));
+    a.frame_id_bounds = (a.frame_id_bounds.0.min(b.frame_id_bounds.0),
+                         a.frame_id_bounds.1.max(b.frame_id_bounds.1));
+
+    // scan / subscan as intensity-weighted (apex_smoothed) averages
+    let w0 = a.apex_smoothed.max(1e-6);
+    let w1 = b.apex_smoothed.max(1e-6);
+    a.subscan = (a.subscan*w0 + b.subscan*w1) / (w0 + w1);
+    a.scan = ((a.scan as f32*w0 + b.scan as f32*w1) / (w0 + w1)).round() as usize;
+
+    // bounds union
+    a.left = a.left.min(b.left);
+    a.right = a.right.max(b.right);
+    a.width_scans = a.right.saturating_sub(a.left).saturating_add(1);
+
+    // peak stats
+    a.apex_raw      = a.apex_raw.max(b.apex_raw);
+    a.apex_smoothed = a.apex_smoothed.max(b.apex_smoothed);
+    a.prominence    = a.prominence.max(b.prominence);
+    a.area_raw     += b.area_raw;
+
+    // mobility (prefer non-None)
+    if a.mobility.is_none() { a.mobility = b.mobility; }
+
+    a
+}
+
+/// Pure-Rust stitcher: assumes all peaks are from potentially overlapping RT windows.
+/// Buckets by (window_group, mz_row), sorts by (scan, rt_start), sweeps and merges.
+fn stitch_im_peaks_core(mut peaks: Vec<ImPeak1D>, s: StitchParams) -> Vec<ImPeak1D> {
+    if peaks.is_empty() { return peaks; }
+
+    let mut buckets: BTreeMap<(Option<u32>, usize), Vec<ImPeak1D>> = BTreeMap::new();
+    for p in peaks.drain(..) {
+        buckets.entry((p.window_group, p.mz_row)).or_default().push(p);
+    }
+
+    buckets
+        .into_par_iter()
+        .flat_map(|((_wg, _row), mut v)| {
+            v.sort_unstable_by_key(|p| (p.scan, p.rt_bounds.0));
+            let mut out: Vec<ImPeak1D> = Vec::with_capacity(v.len());
+            for p in v.into_iter() {
+                if let Some(last) = out.last_mut() {
+                    if compatible(last, &p, &s) {
+                        *last = merge_two(last.clone(), &p);
+                        continue;
+                    }
+                }
+                out.push(p);
+            }
+            out
+        })
+        .collect()
+}
+
+#[pyfunction]
+#[pyo3(signature = (peaks, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0))]
+pub fn stitch_im_peaks_across_windows(
+    py: Python<'_>,
+    peaks: Vec<Py<PyImPeak1D>>,
+    min_overlap_frames: usize,
+    max_scan_delta: usize,
+    jaccard_min: f32,
+) -> PyResult<Vec<Py<PyImPeak1D>>> {
+    // unwrap to Rust
+    let rs: Vec<ImPeak1D> = peaks
+        .into_iter()
+        .map(|p| p.borrow(py).inner.clone())
+        .collect();
+
+    let params = StitchParams {
+        min_overlap_frames,
+        max_scan_delta,
+        jaccard_min,
+    };
+
+    // stitch
+    let stitched = stitch_im_peaks_core(rs, params);
+
+    // wrap back
+    stitched
+        .into_iter()
+        .map(|p| Py::new(py, PyImPeak1D { inner: p }))
+        .collect()
+}
+
+#[pyfunction]
+#[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0))]
+pub fn stitch_im_peaks_batched_across_windows(
+    py: Python<'_>,
+    batched: Vec<Vec<Vec<Py<PyImPeak1D>>>>, // windows × rows × peaks
+    min_overlap_frames: usize,
+    max_scan_delta: usize,
+    jaccard_min: f32,
+) -> PyResult<Vec<Py<PyImPeak1D>>> {
+    use rustdf::cluster::utility::ImPeak1D as RsImPeak1D;
+
+    // 1) Flatten with capacity pre-sizing to reduce reallocs
+    let mut flat: Vec<Py<PyImPeak1D>> = Vec::new();
+    // optional: estimate size
+    let mut est = 0usize;
+    for win in &batched {
+        for row in win {
+            est += row.len();
+        }
+    }
+    flat.reserve(est);
+
+    for win in batched {
+        for row in win {
+            flat.extend(row);
+        }
+    }
+
+    // 2) Unwrap to Rust peaks
+    let rs: Vec<RsImPeak1D> = flat
+        .into_iter()
+        .map(|p| p.borrow(py).inner.clone())
+        .collect();
+
+    let params = StitchParams {
+        min_overlap_frames,
+        max_scan_delta,
+        jaccard_min,
+    };
+
+    // 3) Stitch (pure Rust)
+    let stitched = stitch_im_peaks_core(rs, params);
+
+    // 4) Wrap back
+    stitched
+        .into_iter()
+        .map(|p| Py::new(py, PyImPeak1D { inner: p }))
+        .collect()
+}
+
 #[pymodule]
 pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyClusterSpec>()?;
@@ -497,5 +673,7 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(link_ms2_to_ms1, m)?)?;
     m.add_function(wrap_pyfunction!(build_precursor_fragment_annotation_py, m)?)?;
+    m.add_function(wrap_pyfunction!(stitch_im_peaks_across_windows, m)?)?;
+    m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_across_windows, m)?)?;
     Ok(())
 }
