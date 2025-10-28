@@ -788,7 +788,7 @@ pub fn build_frame_bin_view(
 }
 
 #[inline(always)]
-fn bin_range(view: &FrameBinView, bin_lo: usize, bin_hi: usize) -> (usize, usize) {
+pub fn bin_range(view: &FrameBinView, bin_lo: usize, bin_hi: usize) -> (usize, usize) {
     let n = view.unique_bins.len();
     if n == 0 { return (0, 0); }               // empty: nothing to return
 

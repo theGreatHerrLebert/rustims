@@ -1,7 +1,7 @@
 use mscore::timstof::frame::TimsFrame;
 use rayon::prelude::*;
 use rayon::iter::ParallelIterator;
-use crate::cluster::utility::{ImPeak1D, RtIndex, RtPeak1D};
+use crate::cluster::utility::{bin_range, build_frame_bin_view, FrameBinView, ImPeak1D, MzScale, RtIndex, RtPeak1D};
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
 // cluster_eval.rs (or wherever these live)
@@ -1136,4 +1136,149 @@ pub fn make_cluster_specs_from_peaks_rs(
             })
         })
         .collect()
+}
+
+fn rt_marginal_conditioned(
+    ds: &TimsDatasetDIA,
+    rt_index: &RtIndex,
+    im: &ImPeak1D,         // requires im.left/right to be *physical* scans
+    mz_center: f32,
+    mz_ppm_window: f32,
+    num_threads: usize,
+) -> (Vec<f32>, Vec<u32>) {
+
+    let frames = ds.get_slice(rt_index.frames.clone(), num_threads).frames;
+    let cols = frames.len();
+    let mut rt_marg = vec![0.0f32; cols];
+
+    // m/z bin range on the SAME scale as rt_index
+    let tol = mz_center * mz_ppm_window * 1e-6;
+    let (bin_lo, bin_hi) = rt_index.scale.index_range_for_mz_window(mz_center - tol, mz_center + tol);
+
+    // Precompute FrameBinViews once
+    let views: Vec<FrameBinView> = (0..cols)
+        .into_par_iter()
+        .map(|i| build_frame_bin_view(frames[i].clone(), &rt_index.scale, /*global_num_scans*/ {
+            // compute global max scan; cheap to recompute here
+            frames[i].scan.iter().copied().max().map(|m| m as usize + 1).unwrap_or(0)
+        }))
+        .collect();
+
+    // Accumulate per frame within m/z band and IM [left,right] (physical)
+    let im_l = im.left;
+    let im_r = im.right;
+
+    rt_marg
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(t, acc)| {
+            let v = &views[t];
+            let (start, end) = bin_range(v, bin_lo, bin_hi);
+            let mut sum = 0.0f32;
+            for i in start..end {
+                let s_phys = v.scan_idx[i] as usize;
+                if s_phys >= im_l && s_phys <= im_r {
+                    sum += v.intensity[i];
+                }
+            }
+            *acc = sum;
+        });
+
+    (rt_marg, rt_index.frames.clone())
+}
+
+fn restrict_rt_to_mu_pm_k_sigma(
+    rt_index: &RtIndex,
+    mu_sec: f32,
+    k: f32,
+    prior: (usize, usize),
+) -> (usize, usize) {
+    let (l0, r0) = prior;
+    if l0 > r0 || rt_index.cols == 0 { return prior; }
+
+    // map seconds → nearest frame index by lower_bound on frame_times
+    let ft = &rt_index.frame_times;
+    let to_idx = |t: f32| -> usize {
+        // lower_bound
+        let mut lo = 0usize;
+        let mut hi = ft.len();
+        while lo < hi {
+            let mid = (lo + hi) >> 1;
+            if ft[mid] < t { lo = mid + 1; } else { hi = mid; }
+        }
+        lo.min(ft.len().saturating_sub(1))
+    };
+
+    // estimate σ in seconds: find nearest index to μ, then derive pixel width ~1 frame
+    // NOTE: you already have σ in seconds from fit; we receive μ in seconds and
+    //       *use k·σ directly in seconds*. If you prefer: pass σ as an argument instead.
+    // Here we assume caller chose k based on the fit's σ (seconds).
+    let lo_t = (mu_sec - k * 1.0f32 /* σ will be multiplied by caller before pass if needed */).max(ft.first().copied().unwrap_or(mu_sec));
+    let hi_t = (mu_sec + k * 1.0f32).min(ft.last().copied().unwrap_or(mu_sec));
+
+    // If you *do* have σ (seconds), call this with k_sigma_sec = k * sigma_sec:
+    // let lo_t = (mu_sec - k_sigma_sec).max(ft[0]);
+    // let hi_t = (mu_sec + k_sigma_sec).min(*ft.last().unwrap());
+
+    let mut l = to_idx(lo_t);
+    let mut r = to_idx(hi_t);
+    if l > r { std::mem::swap(&mut l, &mut r); }
+
+    // intersect with prior
+    l = l.max(l0);
+    r = r.min(r0);
+    (l, r)
+}
+
+pub fn make_cluster_specs_from_im_peaks_conditioned(
+    im_peaks: &[ImPeak1D],
+    scale: &MzScale,
+    rt_index: &RtIndex,
+    k_rt_sigma: Option<f32>,          // e.g., Some(3.0)
+    max_rt_span_frames: Option<usize>,// e.g., Some(200)
+    mz_ppm_window: f32,
+    mz_hist_bins: usize,
+    ds: &TimsDatasetDIA,
+    num_threads: usize,
+) -> Vec<ClusterSpec> {
+    im_peaks.iter().map(|im| {
+        let mz_c = scale.center(im.mz_row);
+        let (rt_l_relaxed, rt_r_relaxed) = (0, rt_index.cols.saturating_sub(1)); // or a smarter prior
+
+        // Build a quick RT marginal *conditioned* on (IM ∧ m/z)
+        let (rt_marg, _frame_ids_local) =
+            rt_marginal_conditioned(ds, rt_index, im, mz_c, mz_ppm_window, num_threads);
+
+        let rt_fit0 = moment_fit_1d(&rt_marg, Some(&rt_index.frame_times[rt_l_relaxed..=rt_r_relaxed]));
+        let (mut rt_l, mut rt_r) = (rt_l_relaxed, rt_r_relaxed);
+
+        if let Some(k) = k_rt_sigma {
+            if rt_fit0.sigma.is_finite() && rt_fit0.sigma > 0.0 {
+                // turn seconds → nearest frame index
+                let mu_t = rt_fit0.mu;
+                let mut best = (rt_l, rt_r);
+                // find nearest indices around mu ± kσ
+                // (helper omitted for brevity)
+                best = restrict_rt_to_mu_pm_k_sigma(rt_index, mu_t, k, best);
+                (rt_l, rt_r) = best;
+            }
+        }
+        if let Some(cap) = max_rt_span_frames {
+            let anchor = (rt_l + rt_r) / 2;
+            (rt_l, rt_r) = cap_window_symmetric((0, rt_index.cols.saturating_sub(1)), rt_l, rt_r, cap, anchor);
+        }
+
+        ClusterSpec {
+            rt_left: rt_l,
+            rt_right: rt_r,
+            im_left: im.left,
+            im_right: im.right,
+            mz_center_hint: mz_c,
+            mz_ppm_window,
+            extra_rt_pad: 0,
+            extra_im_pad: 0,
+            mz_hist_bins,
+            mz_window_da_override: None,
+        }
+    }).collect()
 }

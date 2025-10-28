@@ -15,7 +15,7 @@ use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn,
 };
 
 use rustdf::cluster::im_centric::{MzScanWindowGrid};
-use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
+use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, make_cluster_specs_from_im_peaks_conditioned, ClusterResult, ClusterSpec, EvalOptions};
 use rustdf::cluster::feature::{Envelope, Feature};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
@@ -1438,6 +1438,137 @@ impl PyTimsDatasetDIA {
     /// Optional: m/z clamp from DIA windows (isolation mz ± width/2 merged across windows).
     pub fn mz_bounds_for_group(&self, window_group: u32) -> Option<(f32, f32)> {
         self.inner.mz_bounds_for_window_group_core(window_group)
+    }
+
+    /// IM-first -> RT-conditioned spec build + evaluation on the whole dataset RT index.
+    /// Returns (specs, clusters).
+    #[pyo3(signature = (
+        rt_index,
+        im_peaks,
+        k_rt_sigma=None,
+        max_rt_span_frames=None,
+        mz_ppm_window=10.0,
+        mz_hist_bins=64,
+        eval_opts=None,
+        num_threads=4
+    ))]
+    pub fn clusters_from_im_peaks_conditioned(
+        &self,
+        py: Python<'_>,
+        rt_index: PyRtIndex,
+        im_peaks: Vec<Py<PyImPeak1D>>,
+        k_rt_sigma: Option<f32>,
+        max_rt_span_frames: Option<usize>,
+        mz_ppm_window: f32,
+        mz_hist_bins: usize,
+        eval_opts: Option<PyEvalOptions>,
+        num_threads: usize,
+    ) -> PyResult<(Vec<Py<PyClusterSpec>>, Vec<Py<PyClusterResult>>)> {
+
+        let im_rs: Vec<ImPeak1D> = im_peaks
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let specs: Vec<ClusterSpec> = make_cluster_specs_from_im_peaks_conditioned(
+            &im_rs,
+            &rt_index.inner.scale,
+            &rt_index.inner,
+            k_rt_sigma,
+            max_rt_span_frames,
+            mz_ppm_window,
+            mz_hist_bins,
+            &self.inner,
+            num_threads,
+        );
+
+        let opts_rs: EvalOptions = eval_opts.map(|o| o.inner).unwrap_or_default();
+
+        // evaluate
+        let mut clusters_rs: Vec<ClusterResult> =
+            evaluate_clusters_3d(&self.inner, &rt_index.inner, &specs, opts_rs, num_threads);
+
+        annotate_precursor_groups(&self.inner, &mut clusters_rs);
+
+        // wrap back to Python
+        let specs_py: Vec<Py<PyClusterSpec>> = specs
+            .into_iter()
+            .map(|s| Py::new(py, PyClusterSpec { inner: s }))
+            .collect::<PyResult<_>>()?;
+
+        let clusters_py: Vec<Py<PyClusterResult>> = clusters_rs
+            .into_iter()
+            .map(|c| Py::new(py, PyClusterResult { inner: c }))
+            .collect::<PyResult<_>>()?;
+
+        Ok((specs_py, clusters_py))
+    }
+
+    /// IM-first -> RT-conditioned, but **scoped to a DIA window group** (ms2 frames / group RT index).
+    /// Returns (specs, clusters). We stamp `window_group_hint` in options if not set.
+    #[pyo3(signature = (
+        window_group,
+        rt_index_group,
+        im_peaks,
+        k_rt_sigma=None,
+        max_rt_span_frames=None,
+        mz_ppm_window=10.0,
+        mz_hist_bins=64,
+        eval_opts=None,
+        num_threads=4
+    ))]
+    pub fn clusters_from_im_peaks_conditioned_for_group(
+        &self,
+        py: Python<'_>,
+        window_group: u32,
+        rt_index_group: PyRtIndex,
+        im_peaks: Vec<Py<PyImPeak1D>>,
+        k_rt_sigma: Option<f32>,
+        max_rt_span_frames: Option<usize>,
+        mz_ppm_window: f32,
+        mz_hist_bins: usize,
+        eval_opts: Option<PyEvalOptions>,
+        num_threads: usize,
+    ) -> PyResult<(Vec<Py<PyClusterSpec>>, Vec<Py<PyClusterResult>>)> {
+
+        let im_rs: Vec<ImPeak1D> = im_peaks
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let specs: Vec<ClusterSpec> = make_cluster_specs_from_im_peaks_conditioned(
+            &im_rs,
+            &rt_index_group.inner.scale,
+            &rt_index_group.inner,
+            k_rt_sigma,
+            max_rt_span_frames,
+            mz_ppm_window,
+            mz_hist_bins,
+            &self.inner,
+            num_threads,
+        );
+
+        let mut opts_rs: EvalOptions = eval_opts.map(|o| o.inner).unwrap_or_default();
+        if opts_rs.window_group_hint.is_none() {
+            opts_rs.window_group_hint = Some(window_group);
+        }
+
+        let mut clusters_rs: Vec<ClusterResult> =
+            evaluate_clusters_3d(&self.inner, &rt_index_group.inner, &specs, opts_rs, num_threads);
+
+        annotate_precursor_groups(&self.inner, &mut clusters_rs);
+
+        // wrap back
+        let specs_py: Vec<Py<PyClusterSpec>> = specs
+            .into_iter()
+            .map(|s| Py::new(py, PyClusterSpec { inner: s }))
+            .collect::<PyResult<_>>()?;
+        let clusters_py: Vec<Py<PyClusterResult>> = clusters_rs
+            .into_iter()
+            .map(|c| Py::new(py, PyClusterResult { inner: c }))
+            .collect::<PyResult<_>>()?;
+
+        Ok((specs_py, clusters_py))
     }
 }
 
