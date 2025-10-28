@@ -769,3 +769,74 @@ def clusters_to_dataframe(results, rt_index=None):
             df[f"log1p_{col}"] = np.log1p(df[col].clip(lower=0))
 
     return df
+
+from collections.abc import Iterable
+from typing import List, Sequence, Union
+from .dia import ImPeak1D  # your wrapper class
+
+def _is_impeak1d(x) -> bool:
+    return isinstance(x, ImPeak1D)
+
+def _is_nested(seq) -> bool:
+    """Detect windows×rows×peaks shape: list of lists whose leaves are ImPeak1D."""
+    if not isinstance(seq, Iterable) or isinstance(seq, (str, bytes)):
+        return False
+    # find first non-empty item
+    for a in seq:
+        if a:
+            # a should itself be iterable (rows), not a leaf ImPeak1D
+            return isinstance(a, Iterable) and not _is_impeak1d(a)
+    return False  # empty -> treat as flat noop
+
+def stitch_im_peaks(
+    peaks: Union[
+        Sequence[ImPeak1D],
+        Sequence[Sequence[Sequence[ImPeak1D]]]
+    ],
+    min_overlap_frames: int = 1,
+    max_scan_delta: int = 1,
+    jaccard_min: float = 0.0,
+) -> List[ImPeak1D]:
+    """
+    Stitch IM 1D peaks across overlapping RT windows.
+
+    Accepts either:
+      - flat: List[ImPeak1D]
+      - nested: List[List[List[ImPeak1D]]] (windows × rows × peaks)
+
+    Returns:
+      flat, deduplicated List[ImPeak1D]
+    """
+    # empty fast-path
+    if not peaks:
+        return []
+
+    if _is_nested(peaks):
+        # windows × rows × peaks  ->  call the *batched* Rust function directly
+        batched_ptrs = [
+            [
+                [p.get_py_ptr() for p in row]
+                for row in win
+            ]
+            for win in peaks
+        ]
+        stitched_py = ims.stitch_im_peaks_batched_across_windows(
+            batched_ptrs,
+            int(min_overlap_frames),
+            int(max_scan_delta),
+            float(jaccard_min),
+        )
+        return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
+
+    # Otherwise assume it's flat (or ragged-but-flat after filtering)
+    # Filter out any non-ImPeak1D defensively
+    flat = [p for p in peaks if _is_impeak1d(p)]
+    if not flat:
+        return []
+    stitched_py = ims.stitch_im_peaks_across_windows(
+        [p.get_py_ptr() for p in flat],
+        int(min_overlap_frames),
+        int(max_scan_delta),
+        float(jaccard_min),
+    )
+    return [ImPeak1D.from_py_ptr(p) for p in stitched_py]

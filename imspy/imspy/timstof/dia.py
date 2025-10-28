@@ -156,6 +156,28 @@ class MzScanPlanGroup(RustWrapperObject):
             return [MzScanWindowGrid.from_py_ptr(w) for w in res]
         return MzScanWindowGrid.from_py_ptr(res)
 
+    def get_batch(self, start: int, count: int) -> list["MzScanWindowGrid"]:
+        grids = self.__py_ptr.get_batch(int(start), int(count))
+        return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
+
+    def pick_im_peaks_batched(
+            self,
+            indices: list[int],
+            *,
+            min_prom: float = 50.0,
+            min_distance_scans: int = 2,
+            min_width_scans: int = 2,
+            use_mobility: bool = False,
+    ) -> list[list[list["ImPeak1D"]]]:
+        rows = self.__py_ptr.pick_im_peaks_for_indices(
+            [int(i) for i in indices],
+            float(min_prom),
+            int(min_distance_scans),
+            int(min_width_scans),
+            bool(use_mobility),
+        )
+        return [[[ImPeak1D.from_py_ptr(p) for p in row] for row in win] for win in rows]
+
 class MzScanPlan(RustWrapperObject):
     """Python wrapper for ims.PyMzScanPlan (iterable over MzScanWindowGrid)."""
 
@@ -229,6 +251,29 @@ class MzScanPlan(RustWrapperObject):
     @property
     def precursor_frame_id_bounds(self) -> tuple[int, int] | None:
         return self.__py_ptr.precursor_frame_id_bounds
+
+    def get_batch(self, start: int, count: int) -> list["MzScanWindowGrid"]:
+        grids = self.__py_ptr.get_batch(int(start), int(count))
+        return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
+
+    def pick_im_peaks_batched(
+            self,
+            indices: list[int],
+            *,
+            min_prom: float = 50.0,
+            min_distance_scans: int = 2,
+            min_width_scans: int = 2,
+            use_mobility: bool = False,
+    ) -> list[list[list["ImPeak1D"]]]:
+        rows = self.__py_ptr.pick_im_peaks_for_indices(
+            [int(i) for i in indices],
+            float(min_prom),
+            int(min_distance_scans),
+            int(min_width_scans),
+            bool(use_mobility),
+        )
+        # wrap Py objects
+        return [[[ImPeak1D.from_py_ptr(p) for p in row] for row in win] for win in rows]
 
 class ImIndex(RustWrapperObject):
     """Python wrapper for Rust PyImIndex (IM matrix around RT-picked peaks)."""
