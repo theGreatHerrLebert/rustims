@@ -13,6 +13,15 @@ from imspy.timstof.frame import TimsFrame
 ims = imspy_connector.py_dia
 from imspy.simulation.annotation import RustWrapperObject
 
+def iter_window_batches(plan, batch_size: int):
+    """Yield successive batches of window indices from the plan."""
+    n = plan.num_windows
+    i = 0
+    while i < n:
+        j = min(i + batch_size, n)
+        yield list(range(i, j))
+        i = j
+
 class MzScanWindowGrid(RustWrapperObject):
     """Python wrapper for ims.PyMzScanWindowGrid."""
 
