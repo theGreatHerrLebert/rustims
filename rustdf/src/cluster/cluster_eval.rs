@@ -1241,7 +1241,8 @@ pub fn make_cluster_specs_from_im_peaks_conditioned(
     ds: &TimsDatasetDIA,
     num_threads: usize,
 ) -> Vec<ClusterSpec> {
-    im_peaks.iter().map(|im| {
+    rayon::ThreadPoolBuilder::new().num_threads(num_threads).build_global().ok();
+    im_peaks.par_iter().map(|im| {
         let mz_c = scale.center(im.mz_row);
         let (rt_l_relaxed, rt_r_relaxed) = (0, rt_index.cols.saturating_sub(1)); // or a smarter prior
 
