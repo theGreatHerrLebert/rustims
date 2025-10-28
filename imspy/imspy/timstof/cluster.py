@@ -773,9 +773,6 @@ def clusters_to_dataframe(results, rt_index=None):
 from collections.abc import Iterable
 from typing import List, Sequence, Union
 
-import imspy_connector
-ims = imspy_connector.py_dia  # make sure this is available in this module
-
 def _is_impeak1d(x) -> bool:
     from .dia import ImPeak1D  # your wrapper class
     return isinstance(x, ImPeak1D)
