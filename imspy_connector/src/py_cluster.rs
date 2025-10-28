@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use rayon::slice::ParallelSliceMut;
 use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
 use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate, make_cluster_specs_from_peaks_rs};
 use pyo3::prelude::{PyModule, PyModuleMethods};
@@ -439,18 +439,6 @@ fn load_clusters_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyClusterRes
         .collect()
 }
 
-/*
-/// Link MS2→MS1 with group compatibility and co-elution.
-/// Returns sorted candidates (best score first).
-pub fn link_ms2_to_ms1(
-    ms1: &[ClusterResult],         // ms_level==1
-    ms2: &[ClusterResult],         // ms_level==2, with window_group = Some(g)
-    min_rt_jaccard: f32,           // e.g. 0.1–0.2
-    max_rt_apex_sec: f32,          // e.g. 5.0–10.0
-    max_im_apex_scans: Option<f32>,// e.g. Some(5.0) or None to ignore
-) -> Vec<LinkCandidate> {
- */
-
 #[pyfunction]
 #[pyo3(signature = (ms1, ms2, min_rt_jaccard=0.1, max_rt_apex_sec=5.0, max_im_apex_scans=None))]
 pub fn link_ms2_to_ms1(
@@ -498,27 +486,7 @@ fn rt_overlap(a: (usize, usize), b: (usize, usize)) -> usize {
 }
 
 #[inline]
-fn jaccard(a: (usize, usize), b: (usize, usize)) -> f32 {
-    let inter = rt_overlap(a, b) as f32;
-    if inter <= 0.0 { return 0.0; }
-    let len_a = (a.1 - a.0 + 1) as f32;
-    let len_b = (b.1 - b.0 + 1) as f32;
-    inter / (len_a + len_b - inter)
-}
-
-#[inline]
-fn compatible(p: &ImPeak1D, q: &ImPeak1D, s: &StitchParams) -> bool {
-    if p.mz_row != q.mz_row { return false; }
-    if p.window_group != q.window_group { return false; } // never cross groups
-    if (p.scan as isize - q.scan as isize).abs() as usize > s.max_scan_delta { return false; }
-    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
-    if ov < s.min_overlap_frames { return false; }
-    if s.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < s.jaccard_min { return false; }
-    true
-}
-
-#[inline]
-fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
+fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
     // union RT + frame-id bounds
     a.rt_bounds = (a.rt_bounds.0.min(b.rt_bounds.0), a.rt_bounds.1.max(b.rt_bounds.1));
     a.frame_id_bounds = (a.frame_id_bounds.0.min(b.frame_id_bounds.0),
@@ -527,8 +495,8 @@ fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
     // scan / subscan as intensity-weighted (apex_smoothed) averages
     let w0 = a.apex_smoothed.max(1e-6);
     let w1 = b.apex_smoothed.max(1e-6);
-    a.subscan = (a.subscan*w0 + b.subscan*w1) / (w0 + w1);
-    a.scan = ((a.scan as f32*w0 + b.scan as f32*w1) / (w0 + w1)).round() as usize;
+    a.subscan = (a.subscan * w0 + b.subscan * w1) / (w0 + w1);
+    a.scan = ((a.scan as f32 * w0 + b.scan as f32 * w1) / (w0 + w1)).round() as usize;
 
     // bounds union
     a.left = a.left.min(b.left);
@@ -543,29 +511,66 @@ fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
 
     // mobility (prefer non-None)
     if a.mobility.is_none() { a.mobility = b.mobility; }
-
-    a
 }
 
-/// Pure-Rust stitcher: assumes all peaks are from potentially overlapping RT windows.
-/// Buckets by (window_group, mz_row), sorts by (scan, rt_start), sweeps and merges.
-fn stitch_im_peaks_core(mut peaks: Vec<ImPeak1D>, s: StitchParams) -> Vec<ImPeak1D> {
-    if peaks.is_empty() { return peaks; }
+#[inline]
+fn compatible_fast(p: &ImPeak1D, q: &ImPeak1D, s: &StitchParams) -> bool {
+    // super cheap short-circuits first
+    if p.mz_row != q.mz_row { return false; }
+    if p.window_group != q.window_group { return false; }
+    let scan_delta = (p.scan as isize - q.scan as isize).unsigned_abs();
+    if scan_delta > s.max_scan_delta { return false; }
 
-    let mut buckets: BTreeMap<(Option<u32>, usize), Vec<ImPeak1D>> = BTreeMap::new();
-    for p in peaks.drain(..) {
-        buckets.entry((p.window_group, p.mz_row)).or_default().push(p);
+    // overlap check
+    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
+    if ov < s.min_overlap_frames { return false; }
+
+    // jaccard only if requested
+    if s.jaccard_min > 0.0 {
+        let inter = ov as f32;
+        let len_a = (p.rt_bounds.1 - p.rt_bounds.0 + 1) as f32;
+        let len_b = (q.rt_bounds.1 - q.rt_bounds.0 + 1) as f32;
+        let jac = inter / (len_a + len_b - inter);
+        if jac < s.jaccard_min { return false; }
     }
+    true
+}
 
-    buckets
-        .into_par_iter()
-        .flat_map(|((_wg, _row), mut v)| {
-            v.sort_unstable_by_key(|p| (p.scan, p.rt_bounds.0));
-            let mut out: Vec<ImPeak1D> = Vec::with_capacity(v.len());
-            for p in v.into_iter() {
+fn stitch_im_peaks_core(mut v: Vec<ImPeak1D>, s: StitchParams) -> Vec<ImPeak1D> {
+    if v.is_empty() { return v; }
+
+    // 1) Global in-place parallel sort
+    v.par_sort_unstable_by(|a, b| {
+        a.window_group.cmp(&b.window_group)
+            .then(a.mz_row.cmp(&b.mz_row))
+            .then(a.scan.cmp(&b.scan))
+            .then(a.rt_bounds.0.cmp(&b.rt_bounds.0))
+    });
+
+    // 2) Find bucket boundaries (where (wg,mz_row) changes)
+    let mut cuts = vec![0usize];
+    for i in 1..v.len() {
+        let prev = &v[i-1];
+        let cur  = &v[i];
+        if prev.window_group != cur.window_group || prev.mz_row != cur.mz_row {
+            cuts.push(i);
+        }
+    }
+    cuts.push(v.len());
+
+    let per_bucket: Vec<Vec<ImPeak1D>> = cuts
+        .par_windows(2) // <- parallel windows directly (no extra allocs)
+        .map(|w: &[usize]| {
+            let start = w[0];
+            let end   = w[1];
+            let slice = &v[start..end];
+
+            let mut out: Vec<ImPeak1D> = Vec::with_capacity(slice.len());
+            // don't try to push *p (that needs Copy). Clone or move from an owned iterator:
+            for p in slice.iter().cloned() {
                 if let Some(last) = out.last_mut() {
-                    if compatible(last, &p, &s) {
-                        *last = merge_two(last.clone(), &p);
+                    if compatible_fast(last, &p, &s) {
+                        merge_into(last, &p);
                         continue;
                     }
                 }
@@ -573,7 +578,13 @@ fn stitch_im_peaks_core(mut peaks: Vec<ImPeak1D>, s: StitchParams) -> Vec<ImPeak
             }
             out
         })
-        .collect()
+        .collect();
+
+    // 4) Concatenate
+    let total: usize = per_bucket.iter().map(|b| b.len()).sum();
+    let mut out = Vec::with_capacity(total);
+    for mut b in per_bucket { out.append(&mut b); }
+    out
 }
 
 #[pyfunction]
