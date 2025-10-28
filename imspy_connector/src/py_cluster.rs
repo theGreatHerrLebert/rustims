@@ -1,5 +1,3 @@
-use rayon::prelude::*;
-use rayon::slice::ParallelSliceMut;
 use pyo3::{pymodule, Bound, PyResult, Python, pyclass, pymethods, Py, pyfunction, wrap_pyfunction};
 use rustdf::cluster::cluster_eval::{AttachOptions, ClusterFit1D, ClusterResult, ClusterSpec, EvalOptions, CapAnchor, LinkCandidate, make_cluster_specs_from_peaks_rs};
 use pyo3::prelude::{PyModule, PyModuleMethods};
