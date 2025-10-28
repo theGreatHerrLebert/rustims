@@ -773,6 +773,9 @@ def clusters_to_dataframe(results, rt_index=None):
 from collections.abc import Iterable
 from typing import List, Sequence, Union
 
+import imspy_connector
+ims = imspy_connector.py_dia  # make sure this is available in this module
+
 def _is_impeak1d(x) -> bool:
     from .dia import ImPeak1D  # your wrapper class
     return isinstance(x, ImPeak1D)
@@ -781,47 +784,43 @@ def _is_nested(seq) -> bool:
     """Detect windows×rows×peaks shape: list of lists whose leaves are ImPeak1D."""
     if not isinstance(seq, Iterable) or isinstance(seq, (str, bytes)):
         return False
-    # find first non-empty item
     for a in seq:
-        if a:
-            # a should itself be iterable (rows), not a leaf ImPeak1D
+        if a:  # first non-empty
             return isinstance(a, Iterable) and not _is_impeak1d(a)
-    return False  # empty -> treat as flat noop
+    return False
 
 def stitch_im_peaks(
     peaks: Union[
         Sequence['ImPeak1D'],
-        Sequence[Sequence[Sequence['ImPeak1D']]]
+        Sequence[Sequence[Sequence['ImPeak1D']]]  # windows × rows × peaks
     ],
     min_overlap_frames: int = 1,
     max_scan_delta: int = 1,
     jaccard_min: float = 0.0,
 ) -> List['ImPeak1D']:
-    from .dia import ImPeak1D  # your wrapper class
     """
     Stitch IM 1D peaks across overlapping RT windows.
 
     Accepts either:
-      - flat: List[ImPeak1D]
+      - flat:   List[ImPeak1D]
       - nested: List[List[List[ImPeak1D]]] (windows × rows × peaks)
 
     Returns:
       flat, deduplicated List[ImPeak1D]
     """
+    from .dia import ImPeak1D
+
     # empty fast-path
     if not peaks:
         return []
 
     if _is_nested(peaks):
-        # windows × rows × peaks  ->  call the *batched* Rust function directly
+        # windows × rows × peaks  ->  call the *streaming* Rust function
         batched_ptrs = [
-            [
-                [p.get_py_ptr() for p in row]
-                for row in win
-            ]
+            [[p.get_py_ptr() for p in row] for row in win]
             for win in peaks
         ]
-        stitched_py = ims.stitch_im_peaks_batched_across_windows(
+        stitched_py = ims.stitch_im_peaks_batched_streaming(
             batched_ptrs,
             int(min_overlap_frames),
             int(max_scan_delta),
@@ -829,8 +828,7 @@ def stitch_im_peaks(
         )
         return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
 
-    # Otherwise assume it's flat (or ragged-but-flat after filtering)
-    # Filter out any non-ImPeak1D defensively
+    # Otherwise: flat list (kept with the non-streaming flat Rust path; typically small)
     flat = [p for p in peaks if _is_impeak1d(p)]
     if not flat:
         return []

@@ -471,11 +471,13 @@ pub fn link_ms2_to_ms1(
     Ok(links_py)
 }
 
+use rustc_hash::FxHashMap; // add to Cargo.toml for low-overhead hashmap
+
 #[derive(Clone, Copy, Debug)]
 struct StitchParams {
-    min_overlap_frames: usize, // e.g. 1–3
-    max_scan_delta: usize,     // e.g. 1–2
-    jaccard_min: f32,          // set 0.0 to disable
+    min_overlap_frames: usize,
+    max_scan_delta: usize,
+    jaccard_min: f32,
 }
 
 #[inline]
@@ -486,46 +488,13 @@ fn rt_overlap(a: (usize, usize), b: (usize, usize)) -> usize {
 }
 
 #[inline]
-fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
-    // union RT + frame-id bounds
-    a.rt_bounds = (a.rt_bounds.0.min(b.rt_bounds.0), a.rt_bounds.1.max(b.rt_bounds.1));
-    a.frame_id_bounds = (a.frame_id_bounds.0.min(b.frame_id_bounds.0),
-                         a.frame_id_bounds.1.max(b.frame_id_bounds.1));
-
-    // scan / subscan as intensity-weighted (apex_smoothed) averages
-    let w0 = a.apex_smoothed.max(1e-6);
-    let w1 = b.apex_smoothed.max(1e-6);
-    a.subscan = (a.subscan * w0 + b.subscan * w1) / (w0 + w1);
-    a.scan = ((a.scan as f32 * w0 + b.scan as f32 * w1) / (w0 + w1)).round() as usize;
-
-    // bounds union
-    a.left = a.left.min(b.left);
-    a.right = a.right.max(b.right);
-    a.width_scans = a.right.saturating_sub(a.left).saturating_add(1);
-
-    // peak stats
-    a.apex_raw      = a.apex_raw.max(b.apex_raw);
-    a.apex_smoothed = a.apex_smoothed.max(b.apex_smoothed);
-    a.prominence    = a.prominence.max(b.prominence);
-    a.area_raw     += b.area_raw;
-
-    // mobility (prefer non-None)
-    if a.mobility.is_none() { a.mobility = b.mobility; }
-}
-
-#[inline]
 fn compatible_fast(p: &ImPeak1D, q: &ImPeak1D, s: &StitchParams) -> bool {
-    // super cheap short-circuits first
     if p.mz_row != q.mz_row { return false; }
     if p.window_group != q.window_group { return false; }
     let scan_delta = (p.scan as isize - q.scan as isize).unsigned_abs();
     if scan_delta > s.max_scan_delta { return false; }
-
-    // overlap check
     let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
     if ov < s.min_overlap_frames { return false; }
-
-    // jaccard only if requested
     if s.jaccard_min > 0.0 {
         let inter = ov as f32;
         let len_a = (p.rt_bounds.1 - p.rt_bounds.0 + 1) as f32;
@@ -536,136 +505,97 @@ fn compatible_fast(p: &ImPeak1D, q: &ImPeak1D, s: &StitchParams) -> bool {
     true
 }
 
-fn stitch_im_peaks_core(mut v: Vec<ImPeak1D>, s: StitchParams) -> Vec<ImPeak1D> {
-    if v.is_empty() { return v; }
-
-    // 1) Global in-place parallel sort
-    v.par_sort_unstable_by(|a, b| {
-        a.window_group.cmp(&b.window_group)
-            .then(a.mz_row.cmp(&b.mz_row))
-            .then(a.scan.cmp(&b.scan))
-            .then(a.rt_bounds.0.cmp(&b.rt_bounds.0))
-    });
-
-    // 2) Find bucket boundaries (where (wg,mz_row) changes)
-    let mut cuts = vec![0usize];
-    for i in 1..v.len() {
-        let prev = &v[i-1];
-        let cur  = &v[i];
-        if prev.window_group != cur.window_group || prev.mz_row != cur.mz_row {
-            cuts.push(i);
-        }
-    }
-    cuts.push(v.len());
-
-    let per_bucket: Vec<Vec<ImPeak1D>> = cuts
-        .par_windows(2) // <- parallel windows directly (no extra allocs)
-        .map(|w: &[usize]| {
-            let start = w[0];
-            let end   = w[1];
-            let slice = &v[start..end];
-
-            let mut out: Vec<ImPeak1D> = Vec::with_capacity(slice.len());
-            // don't try to push *p (that needs Copy). Clone or move from an owned iterator:
-            for p in slice.iter().cloned() {
-                if let Some(last) = out.last_mut() {
-                    if compatible_fast(last, &p, &s) {
-                        merge_into(last, &p);
-                        continue;
-                    }
-                }
-                out.push(p);
-            }
-            out
-        })
-        .collect();
-
-    // 4) Concatenate
-    let total: usize = per_bucket.iter().map(|b| b.len()).sum();
-    let mut out = Vec::with_capacity(total);
-    for mut b in per_bucket { out.append(&mut b); }
-    out
+#[inline]
+fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
+    a.rt_bounds = (a.rt_bounds.0.min(b.rt_bounds.0), a.rt_bounds.1.max(b.rt_bounds.1));
+    a.frame_id_bounds = (a.frame_id_bounds.0.min(b.frame_id_bounds.0),
+                         a.frame_id_bounds.1.max(b.frame_id_bounds.1));
+    let w0 = a.apex_smoothed.max(1e-6);
+    let w1 = b.apex_smoothed.max(1e-6);
+    a.subscan = (a.subscan * w0 + b.subscan * w1) / (w0 + w1);
+    a.scan = ((a.scan as f32 * w0 + b.scan as f32 * w1) / (w0 + w1)).round() as usize;
+    a.left = a.left.min(b.left);
+    a.right = a.right.max(b.right);
+    a.width_scans = a.right.saturating_sub(a.left).saturating_add(1);
+    a.apex_raw      = a.apex_raw.max(b.apex_raw);
+    a.apex_smoothed = a.apex_smoothed.max(b.apex_smoothed);
+    a.prominence    = a.prominence.max(b.prominence);
+    a.area_raw     += b.area_raw;
+    if a.mobility.is_none() { a.mobility = b.mobility; }
 }
 
-#[pyfunction]
-#[pyo3(signature = (peaks, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0))]
-pub fn stitch_im_peaks_across_windows(
-    py: Python<'_>,
-    peaks: Vec<Py<PyImPeak1D>>,
-    min_overlap_frames: usize,
-    max_scan_delta: usize,
-    jaccard_min: f32,
-) -> PyResult<Vec<Py<PyImPeak1D>>> {
-    // unwrap to Rust
-    let rs: Vec<ImPeak1D> = peaks
-        .into_iter()
-        .map(|p| p.borrow(py).inner.clone())
-        .collect();
-
-    let params = StitchParams {
-        min_overlap_frames,
-        max_scan_delta,
-        jaccard_min,
-    };
-
-    // stitch
-    let stitched = stitch_im_peaks_core(rs, params);
-
-    // wrap back
-    stitched
-        .into_iter()
-        .map(|p| Py::new(py, PyImPeak1D { inner: p }))
-        .collect()
-}
+// A compact key; bucket scans to avoid too many keys
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+struct Key { wg: Option<u32>, mz_row: usize, scan_bin: usize }
 
 #[pyfunction]
 #[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0))]
-pub fn stitch_im_peaks_batched_across_windows(
+pub fn stitch_im_peaks_batched_streaming(
     py: Python<'_>,
     batched: Vec<Vec<Vec<Py<PyImPeak1D>>>>, // windows × rows × peaks
     min_overlap_frames: usize,
     max_scan_delta: usize,
     jaccard_min: f32,
 ) -> PyResult<Vec<Py<PyImPeak1D>>> {
-    use rustdf::cluster::utility::ImPeak1D as RsImPeak1D;
-
-    // 1) Flatten with capacity pre-sizing to reduce reallocs
-    let mut flat: Vec<Py<PyImPeak1D>> = Vec::new();
-    // optional: estimate size
-    let mut est = 0usize;
-    for win in &batched {
-        for row in win {
-            est += row.len();
-        }
-    }
-    flat.reserve(est);
-
-    for win in batched {
-        for row in win {
-            flat.extend(row);
-        }
-    }
-
-    // 2) Unwrap to Rust peaks
-    let rs: Vec<RsImPeak1D> = flat
-        .into_iter()
-        .map(|p| p.borrow(py).inner.clone())
-        .collect();
-
     let params = StitchParams {
         min_overlap_frames,
-        max_scan_delta,
+        max_scan_delta: max_scan_delta.max(1),
         jaccard_min,
     };
 
-    // 3) Stitch (pure Rust)
-    let stitched = stitch_im_peaks_core(rs, params);
+    // Active accumulators keyed by (wg, mz_row, scan_bin)
+    let mut active: FxHashMap<Key, ImPeak1D> = FxHashMap::default();
+    // Final output
+    let mut out: Vec<Py<PyImPeak1D>> = Vec::new();
 
-    // 4) Wrap back
-    stitched
-        .into_iter()
-        .map(|p| Py::new(py, PyImPeak1D { inner: p }))
-        .collect()
+    // Process windows in given order (RT order); for each row, process its peaks
+    for win in batched.into_iter() {
+        for row in win.into_iter() {
+            // Small sort per row keeps merges stable and cheap
+            let mut row_rs: Vec<ImPeak1D> = row
+                .into_iter()
+                .map(|p| p.borrow(py).inner.clone())
+                .collect();
+            row_rs.sort_unstable_by(|a,b| a.scan.cmp(&b.scan).then(a.rt_bounds.0.cmp(&b.rt_bounds.0)));
+
+            for p in row_rs.into_iter() {
+                let scan_bin = p.scan / params.max_scan_delta;
+                let key = Key { wg: p.window_group, mz_row: p.mz_row, scan_bin };
+
+                if let Some(cur) = active.get_mut(&key) {
+                    if compatible_fast(cur, &p, &params) {
+                        merge_into(cur, &p);
+                        continue;
+                    }
+                    // If the new peak starts clearly after the current can no longer overlap,
+                    // flush and replace. This keeps only one accumulator per key.
+                    if p.rt_bounds.0 > cur.rt_bounds.1 + params.min_overlap_frames {
+                        let flushed = active.remove(&key).unwrap();
+                        out.push(Py::new(py, PyImPeak1D { inner: flushed })?);
+                        active.insert(key, p);
+                    } else {
+                        // Overlapping-but-incompatible; finalize current and start a new run.
+                        let flushed = active.remove(&key).unwrap();
+                        out.push(Py::new(py, PyImPeak1D { inner: flushed })?);
+                        active.insert(key, p);
+                    }
+                } else {
+                    active.insert(key, p);
+                }
+            }
+        }
+
+        // Optional window-boundary compaction:
+        // If you have window RT bounds, you can flush accumulators whose rt_right
+        // is far behind to reduce the hashmap even further.
+        // (Left as a hook; needs passing per-window (rt_lo, rt_hi) if desired.)
+    }
+
+    // Flush remaining accumulators
+    for (_, v) in active.into_iter() {
+        out.push(Py::new(py, PyImPeak1D { inner: v })?);
+    }
+    Ok(out)
 }
 
 #[pymodule]
@@ -684,7 +614,6 @@ pub fn py_cluster(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(link_ms2_to_ms1, m)?)?;
     m.add_function(wrap_pyfunction!(build_precursor_fragment_annotation_py, m)?)?;
-    m.add_function(wrap_pyfunction!(stitch_im_peaks_across_windows, m)?)?;
-    m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_across_windows, m)?)?;
+    m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_streaming, m)?)?;
     Ok(())
 }
