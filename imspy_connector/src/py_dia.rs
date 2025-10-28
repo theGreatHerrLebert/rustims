@@ -151,7 +151,7 @@ impl PyMzScanPlanGroup {
                     .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("no m/z found for group"))?
             } else {
                 scan_mz_range(&frames).ok_or_else(|| {
-                    pyo3::exceptions::PyRuntimeError::new_err("no m/z found for group")
+                    exceptions::PyRuntimeError::new_err("no m/z found for group")
                 })?
             };
 
