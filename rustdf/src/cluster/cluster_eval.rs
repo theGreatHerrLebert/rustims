@@ -1234,39 +1234,50 @@ pub fn make_cluster_specs_from_im_peaks_conditioned(
     im_peaks: &[ImPeak1D],
     scale: &MzScale,
     rt_index: &RtIndex,
-    k_rt_sigma: Option<f32>,          // e.g., Some(3.0)
-    max_rt_span_frames: Option<usize>,// e.g., Some(200)
+    k_rt_sigma: Option<f32>,
+    max_rt_span_frames: Option<usize>,
     mz_ppm_window: f32,
     mz_hist_bins: usize,
     ds: &TimsDatasetDIA,
-    num_threads: usize,
+    num_threads: usize, // kept for signature symmetry; not used here
 ) -> Vec<ClusterSpec> {
-    rayon::ThreadPoolBuilder::new().num_threads(num_threads).build_global().ok();
-    im_peaks.par_iter().map(|im| {
-        let mz_c = scale.center(im.mz_row);
-        let (rt_l_relaxed, rt_r_relaxed) = (0, rt_index.cols.saturating_sub(1)); // or a smarter prior
+    // Precompute m/z centers for all rows that appear
+    // (avoid virtual calls/branchy center() repeatedly)
+    // Note: if im_peaks spans many rows sparsely, this is still cheap.
+    // Map row->center in one pass:
+    use rustc_hash::FxHashMap;
+    let mut mz_center_cache: FxHashMap<usize, f32> = FxHashMap::default();
+    mz_center_cache.reserve(im_peaks.len().min(1 << 16));
+    for p in im_peaks {
+        mz_center_cache.entry(p.mz_row).or_insert_with(|| scale.center(p.mz_row));
+    }
 
-        // Build a quick RT marginal *conditioned* on (IM ∧ m/z)
+    let rt_lo = 0usize;
+    let rt_hi = rt_index.cols.saturating_sub(1);
+
+    let build_one = |im: &ImPeak1D| {
+        let mz_c = *mz_center_cache.get(&im.mz_row).unwrap();
+        // IM ∧ m/z conditioned RT marginal
         let (rt_marg, _frame_ids_local) =
             rt_marginal_conditioned(ds, rt_index, im, mz_c, mz_ppm_window, num_threads);
 
-        let rt_fit0 = moment_fit_1d(&rt_marg, Some(&rt_index.frame_times[rt_l_relaxed..=rt_r_relaxed]));
-        let (mut rt_l, mut rt_r) = (rt_l_relaxed, rt_r_relaxed);
+        let rt_fit0 = moment_fit_1d(
+            &rt_marg,
+            Some(&rt_index.frame_times[rt_lo..=rt_hi])
+        );
+
+        let (mut rt_l, mut rt_r) = (rt_lo, rt_hi);
 
         if let Some(k) = k_rt_sigma {
             if rt_fit0.sigma.is_finite() && rt_fit0.sigma > 0.0 {
-                // turn seconds → nearest frame index
                 let mu_t = rt_fit0.mu;
-                let mut best = (rt_l, rt_r);
-                // find nearest indices around mu ± kσ
-                // (helper omitted for brevity)
-                best = restrict_rt_to_mu_pm_k_sigma(rt_index, mu_t, k, best);
-                (rt_l, rt_r) = best;
+                (rt_l, rt_r) = restrict_rt_to_mu_pm_k_sigma(rt_index, mu_t, k, (rt_l, rt_r));
             }
         }
         if let Some(cap) = max_rt_span_frames {
             let anchor = (rt_l + rt_r) / 2;
-            (rt_l, rt_r) = cap_window_symmetric((0, rt_index.cols.saturating_sub(1)), rt_l, rt_r, cap, anchor);
+            (rt_l, rt_r) =
+                cap_window_symmetric((rt_lo, rt_hi), rt_l, rt_r, cap, anchor);
         }
 
         ClusterSpec {
@@ -1281,5 +1292,14 @@ pub fn make_cluster_specs_from_im_peaks_conditioned(
             mz_hist_bins,
             mz_window_da_override: None,
         }
-    }).collect()
+    };
+
+    // Small inputs: single-threaded is often faster (no rayon overhead)
+    const PAR_THRESHOLD: usize = 1_000;
+    if im_peaks.len() < PAR_THRESHOLD {
+        im_peaks.iter().map(build_one).collect()
+    } else {
+        use rayon::prelude::*;
+        im_peaks.par_iter().map(build_one).collect()
+    }
 }
