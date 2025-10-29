@@ -786,6 +786,7 @@ def _is_nested(seq) -> bool:
             return isinstance(a, Iterable) and not _is_impeak1d(a)
     return False
 
+
 def stitch_im_peaks(
     peaks: Union[
         Sequence['ImPeak1D'],
@@ -794,6 +795,12 @@ def stitch_im_peaks(
     min_overlap_frames: int = 1,
     max_scan_delta: int = 1,
     jaccard_min: float = 0.0,
+    pivot_log_intensity: float = 8.0,
+    alpha_relax: float = 0.5,
+    relax_max: float = 3.0,
+    k_scan: float = 1.0,
+    k_overlap: float = 1.0,
+    k_jaccard: float = 0.1,
     max_mz_row_delta: int = 0,
     allow_cross_groups: bool = False,
 ) -> List['ImPeak1D']:
@@ -824,6 +831,12 @@ def stitch_im_peaks(
             int(min_overlap_frames),
             int(max_scan_delta),
             float(jaccard_min),
+            float(pivot_log_intensity),
+            float(alpha_relax),
+            float(relax_max),
+            float(k_scan),
+            float(k_overlap),
+            float(k_jaccard),
             int(max_mz_row_delta),
             bool(allow_cross_groups),
         )
