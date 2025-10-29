@@ -794,6 +794,8 @@ def stitch_im_peaks(
     min_overlap_frames: int = 1,
     max_scan_delta: int = 1,
     jaccard_min: float = 0.0,
+    max_mz_row_delta: int = 0,
+    allow_cross_groups: bool = False,
 ) -> List['ImPeak1D']:
     """
     Stitch IM 1D peaks across overlapping RT windows.
@@ -822,6 +824,8 @@ def stitch_im_peaks(
             int(min_overlap_frames),
             int(max_scan_delta),
             float(jaccard_min),
+            int(max_mz_row_delta),
+            bool(allow_cross_groups),
         )
         return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
 
