@@ -786,36 +786,6 @@ def _is_nested(seq) -> bool:
             return isinstance(a, Iterable) and not _is_impeak1d(a)
     return False
 
-"""
-/*
-#[derive(Clone, Copy)]
-pub struct StitchParams {
-    pub min_overlap_frames: usize,   // base
-    pub max_scan_delta: usize,       // base
-    pub jaccard_min: f32,            // base
-    // NEW:
-    pub pivot_log_intensity: f32,    // e.g. ln(quantile_90(apex_smoothed)+eps)
-    pub alpha_relax: f32,            // slope for how fast to relax vs log-intensity
-    pub relax_max: f32,              // cap on relaxation
-    pub k_scan: f32,                 // β
-    pub k_overlap: f32,              // γ
-    pub k_jaccard: f32,              // δ
-    pub max_mz_row_delta: usize,     // optional: tolerate row±1 at low I
-    pub allow_cross_groups: bool,    // optional
-    
-    Sensible defaults to start
-	•	pivot_log_intensity: compute once from your peak set (e.g., ln of 90th percentile apex). If you can’t pass that easily, start with something like pivot_log_intensity = 8.0 (which corresponds to I ≈ e^8 ≈ 2981 in whatever units you have) and tune.
-	•	alpha_relax = 0.5
-	•	relax_max = 3.0
-	•	k_scan = 1.0  → up to +3 scans allowed at very low intensity
-	•	k_overlap = 1.0 → down to −3 frames required overlap (floored at 1)
-	•	k_jaccard = 0.10 → up to −0.30 relaxation on Jaccard
-	•	max_mz_row_delta = 0 initially (keep strict m/z unless you want bin-edge forgiveness)
-	•	allow_cross_groups = false (safer)
-}
- */
-
-"""
 
 def stitch_im_peaks(
     peaks: Union[
@@ -827,7 +797,6 @@ def stitch_im_peaks(
     jaccard_min: float = 0.0,
     max_mz_row_delta: int = 0,
     allow_cross_groups: bool = False,
-
 ) -> List['ImPeak1D']:
     """
     Stitch IM 1D peaks across overlapping RT windows.
