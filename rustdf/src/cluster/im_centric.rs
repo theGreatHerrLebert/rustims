@@ -14,12 +14,12 @@ pub struct MzScanGrid {
 
 #[derive(Clone, Debug)]
 pub struct MzScanWindowGrid {
-    pub rt_range_frames: (usize, usize),   // existing: local frame-index range (within the plan)
-    pub rt_range_sec:    (f32, f32),       // existing
-    pub frame_id_bounds: (u32, u32),       // NEW: actual frame IDs [lo, hi]
-    pub window_group:    Option<u32>,      // NEW: DIA group provenance
+    pub rt_range_frames: (usize, usize),
+    pub rt_range_sec:    (f32, f32),
+    pub frame_id_bounds: (u32, u32),
+    pub window_group:    Option<u32>,
     pub scans: Vec<usize>,
-    pub data: Vec<f32>,     // column-major (rows, cols)
+    pub data: Vec<f32>,
     pub rows: usize,
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,
@@ -95,9 +95,15 @@ use crate::cluster::utility::ImPeak1D;
 
 #[derive(Clone, Copy)]
 pub struct StitchParams {
-    pub min_overlap_frames: usize,  // e.g. 1–3
-    pub max_scan_delta: usize,      // e.g. 1–2
-    pub jaccard_min: f32,           // e.g. 0.2 (set 0 to ignore)
+    pub min_overlap_frames: usize,
+    pub max_scan_delta: usize,
+    pub jaccard_min: f32,
+    pub max_mz_row_delta: usize,   // NEW, e.g. 0 (current), 1 or 2
+    pub allow_cross_groups: bool,  // NEW if you want to stitch across groups
+}
+
+fn same_row_or_close(p:&ImPeak1D, q:&ImPeak1D, d:usize) -> bool {
+    p.mz_row.abs_diff(q.mz_row) <= d
 }
 
 fn rt_overlap((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> usize {
@@ -115,8 +121,8 @@ fn jaccard((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
 }
 
 fn compatible(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
-    if p.mz_row != q.mz_row { return false; }
-    if p.window_group != q.window_group { return false; } // keeps groups isolated
+    if !same_row_or_close(p, q, sp.max_mz_row_delta) { return false; }
+    if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
     if (p.scan as isize - q.scan as isize).abs() as usize > sp.max_scan_delta { return false; }
     let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
     if ov < sp.min_overlap_frames { return false; }

@@ -473,34 +473,17 @@ use rustc_hash::FxHashMap; // add to Cargo.toml for low-overhead hashmap
 
 #[derive(Clone, Copy)]
 pub struct StitchParams {
-    pub min_overlap_frames: usize,   // base
-    pub max_scan_delta: usize,       // base
-    pub jaccard_min: f32,            // base
-
-    // NEW:
-    pub pivot_log_intensity: f32,    // e.g. ln(quantile_90(apex_smoothed)+eps)
-    pub alpha_relax: f32,            // slope for how fast to relax vs log-intensity
-    pub relax_max: f32,              // cap on relaxation
-    pub k_scan: f32,                 // β
-    pub k_overlap: f32,              // γ
-    pub k_jaccard: f32,              // δ
-    pub max_mz_row_delta: usize,     // optional: tolerate row±1 at low I
-    pub allow_cross_groups: bool,    // optional
-}
-
-fn relax_from_intensity(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> f32 {
-    let eps = 1e-6_f32;
-    let i = p.apex_smoothed.max(q.apex_smoothed).max(eps);
-    let l = i.ln(); // natural log
-    let r = (sp.pivot_log_intensity - l) * sp.alpha_relax;
-    r.clamp(0.0, sp.relax_max)
+    pub min_overlap_frames: usize,
+    pub max_scan_delta: usize,
+    pub jaccard_min: f32,
+    pub max_mz_row_delta: usize,   // NEW, e.g. 0 (current), 1 or 2
+    pub allow_cross_groups: bool,  // NEW if you want to stitch across groups
 }
 
 fn same_row_or_close(p:&ImPeak1D, q:&ImPeak1D, d:usize) -> bool {
     p.mz_row.abs_diff(q.mz_row) <= d
 }
 
-#[inline]
 fn jaccard((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
     let inter = rt_overlap((a0,a1),(b0,b1)) as f32;
     if inter == 0.0 { return 0.0; }
@@ -509,37 +492,23 @@ fn jaccard((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
     inter / (len_a + len_b - inter)
 }
 
+
+#[inline]
+fn compatible_fast(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
+    if !same_row_or_close(p, q, sp.max_mz_row_delta) { return false; }
+    if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
+    if (p.scan as isize - q.scan as isize).abs() as usize > sp.max_scan_delta { return false; }
+    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
+    if ov < sp.min_overlap_frames { return false; }
+    if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min { return false; }
+    true
+}
 #[inline]
 fn rt_overlap(a: (usize, usize), b: (usize, usize)) -> usize {
     let lo = a.0.max(b.0);
     let hi = a.1.min(b.1);
     hi.saturating_sub(lo).saturating_add(1)
 }
-
-
-fn compatible_fast(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
-    // m/z bin tolerance (optional)
-    if p.mz_row.abs_diff(q.mz_row) > sp.max_mz_row_delta { return false; }
-
-    // keep groups isolated unless allowed
-    if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
-
-    // intensity-adaptive relaxation
-    let relax = relax_from_intensity(p, q, sp);
-
-    let allowed_scan_delta = sp.max_scan_delta + (sp.k_scan * relax).round() as usize;
-    if (p.scan as isize - q.scan as isize).abs() as usize > allowed_scan_delta { return false; }
-
-    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
-    let required_min_overlap = sp.min_overlap_frames.saturating_sub((sp.k_overlap * relax).round() as usize).max(1);
-    if ov < required_min_overlap { return false; }
-
-    let jac_req = (sp.jaccard_min - sp.k_jaccard * relax).max(0.0);
-    if jac_req > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < jac_req { return false; }
-
-    true
-}
-
 
 #[inline]
 fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
@@ -565,23 +534,13 @@ fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
 struct Key { wg: Option<u32>, mz_row: usize, scan_bin: usize }
 
 #[pyfunction]
-#[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0,
-    pivot_log_intensity=10.0, alpha_relax=1.0, relax_max=5.0,
-    k_scan=0.0, k_overlap=0.0, k_jaccard=0.0,
-    max_mz_row_delta=0, allow_cross_groups=false))]
+#[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
 pub fn stitch_im_peaks_batched_streaming(
     py: Python<'_>,
     batched: Vec<Vec<Vec<Py<PyImPeak1D>>>>, // windows × rows × peaks
     min_overlap_frames: usize,
     max_scan_delta: usize,
     jaccard_min: f32,
-
-    pivot_log_intensity: f32,
-    alpha_relax: f32,
-    relax_max: f32,
-    k_scan: f32,
-    k_overlap: f32,
-    k_jaccard: f32,
     max_mz_row_delta: usize,
     allow_cross_groups: bool,
 ) -> PyResult<Vec<Py<PyImPeak1D>>> {
@@ -589,12 +548,6 @@ pub fn stitch_im_peaks_batched_streaming(
         min_overlap_frames,
         max_scan_delta: max_scan_delta.max(1),
         jaccard_min,
-        pivot_log_intensity,
-        alpha_relax,
-        relax_max,
-        k_scan,
-        k_overlap,
-        k_jaccard,
         max_mz_row_delta,
         allow_cross_groups,
     };
