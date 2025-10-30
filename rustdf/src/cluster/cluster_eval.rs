@@ -536,7 +536,7 @@ fn cap_window_symmetric(
     (new_l, new_r)
 }
 
-/// Evaluate clusters (RT×IM with m/z marginal) with a single frame preload.
+/// Evaluate clusters (RT×IM witbuild_mz_scan_grid_for_framesh m/z marginal) with a single frame preload.
 /// Returns ClusterResult objects; optional raw points attached, no dense 2D patch.
 pub fn evaluate_clusters_3d(
     ds: &TimsDatasetDIA,

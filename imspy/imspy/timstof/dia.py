@@ -34,7 +34,6 @@ class MzScanWindowGrid(RustWrapperObject):
         inst.__py_ptr = p
         return inst
 
-    @classmethod
     def get_py_ptr(self):
         return self.__py_ptr
 

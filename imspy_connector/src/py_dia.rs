@@ -352,7 +352,7 @@ impl PyMzScanPlanGroup {
         Ok(out)
     }
 
-    #[pyo3(signature = (indices, min_prom=50.0, min_distance_scans=2, min_width_scans=2, use_mobility=false))]
+    #[pyo3(signature = (indices, min_prom=50.0, min_distance_scans=2, min_width_scans=10, use_mobility=false))]
     pub fn pick_im_peaks_for_indices(
         &self,
         py: Python<'_>,
@@ -702,8 +702,6 @@ impl PyMzScanPlan {
         Ok(out)
     }
 
-    /// Pick IM peaks for a set of window indices in one Rust call.
-    /// Returns: List[ List[ List[PyImPeak1D] ] ]  ==> windows × rows × peaks
     #[pyo3(signature = (indices, min_prom=50.0, min_distance_scans=2, min_width_scans=2, use_mobility=false))]
     pub fn pick_im_peaks_for_indices(
         &self,
@@ -715,28 +713,29 @@ impl PyMzScanPlan {
         use_mobility: bool,
     ) -> PyResult<Vec<Vec<Vec<Py<PyImPeak1D>>>>>
     {
-        // Heavy work without GIL
-        let results: Vec<Vec<Vec<ImPeak1D>>> = py.allow_threads(|| {
-            indices.into_par_iter()
-                .filter_map(|i| {
-                    if i >= self.windows_idx.len() { return None; }
-                    // Build window (this borrows the dataset briefly inside build_window)
-                    // Safe to call here; build_window does its own short borrows.
-                    let grid = match self.build_window(unsafe { Python::assume_gil_acquired() }, i) {
-                        Ok(g) => g,
-                        Err(_) => return None,
-                    };
-                    let rows = pick_im_peaks_rows_from_grid(
+        // 1) Materialize requested windows under the real GIL (sequential).
+        let mut grids = Vec::with_capacity(indices.len());
+        for i in indices {
+            if i >= self.windows_idx.len() { continue; }
+            let grid = self.build_window(py, i)?; // real GIL
+            grids.push(grid);
+        }
+
+        // 2) Peak-pick in parallel without touching Python.
+        let results_rs: Vec<Vec<Vec<ImPeak1D>>> = py.allow_threads(|| {
+            use rayon::prelude::*;
+            grids.into_par_iter()
+                .map(|grid| {
+                    pick_im_peaks_rows_from_grid(
                         &grid, min_prom, min_distance_scans, min_width_scans, use_mobility
-                    );
-                    Some(rows)
+                    )
                 })
                 .collect()
         });
 
-        // Wrap back to Python objects
-        let mut out = Vec::with_capacity(results.len());
-        for rows in results {
+        // 3) Wrap for Python (under GIL again).
+        let mut out = Vec::with_capacity(results_rs.len());
+        for rows in results_rs {
             let mut rows_py = Vec::with_capacity(rows.len());
             for row in rows {
                 let mut row_py = Vec::with_capacity(row.len());
