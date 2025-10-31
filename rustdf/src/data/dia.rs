@@ -9,10 +9,11 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use rustc_hash::FxHashMap;
-use crate::cluster::cluster_eval::{evaluate_clusters_3d, make_cluster_specs_from_im_peaks_conditioned, ClusterResult, ClusterSpec, EvalOptions};
+use crate::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
 use crate::cluster::feature::{build_features_from_envelopes, AveragineLut, Envelope, Feature,
                               FeatureBuildParams, GroupingParams};
-use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm, ImIndex, build_dense_rt_by_mz_ppm_for_group, build_dense_im_by_rtpeaks_ppm_for_group, ImPeak1D};
+use crate::cluster::utility::{build_dense_rt_by_mz_ppm, pick_peaks_all_rows, RtPeak1D, RtIndex, build_dense_im_by_rtpeaks_ppm,
+                              ImIndex, build_dense_rt_by_mz_ppm_for_group, build_dense_im_by_rtpeaks_ppm_for_group};
 
 // Merge and sort inclusive integer ranges like [(3,7), (8,12), (20,25)].
 fn merge_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
@@ -661,75 +662,6 @@ impl TimsDatasetDIA {
         } else {
             None
         }
-    }
-    /// Build ClusterSpecs from IM peaks by conditioning the RT marginal on (IM ∧ m/z),
-    /// then evaluate clusters in 3D. Returns (specs, clusters).
-    ///
-    /// Requirements:
-    /// - `im_peaks.left/right` must be **physical scan indices** (not compact axis).
-    /// - `rt_index.scale` is the m/z scale used to index frames (must match when evaluating).
-    pub fn clusters_from_im_peaks_conditioned(
-        &self,
-        rt_index: &RtIndex,
-        im_peaks: &[ImPeak1D],
-        k_rt_sigma: Option<f32>,           // e.g., Some(3.0)
-        max_rt_span_frames: Option<usize>, // e.g., Some(200)
-        mz_ppm_window: f32,
-        mz_hist_bins: usize,
-        eval_opts: EvalOptions,        // set refine, im_k_sigma, attachments, etc.
-        num_threads: usize,
-    ) -> (Vec<ClusterSpec>, Vec<ClusterResult>) {
-
-        // Build specs: IM→(m/z, IM) fixed; RT bounded by conditioned marginal.
-        let specs: Vec<ClusterSpec> = make_cluster_specs_from_im_peaks_conditioned(
-            im_peaks,
-            &rt_index.scale,
-            rt_index,
-            k_rt_sigma,
-            max_rt_span_frames,
-            mz_ppm_window,
-            mz_hist_bins,
-            self,
-            num_threads,
-        );
-
-        // Stamp ms_level/window_group if the caller filled eval_opts
-        // (nothing to do here—just pass through)
-        let clusters = evaluate_clusters_3d(self, rt_index, &specs, eval_opts, num_threads);
-
-        // Optional: annotate precursor-group coverage for convenience
-        let mut clusters = clusters;
-        annotate_precursor_groups(self, &mut clusters);
-
-        (specs, clusters)
-    }
-
-    // Convenience overload: IM-first **per DIA group** using the group's RT index
-    // and automatically stamp the group into results.
-    pub fn clusters_from_im_peaks_conditioned_for_group(
-        &self,
-        window_group: u32,
-        rt_index_group: &RtIndex,
-        im_peaks: &[ImPeak1D],
-        k_rt_sigma: Option<f32>,
-        max_rt_span_frames: Option<usize>,
-        mz_ppm_window: f32,
-        mz_hist_bins: usize,
-        mut eval_opts: EvalOptions,
-        num_threads: usize,
-    ) -> (Vec<ClusterSpec>, Vec<ClusterResult>) {
-        eval_opts.window_group_hint = Some(window_group);
-        let (specs, clusters) = self.clusters_from_im_peaks_conditioned(
-            rt_index_group,
-            im_peaks,
-            k_rt_sigma,
-            max_rt_span_frames,
-            mz_ppm_window,
-            mz_hist_bins,
-            eval_opts,
-            num_threads,
-        );
-        (specs, clusters)
     }
 }
 

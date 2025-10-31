@@ -15,62 +15,12 @@ use rustdf::cluster::utility::{RtPeak1D, ImPeak1D, RtIndex, ImIndex, MobilityFn,
 };
 
 use rustdf::cluster::im_centric::{MzScanWindowGrid};
-use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, make_cluster_specs_from_im_peaks_conditioned, ClusterResult, ClusterSpec, EvalOptions};
+use rustdf::cluster::cluster_eval::{evaluate_clusters_3d, ClusterResult, ClusterSpec, EvalOptions};
 use rustdf::cluster::feature::{Envelope, Feature};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 use crate::py_cluster::{PyClusterResult, PyClusterSpec, PyEvalOptions};
 use crate::py_feature::{PyAveragineLut, PyEnvelope, PyFeature, PyFeatureBuildParams, PyGroupingParams};
-
-// helper: pick a sane default; you can tune dynamically by RT span, attach options, etc.
-const DEFAULT_CHUNK_SIZE: usize = 10_000;
-fn process_chunk<'py>(
-    py: Python<'py>,
-    ds: &TimsDatasetDIA,
-    rt_idx: &RtIndex,
-    im_chunk: &mut Vec<ImPeak1D>,
-    k_rt_sigma: Option<f32>,
-    max_rt_span_frames: Option<usize>,
-    mz_ppm_window: f32,
-    mz_hist_bins: usize,
-    opts_rs: &EvalOptions,
-    num_threads: usize,
-    out_specs_py: &mut Vec<Py<PyClusterSpec>>,
-    out_clusters_py: &mut Vec<Py<PyClusterResult>>,
-) -> PyResult<()> {
-    if im_chunk.is_empty() { return Ok(()); }
-
-    // 1) specs for this chunk
-    let specs_rs = make_cluster_specs_from_im_peaks_conditioned(
-        im_chunk,
-        &rt_idx.scale,
-        rt_idx,
-        k_rt_sigma,
-        max_rt_span_frames,
-        mz_ppm_window,
-        mz_hist_bins,
-        ds,
-        num_threads,
-    );
-
-    // 2) evaluate this chunk
-    let mut clusters_rs = evaluate_clusters_3d(
-        ds, rt_idx, &specs_rs, opts_rs.clone(), num_threads
-    );
-
-    annotate_precursor_groups(ds, &mut clusters_rs);
-
-    // 3) wrap and append
-    for s in specs_rs {
-        out_specs_py.push(Py::new(py, PyClusterSpec { inner: s })?);
-    }
-    for c in clusters_rs {
-        out_clusters_py.push(Py::new(py, PyClusterResult { inner: c })?);
-    }
-
-    im_chunk.clear();
-    Ok(())
-}
 
 #[inline]
 fn pick_im_peaks_rows_from_grid(
@@ -1488,102 +1438,6 @@ impl PyTimsDatasetDIA {
     /// Optional: m/z clamp from DIA windows (isolation mz ± width/2 merged across windows).
     pub fn mz_bounds_for_group(&self, window_group: u32) -> Option<(f32, f32)> {
         self.inner.mz_bounds_for_window_group_core(window_group)
-    }
-
-    #[pyo3(signature = (
-    rt_index, im_peaks, k_rt_sigma=None, max_rt_span_frames=None,
-    mz_ppm_window=10.0, mz_hist_bins=64, eval_opts=None, num_threads=4
-))]
-    pub fn clusters_from_im_peaks_conditioned(
-        &self,
-        py: Python<'_>,
-        rt_index: PyRtIndex,
-        im_peaks: Vec<Py<PyImPeak1D>>,
-        k_rt_sigma: Option<f32>,
-        max_rt_span_frames: Option<usize>,
-        mz_ppm_window: f32,
-        mz_hist_bins: usize,
-        eval_opts: Option<PyEvalOptions>,
-        num_threads: usize,
-    ) -> PyResult<(Vec<Py<PyClusterSpec>>, Vec<Py<PyClusterResult>>)> {
-        if im_peaks.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
-        }
-
-        let opts_rs: EvalOptions = eval_opts.map(|o| o.inner).unwrap_or_default();
-
-        // We’ll flatten Py objects to Rust in a streaming buffer and process by chunks.
-        let mut buf: Vec<ImPeak1D> = Vec::with_capacity(DEFAULT_CHUNK_SIZE);
-        let mut out_specs_py: Vec<Py<PyClusterSpec>> = Vec::new();
-        let mut out_clusters_py: Vec<Py<PyClusterResult>> = Vec::new();
-
-        for p in im_peaks {
-            buf.push(p.borrow(py).inner.clone());
-            if buf.len() >= DEFAULT_CHUNK_SIZE {
-                process_chunk(
-                    py, &self.inner, &rt_index.inner, &mut buf,
-                    k_rt_sigma, max_rt_span_frames, mz_ppm_window, mz_hist_bins,
-                    &opts_rs, num_threads, &mut out_specs_py, &mut out_clusters_py
-                )?;
-            }
-        }
-        // flush remainder
-        process_chunk(
-            py, &self.inner, &rt_index.inner, &mut buf,
-            k_rt_sigma, max_rt_span_frames, mz_ppm_window, mz_hist_bins,
-            &opts_rs, num_threads, &mut out_specs_py, &mut out_clusters_py
-        )?;
-
-        Ok((out_specs_py, out_clusters_py))
-    }
-
-    #[pyo3(signature = (
-    window_group, rt_index_group, im_peaks, k_rt_sigma=None, max_rt_span_frames=None,
-    mz_ppm_window=10.0, mz_hist_bins=64, eval_opts=None, num_threads=4
-))]
-    pub fn clusters_from_im_peaks_conditioned_for_group(
-        &self,
-        py: Python<'_>,
-        window_group: u32,
-        rt_index_group: PyRtIndex,
-        im_peaks: Vec<Py<PyImPeak1D>>,
-        k_rt_sigma: Option<f32>,
-        max_rt_span_frames: Option<usize>,
-        mz_ppm_window: f32,
-        mz_hist_bins: usize,
-        eval_opts: Option<PyEvalOptions>,
-        num_threads: usize,
-    ) -> PyResult<(Vec<Py<PyClusterSpec>>, Vec<Py<PyClusterResult>>)> {
-        if im_peaks.is_empty() {
-            return Ok((Vec::new(), Vec::new()));
-        }
-
-        let mut opts_rs: EvalOptions = eval_opts.map(|o| o.inner).unwrap_or_default();
-        if opts_rs.window_group_hint.is_none() {
-            opts_rs.window_group_hint = Some(window_group);
-        }
-
-        let mut buf: Vec<ImPeak1D> = Vec::with_capacity(DEFAULT_CHUNK_SIZE);
-        let mut out_specs_py: Vec<Py<PyClusterSpec>> = Vec::new();
-        let mut out_clusters_py: Vec<Py<PyClusterResult>> = Vec::new();
-
-        for p in im_peaks {
-            buf.push(p.borrow(py).inner.clone());
-            if buf.len() >= DEFAULT_CHUNK_SIZE {
-                process_chunk(
-                    py, &self.inner, &rt_index_group.inner, &mut buf,
-                    k_rt_sigma, max_rt_span_frames, mz_ppm_window, mz_hist_bins,
-                    &opts_rs, num_threads, &mut out_specs_py, &mut out_clusters_py
-                )?;
-            }
-        }
-        process_chunk(
-            py, &self.inner, &rt_index_group.inner, &mut buf,
-            k_rt_sigma, max_rt_span_frames, mz_ppm_window, mz_hist_bins,
-            &opts_rs, num_threads, &mut out_specs_py, &mut out_clusters_py
-        )?;
-
-        Ok((out_specs_py, out_clusters_py))
     }
 }
 

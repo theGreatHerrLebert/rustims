@@ -1,4 +1,6 @@
-use crate::cluster::utility::{build_frame_bin_view, smooth_vector_gaussian, FrameBinView, MzScale};
+use std::collections::BTreeMap;
+use mscore::timstof::frame::TimsFrame;
+use crate::cluster::utility::{bin_range, build_frame_bin_view, smooth_vector_gaussian, FrameBinView, MzScale, RtPeak1D};
 use crate::data::dia::TimsDatasetDIA;
 use crate::data::handle::TimsData;
 use rayon::prelude::*;
@@ -92,6 +94,7 @@ pub fn build_mz_scan_grid_for_frames(
 }
 
 use crate::cluster::utility::ImPeak1D;
+use crate::data::meta::FrameMeta;
 
 #[derive(Clone, Copy)]
 pub struct StitchParams {
@@ -190,4 +193,215 @@ pub fn stitch_im_peaks_across_windows(mut peaks: Vec<ImPeak1D>, sp: StitchParams
         }
         out
     }).collect()
+}
+
+#[inline(always)]
+fn frame_rt(meta: &FrameMeta) -> f32 { meta.time as f32 }
+
+/// Build CSR views for the subset of frames in `slice_frames` whose IDs lie in [fid_lo, fid_hi],
+/// in *RT order*. Returns (views, frame_ids_sorted, frame_times_sorted, global_num_scans).
+pub fn make_views_for_span_from_slice(
+    // preloaded frames (e.g. from ds.get_slice called by the caller once per window/group)
+    slice_frames: &[TimsFrame],
+    // lookup: frame_id -> time (if you don’t want to touch dataset meta, pass a parallel vec instead)
+    meta_lookup: Option<&[FrameMeta]>,
+    fid_lo: u32,
+    fid_hi: u32,
+    scale: &MzScale,
+) -> (Vec<FrameBinView>, Vec<u32>, Vec<f32>, usize) {
+    // filter frames by id bounds
+    let mut picked: Vec<&TimsFrame> = slice_frames
+        .iter()
+        .filter(|fr| (fr.frame_id as u32) >= fid_lo && (fr.frame_id as u32) <= fid_hi)
+        .collect();
+
+    // sort by RT if we have metadata; otherwise keep existing order (assume pre-sorted slice)
+    if let Some(meta) = meta_lookup {
+        picked.sort_by(|a, b| {
+            let ta = meta.iter().find(|m| m.id == a.frame_id as i64).map(frame_rt).unwrap_or(0.0);
+            let tb = meta.iter().find(|m| m.id == b.frame_id as i64).map(frame_rt).unwrap_or(0.0);
+            ta.partial_cmp(&tb).unwrap()
+        });
+    }
+
+    let frame_ids: Vec<u32> = picked.iter().map(|fr| fr.frame_id as u32).collect();
+    let frame_times: Vec<f32> = if let Some(meta) = meta_lookup {
+        frame_ids.iter().map(|fid| {
+            meta.iter().find(|m| (m.id as u32)==*fid).map(frame_rt).unwrap_or(0.0)
+        }).collect()
+    } else {
+        // If you already carry RT times alongside your slice, pass them instead and replace this path.
+        vec![0.0; frame_ids.len()]
+    };
+
+    // global max scan across just these frames (caps scan_idx during view build)
+    let global_num_scans: usize = picked.iter()
+        .flat_map(|fr| fr.scan.iter())
+        .copied()
+        .max()
+        .map(|m| m as usize + 1)
+        .unwrap_or(0);
+
+    let views: Vec<FrameBinView> = picked
+        .into_par_iter()
+        .map(|fr| build_frame_bin_view(fr.clone(), scale, global_num_scans))
+        .collect();
+
+    (views, frame_ids, frame_times, global_num_scans)
+}
+
+#[derive(Clone, Debug)]
+pub struct ImFirstRtOptions {
+    pub mz_ppm_window: f32,
+    pub rt_sigma_frames: Option<f32>,
+    pub rt_min_prom: f32,
+    pub rt_min_distance_frames: usize,
+    pub rt_min_width_frames: usize,
+    pub rt_pad_left: usize,
+    pub rt_pad_right: usize,
+}
+
+impl Default for ImFirstRtOptions {
+    fn default() -> Self {
+        Self {
+            mz_ppm_window: 10.0,
+            rt_sigma_frames: Some(1.25),
+            rt_min_prom: 100.0,
+            rt_min_distance_frames: 2,
+            rt_min_width_frames: 2,
+            rt_pad_left: 0,
+            rt_pad_right: 0,
+        }
+    }
+}
+
+/// Build RT marginal and pick RT sub-peaks **using already-built views**.
+/// No disk I/O; no calls to get_slice.
+/// - `views`: CSR views for frames in **time order** covering the IM-peak span
+/// - `frame_times`: same length as `views`, RT seconds in ascending order
+pub fn rt_peaks_from_impeak_on_views(
+    scale: &MzScale,
+    im_peak: &ImPeak1D,
+    views: &[FrameBinView],
+    frame_times: &[f32],
+    opts: &ImFirstRtOptions,
+) -> (Vec<RtPeak1D>, Vec<f32>) {
+    if views.is_empty() { return (Vec::new(), Vec::new()); }
+    assert_eq!(views.len(), frame_times.len(), "views and frame_times must align");
+
+    // m/z slab around this IM row
+    let mz_center = scale.center(im_peak.mz_row);
+    let tol_da = mz_center * opts.mz_ppm_window * 1e-6;
+    let (bin_lo, bin_hi) = scale.index_range_for_mz_window(mz_center - tol_da, mz_center + tol_da);
+
+    // IM window
+    let (im_l, im_r) = (im_peak.left, im_peak.right);
+
+    // RT marginal
+    let mut rt_marg_raw = vec![0.0f32; views.len()];
+    for (t, v) in views.iter().enumerate() {
+        let (start, end) = bin_range(v, bin_lo, bin_hi);
+        let mut sum = 0.0f32;
+        for i in start..end {
+            let s = v.scan_idx[i] as usize;
+            if s >= im_l && s <= im_r {
+                sum += v.intensity[i];
+            }
+        }
+        rt_marg_raw[t] = sum;
+    }
+
+    // optional smoothing
+    let mut rt_marg_sm = rt_marg_raw.clone();
+    if let Some(sig) = opts.rt_sigma_frames { smooth_vector_gaussian(&mut rt_marg_sm, sig, 3.0); }
+
+    // your peak picker
+    let rt_peaks = crate::cluster::utility::find_peaks_row(
+        &rt_marg_sm,
+        &rt_marg_raw,
+        im_peak.mz_row,
+        mz_center,
+        Some(frame_times),
+        opts.rt_min_prom,
+        opts.rt_min_distance_frames,
+        opts.rt_min_width_frames,
+        opts.rt_pad_left,
+        opts.rt_pad_right,
+    );
+
+    (rt_peaks, rt_marg_raw)
+}
+
+/// IM marginal for a chosen RT sub-window, again **on the same views**
+pub fn im_marginal_for_rt_window_on_views(
+    scale: &MzScale,
+    views: &[FrameBinView],
+    im_peak: &ImPeak1D,
+    rt_left_local: usize,
+    rt_right_local: usize,
+    mz_ppm_window: f32,
+) -> Vec<f32> {
+    if views.is_empty() { return Vec::new(); }
+    let (im_l, im_r) = (im_peak.left, im_peak.right);
+    let scans_len = im_r - im_l + 1;
+    let mut im_marg = vec![0.0f32; scans_len];
+
+    let mz_center = scale.center(im_peak.mz_row);
+    let tol_da = mz_center * mz_ppm_window * 1e-6;
+    let (bin_lo, bin_hi) = scale.index_range_for_mz_window(mz_center - tol_da, mz_center + tol_da);
+
+    let lo = rt_left_local.min(views.len() - 1);
+    let hi = rt_right_local.min(views.len() - 1);
+    if lo > hi { return im_marg; }
+
+    for v in &views[lo..=hi] {
+        let (start, end) = bin_range(v, bin_lo, bin_hi);
+        for i in start..end {
+            let s = v.scan_idx[i] as usize;
+            if s >= im_l && s <= im_r {
+                im_marg[s - im_l] += v.intensity[i];
+            }
+        }
+    }
+    im_marg
+}
+
+pub struct RtImResult {
+    pub im_peak: ImPeak1D,
+    pub rt_peaks: Vec<RtPeak1D>,
+    pub rt_marg: Vec<f32>,
+}
+
+pub fn evaluate_impeaks_batched_on_slice(
+    slice_frames: &[TimsFrame],      // preloaded once by the caller
+    meta_lookup: Option<&[FrameMeta]>,
+    scale: &MzScale,
+    im_peaks: Vec<ImPeak1D>,
+    opts: &ImFirstRtOptions,
+) -> Vec<RtImResult> {
+    // Bucket by RT frame-id bounds to reuse the same views
+    let mut buckets: BTreeMap<(u32,u32), Vec<ImPeak1D>> = BTreeMap::new();
+    for p in im_peaks { buckets.entry(p.frame_id_bounds).or_default().push(p); }
+
+    let mut out: Vec<RtImResult> = Vec::new();
+
+    for ((fid_lo, fid_hi), peaks) in buckets.into_iter() {
+        // 1) Build views ONCE for this RT span
+        let (views, _frame_ids, frame_times, _nscans) =
+            make_views_for_span_from_slice(slice_frames, meta_lookup, fid_lo, fid_hi, scale);
+
+        // 2) Evaluate each IM peak on these cached views
+        for ip in peaks {
+            let (rt_subpeaks, rt_marg) = rt_peaks_from_impeak_on_views(
+                scale, &ip, &views, &frame_times, opts
+            );
+
+            // If needed, one can compute IM marginals per sub-peak here by calling
+            // `im_marginal_for_rt_window_on_views(...)` with pk.left/right.
+
+            out.push(RtImResult { im_peak: ip, rt_peaks: rt_subpeaks, rt_marg });
+        }
+    }
+
+    out
 }
