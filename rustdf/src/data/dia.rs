@@ -1,4 +1,5 @@
 use crate::data::acquisition::AcquisitionMode;
+use rustc_hash::FxHashMap;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
 use crate::data::meta::{
     read_dia_ms_ms_info, read_dia_ms_ms_windows, read_global_meta_sql, read_meta_data_sql,
@@ -7,12 +8,13 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
+use crate::data::utility::merge_ranges;
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
     pub global_meta_data: GlobalMetaData,
     pub meta_data: Vec<FrameMeta>,
-    pub dia_ms_mis_info: Vec<DiaMsMisInfo>,
+    pub dia_ms_ms_info: Vec<DiaMsMisInfo>,
     pub dia_ms_ms_windows: Vec<DiaMsMsWindow>,
 }
 
@@ -66,7 +68,7 @@ impl TimsDatasetDIA {
             loader,
             global_meta_data,
             meta_data,
-            dia_ms_mis_info,
+            dia_ms_ms_info: dia_ms_mis_info,
             dia_ms_ms_windows,
         }
     }
@@ -115,7 +117,7 @@ impl TimsDatasetDIA {
     ) -> TimsFrame {
         // get all fragment frames, filter by window_group
         let fragment_frames: Vec<u32> = self
-            .dia_ms_mis_info
+            .dia_ms_ms_info
             .iter()
             .filter(|x| x.window_group == window_group)
             .map(|x| x.frame_id)
@@ -147,6 +149,87 @@ impl TimsDatasetDIA {
         }
 
         sampled_frame
+    }
+
+    /// All DIA window_group IDs present in the file (sorted unique).
+    pub fn dia_window_groups(&self) -> Vec<u32> {
+        let mut gs: Vec<u32> = self
+            .dia_ms_ms_info
+            .iter()
+            .map(|x| x.window_group as u32)
+            .collect();
+        gs.sort_unstable();
+        gs.dedup();
+        gs
+    }
+
+    /// Map frame_id -> (time, ms_ms_type) for quick lookups.
+    fn frame_time_map(&self) -> FxHashMap<u32, (f32, i64)> {
+        let mut m = FxHashMap::default();
+        for fm in &self.meta_data {
+            m.insert(fm.id as u32, (fm.time as f32, fm.ms_ms_type));
+        }
+        m
+    }
+
+    /// RT-sorted **fragment** frames for a given DIA group.
+    pub fn fragment_frame_ids_and_times_for_group_core(&self, window_group: u32) -> (Vec<u32>, Vec<f32>) {
+        let time_map = self.frame_time_map();
+        let mut rows: Vec<(u32, f32)> = self
+            .dia_ms_ms_info
+            .iter()
+            .filter(|x| x.window_group == window_group)
+            .filter_map(|x| {
+                time_map.get(&(x.frame_id)).map(|(t, _ms2)| (x.frame_id, *t))
+            })
+            .collect();
+
+        // Just in case: keep only MS2 frames (ms_ms_type != 0)
+        rows.retain(|(fid, _)| time_map.get(fid).map(|(_, ty)| *ty != 0).unwrap_or(false));
+
+        rows.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap());
+        let (ids, times): (Vec<_>, Vec<_>) = rows.into_iter().unzip();
+        (ids, times)
+    }
+
+    /// Merged, sorted **global scan** unions for this DIA group, from DiaFrameMsMsWindows.
+    /// Returns None if there are no window rows for this group.
+    pub fn scan_unions_for_window_group_core(&self, window_group: u32) -> Option<Vec<(usize, usize)>> {
+        let ranges: Vec<(usize, usize)> = self
+            .dia_ms_ms_windows
+            .iter()
+            .filter(|w| w.window_group as u32 == window_group)
+            .map(|w| {
+                let l = w.scan_num_begin as usize;
+                let r = w.scan_num_end as usize;
+                if l <= r { (l, r) } else { (r, l) }
+            })
+            .collect();
+        if ranges.is_empty() {
+            return None;
+        }
+        Some(merge_ranges(ranges))
+    }
+
+    /// m/z unions (min..max) for the group from DiaFrameMsMsWindows (wide clamp).
+    pub fn mz_bounds_for_window_group_core(&self, window_group: u32) -> Option<(f32, f32)> {
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        let mut hit = false;
+        for w in &self.dia_ms_ms_windows {
+            if w.window_group as u32 == window_group {
+                let c = w.isolation_mz as f32;
+                let half = 0.5f32 * (w.isolation_width as f32);
+                lo = lo.min(c - half);
+                hi = hi.max(c + half);
+                hit = true;
+            }
+        }
+        if hit && hi > lo && lo.is_finite() && hi.is_finite() {
+            Some((lo, hi))
+        } else {
+            None
+        }
     }
 }
 

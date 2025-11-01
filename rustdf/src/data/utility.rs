@@ -313,3 +313,21 @@ pub fn flatten_scan_values(scan: &Vec<u32>, zero_indexed: bool) -> Vec<u32> {
         .flat_map(|(index, &count)| vec![(index + add) as u32; count as usize].into_iter())
         .collect()
 }
+
+// Merge and sort inclusive integer ranges like [(3,7), (8,12), (20,25)].
+pub fn merge_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    if ranges.is_empty() { return ranges; }
+    ranges.sort_unstable_by_key(|x| x.0);
+    let mut out: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    let mut cur = ranges[0];
+    for (l, r) in ranges.into_iter().skip(1) {
+        if l <= cur.1 + 1 {
+            cur.1 = cur.1.max(r);
+        } else {
+            out.push(cur);
+            cur = (l, r);
+        }
+    }
+    out.push(cur);
+    out
+}
