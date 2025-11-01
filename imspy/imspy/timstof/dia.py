@@ -507,3 +507,44 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(clamp_mz_to_group),
         )
         return MzScanPlanGroup.from_py_ptr(py_plan)
+
+from collections.abc import Iterable
+from typing import List, Sequence
+
+def stitch_im_peaks(
+    peaks: Sequence[Sequence[Sequence['ImPeak1D']]],  # windows × rows × peaks
+    min_overlap_frames: int = 1,
+    max_scan_delta: int = 1,
+    jaccard_min: float = 0.0,
+    max_mz_row_delta: int = 0,
+    allow_cross_groups: bool = False,
+) -> List['ImPeak1D']:
+    """
+    Stitch IM 1D peaks across overlapping RT windows.
+
+    Accepts either:
+      - flat:   List[ImPeak1D]
+      - nested: List[List[List[ImPeak1D]]] (windows × rows × peaks)
+
+    Returns:
+      flat, deduplicated List[ImPeak1D]
+    """
+    from .dia import ImPeak1D
+
+    # empty fast-path
+    if not peaks:
+        return []
+
+    batched_ptrs = [
+        [[p.get_py_ptr() for p in row] for row in win]
+        for win in peaks
+    ]
+    stitched_py = ims.stitch_im_peaks_batched_streaming(
+        batched_ptrs,
+        int(min_overlap_frames),
+        int(max_scan_delta),
+        float(jaccard_min),
+        int(max_mz_row_delta),
+        bool(allow_cross_groups),
+    )
+    return [ImPeak1D.from_py_ptr(p) for p in stitched_py]

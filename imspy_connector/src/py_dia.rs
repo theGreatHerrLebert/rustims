@@ -5,7 +5,7 @@ use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
-
+use rustc_hash::FxHashMap;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D};
@@ -1012,6 +1012,143 @@ fn pick_im_peaks_rows_from_grid(
     }).collect()
 }
 
+#[derive(Clone, Copy)]
+pub struct StitchParams {
+    pub min_overlap_frames: usize,
+    pub max_scan_delta: usize,
+    pub jaccard_min: f32,
+    pub max_mz_row_delta: usize,   // NEW, e.g. 0 (current), 1 or 2
+    pub allow_cross_groups: bool,  // NEW if you want to stitch across groups
+}
+
+fn same_row_or_close(p:&ImPeak1D, q:&ImPeak1D, d:usize) -> bool {
+    p.mz_row.abs_diff(q.mz_row) <= d
+}
+
+fn jaccard((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
+    let inter = rt_overlap((a0,a1),(b0,b1)) as f32;
+    if inter == 0.0 { return 0.0; }
+    let len_a = (a1 - a0 + 1) as f32;
+    let len_b = (b1 - b0 + 1) as f32;
+    inter / (len_a + len_b - inter)
+}
+
+// A compact key; bucket scans to avoid too many keys
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+struct Key { wg: Option<u32>, mz_row: usize, scan_bin: usize }
+
+#[inline]
+fn compatible_fast(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
+    if !same_row_or_close(p, q, sp.max_mz_row_delta) { return false; }
+    if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
+    if (p.scan as isize - q.scan as isize).abs() as usize > sp.max_scan_delta { return false; }
+    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
+    if ov < sp.min_overlap_frames { return false; }
+    if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min { return false; }
+    true
+}
+#[inline]
+fn rt_overlap(a: (usize, usize), b: (usize, usize)) -> usize {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    hi.saturating_sub(lo).saturating_add(1)
+}
+
+#[inline]
+fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
+    a.rt_bounds = (a.rt_bounds.0.min(b.rt_bounds.0), a.rt_bounds.1.max(b.rt_bounds.1));
+    a.frame_id_bounds = (a.frame_id_bounds.0.min(b.frame_id_bounds.0),
+                         a.frame_id_bounds.1.max(b.frame_id_bounds.1));
+    let w0 = a.apex_smoothed.max(1e-6);
+    let w1 = b.apex_smoothed.max(1e-6);
+    a.subscan = (a.subscan * w0 + b.subscan * w1) / (w0 + w1);
+    a.scan = ((a.scan as f32 * w0 + b.scan as f32 * w1) / (w0 + w1)).round() as usize;
+    a.left = a.left.min(b.left);
+    a.right = a.right.max(b.right);
+    a.width_scans = a.right.saturating_sub(a.left).saturating_add(1);
+    a.apex_raw      = a.apex_raw.max(b.apex_raw);
+    a.apex_smoothed = a.apex_smoothed.max(b.apex_smoothed);
+    a.prominence    = a.prominence.max(b.prominence);
+    a.area_raw     += b.area_raw;
+    if a.mobility.is_none() { a.mobility = b.mobility; }
+}
+
+
+
+#[pyfunction]
+#[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
+pub fn stitch_im_peaks_batched_streaming(
+    py: Python<'_>,
+    batched: Vec<Vec<Vec<Py<PyImPeak1D>>>>, // windows × rows × peaks
+    min_overlap_frames: usize,
+    max_scan_delta: usize,
+    jaccard_min: f32,
+    max_mz_row_delta: usize,
+    allow_cross_groups: bool,
+) -> PyResult<Vec<Py<PyImPeak1D>>> {
+    let params = StitchParams {
+        min_overlap_frames,
+        max_scan_delta: max_scan_delta.max(1),
+        jaccard_min,
+        max_mz_row_delta,
+        allow_cross_groups,
+    };
+
+    // Active accumulators keyed by (wg, mz_row, scan_bin)
+    let mut active: FxHashMap<Key, ImPeak1D> = FxHashMap::default();
+    // Final output
+    let mut out: Vec<Py<PyImPeak1D>> = Vec::new();
+
+    // Process windows in given order (RT order); for each row, process its peaks
+    for win in batched.into_iter() {
+        for row in win.into_iter() {
+            // Small sort per row keeps merges stable and cheap
+            let mut row_rs: Vec<ImPeak1D> = row
+                .into_iter()
+                .map(|p| p.borrow(py).inner.clone())
+                .collect();
+            row_rs.sort_unstable_by(|a,b| a.scan.cmp(&b.scan).then(a.rt_bounds.0.cmp(&b.rt_bounds.0)));
+
+            for p in row_rs.into_iter() {
+                let scan_bin = p.scan / params.max_scan_delta;
+                let key = Key { wg: p.window_group, mz_row: p.mz_row, scan_bin };
+
+                if let Some(cur) = active.get_mut(&key) {
+                    if compatible_fast(cur, &p, &params) {
+                        merge_into(cur, &p);
+                        continue;
+                    }
+                    // If the new peak starts clearly after the current can no longer overlap,
+                    // flush and replace. This keeps only one accumulator per key.
+                    if p.rt_bounds.0 > cur.rt_bounds.1 + params.min_overlap_frames {
+                        let flushed = active.remove(&key).unwrap();
+                        out.push(Py::new(py, PyImPeak1D { inner: flushed })?);
+                        active.insert(key, p);
+                    } else {
+                        // Overlapping-but-incompatible; finalize current and start a new run.
+                        let flushed = active.remove(&key).unwrap();
+                        out.push(Py::new(py, PyImPeak1D { inner: flushed })?);
+                        active.insert(key, p);
+                    }
+                } else {
+                    active.insert(key, p);
+                }
+            }
+        }
+
+        // Optional window-boundary compaction:
+        // If you have window RT bounds, you can flush accumulators whose rt_right
+        // is far behind to reduce the hashmap even further.
+        // (Left as a hook; needs passing per-window (rt_lo, rt_hi) if desired.)
+    }
+
+    // Flush remaining accumulators
+    for (_, v) in active.into_iter() {
+        out.push(Py::new(py, PyImPeak1D { inner: v })?);
+    }
+    Ok(out)
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -1019,5 +1156,6 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMzScanPlanGroup>()?;
     m.add_class::<PyMzScanWindowGrid>()?;
     m.add_class::<PyImPeak1D>()?;
+    m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_streaming, m)?)?;
     Ok(())
 }
