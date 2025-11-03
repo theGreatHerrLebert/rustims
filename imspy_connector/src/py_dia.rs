@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
@@ -9,9 +10,121 @@ use rustc_hash::FxHashMap;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D};
-use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian};
+use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, MobilityFn, trapezoid_area_fractional, quad_subsample, find_im_peaks_row};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+
+
+/// IM 1D peak picker without ImRowContext.
+/// You provide the few metadata fields directly.
+fn find_im_peaks_row_nocontext(
+    y_smoothed: &[f32],
+    y_raw: &[f32],
+    mz_row: usize,
+    mz_center: f32,
+    mz_bounds: (f32, f32),
+    rt_bounds: (usize, usize),
+    frame_id_bounds: (u32, u32),
+    window_group: Option<u32>,
+    mobility_of: MobilityFn,
+    min_prom: f32,
+    min_distance_scans: usize,
+    min_width_scans: usize,
+) -> Vec<ImPeak1D> {
+    let n = y_smoothed.len();
+    if n < 3 { return Vec::new(); }
+
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom { return Vec::new(); }
+
+    // strict local maxima
+    let mut cands = Vec::new();
+    for i in 1..n-1 {
+        let yi = y_smoothed[i];
+        if yi > y_smoothed[i-1] && yi >= y_smoothed[i+1] { cands.push(i); }
+    }
+
+    let mut peaks: Vec<ImPeak1D> = Vec::new();
+    for &i in &cands {
+        let apex = y_smoothed[i];
+
+        // prominence baseline
+        let mut l = i; let mut left_min = apex;
+        while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
+        let mut r = i; let mut right_min = apex;
+        while r + 1 < n { r += 1; right_min = right_min.min(y_smoothed[r]); if y_smoothed[r] > apex { break; } }
+
+        let baseline = left_min.max(right_min);
+        let prom = apex - baseline;
+        if prom < min_prom { continue; }
+
+        // half-prom crossings (fractional)
+        let half = baseline + 0.5 * prom;
+
+        // left crossing
+        let mut wl = i;
+        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
+        let left_x = if wl < i && wl + 1 < n {
+            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl + 1];
+            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wl as f32 };
+
+        // right crossing
+        let mut wr = i;
+        while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
+        let right_x = if wr > i && wr < n {
+            let y0 = y_smoothed[wr - 1]; let y1 = y_smoothed[wr];
+            (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wr as f32 };
+
+        let width = (right_x - left_x).max(0.0);
+        let width_scans = width.round() as usize;
+        if width_scans < min_width_scans { continue; }
+
+        // sub-scan apex offset
+        let sub = if i > 0 && i + 1 < n {
+            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
+        } else { 0.0 };
+
+        // NMS by min_distance_scans
+        if let Some(last) = peaks.last() {
+            if i.abs_diff(last.scan) < min_distance_scans {
+                if apex <= last.apex_smoothed { continue; }
+                peaks.pop();
+            }
+        }
+
+        // area on raw between fractional bounds
+        let left_idx  = left_x.floor().clamp(0.0, (n-1) as f32) as usize;
+        let right_idx = right_x.ceil().clamp(0.0, (n-1) as f32) as usize;
+        let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n-1) as f32));
+
+        let mobility = mobility_of.map(|f| f(i));
+
+        peaks.push(ImPeak1D{
+            mz_row,
+            mz_center,
+            mz_bounds,
+            rt_bounds,
+            frame_id_bounds,
+            window_group,
+
+            scan: i,
+            mobility,
+            apex_smoothed: apex,
+            apex_raw: y_raw[i],
+            prominence: prom,
+            left: left_idx,
+            right: right_idx,
+            left_x,
+            right_x,
+            width_scans,
+            area_raw: area,
+            subscan: sub,
+        });
+    }
+    peaks
+}
 
 #[pyclass]
 pub struct PyImPeak1D { pub inner: ImPeak1D }
@@ -123,31 +236,12 @@ impl PyMzScanWindowGrid {
         min_width_scans: usize,
         use_mobility: bool,
     ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
-        use rustdf::cluster::utility::{find_im_peaks_row, ImRowContext, MobilityFn};
-
         let rows = self.inner.rows;
         let cols = self.inner.cols;
 
-        let mob_fn: MobilityFn = if use_mobility {
-            // TODO: plug your real scan->1/K0 converter
-            Some(|scan| scan as f32)
-        } else {
-            None
-        };
+        let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
 
-        // Build per-row contexts from the window metadata once.
-        let ctx_template = ImRowContext {
-            mz_row: 0, // will overwrite per row
-            mz_center: 0.0, // dummy
-            mz_bounds: (0.0, 0.0),                     // dummy
-            rt_bounds: self.inner.rt_range_frames,         // <- window’s frame-index range
-            frame_id_bounds: self.inner.frame_id_bounds,   // <- actual frame IDs
-            window_group: self.inner.window_group,         // <- DIA group if any
-        };
-
-        // For each m/z row, gather the scan profile and run the row picker with context.
         let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|r| {
-            // Gather this row across scans (column-major)
             let mut y_s = Vec::with_capacity(cols);
             let mut y_r = Vec::with_capacity(cols);
             for s in 0..cols {
@@ -160,11 +254,15 @@ impl PyMzScanWindowGrid {
                 y_r.push(val_r);
             }
 
-            let mut ctx = ctx_template;
-            ctx.mz_row = r;
-
-            find_im_peaks_row(
-                &y_s, &y_r, &ctx, mob_fn,
+            find_im_peaks_row_nocontext(
+                &y_s, &y_r,
+                r,                      // mz_row
+                0.0,
+                (0.0, 0.0),        // mz_center, mz_bounds (TODO: fill when scale is threaded)
+                self.inner.rt_range_frames,
+                self.inner.frame_id_bounds,
+                self.inner.window_group,
+                mob_fn,
                 min_prom, min_distance_scans, min_width_scans
             )
         }).collect();
@@ -179,7 +277,7 @@ pub struct PyMzScanPlanGroup {
     window_group: u32,
 
     // planned axes + schedule
-    scale: MzScale,
+    scale: Arc<MzScale>,
     frame_ids_sorted: Vec<u32>,
     frame_times: Vec<f32>,
     windows_idx: Vec<(usize, usize)>,
@@ -299,7 +397,7 @@ impl PyMzScanPlanGroup {
         Ok(Self {
             ds,
             window_group,
-            scale,
+            scale: Arc::new(scale),
             frame_ids_sorted,
             frame_times,
             windows_idx,
@@ -501,10 +599,11 @@ impl PyMzScanPlanGroup {
         );
 
         Ok(MzScanWindowGrid {
+            scale: self.scale.clone(),
             rt_range_frames: (lo, hi),
             rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
-            frame_id_bounds,                           // NEW
-            window_group: Some(self.window_group),     // NEW
+            frame_id_bounds,
+            window_group: Some(self.window_group),
             scans: (0..cols).collect(),
             data,
             rows,
@@ -519,7 +618,7 @@ pub struct PyMzScanPlan {
     ds: Py<PyAny>,                 // keeps dataset alive; downcast when needed
 
     // planned axes + schedule
-    scale: MzScale,
+    scale: Arc<MzScale>,
     frame_ids_sorted: Vec<u32>,
     frame_times: Vec<f32>,
     windows_idx: Vec<(usize, usize)>,
@@ -621,7 +720,7 @@ impl PyMzScanPlan {
 
         Ok(Self {
             ds,                      // now safe to move
-            scale,
+            scale: Arc::new(scale),
             frame_ids_sorted,
             frame_times,
             windows_idx,
@@ -806,7 +905,6 @@ impl PyMzScanPlan {
         let rows = self.rows;
         let cols = self.global_num_scans;
         let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
-
         // Views for this window; borrow the dataset only around get_slice
         let views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
             (lo..=hi).map(|k| views[k].clone()).collect()
@@ -858,6 +956,7 @@ impl PyMzScanPlan {
         );
 
         Ok(MzScanWindowGrid {
+            scale: self.scale.clone(),
             rt_range_frames: (lo, hi),
             rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
             frame_id_bounds,           // NEW
@@ -968,25 +1067,11 @@ fn pick_im_peaks_rows_from_grid(
     min_width_scans: usize,
     use_mobility: bool,
 ) -> Vec<Vec<ImPeak1D>> {
-    use rustdf::cluster::utility::{find_im_peaks_row, ImRowContext, MobilityFn};
+    use rustdf::cluster::utility::{MobilityFn};
 
     let rows = grid.rows;
     let cols = grid.cols;
-
-    let mob_fn: MobilityFn = if use_mobility {
-        Some(|scan| scan as f32)
-    } else {
-        None
-    };
-
-    let ctx_template = ImRowContext {
-        mz_row: 0,
-        mz_center: 0.0,
-        mz_bounds: (0.0, 0.0),
-        rt_bounds: grid.rt_range_frames,
-        frame_id_bounds: grid.frame_id_bounds,
-        window_group: grid.window_group,
-    };
+    let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
 
     (0..rows).map(|r| {
         // gather row across scans (column-major)
@@ -995,18 +1080,21 @@ fn pick_im_peaks_rows_from_grid(
         for s in 0..cols {
             let val_s = grid.data[s * rows + r];
             y_s.push(val_s);
-            let val_r = grid.data_raw
-                .as_ref()
-                .map(|dr| dr[s * rows + r])
-                .unwrap_or(val_s);
+            let val_r = grid.data_raw.as_ref().map(|dr| dr[s * rows + r]).unwrap_or(val_s);
             y_r.push(val_r);
         }
 
-        let mut ctx = ctx_template;
-        ctx.mz_row = r;
+        let mz_center = grid.mz_center_for_row(r);
+        let mz_bounds = grid.mz_bounds_for_row(r);
 
         find_im_peaks_row(
-            &y_s, &y_r, &ctx, mob_fn,
+            &y_s, &y_r,
+            r,
+            mz_center, mz_bounds,
+            grid.rt_range_frames,
+            grid.frame_id_bounds,
+            grid.window_group,
+            mob_fn,
             min_prom, min_distance_scans, min_width_scans
         )
     }).collect()

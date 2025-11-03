@@ -1,6 +1,21 @@
+use std::sync::Arc;
 use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::MzScale;
+use crate::cluster::utility::{quad_subsample, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
+
+#[derive(Clone, Debug)]
+pub struct RtPeak1D {
+    pub rt_idx: usize,          // apex index in the RT vector
+    pub rt_sec: Option<f32>,    // apex time in seconds if rt_times provided
+    pub apex_smoothed: f32,
+    pub apex_raw: f32,
+    pub prominence: f32,
+    pub left_x: f32,            // fractional RT index at half-prom left crossing
+    pub right_x: f32,           // fractional RT index at half-prom right crossing
+    pub width_frames: usize,
+    pub area_raw: f32,
+    pub subframe: f32,          // quadratic sub-sample offset in [-0.5, 0.5]
+}
 
 #[derive(Clone, Debug)]
 pub struct ImPeak1D {
@@ -41,6 +56,19 @@ pub struct MzScanGrid {
     pub rows: usize,
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,
+    pub scale: MzScale,
+}
+
+impl MzScanGrid {
+    #[inline]
+    pub fn mz_center_for_row(&self, r: usize) -> f32 {
+        self.scale.center(r)
+    }
+    #[inline]
+    pub fn mz_bounds_for_row(&self, r: usize) -> (f32, f32) {
+        // safe: edges.len() == rows + 1
+        (self.scale.edges[r], self.scale.edges[r + 1])
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -49,11 +77,26 @@ pub struct MzScanWindowGrid {
     pub rt_range_sec:    (f32, f32),
     pub frame_id_bounds: (u32, u32),
     pub window_group:    Option<u32>,
+
+    pub scale: Arc<MzScale>,
+
     pub scans: Vec<usize>,
     pub data: Vec<f32>,
     pub rows: usize,
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,
+}
+
+impl MzScanWindowGrid {
+    #[inline]
+    pub fn mz_center_for_row(&self, r: usize) -> f32 {
+        self.scale.center(r)
+    }
+    #[inline]
+    pub fn mz_bounds_for_row(&self, r: usize) -> (f32, f32) {
+        // safe: edges.len() == rows + 1
+        (self.scale.edges[r], self.scale.edges[r + 1])
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -208,7 +251,6 @@ pub fn build_frame_bin_view(
     let mut offsets = Vec::with_capacity(unique_bins.len() + 1);
     offsets.push(0);
     for c in &counts { offsets.push(offsets.last().unwrap() + *c); }
-
     FrameBinView {
         _frame_id: fr.frame_id as u32,
         unique_bins,
@@ -216,4 +258,216 @@ pub fn build_frame_bin_view(
         scan_idx: scan_sorted,
         intensity: inten_sorted,
     }
+}
+
+#[inline]
+fn sum_frame_bins_scans(
+    fbv: &FrameBinView,
+    bin_lo: usize, bin_hi: usize,
+    scan_lo: usize, scan_hi: usize,
+) -> f32 {
+    // Locate contiguous block of unique_bins in [bin_lo..bin_hi]
+    // Since unique_bins is sorted, two binary searches:
+    let ub = &fbv.unique_bins;
+    if ub.is_empty() || bin_lo > bin_hi { return 0.0; }
+
+    let start = match ub.binary_search(&bin_lo) {
+        Ok(i) => i,
+        Err(i) => i.min(ub.len()),
+    };
+    let mut acc = 0.0f32;
+
+    let end_bin = bin_hi;
+    let mut i = start;
+    while i < ub.len() {
+        let b = ub[i];
+        if b > end_bin { break; }
+        // entries for this bin: offsets[i]..offsets[i+1]
+        let lo = fbv.offsets[i];
+        let hi = fbv.offsets[i + 1];
+        // scan filter
+        let scans = &fbv.scan_idx[lo..hi];
+        let ints  = &fbv.intensity[lo..hi];
+        // linear scan; if this becomes hot, keep scans sorted and do two lower_bounds
+        for (s, val) in scans.iter().zip(ints.iter()) {
+            let s = *s as usize;
+            if s >= scan_lo && s <= scan_hi { acc += *val; }
+        }
+        i += 1;
+    }
+    acc
+}
+
+/// Returns (rt_times_sec, rt_trace_intensity)
+pub fn rt_trace_for_im_peak(
+    frames: &[FrameBinView],        // RT-sorted, same group
+    mz_row: usize,
+    bin_pad: usize,                 // e.g., 0 or 1
+    scan_lo: usize,
+    scan_hi: usize,
+) -> Vec<f32> {
+    let bin_lo = mz_row.saturating_sub(bin_pad);
+    let bin_hi = mz_row.saturating_add(bin_pad);
+    let mut v = Vec::with_capacity(frames.len());
+    for fbv in frames {
+        v.push(sum_frame_bins_scans(fbv, bin_lo, bin_hi, scan_lo, scan_hi));
+    }
+    v
+}
+
+pub fn find_rt_peaks(
+    y_smoothed: &[f32],
+    y_raw: &[f32],
+    rt_times: Option<&[f32]>,  // same length as y_*
+    min_prom: f32,             // absolute units
+    min_sep_frames: usize,
+    min_width_frames: usize,
+) -> Vec<RtPeak1D> {
+    let n = y_smoothed.len();
+    if n < 3 || y_raw.len() != n { return Vec::new(); }
+
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom { return Vec::new(); }
+
+    // 1) strict local maxima on smoothed
+    let mut cands = Vec::new();
+    for i in 1..n - 1 {
+        let yi = y_smoothed[i];
+        if yi > y_smoothed[i - 1] && yi >= y_smoothed[i + 1] {
+            cands.push(i);
+        }
+    }
+
+    let mut peaks: Vec<RtPeak1D> = Vec::new();
+    for &i in &cands {
+        let apex = y_smoothed[i];
+
+        // 2) prominence baseline (bounded by taller peaks)
+        let mut l = i; let mut left_min = apex;
+        while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
+        let mut r = i; let mut right_min = apex;
+        while r + 1 < n { r += 1; right_min = right_min.min(y_smoothed[r]); if y_smoothed[r] > apex { break; } }
+
+        let baseline = left_min.max(right_min);
+        let prom = apex - baseline;
+        if prom < min_prom { continue; }
+
+        // 3) half-prom crossings (fractional)
+        let half = baseline + 0.5 * prom;
+
+        // left crossing
+        let mut wl = i;
+        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
+        let left_x = if wl < i && wl + 1 < n {
+            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl + 1];
+            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wl as f32 };
+
+        // right crossing
+        let mut wr = i;
+        while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
+        let right_x = if wr > i && wr < n {
+            let y0 = y_smoothed[wr - 1]; let y1 = y_smoothed[wr];
+            (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wr as f32 };
+
+        let width = (right_x - left_x).max(0.0);
+        let width_frames = width.round() as usize;
+        if width_frames < min_width_frames { continue; }
+
+        // 4) sub-frame apex offset (quadratic interpolation)
+        let sub = if i > 0 && i + 1 < n {
+            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
+        } else { 0.0 };
+
+        // 5) NMS by minimum separation in frames (keep taller on smoothed)
+        if let Some(last) = peaks.last() {
+            if i.abs_diff(last.rt_idx) < min_sep_frames {
+                if apex <= last.apex_smoothed { continue; }
+                // replace last if current is taller
+                // (safe clone: struct is small)
+                // We cannot mutate-in-place easily because we need new area/width.
+                // Just pop; we’ll push a new one below.
+                let _ = peaks.pop();
+            }
+        }
+
+        // 6) area on raw between fractional bounds
+        let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n - 1) as f32));
+
+        // rt_sec if provided
+        let rt_sec = rt_times.map(|t| {
+            // sub-sample apex time (optional): i as base + sub offset interpolated
+            if i + 1 < t.len() && i > 0 {
+                // linear between frame i and i+1 using sub in [-0.5,0.5]
+                let base = i as f32 + sub;
+                let j0 = base.floor().clamp(0.0, (t.len() - 1) as f32) as usize;
+                let j1 = (j0 + 1).min(t.len() - 1);
+                let frac = base - j0 as f32;
+                (1.0 - frac) * t[j0] + frac * t[j1]
+            } else {
+                t[i]
+            }
+        });
+
+        peaks.push(RtPeak1D {
+            rt_idx: i,
+            rt_sec,
+            apex_smoothed: apex,
+            apex_raw: y_raw[i],
+            prominence: prom,
+            left_x,
+            right_x,
+            width_frames,
+            area_raw: area,
+            subframe: sub,
+        });
+    }
+    peaks
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RtExpandParams {
+    pub bin_pad: usize,          // include neighboring m/z bins around peak.mz_row (0–2)
+    pub smooth_sigma: f32,       // in frames, e.g. 1.0–1.5
+    pub smooth_trunc: f32,       // e.g. 3.0
+    pub min_prom: f32,           // absolute units after smoothing
+    pub min_sep_frames: usize,   // 2–4
+    pub min_width_frames: usize, // 2–3
+}
+
+/// Expand a single IM peak along RT and return RT peaks (no stitching).
+pub fn expand_im_peak_along_rt(
+    im_peak: &ImPeak1D,
+    frames_sorted: &[FrameBinView], // RT-ordered frames of the same DIA group / slice
+    rt_times: Option<&[f32]>,       // optional times aligned to frames_sorted
+    p: RtExpandParams,
+) -> Vec<RtPeak1D> {
+    // 1) build conditioned RT trace
+    let trace_raw = rt_trace_for_im_peak(
+        frames_sorted,
+        im_peak.mz_row,
+        p.bin_pad,
+        im_peak.left,
+        im_peak.right,
+    );
+
+    // Early out if empty or all-zero
+    if trace_raw.is_empty() || !trace_raw.iter().any(|&x| x.is_finite() && x > 0.0) {
+        return Vec::new();
+    }
+
+    // 2) smooth
+    let mut trace_smooth = trace_raw.clone();
+    smooth_vector_gaussian(&mut trace_smooth[..], p.smooth_sigma, p.smooth_trunc);
+
+    // 3) pick RT peaks
+    find_rt_peaks(
+        &trace_smooth,
+        &trace_raw,
+        rt_times,
+        p.min_prom,
+        p.min_sep_frames,
+        p.min_width_frames,
+    )
 }

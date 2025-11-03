@@ -4,16 +4,6 @@ use crate::cluster::peak::ImPeak1D;
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
 
-#[derive(Clone, Copy, Debug)]
-pub struct ImRowContext {
-    pub mz_row: usize,
-    pub mz_center: f32,
-    pub mz_bounds: (f32, f32),
-    pub rt_bounds: (usize, usize),
-    pub frame_id_bounds: (u32, u32),
-    pub window_group: Option<u32>,
-}
-
 #[derive(Clone, Debug)]
 pub struct MzScale {
     pub mz_min: f32,
@@ -135,11 +125,16 @@ pub fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
 pub fn find_im_peaks_row(
     y_smoothed: &[f32],
     y_raw: &[f32],
-    ctx: &ImRowContext,
-    mobility_of: MobilityFn,   // pass Some(f) if you want mobility values, else None
-    min_prom: f32,             // absolute prom threshold in intensity units
-    min_distance_scans: usize, // min separation in scans
-    min_width_scans: usize,    // min width at half-prom
+    mz_row: usize,
+    mz_center: f32,
+    mz_bounds: (f32, f32),
+    rt_bounds: (usize, usize),
+    frame_id_bounds: (u32, u32),
+    window_group: Option<u32>,
+    mobility_of: MobilityFn,
+    min_prom: f32,
+    min_distance_scans: usize,
+    min_width_scans: usize,
 ) -> Vec<ImPeak1D> {
     let n = y_smoothed.len();
     if n < 3 { return Vec::new(); }
@@ -215,13 +210,12 @@ pub fn find_im_peaks_row(
         let mobility = mobility_of.map(|f| f(i));
 
         peaks.push(ImPeak1D{
-            mz_row: ctx.mz_row,
-            mz_center: ctx.mz_center,
-            mz_bounds: ctx.mz_bounds,
-            rt_bounds: ctx.rt_bounds,
-            frame_id_bounds: ctx.frame_id_bounds,
-            window_group: ctx.window_group,
-
+            mz_row,
+            mz_center,
+            mz_bounds,
+            rt_bounds,
+            frame_id_bounds,
+            window_group,
             scan: i,
             mobility,
             apex_smoothed: apex,
@@ -240,12 +234,12 @@ pub fn find_im_peaks_row(
 }
 
 #[inline(always)]
-fn lerp(a: f32, b: f32, t: f32) -> f32 { a + t * (b - a) }
+pub fn lerp(a: f32, b: f32, t: f32) -> f32 { a + t * (b - a) }
 
 /// Safe integration of a piecewise-linear signal y over [x0, x1].
 /// x is in sample-index units, segments are [s, s+1] for s=0..n-2.
 /// Handles boundaries: no y[n] access, supports n==0/1.
-fn trapezoid_area_fractional(y: &[f32], mut x0: f32, mut x1: f32) -> f32 {
+pub fn trapezoid_area_fractional(y: &[f32], mut x0: f32, mut x1: f32) -> f32 {
     let n = y.len();
     if n < 2 {
         // With <2 samples, treat area as 0
@@ -305,7 +299,7 @@ fn trapezoid_area_fractional(y: &[f32], mut x0: f32, mut x1: f32) -> f32 {
 }
 
 #[inline(always)]
-fn quad_subsample(y0: f32, y1: f32, y2: f32) -> f32 {
+pub fn quad_subsample(y0: f32, y1: f32, y2: f32) -> f32 {
     let denom = y0 - 2.0*y1 + y2;
     if denom.abs() < 1e-12 { 0.0 } else { 0.5 * (y0 - y2) / denom }
 }
