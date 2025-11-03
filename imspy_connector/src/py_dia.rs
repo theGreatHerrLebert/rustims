@@ -1017,7 +1017,9 @@ impl PyTimsDatasetDIA {
 
     /// Expand a batch of IM peaks along RT **within one DIA window_group**.
     /// Returns List[List[PyRtPeak1D]] aligned to the input order of IM peaks.
-    #[pyo3(signature = (window_group, im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=5.0, fallback_if_frames_lt=5, fallback_frac_width=0.5))]
+    #[pyo3(signature = (window_group, im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0,
+    min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=5.0,
+    fallback_if_frames_lt=5, fallback_frac_width=0.5))]
     pub fn expand_rt_for_im_peaks_in_group(
         &self,
         py: Python<'_>,
@@ -1065,12 +1067,12 @@ impl PyTimsDatasetDIA {
         };
         let ctx = rt_frames.ctx();
 
-        // Expand without the GIL
         let nested: Vec<Vec<RtPeak1D>> = py.allow_threads(|| {
             expand_many_im_peaks_along_rt(
                 &im_rs,
                 &rt_frames.frames,
                 ctx,
+                rt_frames.scale.as_ref(),
                 p,
             )
         });
@@ -1079,7 +1081,9 @@ impl PyTimsDatasetDIA {
     }
 
     /// Expand IM peaks along RT in **precursor space (MS1)**.
-    #[pyo3(signature = (im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=10.0, fallback_if_frames_lt=5, fallback_frac_width=0.5))]
+    #[pyo3(signature = (im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0,
+    min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=10.0,
+    fallback_if_frames_lt=5, fallback_frac_width=0.5))]
     pub fn expand_rt_for_im_peaks_in_precursor(
         &self,
         py: Python<'_>,
@@ -1129,6 +1133,7 @@ impl PyTimsDatasetDIA {
                 &im_rs,
                 &rt_frames.frames,
                 ctx,
+                rt_frames.scale.as_ref(),
                 p,
             )
         });

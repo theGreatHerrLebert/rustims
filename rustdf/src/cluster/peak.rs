@@ -5,11 +5,11 @@ use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_pe
 
 #[derive(Clone, Debug)]
 pub struct RtFrames {
-    pub frames: Vec<FrameBinView>, // RT-sorted CSR rows for this provenance
-    pub frame_ids: Vec<u32>,       // same order as frames
-    pub rt_times: Vec<f32>,        // same order as frames
+    pub frames: Vec<FrameBinView>,
+    pub frame_ids: Vec<u32>,
+    pub rt_times: Vec<f32>,
+    pub scale: Arc<MzScale>,       // NEW: the CSR scale used for these frames
 }
-
 impl RtFrames {
     #[inline]
     pub fn ctx(&self) -> RtTraceCtx<'_> {
@@ -377,6 +377,27 @@ pub fn rt_trace_for_im_peak(
     v
 }
 
+#[inline]
+pub fn rt_trace_for_im_peak_by_bounds(
+    frames: &[FrameBinView],
+    rt_scale: &MzScale,            // RtFrames.scale
+    mz_bounds: (f32, f32),         // im_peak.mz_bounds
+    extra_bins_pad: usize,         // 0–2
+    scan_lo: usize,
+    scan_hi: usize,
+) -> Vec<f32> {
+    // Map physical m/z bounds into the RT CSR scale, then pad by bins.
+    let (mut bin_l, mut bin_r) = rt_scale.index_range_for_mz_window(mz_bounds.0, mz_bounds.1);
+    bin_l = bin_l.saturating_sub(extra_bins_pad);
+    bin_r = bin_r.saturating_add(extra_bins_pad);
+
+    let mut v = Vec::with_capacity(frames.len());
+    for fbv in frames {
+        v.push(sum_frame_bins_scans(fbv, bin_l, bin_r, scan_lo, scan_hi));
+    }
+    v
+}
+
 pub fn find_rt_peaks(
     y_smoothed: &[f32],
     y_raw: &[f32],
@@ -496,57 +517,65 @@ pub struct RtExpandParams {
 
 pub fn expand_im_peak_along_rt(
     im_peak: &ImPeak1D,
-    frames_sorted: &[FrameBinView], // RT-ordered frames for this DIA group
-    ctx: RtTraceCtx<'_>,
+    frames_sorted: &[FrameBinView],
+    rt_ctx: RtTraceCtx<'_>,
+    rt_scale: &MzScale,          // NEW: pass RtFrames.scale
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
-
-    let trace_raw = rt_trace_for_im_peak(
-        frames_sorted, im_peak.mz_row, p.bin_pad, im_peak.left, im_peak.right,
+    // Build RT trace by physical mz bounds mapped to this RT scale
+    let trace_raw = rt_trace_for_im_peak_by_bounds(
+        frames_sorted, rt_scale, im_peak.mz_bounds, p.bin_pad, im_peak.left, im_peak.right,
     );
-    if trace_raw.is_empty() || !trace_raw.iter().any(|&x| x.is_finite() && x > 0.0) {
+    let has_signal = trace_raw.iter().any(|&x| x.is_finite() && x > 0.0);
+    if trace_raw.is_empty() || !has_signal {
         return Vec::new();
     }
 
-    // --- NEW: if the parent IM peak’s RT support is too short, skip fitting
+    // Early fallback for very short IM-RT support
     let im_rt_span = im_peak.rt_bounds.1.saturating_sub(im_peak.rt_bounds.0) + 1;
     if im_rt_span < p.fallback_if_frames_lt {
-        if let Some(pk) = fallback_rt_peak_from_trace(&trace_raw, ctx, im_peak, p.fallback_frac_width) {
+        if let Some(pk) = fallback_rt_peak_from_trace(&trace_raw, rt_ctx, im_peak, p.fallback_frac_width) {
             return vec![pk];
-        } else {
-            return Vec::new();
         }
+        // If centroid fallback still failed, bail.
+        return Vec::new();
     }
 
-    // normal path (smooth + half-prom)
+    // Normal path
     let mut trace_smooth = trace_raw.clone();
     smooth_vector_gaussian(&mut trace_smooth[..], p.smooth_sigma, p.smooth_trunc);
 
     let base = find_rt_peaks(
-        &trace_smooth, &trace_raw, ctx.rt_times_sec,
+        &trace_smooth, &trace_raw, rt_ctx.rt_times_sec,
         p.min_prom, p.min_sep_frames, p.min_width_frames,
     );
 
-    // map into enriched RtPeak1D
+    if base.is_empty() {
+        // NEW: “always-one” safety net if there is measurable RT signal.
+        if let Some(pk) = fallback_rt_peak_from_trace(&trace_raw, rt_ctx, im_peak, p.fallback_frac_width) {
+            return vec![pk];
+        }
+        // else: nothing sensible to emit
+        return Vec::new();
+    }
+
+    // map into enriched RtPeak1D (unchanged)
     let n_frames = frames_sorted.len();
     let (fid_lo, fid_hi) = im_peak.frame_id_bounds;
     base.into_iter().map(|r0| {
-        // compute integer bounds from fractional
-        let l = r0.left_x.floor().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
+        let l  = r0.left_x.floor().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
         let rr = r0.right_x.ceil().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
         let rt_bounds_frames = (l, rr);
 
-        // map to frame ids using ctx
-        let frame_id_bounds = if ctx.frame_ids_sorted.is_empty() {
-            (fid_lo, fid_hi) // fallback to IM parent
+        let frame_id_bounds = if rt_ctx.frame_ids_sorted.is_empty() {
+            (fid_lo, fid_hi)
         } else {
-            let lo = ctx.frame_ids_sorted[l.min(ctx.frame_ids_sorted.len()-1)];
-            let hi = ctx.frame_ids_sorted[rr.min(ctx.frame_ids_sorted.len()-1)];
+            let lo = rt_ctx.frame_ids_sorted[l.min(rt_ctx.frame_ids_sorted.len()-1)];
+            let hi = rt_ctx.frame_ids_sorted[rr.min(rt_ctx.frame_ids_sorted.len()-1)];
             (lo.min(hi), lo.max(hi))
         };
 
         let mut r = RtPeak1D {
-            // geometry carried over
             rt_idx: r0.rt_idx,
             rt_sec: r0.rt_sec,
             apex_smoothed: r0.apex_smoothed,
@@ -557,16 +586,12 @@ pub fn expand_im_peak_along_rt(
             width_frames: r0.width_frames,
             area_raw: r0.area_raw,
             subframe: r0.subframe,
-
-            // new metadata
             rt_bounds_frames,
             frame_id_bounds,
             window_group: im_peak.window_group,
-
             mz_row: im_peak.mz_row,
             mz_center: im_peak.mz_center,
             mz_bounds: im_peak.mz_bounds,
-
             parent_im_id: Some(im_peak.id),
             id: 0,
         };
@@ -575,18 +600,16 @@ pub fn expand_im_peak_along_rt(
     }).collect()
 }
 
-// 2) Parallel expansion: outputs Vec<Vec<RtPeak1D>> aligned to input order
+// add param
 pub fn expand_many_im_peaks_along_rt(
-    im_peaks: &[ImPeak1D],             // all from precursor space OR same window_group
-    frames_sorted: &[FrameBinView],    // RT-ordered frames for that provenance
+    im_peaks: &[ImPeak1D],
+    frames_sorted: &[FrameBinView],
     ctx: RtTraceCtx<'_>,
+    rt_scale: &MzScale,              // <-- NEW
     p: RtExpandParams,
 ) -> Vec<Vec<RtPeak1D>> {
-    if im_peaks.is_empty() {
-        return Vec::new();
-    }
+    if im_peaks.is_empty() { return Vec::new(); }
 
-    // Optional sanity: enforce single-group assumption (None == precursor space)
     #[cfg(debug_assertions)]
     {
         let first_g = im_peaks[0].window_group;
@@ -594,35 +617,33 @@ pub fn expand_many_im_peaks_along_rt(
         debug_assert!(same, "expand_many_im_peaks_along_rt: mixed window_group in batch");
     }
 
-    // Parallel map, preserving order
     im_peaks.par_iter()
-        .map(|im| expand_im_peak_along_rt(im, frames_sorted, ctx, p))
+        .map(|im| expand_im_peak_along_rt(im, frames_sorted, ctx, rt_scale, p))
         .collect()
 }
 
+// flat variant
+pub fn expand_many_im_peaks_along_rt_flat(
+    im_peaks: &[ImPeak1D],
+    frames_sorted: &[FrameBinView],
+    ctx: RtTraceCtx<'_>,
+    rt_scale: &MzScale,              // <-- NEW
+    p: RtExpandParams,
+) -> Vec<RtPeaksForIm> {
+    if im_peaks.is_empty() { return Vec::new(); }
+
+    (0..im_peaks.len()).into_par_iter()
+        .map(|i| {
+            let im = &im_peaks[i];
+            let peaks = expand_im_peak_along_rt(im, frames_sorted, ctx, rt_scale, p);
+            RtPeaksForIm { im_index: i, im_id: im.id, peaks }
+        })
+        .collect()
+}
 // 3) Variant that returns a flat stream with the input index for downstream use
 #[derive(Clone, Debug)]
 pub struct RtPeaksForIm {
     pub im_index: usize,       // index into the input im_peaks slice
     pub im_id: PeakId,         // parent id for convenience
     pub peaks: Vec<RtPeak1D>,
-}
-
-pub fn expand_many_im_peaks_along_rt_flat(
-    im_peaks: &[ImPeak1D],
-    frames_sorted: &[FrameBinView],
-    ctx: RtTraceCtx<'_>,
-    p: RtExpandParams,
-) -> Vec<RtPeaksForIm> {
-    if im_peaks.is_empty() {
-        return Vec::new();
-    }
-
-    (0..im_peaks.len()).into_par_iter()
-        .map(|i| {
-            let im = &im_peaks[i];
-            let peaks = expand_im_peak_along_rt(im, frames_sorted, ctx, p);
-            RtPeaksForIm { im_index: i, im_id: im.id, peaks }
-        })
-        .collect()
 }

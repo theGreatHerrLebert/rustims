@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use crate::data::acquisition::AcquisitionMode;
 use rustc_hash::FxHashMap;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
@@ -278,7 +279,7 @@ impl TimsDatasetDIA {
             .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
             .collect();
 
-        RtFrames { frames, frame_ids: ids, rt_times: times }
+        RtFrames { frames, frame_ids: ids, rt_times: times, scale: Arc::new(scale) }
     }
 
     /// RT-sorted PRECURSOR frames (ms_ms_type==0) into FrameBinView rows.
@@ -308,7 +309,7 @@ impl TimsDatasetDIA {
             .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
             .collect();
 
-        RtFrames { frames, frame_ids, rt_times }
+        RtFrames { frames, frame_ids, rt_times , scale: Arc::new(scale) }
     }
     /// Expand a batch of IM peaks along RT within a DIA `window_group`.
     /// Returns Vec<Vec<RtPeak1D>> aligned to `im_peaks` order.
@@ -327,11 +328,11 @@ impl TimsDatasetDIA {
 
         let rt = self.make_rt_frames_for_group(window_group, ppm_per_bin);
         debug_assert!(rt.is_consistent());
-
         expand_many_im_peaks_along_rt(
             im_peaks,
             &rt.frames,
             rt.ctx(),
+            rt.scale.as_ref(),              // <-- pass the CSR scale
             p,
         )
     }
@@ -351,11 +352,11 @@ impl TimsDatasetDIA {
 
         let rt = self.make_rt_frames_for_precursor(ppm_per_bin);
         debug_assert!(rt.is_consistent());
-
         expand_many_im_peaks_along_rt(
             im_peaks,
             &rt.frames,
             rt.ctx(),
+            rt.scale.as_ref(),             // <-- pass the CSR scale
             p,
         )
     }
