@@ -14,6 +14,144 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+class Fit1D:
+    """Light wrapper around ims.PyFit1D (read-only)."""
+    def __init__(self, py):
+        self._py = py
+
+    @property
+    def mu(self) -> float: return self._py.mu
+    @property
+    def sigma(self) -> float: return self._py.sigma
+    @property
+    def height(self) -> float: return self._py.height
+    @property
+    def baseline(self) -> float: return self._py.baseline
+    @property
+    def area(self) -> float: return self._py.area
+    @property
+    def r2(self) -> float: return self._py.r2
+    @property
+    def n(self) -> int: return self._py.n
+
+    def to_dict(self, prefix: str):
+        return {
+            f"{prefix}_mu": self.mu,
+            f"{prefix}_sigma": self.sigma,
+            f"{prefix}_height": self.height,
+            f"{prefix}_baseline": self.baseline,
+            f"{prefix}_area": self.area,
+            f"{prefix}_r2": self.r2,
+            f"{prefix}_n": self.n,
+        }
+
+    def __repr__(self):
+        return repr(self._py)
+
+
+class RawPoints:
+    """Wrapper around ims.PyRawPoints."""
+    def __init__(self, py):
+        self._py = py
+
+    @property
+    def n(self) -> int:
+        return self._py.len
+
+    def arrays(self):
+        """Return numpy arrays (mz, rt, im, scan, intensity, tof, frame)."""
+        return tuple(np.asarray(arr) for arr in self._py.to_arrays())
+
+    def to_dataframe(self) -> pd.DataFrame:
+        mz, rt, im, scan, inten, tof, frame = self.arrays()
+        return pd.DataFrame({
+            "mz": mz, "rt": rt, "im": im, "scan": scan,
+            "intensity": inten, "tof": tof, "frame": frame
+        })
+
+    def __repr__(self):
+        return f"RawPoints(n={self.n})"
+
+
+class ClusterResult1D:
+    """Ergonomic wrapper around ims.PyClusterResult1D."""
+    def __init__(self, py):
+        self._py = py
+
+    # windows
+    @property
+    def rt_window(self): return self._py.rt_window
+    @property
+    def im_window(self): return self._py.im_window
+    @property
+    def mz_window(self): return self._py.mz_window
+
+    # fits
+    @property
+    def rt_fit(self) -> Fit1D: return Fit1D(self._py.rt_fit)
+    @property
+    def im_fit(self) -> Fit1D: return Fit1D(self._py.im_fit)
+    @property
+    def mz_fit(self) -> Fit1D: return Fit1D(self._py.mz_fit)
+
+    # stats / provenance
+    @property
+    def raw_sum(self) -> float: return self._py.raw_sum
+    @property
+    def volume_proxy(self) -> float: return self._py.volume_proxy
+    @property
+    def ms_level(self) -> int: return self._py.ms_level
+    @property
+    def window_group(self): return self._py.window_group
+    @property
+    def parent_im_id(self): return self._py.parent_im_id
+    @property
+    def parent_rt_id(self): return self._py.parent_rt_id
+
+    # axes (may be None)
+    def frame_ids_used(self) -> np.ndarray:
+        return np.asarray(self._py.frame_ids_used())
+    def rt_axis_sec(self) -> np.ndarray | None:
+        arr = self._py.rt_axis_sec()
+        return None if arr is None else np.asarray(arr, dtype=np.float32)
+    def im_axis_scans(self) -> np.ndarray | None:
+        arr = self._py.im_axis_scans()
+        return None if arr is None else np.asarray(arr, dtype=np.int64)
+    def mz_axis_da(self) -> np.ndarray | None:
+        arr = self._py.mz_axis_da()
+        return None if arr is None else np.asarray(arr, dtype=np.float32)
+
+    # optional raw points
+    def raw_points(self) -> RawPoints | None:
+        rp = self._py.raw_points()
+        return None if rp is None else RawPoints(rp)
+
+    def to_dict(self) -> dict:
+        d = {
+            "ms_level": self.ms_level,
+            "window_group": self.window_group,
+            "parent_im_id": self.parent_im_id,
+            "parent_rt_id": self.parent_rt_id,
+            "rt_lo": self.rt_window[0],
+            "rt_hi": self.rt_window[1],
+            "im_lo": self.im_window[0],
+            "im_hi": self.im_window[1],
+            "mz_lo": self.mz_window[0],
+            "mz_hi": self.mz_window[1],
+            "raw_sum": self.raw_sum,
+            "volume_proxy": self.volume_proxy,
+        }
+        d.update(self.rt_fit.to_dict("rt"))
+        d.update(self.im_fit.to_dict("im"))
+        d.update(self.mz_fit.to_dict("mz"))
+        return d
+
+    def to_dataframe_row(self) -> pd.DataFrame:
+        return pd.DataFrame([self.to_dict()])
+
+    def __repr__(self):
+        return repr(self._py)
+
 def iter_window_batches(plan, batch_size: int):
     """Yield successive batches of window indices from the plan."""
     n = plan.num_windows
@@ -626,6 +764,110 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             float(fallback_frac_width)
         )
         return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
+
+    def clusters_for_group(
+            self,
+            window_group: int,
+            im_peaks: list["ImPeak1D"],
+            *,
+            ppm_per_bin: float = 5.0,
+            # RtExpandParams
+            bin_pad: int = 0,
+            smooth_sigma: float = 1.25,
+            smooth_trunc: float = 3.0,
+            min_prom: float = 50.0,
+            min_sep_frames: int = 2,
+            min_width_frames: int = 2,
+            fallback_if_frames_lt: int = 5,
+            fallback_frac_width: float = 0.5,
+            # BuildSpecOpts
+            extra_rt_pad: int = 0,
+            extra_im_pad: int = 0,
+            mz_ppm_pad: float = 5.0,
+            mz_hist_bins: int = 64,
+            # Eval1DOpts
+            refine_mz_once: bool = True,
+            refine_k_sigma: float = 3.0,
+            attach_axes: bool = True,
+            attach_points: bool = False,
+            attach_max_points: int | None = None,
+            # pairing + threads
+            require_rt_overlap: bool = True,
+            num_threads: int = 0,
+    ):
+        """Cluster in MS2 space for one DIA window group."""
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_results = self.__dataset.clusters_for_group(
+            int(window_group),
+            float(ppm_per_bin),
+            [p.get_py_ptr() for p in im_peaks],
+            int(bin_pad),
+            float(smooth_sigma), float(smooth_trunc),
+            float(min_prom), int(min_sep_frames), int(min_width_frames),
+            int(fallback_if_frames_lt), float(fallback_frac_width),
+            int(extra_rt_pad), int(extra_im_pad), float(mz_ppm_pad), int(mz_hist_bins),
+            bool(refine_mz_once), float(refine_k_sigma),
+            bool(attach_axes),
+            bool(attach_points), attach_max_points,
+            bool(require_rt_overlap), int(num_threads),
+        )
+        # If you’ve built a Python wrapper ClusterResult1D, wrap here:
+        # return [ClusterResult1D(r) for r in py_results]
+        return py_results
+
+    def clusters_for_precursor(
+            self,
+            im_peaks: list["ImPeak1D"],
+            *,
+            ppm_per_bin: float = 10.0,
+            # RtExpandParams
+            bin_pad: int = 0,
+            smooth_sigma: float = 1.25,
+            smooth_trunc: float = 3.0,
+            min_prom: float = 50.0,
+            min_sep_frames: int = 2,
+            min_width_frames: int = 2,
+            fallback_if_frames_lt: int = 5,
+            fallback_frac_width: float = 0.5,
+            # BuildSpecOpts
+            extra_rt_pad: int = 0,
+            extra_im_pad: int = 0,
+            mz_ppm_pad: float = 5.0,
+            mz_hist_bins: int = 64,
+            # Eval1DOpts
+            refine_mz_once: bool = True,
+            refine_k_sigma: float = 3.0,
+            attach_axes: bool = True,
+            attach_points: bool = False,
+            attach_max_points: int | None = None,
+            # pairing + threads
+            require_rt_overlap: bool = True,
+            num_threads: int = 0,
+    ):
+        """Cluster in MS1 precursor space."""
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_results = self.__dataset.clusters_for_precursor(
+            float(ppm_per_bin),
+            [p.get_py_ptr() for p in im_peaks],
+            int(bin_pad),
+            float(smooth_sigma), float(smooth_trunc),
+            float(min_prom), int(min_sep_frames), int(min_width_frames),
+            int(fallback_if_frames_lt), float(fallback_frac_width),
+            int(extra_rt_pad), int(extra_im_pad), float(mz_ppm_pad), int(mz_hist_bins),
+            bool(refine_mz_once), float(refine_k_sigma),
+            bool(attach_axes),
+            bool(attach_points), attach_max_points,
+            bool(require_rt_overlap), int(num_threads),
+        )
+        # If you’ve built a Python wrapper ClusterResult1D, wrap here:
+        # return [ClusterResult1D(r) for r in py_results]
+        return py_results
 
 from collections.abc import Iterable
 from typing import List, Sequence

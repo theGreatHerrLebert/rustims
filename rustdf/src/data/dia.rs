@@ -11,9 +11,11 @@ use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use rayon::iter::IntoParallelRefIterator;
 use crate::cluster::peak::{build_frame_bin_view, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames, RtPeak1D};
-use crate::cluster::utility::{scan_mz_range, MzScale};
+use crate::cluster::utility::{bin_range_for_win, scan_mz_range, MzScale};
 use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -359,6 +361,146 @@ impl TimsDatasetDIA {
             rt.scale.as_ref(),             // <-- pass the CSR scale
             p,
         )
+    }
+
+    /// Evaluate a batch of 1D cluster specs on the given RtFrames.
+    /// - Runs spec evaluation (marginals + moment fits) in parallel.
+    /// - Optionally attaches raw points using the finalized m/z window and the spec’s IM/RT windows.
+    /// - `num_threads == 0` => use rayon’s global pool.
+    pub fn evaluate_specs_1d_threads(
+        &self,
+        rt_frames: &RtFrames,
+        specs: &[ClusterSpec1D],
+        opts: &Eval1DOpts,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        if specs.is_empty() { return Vec::new(); }
+
+        let scale = &*rt_frames.scale;
+
+        let run = || {
+            specs.par_iter()
+                .map(|spec| {
+                    // 1) compute fits/marginals from CSR-binned `rt_frames`
+                    let mut res = evaluate_spec_1d(rt_frames, spec, opts);
+
+                    // 2) optional raw attachment (pull real frames only when requested)
+                    if opts.attach.attach_points
+                        && res.raw_sum > 0.0
+                        && res.mz_fit.area > 0.0
+                    {
+                        // Recreate the final bin bounds from the result’s m/z window
+                        // (evaluate_spec_1d may have refined μ±kσ already).
+                        let (bin_lo, bin_hi) = bin_range_for_win(scale, res.mz_window);
+
+                        // Use the spec’s IM and RT windows (evaluate_spec_1d currently does not refine IM)
+                        let (im_lo, im_hi) = (spec.im_lo, spec.im_hi);
+                        let (rt_lo, rt_hi) = res.rt_window;
+
+                        let raw = attach_raw_points_for_spec_1d_threads(
+                            self,
+                            rt_frames,
+                            bin_lo, bin_hi,
+                            im_lo, im_hi,
+                            rt_lo, rt_hi,
+                            opts.attach.max_points,
+                            num_threads.max(1),
+                        );
+                        res.raw_points = Some(raw);
+                    } else {
+                        res.raw_points = None;
+                    }
+
+                    res
+                })
+                .collect::<Vec<_>>()
+        };
+
+        if num_threads == 0 {
+            run()
+        } else {
+            ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap().install(run)
+        }
+    }
+
+    pub fn clusters_from_im_and_rt_groups(
+        &self,
+        rt_frames: &RtFrames,
+        im_peaks: &[ImPeak1D],
+        rt_groups: &[Vec<RtPeak1D>],
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        require_rt_overlap: bool,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        let specs = make_specs_from_im_and_rt_groups_threads(
+            im_peaks, rt_groups, rt_frames, build_opts, require_rt_overlap, num_threads
+        );
+        self.evaluate_specs_1d_threads(rt_frames, &specs, eval_opts, num_threads)
+    }
+
+    pub fn clusters_for_group(
+        &self,
+        window_group: u32,
+        ppm_per_bin: f32,
+        im_peaks: &[ImPeak1D],
+        rt_params: RtExpandParams,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        require_rt_overlap: bool,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        // Guard: all IM peaks must belong to this DIA group
+        debug_assert!(
+            im_peaks.iter().all(|p| p.window_group == Some(window_group)),
+            "clusters_for_group: some IM peaks have wrong or missing window_group"
+        );
+
+        let rt = self.make_rt_frames_for_group(window_group, ppm_per_bin);
+
+        let rt_groups = expand_many_im_peaks_along_rt(
+            im_peaks, &rt.frames, rt.ctx(), rt.scale.as_ref(), rt_params
+        );
+
+        // Force MS level 2 for DIA fragments
+        let build_opts_ms2 = build_opts.with_ms_level(2);
+
+        let specs = make_specs_from_im_and_rt_groups_threads(
+            im_peaks, &rt_groups, &rt, &build_opts_ms2, require_rt_overlap, num_threads
+        );
+
+        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
+    }
+    pub fn clusters_for_precursor(
+        &self,
+        ppm_per_bin: f32,
+        im_peaks: &[ImPeak1D],
+        rt_params: RtExpandParams,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        require_rt_overlap: bool,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        // Guard: all IM peaks must be MS1 (no window_group)
+        debug_assert!(
+            im_peaks.iter().all(|p| p.window_group.is_none()),
+            "clusters_for_precursor: IM peaks unexpectedly carry a window_group"
+        );
+
+        let rt = self.make_rt_frames_for_precursor(ppm_per_bin);
+
+        let rt_groups = expand_many_im_peaks_along_rt(
+            im_peaks, &rt.frames, rt.ctx(), rt.scale.as_ref(), rt_params
+        );
+
+        // Force MS level 1 for precursor
+        let build_opts_ms1 = build_opts.with_ms_level(1);
+
+        let specs = make_specs_from_im_and_rt_groups_threads(
+            im_peaks, &rt_groups, &rt, &build_opts_ms1, require_rt_overlap, num_threads
+        );
+
+        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
     }
 }
 

@@ -1,7 +1,8 @@
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::peak::{ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
+use crate::cluster::peak::{FrameBinView, ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
+use crate::cluster::cluster::Fit1D;
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
@@ -461,4 +462,217 @@ pub fn fallback_rt_peak_from_trace(
     };
     rp.id = rt_peak_id(&rp);
     Some(rp)
+}
+
+#[inline]
+pub fn bin_range_for_win(scale: &MzScale, mz_win:(f32,f32)) -> (usize, usize) {
+    let (a,b) = mz_win;
+    let (mut lo, mut hi) = scale.index_range_for_mz_window(a,b);
+    if lo > hi { std::mem::swap(&mut lo, &mut hi); }
+    (lo, hi)
+}
+
+/// Sum across a single frame in bin [bin_lo..bin_hi], scan [im_lo..im_hi]
+#[inline]
+fn sum_frame_block(fbv:&FrameBinView, bin_lo:usize, bin_hi:usize, im_lo:usize, im_hi:usize) -> f32 {
+    // identical approach as your sum_frame_bins_scans, but for a range
+    let ub = &fbv.unique_bins;
+    if ub.is_empty() || bin_lo > bin_hi { return 0.0; }
+    let start = match ub.binary_search(&bin_lo) { Ok(i)=>i, Err(i)=>i.min(ub.len()) };
+    let mut acc = 0.0f32;
+    let mut i = start;
+    while i < ub.len() {
+        let b = ub[i];
+        if b > bin_hi { break; }
+        let lo = fbv.offsets[i];
+        let hi = fbv.offsets[i+1];
+        let scans = &fbv.scan_idx[lo..hi];
+        let ints  = &fbv.intensity[lo..hi];
+        for (s, val) in scans.iter().zip(ints.iter()) {
+            let s = *s as usize;
+            if s >= im_lo && s <= im_hi { acc += *val; }
+        }
+        i += 1;
+    }
+    acc
+}
+
+/// Build RT marginal (len = frames in [rt_lo..rt_hi]), using (bin,scan) window
+pub fn build_rt_marginal(
+    frames: &[FrameBinView],
+    rt_lo: usize, rt_hi: usize,
+    bin_lo: usize, bin_hi: usize,
+    im_lo: usize, im_hi: usize,
+) -> Vec<f32> {
+    let mut out = vec![0.0f32; rt_hi + 1 - rt_lo];
+    for (k, fbv) in frames[rt_lo..=rt_hi].iter().enumerate() {
+        out[k] = sum_frame_block(fbv, bin_lo, bin_hi, im_lo, im_hi);
+    }
+    out
+}
+
+/// Build IM marginal (absolute scan axis). We have to touch selected entries:
+pub fn build_im_marginal(
+    frames: &[FrameBinView],
+    rt_lo: usize, rt_hi: usize,
+    bin_lo: usize, bin_hi: usize,
+    im_lo: usize, im_hi: usize,
+) -> Vec<f32> {
+    let len = im_hi + 1 - im_lo;
+    let mut out = vec![0.0f32; len];
+
+    for fbv in &frames[rt_lo..=rt_hi] {
+        let ub = &fbv.unique_bins;
+        if ub.is_empty() { continue; }
+        let start = match ub.binary_search(&bin_lo) { Ok(i)=>i, Err(i)=>i.min(ub.len()) };
+        let mut i = start;
+        while i < ub.len() {
+            let b = ub[i];
+            if b > bin_hi { break; }
+            let lo = fbv.offsets[i]; let hi = fbv.offsets[i+1];
+            let scans = &fbv.scan_idx[lo..hi];
+            let ints  = &fbv.intensity[lo..hi];
+            for (s, val) in scans.iter().zip(ints.iter()) {
+                let s_abs = *s as usize;
+                if s_abs >= im_lo && s_abs <= im_hi {
+                    out[s_abs - im_lo] += *val;
+                }
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Build m/z histogram (one bin per CSR bin in [bin_lo..bin_hi])
+pub fn build_mz_hist(
+    frames: &[FrameBinView],
+    rt_lo: usize, rt_hi: usize,
+    bin_lo: usize, bin_hi: usize,
+    im_lo: usize, im_hi: usize,
+    scale: &MzScale,
+) -> (Vec<f32>, Vec<f32>) {
+    let r = bin_hi + 1 - bin_lo;
+    let mut hist = vec![0.0f32; r];
+    for fbv in &frames[rt_lo..=rt_hi] {
+        let ub = &fbv.unique_bins;
+        if ub.is_empty() { continue; }
+        let start = match ub.binary_search(&bin_lo) { Ok(i)=>i, Err(i)=>i.min(ub.len()) };
+        let mut i = start;
+        while i < ub.len() {
+            let b = ub[i];
+            if b > bin_hi { break; }
+            let lo = fbv.offsets[i]; let hi = fbv.offsets[i+1];
+            let scans = &fbv.scan_idx[lo..hi];
+            let ints  = &fbv.intensity[lo..hi];
+            let mut sum = 0.0f32;
+            for (s, val) in scans.iter().zip(ints.iter()) {
+                let s_abs = *s as usize;
+                if s_abs >= im_lo && s_abs <= im_hi { sum += *val; }
+            }
+            hist[b - bin_lo] += sum;
+            i += 1;
+        }
+    }
+    let centers = (bin_lo..=bin_hi).map(|i| scale.center(i)).collect::<Vec<_>>();
+    (hist, centers)
+}
+
+#[inline]
+pub fn quantile(values: &[f32], q: f32) -> f32 {
+    // Drop non-finite values to avoid NaN poisoning the order
+    let mut v: Vec<f32> = values.iter().copied().filter(|x| x.is_finite()).collect();
+    if v.is_empty() { return 0.0; }
+
+    let n = v.len();
+    let q = q.clamp(0.0, 1.0);
+    let idx = (q * (n.saturating_sub(1) as f32)).round() as usize;
+
+    // For floats, use the comparator form + total ordering
+    let (_left, nth, _right) = v.select_nth_unstable_by(idx, |a, b| a.total_cmp(b));
+    *nth
+}
+
+#[inline]
+pub fn quantile_mut(v: &mut [f32], q: f32) -> f32 {
+    if v.is_empty() { return 0.0; }
+    // Replace NaNs with -inf so they sort to the front (or filter them beforehand)
+    for x in v.iter_mut() {
+        if !x.is_finite() { *x = f32::NEG_INFINITY; }
+    }
+    let idx = (q.clamp(0.0, 1.0) * (v.len().saturating_sub(1) as f32)).round() as usize;
+    let (_l, nth, _r) = v.select_nth_unstable_by(idx, |a, b| a.total_cmp(b));
+    *nth
+}
+
+pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
+    let n = y.len();
+    if n == 0 { return Fit1D::default(); }
+    let mut ys = y.to_vec();
+    let b0 = quantile_mut(&mut ys, 0.10);
+
+    let mut wsum=0.0f64; let mut xsum=0.0f64; let mut x2sum=0.0f64;
+    let mut y_max = f32::MIN;
+    let mut trap = 0.0f64;
+
+    for i in 0..n {
+        let xi = x.map(|xx| xx[i]).unwrap_or(i as f32) as f64;
+        let yi_pos = (y[i] - b0).max(0.0) as f64;
+        if yi_pos > 0.0 {
+            wsum += yi_pos;
+            xsum += yi_pos * xi;
+            x2sum += yi_pos * xi * xi;
+        }
+        y_max = y_max.max(y[i]);
+        if let Some(xx) = x {
+            if i>0 {
+                let dx = (xx[i]-xx[i-1]) as f64;
+                let y0 = (y[i-1]-b0).max(0.0) as f64;
+                trap += 0.5*(y0+yi_pos)*dx;
+            }
+        }
+    }
+    if wsum <= 0.0 {
+        return Fit1D { baseline:b0, area: trap as f32, n, ..Default::default() };
+    }
+    let mu = (xsum/wsum) as f32;
+    let var = (x2sum/wsum - (mu as f64)*(mu as f64)).max(0.0) as f32;
+    let sigma = var.sqrt();
+
+    // refine height/baseline by 2×2 LS (Gaussian @ mu, sigma)
+    let mut s_gg=0.0f64; let mut s_g1=0.0f64; let s_11=n as f64;
+    let mut s_yg=0.0f64; let mut s_y1=0.0f64;
+    if sigma.is_finite() && sigma>0.0 {
+        for i in 0..n {
+            let xi = x.map(|xx| xx[i]).unwrap_or(i as f32);
+            let z = (xi - mu) as f64 / (sigma as f64);
+            let g = (-0.5*z*z).exp();
+            let yi = y[i] as f64;
+            s_gg += g*g; s_g1 += g; s_yg += yi*g; s_y1 += yi;
+        }
+        let det = s_11*s_gg - s_g1*s_g1;
+        if det.abs() > 1e-12 {
+            let b = ( s_gg*s_y1 - s_g1*s_yg)/det;
+            let h = (-s_g1*s_y1 + s_11*s_yg)/det;
+            let area = (h as f32)*sigma*(std::f32::consts::TAU).sqrt();
+            // crude r^2
+            let mean = y.iter().sum::<f32>()/n as f32;
+            let mut ss_res=0.0f64; let mut ss_tot=0.0f64;
+            for i in 0..n {
+                let xi = x.map(|xx| xx[i]).unwrap_or(i as f32);
+                let z = (xi - mu)/sigma;
+                let yhat = (b as f32) + (h as f32)*(-0.5*z*z).exp();
+                let e = (y[i]-yhat) as f64;
+                ss_res += e*e; let d=(y[i]-mean) as f64; ss_tot += d*d;
+            }
+            let r2 = if ss_tot>0.0 { (1.0 - ss_res/ss_tot) as f32 } else { 0.0 };
+            return Fit1D { mu, sigma, height: h as f32, baseline: b as f32, area, r2, n };
+        }
+    }
+    // fallback: keep baseline b0, height from (max-b0)
+    let height = (y_max - b0).max(0.0);
+    let area = if sigma.is_finite() && sigma>0.0 {
+        height * sigma * (std::f32::consts::TAU).sqrt()
+    } else { trap as f32 };
+    Fit1D { mu, sigma: sigma.max(0.0), height, baseline: b0, area, r2: f32::NAN, n }
 }
