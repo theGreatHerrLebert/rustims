@@ -289,6 +289,8 @@ class ImPeak1D(RustWrapperObject):
     def __init__(self, *a, **k):
         raise RuntimeError("ImPeak1D is created in Rust; use ImPeak1D.from_py_ptr().")
 
+    @property
+    def id(self) -> int: return self.__py_ptr.id
     # --- New preferred / extra context fields ---
     @property
     def mz_row(self) -> int: return self.__py_ptr.mz_row

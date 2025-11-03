@@ -1,5 +1,7 @@
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::peak::ImPeak1D;
+use crate::cluster::peak::{ImPeak1D, PeakId, RtPeak1D};
+use std::hash::{Hash, Hasher};
+use rustc_hash::FxHasher;
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
@@ -209,7 +211,7 @@ pub fn find_im_peaks_row(
 
         let mobility = mobility_of.map(|f| f(i));
 
-        peaks.push(ImPeak1D{
+        let mut peak = ImPeak1D{
             mz_row,
             mz_center,
             mz_bounds,
@@ -228,7 +230,11 @@ pub fn find_im_peaks_row(
             width_scans,
             area_raw: area,
             subscan: sub,
-        });
+            id: 0, // to be filled later
+        };
+
+        peak.id = im_peak_id(&peak);
+        peaks.push(peak);
     }
     peaks
 }
@@ -332,4 +338,28 @@ pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
         out[i] = if norm > 0.0 { acc / norm } else { 0.0 };
     }
     v.copy_from_slice(&out);
+}
+
+#[inline]
+pub fn im_peak_id(p: &ImPeak1D) -> PeakId {
+    // deterministic over the fields that define identity
+    let mut h = FxHasher::default();
+    p.window_group.hash(&mut h);
+    p.mz_row.hash(&mut h);
+    p.scan.hash(&mut h);
+    p.left.hash(&mut h);
+    p.right.hash(&mut h);
+    p.frame_id_bounds.hash(&mut h);
+    h.finish()
+}
+
+#[inline]
+pub fn rt_peak_id(r: &RtPeak1D) -> PeakId {
+    let mut h = FxHasher::default();
+    r.parent_im_id.hash(&mut h);
+    r.mz_row.hash(&mut h);
+    r.rt_idx.hash(&mut h);
+    r.frame_id_bounds.hash(&mut h);
+    r.window_group.hash(&mut h);
+    h.finish()
 }

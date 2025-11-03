@@ -8,7 +8,11 @@ use crate::data::meta::{
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
+use rayon::iter::IntoParallelRefIterator;
+use crate::cluster::peak::{build_frame_bin_view, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames, RtPeak1D};
+use crate::cluster::utility::{scan_mz_range, MzScale};
 use crate::data::utility::merge_ranges;
+use rayon::prelude::*;
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -230,6 +234,130 @@ impl TimsDatasetDIA {
         } else {
             None
         }
+    }
+    /// Suggest an MzScale for a DIA group. Prefer table bounds; fallback to global acquisition range.
+    pub fn mzscale_for_group(&self, window_group: u32, ppm_per_bin: f32) -> MzScale {
+        let (lo, hi) = self
+            .mz_bounds_for_window_group_core(window_group)
+            .unwrap_or((
+                self.global_meta_data.mz_acquisition_range_lower as f32,
+                self.global_meta_data.mz_acquisition_range_upper as f32,
+            ));
+        MzScale::build(lo.max(1.0), hi, ppm_per_bin)
+    }
+
+    /// Conservative: derive an MzScale by scanning actual frame data (rarely needed; slower).
+    pub fn mzscale_from_frames_scan(&self, frame_ids: &[u32], ppm_per_bin: f32) -> Option<MzScale> {
+        let frames: Vec<_> = frame_ids.iter().map(|&fid| self.get_frame(fid)).collect();
+        scan_mz_range(&frames).map(|(lo, hi)| MzScale::build(lo.max(1.0), hi, ppm_per_bin))
+    }
+
+    /// RT-sorted FRAGMENT frames + times for a DIA group, then converted into FrameBinView rows.
+    /// `ppm_per_bin` sets the m/z granularity of CSR binning.
+    pub fn make_rt_frames_for_group(
+        &self,
+        window_group: u32,
+        ppm_per_bin: f32,
+    ) -> RtFrames {
+        let (ids, times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
+        assert!(!ids.is_empty(), "No MS2 frames for window_group {}", window_group);
+
+        // global number of scans: max in this provenance
+        let global_num_scans = self.meta_data
+            .iter()
+            .filter(|m| ids.binary_search(&(m.id as u32)).is_ok())
+            .map(|m| m.num_scans as usize)
+            .max()
+            .unwrap_or(0);
+
+        // scale for this group
+        let scale = self.mzscale_for_group(window_group, ppm_per_bin);
+
+        // Build CSR rows (parallel)
+        let frames: Vec<FrameBinView> = ids.par_iter()
+            .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
+            .collect();
+
+        RtFrames { frames, frame_ids: ids, rt_times: times }
+    }
+
+    /// RT-sorted PRECURSOR frames (ms_ms_type==0) into FrameBinView rows.
+    pub fn make_rt_frames_for_precursor(
+        &self,
+        ppm_per_bin: f32,
+    ) -> RtFrames {
+        // Collect (frame_id, time) for precursor frames and sort by time
+        let mut rows: Vec<(u32, f32, usize)> = self.meta_data
+            .iter()
+            .filter(|m| m.ms_ms_type == 0)
+            .map(|m| (m.id as u32, m.time as f32, m.num_scans as usize))
+            .collect();
+        assert!(!rows.is_empty(), "No precursor (MS1) frames found");
+        rows.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap());
+
+        let frame_ids: Vec<u32> = rows.iter().map(|r| r.0).collect();
+        let rt_times:  Vec<f32> = rows.iter().map(|r| r.1).collect();
+        let global_num_scans = rows.iter().map(|r| r.2).max().unwrap_or(1);
+
+        // A broad scale for MS1 (use global acquisition range from metadata)
+        let lo = self.global_meta_data.mz_acquisition_range_lower as f32;
+        let hi = self.global_meta_data.mz_acquisition_range_upper as f32;
+        let scale = MzScale::build(lo.max(1.0), hi, ppm_per_bin);
+
+        let frames: Vec<FrameBinView> = frame_ids.par_iter()
+            .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
+            .collect();
+
+        RtFrames { frames, frame_ids, rt_times }
+    }
+    /// Expand a batch of IM peaks along RT within a DIA `window_group`.
+    /// Returns Vec<Vec<RtPeak1D>> aligned to `im_peaks` order.
+    pub fn expand_rt_for_im_peaks_in_group(
+        &self,
+        window_group: u32,
+        im_peaks: &[ImPeak1D],
+        p: RtExpandParams,
+        ppm_per_bin: f32,   // CSR resolution; keep consistent with how im_peaks were found
+    ) -> Vec<Vec<RtPeak1D>> {
+        if im_peaks.is_empty() {
+            return Vec::new();
+        }
+        // Debug guard: single-provenance assumption
+        debug_assert!(im_peaks.iter().all(|x| x.window_group == Some(window_group)));
+
+        let rt = self.make_rt_frames_for_group(window_group, ppm_per_bin);
+        debug_assert!(rt.is_consistent());
+
+        expand_many_im_peaks_along_rt(
+            im_peaks,
+            &rt.frames,
+            rt.ctx(),
+            p,
+        )
+    }
+
+    /// Expand a batch of IM peaks along RT in PRECURSOR space (ms_ms_type==0).
+    pub fn expand_rt_for_im_peaks_in_precursor(
+        &self,
+        im_peaks: &[ImPeak1D],
+        p: RtExpandParams,
+        ppm_per_bin: f32,
+    ) -> Vec<Vec<RtPeak1D>> {
+        if im_peaks.is_empty() {
+            return Vec::new();
+        }
+        // Debug guard: precursor provenance
+        debug_assert!(im_peaks.iter().all(|x| x.window_group.is_none()));
+
+        let rt = self.make_rt_frames_for_precursor(ppm_per_bin);
+        debug_assert!(rt.is_consistent());
+
+        expand_many_im_peaks_along_rt(
+            im_peaks,
+            &rt.frames,
+            rt.ctx(),
+            p,
+        )
     }
 }
 

@@ -9,128 +9,84 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D};
-use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, MobilityFn, trapezoid_area_fractional, quad_subsample, find_im_peaks_row};
+use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, expand_many_im_peaks_along_rt};
+use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, MobilityFn, trapezoid_area_fractional, quad_subsample, find_im_peaks_row, im_peak_id};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
+#[inline]
+fn owned_copy_im(p: &ImPeak1D) -> ImPeak1D {
+    ImPeak1D {
+        mz_row: p.mz_row,
+        mz_center: p.mz_center,
+        mz_bounds: p.mz_bounds,
+        rt_bounds: p.rt_bounds,
+        frame_id_bounds: p.frame_id_bounds,
+        window_group: p.window_group,
 
-/// IM 1D peak picker without ImRowContext.
-/// You provide the few metadata fields directly.
-fn find_im_peaks_row_nocontext(
-    y_smoothed: &[f32],
-    y_raw: &[f32],
-    mz_row: usize,
-    mz_center: f32,
-    mz_bounds: (f32, f32),
-    rt_bounds: (usize, usize),
-    frame_id_bounds: (u32, u32),
-    window_group: Option<u32>,
-    mobility_of: MobilityFn,
-    min_prom: f32,
-    min_distance_scans: usize,
-    min_width_scans: usize,
-) -> Vec<ImPeak1D> {
-    let n = y_smoothed.len();
-    if n < 3 { return Vec::new(); }
-
-    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
-    if row_max < min_prom { return Vec::new(); }
-
-    // strict local maxima
-    let mut cands = Vec::new();
-    for i in 1..n-1 {
-        let yi = y_smoothed[i];
-        if yi > y_smoothed[i-1] && yi >= y_smoothed[i+1] { cands.push(i); }
+        scan: p.scan,
+        mobility: p.mobility,
+        apex_smoothed: p.apex_smoothed,
+        apex_raw: p.apex_raw,
+        prominence: p.prominence,
+        left: p.left,
+        right: p.right,
+        left_x: p.left_x,
+        right_x: p.right_x,
+        width_scans: p.width_scans,
+        area_raw: p.area_raw,
+        subscan: p.subscan,
+        id: p.id,
     }
-
-    let mut peaks: Vec<ImPeak1D> = Vec::new();
-    for &i in &cands {
-        let apex = y_smoothed[i];
-
-        // prominence baseline
-        let mut l = i; let mut left_min = apex;
-        while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
-        let mut r = i; let mut right_min = apex;
-        while r + 1 < n { r += 1; right_min = right_min.min(y_smoothed[r]); if y_smoothed[r] > apex { break; } }
-
-        let baseline = left_min.max(right_min);
-        let prom = apex - baseline;
-        if prom < min_prom { continue; }
-
-        // half-prom crossings (fractional)
-        let half = baseline + 0.5 * prom;
-
-        // left crossing
-        let mut wl = i;
-        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
-        let left_x = if wl < i && wl + 1 < n {
-            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl + 1];
-            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else { wl as f32 };
-
-        // right crossing
-        let mut wr = i;
-        while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
-        let right_x = if wr > i && wr < n {
-            let y0 = y_smoothed[wr - 1]; let y1 = y_smoothed[wr];
-            (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else { wr as f32 };
-
-        let width = (right_x - left_x).max(0.0);
-        let width_scans = width.round() as usize;
-        if width_scans < min_width_scans { continue; }
-
-        // sub-scan apex offset
-        let sub = if i > 0 && i + 1 < n {
-            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
-        } else { 0.0 };
-
-        // NMS by min_distance_scans
-        if let Some(last) = peaks.last() {
-            if i.abs_diff(last.scan) < min_distance_scans {
-                if apex <= last.apex_smoothed { continue; }
-                peaks.pop();
-            }
-        }
-
-        // area on raw between fractional bounds
-        let left_idx  = left_x.floor().clamp(0.0, (n-1) as f32) as usize;
-        let right_idx = right_x.ceil().clamp(0.0, (n-1) as f32) as usize;
-        let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n-1) as f32));
-
-        let mobility = mobility_of.map(|f| f(i));
-
-        peaks.push(ImPeak1D{
-            mz_row,
-            mz_center,
-            mz_bounds,
-            rt_bounds,
-            frame_id_bounds,
-            window_group,
-
-            scan: i,
-            mobility,
-            apex_smoothed: apex,
-            apex_raw: y_raw[i],
-            prominence: prom,
-            left: left_idx,
-            right: right_idx,
-            left_x,
-            right_x,
-            width_scans,
-            area_raw: area,
-            subscan: sub,
-        });
-    }
-    peaks
 }
 
 #[pyclass]
-pub struct PyImPeak1D { pub inner: ImPeak1D }
+pub struct PyRtPeak1D { pub inner: RtPeak1D }
+
+#[pymethods]
+impl PyRtPeak1D {
+    // --- geometry in RT index/time
+    #[getter] fn rt_idx(&self) -> usize { self.inner.rt_idx }
+    #[getter] fn rt_sec(&self) -> Option<f32> { self.inner.rt_sec }
+    #[getter] fn apex_smoothed(&self) -> f32 { self.inner.apex_smoothed }
+    #[getter] fn apex_raw(&self) -> f32 { self.inner.apex_raw }
+    #[getter] fn prominence(&self) -> f32 { self.inner.prominence }
+    #[getter] fn left_x(&self) -> f32 { self.inner.left_x }
+    #[getter] fn right_x(&self) -> f32 { self.inner.right_x }
+    #[getter] fn width_frames(&self) -> usize { self.inner.width_frames }
+    #[getter] fn area_raw(&self) -> f32 { self.inner.area_raw }
+    #[getter] fn subframe(&self) -> f32 { self.inner.subframe }
+
+    // --- provenance / bounds
+    #[getter] fn rt_bounds_frames(&self) -> (usize, usize) { self.inner.rt_bounds_frames }
+    #[getter] fn frame_id_bounds(&self) -> (u32, u32) { self.inner.frame_id_bounds }
+    #[getter] fn window_group(&self) -> Option<u32> { self.inner.window_group }
+
+    // --- m/z context
+    #[getter] fn mz_row(&self) -> usize { self.inner.mz_row }
+    #[getter] fn mz_center(&self) -> f32 { self.inner.mz_center }
+    #[getter] fn mz_bounds(&self) -> (f32, f32) { self.inner.mz_bounds }
+
+    // --- linkage
+    #[getter] fn parent_im_id(&self) -> Option<u64> { self.inner.parent_im_id }
+    #[getter] fn id(&self) -> u64 { self.inner.id }
+
+    pub fn __repr__(&self) -> String {
+        format!(
+            "RtPeak1D(rt_idx={}, rt_sec={:?}, apex={:.3}, prom={:.3}, frames={:?}, mz_row={})",
+            self.inner.rt_idx, self.inner.rt_sec, self.inner.apex_smoothed,
+            self.inner.prominence, self.inner.rt_bounds_frames, self.inner.mz_row
+        )
+    }
+}
+
+#[pyclass]
+pub struct PyImPeak1D { pub inner: Arc<ImPeak1D> }
 
 #[pymethods]
 impl PyImPeak1D {
+    /// Stable 64-bit identity of this IM peak
+    #[getter] fn id(&self) -> u64 { self.inner.id }
     /// Prefer this going forward (same value as rt_row)
     #[getter] fn mz_row(&self) -> usize { self.inner.mz_row }
 
@@ -219,7 +175,14 @@ impl PyMzScanWindowGrid {
             tl, tr, self.inner.rows, self.inner.cols
         )
     }
-
+    #[getter]
+    fn mz_centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.inner.scale.centers.clone()).unbind())
+    }
+    #[getter]
+    fn mz_edges<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
+        Ok(PyArray1::from_vec_bound(py, self.inner.scale.edges.clone()).unbind())
+    }
     /// Pick 1D IM peaks in each m/z row of this window.
     /// Returns a nested list: List[List[PyImPeak1D]] with outer index = row (m/z bin).
     #[pyo3(signature = (
@@ -531,7 +494,7 @@ impl PyMzScanPlanGroup {
             for row in rows {
                 let mut row_py = Vec::with_capacity(row.len());
                 for p in row {
-                    row_py.push(Py::new(py, PyImPeak1D { inner: p })?);
+                    row_py.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
                 }
                 rows_py.push(row_py);
             }
@@ -889,7 +852,7 @@ impl PyMzScanPlan {
             for row in rows {
                 let mut row_py = Vec::with_capacity(row.len());
                 for p in row {
-                    row_py.push(Py::new(py, PyImPeak1D { inner: p })?);
+                    row_py.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
                 }
                 rows_py.push(row_py);
             }
@@ -1051,11 +1014,126 @@ impl PyTimsDatasetDIA {
     pub fn mz_bounds_for_group(&self, window_group: u32) -> Option<(f32, f32)> {
         self.inner.mz_bounds_for_window_group_core(window_group)
     }
+
+    /// Expand a batch of IM peaks along RT **within one DIA window_group**.
+    /// Returns List[List[PyRtPeak1D]] aligned to the input order of IM peaks.
+    #[pyo3(signature = (window_group, im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=5.0))]
+    pub fn expand_rt_for_im_peaks_in_group(
+        &self,
+        py: Python<'_>,
+        window_group: u32,
+        im_peaks: Vec<Py<PyImPeak1D>>,
+        bin_pad: usize,
+        smooth_sigma: f32,
+        smooth_trunc: f32,
+        min_prom: f32,
+        min_sep_frames: usize,
+        min_width_frames: usize,
+        ppm_per_bin: f32,
+    ) -> PyResult<Vec<Vec<Py<PyRtPeak1D>>>> {
+        if im_peaks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // After (collect Arcs, then owned-copy once here):
+        let im_arcs: Vec<Arc<ImPeak1D>> = im_peaks
+            .iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let im_rs: Vec<ImPeak1D> = im_arcs.iter().map(|a| owned_copy_im(a.as_ref())).collect();
+        // Guard: all from the same group
+        debug_assert!(im_rs.iter().all(|p| p.window_group == Some(window_group)));
+
+        // Build RT frames for this group
+        let rt_frames = self.inner.make_rt_frames_for_group(window_group, ppm_per_bin);
+        if !rt_frames.is_consistent() {
+            return Err(exceptions::PyRuntimeError::new_err("inconsistent RT frames layout"));
+        }
+
+        let p = RtExpandParams {
+            bin_pad,
+            smooth_sigma,
+            smooth_trunc,
+            min_prom,
+            min_sep_frames,
+            min_width_frames,
+        };
+        let ctx = rt_frames.ctx();
+
+        // Expand without the GIL
+        let nested: Vec<Vec<RtPeak1D>> = py.allow_threads(|| {
+            expand_many_im_peaks_along_rt(
+                &im_rs,
+                &rt_frames.frames,
+                ctx,
+                p,
+            )
+        });
+
+        rtpeaks_to_py_nested(py, nested)
+    }
+
+    /// Expand IM peaks along RT in **precursor space (MS1)**.
+    #[pyo3(signature = (im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=10.0))]
+    pub fn expand_rt_for_im_peaks_in_precursor(
+        &self,
+        py: Python<'_>,
+        im_peaks: Vec<Py<PyImPeak1D>>,
+        bin_pad: usize,
+        smooth_sigma: f32,
+        smooth_trunc: f32,
+        min_prom: f32,
+        min_sep_frames: usize,
+        min_width_frames: usize,
+        ppm_per_bin: f32,
+    ) -> PyResult<Vec<Vec<Py<PyRtPeak1D>>>> {
+        if im_peaks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // After (collect Arcs, then owned-copy once here):
+        let im_arcs: Vec<Arc<ImPeak1D>> = im_peaks
+            .iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let im_rs: Vec<ImPeak1D> = im_arcs.iter().map(|a| owned_copy_im(a.as_ref())).collect();
+        debug_assert!(im_rs.iter().all(|p| p.window_group.is_none()));
+
+        let rt_frames = self.inner.make_rt_frames_for_precursor(ppm_per_bin);
+        if !rt_frames.is_consistent() {
+            return Err(exceptions::PyRuntimeError::new_err("inconsistent RT frames layout"));
+        }
+
+        let p = RtExpandParams {
+            bin_pad,
+            smooth_sigma,
+            smooth_trunc,
+            min_prom,
+            min_sep_frames,
+            min_width_frames,
+        };
+        let ctx = rt_frames.ctx();
+
+        let nested: Vec<Vec<RtPeak1D>> = py.allow_threads(|| {
+            expand_many_im_peaks_along_rt(
+                &im_rs,
+                &rt_frames.frames,
+                ctx,
+                p,
+            )
+        });
+
+        rtpeaks_to_py_nested(py, nested)
+    }
 }
 
 fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
     Ok(rows.into_iter().map(|row| {
-        row.into_iter().map(|p| Py::new(py, PyImPeak1D{ inner: p }).unwrap()).collect()
+        row.into_iter()
+            .map(|p| Py::new(py, PyImPeak1D { inner: Arc::new(p) }).unwrap())
+            .collect()
     }).collect())
 }
 
@@ -1190,36 +1268,31 @@ pub fn stitch_im_peaks_batched_streaming(
     // Process windows in given order (RT order); for each row, process its peaks
     for win in batched.into_iter() {
         for row in win.into_iter() {
-            // Small sort per row keeps merges stable and cheap
-            let mut row_rs: Vec<ImPeak1D> = row
+            let mut row_arcs: Vec<Arc<ImPeak1D>> = row
                 .into_iter()
                 .map(|p| p.borrow(py).inner.clone())
                 .collect();
-            row_rs.sort_unstable_by(|a,b| a.scan.cmp(&b.scan).then(a.rt_bounds.0.cmp(&b.rt_bounds.0)));
 
-            for p in row_rs.into_iter() {
+            row_arcs.sort_unstable_by(|a, b| {
+                a.scan.cmp(&b.scan).then(a.rt_bounds.0.cmp(&b.rt_bounds.0))
+            });
+
+            for p_arc in row_arcs.into_iter() {
+                let p = p_arc.as_ref(); // &ImPeak1D
                 let scan_bin = p.scan / params.max_scan_delta;
                 let key = Key { wg: p.window_group, mz_row: p.mz_row, scan_bin };
 
                 if let Some(cur) = active.get_mut(&key) {
-                    if compatible_fast(cur, &p, &params) {
-                        merge_into(cur, &p);
+                    if compatible_fast(cur, p, &params) {
+                        merge_into(cur, p);
                         continue;
                     }
-                    // If the new peak starts clearly after the current can no longer overlap,
-                    // flush and replace. This keeps only one accumulator per key.
-                    if p.rt_bounds.0 > cur.rt_bounds.1 + params.min_overlap_frames {
-                        let flushed = active.remove(&key).unwrap();
-                        out.push(Py::new(py, PyImPeak1D { inner: flushed })?);
-                        active.insert(key, p);
-                    } else {
-                        // Overlapping-but-incompatible; finalize current and start a new run.
-                        let flushed = active.remove(&key).unwrap();
-                        out.push(Py::new(py, PyImPeak1D { inner: flushed })?);
-                        active.insert(key, p);
-                    }
+                    // finalize current and start new run
+                    let flushed = active.remove(&key).unwrap();
+                    out.push(Py::new(py, PyImPeak1D { inner: Arc::new(flushed) })?);
+                    active.insert(key, owned_copy_im(p)); // <-- owned copy only here
                 } else {
-                    active.insert(key, p);
+                    active.insert(key, owned_copy_im(p)); // <-- first time for this bucket
                 }
             }
         }
@@ -1232,9 +1305,132 @@ pub fn stitch_im_peaks_batched_streaming(
 
     // Flush remaining accumulators
     for (_, v) in active.into_iter() {
-        out.push(Py::new(py, PyImPeak1D { inner: v })?);
+        out.push(Py::new(py, PyImPeak1D { inner: Arc::new(v) })?);
     }
     Ok(out)
+}
+
+/// IM 1D peak picker without ImRowContext.
+/// You provide the few metadata fields directly.
+fn find_im_peaks_row_nocontext(
+    y_smoothed: &[f32],
+    y_raw: &[f32],
+    mz_row: usize,
+    mz_center: f32,
+    mz_bounds: (f32, f32),
+    rt_bounds: (usize, usize),
+    frame_id_bounds: (u32, u32),
+    window_group: Option<u32>,
+    mobility_of: MobilityFn,
+    min_prom: f32,
+    min_distance_scans: usize,
+    min_width_scans: usize,
+) -> Vec<ImPeak1D> {
+    let n = y_smoothed.len();
+    if n < 3 { return Vec::new(); }
+
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom { return Vec::new(); }
+
+    // strict local maxima
+    let mut cands = Vec::new();
+    for i in 1..n-1 {
+        let yi = y_smoothed[i];
+        if yi > y_smoothed[i-1] && yi >= y_smoothed[i+1] { cands.push(i); }
+    }
+
+    let mut peaks: Vec<ImPeak1D> = Vec::new();
+    for &i in &cands {
+        let apex = y_smoothed[i];
+
+        // prominence baseline
+        let mut l = i; let mut left_min = apex;
+        while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
+        let mut r = i; let mut right_min = apex;
+        while r + 1 < n { r += 1; right_min = right_min.min(y_smoothed[r]); if y_smoothed[r] > apex { break; } }
+
+        let baseline = left_min.max(right_min);
+        let prom = apex - baseline;
+        if prom < min_prom { continue; }
+
+        // half-prom crossings (fractional)
+        let half = baseline + 0.5 * prom;
+
+        // left crossing
+        let mut wl = i;
+        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
+        let left_x = if wl < i && wl + 1 < n {
+            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl + 1];
+            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wl as f32 };
+
+        // right crossing
+        let mut wr = i;
+        while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
+        let right_x = if wr > i && wr < n {
+            let y0 = y_smoothed[wr - 1]; let y1 = y_smoothed[wr];
+            (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wr as f32 };
+
+        let width = (right_x - left_x).max(0.0);
+        let width_scans = width.round() as usize;
+        if width_scans < min_width_scans { continue; }
+
+        // sub-scan apex offset
+        let sub = if i > 0 && i + 1 < n {
+            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
+        } else { 0.0 };
+
+        // NMS by min_distance_scans
+        if let Some(last) = peaks.last() {
+            if i.abs_diff(last.scan) < min_distance_scans {
+                if apex <= last.apex_smoothed { continue; }
+                peaks.pop();
+            }
+        }
+
+        // area on raw between fractional bounds
+        let left_idx  = left_x.floor().clamp(0.0, (n-1) as f32) as usize;
+        let right_idx = right_x.ceil().clamp(0.0, (n-1) as f32) as usize;
+        let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n-1) as f32));
+
+        let mobility = mobility_of.map(|f| f(i));
+
+        let mut peak = ImPeak1D{
+            mz_row,
+            mz_center,
+            mz_bounds,
+            rt_bounds,
+            frame_id_bounds,
+            window_group,
+
+            scan: i,
+            mobility,
+            apex_smoothed: apex,
+            apex_raw: y_raw[i],
+            prominence: prom,
+            left: left_idx,
+            right: right_idx,
+            left_x,
+            right_x,
+            width_scans,
+            area_raw: area,
+            subscan: sub,
+            id: 0,
+        };
+
+        peak.id = im_peak_id(&peak);
+        peaks.push(peak);
+    }
+    peaks
+}
+
+fn rtpeaks_to_py_nested(py: Python<'_>, nested: Vec<Vec<RtPeak1D>>) -> PyResult<Vec<Vec<Py<PyRtPeak1D>>>> {
+    nested.into_iter().map(|v| {
+        v.into_iter()
+            .map(|r| Py::new(py, PyRtPeak1D { inner: r }))
+            .collect::<PyResult<Vec<_>>>()
+    }).collect()
 }
 
 #[pymodule]
@@ -1244,6 +1440,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMzScanPlanGroup>()?;
     m.add_class::<PyMzScanWindowGrid>()?;
     m.add_class::<PyImPeak1D>()?;
+    m.add_class::<PyRtPeak1D>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_streaming, m)?)?;
     Ok(())
 }

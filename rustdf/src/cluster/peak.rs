@@ -1,21 +1,82 @@
 use std::sync::Arc;
 use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{quad_subsample, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
+use crate::cluster::utility::{quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
 
 #[derive(Clone, Debug)]
-pub struct RtPeak1D {
-    pub rt_idx: usize,          // apex index in the RT vector
-    pub rt_sec: Option<f32>,    // apex time in seconds if rt_times provided
+pub struct RtFrames {
+    pub frames: Vec<FrameBinView>, // RT-sorted CSR rows for this provenance
+    pub frame_ids: Vec<u32>,       // same order as frames
+    pub rt_times: Vec<f32>,        // same order as frames
+}
+
+impl RtFrames {
+    #[inline]
+    pub fn ctx(&self) -> RtTraceCtx<'_> {
+        RtTraceCtx {
+            frame_ids_sorted: &self.frame_ids,
+            rt_times_sec: Some(&self.rt_times),
+        }
+    }
+
+    #[inline]
+    pub fn is_consistent(&self) -> bool {
+        self.frames.len() == self.frame_ids.len() && self.frame_ids.len() == self.rt_times.len()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RtLocalPeak {
+    pub rt_idx: usize,
+    pub rt_sec: Option<f32>,
     pub apex_smoothed: f32,
     pub apex_raw: f32,
     pub prominence: f32,
-    pub left_x: f32,            // fractional RT index at half-prom left crossing
-    pub right_x: f32,           // fractional RT index at half-prom right crossing
+    pub left_x: f32,
+    pub right_x: f32,
     pub width_frames: usize,
     pub area_raw: f32,
-    pub subframe: f32,          // quadratic sub-sample offset in [-0.5, 0.5]
+    pub subframe: f32,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct RtTraceCtx<'a> {
+    pub frame_ids_sorted: &'a [u32],   // same order as frames_sorted
+    pub rt_times_sec: Option<&'a [f32]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RtPeak1D {
+    // geometry in RT index/time
+    pub rt_idx: usize,
+    pub rt_sec: Option<f32>,
+    pub apex_smoothed: f32,
+    pub apex_raw: f32,
+    pub prominence: f32,
+    pub left_x: f32,
+    pub right_x: f32,
+    pub width_frames: usize,
+    pub area_raw: f32,
+    pub subframe: f32,
+
+    // provenance / bounds in frames and frame_ids
+    pub rt_bounds_frames: (usize, usize),   // inclusive in local RT trace
+    pub frame_id_bounds: (u32, u32),        // materialized
+    pub window_group: Option<u32>,
+
+    // m/z context carried from the IM parent (exact row + physical window)
+    pub mz_row: usize,
+    pub mz_center: f32,
+    pub mz_bounds: (f32, f32),
+
+    // linkage
+    pub parent_im_id: Option<PeakId>,
+    pub id: PeakId,                          // optional: RT-level id
+}
+
+// Stable 64-bit id for peaks
+pub type PeakId = u64;
+
 
 #[derive(Clone, Debug)]
 pub struct ImPeak1D {
@@ -38,6 +99,7 @@ pub struct ImPeak1D {
     pub width_scans: usize,
     pub area_raw: f32,
     pub subscan: f32,
+    pub id: PeakId,
 }
 
 #[derive(Clone, Debug)]
@@ -318,11 +380,11 @@ pub fn rt_trace_for_im_peak(
 pub fn find_rt_peaks(
     y_smoothed: &[f32],
     y_raw: &[f32],
-    rt_times: Option<&[f32]>,  // same length as y_*
-    min_prom: f32,             // absolute units
+    rt_times: Option<&[f32]>,
+    min_prom: f32,
     min_sep_frames: usize,
     min_width_frames: usize,
-) -> Vec<RtPeak1D> {
+) -> Vec<RtLocalPeak> {
     let n = y_smoothed.len();
     if n < 3 || y_raw.len() != n { return Vec::new(); }
 
@@ -338,7 +400,7 @@ pub fn find_rt_peaks(
         }
     }
 
-    let mut peaks: Vec<RtPeak1D> = Vec::new();
+    let mut peaks: Vec<RtLocalPeak> = Vec::new();
     for &i in &cands {
         let apex = y_smoothed[i];
 
@@ -384,10 +446,6 @@ pub fn find_rt_peaks(
         if let Some(last) = peaks.last() {
             if i.abs_diff(last.rt_idx) < min_sep_frames {
                 if apex <= last.apex_smoothed { continue; }
-                // replace last if current is taller
-                // (safe clone: struct is small)
-                // We cannot mutate-in-place easily because we need new area/width.
-                // Just pop; we’ll push a new one below.
                 let _ = peaks.pop();
             }
         }
@@ -395,11 +453,9 @@ pub fn find_rt_peaks(
         // 6) area on raw between fractional bounds
         let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n - 1) as f32));
 
-        // rt_sec if provided
+        // rt_sec if provided (sub-sample around apex)
         let rt_sec = rt_times.map(|t| {
-            // sub-sample apex time (optional): i as base + sub offset interpolated
             if i + 1 < t.len() && i > 0 {
-                // linear between frame i and i+1 using sub in [-0.5,0.5]
                 let base = i as f32 + sub;
                 let j0 = base.floor().clamp(0.0, (t.len() - 1) as f32) as usize;
                 let j1 = (j0 + 1).min(t.len() - 1);
@@ -410,7 +466,7 @@ pub fn find_rt_peaks(
             }
         });
 
-        peaks.push(RtPeak1D {
+        peaks.push(RtLocalPeak {
             rt_idx: i,
             rt_sec,
             apex_smoothed: apex,
@@ -436,38 +492,124 @@ pub struct RtExpandParams {
     pub min_width_frames: usize, // 2–3
 }
 
-/// Expand a single IM peak along RT and return RT peaks (no stitching).
 pub fn expand_im_peak_along_rt(
     im_peak: &ImPeak1D,
-    frames_sorted: &[FrameBinView], // RT-ordered frames of the same DIA group / slice
-    rt_times: Option<&[f32]>,       // optional times aligned to frames_sorted
+    frames_sorted: &[FrameBinView], // RT-ordered frames for this DIA group
+    ctx: RtTraceCtx<'_>,
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
-    // 1) build conditioned RT trace
     let trace_raw = rt_trace_for_im_peak(
-        frames_sorted,
-        im_peak.mz_row,
-        p.bin_pad,
-        im_peak.left,
-        im_peak.right,
+        frames_sorted, im_peak.mz_row, p.bin_pad, im_peak.left, im_peak.right,
     );
-
-    // Early out if empty or all-zero
     if trace_raw.is_empty() || !trace_raw.iter().any(|&x| x.is_finite() && x > 0.0) {
         return Vec::new();
     }
 
-    // 2) smooth
+    // smooth
     let mut trace_smooth = trace_raw.clone();
     smooth_vector_gaussian(&mut trace_smooth[..], p.smooth_sigma, p.smooth_trunc);
 
-    // 3) pick RT peaks
-    find_rt_peaks(
-        &trace_smooth,
-        &trace_raw,
-        rt_times,
-        p.min_prom,
-        p.min_sep_frames,
-        p.min_width_frames,
-    )
+    // pick
+    let base = find_rt_peaks(
+        &trace_smooth, &trace_raw, ctx.rt_times_sec, p.min_prom, p.min_sep_frames, p.min_width_frames,
+    );
+
+    // map into enriched RtPeak1D
+    let n_frames = frames_sorted.len();
+    let (fid_lo, fid_hi) = im_peak.frame_id_bounds;
+    base.into_iter().map(|r0| {
+        // compute integer bounds from fractional
+        let l = r0.left_x.floor().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
+        let rr = r0.right_x.ceil().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
+        let rt_bounds_frames = (l, rr);
+
+        // map to frame ids using ctx
+        let frame_id_bounds = if ctx.frame_ids_sorted.is_empty() {
+            (fid_lo, fid_hi) // fallback to IM parent
+        } else {
+            let lo = ctx.frame_ids_sorted[l.min(ctx.frame_ids_sorted.len()-1)];
+            let hi = ctx.frame_ids_sorted[rr.min(ctx.frame_ids_sorted.len()-1)];
+            (lo.min(hi), lo.max(hi))
+        };
+
+        let mut r = RtPeak1D {
+            // geometry carried over
+            rt_idx: r0.rt_idx,
+            rt_sec: r0.rt_sec,
+            apex_smoothed: r0.apex_smoothed,
+            apex_raw: r0.apex_raw,
+            prominence: r0.prominence,
+            left_x: r0.left_x,
+            right_x: r0.right_x,
+            width_frames: r0.width_frames,
+            area_raw: r0.area_raw,
+            subframe: r0.subframe,
+
+            // new metadata
+            rt_bounds_frames,
+            frame_id_bounds,
+            window_group: im_peak.window_group,
+
+            mz_row: im_peak.mz_row,
+            mz_center: im_peak.mz_center,
+            mz_bounds: im_peak.mz_bounds,
+
+            parent_im_id: Some(im_peak.id),
+            id: 0,
+        };
+        r.id = rt_peak_id(&r);
+        r
+    }).collect()
+}
+
+// 2) Parallel expansion: outputs Vec<Vec<RtPeak1D>> aligned to input order
+pub fn expand_many_im_peaks_along_rt(
+    im_peaks: &[ImPeak1D],             // all from precursor space OR same window_group
+    frames_sorted: &[FrameBinView],    // RT-ordered frames for that provenance
+    ctx: RtTraceCtx<'_>,
+    p: RtExpandParams,
+) -> Vec<Vec<RtPeak1D>> {
+    if im_peaks.is_empty() {
+        return Vec::new();
+    }
+
+    // Optional sanity: enforce single-group assumption (None == precursor space)
+    #[cfg(debug_assertions)]
+    {
+        let first_g = im_peaks[0].window_group;
+        let same = im_peaks.iter().all(|x| x.window_group == first_g);
+        debug_assert!(same, "expand_many_im_peaks_along_rt: mixed window_group in batch");
+    }
+
+    // Parallel map, preserving order
+    im_peaks.par_iter()
+        .map(|im| expand_im_peak_along_rt(im, frames_sorted, ctx, p))
+        .collect()
+}
+
+// 3) Variant that returns a flat stream with the input index for downstream use
+#[derive(Clone, Debug)]
+pub struct RtPeaksForIm {
+    pub im_index: usize,       // index into the input im_peaks slice
+    pub im_id: PeakId,         // parent id for convenience
+    pub peaks: Vec<RtPeak1D>,
+}
+
+pub fn expand_many_im_peaks_along_rt_flat(
+    im_peaks: &[ImPeak1D],
+    frames_sorted: &[FrameBinView],
+    ctx: RtTraceCtx<'_>,
+    p: RtExpandParams,
+) -> Vec<RtPeaksForIm> {
+    if im_peaks.is_empty() {
+        return Vec::new();
+    }
+
+    (0..im_peaks.len()).into_par_iter()
+        .map(|i| {
+            let im = &im_peaks[i];
+            let peaks = expand_im_peak_along_rt(im, frames_sorted, ctx, p);
+            RtPeaksForIm { im_index: i, im_id: im.id, peaks }
+        })
+        .collect()
 }
