@@ -828,9 +828,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_points), attach_max_points,
             bool(require_rt_overlap), int(num_threads),
         )
-        # If you’ve built a Python wrapper ClusterResult1D, wrap here:
-        # return [ClusterResult1D(r) for r in py_results]
-        return py_results
+        return [ClusterResult1D(r) for r in py_results]
 
     def clusters_for_precursor(
             self,
@@ -879,9 +877,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_points), attach_max_points,
             bool(require_rt_overlap), int(num_threads),
         )
-        # If you’ve built a Python wrapper ClusterResult1D, wrap here:
-        # return [ClusterResult1D(r) for r in py_results]
-        return py_results
+        return [ClusterResult1D(r) for r in py_results]
 
 from collections.abc import Iterable
 from typing import List, Sequence
