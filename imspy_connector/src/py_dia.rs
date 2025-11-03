@@ -257,8 +257,8 @@ impl PyMzScanWindowGrid {
             find_im_peaks_row_nocontext(
                 &y_s, &y_r,
                 r,                      // mz_row
-                0.0,
-                (0.0, 0.0),        // mz_center, mz_bounds (TODO: fill when scale is threaded)
+                self.inner.mz_center_for_row(r),
+                self.inner.mz_bounds_for_row(r),
                 self.inner.rt_range_frames,
                 self.inner.frame_id_bounds,
                 self.inner.window_group,
