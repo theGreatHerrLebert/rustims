@@ -284,6 +284,67 @@ class MzScanPlan(RustWrapperObject):
         # wrap Py objects
         return [[[ImPeak1D.from_py_ptr(p) for p in row] for row in win] for win in rows]
 
+class RtPeak1D(RustWrapperObject):
+    """Python wrapper for Rust PyRtPeak1D (read-only)."""
+    def __init__(self, *a, **k):
+        raise RuntimeError("RtPeak1D is created in Rust; use RtPeak1D.from_py_ptr().")
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyRtPeak1D) -> "RtPeak1D":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    # --- geometry in RT index/time
+    @property
+    def rt_idx(self) -> int: return self.__py_ptr.rt_idx
+    @property
+    def rt_sec(self) -> float | None: return self.__py_ptr.rt_sec
+    @property
+    def apex_smoothed(self) -> float: return self.__py_ptr.apex_smoothed
+    @property
+    def apex_raw(self) -> float: return self.__py_ptr.apex_raw
+    @property
+    def prominence(self) -> float: return self.__py_ptr.prominence
+    @property
+    def left_x(self) -> float: return self.__py_ptr.left_x
+    @property
+    def right_x(self) -> float: return self.__py_ptr.right_x
+    @property
+    def width_frames(self) -> int: return self.__py_ptr.width_frames
+    @property
+    def area_raw(self) -> float: return self.__py_ptr.area_raw
+    @property
+    def subframe(self) -> float: return self.__py_ptr.subframe
+
+    # --- provenance / bounds
+    @property
+    def rt_bounds_frames(self) -> tuple[int, int]: return self.__py_ptr.rt_bounds_frames
+    @property
+    def frame_id_bounds(self) -> tuple[int, int]: return self.__py_ptr.frame_id_bounds
+    @property
+    def window_group(self) -> int | None: return self.__py_ptr.window_group
+
+    # --- m/z context
+    @property
+    def mz_row(self) -> int: return self.__py_ptr.mz_row
+    @property
+    def mz_center(self) -> float: return self.__py_ptr.mz_center
+    @property
+    def mz_bounds(self) -> tuple[float, float]: return self.__py_ptr.mz_bounds
+
+    # --- linkage
+    @property
+    def parent_im_id(self) -> int | None: return self.__py_ptr.parent_im_id
+    @property
+    def id(self) -> int: return self.__py_ptr.id
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+    def __repr__(self):
+        return repr(self.__py_ptr)
+
 class ImPeak1D(RustWrapperObject):
     """Python wrapper for Rust PyImPeak1D (read-only)."""
     def __init__(self, *a, **k):
@@ -301,8 +362,6 @@ class ImPeak1D(RustWrapperObject):
     @property
     def mz_bounds(self) -> tuple[float, float]: return self.__py_ptr.mz_bounds
 
-    @property
-    def parent_rt_peak_row(self) -> int: return self.__py_ptr.parent_rt_peak_row
     @property
     def rt_bounds(self) -> tuple[int, int]: return self.__py_ptr.rt_bounds
     @property
@@ -349,16 +408,16 @@ class ImPeak1D(RustWrapperObject):
         rt_lo, rt_hi = self.rt_bounds
         fid_lo, fid_hi = self.frame_id_bounds
         return (
-            "ImPeak1D(mz_row={mz_row}, rt_row={rt_row}, scan={scan}, mobility={mob}, "
+            "ImPeak1D(mz_row={mz_row}, scan={scan}, mobility={mob}, "
             "apex_smoothed={apx:.1f}, prominence={prom:.1f}, width_scans={w}, area_raw={area:.1f}, "
             "left={l}, right={r}, left_x={lx:.3f}, right_x={rx:.3f}, subscan={sub:.3f}, "
-            "parent_rt_peak_row={pr}, rt_bounds=({rtl},{rth}), frame_id_bounds=({fl},{fh}), "
+            "rt_bounds=({rtl},{rth}), frame_id_bounds=({fl},{fh}), "
             "window_group={wg})"
         ).format(
-            mz_row=self.mz_row, rt_row=self.rt_row, scan=self.scan, mob=self.mobility,
+            mz_row=self.mz_row, scan=self.scan, mob=self.mobility,
             apx=self.apex_smoothed, prom=self.prominence, w=self.width_scans, area=self.area_raw,
             l=self.left, r=self.right, lx=self.left_x, rx=self.right_x, sub=self.subscan,
-            pr=self.parent_rt_peak_row, rtl=rt_lo, rth=rt_hi, fl=fid_lo, fh=fid_hi,
+            rtl=rt_lo, rth=rt_hi, fl=fid_lo, fh=fid_hi,
             wg=self.window_group,
         )
 
@@ -509,6 +568,56 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(clamp_mz_to_group),
         )
         return MzScanPlanGroup.from_py_ptr(py_plan)
+
+    def expand_rt_for_im_peaks_in_precursor(
+            self,
+            im_peaks: list["ImPeak1D"],
+            *,
+            bin_pad: int = 0,
+            smooth_sigma: float = 1.25,
+            smooth_trunc: float = 3.0,
+            min_prom: float = 50.0,
+            min_sep_frames: int = 2,
+            min_width_frames: int = 2,
+            ppm_per_bin: float = 10.0,
+    ) -> list[list["RtPeak1D"]]:
+        nested = self.__dataset.expand_rt_for_im_peaks_in_precursor(
+            [p.get_py_ptr() for p in im_peaks],
+            int(bin_pad),
+            float(smooth_sigma),
+            float(smooth_trunc),
+            float(min_prom),
+            int(min_sep_frames),
+            int(min_width_frames),
+            float(ppm_per_bin),
+        )
+        return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
+
+    def expand_rt_for_im_peaks_in_group(
+            self,
+            window_group: int,
+            im_peaks: list["ImPeak1D"],
+            *,
+            bin_pad: int = 0,
+            smooth_sigma: float = 1.25,
+            smooth_trunc: float = 3.0,
+            min_prom: float = 50.0,
+            min_sep_frames: int = 2,
+            min_width_frames: int = 2,
+            ppm_per_bin: float = 5.0,
+    ) -> list[list["RtPeak1D"]]:
+        nested = self.__dataset.expand_rt_for_im_peaks_in_group(
+            int(window_group),
+            [p.get_py_ptr() for p in im_peaks],
+            int(bin_pad),
+            float(smooth_sigma),
+            float(smooth_trunc),
+            float(min_prom),
+            int(min_sep_frames),
+            int(min_width_frames),
+            float(ppm_per_bin),
+        )
+        return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
 
 from collections.abc import Iterable
 from typing import List, Sequence
