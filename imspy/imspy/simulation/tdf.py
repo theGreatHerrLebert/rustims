@@ -254,8 +254,14 @@ class TDFWriter:
     def get_frame_meta_data(self) -> pd.DataFrame:
         return pd.DataFrame(self.frame_meta_data)
 
-    def write_frame_meta_data(self) -> None:
-        self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
+    def write_frame_meta_data(self, rename_frame_id: bool = True) -> None:
+
+        if rename_frame_id:
+            out = self.get_frame_meta_data().rename(columns={"frame_id": "Id"})
+            self._create_table(self.conn, out, "FrameMetaData")
+        else:
+            out = self.get_frame_meta_data()
+            self._create_table(self.conn, out, "FrameMetaData")
 
     def write_calibration_info(self, mz_standard_deviation_ppm: float = 0.15) -> None:
         try:
