@@ -1,5 +1,5 @@
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::peak::{ImPeak1D, PeakId, RtPeak1D};
+use crate::cluster::peak::{ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
 
@@ -362,4 +362,103 @@ pub fn rt_peak_id(r: &RtPeak1D) -> PeakId {
     r.frame_id_bounds.hash(&mut h);
     r.window_group.hash(&mut h);
     h.finish()
+}
+
+pub fn fallback_rt_peak_from_trace(
+    trace_raw: &[f32],
+    ctx: RtTraceCtx<'_>,
+    im_peak: &ImPeak1D,
+    frac: f32, // e.g., 0.10
+) -> Option<RtPeak1D> {
+    let n = trace_raw.len();
+    if n == 0 { return None; }
+
+    // apex on raw
+    let (mut i_max, mut y_max) = (0usize, 0.0f32);
+    for (i, &y) in trace_raw.iter().enumerate() {
+        if y > y_max { y_max = y; i_max = i; }
+    }
+    if y_max <= 0.0 { return None; }
+
+    // centroid (first moment) for a stable center estimate
+    let mut sum_y = 0.0f32;
+    let mut sum_ty = 0.0f32;
+    for (i, &y) in trace_raw.iter().enumerate() {
+        sum_y  += y;
+        sum_ty += (i as f32) * y;
+    }
+    let mu = if sum_y > 0.0 { sum_ty / sum_y } else { i_max as f32 };
+    let rt_idx = mu.floor().clamp(0.0, (n - 1) as f32) as usize;
+    let subframe = (mu - (rt_idx as f32)).clamp(-0.5, 0.5);
+
+    // fractional width at frac * apex
+    let thr = frac * y_max;
+    // left crossing
+    let mut l = i_max;
+    while l > 0 && trace_raw[l] > thr { l -= 1; }
+    let left_x = if l < i_max {
+        let y0 = trace_raw[l]; let y1 = trace_raw[l + 1];
+        l as f32 + if y1 != y0 { (thr - y0) / (y1 - y0) } else { 0.0 }
+    } else { l as f32 };
+
+    // right crossing
+    let mut r = i_max;
+    while r + 1 < n && trace_raw[r] > thr { r += 1; }
+    let right_x = if r > i_max && r < n {
+        let y0 = trace_raw[r - 1]; let y1 = trace_raw[r];
+        (r - 1) as f32 + if y1 != y0 { (thr - y0) / (y1 - y0) } else { 0.0 }
+    } else { r as f32 };
+
+    let width_frames = (right_x - left_x).max(0.0).round() as usize;
+    let area_raw = trapezoid_area_fractional(trace_raw, left_x.max(0.0), right_x.min((n - 1) as f32));
+
+    // “prominence” proxy: apex – min in support (conservative)
+    let base = trace_raw.iter().copied().fold(f32::INFINITY, f32::min);
+    let prom = (y_max - base).max(0.0);
+
+    // integer bounds & frame ids
+    let l_i = left_x.floor().clamp(0.0, (n.saturating_sub(1)) as f32) as usize;
+    let r_i = right_x.ceil().clamp(0.0, (n.saturating_sub(1)) as f32) as usize;
+    let rt_bounds_frames = (l_i.min(r_i), r_i.max(l_i));
+
+    let frame_id_bounds = if ctx.frame_ids_sorted.is_empty() {
+        im_peak.frame_id_bounds
+    } else {
+        let lo = ctx.frame_ids_sorted[rt_bounds_frames.0.min(ctx.frame_ids_sorted.len()-1)];
+        let hi = ctx.frame_ids_sorted[rt_bounds_frames.1.min(ctx.frame_ids_sorted.len()-1)];
+        (lo.min(hi), lo.max(hi))
+    };
+
+    let rt_sec = ctx.rt_times_sec.map(|t| {
+        let j0 = rt_idx.min(t.len()-1);
+        let j1 = (j0 + 1).min(t.len()-1);
+        let frac = (subframe + (rt_idx as f32) - j0 as f32).clamp(0.0, 1.0);
+        (1.0 - frac) * t[j0] + frac * t[j1]
+    });
+
+    let mut rp = RtPeak1D {
+        rt_idx,
+        rt_sec,
+        apex_smoothed: y_max, // no smoothing in fallback
+        apex_raw: y_max,
+        prominence: prom,
+        left_x,
+        right_x,
+        width_frames,
+        area_raw,
+        subframe,
+
+        rt_bounds_frames,
+        frame_id_bounds,
+        window_group: im_peak.window_group,
+
+        mz_row: im_peak.mz_row,
+        mz_center: im_peak.mz_center,
+        mz_bounds: im_peak.mz_bounds,
+
+        parent_im_id: Some(im_peak.id),
+        id: 0,
+    };
+    rp.id = rt_peak_id(&rp);
+    Some(rp)
 }

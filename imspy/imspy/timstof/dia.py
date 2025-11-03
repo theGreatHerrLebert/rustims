@@ -580,6 +580,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             min_sep_frames: int = 2,
             min_width_frames: int = 2,
             ppm_per_bin: float = 10.0,
+            fallback_if_frames_lt: int = 3,
+            fallback_frac_width: float = 0.10
     ) -> list[list["RtPeak1D"]]:
         nested = self.__dataset.expand_rt_for_im_peaks_in_precursor(
             [p.get_py_ptr() for p in im_peaks],
@@ -590,6 +592,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(min_sep_frames),
             int(min_width_frames),
             float(ppm_per_bin),
+            int(fallback_if_frames_lt),
+            float(fallback_frac_width)
         )
         return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
 
@@ -605,6 +609,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             min_sep_frames: int = 2,
             min_width_frames: int = 2,
             ppm_per_bin: float = 5.0,
+            fallback_if_frames_lt: int = 3,
+            fallback_frac_width: float = 0.10
     ) -> list[list["RtPeak1D"]]:
         nested = self.__dataset.expand_rt_for_im_peaks_in_group(
             int(window_group),
@@ -616,6 +622,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(min_sep_frames),
             int(min_width_frames),
             float(ppm_per_bin),
+            int(fallback_if_frames_lt),
+            float(fallback_frac_width)
         )
         return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
 

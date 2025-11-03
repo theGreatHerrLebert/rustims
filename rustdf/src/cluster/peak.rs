@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
+use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
 
 #[derive(Clone, Debug)]
 pub struct RtFrames {
@@ -490,6 +490,8 @@ pub struct RtExpandParams {
     pub min_prom: f32,           // absolute units after smoothing
     pub min_sep_frames: usize,   // 2–4
     pub min_width_frames: usize, // 2–3
+    pub fallback_if_frames_lt: usize, // e.g. 3
+    pub fallback_frac_width: f32,     // width at a small fraction of apex (e.g., 0.10)
 }
 
 pub fn expand_im_peak_along_rt(
@@ -498,6 +500,7 @@ pub fn expand_im_peak_along_rt(
     ctx: RtTraceCtx<'_>,
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
+
     let trace_raw = rt_trace_for_im_peak(
         frames_sorted, im_peak.mz_row, p.bin_pad, im_peak.left, im_peak.right,
     );
@@ -505,13 +508,23 @@ pub fn expand_im_peak_along_rt(
         return Vec::new();
     }
 
-    // smooth
+    // --- NEW: if the parent IM peak’s RT support is too short, skip fitting
+    let im_rt_span = im_peak.rt_bounds.1.saturating_sub(im_peak.rt_bounds.0) + 1;
+    if im_rt_span < p.fallback_if_frames_lt {
+        if let Some(pk) = fallback_rt_peak_from_trace(&trace_raw, ctx, im_peak, p.fallback_frac_width) {
+            return vec![pk];
+        } else {
+            return Vec::new();
+        }
+    }
+
+    // normal path (smooth + half-prom)
     let mut trace_smooth = trace_raw.clone();
     smooth_vector_gaussian(&mut trace_smooth[..], p.smooth_sigma, p.smooth_trunc);
 
-    // pick
     let base = find_rt_peaks(
-        &trace_smooth, &trace_raw, ctx.rt_times_sec, p.min_prom, p.min_sep_frames, p.min_width_frames,
+        &trace_smooth, &trace_raw, ctx.rt_times_sec,
+        p.min_prom, p.min_sep_frames, p.min_width_frames,
     );
 
     // map into enriched RtPeak1D

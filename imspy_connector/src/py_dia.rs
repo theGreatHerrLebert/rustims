@@ -1017,7 +1017,7 @@ impl PyTimsDatasetDIA {
 
     /// Expand a batch of IM peaks along RT **within one DIA window_group**.
     /// Returns List[List[PyRtPeak1D]] aligned to the input order of IM peaks.
-    #[pyo3(signature = (window_group, im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=5.0))]
+    #[pyo3(signature = (window_group, im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=5.0, fallback_if_frames_lt=5, fallback_frac_width=0.5))]
     pub fn expand_rt_for_im_peaks_in_group(
         &self,
         py: Python<'_>,
@@ -1030,6 +1030,8 @@ impl PyTimsDatasetDIA {
         min_sep_frames: usize,
         min_width_frames: usize,
         ppm_per_bin: f32,
+        fallback_if_frames_lt: usize,
+        fallback_frac_width: f32,
     ) -> PyResult<Vec<Vec<Py<PyRtPeak1D>>>> {
         if im_peaks.is_empty() {
             return Ok(Vec::new());
@@ -1058,6 +1060,8 @@ impl PyTimsDatasetDIA {
             min_prom,
             min_sep_frames,
             min_width_frames,
+            fallback_if_frames_lt,
+            fallback_frac_width,
         };
         let ctx = rt_frames.ctx();
 
@@ -1075,7 +1079,7 @@ impl PyTimsDatasetDIA {
     }
 
     /// Expand IM peaks along RT in **precursor space (MS1)**.
-    #[pyo3(signature = (im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=10.0))]
+    #[pyo3(signature = (im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0, min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=10.0, fallback_if_frames_lt=5, fallback_frac_width=0.5))]
     pub fn expand_rt_for_im_peaks_in_precursor(
         &self,
         py: Python<'_>,
@@ -1087,6 +1091,8 @@ impl PyTimsDatasetDIA {
         min_sep_frames: usize,
         min_width_frames: usize,
         ppm_per_bin: f32,
+        fallback_if_frames_lt: usize,
+        fallback_frac_width: f32,
     ) -> PyResult<Vec<Vec<Py<PyRtPeak1D>>>> {
         if im_peaks.is_empty() {
             return Ok(Vec::new());
@@ -1113,6 +1119,8 @@ impl PyTimsDatasetDIA {
             min_prom,
             min_sep_frames,
             min_width_frames,
+            fallback_if_frames_lt,
+            fallback_frac_width,
         };
         let ctx = rt_frames.ctx();
 
