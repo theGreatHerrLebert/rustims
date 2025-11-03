@@ -1,6 +1,8 @@
 import sqlite3
 from typing import List
 
+from imspy.timstof.slice import TimsSlice
+
 from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 import pandas as pd
@@ -68,6 +70,18 @@ class RawPoints:
             "mz": mz, "rt": rt, "im": im, "scan": scan,
             "intensity": inten, "tof": tof, "frame": frame
         })
+
+    def to_tims_slice(self) -> TimsSlice:
+        mz, rt, im, scan, intensity, tof, frame = self.arrays()
+        return TimsSlice(
+            frame_id=frame.astype(np.int32),
+            scan=scan.astype(np.int32),
+            tof=tof.astype(np.int32),
+            retention_time=rt.astype(np.float64),
+            mobility=im.astype(np.float64),
+            mz=mz.astype(np.float64),
+            intensity=intensity.astype(np.float64),
+        )
 
     def __repr__(self):
         return f"RawPoints(n={self.n})"
