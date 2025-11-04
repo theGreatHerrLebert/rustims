@@ -140,7 +140,55 @@ class ClusterResult1D:
         rp = self._py.raw_points()
         return None if rp is None else RawPoints(rp)
 
+    # ---- new: convenience flags/counters for missingness diagnostics ----
+    @property
+    def has_rt_axis(self) -> bool: return self.rt_axis_sec() is not None
+    @property
+    def has_im_axis(self) -> bool: return self.im_axis_scans() is not None
+    @property
+    def has_mz_axis(self) -> bool: return self.mz_axis_da() is not None
+
+    @property
+    def frame_count(self) -> int:
+        fids = self.frame_ids_used()
+        return 0 if fids is None else int(fids.size)
+
+    @property
+    def raw_points_attached(self) -> bool:
+        return self.raw_points() is not None
+
+    @property
+    def raw_points_n(self) -> int:
+        rp = self.raw_points()
+        return 0 if rp is None else int(len(rp.intensity))
+
+    @property
+    def empty_rt(self) -> bool:
+        f = self.rt_fit
+        # empty if fit has no samples or essentially zero area
+        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
+
+    @property
+    def empty_im(self) -> bool:
+        f = self.im_fit
+        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
+
+    @property
+    def empty_mz(self) -> bool:
+        f = self.mz_fit
+        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
+
+    @property
+    def any_empty_dim(self) -> bool:
+        return self.empty_rt or self.empty_im or self.empty_mz
+
+    @property
+    def raw_empty(self) -> bool:
+        # strict: either no raw points attached or attached but zero points
+        return (not self.raw_points_attached) or (self.raw_points_n == 0)
+
     def to_dict(self) -> dict:
+        # base fields
         d = {
             "ms_level": self.ms_level,
             "window_group": self.window_group,
@@ -152,9 +200,27 @@ class ClusterResult1D:
             "im_hi": self.im_window[1],
             "mz_lo": self.mz_window[0],
             "mz_hi": self.mz_window[1],
-            "raw_sum": self.raw_sum,
-            "volume_proxy": self.volume_proxy,
+            "raw_sum": float(self.raw_sum),
+            "volume_proxy": float(self.volume_proxy),
+
+            # axes/meta
+            "frame_count": self.frame_count,
+            "has_rt_axis": self.has_rt_axis,
+            "has_im_axis": self.has_im_axis,
+            "has_mz_axis": self.has_mz_axis,
+
+            # raw-points diagnostics
+            "raw_points_attached": self.raw_points_attached,
+            "raw_points_n": self.raw_points_n,
+            "raw_empty": self.raw_empty,
+
+            # per-dimension emptiness from fits
+            "empty_rt": self.empty_rt,
+            "empty_im": self.empty_im,
+            "empty_mz": self.empty_mz,
+            "any_empty_dim": self.any_empty_dim,
         }
+        # fit summaries (prefixed via your Fit1D.to_dict)
         d.update(self.rt_fit.to_dict("rt"))
         d.update(self.im_fit.to_dict("im"))
         d.update(self.mz_fit.to_dict("mz"))
@@ -162,9 +228,6 @@ class ClusterResult1D:
 
     def to_dataframe_row(self) -> pd.DataFrame:
         return pd.DataFrame([self.to_dict()])
-
-    def __repr__(self):
-        return repr(self._py)
 
 def iter_window_batches(plan, batch_size: int):
     """Yield successive batches of window indices from the plan."""
