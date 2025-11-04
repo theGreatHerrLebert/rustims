@@ -43,6 +43,59 @@ pub struct PyRawPoints { pub inner: RawPoints }
 impl PyRawPoints {
     #[getter] fn len(&self) -> usize { self.inner.mz.len() }
 
+    /// True if no points were collected
+    #[getter]
+    fn is_empty(&self) -> bool { self.inner.mz.is_empty() }
+
+    /// Unique frame ids (sorted ascending)
+    fn unique_frames<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
+        let mut v = self.inner.frame.clone();
+        v.sort_unstable();
+        v.dedup();
+        Ok(PyArray1::from_vec_bound(py, v).unbind())
+    }
+
+    /// Unique scan indices (sorted ascending)
+    fn unique_scans<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
+        let mut v = self.inner.scan.clone();
+        v.sort_unstable();
+        v.dedup();
+        Ok(PyArray1::from_vec_bound(py, v).unbind())
+    }
+
+    /// (mz_min, mz_max)
+    fn mz_min_max(&self) -> Option<(f32, f32)> {
+        if self.inner.mz.is_empty() { return None; }
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for &x in &self.inner.mz { if x < lo { lo = x; } else if x > hi { hi = x; } }
+        Some((lo, hi))
+    }
+
+    /// (rt_min, rt_max)
+    fn rt_min_max(&self) -> Option<(f32, f32)> {
+        if self.inner.rt.is_empty() { return None; }
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for &x in &self.inner.rt { if x < lo { lo = x; } else if x > hi { hi = x; } }
+        Some((lo, hi))
+    }
+
+    /// (im_min, im_max)
+    fn im_min_max(&self) -> Option<(f32, f32)> {
+        if self.inner.im.is_empty() { return None; }
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for &x in &self.inner.im { if x < lo { lo = x; } else if x > hi { hi = x; } }
+        Some((lo, hi))
+    }
+
+    /// Sum and max of intensities
+    fn intensity_sum_max(&self) -> (f32, f32) {
+        let mut s = 0.0f32;
+        let mut m = 0.0f32;
+        for &y in &self.inner.intensity { s += y; if y > m { m = y; } }
+        (s, m)
+    }
+
+    /// Return numpy arrays (mz, rt, im, scan, intensity, tof, frame) — no copy on the Python side
     fn to_arrays<'py>(&self, py: Python<'py>)
                       -> PyResult<(Py<PyArray1<f32>>, Py<PyArray1<f32>>, Py<PyArray1<f32>>,
                                    Py<PyArray1<u32>>, Py<PyArray1<f32>>, Py<PyArray1<i32>>, Py<PyArray1<u32>>)>

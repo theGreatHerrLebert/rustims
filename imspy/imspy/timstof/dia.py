@@ -60,9 +60,42 @@ class RawPoints:
     def n(self) -> int:
         return self._py.len
 
+    @property
+    def is_empty(self) -> bool:
+        return bool(self._py.is_empty)
+
     def arrays(self):
         """Return numpy arrays (mz, rt, im, scan, intensity, tof, frame)."""
         return tuple(np.asarray(arr) for arr in self._py.to_arrays())
+
+    # ---- new diagnostics ----
+    @property
+    def unique_frames(self) -> np.ndarray:
+        return np.asarray(self._py.unique_frames(), dtype=np.uint32)
+
+    @property
+    def unique_scans(self) -> np.ndarray:
+        return np.asarray(self._py.unique_scans(), dtype=np.uint32)
+
+    @property
+    def mz_min_max(self) -> tuple[float, float] | None:
+        t = self._py.mz_min_max()
+        return None if t is None else (float(t[0]), float(t[1]))
+
+    @property
+    def rt_min_max(self) -> tuple[float, float] | None:
+        t = self._py.rt_min_max()
+        return None if t is None else (float(t[0]), float(t[1]))
+
+    @property
+    def im_min_max(self) -> tuple[float, float] | None:
+        t = self._py.im_min_max()
+        return None if t is None else (float(t[0]), float(t[1]))
+
+    @property
+    def intensity_sum_max(self) -> tuple[float, float]:
+        s, m = self._py.intensity_sum_max()
+        return float(s), float(m)
 
     def to_dataframe(self) -> pd.DataFrame:
         mz, rt, im, scan, inten, tof, frame = self.arrays()
@@ -82,6 +115,26 @@ class RawPoints:
             mz=mz.astype(np.float64),
             intensity=intensity.astype(np.float64),
         )
+
+    def to_dict(self) -> dict:
+        """Small summary for dataframe merging."""
+        (i_sum, i_max) = self.intensity_sum_max
+        uf = self.unique_frames
+        us = self.unique_scans
+        return {
+            "raw_n": self.n,
+            "raw_empty": self.is_empty,
+            "raw_intensity_sum": i_sum,
+            "raw_intensity_max": i_max,
+            "raw_n_frames": int(uf.size),
+            "raw_n_scans": int(us.size),
+            "raw_mz_min": None if self.mz_min_max is None else self.mz_min_max[0],
+            "raw_mz_max": None if self.mz_min_max is None else self.mz_min_max[1],
+            "raw_rt_min": None if self.rt_min_max is None else self.rt_min_max[0],
+            "raw_rt_max": None if self.rt_min_max is None else self.rt_min_max[1],
+            "raw_im_min": None if self.im_min_max is None else self.im_min_max[0],
+            "raw_im_max": None if self.im_min_max is None else self.im_min_max[1],
+        }
 
     def __repr__(self):
         return f"RawPoints(n={self.n})"
@@ -224,6 +277,24 @@ class ClusterResult1D:
         d.update(self.rt_fit.to_dict("rt"))
         d.update(self.im_fit.to_dict("im"))
         d.update(self.mz_fit.to_dict("mz"))
+
+        rp = self.raw_points()
+
+        if rp is not None:
+            d.update(rp.to_dict())
+        else:
+            d.update({
+                "raw_n": 0,
+                "raw_empty": True,
+                "raw_intensity_sum": 0.0,
+                "raw_intensity_max": 0.0,
+                "raw_n_frames": 0,
+                "raw_n_scans": 0,
+                "raw_mz_min": None, "raw_mz_max": None,
+                "raw_rt_min": None, "raw_rt_max": None,
+                "raw_im_min": None, "raw_im_max": None,
+            })
+
         return d
 
     def to_dataframe_row(self) -> pd.DataFrame:
