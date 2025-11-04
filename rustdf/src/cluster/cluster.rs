@@ -382,6 +382,15 @@ fn push_point(
     *seen += 1;
 }
 
+#[inline]
+fn cushion_hi_edge(scale: &crate::cluster::utility::MzScale, mz_hi_edge: f32) -> f32 {
+    // ~0.6× one-bin width at that edge, converted to ppm of mz_hi_edge.
+    // This prevents l==r collapses from FP rounding in upper_bound_in.
+    let cushion_ppm = 0.6 * scale.ppm_per_bin;
+    let eps = mz_hi_edge * cushion_ppm * 1e-6;
+    (mz_hi_edge + eps).min(scale.mz_max)
+}
+
 pub fn attach_raw_points_for_spec_1d(
     ds: &TimsDatasetDIA,
     rt_frames: &RtFrames,
@@ -391,16 +400,20 @@ pub fn attach_raw_points_for_spec_1d(
     max_points: Option<usize>,
 ) -> RawPoints {
     let scale = &*rt_frames.scale;
-    let mz_lo = scale.edges[final_bin_lo];
-    let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max);
 
+    // Map bins→Da and gently cushion the *upper* edge to avoid FP misses.
+    let mut mz_lo = scale.edges[final_bin_lo];
+    let mut mz_hi = cushion_hi_edge(scale, scale.edges[final_bin_hi + 1].min(scale.mz_max));
+
+    // Load the frames once
     let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
     let slice = ds.get_slice(frame_ids_local.clone(), 1);
 
+    // Precompute scan slices per frame
     let scan_slices: Vec<Vec<ScanSlice>> =
         slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
 
-    // count for capacity + stride
+    // --- Counting pass for capacity + stride ---
     let mut total = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz = &fr.ims_frame.mz;
@@ -411,6 +424,32 @@ pub fn attach_raw_points_for_spec_1d(
             total += r.saturating_sub(l);
         }
     }
+
+    // If we saw zero, try a conservative widen by ±1 bin and re-count.
+    if total == 0 {
+        let lo_idx = final_bin_lo.saturating_sub(1);
+        // edges.len() == num_bins + 1; clamp hi+2 to edges.len()-1
+        let hi_edge_idx = ((final_bin_hi + 2).min(scale.num_bins())).min(scale.edges.len() - 1);
+        let try_lo = scale.edges[lo_idx];
+        let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx].min(scale.mz_max));
+
+        let mut total2 = 0usize;
+        for (fi, fr) in slice.frames.iter().enumerate() {
+            let mz = &fr.ims_frame.mz;
+            for sl in &scan_slices[fi] {
+                if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
+                let l = lower_bound_in(mz, sl.start, sl.end, try_lo);
+                let r = upper_bound_in(mz, sl.start, sl.end, try_hi);
+                total2 += r.saturating_sub(l);
+            }
+        }
+        if total2 > 0 {
+            total = total2;
+            mz_lo = try_lo;
+            mz_hi = try_hi;
+        }
+    }
+
     let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
 
     let mut pts = RawPoints {
@@ -426,6 +465,7 @@ pub fn attach_raw_points_for_spec_1d(
 
     let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
 
+    // --- Extraction pass ---
     let mut seen = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz   = &fr.ims_frame.mz;
@@ -441,7 +481,7 @@ pub fn attach_raw_points_for_spec_1d(
             let s_abs = sl.scan;
             if s_abs < final_im_lo || s_abs > final_im_hi { continue; }
 
-            // two binary searches on the (sorted) per-scan subarray
+            // Two binary searches on the (sorted) per-scan subarray
             let mut l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
             let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
             if r > len_all { r = len_all; }
@@ -466,8 +506,10 @@ pub fn attach_raw_points_for_spec_1d_threads(
     num_threads: usize,
 ) -> RawPoints {
     let scale = &*rt_frames.scale;
-    let mz_lo = scale.edges[final_bin_lo];
-    let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max);
+
+    // Cushioned high edge
+    let mut mz_lo = scale.edges[final_bin_lo];
+    let mut mz_hi = cushion_hi_edge(scale, scale.edges[final_bin_hi + 1].min(scale.mz_max));
 
     let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
     let slice = ds.get_slice(frame_ids_local.clone(), num_threads.max(1));
@@ -475,6 +517,7 @@ pub fn attach_raw_points_for_spec_1d_threads(
     let scan_slices: Vec<Vec<ScanSlice>> =
         slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
 
+    // Count
     let mut total = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz = &fr.ims_frame.mz;
@@ -485,6 +528,31 @@ pub fn attach_raw_points_for_spec_1d_threads(
             total += r.saturating_sub(l);
         }
     }
+
+    // Last-chance widen if needed
+    if total == 0 {
+        let lo_idx = final_bin_lo.saturating_sub(1);
+        let hi_edge_idx = ((final_bin_hi + 2).min(scale.num_bins())).min(scale.edges.len() - 1);
+        let try_lo = scale.edges[lo_idx];
+        let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx].min(scale.mz_max));
+
+        let mut total2 = 0usize;
+        for (fi, fr) in slice.frames.iter().enumerate() {
+            let mz = &fr.ims_frame.mz;
+            for sl in &scan_slices[fi] {
+                if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
+                let l = lower_bound_in(mz, sl.start, sl.end, try_lo);
+                let r = upper_bound_in(mz, sl.start, sl.end, try_hi);
+                total2 += r.saturating_sub(l);
+            }
+        }
+        if total2 > 0 {
+            total = total2;
+            mz_lo = try_lo;
+            mz_hi = try_hi;
+        }
+    }
+
     let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
 
     let mut pts = RawPoints {
@@ -500,6 +568,7 @@ pub fn attach_raw_points_for_spec_1d_threads(
 
     let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
 
+    // Extract
     let mut seen = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz   = &fr.ims_frame.mz;
