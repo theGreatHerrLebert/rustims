@@ -214,16 +214,21 @@ fn owned_copy_im(p: &ImPeak1D) -> ImPeak1D {
         frame_id_bounds: p.frame_id_bounds,
         window_group: p.window_group,
 
+        // scan geometry
         scan: p.scan,
+        left: p.left,
+        right: p.right,
+        scan_abs: p.scan_abs,       // NEW
+        left_abs: p.left_abs,       // NEW
+        right_abs: p.right_abs,     // NEW
+        left_x: p.left_x,
+        right_x: p.right_x,
+        width_scans: p.width_scans,
+
         mobility: p.mobility,
         apex_smoothed: p.apex_smoothed,
         apex_raw: p.apex_raw,
         prominence: p.prominence,
-        left: p.left,
-        right: p.right,
-        left_x: p.left_x,
-        right_x: p.right_x,
-        width_scans: p.width_scans,
         area_raw: p.area_raw,
         subscan: p.subscan,
         id: p.id,
@@ -305,6 +310,9 @@ impl PyImPeak1D {
     #[getter] fn width_scans(&self) -> usize { self.inner.width_scans }
     #[getter] fn area_raw(&self) -> f32 { self.inner.area_raw }
     #[getter] fn subscan(&self) -> f32 { self.inner.subscan }
+    #[getter] fn scan_abs(&self) -> usize { self.inner.scan_abs }
+    #[getter] fn left_abs(&self) -> usize { self.inner.left_abs }
+    #[getter] fn right_abs(&self) -> usize { self.inner.right_abs }
 }
 
 #[pyclass]
@@ -375,12 +383,13 @@ impl PyMzScanWindowGrid {
     }
     /// Pick 1D IM peaks in each m/z row of this window.
     /// Returns a nested list: List[List[PyImPeak1D]] with outer index = row (m/z bin).
+    // ── REPLACE the entire pick_im_peaks method in impl PyMzScanWindowGrid with this ──
     #[pyo3(signature = (
-        min_prom=50.0,
-        min_distance_scans=2,
-        min_width_scans=2,
-        use_mobility=false
-    ))]
+    min_prom=50.0,
+    min_distance_scans=2,
+    min_width_scans=2,
+    use_mobility=false
+))]
     pub fn pick_im_peaks<'py>(
         &self,
         py: Python<'py>,
@@ -389,38 +398,43 @@ impl PyMzScanWindowGrid {
         min_width_scans: usize,
         use_mobility: bool,
     ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
-        let rows = self.inner.rows;
-        let cols = self.inner.cols;
+    let rows = self.inner.rows;
+    let cols = self.inner.cols;
 
-        let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
+    let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
 
-        let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|r| {
-            let mut y_s = Vec::with_capacity(cols);
-            let mut y_r = Vec::with_capacity(cols);
-            for s in 0..cols {
-                let val_s = self.inner.data[s * rows + r];
-                y_s.push(val_s);
-                let val_r = self.inner.data_raw
-                    .as_ref()
-                    .map(|dr| dr[s * rows + r])
-                    .unwrap_or(val_s);
-                y_r.push(val_r);
-            }
+    let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|r| {
+    let mut y_s = Vec::with_capacity(cols);
+    let mut y_r = Vec::with_capacity(cols);
+    for s in 0..cols {
+    let val_s = self.inner.data[s * rows + r];
+    y_s.push(val_s);
+    let val_r = self.inner
+    .data_raw
+    .as_ref()
+    .map(|dr| dr[s * rows + r])
+    .unwrap_or(val_s);
+    y_r.push(val_r);
+    }
 
-            find_im_peaks_row_nocontext(
-                &y_s, &y_r,
-                r,                      // mz_row
-                self.inner.mz_center_for_row(r),
-                self.inner.mz_bounds_for_row(r),
-                self.inner.rt_range_frames,
-                self.inner.frame_id_bounds,
-                self.inner.window_group,
-                mob_fn,
-                min_prom, min_distance_scans, min_width_scans
-            )
-        }).collect();
+    find_im_peaks_row_nocontext(
+    &y_s,
+    &y_r,
+    r, // mz_row
+    self.inner.mz_center_for_row(r),
+    self.inner.mz_bounds_for_row(r),
+    self.inner.rt_range_frames,
+    self.inner.frame_id_bounds,
+    self.inner.window_group,
+    &self.inner.scans,            // <-- NEW ARG: absolute scan axis
+    mob_fn,
+    min_prom,
+    min_distance_scans,
+    min_width_scans,
+    )
+    }).collect();
 
-        impeaks_to_py_nested(py, rows_rs)
+    impeaks_to_py_nested(py, rows_rs)
     }
 }
 
@@ -1513,6 +1527,7 @@ fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Ve
     }).collect())
 }
 
+// ── REPLACE the helper pick_im_peaks_rows_from_grid with this ──
 #[inline]
 fn pick_im_peaks_rows_from_grid(
     grid: &MzScanWindowGrid,
@@ -1521,7 +1536,7 @@ fn pick_im_peaks_rows_from_grid(
     min_width_scans: usize,
     use_mobility: bool,
 ) -> Vec<Vec<ImPeak1D>> {
-    use rustdf::cluster::utility::{MobilityFn};
+    use rustdf::cluster::utility::MobilityFn;
 
     let rows = grid.rows;
     let cols = grid.cols;
@@ -1542,14 +1557,19 @@ fn pick_im_peaks_rows_from_grid(
         let mz_bounds = grid.mz_bounds_for_row(r);
 
         find_im_peaks_row(
-            &y_s, &y_r,
+            &y_s,
+            &y_r,
             r,
-            mz_center, mz_bounds,
+            mz_center,
+            mz_bounds,
             grid.rt_range_frames,
             grid.frame_id_bounds,
             grid.window_group,
             mob_fn,
-            min_prom, min_distance_scans, min_width_scans
+            min_prom,
+            min_distance_scans,   // <-- distance first
+            min_width_scans,      // <-- then width
+            &grid.scans,          // <-- scan_axis LAST
         )
     }).collect()
 }
@@ -1697,6 +1717,7 @@ fn find_im_peaks_row_nocontext(
     rt_bounds: (usize, usize),
     frame_id_bounds: (u32, u32),
     window_group: Option<u32>,
+    scans_axis: &[usize],            // NEW: absolute scan numbers (len == y_* len)
     mobility_of: MobilityFn,
     min_prom: f32,
     min_distance_scans: usize,
@@ -1770,6 +1791,10 @@ fn find_im_peaks_row_nocontext(
         let right_idx = right_x.ceil().clamp(0.0, (n-1) as f32) as usize;
         let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n-1) as f32));
 
+        let scan_abs  = *scans_axis.get(i).unwrap_or(&i);
+        let left_abs  = *scans_axis.get(left_idx).unwrap_or(&left_idx);
+        let right_abs = *scans_axis.get(right_idx).unwrap_or(&right_idx);
+
         let mobility = mobility_of.map(|f| f(i));
 
         let mut peak = ImPeak1D{
@@ -1781,6 +1806,9 @@ fn find_im_peaks_row_nocontext(
             window_group,
 
             scan: i,
+            scan_abs,                       // NEW
+            left_abs,                       // NEW
+            right_abs,
             mobility,
             apex_smoothed: apex,
             apex_raw: y_raw[i],

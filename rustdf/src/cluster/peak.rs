@@ -88,15 +88,20 @@ pub struct ImPeak1D {
     pub window_group: Option<u32>,     // DIA group provenance
 
     pub scan: usize,
+    pub left: usize,
+    pub right: usize,
+
+    pub scan_abs: usize,
+    pub left_abs: usize,
+    pub right_abs: usize,
+
     pub mobility: Option<f32>,
     pub apex_smoothed: f32,
     pub apex_raw: f32,
     pub prominence: f32,
-    pub left: usize,
-    pub right: usize,
     pub left_x: f32,
     pub right_x: f32,
-    pub width_scans: usize,
+    pub width_scans: usize,            // interpreted as ABSOLUTE width
     pub area_raw: f32,
     pub subscan: f32,
     pub id: PeakId,
@@ -107,7 +112,7 @@ pub struct FrameBinView {
     pub _frame_id: u32,
     pub unique_bins: Vec<usize>,
     pub offsets: Vec<usize>,
-    pub scan_idx: Vec<u32>,
+    pub scan_idx: Vec<u32>,            // ABSOLUTE scan indices
     pub intensity: Vec<f32>,
 }
 
@@ -197,7 +202,8 @@ fn jaccard((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
 fn compatible(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
     if !same_row_or_close_im(p, q, sp.max_mz_row_delta) { return false; }
     if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
-    if (p.scan as isize - q.scan as isize).abs() as usize > sp.max_scan_delta { return false; }
+    // Use ABSOLUTE scan centers for cross-window compatibility
+    if (p.scan_abs as isize - q.scan_abs as isize).abs() as usize > sp.max_scan_delta { return false; }
     let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
     if ov < sp.min_overlap_frames { return false; }
     if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min { return false; }
@@ -213,13 +219,18 @@ fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
     // scan / subscan (weighted by apex_smoothed)
     let w0 = a.apex_smoothed.max(1e-6);
     let w1 = b.apex_smoothed.max(1e-6);
-    a.subscan = (a.subscan*w0 + b.subscan*w1) / (w0 + w1);
-    a.scan = ((a.scan as f32*w0 + b.scan as f32*w1) / (w0+w1)).round() as usize;
+    a.subscan  = (a.subscan*w0 + b.subscan*w1) / (w0 + w1);
+    a.scan     = ((a.scan as f32*w0 + b.scan as f32*w1) / (w0+w1)).round() as usize;
+    a.scan_abs = ((a.scan_abs as f32*w0 + b.scan_abs as f32*w1) / (w0+w1)).round() as usize;
 
-    // bounds union
-    a.left  = a.left.min(b.left);
-    a.right = a.right.max(b.right);
-    a.width_scans = a.right.saturating_sub(a.left).saturating_add(1);
+    // bounds union (both local and absolute maintained)
+    a.left      = a.left.min(b.left);
+    a.right     = a.right.max(b.right);
+    a.left_abs  = a.left_abs.min(b.left_abs);
+    a.right_abs = a.right_abs.max(b.right_abs);
+
+    // width is defined on the ABSOLUTE axis
+    a.width_scans = a.right_abs.saturating_sub(a.left_abs).saturating_add(1);
 
     // intensities / stats
     a.apex_raw      = a.apex_raw.max(b.apex_raw);
@@ -248,8 +259,8 @@ pub fn stitch_im_peaks_across_windows(mut peaks: Vec<ImPeak1D>, sp: StitchParams
 
     // parallel stitch per bucket
     buckets.into_par_iter().flat_map(|((_wg, _row), mut v)| {
-        // sort by scan, then by rt start (helps the sweep)
-        v.sort_unstable_by_key(|p| (p.scan, p.rt_bounds.0));
+        // sort by ABSOLUTE scan center, then by rt start (helps the sweep)
+        v.sort_unstable_by_key(|p| (p.scan_abs, p.rt_bounds.0));
 
         let mut out: Vec<ImPeak1D> = Vec::with_capacity(v.len());
         for p in v.into_iter() {
@@ -347,7 +358,7 @@ fn sum_frame_bins_scans(
         // entries for this bin: offsets[i]..offsets[i+1]
         let lo = fbv.offsets[i];
         let hi = fbv.offsets[i + 1];
-        // scan filter
+        // scan filter (ABSOLUTE axis)
         let scans = &fbv.scan_idx[lo..hi];
         let ints  = &fbv.intensity[lo..hi];
         // linear scan; if this becomes hot, keep scans sorted and do two lower_bounds
@@ -360,7 +371,7 @@ fn sum_frame_bins_scans(
     acc
 }
 
-/// Returns (rt_times_sec, rt_trace_intensity)
+/// Returns an RT trace for a single IM peak using bin padding around a row
 pub fn rt_trace_for_im_peak(
     frames: &[FrameBinView],        // RT-sorted, same group
     mz_row: usize,
@@ -524,7 +535,7 @@ pub fn expand_im_peak_along_rt(
 ) -> Vec<RtPeak1D> {
     // Build RT trace by physical mz bounds mapped to this RT scale
     let trace_raw = rt_trace_for_im_peak_by_bounds(
-        frames_sorted, rt_scale, im_peak.mz_bounds, p.bin_pad, im_peak.left, im_peak.right,
+        frames_sorted, rt_scale, im_peak.mz_bounds, p.bin_pad, im_peak.left_abs, im_peak.right_abs,
     );
     let has_signal = trace_raw.iter().any(|&x| x.is_finite() && x > 0.0);
     if trace_raw.is_empty() || !has_signal {

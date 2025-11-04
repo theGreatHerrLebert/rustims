@@ -138,6 +138,7 @@ pub fn find_im_peaks_row(
     min_prom: f32,
     min_distance_scans: usize,
     min_width_scans: usize,
+    scan_axis: &[usize],
 ) -> Vec<ImPeak1D> {
     let n = y_smoothed.len();
     if n < 3 { return Vec::new(); }
@@ -212,7 +213,11 @@ pub fn find_im_peaks_row(
 
         let mobility = mobility_of.map(|f| f(i));
 
-        let mut peak = ImPeak1D{
+        let scan_abs  = scan_axis[i];
+        let left_abs  = scan_axis[left_idx.min(scan_axis.len()-1)];
+        let right_abs = scan_axis[right_idx.min(scan_axis.len()-1)];
+
+        let mut peak = ImPeak1D {
             mz_row,
             mz_center,
             mz_bounds,
@@ -232,6 +237,9 @@ pub fn find_im_peaks_row(
             area_raw: area,
             subscan: sub,
             id: 0, // to be filled later
+            scan_abs,
+            left_abs,
+            right_abs,
         };
 
         peak.id = im_peak_id(&peak);

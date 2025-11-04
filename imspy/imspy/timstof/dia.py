@@ -395,7 +395,7 @@ class ClusterResult1D:
     @property
     def empty_rt(self) -> bool:
         f = self.rt_fit
-        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
+        return (f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
 
     @property
     def empty_im(self) -> bool:
@@ -845,6 +845,15 @@ class ImPeak1D(RustWrapperObject):
     def area_raw(self) -> float: return self.__py_ptr.area_raw
     @property
     def subscan(self) -> float: return self.__py_ptr.subscan
+    @property
+    def scan_abs(self) -> int:
+        return self.__py_ptr.scan_abs
+    @property
+    def left_abs(self) -> int:
+        return self.__py_ptr.left_abs
+    @property
+    def right_abs(self) -> int:
+        return self.__py_ptr.right_abs
 
     def get_py_ptr(self):
         return self.__py_ptr
@@ -863,12 +872,14 @@ class ImPeak1D(RustWrapperObject):
             "apex_smoothed={apx:.1f}, prominence={prom:.1f}, width_scans={w}, area_raw={area:.1f}, "
             "left={l}, right={r}, left_x={lx:.3f}, right_x={rx:.3f}, subscan={sub:.3f}, "
             "rt_bounds=({rtl},{rth}), frame_id_bounds=({fl},{fh}), "
+            "scan_abs={scan_abs}, left_abs={left_abs}, right_abs={right_abs}, "
             "window_group={wg})"
         ).format(
             mz_row=self.mz_row, scan=self.scan, mob=self.mobility,
             apx=self.apex_smoothed, prom=self.prominence, w=self.width_scans, area=self.area_raw,
             l=self.left, r=self.right, lx=self.left_x, rx=self.right_x, sub=self.subscan,
             rtl=rt_lo, rth=rt_hi, fl=fid_lo, fh=fid_hi,
+            scan_abs=self.scan_abs, left_abs=self.left_abs, right_abs=self.right_abs,
             wg=self.window_group,
         )
 
