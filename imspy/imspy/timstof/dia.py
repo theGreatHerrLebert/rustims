@@ -1107,6 +1107,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             # pairing + threads
             require_rt_overlap: bool = True,
             num_threads: int = 0,
+            min_im_span: int = 10,
     ):
         """Cluster in MS2 space for one DIA window group."""
         if self.use_bruker_sdk:
@@ -1126,6 +1127,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_axes),
             bool(attach_points), attach_max_points,
             bool(require_rt_overlap), int(num_threads),
+            int(min_im_span)
         )
         return [ClusterResult1D(r) for r in py_results]
 
@@ -1157,6 +1159,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             # pairing + threads
             require_rt_overlap: bool = True,
             num_threads: int = 0,
+            min_im_span: int = 10,
     ):
         """Cluster in MS1 precursor space."""
         if self.use_bruker_sdk:
@@ -1175,6 +1178,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_axes),
             bool(attach_points), attach_max_points,
             bool(require_rt_overlap), int(num_threads),
+            int(min_im_span)
         )
         return [ClusterResult1D(r) for r in py_results]
 

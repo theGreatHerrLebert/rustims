@@ -1347,7 +1347,8 @@ impl PyTimsDatasetDIA {
         attach_axes=true,
         attach_points=false, attach_max_points=None,
         // matching constraint + threads
-        require_rt_overlap=true, num_threads=0
+        require_rt_overlap=true, num_threads=0,
+        min_im_span=12,
     ))]
     pub fn clusters_for_group(
         &self,
@@ -1364,6 +1365,7 @@ impl PyTimsDatasetDIA {
         attach_axes: bool,
         attach_points: bool, attach_max_points: Option<usize>,
         require_rt_overlap: bool, num_threads: usize,
+        min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
 
         // materialize IM peaks (owned copies)
@@ -1388,6 +1390,7 @@ impl PyTimsDatasetDIA {
         let build_opts = BuildSpecOpts {
             extra_rt_pad, extra_im_pad, mz_ppm_pad, mz_hist_bins,
             ms_level: 2, // will also be stamped inside clusters_for_group
+            min_im_span,
         };
         let eval_opts = Eval1DOpts {
             refine_mz_once,
@@ -1433,7 +1436,8 @@ impl PyTimsDatasetDIA {
         attach_axes=true,
         attach_points=false, attach_max_points=None,
         // matching constraint + threads
-        require_rt_overlap=true, num_threads=0
+        require_rt_overlap=true, num_threads=0,
+        min_im_span=12,
     ))]
 
     pub fn clusters_for_precursor(
@@ -1450,6 +1454,7 @@ impl PyTimsDatasetDIA {
         attach_axes: bool,
         attach_points: bool, attach_max_points: Option<usize>,
         require_rt_overlap: bool, num_threads: usize,
+        min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
 
         // materialize IM peaks
@@ -1471,6 +1476,7 @@ impl PyTimsDatasetDIA {
         let build_opts = BuildSpecOpts {
             extra_rt_pad, extra_im_pad, mz_ppm_pad, mz_hist_bins,
             ms_level: 1, // will also be stamped inside clusters_for_precursor
+            min_im_span,
         };
         let eval_opts = Eval1DOpts {
             refine_mz_once,

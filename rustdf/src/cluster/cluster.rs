@@ -20,7 +20,7 @@ pub struct RawPoints {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct ScanSlice { _scan: usize, start: usize, end: usize }
+struct ScanSlice { scan: usize, start: usize, end: usize }
 
 fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
     let scv = &fr.scan;
@@ -31,14 +31,14 @@ fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
     for i in 1..scv.len() {
         if scv[i] != s_cur {
             if s_cur >= 0 {
-                out.push(ScanSlice { _scan: s_cur as usize, start: i_start, end: i });
+                out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: i });
             }
             s_cur = scv[i];
             i_start = i;
         }
     }
     if s_cur >= 0 {
-        out.push(ScanSlice { _scan: s_cur as usize, start: i_start, end: scv.len() });
+        out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: scv.len() });
     }
     out
 }
@@ -108,6 +108,8 @@ pub struct BuildSpecOpts {
     pub mz_ppm_pad: f32,
     pub mz_hist_bins: usize,
     pub ms_level: u8,
+    // NEW: ensure we never end up with a 1-scan window
+    pub min_im_span: usize,   // e.g., 10
 }
 
 impl BuildSpecOpts {
@@ -116,6 +118,56 @@ impl BuildSpecOpts {
         let mut o = self;
         o.ms_level = level;
         o
+    }
+}
+
+#[inline]
+fn widen_scan_window(lo: usize, hi: usize, want_span: usize, center: usize) -> (usize, usize) {
+    let cur_span = hi.saturating_sub(lo).saturating_add(1);
+    if cur_span >= want_span { return (lo, hi); }
+    let half = want_span / 2;
+    let new_lo = center.saturating_sub(half);
+    let new_hi = center.saturating_add(want_span - 1 - half);
+    (new_lo.min(lo), new_hi.max(hi))  // keep original covered, but ensure ≥ want_span overall
+}
+
+pub fn make_spec_from_pair(
+    im: &ImPeak1D,
+    rt: &RtPeak1D,
+    rt_frames: &RtFrames,
+    opts: &BuildSpecOpts,
+) -> ClusterSpec1D {
+    let frames_len = rt_frames.frames.len();
+
+    // --- RT clamp as before
+    let (mut rt_lo, mut rt_hi) = rt.rt_bounds_frames;
+    rt_lo = rt_lo.saturating_sub(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
+    rt_hi = rt_hi.saturating_add(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
+    if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
+
+    // --- IM (scan) window: start from IM peak bounds + padding ...
+    let mut im_lo = im.left.saturating_sub(opts.extra_im_pad);
+    let mut im_hi = im.right.saturating_add(opts.extra_im_pad);
+    if im_lo > im_hi { std::mem::swap(&mut im_lo, &mut im_hi); }
+
+    // ... then hard-enforce a minimum span around the IM apex scan
+    let want = opts.min_im_span.max(im.width_scans.max(2)); // at least peak width, minimum 2
+    let (wo_lo, wo_hi) = widen_scan_window(im_lo, im_hi, want, im.scan);
+    im_lo = wo_lo;
+    im_hi = wo_hi;
+
+    // m/z window identical
+    let mz0 = im.mz_bounds;
+    let mz_win = ppm_expand(mz0, opts.mz_ppm_pad, im.mz_center);
+
+    ClusterSpec1D {
+        rt_lo, rt_hi, im_lo, im_hi,
+        mz_win,
+        mz_hist_bins: opts.mz_hist_bins.max(16),
+        window_group: im.window_group,
+        parent_im_id: Some(im.id),
+        parent_rt_id: Some(rt.id),
+        ms_level: opts.ms_level,
     }
 }
 
@@ -141,36 +193,6 @@ fn ppm_expand((lo, hi):(f32,f32), ppm: f32, center_hint: f32) -> (f32,f32) {
     if ppm <= 0.0 { return (lo, hi); }
     let d = center_hint.abs() * ppm * 1e-6;
     (lo - d, hi + d)
-}
-
-pub fn make_spec_from_pair(
-    im: &ImPeak1D,
-    rt: &RtPeak1D,
-    rt_frames: &RtFrames,          // to clamp RT to local domain
-    opts: &BuildSpecOpts,
-) -> ClusterSpec1D {
-    let frames_len = rt_frames.frames.len();
-    let (mut rt_lo, mut rt_hi) = rt.rt_bounds_frames;
-    rt_lo = rt_lo.saturating_sub(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
-    rt_hi = rt_hi.saturating_add(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
-    if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
-
-    let mut im_lo = im.left.saturating_sub(opts.extra_im_pad);
-    let mut im_hi = im.right.saturating_add(opts.extra_im_pad);
-    if im_lo > im_hi { std::mem::swap(&mut im_lo, &mut im_hi); }
-
-    let mz0 = im.mz_bounds; // already physical Da
-    let mz_win = ppm_expand(mz0, opts.mz_ppm_pad, im.mz_center);
-
-    ClusterSpec1D {
-        rt_lo, rt_hi, im_lo, im_hi,
-        mz_win,
-        mz_hist_bins: opts.mz_hist_bins.max(16),
-        window_group: im.window_group,
-        parent_im_id: Some(im.id),
-        parent_rt_id: Some(rt.id),
-        ms_level: opts.ms_level,
-    }
 }
 
 pub fn evaluate_spec_1d(
@@ -346,164 +368,96 @@ fn rt_bounds_from_im(im: &ImPeak1D, n_frames: usize) -> (usize, usize) {
     if lo > hi { std::mem::swap(&mut lo, &mut hi); }
     (lo, hi)
 }
-
-/// Optional predicate knobs so we can byte-for-byte mirror `filter_ranged`.
-#[derive(Clone, Copy, Debug)]
-pub struct MirrorFilter {
-    pub use_inv_mob: bool,            // set true if you want to constrain inv. mobility
-    pub inv_mob_min: f64,
-    pub inv_mob_max: f64,
-    pub intensity_min: f64,           // usually 0.0
-    pub intensity_max: f64,           // usually f64::INFINITY
-}
-
-impl Default for MirrorFilter {
-    fn default() -> Self {
-        Self {
-            use_inv_mob: false,
-            inv_mob_min: 0.0,
-            inv_mob_max: f64::INFINITY,
-            intensity_min: 0.0,
-            intensity_max: f64::INFINITY,
-        }
+#[inline]
+fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start; let mut hi = end; let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] < xf { lo = mid + 1; } else { hi = mid; }
     }
+    lo
+}
+#[inline]
+fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start; let mut hi = end; let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] <= xf { lo = mid + 1; } else { hi = mid; }
+    }
+    lo
+}
+#[inline]
+fn cushion_hi_edge(scale: &crate::cluster::utility::MzScale, mz_hi_edge: f32) -> f32 {
+    let cushion_ppm = 0.6 * scale.ppm_per_bin;
+    let eps = mz_hi_edge * cushion_ppm * 1e-6;
+    (mz_hi_edge + eps).min(scale.mz_max)
 }
 
 #[inline]
-fn mirror_pass_count(
-    mz: &[f64], it: &[f64], scan: &[i32], mob: &[f64], tofs: &[i32],
-    start: usize, end: usize,
-    mz_lo: f64, mz_hi: f64,
-    scan_lo: i32, scan_hi: i32,
-    mf: MirrorFilter,
-) -> usize {
-    let end = end.min(mz.len().min(it.len()).min(scan.len()).min(mob.len()).min(tofs.len()));
-    let mut n = 0usize;
-    if mf.use_inv_mob {
-        for i in start..end {
-            // Inclusive bounds everywhere — same as filter_ranged
-            if mz[i] >= mz_lo && mz[i] <= mz_hi
-                && scan[i] >= scan_lo && scan[i] <= scan_hi
-                && mob[i]  >= mf.inv_mob_min && mob[i]  <= mf.inv_mob_max
-                && it[i]   >= mf.intensity_min && it[i] <= mf.intensity_max
-            {
-                n += 1;
-            }
-        }
-    } else {
-        for i in start..end {
-            if mz[i] >= mz_lo && mz[i] <= mz_hi
-                && scan[i] >= scan_lo && scan[i] <= scan_hi
-                && it[i]   >= mf.intensity_min && it[i] <= mf.intensity_max
-            {
-                n += 1;
-            }
-        }
-    }
-    n
+fn cushion_lo_edge(scale: &crate::cluster::utility::MzScale, mz_lo_edge: f32) -> f32 {
+    let cushion_ppm = 0.6 * scale.ppm_per_bin;
+    let eps = mz_lo_edge * cushion_ppm * 1e-6;
+    (mz_lo_edge - eps).max(scale.mz_min)
 }
 
-#[inline]
-fn mirror_pass_push(
-    mz: &[f64], it: &[f64], scan: &[i32], mob: &[f64], tofs: &[i32],
-    start: usize, end: usize,
-    mz_lo: f64, mz_hi: f64,
-    scan_lo: i32, scan_hi: i32,
-    mf: MirrorFilter,
-    rt_val: f32, frame_id: u32,
-    seen: &mut usize, stride: usize, out: &mut RawPoints,
-) {
-    let end = end.min(mz.len().min(it.len()).min(scan.len()).min(mob.len()).min(tofs.len()));
-    if mf.use_inv_mob {
-        for i in start..end {
-            if mz[i] >= mz_lo && mz[i] <= mz_hi
-                && scan[i] >= scan_lo && scan[i] <= scan_hi
-                && mob[i]  >= mf.inv_mob_min && mob[i]  <= mf.inv_mob_max
-                && it[i]   >= mf.intensity_min && it[i] <= mf.intensity_max
-            {
-                if stride == 1 || (*seen % stride == 0) {
-                    out.mz.push(mz[i] as f32);
-                    out.rt.push(rt_val);
-                    out.im.push(mob[i] as f32);
-                    out.scan.push(scan[i] as u32);
-                    out.intensity.push(it[i] as f32);
-                    out.frame.push(frame_id);
-                    out.tof.push(tofs[i]);
-                }
-                *seen += 1;
-            }
-        }
-    } else {
-        for i in start..end {
-            if mz[i] >= mz_lo && mz[i] <= mz_hi
-                && scan[i] >= scan_lo && scan[i] <= scan_hi
-                && it[i]   >= mf.intensity_min && it[i] <= mf.intensity_max
-            {
-                if stride == 1 || (*seen % stride == 0) {
-                    out.mz.push(mz[i] as f32);
-                    out.rt.push(rt_val);
-                    out.im.push(mob[i] as f32);
-                    out.scan.push(scan[i] as u32);
-                    out.intensity.push(it[i] as f32);
-                    out.frame.push(frame_id);
-                    out.tof.push(tofs[i]);
-                }
-                *seen += 1;
-            }
-        }
-    }
-}
-
-/// EXACT mirror of `filter_ranged` semantics: linear scan within each per-scan block.
-/// No binary search; all comparisons inclusive (>=, <=).
 pub fn attach_raw_points_for_spec_1d(
     ds: &TimsDatasetDIA,
     rt_frames: &RtFrames,
-    final_bin_lo: usize, final_bin_hi: usize,     // map to Da via scale.edges
-    final_im_lo: usize, final_im_hi: usize,       // inclusive scan bounds
-    final_rt_lo: usize, final_rt_hi: usize,       // inclusive RT indices into rt_frames
+    final_bin_lo: usize, final_bin_hi: usize,
+    final_im_lo: usize, final_im_hi: usize,
+    final_rt_lo: usize, final_rt_hi: usize,
     max_points: Option<usize>,
 ) -> RawPoints {
     let scale = rt_frames.scale.as_ref();
-    // Use *exactly* the Da interval you previously passed to Python.
-    // Both ends are treated inclusive (same as handle.filter_ranged).
-    let mz_lo = scale.edges[final_bin_lo] as f64;
-    let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max) as f64;
 
-    let scan_lo = final_im_lo as i32;
-    let scan_hi = final_im_hi as i32;
+    // cushioned edges (helps edge-inclusion mismatches)
+    let mut mz_lo = cushion_lo_edge(scale, scale.edges[final_bin_lo]);
+    let mut mz_hi = cushion_hi_edge(scale, scale.edges[final_bin_hi + 1].min(scale.mz_max));
 
-    // If you want inv.mob/intensity constraints, tweak here:
-    let mf = MirrorFilter::default(); // identical to your handle unless you enable fields
-
+    // prepare slice & per-scan blocks
     let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
     let slice = ds.get_slice(frame_ids_local.clone(), 1);
-
-    // Pre-compute contiguous [start,end) ranges per scan value for speed
     let scan_slices: Vec<Vec<ScanSlice>> =
         slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
 
-    // --- counting pass ---
+    // count with binary search within each scan block
     let mut total = 0usize;
-    for (fi, fr) in slice.frames.iter().enumerate() {
-        let mz   = &fr.ims_frame.mz;
-        let it   = &fr.ims_frame.intensity;
-        let sc   = &fr.scan;
-        let mob  = &fr.ims_frame.mobility;
-        let tofs = &fr.tof;
+    let mut w_im_lo = final_im_lo;
+    let mut w_im_hi = final_im_hi;
 
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let mz = &fr.ims_frame.mz;
         for sl in &scan_slices[fi] {
-            // Only loop the contiguous block for the scan; still check inclusive bounds
-            total += mirror_pass_count(
-                mz, it, sc, mob, tofs,
-                sl.start, sl.end,
-                mz_lo, mz_hi, scan_lo, scan_hi, mf
-            );
+            if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
+            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            total += r.saturating_sub(l);
         }
     }
+
+    // light retry: widen ±1 bin, ±1 scan when zero
+    if total == 0 {
+        let lo_idx = final_bin_lo.saturating_sub(1);
+        let hi_edge_idx = ((final_bin_hi + 2).min(scale.num_bins())).min(scale.edges.len() - 1);
+        mz_lo = cushion_lo_edge(scale, scale.edges[lo_idx]);
+        mz_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx].min(scale.mz_max));
+        w_im_lo = final_im_lo.saturating_sub(1);
+        w_im_hi = final_im_hi.saturating_add(1);
+
+        for (fi, fr) in slice.frames.iter().enumerate() {
+            let mz = &fr.ims_frame.mz;
+            for sl in &scan_slices[fi] {
+                if sl.scan < w_im_lo || sl.scan > w_im_hi { continue; }
+                let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+                let r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+                total += r.saturating_sub(l);
+            }
+        }
+    }
+
     let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
 
-    let mut out = RawPoints {
+    let mut pts = RawPoints {
         mz: Vec::with_capacity(total/stride + 8),
         rt: Vec::with_capacity(total/stride + 8),
         im: Vec::with_capacity(total/stride + 8),
@@ -512,32 +466,48 @@ pub fn attach_raw_points_for_spec_1d(
         tof: Vec::with_capacity(total/stride + 8),
         frame: Vec::with_capacity(total/stride + 8),
     };
-    if total == 0 { return out; }
+    if total == 0 { return pts; }
 
     let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
 
-    // --- extraction pass ---
+    // extract mirroring the count logic
     let mut seen = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz   = &fr.ims_frame.mz;
         let it   = &fr.ims_frame.intensity;
-        let sc   = &fr.scan;
-        let mob  = &fr.ims_frame.mobility;
+        let ims  = &fr.ims_frame.mobility;
         let tofs = &fr.tof;
 
-        let rt_val   = rt_axis_sec[fi];
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+        let rt_val = rt_axis_sec[fi];
         let frame_id = frame_ids_local[fi];
 
         for sl in &scan_slices[fi] {
-            mirror_pass_push(
-                mz, it, sc, mob, tofs,
-                sl.start, sl.end,
-                mz_lo, mz_hi, scan_lo, scan_hi, mf,
-                rt_val, frame_id, &mut seen, stride, &mut out
-            );
+            let s_abs = sl.scan;
+            if s_abs < w_im_lo || s_abs > w_im_hi { continue; }
+
+            let mut l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            if r > len_all { r = len_all; }
+            if l >= r { continue; }
+
+            while l < r {
+                if stride == 1 || (seen % stride == 0) {
+                    pts.mz.push(mz[l] as f32);
+                    pts.rt.push(rt_val);
+                    pts.im.push(ims[l] as f32);
+                    pts.scan.push(s_abs as u32);
+                    pts.intensity.push(it[l] as f32);
+                    pts.frame.push(frame_id);
+                    pts.tof.push(tofs[l]);
+                }
+                seen += 1;
+                l += 1;
+            }
         }
     }
-    out
+
+    pts
 }
 
 pub fn attach_raw_points_for_spec_1d_threads(
@@ -549,39 +519,55 @@ pub fn attach_raw_points_for_spec_1d_threads(
     max_points: Option<usize>,
     num_threads: usize,
 ) -> RawPoints {
-    let scale = rt_frames.scale.as_ref();
-    let mz_lo = scale.edges[final_bin_lo] as f64;
-    let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max) as f64;
-    let scan_lo = final_im_lo as i32;
-    let scan_hi = final_im_hi as i32;
-    let mf = MirrorFilter::default();
+    let scale = &*rt_frames.scale;
+
+    let mut mz_lo = scale.edges[final_bin_lo];
+    let mut mz_hi = cushion_hi_edge(scale, scale.edges[final_bin_hi + 1].min(scale.mz_max));
 
     let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
     let slice = ds.get_slice(frame_ids_local.clone(), num_threads.max(1));
-
     let scan_slices: Vec<Vec<ScanSlice>> =
         slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
 
-    // Count
+    // count
     let mut total = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
-        let mz   = &fr.ims_frame.mz;
-        let it   = &fr.ims_frame.intensity;
-        let sc   = &fr.scan;
-        let mob  = &fr.ims_frame.mobility;
-        let tofs = &fr.tof;
-
+        let mz = &fr.ims_frame.mz;
         for sl in &scan_slices[fi] {
-            total += mirror_pass_count(
-                mz, it, sc, mob, tofs,
-                sl.start, sl.end,
-                mz_lo, mz_hi, scan_lo, scan_hi, mf
-            );
+            if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
+            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            total += r.saturating_sub(l);
         }
     }
+
+    // last-chance widen
+    if total == 0 {
+        let lo_idx = final_bin_lo.saturating_sub(1);
+        let hi_edge_idx = ((final_bin_hi + 2).min(scale.num_bins())).min(scale.edges.len() - 1);
+        let try_lo = scale.edges[lo_idx];
+        let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx].min(scale.mz_max));
+
+        let mut total2 = 0usize;
+        for (fi, fr) in slice.frames.iter().enumerate() {
+            let mz = &fr.ims_frame.mz;
+            for sl in &scan_slices[fi] {
+                if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
+                let l = lower_bound_in(mz, sl.start, sl.end, try_lo);
+                let r = upper_bound_in(mz, sl.start, sl.end, try_hi);
+                total2 += r.saturating_sub(l);
+            }
+        }
+        if total2 > 0 {
+            total = total2;
+            mz_lo = try_lo;
+            mz_hi = try_hi;
+        }
+    }
+
     let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
 
-    let mut out = RawPoints {
+    let mut pts = RawPoints {
         mz: Vec::with_capacity(total/stride + 8),
         rt: Vec::with_capacity(total/stride + 8),
         im: Vec::with_capacity(total/stride + 8),
@@ -590,30 +576,45 @@ pub fn attach_raw_points_for_spec_1d_threads(
         tof: Vec::with_capacity(total/stride + 8),
         frame: Vec::with_capacity(total/stride + 8),
     };
-    if total == 0 { return out; }
+    if total == 0 { return pts; }
 
     let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
 
-    // Extract
+    // extract
     let mut seen = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz   = &fr.ims_frame.mz;
         let it   = &fr.ims_frame.intensity;
-        let sc   = &fr.scan;
-        let mob  = &fr.ims_frame.mobility;
+        let ims  = &fr.ims_frame.mobility;
         let tofs = &fr.tof;
 
-        let rt_val   = rt_axis_sec[fi];
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+        let rt_val = rt_axis_sec[fi];
         let frame_id = frame_ids_local[fi];
 
         for sl in &scan_slices[fi] {
-            mirror_pass_push(
-                mz, it, sc, mob, tofs,
-                sl.start, sl.end,
-                mz_lo, mz_hi, scan_lo, scan_hi, mf,
-                rt_val, frame_id, &mut seen, stride, &mut out
-            );
+            let s_abs = sl.scan;
+            if s_abs < final_im_lo || s_abs > final_im_hi { continue; }
+
+            let mut l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            if r > len_all { r = len_all; }
+            if l >= r { continue; }
+
+            while l < r {
+                if stride == 1 || (seen % stride == 0) {
+                    pts.mz.push(mz[l] as f32);
+                    pts.rt.push(rt_val);
+                    pts.im.push(ims[l] as f32);
+                    pts.scan.push(s_abs as u32);
+                    pts.intensity.push(it[l] as f32);
+                    pts.frame.push(frame_id);
+                    pts.tof.push(tofs[l]);
+                }
+                seen += 1;
+                l += 1;
+            }
         }
     }
-    out
+    pts
 }
