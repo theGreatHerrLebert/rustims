@@ -68,7 +68,7 @@ class RawPoints:
         """Return numpy arrays (mz, rt, im, scan, intensity, tof, frame)."""
         return tuple(np.asarray(arr) for arr in self._py.to_arrays())
 
-    # ---- new diagnostics ----
+    # ---- diagnostics from Rust (cheap) ----
     @property
     def unique_frames(self) -> np.ndarray:
         return np.asarray(self._py.unique_frames(), dtype=np.uint32)
@@ -193,7 +193,7 @@ class ClusterResult1D:
         rp = self._py.raw_points()
         return None if rp is None else RawPoints(rp)
 
-    # ---- new: convenience flags/counters for missingness diagnostics ----
+    # ---- diagnostics ----
     @property
     def has_rt_axis(self) -> bool: return self.rt_axis_sec() is not None
     @property
@@ -204,21 +204,21 @@ class ClusterResult1D:
     @property
     def frame_count(self) -> int:
         fids = self.frame_ids_used()
-        return 0 if fids is None else int(fids.size)
+        return int(fids.size)
 
     @property
     def raw_points_attached(self) -> bool:
-        return self.raw_points() is not None
+        rp = self.raw_points()
+        return (rp is not None) and (rp.n > 0)
 
     @property
     def raw_points_n(self) -> int:
         rp = self.raw_points()
-        return 0 if rp is None else int(len(rp.intensity))
+        return 0 if rp is None else int(rp.n)
 
     @property
     def empty_rt(self) -> bool:
         f = self.rt_fit
-        # empty if fit has no samples or essentially zero area
         return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
 
     @property
@@ -237,11 +237,9 @@ class ClusterResult1D:
 
     @property
     def raw_empty(self) -> bool:
-        # strict: either no raw points attached or attached but zero points
-        return (not self.raw_points_attached) or (self.raw_points_n == 0)
+        return not self.raw_points_attached
 
     def to_dict(self) -> dict:
-        # base fields
         d = {
             "ms_level": self.ms_level,
             "window_group": self.window_group,
@@ -255,31 +253,23 @@ class ClusterResult1D:
             "mz_hi": self.mz_window[1],
             "raw_sum": float(self.raw_sum),
             "volume_proxy": float(self.volume_proxy),
-
-            # axes/meta
             "frame_count": self.frame_count,
             "has_rt_axis": self.has_rt_axis,
             "has_im_axis": self.has_im_axis,
             "has_mz_axis": self.has_mz_axis,
-
-            # raw-points diagnostics
             "raw_points_attached": self.raw_points_attached,
             "raw_points_n": self.raw_points_n,
             "raw_empty": self.raw_empty,
-
-            # per-dimension emptiness from fits
             "empty_rt": self.empty_rt,
             "empty_im": self.empty_im,
             "empty_mz": self.empty_mz,
             "any_empty_dim": self.any_empty_dim,
         }
-        # fit summaries (prefixed via your Fit1D.to_dict)
         d.update(self.rt_fit.to_dict("rt"))
         d.update(self.im_fit.to_dict("im"))
         d.update(self.mz_fit.to_dict("mz"))
 
         rp = self.raw_points()
-
         if rp is not None:
             d.update(rp.to_dict())
         else:
@@ -294,7 +284,6 @@ class ClusterResult1D:
                 "raw_rt_min": None, "raw_rt_max": None,
                 "raw_im_min": None, "raw_im_max": None,
             })
-
         return d
 
     def to_dataframe_row(self) -> pd.DataFrame:
