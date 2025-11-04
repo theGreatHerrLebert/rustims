@@ -16,6 +16,45 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+def save_clusters_bin(
+        path: str,
+        clusters: List["ClusterResult1D"],
+        compress: bool = True,
+        strip_points: bool = False,
+        strip_axes: bool = False,
+    ) -> None:
+    """Save clusters to binary file.
+    Args:
+        path: path to save clusters
+        clusters: list of ClusterResult1D
+        compress: whether to compress the file
+        strip_points: whether to strip raw points
+        strip_axes: whether to strip axes
+
+    Returns:
+        None
+    """
+    rust_clusters = [c._py for c in clusters]
+    ims.save_clusters_bin(
+        path,
+        rust_clusters,
+        compress,
+        strip_points,
+        strip_axes,
+    )
+
+def load_clusters_bin(path: str) -> List["ClusterResult1D"]:
+    """Load clusters from binary file.
+
+    Args:
+        path: path to load clusters
+
+    Returns:
+        list of ClusterResult1D
+    """
+    rust_clusters = ims.load_clusters_bin(path)
+    return [ClusterResult1D(c) for c in rust_clusters]
+
 class Fit1D:
     """Light wrapper around ims.PyFit1D (read-only)."""
     def __init__(self, py):

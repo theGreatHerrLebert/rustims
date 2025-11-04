@@ -5,6 +5,8 @@ use pyo3::types::{PyAny, PyList, PySlice};
 use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
+use rustdf::cluster::io as cio;
+
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, Fit1D, RawPoints};
@@ -14,6 +16,35 @@ use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view
 use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, MobilityFn, trapezoid_area_fractional, quad_subsample, find_im_peaks_row, im_peak_id};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+
+#[pyfunction]
+#[pyo3(signature = (path, clusters, compress=true, strip_points=false, strip_axes=false))]
+pub fn save_clusters_bin(
+    path: &str,
+    clusters: Vec<Py<PyClusterResult1D>>,
+    compress: bool,
+    strip_points: bool,
+    strip_axes: bool,
+) -> PyResult<()> {
+    let mut rust_clusters: Vec<ClusterResult1D> = clusters
+        .into_iter()
+        .map(|c| Python::with_gil(|py| c.borrow(py).inner.clone()))
+        .collect();
+    if strip_points || strip_axes {
+        rust_clusters = rustdf::cluster::io::strip_heavy(rust_clusters, !strip_points, !strip_axes);
+    }
+    cio::save_bincode(path, &rust_clusters, compress)
+        .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+pub fn load_clusters_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+    let clusters = cio::load_bincode(path)
+        .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))?;
+    clusters.into_iter()
+        .map(|c| Py::new(py, PyClusterResult1D { inner: c }))
+        .collect()
+}
 
 #[pyclass]
 #[derive(Clone, Debug)]
@@ -1790,5 +1821,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRawPoints>()?;
     m.add_class::<PyClusterResult1D>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_streaming, m)?)?;
+    m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     Ok(())
 }

@@ -173,7 +173,7 @@ pub struct ClusterSpec1D {
     pub ms_level: u8,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Fit1D {
     pub mu: f32,
     pub sigma: f32,
@@ -184,7 +184,7 @@ pub struct Fit1D {
     pub n: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterResult1D {
     pub rt_window: (usize, usize),
     pub im_window: (usize, usize),
