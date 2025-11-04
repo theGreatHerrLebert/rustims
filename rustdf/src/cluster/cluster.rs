@@ -2,12 +2,11 @@ use serde::{Deserialize, Serialize};
 use mscore::timstof::frame::TimsFrame;
 use crate::cluster::peak::{ImPeak1D, RtFrames, RtPeak1D};
 use crate::cluster::utility::{bin_range_for_win, build_im_marginal, build_mz_hist, build_rt_marginal, fit1d_moment};
-use crate::data::dia::TimsDatasetDIA;
-use crate::data::handle::TimsData;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-
+use crate::data::dia::TimsDatasetDIA;
+use crate::data::handle::TimsData;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RawPoints {
@@ -63,94 +62,6 @@ fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
 
 #[inline] fn thin_stride(total: usize, cap: usize) -> usize {
     if cap == 0 || total <= cap { 1 } else { (total + cap - 1) / cap }
-}
-
-// Attach raw points for ONE evaluated spec using the finalized windows.
-pub fn attach_raw_points_for_spec_1d(
-    ds: &TimsDatasetDIA,
-    rt_frames: &RtFrames,
-    final_bin_lo: usize, final_bin_hi: usize, // from your refine stage
-    final_im_lo: usize, final_im_hi: usize,   // from spec (already inclusive)
-    final_rt_lo: usize, final_rt_hi: usize,   // local indices inside rt_frames
-    max_points: Option<usize>,
-) -> RawPoints {
-    // Map bins to physical Da
-    let scale = &*rt_frames.scale;
-    let mz_lo = scale.edges[final_bin_lo];
-    let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max);
-
-    // Pull real frames once
-    let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
-    let slice = ds.get_slice(frame_ids_local.clone(), /*threads*/ 1);
-
-    // Precompute scan slices
-    let scan_slices: Vec<Vec<ScanSlice>> =
-        slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
-
-    // Count for capacity + thinning stride
-    let mut total = 0usize;
-    for (fi, fr) in slice.frames.iter().enumerate() {
-        let mz = &fr.ims_frame.mz;
-        for sl in &scan_slices[fi] {
-            if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
-            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
-            let r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
-            total += r.saturating_sub(l);
-        }
-    }
-    let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
-
-    let mut pts = RawPoints {
-        mz: Vec::with_capacity(total / stride + 8),
-        rt: Vec::with_capacity(total / stride + 8),
-        im: Vec::with_capacity(total / stride + 8),
-        scan: Vec::with_capacity(total / stride + 8),
-        intensity: Vec::with_capacity(total / stride + 8),
-        tof: Vec::with_capacity(total / stride + 8),
-        frame: Vec::with_capacity(total / stride + 8),
-    };
-    if total == 0 { return pts; }
-
-    let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
-
-    let mut seen = 0usize;
-    for (fi, fr) in slice.frames.iter().enumerate() {
-        let mz   = &fr.ims_frame.mz;
-        let it   = &fr.ims_frame.intensity;
-        let ims  = &fr.ims_frame.mobility;
-        let tofs = &fr.tof;
-
-        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
-        let rt_val = rt_axis_sec[fi];
-        let frame_id = frame_ids_local[fi];
-
-        for sl in &scan_slices[fi] {
-            let s_abs = sl.scan;
-            if s_abs < final_im_lo || s_abs > final_im_hi { continue; }
-
-            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
-            let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
-            if r > len_all { r = len_all; }
-            if l >= r { continue; }
-
-            let mut i = l;
-            while i < r {
-                if stride == 1 || (seen % stride == 0) {
-                    pts.mz.push(mz[i] as f32);
-                    pts.rt.push(rt_val);
-                    pts.im.push(ims[i] as f32);
-                    pts.scan.push(s_abs as u32);
-                    pts.intensity.push(it[i] as f32);
-                    pts.frame.push(frame_id);
-                    pts.tof.push(tofs[i]);
-                }
-                seen += 1;
-                i += 1;
-            }
-        }
-    }
-
-    pts
 }
 
 #[derive(Clone, Debug)]
@@ -437,28 +348,59 @@ pub fn make_specs_from_im_and_rt_groups_threads(
     }
 }
 
-pub fn attach_raw_points_for_spec_1d_threads(
+/// Helper: derive a conservative RT window for an IM peak in local frame indices.
+/// Uses the IM peak’s stored fractional `rt_bounds` if available on the same grid;
+/// otherwise falls back to the IM-carried `frame_id_bounds` mapped into this RtFrames slice.
+///
+/// NOTE: If your `ImPeak1D` already stores `rt_bounds` in the SAME local grid,
+///       you can simplify and just return `im.rt_bounds`.
+fn rt_bounds_from_im(im: &ImPeak1D, n_frames: usize) -> (usize, usize) {
+    // If your ImPeak1D carries local frame-index bounds, prefer them:
+    // (Rename `rt_bounds` below to whatever field name you actually use.)
+    let (a,b) = im.rt_bounds; // (usize, usize) on the same grid as RtFrames
+    let mut lo = a.min(n_frames.saturating_sub(1));
+    let mut hi = b.min(n_frames.saturating_sub(1));
+    if lo > hi { std::mem::swap(&mut lo, &mut hi); }
+    (lo, hi)
+}
+
+#[inline]
+fn push_point(
+    i: usize,
+    mz: &[f64], rt_val: f32, ims: &[f64], scan_abs: usize, it: &[f64], frame_id: u32, tofs: &[i32],
+    seen: &mut usize, stride: usize, pts: &mut RawPoints,
+) {
+    if stride == 1 || (*seen % stride == 0) {
+        pts.mz.push(mz[i] as f32);
+        pts.rt.push(rt_val);
+        pts.im.push(ims[i] as f32);
+        pts.scan.push(scan_abs as u32);
+        pts.intensity.push(it[i] as f32);
+        pts.frame.push(frame_id);
+        pts.tof.push(tofs[i]);
+    }
+    *seen += 1;
+}
+
+pub fn attach_raw_points_for_spec_1d(
     ds: &TimsDatasetDIA,
     rt_frames: &RtFrames,
     final_bin_lo: usize, final_bin_hi: usize,
     final_im_lo: usize, final_im_hi: usize,
     final_rt_lo: usize, final_rt_hi: usize,
     max_points: Option<usize>,
-    num_threads: usize,
 ) -> RawPoints {
-    // map bin→Da
     let scale = &*rt_frames.scale;
     let mz_lo = scale.edges[final_bin_lo];
     let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max);
 
-    // load frames with requested threads
     let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
-    let slice = ds.get_slice(frame_ids_local.clone(), num_threads.max(1));
+    let slice = ds.get_slice(frame_ids_local.clone(), 1);
 
     let scan_slices: Vec<Vec<ScanSlice>> =
         slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
 
-    // count
+    // count for capacity + stride
     let mut total = 0usize;
     for (fi, fr) in slice.frames.iter().enumerate() {
         let mz = &fr.ims_frame.mz;
@@ -499,43 +441,90 @@ pub fn attach_raw_points_for_spec_1d_threads(
             let s_abs = sl.scan;
             if s_abs < final_im_lo || s_abs > final_im_hi { continue; }
 
-            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            // two binary searches on the (sorted) per-scan subarray
+            let mut l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
             let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
             if r > len_all { r = len_all; }
             if l >= r { continue; }
 
-            let mut i = l;
-            while i < r {
-                if stride == 1 || (seen % stride == 0) {
-                    pts.mz.push(mz[i] as f32);
-                    pts.rt.push(rt_val);
-                    pts.im.push(ims[i] as f32);
-                    pts.scan.push(s_abs as u32);
-                    pts.intensity.push(it[i] as f32);
-                    pts.frame.push(frame_id);
-                    pts.tof.push(tofs[i]);
-                }
-                seen += 1;
-                i += 1;
+            while l < r {
+                push_point(l, mz, rt_val, ims, s_abs, it, frame_id, tofs, &mut seen, stride, &mut pts);
+                l += 1;
             }
         }
     }
-
     pts
 }
 
-/// Helper: derive a conservative RT window for an IM peak in local frame indices.
-/// Uses the IM peak’s stored fractional `rt_bounds` if available on the same grid;
-/// otherwise falls back to the IM-carried `frame_id_bounds` mapped into this RtFrames slice.
-///
-/// NOTE: If your `ImPeak1D` already stores `rt_bounds` in the SAME local grid,
-///       you can simplify and just return `im.rt_bounds`.
-fn rt_bounds_from_im(im: &ImPeak1D, n_frames: usize) -> (usize, usize) {
-    // If your ImPeak1D carries local frame-index bounds, prefer them:
-    // (Rename `rt_bounds` below to whatever field name you actually use.)
-    let (a,b) = im.rt_bounds; // (usize, usize) on the same grid as RtFrames
-    let mut lo = a.min(n_frames.saturating_sub(1));
-    let mut hi = b.min(n_frames.saturating_sub(1));
-    if lo > hi { std::mem::swap(&mut lo, &mut hi); }
-    (lo, hi)
+pub fn attach_raw_points_for_spec_1d_threads(
+    ds: &TimsDatasetDIA,
+    rt_frames: &RtFrames,
+    final_bin_lo: usize, final_bin_hi: usize,
+    final_im_lo: usize, final_im_hi: usize,
+    final_rt_lo: usize, final_rt_hi: usize,
+    max_points: Option<usize>,
+    num_threads: usize,
+) -> RawPoints {
+    let scale = &*rt_frames.scale;
+    let mz_lo = scale.edges[final_bin_lo];
+    let mz_hi = scale.edges[final_bin_hi + 1].min(scale.mz_max);
+
+    let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
+    let slice = ds.get_slice(frame_ids_local.clone(), num_threads.max(1));
+
+    let scan_slices: Vec<Vec<ScanSlice>> =
+        slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
+
+    let mut total = 0usize;
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let mz = &fr.ims_frame.mz;
+        for sl in &scan_slices[fi] {
+            if sl.scan < final_im_lo || sl.scan > final_im_hi { continue; }
+            let l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            total += r.saturating_sub(l);
+        }
+    }
+    let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
+
+    let mut pts = RawPoints {
+        mz: Vec::with_capacity(total/stride + 8),
+        rt: Vec::with_capacity(total/stride + 8),
+        im: Vec::with_capacity(total/stride + 8),
+        scan: Vec::with_capacity(total/stride + 8),
+        intensity: Vec::with_capacity(total/stride + 8),
+        tof: Vec::with_capacity(total/stride + 8),
+        frame: Vec::with_capacity(total/stride + 8),
+    };
+    if total == 0 { return pts; }
+
+    let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
+
+    let mut seen = 0usize;
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let mz   = &fr.ims_frame.mz;
+        let it   = &fr.ims_frame.intensity;
+        let ims  = &fr.ims_frame.mobility;
+        let tofs = &fr.tof;
+
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+        let rt_val = rt_axis_sec[fi];
+        let frame_id = frame_ids_local[fi];
+
+        for sl in &scan_slices[fi] {
+            let s_abs = sl.scan;
+            if s_abs < final_im_lo || s_abs > final_im_hi { continue; }
+
+            let mut l = lower_bound_in(mz, sl.start, sl.end, mz_lo);
+            let mut r = upper_bound_in(mz, sl.start, sl.end, mz_hi);
+            if r > len_all { r = len_all; }
+            if l >= r { continue; }
+
+            while l < r {
+                push_point(l, mz, rt_val, ims, s_abs, it, frame_id, tofs, &mut seen, stride, &mut pts);
+                l += 1;
+            }
+        }
+    }
+    pts
 }

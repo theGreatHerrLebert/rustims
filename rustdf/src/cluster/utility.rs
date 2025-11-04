@@ -2,7 +2,7 @@ use mscore::timstof::frame::TimsFrame;
 use crate::cluster::peak::{FrameBinView, ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
-use crate::cluster::cluster::Fit1D;
+use crate::cluster::cluster::{Fit1D};
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;

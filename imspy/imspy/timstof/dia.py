@@ -1,5 +1,5 @@
+from __future__ import annotations
 import sqlite3
-from typing import List
 
 from imspy.timstof.slice import TimsSlice
 
@@ -7,7 +7,6 @@ from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 import numpy as np
-import warnings
 from typing import Optional
 
 import imspy_connector
@@ -16,43 +15,181 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+import os
+import tempfile
+import warnings
+from pathlib import Path
+from typing import List, Sequence, Union
+# --- helpers ---------------------------------------------------------------
+
+_BIN_SUFFIX = ".bin"
+_BINZ_SUFFIX = ".binz"  # suggest: compressed files end with .binz
+
+def _ensure_dir(p: Path) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+
+def _suffix_for(compress: bool) -> str:
+    return _BINZ_SUFFIX if compress else _BIN_SUFFIX
+
+def _infer_compress_from_suffix(path: Path, default: bool) -> bool:
+    if path.suffix.lower() == _BINZ_SUFFIX:
+        return True
+    if path.suffix.lower() == _BIN_SUFFIX:
+        return False
+    return default
+
+def _normalize_path_and_compress(
+    path: Union[str, Path],
+    compress: bool,
+    allow_suffix_inference: bool = True,
+) -> tuple[Path, bool]:
+    """
+    - Accept Path or str
+    - If suffix is .binz/.bin, allow it to override `compress` (when allowed)
+    - If no/unknown suffix, append the correct one
+    - If suffix disagrees with `compress`, warn and rename to match `compress`
+    """
+    p = Path(path)
+
+    # 1) infer from suffix if user explicitly provided one
+    eff_compress = _infer_compress_from_suffix(p, compress) if allow_suffix_inference else compress
+
+    # 2) normalize suffix
+    desired_suffix = _suffix_for(eff_compress)
+    if p.suffix.lower() not in {_BIN_SUFFIX, _BINZ_SUFFIX}:
+        # add the expected suffix if missing/unknown
+        p = p.with_suffix(p.suffix + desired_suffix if p.suffix else desired_suffix)
+    elif p.suffix.lower() != desired_suffix:
+        warnings.warn(
+            f"Provided suffix '{p.suffix}' does not match compress={eff_compress}. "
+            f"Using '{desired_suffix}' instead.",
+            stacklevel=2,
+        )
+        p = p.with_suffix(desired_suffix)
+
+    return p, eff_compress
+
+def _assert_clusters(seq: Sequence["ClusterResult1D"]) -> None:
+    if not isinstance(seq, Sequence):
+        raise TypeError("clusters must be a sequence of ClusterResult1D")
+    for i, c in enumerate(seq):
+        # Be strict here; it prevents passing raw PyO3 handles by accident
+        from types import SimpleNamespace  # noqa: F401  # only for fallback typing
+        if not hasattr(c, "_py"):
+            raise TypeError(f"clusters[{i}] is not a ClusterResult1D (missing ._py)")
+        # Optional: very cheap sanity check to avoid mixing types
+        if c.__class__.__name__ != "ClusterResult1D":
+            warnings.warn(
+                f"clusters[{i}] is a {c.__class__.__name__}, expected ClusterResult1D.",
+                stacklevel=2,
+            )
+
+# --- public API ------------------------------------------------------------
+
 def save_clusters_bin(
-        path: str,
-        clusters: List["ClusterResult1D"],
-        compress: bool = True,
-        strip_points: bool = False,
-        strip_axes: bool = False,
-    ) -> None:
-    """Save clusters to binary file.
-    Args:
-        path: path to save clusters
-        clusters: list of ClusterResult1D
-        compress: whether to compress the file
-        strip_points: whether to strip raw points
-        strip_axes: whether to strip axes
-
-    Returns:
-        None
+    path: Union[str, Path],
+    clusters: Sequence["ClusterResult1D"],
+    compress: bool = True,
+    strip_points: bool = False,
+    strip_axes: bool = False,
+    *,
+    overwrite: bool = True,
+    atomic: bool = True,
+) -> None:
     """
-    rust_clusters = [c._py for c in clusters]
-    ims.save_clusters_bin(
-        path,
-        rust_clusters,
-        compress,
-        strip_points,
-        strip_axes,
-    )
-
-def load_clusters_bin(path: str) -> List["ClusterResult1D"]:
-    """Load clusters from binary file.
+    Save clusters to a bincode file (.bin for uncompressed, .binz for compressed).
 
     Args:
-        path: path to load clusters
+        path: target path (str or Path). If no suffix is given, one is added
+              based on `compress` (.binz if True, .bin if False).
+              If a conflicting suffix is given, it is overridden with a warning.
+        clusters: sequence of ClusterResult1D
+        compress: gzip-like compression (controls suffix normalization)
+        strip_points: drop raw point arrays before saving (smaller file)
+        strip_axes: drop axes arrays before saving (smaller file)
+        overwrite: allow overwriting existing files
+        atomic: write to a temporary file and atomically replace target
+    """
+    _assert_clusters(clusters)
+
+    # Normalize path & compression based on suffix conventions
+    path, compress = _normalize_path_and_compress(path, compress, allow_suffix_inference=True)
+
+    if not overwrite and Path(path).exists():
+        raise FileExistsError(f"Refusing to overwrite existing file: {path}")
+
+    if strip_points or strip_axes:
+        kept = []
+        if not strip_points:
+            kept.append("points")
+        if not strip_axes:
+            kept.append("axes")
+        warnings.warn(
+            "Stripping heavy fields for smaller file size; "
+            f"kept: {', '.join(kept) if kept else 'none'}.",
+            stacklevel=2,
+        )
+
+    rust_clusters = [c._py for c in clusters]  # stable interface to the PyO3 side
+
+    _ensure_dir(Path(path))
+
+    if atomic:
+        # create a temp file in the same directory for atomic replace
+        tmp_dir = str(Path(path).parent)
+        suffix = Path(path).suffix
+        with tempfile.NamedTemporaryFile(prefix=".tmp_", suffix=suffix, dir=tmp_dir, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            # write to temp via PyO3
+            ims.save_clusters_bin(
+                str(tmp_path),
+                rust_clusters,
+                bool(compress),
+                bool(strip_points),
+                bool(strip_axes),
+            )
+            # atomic replace
+            os.replace(str(tmp_path), str(path))
+        except Exception:
+            # if something goes wrong, clean up the temp file
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            finally:
+                raise
+    else:
+        ims.save_clusters_bin(
+            str(path),
+            rust_clusters,
+            bool(compress),
+            bool(strip_points),
+            bool(strip_axes),
+        )
+
+def load_clusters_bin(path: Union[str, Path]) -> List["ClusterResult1D"]:
+    """
+    Load clusters from a bincode file (.bin or .binz).
+
+    Args:
+        path: file to load (str or Path). Suffix must be .bin or .binz.
 
     Returns:
-        list of ClusterResult1D
+        list[ClusterResult1D]
     """
-    rust_clusters = ims.load_clusters_bin(path)
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"No such file: {p}")
+    if p.suffix.lower() not in {_BIN_SUFFIX, _BINZ_SUFFIX}:
+        warnings.warn(
+            f"Unexpected suffix '{p.suffix}'. Expected '{_BIN_SUFFIX}' or '{_BINZ_SUFFIX}'. "
+            "Attempting to load anyway.",
+            stacklevel=2,
+        )
+
+    rust_clusters = ims.load_clusters_bin(str(p))
+    # Wrap back into your Python class
     return [ClusterResult1D(c) for c in rust_clusters]
 
 class Fit1D:
