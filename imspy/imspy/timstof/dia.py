@@ -1292,7 +1292,10 @@ def clusters_to_dataframe(
     pandas.DataFrame
     """
     # Delegates to the PyO3 function; returns a dict[str, np.ndarray]-like
-    arrs = ims.export_cluster_arrays(clusters, include_raw_stats)
+    arrs = ims.export_cluster_arrays(
+        [c.get_py_ptr() if hasattr(c, "get_py_ptr") else c for c in clusters],
+        include_raw_stats
+    )
 
     # Defensive: ensure plain ndarray views
     data = {k: np.asarray(v) for k, v in arrs.items()}
