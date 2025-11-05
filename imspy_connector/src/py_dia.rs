@@ -10,6 +10,7 @@ use rustdf::cluster::io as cio;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, Fit1D, RawPoints};
+use rustdf::cluster::cluster_link::{link_ms2_to_ms1_noindex, Ms2ToMs1LinkerOpts, SelectionCfg};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, expand_many_im_peaks_along_rt};
@@ -1516,6 +1517,92 @@ impl PyTimsDatasetDIA {
         });
 
         results_to_py(py, results)
+    }
+
+    /// Link MS2 clusters to MS1 clusters without a precursor m/z index.
+    ///
+    /// Returns a list of (precursor, [fragments...]) pairs.
+    #[pyo3(signature = (
+        ms1_clusters,
+        ms2_clusters,
+        // Ms2ToMs1LinkerOpts
+        min_rt_jaccard=0.1,
+        max_rt_apex_sec=Some(8.0),
+        max_im_apex_scans=Some(5.0),
+        require_im_overlap=true,
+        mz_ppm=25.0,
+        rt_guard_sec=0.0,
+        // SelectionCfg
+        min_score=0.0,
+        top_k_per_ms2=32,
+        top_k_per_ms1=Some(512),
+        cardinality_one_to_one=false,
+    ))]
+    pub fn link_ms2_to_ms1(
+        &self,
+        py: Python<'_>,
+        ms1_clusters: Vec<Py<PyClusterResult1D>>,
+        ms2_clusters: Vec<Py<PyClusterResult1D>>,
+        // Ms2ToMs1LinkerOpts
+        min_rt_jaccard: f32,
+        max_rt_apex_sec: Option<f32>,
+        max_im_apex_scans: Option<f32>,
+        require_im_overlap: bool,
+        mz_ppm: f32,
+        rt_guard_sec: f64,
+        // SelectionCfg
+        min_score: f32,
+        top_k_per_ms2: usize,
+        top_k_per_ms1: Option<usize>,
+        cardinality_one_to_one: bool,
+    ) -> PyResult<Vec<(Py<PyClusterResult1D>, Vec<Py<PyClusterResult1D>>)>> {
+
+        // 1) Materialize Rust copies of clusters
+        let ms1_rs: Vec<ClusterResult1D> = ms1_clusters
+            .iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let ms2_rs: Vec<ClusterResult1D> = ms2_clusters
+            .iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        // 2) Build options
+        let linker_opts = Ms2ToMs1LinkerOpts {
+            min_rt_jaccard,
+            max_rt_apex_sec,
+            max_im_apex_scans,
+            require_im_overlap,
+            rt_guard_sec,
+            mz_ppm,
+        };
+
+        let sel_cfg = SelectionCfg {
+            min_score,
+            top_k_per_ms2,
+            top_k_per_ms1,
+            cardinality_one_to_one,
+        };
+
+        // 3) Run without GIL
+        let linked = py.allow_threads(|| {
+            link_ms2_to_ms1_noindex(&self.inner, &ms1_rs, &ms2_rs, linker_opts, sel_cfg)
+        });
+
+        // 4) Pack back into Python objects (Py::new ensures correct type, not PyAny)
+        let out: Vec<(Py<PyClusterResult1D>, Vec<Py<PyClusterResult1D>>)> =
+            linked.into_iter()
+                .map(|(prec, frags)| -> PyResult<_> {
+                    let py_prec = Py::new(py, PyClusterResult1D { inner: prec })?;
+                    let py_frags: Vec<Py<PyClusterResult1D>> = frags.into_iter()
+                        .map(|f| Py::new(py, PyClusterResult1D { inner: f }))
+                        .collect::<PyResult<_>>()?;
+                    Ok((py_prec, py_frags))
+                })
+                .collect::<PyResult<_>>()?;
+
+        Ok(out)
     }
 }
 

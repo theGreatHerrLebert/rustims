@@ -16,6 +16,136 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
+use std::collections::{HashMap};
+use crate::cluster::cluster_link::{build_precursor_fragment_annotation_ms2centric, link_ms2_to_ms1_candidates_noindex, Ms2ToMs1LinkerOpts, SelectionCfg};
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct ProgramSlice {
+    mz_lo: f64,
+    mz_hi: f64,
+    scan_lo: u32,
+    scan_hi: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiaIndex {
+    /// MS2 frame_id -> window_group
+    pub frame_to_group: HashMap<u32, u32>,
+    /// window_group -> MS2 frame_ids (sorted by time)
+    pub group_to_frames: HashMap<u32, Vec<u32>>,
+    /// window_group -> list of (mz_lo, mz_hi) isolation ranges (from DiaFrameMsMsWindows)
+    pub group_to_isolation: HashMap<u32, Vec<(f64, f64)>>,
+    /// window_group -> list of (scan_lo, scan_hi) active scan ranges (from DiaFrameMsMsWindows)
+    pub group_to_scan_ranges: HashMap<u32, Vec<(u32, u32)>>,
+    /// frame_id -> time (seconds)
+    pub frame_time: HashMap<u32, f64>,
+}
+
+impl DiaIndex {
+    pub fn new(meta: &[FrameMeta],
+               info: &[DiaMsMisInfo],
+               wins: &[DiaMsMsWindow]) -> Self {
+        let mut frame_to_group = HashMap::new();
+        let mut group_to_frames: HashMap<u32, Vec<u32>> = HashMap::new();
+        for r in info {
+            let fid = r.frame_id as u32;
+            frame_to_group.insert(fid, r.window_group);
+            group_to_frames.entry(r.window_group).or_default().push(fid);
+        }
+        for v in group_to_frames.values_mut() {
+            v.sort_unstable(); // sorted by frame id; time lookup below will use frame_time
+        }
+
+        let mut group_to_isolation: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
+        let mut group_to_scan_ranges: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+        for w in wins {
+            let lo = w.isolation_mz - 0.5 * w.isolation_width;
+            let hi = w.isolation_mz + 0.5 * w.isolation_width;
+            group_to_isolation.entry(w.window_group).or_default().push((lo, hi));
+            group_to_scan_ranges
+                .entry(w.window_group)
+                .or_default()
+                .push((w.scan_num_begin as u32, w.scan_num_end as u32));
+        }
+
+        let mut frame_time = HashMap::new();
+        for m in meta {
+            frame_time.insert(m.id as u32, m.time);
+        }
+
+        DiaIndex {
+            frame_to_group,
+            group_to_frames,
+            group_to_isolation,
+            group_to_scan_ranges,
+            frame_time,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PrecursorEntry {
+    pub idx: usize,                  // index into ms1_clusters vec
+    pub mz_win: (f32, f32),
+    pub im_win: (usize, usize),
+    pub rt_win: (usize, usize),      // local frame indices in the same RtFrames
+}
+
+#[derive(Clone, Debug)]
+pub struct PrecursorMzIndex {
+    /// bin -> precursor indices
+    pub bin_to_ms1: Vec<Vec<usize>>,
+    /// backref: idx -> entry (for filters and scoring)
+    pub entries: Vec<PrecursorEntry>,
+    pub scale: MzScale,
+}
+
+impl PrecursorMzIndex {
+    pub fn build(
+        ms1: &[ClusterResult1D],
+        scale: MzScale,
+    ) -> Self {
+        let mut bin_to_ms1 = vec![Vec::new(); scale.num_bins()];
+        let mut entries = Vec::with_capacity(ms1.len());
+
+        for (i, c) in ms1.iter().enumerate() {
+            if c.ms_level != 1 { continue; }
+            let (lo, hi) = c.mz_window;
+            let (b0, b1) = bin_range_for_win(&scale, (lo, hi));
+            let e = PrecursorEntry {
+                idx: i,
+                mz_win: (lo, hi),
+                im_win: c.im_window,
+                rt_win: c.rt_window,
+            };
+            entries.push(e);
+            for b in b0..=b1 {
+                bin_to_ms1[b].push(i);
+            }
+        }
+
+        Self { bin_to_ms1, entries, scale }
+    }
+
+    /// Return deduplicated precursor indices for a given m/z window
+    pub fn candidates_for_mz(&self, mz_win: (f32, f32)) -> Vec<usize> {
+        let (b0, b1) = crate::cluster::utility::bin_range_for_win(&self.scale, mz_win);
+        let mut out: Vec<usize> = Vec::new();
+        for b in b0..=b1 {
+            out.extend_from_slice(&self.bin_to_ms1[b]);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Ms2GroupProgram {
+    pub mz_windows: Vec<(f32, f32)>,
+    pub scan_ranges: Vec<(u32, u32)>,
+}
 
 pub struct TimsDatasetDIA {
     pub loader: TimsDataLoader,
@@ -23,6 +153,7 @@ pub struct TimsDatasetDIA {
     pub meta_data: Vec<FrameMeta>,
     pub dia_ms_ms_info: Vec<DiaMsMisInfo>,
     pub dia_ms_ms_windows: Vec<DiaMsMsWindow>,
+    pub dia_index: DiaIndex,
 }
 
 impl TimsDatasetDIA {
@@ -71,13 +202,61 @@ impl TimsDatasetDIA {
             ),
         };
 
+        let dia_index = DiaIndex::new(&meta_data, &dia_ms_mis_info, &dia_ms_ms_windows);
+
         TimsDatasetDIA {
             loader,
             global_meta_data,
             meta_data,
             dia_ms_ms_info: dia_ms_mis_info,
             dia_ms_ms_windows,
+            dia_index,
         }
+    }
+
+    pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
+        let mut mz_windows = Vec::new();
+        let mut scan_ranges = Vec::new();
+        if let Some(r) = self.dia_index.group_to_isolation.get(&g) {
+            for &(lo, hi) in r {
+                mz_windows.push((lo as f32, hi as f32));
+            }
+        }
+        if let Some(r) = self.dia_index.group_to_scan_ranges.get(&g) {
+            scan_ranges.extend_from_slice(r);
+        }
+        Ms2GroupProgram { mz_windows, scan_ranges }
+    }
+
+    /// Collect all program slices for a window group from DiaFrameMsMsWindows.
+    /// Isolation window: [isolation_mz - width/2, isolation_mz + width/2]
+    pub fn program_slices_for_group(&self, group: u32) -> Vec<ProgramSlice> {
+        self.dia_ms_ms_windows
+            .iter()
+            .filter(|w| w.window_group == group)
+            .map(|w| {
+                let half = 0.5 * w.isolation_width;
+                ProgramSlice {
+                    mz_lo: (w.isolation_mz - half) as f64,
+                    mz_hi: (w.isolation_mz + half) as f64,
+                    scan_lo: w.scan_num_begin as u32,
+                    scan_hi: w.scan_num_end as u32,
+                }
+            })
+            .collect()
+    }
+
+    /// MS2→MS1 linker that does NOT require a PrecursorMzIndex.
+    /// It uses the DIA program windows (mz + scan ranges) to pre-gate MS1.
+    pub fn link_ms2_to_ms1_noindex(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        opts: Ms2ToMs1LinkerOpts,
+        cfg: SelectionCfg,
+    ) -> Vec<(ClusterResult1D, Vec<ClusterResult1D>)> {
+        let cands = link_ms2_to_ms1_candidates_noindex(self, ms1, ms2, &opts);
+        build_precursor_fragment_annotation_ms2centric(ms1, ms2, &cands, &cfg)
     }
 
     pub fn sample_precursor_signal(

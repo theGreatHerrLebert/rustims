@@ -19,7 +19,7 @@ import os
 import tempfile
 import warnings
 from pathlib import Path
-from typing import List, Sequence, Union
+from typing import List, Sequence, Union, Tuple
 # --- helpers ---------------------------------------------------------------
 
 _BIN_SUFFIX = ".bin"
@@ -1192,6 +1192,51 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(min_im_span)
         )
         return [ClusterResult1D(r) for r in py_results]
+
+    def link_ms2_to_ms1(
+            self,
+            ms1_clusters: List["ClusterResult1D"],
+            ms2_clusters: List["ClusterResult1D"],
+            *,
+            min_rt_jaccard: float = 0.1,
+            max_rt_apex_sec: float | None = 8.0,
+            max_im_apex_scans: float | None = 5.0,
+            require_im_overlap: bool = True,
+            mz_ppm: float = 25.0,
+            rt_guard_sec: float = 0.0,
+            min_score: float = 0.0,
+            top_k_per_ms2: int = 32,
+            top_k_per_ms1: int | None = 512,
+            cardinality_one_to_one: bool = False,
+    ) -> List[Tuple["ClusterResult1D", List["ClusterResult1D"]]]:
+        """
+        Link MS2 clusters to MS1 clusters (no m/z index). Returns list of (precursor, [fragments]).
+        """
+        # Extract underlying Py objects:
+        py_ms1 = [c._py for c in ms1_clusters]
+        py_ms2 = [c._py for c in ms2_clusters]
+
+        pairs = self.__dataset.link_ms2_to_ms1(
+            py_ms1, py_ms2,
+            min_rt_jaccard,
+            max_rt_apex_sec,
+            max_im_apex_scans,
+            require_im_overlap,
+            mz_ppm,
+            rt_guard_sec,
+            min_score,
+            top_k_per_ms2,
+            top_k_per_ms1,
+            cardinality_one_to_one,
+        )
+
+        # Wrap results back into high-level Python objects
+        out = []
+        for py_prec, py_frags in pairs:
+            prec = ClusterResult1D(py_prec)
+            frags = [ClusterResult1D(pf) for pf in py_frags]
+            out.append((prec, frags))
+        return out
 
 from collections.abc import Iterable
 from typing import List, Sequence
