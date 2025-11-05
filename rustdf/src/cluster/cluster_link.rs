@@ -80,17 +80,6 @@ fn jaccard_time(a_lo: f64, a_hi: f64, b_lo: f64, b_hi: f64) -> f32 {
     if union <= 0.0 { 0.0 } else { (inter / union) as f32 }
 }
 
-#[inline]
-fn overlaps_scan_usize(a: (usize, usize), b: (u32, u32)) -> bool {
-    let (al, ah) = (a.0 as u32, a.1 as u32);
-    !(ah < b.0 || b.1 < al)
-}
-
-#[inline]
-fn any_prog_im_overlap(want_im: (usize, usize), ranges: &[(u32, u32)]) -> bool {
-    ranges.iter().any(|&r| overlaps_scan_usize(want_im, r))
-}
-
 /// Coarse Da-binned index for MS1 m/z windows (built on the fly per call)
 struct MzBins {
     bins: Vec<Vec<usize>>,
@@ -140,7 +129,7 @@ impl MzBins {
 
 /// Build raw link candidates **without** a precursor m/z index.
 /// m/z gating uses a coarse Da-binned index built from MS1 (padded windows),
-/// then unions per group’s isolation windows.
+/// then unions per group’s isolation windows. IM program overlap is pre-masked per group.
 pub fn link_ms2_to_ms1_candidates_noindex(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],   // precursors (ms_level==1)
@@ -244,12 +233,39 @@ pub fn link_ms2_to_ms1_candidates_noindex(
         })
         .collect();
 
+    // 1g) **IM program mask per group**: for each MS1, does its IM window touch any programmed scan range?
+    //     This is independent of a specific MS2, so we can precompute once per group.
+    let im_prog_ok_by_group: HashMap<u32, Vec<bool>> = if !opts.require_im_overlap {
+        HashMap::new()
+    } else {
+        by_group
+            .par_iter()
+            .map(|(&g, _)| {
+                let scans = &prog_cache[&g].1;
+                if scans.is_empty() {
+                    // If no program scan ranges recorded, treat as OK for all MS1
+                    return (g, vec![true; ms1.len()]);
+                }
+                let mask: Vec<bool> = ms1
+                    .par_iter()
+                    .map(|c1| {
+                        scans.iter().any(|&(sl, sh)| {
+                            !( (c1.im_window.1 as u32) < sl || sh < (c1.im_window.0 as u32) )
+                        })
+                    })
+                    .collect();
+                (g, mask)
+            })
+            .collect()
+    };
+
     // ---- 2) PER-GROUP PARALLEL CANDIDATE BUILD ------------------------------
     by_group
         .into_par_iter()
         .flat_map(|(g, js)| {
-            let (_mzwins, scans) = &prog_cache[&g];
+            let (_mzwins, _scans) = &prog_cache[&g];
             let ms1_cand = &ms1_cand_by_group[&g];
+            let im_prog_mask: Option<&Vec<bool>> = im_prog_ok_by_group.get(&g);
 
             let mut local: Vec<LinkCandidate> = Vec::new();
             local.reserve(js.len().saturating_mul(16)); // heuristic
@@ -284,13 +300,15 @@ pub fn link_ms2_to_ms1_candidates_noindex(
                         continue;
                     }
 
-                    // ---- IM checks (pricier) ----
+                    // ---- IM checks (split into program-OK mask and per-MS2 cluster overlap) ----
                     if opts.require_im_overlap {
+                        // Program feasibility is precomputed O(1)
+                        if let Some(mask) = im_prog_mask {
+                            if !mask[i] { continue; }
+                        }
+                        // Cluster-vs-cluster overlap depends on this MS2
                         let im_ok_cluster = !(c1.im_window.1 < c2.im_window.0 || c2.im_window.1 < c1.im_window.0);
                         if !im_ok_cluster { continue; }
-                        let im_ok_program = scans.is_empty()
-                            || any_prog_im_overlap(c1.im_window, scans);
-                        if !im_ok_program { continue; }
                     }
 
                     // ---- apex deltas ----
