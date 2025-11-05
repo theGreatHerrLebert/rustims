@@ -1233,3 +1233,87 @@ def stitch_im_peaks(
         bool(allow_cross_groups),
     )
     return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
+
+_DEFAULT_ORDER = [
+    # provenance / windows
+    "ms_level", "window_group", "parent_im_id", "parent_rt_id",
+    "rt_lo", "rt_hi", "im_lo", "im_hi", "mz_lo", "mz_hi",
+    # summary stats
+    "raw_sum", "volume_proxy", "frame_count",
+    # present/empty flags
+    "has_rt_axis", "has_im_axis", "has_mz_axis",
+    "empty_rt", "empty_im", "empty_mz", "any_empty_dim",
+    # fits
+    "rt_mu", "rt_sigma", "rt_height", "rt_baseline", "rt_area", "rt_r2", "rt_n",
+    "im_mu", "im_sigma", "im_height", "im_baseline", "im_area", "im_r2", "im_n",
+    "mz_mu", "mz_sigma", "mz_height", "mz_baseline", "mz_area", "mz_r2", "mz_n",
+    # raw attachment
+    "raw_points_attached", "raw_points_n", "raw_empty",
+    # optional raw aggregates (only present if include_raw_stats=True)
+    "raw_intensity_sum", "raw_intensity_max",
+    "raw_n_frames", "raw_n_scans",
+    "raw_mz_min", "raw_mz_max",
+    "raw_rt_min", "raw_rt_max",
+    "raw_im_min", "raw_im_max",
+]
+
+_BOOL_COLS = [
+    "has_rt_axis", "has_im_axis", "has_mz_axis",
+    "empty_rt", "empty_im", "empty_mz", "any_empty_dim",
+    "raw_points_attached", "raw_empty",
+]
+
+
+def clusters_to_dataframe(
+    clusters,
+    include_raw_stats: bool = False,
+    as_bool_flags: bool = True,
+    column_order: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Convert an iterable of ims.PyClusterResult1D (or your Python wrapper objects
+    that expose the same pyobject) into a pandas DataFrame using the fast
+    Rust-side column exporter.
+
+    Parameters
+    ----------
+    clusters : Iterable[PyClusterResult1D or wrapper]
+        Anything whose underlying pyobject is the `PyClusterResult1D` class
+        from the PyO3 extension (your wrapper works since it’s extractable).
+    include_raw_stats : bool, default False
+        Include raw_* aggregate columns (requires raw points to be attached).
+    as_bool_flags : bool, default True
+        Convert uint8 indicator columns to boolean dtype.
+    column_order : list[str] | None
+        Reorder columns; by default uses a sensible order with optional raw_* at the end.
+
+    Returns
+    -------
+    pandas.DataFrame
+    """
+    # Delegates to the PyO3 function; returns a dict[str, np.ndarray]-like
+    arrs = ims.export_cluster_arrays(clusters, include_raw_stats)
+
+    # Defensive: ensure plain ndarray views
+    data = {k: np.asarray(v) for k, v in arrs.items()}
+
+    # Optional: convert flag columns to bool
+    if as_bool_flags:
+        for k in _BOOL_COLS:
+            if k in data:
+                # uint8 -> bool is fast and compact
+                data[k] = data[k].astype(bool, copy=False)
+
+    # Build DataFrame
+    df = pd.DataFrame(data)
+
+    # Optional reorder (skip any missing keys to stay robust whether raw_* present or not)
+    if column_order is None:
+        order = [c for c in _DEFAULT_ORDER if c in df.columns] + \
+                [c for c in df.columns if c not in _DEFAULT_ORDER]
+    else:
+        order = [c for c in column_order if c in df.columns] + \
+                [c for c in df.columns if c not in column_order]
+    df = df.reindex(columns=order)
+
+    return df
