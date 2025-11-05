@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyList, PySlice};
+use pyo3::types::{PyAny, PyDict, PyIterator, PyList, PySlice};
 use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
@@ -1635,7 +1635,10 @@ fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
     if a.mobility.is_none() { a.mobility = b.mobility; }
 }
 
-
+#[inline]
+fn opt_u32_to_i64(x: Option<u32>) -> i64 { x.map(|v| v as i64).unwrap_or(-1) }
+#[inline]
+fn opt_u64_to_i64(x: Option<u64>) -> i64 { x.map(|v| v as i64).unwrap_or(-1) }
 
 #[pyfunction]
 #[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
@@ -1843,6 +1846,286 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
         .collect()
 }
 
+#[pyfunction]
+#[pyo3(signature = (clusters, include_raw_stats=None))]
+pub fn export_cluster_arrays<'py>(
+    py: Python<'py>,
+    clusters: Bound<'py, PyAny>,                // <-- Bound API (by value)
+    include_raw_stats: Option<bool>,
+) -> PyResult<Py<PyDict>> {
+    let include_raw = include_raw_stats.unwrap_or(false);
+
+    // 1) Collect inner results (under GIL), no PyCell/deprecation: extract PyRef directly
+    let inners: Vec<ClusterResult1D> = {
+        let it = PyIterator::from_bound_object(&clusters)?;
+        let mut v = Vec::new();
+        for obj in it {
+            let any = obj?;                                       // Bound<'_, PyAny>
+            let cref: PyRef<PyClusterResult1D> = any.extract()?;  // borrow wrapper directly
+            v.push(cref.inner.clone());                           // push the actual inner
+        }
+        v
+    };
+
+    let n = inners.len();
+
+    // 2) Pre-allocate columns
+    let mut ms_level:           Vec<i64>   = Vec::with_capacity(n);
+    let mut window_group:       Vec<i64>   = Vec::with_capacity(n);
+    let mut parent_im_id:       Vec<i64>   = Vec::with_capacity(n);
+    let mut parent_rt_id:       Vec<i64>   = Vec::with_capacity(n);
+
+    let mut rt_lo:              Vec<i64>   = Vec::with_capacity(n);
+    let mut rt_hi:              Vec<i64>   = Vec::with_capacity(n);
+    let mut im_lo:              Vec<i64>   = Vec::with_capacity(n);
+    let mut im_hi:              Vec<i64>   = Vec::with_capacity(n);
+    let mut mz_lo:              Vec<f32>   = Vec::with_capacity(n);
+    let mut mz_hi:              Vec<f32>   = Vec::with_capacity(n);
+
+    let mut raw_sum:            Vec<f32>   = Vec::with_capacity(n);
+    let mut volume_proxy:       Vec<f32>   = Vec::with_capacity(n);
+    let mut frame_count:        Vec<i64>   = Vec::with_capacity(n);
+
+    let mut has_rt_axis:        Vec<u8>    = Vec::with_capacity(n);
+    let mut has_im_axis:        Vec<u8>    = Vec::with_capacity(n);
+    let mut has_mz_axis:        Vec<u8>    = Vec::with_capacity(n);
+
+    let mut empty_rt:           Vec<u8>    = Vec::with_capacity(n);
+    let mut empty_im:           Vec<u8>    = Vec::with_capacity(n);
+    let mut empty_mz:           Vec<u8>    = Vec::with_capacity(n);
+    let mut any_empty_dim:      Vec<u8>    = Vec::with_capacity(n);
+
+    // Fit fields
+    let mut rt_mu:     Vec<f32> = Vec::with_capacity(n);
+    let mut rt_sigma:  Vec<f32> = Vec::with_capacity(n);
+    let mut rt_height: Vec<f32> = Vec::with_capacity(n);
+    let mut rt_base:   Vec<f32> = Vec::with_capacity(n);
+    let mut rt_area:   Vec<f32> = Vec::with_capacity(n);
+    let mut rt_r2:     Vec<f32> = Vec::with_capacity(n);
+    let mut rt_n:      Vec<i64> = Vec::with_capacity(n);
+
+    let mut im_mu:     Vec<f32> = Vec::with_capacity(n);
+    let mut im_sigma:  Vec<f32> = Vec::with_capacity(n);
+    let mut im_height: Vec<f32> = Vec::with_capacity(n);
+    let mut im_base:   Vec<f32> = Vec::with_capacity(n);
+    let mut im_area:   Vec<f32> = Vec::with_capacity(n);
+    let mut im_r2:     Vec<f32> = Vec::with_capacity(n);
+    let mut im_n:      Vec<i64> = Vec::with_capacity(n);
+
+    let mut mz_mu:     Vec<f32> = Vec::with_capacity(n);
+    let mut mz_sigma:  Vec<f32> = Vec::with_capacity(n);
+    let mut mz_height: Vec<f32> = Vec::with_capacity(n);
+    let mut mz_base:   Vec<f32> = Vec::with_capacity(n);
+    let mut mz_area:   Vec<f32> = Vec::with_capacity(n);
+    let mut mz_r2:     Vec<f32> = Vec::with_capacity(n);
+    let mut mz_n:      Vec<i64> = Vec::with_capacity(n);
+
+    // Raw-points status
+    let mut raw_points_attached: Vec<u8>   = Vec::with_capacity(n);
+    let mut raw_points_n:        Vec<i64>  = Vec::with_capacity(n);
+    let mut raw_empty:           Vec<u8>   = Vec::with_capacity(n);
+
+    // Optional raw aggregates
+    let mut raw_intensity_sum:   Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_intensity_max:   Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_n_frames:        Vec<i64>  = Vec::with_capacity(n);
+    let mut raw_n_scans:         Vec<i64>  = Vec::with_capacity(n);
+    let mut raw_mz_min:          Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_mz_max:          Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_rt_min:          Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_rt_max:          Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_im_min:          Vec<f32>  = Vec::with_capacity(n);
+    let mut raw_im_max:          Vec<f32>  = Vec::with_capacity(n);
+
+    // 3) Fill (outside GIL)
+    py.allow_threads(|| {
+        for cr in inners.into_iter() {
+            // windows
+            rt_lo.push(cr.rt_window.0 as i64);
+            rt_hi.push(cr.rt_window.1 as i64);
+            im_lo.push(cr.im_window.0 as i64);
+            im_hi.push(cr.im_window.1 as i64);
+            mz_lo.push(cr.mz_window.0);
+            mz_hi.push(cr.mz_window.1);
+
+            // provenance / stats
+            ms_level.push(cr.ms_level as i64);
+            window_group.push(opt_u32_to_i64(cr.window_group));
+            parent_im_id.push(opt_u64_to_i64(cr.parent_im_id));
+            parent_rt_id.push(opt_u64_to_i64(cr.parent_rt_id));
+
+            raw_sum.push(cr.raw_sum);
+            volume_proxy.push(cr.volume_proxy);
+            frame_count.push(cr.frame_ids_used.len() as i64);
+
+            // axes present?
+            has_rt_axis.push(if cr.rt_axis_sec.as_ref().map_or(false, |v| !v.is_empty()) { 1 } else { 0 });
+            has_im_axis.push(if cr.im_axis_scans.as_ref().map_or(false, |v| !v.is_empty()) { 1 } else { 0 });
+            has_mz_axis.push(if cr.mz_axis_da.as_ref().map_or(false, |v| !v.is_empty()) { 1 } else { 0 });
+
+            // fits
+            let push_fit = |f: &Fit1D,
+                                mu: &mut Vec<f32>, sigma: &mut Vec<f32>, height: &mut Vec<f32>,
+                                base: &mut Vec<f32>, area: &mut Vec<f32>, r2: &mut Vec<f32>, n_: &mut Vec<i64>| {
+                mu.push(f.mu);
+                sigma.push(f.sigma);
+                height.push(f.height);
+                base.push(f.baseline);
+                area.push(f.area);
+                r2.push(f.r2);
+                n_.push(f.n as i64);
+            };
+            push_fit(&cr.rt_fit, &mut rt_mu, &mut rt_sigma, &mut rt_height, &mut rt_base, &mut rt_area, &mut rt_r2, &mut rt_n);
+            push_fit(&cr.im_fit, &mut im_mu, &mut im_sigma, &mut im_height, &mut im_base, &mut im_area, &mut im_r2, &mut im_n);
+            push_fit(&cr.mz_fit, &mut mz_mu, &mut mz_sigma, &mut mz_height, &mut mz_base, &mut mz_area, &mut mz_r2, &mut mz_n);
+
+            // empties (derived)
+            let is_empty_rt = (cr.rt_fit.n == 0) || (cr.rt_fit.area.abs() <= 0.0);
+            let is_empty_im = (cr.im_fit.n == 0) || (cr.im_fit.area.abs() <= 0.0);
+            let is_empty_mz = (cr.mz_fit.n == 0) || (cr.mz_fit.area.abs() <= 0.0);
+
+            empty_rt.push(if is_empty_rt { 1 } else { 0 });
+            empty_im.push(if is_empty_im { 1 } else { 0 });
+            empty_mz.push(if is_empty_mz { 1 } else { 0 });
+            any_empty_dim.push(if is_empty_rt || is_empty_im || is_empty_mz { 1 } else { 0 });
+
+            // raw points + optional aggregates
+            match &cr.raw_points {
+                Some(rp) if !rp.mz.is_empty() => {
+                    raw_points_attached.push(1);
+                    raw_points_n.push(rp.mz.len() as i64);
+                    raw_empty.push(0);
+
+                    if include_raw {
+                        // intensity aggregates
+                        let mut sum_i = 0.0f64;
+                        let mut max_i = 0.0f64;
+                        for &v in &rp.intensity {
+                            let vf = v as f64;
+                            sum_i += vf;
+                            if vf > max_i { max_i = vf; }
+                        }
+                        raw_intensity_sum.push(sum_i as f32);
+                        raw_intensity_max.push(max_i as f32);
+
+                        // unique frames/scans
+                        let mut frames: std::collections::HashSet<u32> = std::collections::HashSet::new();
+                        let mut scans:  std::collections::HashSet<u32> = std::collections::HashSet::new();
+                        for &f in &rp.frame { frames.insert(f); }
+                        for &s in &rp.scan  { scans.insert(s); }
+                        raw_n_frames.push(frames.len() as i64);
+                        raw_n_scans.push(scans.len() as i64);
+
+                        // min/max over mz/rt/im
+                        let (mut mzmin, mut mzmax) = (f32::INFINITY, f32::NEG_INFINITY);
+                        let (mut rtmin, mut rtmax) = (f32::INFINITY, f32::NEG_INFINITY);
+                        let (mut immin, mut immax) = (f32::INFINITY, f32::NEG_INFINITY);
+                        for i in 0..rp.mz.len() {
+                            let mzv = rp.mz[i];
+                            let rtv = rp.rt[i];
+                            let imv = rp.im[i];
+                            if mzv < mzmin { mzmin = mzv; } else if mzv > mzmax { mzmax = mzv; }
+                            if rtv < rtmin { rtmin = rtv; } else if rtv > rtmax { rtmax = rtv; }
+                            if imv < immin { immin = imv; } else if imv > immax { immax = imv; }
+                        }
+                        raw_mz_min.push(mzmin); raw_mz_max.push(mzmax);
+                        raw_rt_min.push(rtmin); raw_rt_max.push(rtmax);
+                        raw_im_min.push(immin); raw_im_max.push(immax);
+                    }
+                }
+                _ => {
+                    raw_points_attached.push(0);
+                    raw_points_n.push(0);
+                    raw_empty.push(1);
+                    if include_raw {
+                        raw_intensity_sum.push(0.0);
+                        raw_intensity_max.push(0.0);
+                        raw_n_frames.push(0);
+                        raw_n_scans.push(0);
+                        raw_mz_min.push(f32::NAN); raw_mz_max.push(f32::NAN);
+                        raw_rt_min.push(f32::NAN); raw_rt_max.push(f32::NAN);
+                        raw_im_min.push(f32::NAN); raw_im_max.push(f32::NAN);
+                    }
+                }
+            }
+        }
+    });
+
+    // 4) Build dict of numpy arrays
+    let out = PyDict::new_bound(py);
+    let arr_i64 = |v: Vec<i64>| PyArray1::from_vec_bound(py, v);
+    let arr_u8  = |v: Vec<u8 >| PyArray1::from_vec_bound(py, v);
+    let arr_f32 = |v: Vec<f32>| PyArray1::from_vec_bound(py, v);
+
+    out.set_item("ms_level",            arr_i64(ms_level))?;
+    out.set_item("window_group",        arr_i64(window_group))?;
+    out.set_item("parent_im_id",        arr_i64(parent_im_id))?;
+    out.set_item("parent_rt_id",        arr_i64(parent_rt_id))?;
+
+    out.set_item("rt_lo",               arr_i64(rt_lo))?;
+    out.set_item("rt_hi",               arr_i64(rt_hi))?;
+    out.set_item("im_lo",               arr_i64(im_lo))?;
+    out.set_item("im_hi",               arr_i64(im_hi))?;
+    out.set_item("mz_lo",               arr_f32(mz_lo))?;
+    out.set_item("mz_hi",               arr_f32(mz_hi))?;
+
+    out.set_item("raw_sum",             arr_f32(raw_sum))?;
+    out.set_item("volume_proxy",        arr_f32(volume_proxy))?;
+    out.set_item("frame_count",         arr_i64(frame_count))?;
+
+    out.set_item("has_rt_axis",         arr_u8 (has_rt_axis))?;
+    out.set_item("has_im_axis",         arr_u8 (has_im_axis))?;
+    out.set_item("has_mz_axis",         arr_u8 (has_mz_axis))?;
+
+    out.set_item("empty_rt",            arr_u8 (empty_rt))?;
+    out.set_item("empty_im",            arr_u8 (empty_im))?;
+    out.set_item("empty_mz",            arr_u8 (empty_mz))?;
+    out.set_item("any_empty_dim",       arr_u8 (any_empty_dim))?;
+
+    out.set_item("rt_mu",               arr_f32(rt_mu))?;
+    out.set_item("rt_sigma",            arr_f32(rt_sigma))?;
+    out.set_item("rt_height",           arr_f32(rt_height))?;
+    out.set_item("rt_baseline",         arr_f32(rt_base))?;
+    out.set_item("rt_area",             arr_f32(rt_area))?;
+    out.set_item("rt_r2",               arr_f32(rt_r2))?;
+    out.set_item("rt_n",                arr_i64(rt_n))?;
+
+    out.set_item("im_mu",               arr_f32(im_mu))?;
+    out.set_item("im_sigma",            arr_f32(im_sigma))?;
+    out.set_item("im_height",           arr_f32(im_height))?;
+    out.set_item("im_baseline",         arr_f32(im_base))?;
+    out.set_item("im_area",             arr_f32(im_area))?;
+    out.set_item("im_r2",               arr_f32(im_r2))?;
+    out.set_item("im_n",                arr_i64(im_n))?;
+
+    out.set_item("mz_mu",               arr_f32(mz_mu))?;
+    out.set_item("mz_sigma",            arr_f32(mz_sigma))?;
+    out.set_item("mz_height",           arr_f32(mz_height))?;
+    out.set_item("mz_baseline",         arr_f32(mz_base))?;
+    out.set_item("mz_area",             arr_f32(mz_area))?;
+    out.set_item("mz_r2",               arr_f32(mz_r2))?;
+    out.set_item("mz_n",                arr_i64(mz_n))?;
+
+    out.set_item("raw_points_attached", arr_u8 (raw_points_attached))?;
+    out.set_item("raw_points_n",        arr_i64(raw_points_n))?;
+    out.set_item("raw_empty",           arr_u8 (raw_empty))?;
+
+    if include_raw {
+        out.set_item("raw_intensity_sum", arr_f32(raw_intensity_sum))?;
+        out.set_item("raw_intensity_max", arr_f32(raw_intensity_max))?;
+        out.set_item("raw_n_frames",      arr_i64(raw_n_frames))?;
+        out.set_item("raw_n_scans",       arr_i64(raw_n_scans))?;
+        out.set_item("raw_mz_min",        arr_f32(raw_mz_min))?;
+        out.set_item("raw_mz_max",        arr_f32(raw_mz_max))?;
+        out.set_item("raw_rt_min",        arr_f32(raw_rt_min))?;
+        out.set_item("raw_rt_max",        arr_f32(raw_rt_max))?;
+        out.set_item("raw_im_min",        arr_f32(raw_im_min))?;
+        out.set_item("raw_im_max",        arr_f32(raw_im_max))?;
+    }
+
+    Ok(out.unbind())
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -1857,5 +2140,6 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_streaming, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(export_cluster_arrays, m)?)?;
     Ok(())
 }
