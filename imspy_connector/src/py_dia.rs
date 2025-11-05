@@ -1529,7 +1529,7 @@ impl PyTimsDatasetDIA {
         results_to_py(py, results)
     }
 
-    // imspy_connector/src/py_dia.rs  (inside impl PyTimsDatasetDIA)
+    // inside impl PyTimsDatasetDIA
 
     /// Link MS2 clusters to MS1 clusters without a precursor m/z index.
     ///
@@ -1544,6 +1544,10 @@ impl PyTimsDatasetDIA {
     require_im_overlap=true,
     mz_ppm=25.0,
     rt_guard_sec=0.0,
+    // NEW: pre-filters
+    max_rt_span_sec=None,
+    max_im_span_scans=None,
+    min_raw_sum=1.0,
     // SelectionCfg
     min_score=0.0,
     top_k_per_ms2=32,
@@ -1564,6 +1568,10 @@ impl PyTimsDatasetDIA {
         require_im_overlap: bool,
         mz_ppm: f32,
         rt_guard_sec: f64,
+        // NEW: pre-filters
+        max_rt_span_sec: Option<f64>,
+        max_im_span_scans: Option<usize>,
+        min_raw_sum: f32,
         // SelectionCfg
         min_score: f32,
         top_k_per_ms2: usize,
@@ -1582,7 +1590,7 @@ impl PyTimsDatasetDIA {
             .map(|p| p.borrow(py).inner.clone())
             .collect();
 
-        // 2) Options
+        // 2) Options (include new fields)
         let linker_opts = Ms2ToMs1LinkerOpts {
             min_rt_jaccard,
             max_rt_apex_sec,
@@ -1590,6 +1598,9 @@ impl PyTimsDatasetDIA {
             require_im_overlap,
             rt_guard_sec,
             mz_ppm,
+            max_rt_span_sec,
+            max_im_span_scans,
+            min_raw_sum,
         };
         let sel_cfg = SelectionCfg {
             min_score,
@@ -1598,10 +1609,15 @@ impl PyTimsDatasetDIA {
             cardinality_one_to_one,
         };
 
-        // 3) Call the optimized method on the inner dataset (no GIL)
+        // 3) Call optimized method on the inner dataset (no GIL)
         let linked = py.allow_threads(|| {
-            self.inner
-                .link_ms2_to_ms1_noindex(&ms1_rs, &ms2_rs, linker_opts, sel_cfg, pre_top_k_per_ms2)
+            self.inner.link_ms2_to_ms1_noindex(
+                &ms1_rs,
+                &ms2_rs,
+                linker_opts,
+                sel_cfg,
+                pre_top_k_per_ms2, // <- early prune
+            )
         });
 
         // 4) Pack back into Python objects

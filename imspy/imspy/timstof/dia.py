@@ -1198,40 +1198,58 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             ms1_clusters: List["ClusterResult1D"],
             ms2_clusters: List["ClusterResult1D"],
             *,
+            # Ms2ToMs1LinkerOpts
             min_rt_jaccard: float = 0.1,
-            max_rt_apex_sec: float | None = 8.0,
-            max_im_apex_scans: float | None = 5.0,
+            max_rt_apex_sec: float | None = 5.0,
+            max_im_apex_scans: float | None = 25.0,
             require_im_overlap: bool = True,
             mz_ppm: float = 25.0,
             rt_guard_sec: float = 0.0,
+            # NEW: pre-filters
+            max_rt_span_sec: float | None = 50.0,
+            max_im_span_scans: int | None = 80,
+            min_raw_sum: float = 1.0,
+            # SelectionCfg
             min_score: float = 0.0,
             top_k_per_ms2: int = 32,
             top_k_per_ms1: int | None = 512,
             cardinality_one_to_one: bool = False,
+            # Early prune (optional)
+            pre_top_k_per_ms2: int | None = None,
     ) -> List[Tuple["ClusterResult1D", List["ClusterResult1D"]]]:
         """
-        Link MS2 clusters to MS1 clusters (no m/z index). Returns list of (precursor, [fragments]).
+        Link MS2 clusters to MS1 clusters (no m/z index).
+        Returns a list of (precursor, [fragments]).
         """
         # Extract underlying Py objects:
         py_ms1 = [c._py for c in ms1_clusters]
         py_ms2 = [c._py for c in ms2_clusters]
 
         pairs = self.__dataset.link_ms2_to_ms1(
-            py_ms1, py_ms2,
+            py_ms1,
+            py_ms2,
+            # Ms2ToMs1LinkerOpts
             min_rt_jaccard,
             max_rt_apex_sec,
             max_im_apex_scans,
             require_im_overlap,
             mz_ppm,
             rt_guard_sec,
+            # NEW: pre-filters
+            max_rt_span_sec,
+            max_im_span_scans,
+            min_raw_sum,
+            # SelectionCfg
             min_score,
             top_k_per_ms2,
             top_k_per_ms1,
             cardinality_one_to_one,
+            # Early prune
+            pre_top_k_per_ms2,
         )
 
         # Wrap results back into high-level Python objects
-        out = []
+        out: list[tuple["ClusterResult1D", list["ClusterResult1D"]]] = []
         for py_prec, py_frags in pairs:
             prec = ClusterResult1D(py_prec)
             frags = [ClusterResult1D(pf) for pf in py_frags]
