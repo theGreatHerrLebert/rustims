@@ -1,5 +1,3 @@
-// rustdf/src/cluster/cluster_link.rs
-
 use crate::cluster::cluster::ClusterResult1D;
 use crate::data::dia::TimsDatasetDIA;
 use rayon::prelude::*;
@@ -9,17 +7,11 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Ms2ToMs1LinkerOpts {
-    /// Minimum RT overlap (Jaccard in **time space**, seconds)
-    pub min_rt_jaccard: f32,            // e.g. 0.1
-    /// Max |Δ apex RT| in seconds (None disables)
-    pub max_rt_apex_sec: Option<f32>,   // e.g. Some(8.0)
-    /// Max |Δ apex IM| in scans (None disables)
-    pub max_im_apex_scans: Option<f32>, // e.g. Some(5.0)
-    /// Require IM overlap of (MS1 cluster vs MS2 cluster) AND program scan ranges
+    pub min_rt_jaccard: f32,
+    pub max_rt_apex_sec: Option<f32>,
+    pub max_im_apex_scans: Option<f32>,
     pub require_im_overlap: bool,
-    /// Soft pad on absolute time bounds (seconds) for co-elution check
     pub rt_guard_sec: f64,
-    /// PPM pad applied to the MS1 cluster m/z window when gating against DIA isolation windows
     pub mz_ppm: f32,
 }
 
@@ -46,13 +38,9 @@ pub struct LinkCandidate {
 
 #[derive(Clone, Debug)]
 pub struct SelectionCfg {
-    /// Discard candidates with score < min_score
     pub min_score: f32,
-    /// Keep at most this many candidates per MS2 before greedy selection
     pub top_k_per_ms2: usize,
-    /// Optionally keep at most this many candidates per MS1 (after per-MS2 cull)
     pub top_k_per_ms1: Option<usize>,
-    /// If true, enforce 1:1 (each MS1 used at most once) across accepted links
     pub cardinality_one_to_one: bool,
 }
 
@@ -76,7 +64,6 @@ fn jaccard_time(a_lo: f64, a_hi: f64, b_lo: f64, b_hi: f64) -> f32 {
     if union <= 0.0 { 0.0 } else { (inter / union) as f32 }
 }
 
-/// Coarse Da-binned index for MS1 m/z windows (built on the fly per call)
 struct MzBins {
     bins: Vec<Vec<usize>>,
     lo: f64,
@@ -112,7 +99,6 @@ impl MzBins {
     }
 }
 
-/// Each MS1 with [t_lo, t_hi] is inserted into every bucket touched by the interval.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct RtBuckets {
@@ -154,59 +140,73 @@ impl RtBuckets {
         let b = clamp(t0.max(t1));
         (a.min(b), a.max(b))
     }
-    /// Collect MS1 indices that touch [t0, t1] (not deduped).
     #[inline] fn gather(&self, t0: f64, t1: f64, out: &mut Vec<usize>) {
         let (b0, b1) = self.bucket_range(t0, t1);
         for b in b0..=b1 { out.extend_from_slice(&self.buckets[b]); }
     }
 }
 
-/// Build raw link candidates **without** a precursor m/z index.
-/// Adds RT bucketing + coarse m/z binning and *early per-MS2 top-K* pruning.
 pub fn link_ms2_to_ms1_candidates_noindex(
     ds: &TimsDatasetDIA,
-    ms1: &[ClusterResult1D],   // precursors (ms_level==1)
-    ms2: &[ClusterResult1D],   // fragments  (ms_level==2, window_group=Some)
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
     opts: &Ms2ToMs1LinkerOpts,
-    pre_top_k_per_ms2: Option<usize>,   // <-- new: early trim hint
+    pre_top_k_per_ms2: Option<usize>,
 ) -> Vec<LinkCandidate> {
     let frame_time = &ds.dia_index.frame_time;
 
-    // ---- group MS2 by DIA window group ----
+    // group MS2 by group
     let mut by_group: HashMap<u32, Vec<usize>> = HashMap::new();
     for (j, c2) in ms2.iter().enumerate() {
         if let Some(g) = c2.window_group { by_group.entry(g).or_default().push(j); }
     }
 
-    // ---- PRECOMPUTES (parallel where useful) --------------------------------
+    // --- PRECOMPUTES ---
 
-    // MS1 and MS2 absolute time bounds (seconds)
+    // 1) MS1 absolute time bounds (use 2 independent ifs)
     let ms1_time_bounds: Vec<(f64, f64)> = ms1.par_iter().map(|c| {
-        let mut t_lo = f64::INFINITY; let mut t_hi = f64::NEG_INFINITY;
+        let mut t_lo = f64::INFINITY;
+        let mut t_hi = f64::NEG_INFINITY;
         for &fid in &c.frame_ids_used {
-            if let Some(&t) = frame_time.get(&fid) { if t < t_lo { t_lo = t; } else if t > t_hi { t_hi = t; } }
+            if let Some(&t) = frame_time.get(&fid) {
+                if t < t_lo { t_lo = t; }
+                if t > t_hi { t_hi = t; } // <- NOT else-if
+            }
         }
         (t_lo, t_hi)
     }).collect();
 
+    // 2) MS2 absolute time bounds (use 2 independent ifs)
     let ms2_time_bounds: Vec<(f64, f64)> = ms2.par_iter().map(|c2| {
-        let mut t_lo = f64::INFINITY; let mut t_hi = f64::NEG_INFINITY;
+        let mut t_lo = f64::INFINITY;
+        let mut t_hi = f64::NEG_INFINITY;
         for &fid in &c2.frame_ids_used {
-            if let Some(&t) = frame_time.get(&fid) { if t < t_lo { t_lo = t; } else if t > t_hi { t_hi = t; } }
+            if let Some(&t) = frame_time.get(&fid) {
+                if t < t_lo { t_lo = t; }
+                if t > t_hi { t_hi = t; } // <- NOT else-if
+            }
         }
         (t_lo, t_hi)
     }).collect();
 
-    // Global RT span (for buckets)
-    let (mut rt_min, mut rt_max) = (f64::INFINITY, f64::NEG_INFINITY);
-    for &(a,b) in &ms1_time_bounds { if a.is_finite() { rt_min = rt_min.min(a); } else if b.is_finite() { rt_max = rt_max.max(b); } }
-    for &(a,b) in &ms2_time_bounds { if a.is_finite() { rt_min = rt_min.min(a); } else if b.is_finite() { rt_max = rt_max.max(b); } }
-    if !rt_min.is_finite() || !rt_max.is_finite() || rt_max <= rt_min { return Vec::new(); }
+    // 3) Global RT span (DON'T use else-if; update both ends)
+    let mut rt_min = f64::INFINITY;
+    let mut rt_max = f64::NEG_INFINITY;
+    for &(a,b) in &ms1_time_bounds {
+        if a.is_finite() { rt_min = rt_min.min(a); }
+        if b.is_finite() { rt_max = rt_max.max(b); }
+    }
+    for &(a,b) in &ms2_time_bounds {
+        if a.is_finite() { rt_min = rt_min.min(a); }
+        if b.is_finite() { rt_max = rt_max.max(b); }
+    }
+    if !rt_min.is_finite() || !rt_max.is_finite() || rt_max <= rt_min {
+        return Vec::new();
+    }
 
-    // Build RT time buckets over MS1 once (choose 1.0 s buckets; adjust as needed)
     let rt_buckets = Arc::new(RtBuckets::new(rt_min, rt_max, 1.0, &ms1_time_bounds));
 
-    // MS1 padded m/z windows (ppm on edges)
+    // 4) MS1 padded m/z windows
     let ppm = (opts.mz_ppm as f64) * 1e-6;
     let ms1_padded_mz: Vec<(f64, f64)> = ms1.par_iter().map(|c| {
         let (mut lo, mut hi) = (c.mz_window.0 as f64, c.mz_window.1 as f64);
@@ -216,7 +216,7 @@ pub fn link_ms2_to_ms1_candidates_noindex(
         (lo, hi)
     }).collect();
 
-    // Cache group programs (mz windows + merged IM scan ranges)
+    // 5) Program cache
     let mut prog_cache: HashMap<u32, (Vec<(f32,f32)>, Vec<(u32,u32)>)> = HashMap::new();
     for &g in by_group.keys() {
         let prog = ds.program_for_group(g);
@@ -226,14 +226,14 @@ pub fn link_ms2_to_ms1_candidates_noindex(
         prog_cache.insert(g, (prog.mz_windows, scans));
     }
 
-    // Coarse Da-binned index for MS1 windows (global)
+    // 6) Coarse Da-binned index for MS1 windows
     let global_lo = ds.global_meta_data.mz_acquisition_range_lower as f64;
     let global_hi = ds.global_meta_data.mz_acquisition_range_upper as f64;
     let mut bins_build = MzBins::new(global_lo.max(1.0), global_hi, 1.0);
     for (i, &(lo, hi)) in ms1_padded_mz.iter().enumerate() { bins_build.push_window(lo, hi, i); }
     let bins = Arc::new(bins_build);
 
-    // Per-group m/z feasibility mask for O(1) membership
+    // 7) m/z feasibility mask per group
     let is_ms1_cand_mask: HashMap<u32, Vec<bool>> = by_group.par_iter().map(|(&g, _)| {
         let (mzwins, _scans) = &prog_cache[&g];
         let mut tmp = Vec::<usize>::new(); tmp.reserve(ms1.len().min(8192));
@@ -244,7 +244,7 @@ pub fn link_ms2_to_ms1_candidates_noindex(
         (g, mask)
     }).collect();
 
-    // IM program feasibility mask per group (O(1) later)
+    // 8) IM program feasibility mask per group
     let im_prog_ok_by_group: HashMap<u32, Vec<bool>> = if !opts.require_im_overlap {
         HashMap::new()
     } else {
@@ -258,21 +258,19 @@ pub fn link_ms2_to_ms1_candidates_noindex(
         }).collect()
     };
 
-    // ---- PER-GROUP, THEN PER-FRAGMENT PARALLEL ------------------------------
+    // --- PER-GROUP / PER-FRAGMENT PARALLEL ---
     by_group
         .into_par_iter()
         .flat_map(|(g, js)| {
             let is_ms1_cand = &is_ms1_cand_mask[&g];
             let im_prog_mask_opt = im_prog_ok_by_group.get(&g);
 
-            // parallel over fragment clusters in this group
             js.par_iter().flat_map(|&j| {
                 let c2 = &ms2[j];
                 if !(c2.rt_fit.mu.is_finite() && c2.im_fit.mu.is_finite()) {
                     return Vec::<LinkCandidate>::new();
                 }
 
-                // MS2 absolute time with guard
                 let (mut t2_lo, mut t2_hi) = ms2_time_bounds[j];
                 if t2_lo.is_finite() { t2_lo -= opts.rt_guard_sec; }
                 if t2_hi.is_finite() { t2_hi += opts.rt_guard_sec; }
@@ -280,37 +278,32 @@ pub fn link_ms2_to_ms1_candidates_noindex(
                     return Vec::<LinkCandidate>::new();
                 }
 
-                // Pull MS1 candidates that *time-overlap* the MS2 (via buckets)
                 let mut ms1_time_hits = Vec::<usize>::new();
                 rt_buckets.gather(t2_lo, t2_hi, &mut ms1_time_hits);
                 ms1_time_hits.sort_unstable(); ms1_time_hits.dedup();
 
-                // Per-fragment buffer
                 let mut local = Vec::<LinkCandidate>::new();
                 local.reserve(16);
 
                 for i in ms1_time_hits {
-                    // Intersect with group’s m/z-gated MS1 set in O(1)
                     if !is_ms1_cand[i] { continue; }
 
                     let c1 = &ms1[i];
 
-                    // Absolute co-elution already bucket-gated; keep guard for degenerate bounds
                     let (t1_lo, t1_hi) = ms1_time_bounds[i];
                     if !(t1_lo.is_finite() && t1_hi.is_finite() && t1_hi > t1_lo) { continue; }
 
-                    // Jaccard in time space
                     let jacc = jaccard_time(t1_lo, t1_hi, t2_lo, t2_hi);
                     if jacc < opts.min_rt_jaccard { continue; }
 
-                    // IM checks
                     if opts.require_im_overlap {
-                        if let Some(mask) = im_prog_mask_opt { if !mask[i] { continue; } }
+                        if let Some(mask) = im_prog_mask_opt {
+                            if !mask[i] { continue; }
+                        }
                         let im_ok_cluster = !(c1.im_window.1 < c2.im_window.0 || c2.im_window.1 < c1.im_window.0);
                         if !im_ok_cluster { continue; }
                     }
 
-                    // Apex deltas + simple score
                     let d_rt = (c1.rt_fit.mu - c2.rt_fit.mu).abs();
                     if let Some(max) = opts.max_rt_apex_sec { if !d_rt.is_finite() || d_rt > max { continue; } }
 
@@ -330,7 +323,7 @@ pub fn link_ms2_to_ms1_candidates_noindex(
 
                 if let Some(k) = pre_top_k_per_ms2 {
                     if local.len() > k {
-                        let _ = local.select_nth_unstable_by(k, |a, b| b.score.total_cmp(&a.score));
+                        let (_, _, _) = local.select_nth_unstable_by(k, |a, b| b.score.total_cmp(&a.score));
                         local.truncate(k);
                     }
                     local.sort_by(|a,b| b.score.total_cmp(&a.score));
@@ -339,13 +332,11 @@ pub fn link_ms2_to_ms1_candidates_noindex(
                 }
 
                 local
-            }).collect::<Vec<_>>() // end per-fragment parallel
+            }).collect::<Vec<_>>()
         })
-        .collect() // end per-group parallel
+        .collect()
 }
 
-/// Greedy selection & grouping (MS2-centric), returning (precursor, [fragments]) blocks.
-/// Assumes `candidates` are already group-compatible and pre-gated (m/z/IM/RT).
 pub fn build_precursor_fragment_annotation_ms2centric(
     ms1: &[ClusterResult1D],
     ms2: &[ClusterResult1D],
@@ -356,7 +347,6 @@ pub fn build_precursor_fragment_annotation_ms2centric(
         return Vec::new();
     }
 
-    // Group candidates by DIA window group
     let mut by_group: HashMap<u32, Vec<LinkCandidate>> = HashMap::new();
     for c in candidates {
         if c.score >= cfg.min_score {
@@ -364,13 +354,11 @@ pub fn build_precursor_fragment_annotation_ms2centric(
         }
     }
 
-    // Per-group selection in parallel
     let selected: Vec<LinkCandidate> = by_group
         .into_par_iter()
         .map(|(_g, mut edges)| {
             if edges.is_empty() { return Vec::<LinkCandidate>::new(); }
 
-            // 1) Per-MS2 top-K cull
             let mut by_ms2: HashMap<usize, Vec<LinkCandidate>> = HashMap::new();
             for e in edges.drain(..) {
                 if e.ms2_idx < ms2.len() && e.ms1_idx < ms1.len() {
@@ -383,7 +371,6 @@ pub fn build_precursor_fragment_annotation_ms2centric(
             }
             let mut culled: Vec<LinkCandidate> = by_ms2.into_values().flatten().collect();
 
-            // 2) Optional per-MS1 top-K cull
             if let Some(k) = cfg.top_k_per_ms1 {
                 let mut by_ms1: HashMap<usize, Vec<LinkCandidate>> = HashMap::new();
                 for e in culled.drain(..) { by_ms1.entry(e.ms1_idx).or_default().push(e); }
@@ -394,7 +381,6 @@ pub fn build_precursor_fragment_annotation_ms2centric(
                 culled = by_ms1.into_values().flatten().collect();
             }
 
-            // 3) Greedy accept best-first with cardinality constraints
             culled.sort_by(|a, b| b.score.total_cmp(&a.score));
             let mut used_ms2: HashSet<usize> = HashSet::new();
             let mut used_ms1: HashSet<usize> = HashSet::new();
@@ -415,7 +401,6 @@ pub fn build_precursor_fragment_annotation_ms2centric(
 
     if selected.is_empty() { return Vec::new(); }
 
-    // Group accepted links by MS1; sort fragment lists by score desc
     let mut score_lookup: HashMap<(usize, usize), f32> = HashMap::new();
     for s in &selected { score_lookup.insert((s.ms1_idx, s.ms2_idx), s.score); }
 
@@ -433,12 +418,10 @@ pub fn build_precursor_fragment_annotation_ms2centric(
         if let Some(prec) = ms1.get(i_ms1).cloned() { out.push((prec, frags)); }
     }
 
-    // Order precursor blocks by precursor strength (raw_sum desc)
     out.sort_by(|a, b| b.0.raw_sum.total_cmp(&a.0.raw_sum));
     out
 }
 
-/// Convenience wrapper: full MS2→MS1 linking without an m/z index.
 pub fn link_ms2_to_ms1_noindex(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],
@@ -447,7 +430,7 @@ pub fn link_ms2_to_ms1_noindex(
     sel_cfg: SelectionCfg,
 ) -> Vec<(ClusterResult1D, Vec<ClusterResult1D>)> {
     let cands = link_ms2_to_ms1_candidates_noindex(
-        ds, ms1, ms2, &linker_opts, Some(sel_cfg.top_k_per_ms2) // <-- pass early trim
+        ds, ms1, ms2, &linker_opts, Some(sel_cfg.top_k_per_ms2)
     );
     build_precursor_fragment_annotation_ms2centric(ms1, ms2, &cands, &sel_cfg)
 }
