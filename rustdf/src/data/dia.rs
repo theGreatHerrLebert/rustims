@@ -254,8 +254,9 @@ impl TimsDatasetDIA {
         ms2: &[ClusterResult1D],
         opts: Ms2ToMs1LinkerOpts,
         cfg: SelectionCfg,
+        pre_top_k_per_ms2: Option<usize>,
     ) -> Vec<(ClusterResult1D, Vec<ClusterResult1D>)> {
-        let cands = link_ms2_to_ms1_candidates_noindex(self, ms1, ms2, &opts);
+        let cands = link_ms2_to_ms1_candidates_noindex(self, ms1, ms2, &opts, pre_top_k_per_ms2);
         build_precursor_fragment_annotation_ms2centric(ms1, ms2, &cands, &cfg)
     }
 
