@@ -5,6 +5,7 @@ use crate::data::dia::TimsDatasetDIA;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct Ms2ToMs1LinkerOpts {
@@ -79,17 +80,76 @@ fn jaccard_time(a_lo: f64, a_hi: f64, b_lo: f64, b_hi: f64) -> f32 {
     if union <= 0.0 { 0.0 } else { (inter / union) as f32 }
 }
 
+#[inline]
+fn overlaps_scan_usize(a: (usize, usize), b: (u32, u32)) -> bool {
+    let (al, ah) = (a.0 as u32, a.1 as u32);
+    !(ah < b.0 || b.1 < al)
+}
+
+#[inline]
+fn any_prog_im_overlap(want_im: (usize, usize), ranges: &[(u32, u32)]) -> bool {
+    ranges.iter().any(|&r| overlaps_scan_usize(want_im, r))
+}
+
+/// Coarse Da-binned index for MS1 m/z windows (built on the fly per call)
+struct MzBins {
+    bins: Vec<Vec<usize>>,
+    lo: f64,
+    hi: f64,
+    w: f64,
+}
+
+impl MzBins {
+    fn new(lo: f64, hi: f64, w: f64) -> Self {
+        let span = (hi - lo).max(1.0);
+        let n = ((span / w).ceil() as usize).max(1);
+        Self { bins: vec![Vec::new(); n], lo, hi, w }
+    }
+
+    #[inline]
+    fn clamp_bin(&self, x: f64) -> usize {
+        if x <= self.lo { return 0; }
+        if x >= self.hi { return self.bins.len().saturating_sub(1); }
+        let idx = ((x - self.lo) / self.w).floor() as isize;
+        idx.clamp(0, (self.bins.len() as isize) - 1) as usize
+    }
+
+    #[inline]
+    fn bin_range(&self, a: f64, b: f64) -> (usize, usize) {
+        let i0 = self.clamp_bin(a.min(b));
+        let i1 = self.clamp_bin(a.max(b));
+        (i0.min(i1), i0.max(i1))
+    }
+
+    fn push_window(&mut self, lo: f64, hi: f64, idx: usize) {
+        if !(lo.is_finite() && hi.is_finite() && hi > lo) { return; }
+        let (i0, i1) = self.bin_range(lo, hi);
+        for i in i0..=i1 {
+            self.bins[i].push(idx);
+        }
+    }
+
+    fn union_for_window(&self, lo: f64, hi: f64, out: &mut Vec<usize>) {
+        if !(lo.is_finite() && hi.is_finite() && hi > lo) { return; }
+        let (i0, i1) = self.bin_range(lo, hi);
+        for i in i0..=i1 {
+            out.extend_from_slice(&self.bins[i]);
+        }
+    }
+}
+
+/// Build raw link candidates **without** a precursor m/z index.
+/// m/z gating uses a coarse Da-binned index built from MS1 (padded windows),
+/// then unions per group’s isolation windows.
 pub fn link_ms2_to_ms1_candidates_noindex(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],   // precursors (ms_level==1)
     ms2: &[ClusterResult1D],   // fragments  (ms_level==2, window_group=Some)
     opts: &Ms2ToMs1LinkerOpts,
 ) -> Vec<LinkCandidate> {
-    use rayon::prelude::*;
-
     let frame_time = &ds.dia_index.frame_time;
 
-    // ---- 0) group MS2 by group (once) --------------------------------------
+    // ---- 0) group MS2 by group ----------------------------------------------
     let mut by_group: HashMap<u32, Vec<usize>> = HashMap::new();
     for (j, c2) in ms2.iter().enumerate() {
         if let Some(g) = c2.window_group {
@@ -97,74 +157,90 @@ pub fn link_ms2_to_ms1_candidates_noindex(
         }
     }
 
-    // ---- 1) PRECOMPUTES (all parallel) -------------------------------------
-    // 1a) MS1 absolute time bounds
-    let ms1_time_bounds: Vec<(f64, f64)> = ms1.par_iter().map(|c| {
-        let mut t_lo = f64::INFINITY;
-        let mut t_hi = f64::NEG_INFINITY;
-        for &fid in &c.frame_ids_used {
-            if let Some(&t) = frame_time.get(&fid) {
-                if t < t_lo { t_lo = t; }
-                if t > t_hi { t_hi = t; }
-            }
-        }
-        (t_lo, t_hi)
-    }).collect();
+    // ---- 1) PRECOMPUTES ------------------------------------------------------
 
-    // 1b) MS2 absolute time bounds (for all MS2 once)
-    let ms2_time_bounds: Vec<(f64,f64)> = ms2.par_iter().map(|c2| {
-        let mut t2_lo = f64::INFINITY;
-        let mut t2_hi = f64::NEG_INFINITY;
-        for &fid in &c2.frame_ids_used {
-            if let Some(&t) = frame_time.get(&fid) {
-                if t < t2_lo { t2_lo = t; }
-                if t > t2_hi { t2_hi = t; }
+    // 1a) MS1 absolute time bounds
+    let ms1_time_bounds: Vec<(f64, f64)> = ms1
+        .par_iter()
+        .map(|c| {
+            let mut t_lo = f64::INFINITY;
+            let mut t_hi = f64::NEG_INFINITY;
+            for &fid in &c.frame_ids_used {
+                if let Some(&t) = frame_time.get(&fid) {
+                    if t < t_lo { t_lo = t; }
+                    if t > t_hi { t_hi = t; }
+                }
             }
-        }
-        (t2_lo, t2_hi)
-    }).collect();
+            (t_lo, t_hi)
+        })
+        .collect();
+
+    // 1b) MS2 absolute time bounds (all MS2 once)
+    let ms2_time_bounds: Vec<(f64, f64)> = ms2
+        .par_iter()
+        .map(|c2| {
+            let mut t_lo = f64::INFINITY;
+            let mut t_hi = f64::NEG_INFINITY;
+            for &fid in &c2.frame_ids_used {
+                if let Some(&t) = frame_time.get(&fid) {
+                    if t < t_lo { t_lo = t; }
+                    if t > t_hi { t_hi = t; }
+                }
+            }
+            (t_lo, t_hi)
+        })
+        .collect();
 
     // 1c) MS1 padded m/z windows (pad the *window* edges by ppm)
     let ppm = (opts.mz_ppm as f64) * 1e-6;
-    let ms1_padded_mz: Vec<(f64,f64)> = ms1.par_iter().map(|c| {
-        let (mut lo, mut hi) = (c.mz_window.0 as f64, c.mz_window.1 as f64);
-        if lo.is_finite() && hi.is_finite() && hi > lo && ppm > 0.0 {
-            lo -= lo.abs() * ppm;
-            hi += hi.abs() * ppm;
-        }
-        (lo, hi)
-    }).collect();
+    let ms1_padded_mz: Vec<(f64, f64)> = ms1
+        .par_iter()
+        .map(|c| {
+            let (mut lo, mut hi) = (c.mz_window.0 as f64, c.mz_window.1 as f64);
+            if lo.is_finite() && hi.is_finite() && hi > lo && ppm > 0.0 {
+                lo -= lo.abs() * ppm;
+                hi += hi.abs() * ppm;
+            }
+            (lo, hi)
+        })
+        .collect();
 
     // 1d) cache group programs (mz windows + merged scan ranges) once
-    let mut prog_cache: HashMap<u32, (Vec<(f32,f32)>, Vec<(u32,u32)>)> = HashMap::new();
+    let mut prog_cache: HashMap<u32, (Vec<(f32, f32)>, Vec<(u32, u32)>)> = HashMap::new();
     for &g in by_group.keys() {
         let prog = ds.program_for_group(g);
         // merge scan ranges once (if not already merged upstream)
         let scans = if let Some(u) = ds.scan_unions_for_window_group_core(g) {
-            u.into_iter().map(|(a,b)| (a as u32, b as u32)).collect()
+            u.into_iter().map(|(a, b)| (a as u32, b as u32)).collect()
         } else {
             prog.scan_ranges.clone()
         };
         prog_cache.insert(g, (prog.mz_windows, scans));
     }
 
-    // 1e) for each group, prebuild the MS1 indices that pass m/z gating
-    //     (this avoids recomputing against the same isolation program for each MS2 in the group)
+    // 1e) Build a global coarse Da-binned index for MS1 windows (read-only later)
+    //     Pick a simple width: 1.0 Da is fine; tighten to 0.5 if your windows are narrow.
+    let global_lo = ds.global_meta_data.mz_acquisition_range_lower as f64;
+    let global_hi = ds.global_meta_data.mz_acquisition_range_upper as f64;
+    let mut bins_build = MzBins::new(global_lo.max(1.0), global_hi, 1.0);
+    for (i, &(lo, hi)) in ms1_padded_mz.iter().enumerate() {
+        bins_build.push_window(lo, hi, i);
+    }
+    let bins = Arc::new(bins_build);
+
+    // 1f) For each group, prebuild MS1 candidates by **bin-union** over isolation windows
     let ms1_cand_by_group: HashMap<u32, Vec<usize>> = by_group
         .par_iter()
         .map(|(&g, _)| {
             let (mzwins, _scans) = &prog_cache[&g];
-            // For speed: if there are many mzwins, sort them and do a linear sweep.
-            // Here we keep the simpler any-overlap loop; it’s fast in practice for DIA sizes.
-            let cand: Vec<usize> = (0..ms1.len()).filter(|&i| {
-                let (lo, hi) = ms1_padded_mz[i];
-                if !(lo.is_finite() && hi.is_finite() && hi > lo) { return false; }
-                mzwins.iter().any(|&(wlo, whi)| {
-                    let (wlo, whi) = (wlo as f64, whi as f64);
-                    !(hi < wlo || whi < lo)
-                })
-            }).collect();
-            (g, cand)
+            let mut tmp: Vec<usize> = Vec::new();
+            tmp.reserve(ms1.len().min(8192));
+            for &(wlo, whi) in mzwins {
+                bins.union_for_window(wlo as f64, whi as f64, &mut tmp);
+            }
+            tmp.sort_unstable();
+            tmp.dedup();
+            (g, tmp)
         })
         .collect();
 
@@ -172,10 +248,7 @@ pub fn link_ms2_to_ms1_candidates_noindex(
     by_group
         .into_par_iter()
         .flat_map(|(g, js)| {
-            let (mzwins, scans) = &prog_cache[&g];
-            if mzwins.is_empty() {
-                return Vec::<LinkCandidate>::new();
-            }
+            let (_mzwins, scans) = &prog_cache[&g];
             let ms1_cand = &ms1_cand_by_group[&g];
 
             let mut local: Vec<LinkCandidate> = Vec::new();
@@ -195,25 +268,32 @@ pub fn link_ms2_to_ms1_candidates_noindex(
                 for &i in ms1_cand {
                     let c1 = &ms1[i];
 
-                    // IM strictness: cluster overlap AND program scan ranges
-                    if opts.require_im_overlap {
-                        let im_ok_cluster = !(c1.im_window.1 < c2.im_window.0 || c2.im_window.1 < c1.im_window.0);
-                        let im_ok_program = scans.is_empty()
-                            || scans.iter().any(|&(sl, sh)| !( (c1.im_window.1 as u32) < sl || sh < (c1.im_window.0 as u32) ));
-                        if !(im_ok_cluster && im_ok_program) { continue; }
-                    }
-
-                    // absolute co-elution guard
+                    // ---- cheap absolute RT co-elution first ----
                     let (t1_lo, t1_hi) = ms1_time_bounds[i];
                     if t2_lo.is_finite() && t2_hi.is_finite() && t1_lo.is_finite() && t1_hi.is_finite() {
-                        if t1_hi < t2_lo || t2_hi < t1_lo { continue; }
+                        if t1_hi < t2_lo || t2_hi < t1_lo {
+                            continue;
+                        }
+                    } else {
+                        continue;
                     }
 
-                    // Jaccard in time space using bounds (not indices)
+                    // ---- Jaccard in time space (cheap) ----
                     let jacc = jaccard_time(t1_lo, t1_hi, t2_lo, t2_hi);
-                    if jacc < opts.min_rt_jaccard { continue; }
+                    if jacc < opts.min_rt_jaccard {
+                        continue;
+                    }
 
-                    // apex deltas
+                    // ---- IM checks (pricier) ----
+                    if opts.require_im_overlap {
+                        let im_ok_cluster = !(c1.im_window.1 < c2.im_window.0 || c2.im_window.1 < c1.im_window.0);
+                        if !im_ok_cluster { continue; }
+                        let im_ok_program = scans.is_empty()
+                            || any_prog_im_overlap(c1.im_window, scans);
+                        if !im_ok_program { continue; }
+                    }
+
+                    // ---- apex deltas ----
                     let d_rt = (c1.rt_fit.mu - c2.rt_fit.mu).abs();
                     if let Some(max) = opts.max_rt_apex_sec {
                         if !d_rt.is_finite() || d_rt > max { continue; }
@@ -224,11 +304,14 @@ pub fn link_ms2_to_ms1_candidates_noindex(
                         if !d_im.is_finite() || d_im > max { continue; }
                     }
 
+                    // ---- score ----
                     let score = jacc
                         * (1.0 / (1.0 + d_rt))
                         * (if let Some(max) = opts.max_im_apex_scans {
                         1.0 / (1.0 + d_im / (max + 1e-3))
-                    } else { 1.0 });
+                    } else {
+                        1.0
+                    });
 
                     if score.is_finite() {
                         local.push(LinkCandidate { ms1_idx: i, ms2_idx: j, score, group: g });
@@ -236,7 +319,8 @@ pub fn link_ms2_to_ms1_candidates_noindex(
                 }
             }
 
-            local.sort_by(|a,b| b.score.total_cmp(&a.score));
+            // best-first (makes later truncations cheaper)
+            local.sort_by(|a, b| b.score.total_cmp(&a.score));
             local
         })
         .collect()
