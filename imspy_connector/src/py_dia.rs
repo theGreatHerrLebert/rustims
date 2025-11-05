@@ -1352,17 +1352,27 @@ impl PyTimsDatasetDIA {
         im_peaks,
         // RtExpandParams
         bin_pad=0,
-        smooth_sigma=1.25, smooth_trunc=3.0,
-        min_prom=50.0, min_sep_frames=2, min_width_frames=2,
-        fallback_if_frames_lt=5, fallback_frac_width=0.5,
+        smooth_sigma=1.25,
+        smooth_trunc=3.0,
+        min_prom=50.0,
+        min_sep_frames=2,
+        min_width_frames=2,
+        fallback_if_frames_lt=5,
+        fallback_frac_width=0.5,
         // BuildSpecOpts
-        extra_rt_pad=0, extra_im_pad=0, mz_ppm_pad=5.0, mz_hist_bins=64,
+        extra_rt_pad=0,
+        extra_im_pad=0,
+        mz_ppm_pad=5.0,
+        mz_hist_bins=64,
         // Eval1DOpts
-        refine_mz_once=true, refine_k_sigma=3.0,
+        refine_mz_once=true,
+        refine_k_sigma=3.0,
         attach_axes=true,
-        attach_points=false, attach_max_points=None,
+        attach_points=false,
+        attach_max_points=None,
         // matching constraint + threads
-        require_rt_overlap=true, num_threads=0,
+        require_rt_overlap=true,
+        num_threads=0,
         min_im_span=12,
     ))]
     pub fn clusters_for_group(
