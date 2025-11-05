@@ -465,6 +465,20 @@ class ClusterResult1D:
     def to_dataframe_row(self) -> pd.DataFrame:
         return pd.DataFrame([self.to_dict()])
 
+    def __repr__(self):
+        """
+        Return a string representation of the ClusterResult1D object.
+        Returns:
+        str: A string representation of the ClusterResult1D object.
+        """
+
+        return (f"ClusterResult1D(ms_level={self.ms_level}, window_group={self.window_group}, "
+                f"raw_points_n={self.raw_points_n}, rt_window={self.rt_window}, im_window={self.im_window},"
+                f" mz_window={self.mz_window}, rt_fit={self.rt_fit}, im_fit={self.im_fit}, "
+                f"mz_fit={self.mz_fit}, raw_sum={self.raw_sum}, "
+                f"volume_proxy={self.volume_proxy}, parent_im_id={self.parent_im_id}, "
+                f"parent_rt_id={self.parent_rt_id})")
+
 def iter_window_batches(plan, batch_size: int):
     """Yield successive batches of window indices from the plan."""
     n = plan.num_windows
