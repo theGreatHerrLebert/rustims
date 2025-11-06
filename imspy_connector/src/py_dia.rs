@@ -1413,8 +1413,11 @@ impl PyTimsDatasetDIA {
             fallback_frac_width,
         };
         let build_opts = BuildSpecOpts {
-            extra_rt_pad, extra_im_pad, mz_ppm_pad, mz_hist_bins,
-            ms_level: 2, // will also be stamped inside clusters_for_group
+            extra_rt_pad,
+            extra_im_pad,
+            mz_ppm_pad,
+            mz_hist_bins,
+            ms_level: 2,
             min_im_span,
         };
         let eval_opts = Eval1DOpts {
