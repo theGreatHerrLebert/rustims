@@ -92,6 +92,7 @@ impl RtBuckets {
 
 /// Options for the simple candidate enumeration.
 /// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
+// --- add to CandidateOpts ---
 #[derive(Clone, Debug)]
 pub struct CandidateOpts {
     /// Require at least this Jaccard in RT (set 0.0 for “any overlap”).
@@ -104,7 +105,16 @@ pub struct CandidateOpts {
     pub max_ms1_rt_span_sec: Option<f64>,
     pub max_ms2_rt_span_sec: Option<f64>,
     pub min_raw_sum: f32,
+
+    // ---- NEW tight guards ----
+    /// Maximum allowed |rt_apex_MS1 - rt_apex_MS2| in seconds (None disables).
+    pub max_rt_apex_delta_sec: Option<f32>,
+    /// Maximum allowed |im_apex_MS1 - im_apex_MS2| in global scans (None disables).
+    pub max_scan_apex_delta: Option<usize>,
+    /// Require at least this many scan-overlap between MS1 and MS2 IM windows.
+    pub min_im_overlap_scans: usize,
 }
+
 impl Default for CandidateOpts {
     fn default() -> Self {
         Self {
@@ -114,6 +124,11 @@ impl Default for CandidateOpts {
             max_ms1_rt_span_sec: Some(60.0),
             max_ms2_rt_span_sec: Some(60.0),
             min_raw_sum: 1.0,
+
+            // sensible, but conservative defaults
+            max_rt_apex_delta_sec: Some(2.0),   // tighten to taste
+            max_scan_apex_delta:   Some(6),     // ~ few IM scans
+            min_im_overlap_scans:  1,           // at least touch
         }
     }
 }
@@ -278,7 +293,7 @@ impl PrecursorSearchIndex {
                     let mut local = Vec::<(usize, usize)>::with_capacity(16);
                     for i in hits {
                         if !idx.ms1_keep[i] { continue; }
-                        if !mask[i] { continue; } // must be eligible for this group by mz+scan
+                        if !mask[i] { continue; } // eligible by group (mz & program scans)
 
                         let (t1_lo, t1_hi) = idx.ms1_time_bounds[i];
                         if !(t1_lo.is_finite() && t1_hi.is_finite()) { continue; }
@@ -288,6 +303,41 @@ impl PrecursorSearchIndex {
                         if opts.min_rt_jaccard > 0.0 {
                             let jacc = jaccard_time(t1_lo, t1_hi, t2_lo, t2_hi);
                             if jacc < opts.min_rt_jaccard { continue; }
+                        }
+
+                        // ---- NEW: IM window overlap in global scan axis ----
+                        let im1 = ms1[i].im_window;
+                        let im2 = ms2[j].im_window;
+                        let im_overlap = {
+                            let lo = im1.0.max(im2.0);
+                            let hi = im1.1.min(im2.1);
+                            hi.saturating_sub(lo).saturating_add(1)
+                        };
+                        if im_overlap < opts.min_im_overlap_scans { continue; }
+
+                        // ---- NEW: IM apex delta in scans ----
+                        if let Some(max_d) = opts.max_scan_apex_delta {
+                            // Fit μ is in scan units for IM (you stamp attach_axes=true in clustering)
+                            let s1 = ms1[i].im_fit.mu;
+                            let s2 = ms2[j].im_fit.mu;
+                            if s1.is_finite() && s2.is_finite() {
+                                let d = (s1 - s2).abs() as f32;
+                                if d > (max_d as f32) { continue; }
+                            } else {
+                                // if either apex missing/degenerate, be strict and drop
+                                continue;
+                            }
+                        }
+
+                        // ---- NEW: RT apex delta in seconds ----
+                        if let Some(max_dt) = opts.max_rt_apex_delta_sec {
+                            let r1 = ms1[i].rt_fit.mu; // seconds when attach_axes=true
+                            let r2 = ms2[j].rt_fit.mu;
+                            if r1.is_finite() && r2.is_finite() {
+                                if (r1 - r2).abs() > max_dt { continue; }
+                            } else {
+                                continue;
+                            }
                         }
 
                         local.push((j, i));
