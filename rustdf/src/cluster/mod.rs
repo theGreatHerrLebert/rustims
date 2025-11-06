@@ -5,3 +5,4 @@ pub mod io;
 pub mod matching;
 pub mod peak;
 pub mod candidates;
+pub mod cluster_scoring;

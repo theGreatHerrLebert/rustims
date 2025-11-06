@@ -11,6 +11,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use rustdf::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, Fit1D, RawPoints};
+use rustdf::cluster::cluster_scoring::{best_ms1_for_each_ms2, score_pairs, ScoreOpts};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, expand_many_im_peaks_along_rt};
@@ -1150,6 +1151,233 @@ impl PyTimsDatasetDIA {
         let dataset = TimsDatasetDIA::new(bruker_lib_path, data_path, in_memory, use_bruker_sdk);
         PyTimsDatasetDIA { inner: dataset }
     }
+
+    /// Enumerate (ms2_idx, ms1_idx) candidate pairs using DIA program + RT/IM constraints.
+    ///
+    /// Returns a list of (ms2_idx, ms1_idx) integer tuples.
+    ///
+    /// Notes:
+    /// - This clones the passed ClusterResult1D objects. For best memory behavior,
+    ///   avoid attaching raw points to clusters before calling this method.
+    /// - Heavy work runs without the GIL.
+    #[pyo3(signature = (
+    ms1, ms2,
+    // RT coarse guards
+    min_rt_jaccard = 0.10_f32,
+    rt_guard_sec = 0.0_f64,
+    rt_bucket_width = 1.0_f64,
+    // sanity limits
+    max_ms1_rt_span_sec = Some(60.0_f64),
+    max_ms2_rt_span_sec = Some(60.0_f64),
+    min_raw_sum = 1.0_f32,
+    // ---- NEW tight guards (keyword-only in Python) ----
+    max_rt_apex_delta_sec = Some(2.0_f32),
+    max_scan_apex_delta = Some(6_usize),
+    min_im_overlap_scans = 1_usize,
+))]
+    pub fn enumerate_ms2_ms1_pairs(
+        &self,
+        py: Python<'_>,
+        ms1: Vec<Py<PyClusterResult1D>>,
+        ms2: Vec<Py<PyClusterResult1D>>,
+        // RT coarse guards
+        min_rt_jaccard: f32,
+        rt_guard_sec: f64,
+        rt_bucket_width: f64,
+        // sanity limits
+        max_ms1_rt_span_sec: Option<f64>,
+        max_ms2_rt_span_sec: Option<f64>,
+        min_raw_sum: f32,
+        // NEW tight guards
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+    ) -> PyResult<Vec<(usize, usize)>> {
+
+        // 1) Options (now includes tight guards)
+        let opts = CandidateOpts {
+            min_rt_jaccard,
+            ms2_rt_guard_sec: rt_guard_sec,
+            rt_bucket_width,
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
+            min_raw_sum,
+
+            // NEW:
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+        };
+
+        // 2) Extract owned Rust clusters (clone, still cheap if no raw points attached)
+        let ms1_rust: Vec<ClusterResult1D> = ms1
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+        let ms2_rust: Vec<ClusterResult1D> = ms2
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        // 3) Build index + enumerate without the GIL
+        let pairs = py.allow_threads(|| {
+            let idx = PrecursorSearchIndex::build(&self.inner, &ms1_rust, &opts);
+            idx.enumerate_pairs(&ms1_rust, &ms2_rust, &opts)
+        });
+
+        Ok(pairs)
+    }
+
+    /// Score candidate (ms2_idx, ms1_idx) pairs using the built-in scoring model.
+    ///
+    /// You can pass optional weight overrides; all unspecified parameters fall back to defaults.
+    #[pyo3(signature = (
+        ms1, ms2, pairs,
+        w_jacc_rt = 1.0_f32,
+        w_shape = 1.0_f32,
+        w_rt_apex = 0.75_f32,
+        w_im_apex = 0.75_f32,
+        w_im_overlap = 0.5_f32,
+        w_ms1_intensity = 0.25_f32,
+        rt_apex_scale_s = 0.75_f32,
+        im_apex_scale_scans = 3.0_f32,
+        shape_neutral = 0.6_f32,
+        min_sigma_rt = 0.05_f32,
+        min_sigma_im = 0.5_f32,
+        w_shape_rt_inner = 1.0_f32,
+        w_shape_im_inner = 1.0_f32,
+        return_features = false,
+    ))]
+    pub fn score_ms2_ms1_pairs(
+        &self,
+        py: Python<'_>,
+        ms1: Vec<Py<PyClusterResult1D>>,
+        ms2: Vec<Py<PyClusterResult1D>>,
+        pairs: Vec<(usize, usize)>,
+        // optional scoring weights / parameters
+        w_jacc_rt: f32,
+        w_shape: f32,
+        w_rt_apex: f32,
+        w_im_apex: f32,
+        w_im_overlap: f32,
+        w_ms1_intensity: f32,
+        rt_apex_scale_s: f32,
+        im_apex_scale_scans: f32,
+        shape_neutral: f32,
+        min_sigma_rt: f32,
+        min_sigma_im: f32,
+        w_shape_rt_inner: f32,
+        w_shape_im_inner: f32,
+        return_features: bool,
+    ) -> PyResult<Vec<PyObject>> {
+        let sopts = ScoreOpts {
+            w_jacc_rt,
+            w_shape,
+            w_rt_apex,
+            w_im_apex,
+            w_im_overlap,
+            w_ms1_intensity,
+            rt_apex_scale_s,
+            im_apex_scale_scans,
+            shape_neutral,
+            min_sigma_rt,
+            min_sigma_im,
+            w_shape_rt_inner,
+            w_shape_im_inner,
+        };
+
+        let ms1_rust: Vec<ClusterResult1D> =
+            ms1.into_iter().map(|p| p.borrow(py).inner.clone()).collect();
+        let ms2_rust: Vec<ClusterResult1D> =
+            ms2.into_iter().map(|p| p.borrow(py).inner.clone()).collect();
+
+        let scored = py.allow_threads(|| score_pairs(&ms1_rust, &ms2_rust, &pairs, &sopts));
+
+        let mut out = Vec::with_capacity(scored.len());
+        for (j, i, feats, s) in scored {
+            if return_features {
+                let d = PyDict::new_bound(py);
+                d.set_item("ms2_idx", j)?;
+                d.set_item("ms1_idx", i)?;
+                d.set_item("score", s)?;
+                d.set_item("rt_apex_delta_s", feats.rt_apex_delta_s)?;
+                d.set_item("im_apex_delta_scans", feats.im_apex_delta_scans)?;
+                d.set_item("jacc_rt", feats.jacc_rt)?;
+                d.set_item("im_overlap", feats.im_overlap_scans)?;
+                d.set_item("shape_ok", feats.shape_ok)?;
+                d.set_item("s_shape", feats.s_shape)?;
+                out.push(d.into_py(py));
+            } else {
+                out.push((j, i, s).into_py(py));
+            }
+        }
+
+        Ok(out)
+    }
+
+    #[pyo3(signature = (
+    ms1, ms2, pairs,
+    w_jacc_rt = 1.0_f32,
+    w_shape = 1.0_f32,
+    w_rt_apex = 0.75_f32,
+    w_im_apex = 0.75_f32,
+    w_im_overlap = 0.5_f32,
+    w_ms1_intensity = 0.25_f32,
+    rt_apex_scale_s = 0.75_f32,
+    im_apex_scale_scans = 3.0_f32,
+    shape_neutral = 0.6_f32,
+    min_sigma_rt = 0.05_f32,
+    min_sigma_im = 0.5_f32,
+    w_shape_rt_inner = 1.0_f32,
+    w_shape_im_inner = 1.0_f32,
+))]
+    pub fn best_ms1_per_ms2(
+        &self,
+        py: Python<'_>,
+        ms1: Vec<Py<PyClusterResult1D>>,
+        ms2: Vec<Py<PyClusterResult1D>>,
+        pairs: Vec<(usize, usize)>,
+        // same params as above
+        w_jacc_rt: f32,
+        w_shape: f32,
+        w_rt_apex: f32,
+        w_im_apex: f32,
+        w_im_overlap: f32,
+        w_ms1_intensity: f32,
+        rt_apex_scale_s: f32,
+        im_apex_scale_scans: f32,
+        shape_neutral: f32,
+        min_sigma_rt: f32,
+        min_sigma_im: f32,
+        w_shape_rt_inner: f32,
+        w_shape_im_inner: f32,
+    ) -> PyResult<Vec<Option<usize>>> {
+        let sopts = ScoreOpts {
+            w_jacc_rt,
+            w_shape,
+            w_rt_apex,
+            w_im_apex,
+            w_im_overlap,
+            w_ms1_intensity,
+            rt_apex_scale_s,
+            im_apex_scale_scans,
+            shape_neutral,
+            min_sigma_rt,
+            min_sigma_im,
+            w_shape_rt_inner,
+            w_shape_im_inner,
+        };
+
+        let ms1_rust: Vec<ClusterResult1D> =
+            ms1.into_iter().map(|p| p.borrow(py).inner.clone()).collect();
+        let ms2_rust: Vec<ClusterResult1D> =
+            ms2.into_iter().map(|p| p.borrow(py).inner.clone()).collect();
+
+        let winners =
+            py.allow_threads(|| best_ms1_for_each_ms2(&ms1_rust, &ms2_rust, &pairs, &sopts));
+        Ok(winners)
+    }
+
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
         PyTimsFrame { inner: self.inner.get_frame(frame_id) }
     }
@@ -1530,82 +1758,6 @@ impl PyTimsDatasetDIA {
         });
 
         results_to_py(py, results)
-    }
-
-    /// Enumerate (ms2_idx, ms1_idx) candidate pairs using DIA program + RT/IM constraints.
-    ///
-    /// Returns a list of (ms2_idx, ms1_idx) integer tuples.
-    ///
-    /// Notes:
-    /// - This clones the passed ClusterResult1D objects. For best memory behavior,
-    ///   avoid attaching raw points to clusters before calling this method.
-    /// - Heavy work runs without the GIL.
-    #[pyo3(signature = (
-    ms1, ms2,
-    // RT coarse guards
-    min_rt_jaccard = 0.10_f32,
-    rt_guard_sec = 0.0_f64,
-    rt_bucket_width = 1.0_f64,
-    // sanity limits
-    max_ms1_rt_span_sec = Some(60.0_f64),
-    max_ms2_rt_span_sec = Some(60.0_f64),
-    min_raw_sum = 1.0_f32,
-    // ---- NEW tight guards (keyword-only in Python) ----
-    max_rt_apex_delta_sec = Some(2.0_f32),
-    max_scan_apex_delta = Some(6_usize),
-    min_im_overlap_scans = 1_usize,
-))]
-    pub fn enumerate_ms2_ms1_pairs(
-        &self,
-        py: Python<'_>,
-        ms1: Vec<Py<PyClusterResult1D>>,
-        ms2: Vec<Py<PyClusterResult1D>>,
-        // RT coarse guards
-        min_rt_jaccard: f32,
-        rt_guard_sec: f64,
-        rt_bucket_width: f64,
-        // sanity limits
-        max_ms1_rt_span_sec: Option<f64>,
-        max_ms2_rt_span_sec: Option<f64>,
-        min_raw_sum: f32,
-        // NEW tight guards
-        max_rt_apex_delta_sec: Option<f32>,
-        max_scan_apex_delta: Option<usize>,
-        min_im_overlap_scans: usize,
-    ) -> PyResult<Vec<(usize, usize)>> {
-
-        // 1) Options (now includes tight guards)
-        let opts = CandidateOpts {
-            min_rt_jaccard,
-            ms2_rt_guard_sec: rt_guard_sec,
-            rt_bucket_width,
-            max_ms1_rt_span_sec,
-            max_ms2_rt_span_sec,
-            min_raw_sum,
-
-            // NEW:
-            max_rt_apex_delta_sec,
-            max_scan_apex_delta,
-            min_im_overlap_scans,
-        };
-
-        // 2) Extract owned Rust clusters (clone, still cheap if no raw points attached)
-        let ms1_rust: Vec<ClusterResult1D> = ms1
-            .into_iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-        let ms2_rust: Vec<ClusterResult1D> = ms2
-            .into_iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-
-        // 3) Build index + enumerate without the GIL
-        let pairs = py.allow_threads(|| {
-            let idx = PrecursorSearchIndex::build(&self.inner, &ms1_rust, &opts);
-            idx.enumerate_pairs(&ms1_rust, &ms2_rust, &opts)
-        });
-
-        Ok(pairs)
     }
 }
 

@@ -7,7 +7,7 @@ from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import Optional, Dict
 
 import imspy_connector
 
@@ -1277,6 +1277,171 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         for j_ms2, i_ms1 in pairs:
             out.append((ms2_clusters[j_ms2], ms1_clusters[i_ms1]))
         return out
+
+    def best_ms1_per_ms2(
+            self,
+            ms1_clusters: List["ClusterResult1D"],
+            ms2_clusters: List["ClusterResult1D"],
+            pairs: List[Tuple[int, int]],
+            *,
+            # scoring weights / params (passed straight through to Rust; same defaults)
+            w_jacc_rt: float = 1.0,
+            w_shape: float = 1.0,
+            w_rt_apex: float = 0.75,
+            w_im_apex: float = 0.75,
+            w_im_overlap: float = 0.5,
+            w_ms1_intensity: float = 0.25,
+            rt_apex_scale_s: float = 0.75,
+            im_apex_scale_scans: float = 3.0,
+            shape_neutral: float = 0.6,
+            min_sigma_rt: float = 0.05,
+            min_sigma_im: float = 0.5,
+            w_shape_rt_inner: float = 1.0,
+            w_shape_im_inner: float = 1.0,
+    ) -> List[Optional[int]]:
+        """
+        For each MS2 (by index), return the index of the best MS1 (or None).
+        Uses the same scoring formulation as `score_ms2_ms1_pairs` internally.
+        """
+        py_ms1 = [c._py for c in ms1_clusters]
+        py_ms2 = [c._py for c in ms2_clusters]
+
+        return self.__dataset.best_ms1_per_ms2(
+            py_ms1, py_ms2, pairs,
+            w_jacc_rt, w_shape, w_rt_apex, w_im_apex, w_im_overlap, w_ms1_intensity,
+            rt_apex_scale_s, im_apex_scale_scans, shape_neutral, min_sigma_rt, min_sigma_im,
+            w_shape_rt_inner, w_shape_im_inner,
+        )
+
+    def group_ms2_by_ms1(
+            self,
+            winners: List[Optional[int]],
+            ms1_clusters: List["ClusterResult1D"],
+            ms2_clusters: List["ClusterResult1D"],
+            scores: Optional[List[Optional[float]]] = None,
+    ) -> Dict["ClusterResult1D", List["ClusterResult1D"]]:
+        """
+        Build a mapping: precursor MS1 cluster -> list of its assigned MS2 clusters.
+
+        Parameters
+        ----------
+        winners : List[Optional[int]]
+            Output of `best_ms1_per_ms2` (length == len(ms2_clusters)); each entry
+            is the chosen ms1_idx for that MS2 or None if no valid assignment.
+        scores : Optional[List[Optional[float]]]
+            Optional per-MS2 score (same order as `winners`). If provided, each
+            MS2 list per MS1 is sorted by descending score; otherwise preserves input order.
+
+        Returns
+        -------
+        Dict[ClusterResult1D, List[ClusterResult1D]]
+        """
+        if scores is not None and len(scores) != len(winners):
+            raise ValueError("scores must be same length as winners if provided")
+
+        # Use object identity as keys; if you prefer indices, change key to int
+        out: Dict["ClusterResult1D", List[Tuple[float, "ClusterResult1D"]]] = {}
+
+        for j, ms1_idx in enumerate(winners):
+            if ms1_idx is None:
+                continue
+            ms1_obj = ms1_clusters[ms1_idx]
+            ms2_obj = ms2_clusters[j]
+            s = scores[j] if scores is not None and scores[j] is not None else float("nan")
+            out.setdefault(ms1_obj, []).append((s, ms2_obj))
+
+        # Sort per-precursor by score if provided; strip scores
+        grouped: Dict["ClusterResult1D", List["ClusterResult1D"]] = {}
+        for ms1_obj, pairs in out.items():
+            if scores is not None:
+                pairs.sort(key=lambda t: (-(t[0] if t[0] == t[0] else float("-inf"))))  # NaN-safe
+            grouped[ms1_obj] = [m for _, m in pairs]
+
+        return grouped
+
+    def enumerate_score_assign_group(
+            self,
+            ms1_clusters: List["ClusterResult1D"],
+            ms2_clusters: List["ClusterResult1D"],
+            *,
+            # enumeration guards
+            min_rt_jaccard: float = 0.10,
+            rt_guard_sec: float = 0.0,
+            rt_bucket_width: float = 1.0,
+            max_ms1_rt_span_sec: float | None = 60.0,
+            max_ms2_rt_span_sec: float | None = 60.0,
+            min_raw_sum: float = 1.0,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            # scoring knobs
+            w_jacc_rt: float = 1.0,
+            w_shape: float = 1.0,
+            w_rt_apex: float = 0.75,
+            w_im_apex: float = 0.75,
+            w_im_overlap: float = 0.5,
+            w_ms1_intensity: float = 0.25,
+            rt_apex_scale_s: float = 0.75,
+            im_apex_scale_scans: float = 3.0,
+            shape_neutral: float = 0.6,
+            min_sigma_rt: float = 0.05,
+            min_sigma_im: float = 0.5,
+            w_shape_rt_inner: float = 1.0,
+            w_shape_im_inner: float = 1.0,
+            return_scores: bool = False,
+    ):
+        """
+        Convenience: enumerate → pick best MS1 per MS2 → group MS2 by MS1.
+        Returns (grouped, winners, optional_scores) for downstream analysis.
+        """
+        pairs = self.enumerate_ms2_ms1_pairs(
+            ms1_clusters, ms2_clusters,
+            min_rt_jaccard=min_rt_jaccard,
+            rt_guard_sec=rt_guard_sec,
+            rt_bucket_width=rt_bucket_width,
+            max_ms1_rt_span_sec=max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec=max_ms2_rt_span_sec,
+            min_raw_sum=min_raw_sum,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+        )
+
+        winners = self.best_ms1_per_ms2(
+            ms1_clusters, ms2_clusters, pairs,
+            w_jacc_rt=w_jacc_rt, w_shape=w_shape, w_rt_apex=w_rt_apex, w_im_apex=w_im_apex,
+            w_im_overlap=w_im_overlap, w_ms1_intensity=w_ms1_intensity,
+            rt_apex_scale_s=rt_apex_scale_s, im_apex_scale_scans=im_apex_scale_scans,
+            shape_neutral=shape_neutral, min_sigma_rt=min_sigma_rt, min_sigma_im=min_sigma_im,
+            w_shape_rt_inner=w_shape_rt_inner, w_shape_im_inner=w_shape_im_inner,
+        )
+
+        scores = None
+        if return_scores:
+            # Use the same scoring call but ask Rust to return features/scores per pair,
+            # then collapse to per-MS2 best (aligned with `winners`) for sorting.
+            triplets_or_feats = self.__dataset.score_ms2_ms1_pairs(
+                [c._py for c in ms1_clusters],
+                [c._py for c in ms2_clusters],
+                pairs,
+                w_jacc_rt, w_shape, w_rt_apex, w_im_apex, w_im_overlap, w_ms1_intensity,
+                rt_apex_scale_s, im_apex_scale_scans, shape_neutral, min_sigma_rt, min_sigma_im,
+                w_shape_rt_inner, w_shape_im_inner,
+                True,  # return_features
+            )
+            # triplets_or_feats is a list of dicts with "ms2_idx", "ms1_idx", "score", ...
+            best_score_per_ms2 = [None] * len(ms2_clusters)
+            for d in triplets_or_feats:
+                j = int(d["ms2_idx"])
+                i = int(d["ms1_idx"])
+                s = float(d["score"])
+                if winners[j] is None or winners[j] != i:
+                    continue
+                best_score_per_ms2[j] = s
+            scores = best_score_per_ms2
+
+        grouped = self.group_ms2_by_ms1(winners, ms1_clusters, ms2_clusters, scores=scores)
+        return (grouped, winners, scores) if return_scores else (grouped, winners)
 
 from collections.abc import Iterable
 from typing import List, Sequence

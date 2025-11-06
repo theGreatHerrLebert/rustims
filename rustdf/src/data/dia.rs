@@ -18,7 +18,7 @@ use rayon::ThreadPoolBuilder;
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
 use std::collections::{HashMap};
 use crate::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
-
+use crate::cluster::cluster_scoring::{best_ms1_for_each_ms2, ms1_to_ms2_map, score_pairs, AssignmentResult, PairFeatures, ScoreOpts};
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -278,6 +278,53 @@ impl TimsDatasetDIA {
     ) -> Vec<(usize, usize)> {
         let idx = PrecursorSearchIndex::build(self, ms1, opts);
         idx.enumerate_pairs(ms1, ms2, opts)
+    }
+    
+    /// Score already-enumerated pairs using width-aware / robust features.
+    /// Returns (ms2_idx, ms1_idx, features, score).
+    pub fn score_ms2_ms1_pairs(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        pairs: &[(usize, usize)],
+        sopts: &ScoreOpts,
+    ) -> Vec<(usize, usize, PairFeatures, f32)> {
+        score_pairs(ms1, ms2, pairs, sopts)
+    }
+
+    /// For each MS2, pick the best MS1 (or None if nothing decent).
+    pub fn best_ms1_per_ms2(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        pairs: &[(usize, usize)],
+        sopts: &ScoreOpts,
+    ) -> Vec<Option<usize>> {
+        best_ms1_for_each_ms2(ms1, ms2, pairs, sopts)
+    }
+
+    /// Build MS1 → Vec<MS2> from a winners vector.
+    pub fn ms1_to_ms2_assignments(
+        &self,
+        ms1_len: usize,
+        ms2_best_ms1: &[Option<usize>],
+    ) -> Vec<Vec<usize>> {
+        ms1_to_ms2_map(ms1_len, ms2_best_ms1)
+    }
+
+    /// End-to-end helper: enumerate → select best MS1 for each MS2 → build MS1→MS2 map.
+    /// Returns both the raw pairs and the final assignments.
+    pub fn enumerate_and_assign_best(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        copts: &CandidateOpts,
+        sopts: &ScoreOpts,
+    ) -> AssignmentResult {
+        let pairs = self.enumerate_ms2_ms1_pairs(ms1, ms2, copts);
+        let ms2_best_ms1 = self.best_ms1_per_ms2(ms1, ms2, &pairs, sopts);
+        let ms1_to_ms2 = self.ms1_to_ms2_assignments(ms1.len(), &ms2_best_ms1);
+        AssignmentResult { pairs, ms2_best_ms1, ms1_to_ms2 }
     }
 
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
