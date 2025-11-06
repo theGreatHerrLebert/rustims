@@ -1541,12 +1541,9 @@ impl PyTimsDatasetDIA {
         ms1, ms2,
         min_rt_jaccard = 0.10_f32,
         rt_guard_sec = 0.0_f64,
-        max_rt_apex_sec = Some(8.0_f32),
-        require_im_overlap = true,
         rt_bucket_width = 1.0_f64,
         max_ms1_rt_span_sec = Some(60.0_f64),
         max_ms2_rt_span_sec = Some(60.0_f64),
-        max_im_span_scans = Some(80_usize),
         min_raw_sum = 1.0_f32,
     ))]
     pub fn enumerate_ms2_ms1_pairs(
