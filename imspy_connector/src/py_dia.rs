@@ -1556,40 +1556,32 @@ impl PyTimsDatasetDIA {
         ms2: Vec<Py<PyClusterResult1D>>,
         min_rt_jaccard: f32,
         rt_guard_sec: f64,
-        max_rt_apex_sec: Option<f32>,
-        require_im_overlap: bool,
         rt_bucket_width: f64,
         max_ms1_rt_span_sec: Option<f64>,
         max_ms2_rt_span_sec: Option<f64>,
-        max_im_span_scans: Option<usize>,
         min_raw_sum: f32,
     ) -> PyResult<Vec<(usize, usize)>> {
-        // 1) Build CandidateOpts from plain values
+        // 1) Options (RT seconds + group reachability; no m/z matching)
         let opts = CandidateOpts {
             min_rt_jaccard,
-            rt_guard_sec,
-            max_rt_apex_sec,
-            require_im_overlap,
+            ms2_rt_guard_sec: rt_guard_sec,
             rt_bucket_width,
             max_ms1_rt_span_sec,
             max_ms2_rt_span_sec,
-            max_im_span_scans,
             min_raw_sum,
         };
 
-        // 2) Pull out inner ClusterResult1D (clone to own them for no-GIL work)
-        let ms1_rust: Vec<ClusterResult1D> = Python::with_gil(|py| {
-            ms1.into_iter()
-                .map(|p| p.borrow(py).inner.clone())
-                .collect()
-        });
-        let ms2_rust: Vec<ClusterResult1D> = Python::with_gil(|py| {
-            ms2.into_iter()
-                .map(|p| p.borrow(py).inner.clone())
-                .collect()
-        });
+        // 2) Extract owned Rust clusters (clone, still cheap if no raw points attached)
+        let ms1_rust: Vec<ClusterResult1D> = ms1
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+        let ms2_rust: Vec<ClusterResult1D> = ms2
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
 
-        // 3) Enumerate (ms2_idx, ms1_idx) pairs without the GIL
+        // 3) Build index + enumerate without the GIL
         let pairs = py.allow_threads(|| {
             let idx = PrecursorSearchIndex::build(&self.inner, &ms1_rust, &opts);
             idx.enumerate_pairs(&ms1_rust, &ms2_rust, &opts)
