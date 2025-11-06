@@ -22,56 +22,134 @@ use crate::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct ProgramSlice {
-    mz_lo: f64,
-    mz_hi: f64,
-    scan_lo: u32,
-    scan_hi: u32,
+    pub mz_lo: f64,
+    pub mz_hi: f64,
+    pub scan_lo: u32,
+    pub scan_hi: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Ms2GroupProgram {
+    /// Raw per-row isolation windows (normalized, ascending, finite)
+    pub mz_windows: Vec<(f32, f32)>,
+    /// Raw per-row active scan ranges (normalized, inclusive)
+    pub scan_ranges: Vec<(u32, u32)>,
+    /// Union (convex hull) over all mz_windows for the group; None if no valid rows
+    pub mz_union: Option<(f32, f32)>,
+    /// Merged disjoint scan ranges (inclusive) over the group; empty = permissive fallback
+    pub scan_unions: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DiaIndex {
     /// MS2 frame_id -> window_group
     pub frame_to_group: HashMap<u32, u32>,
-    /// window_group -> MS2 frame_ids (sorted by time)
+    /// window_group -> MS2 frame_ids (sorted by **time**)
     pub group_to_frames: HashMap<u32, Vec<u32>>,
-    /// window_group -> list of (mz_lo, mz_hi) isolation ranges (from DiaFrameMsMsWindows)
+    /// window_group -> list of (mz_lo, mz_hi) isolation ranges (normalized)
     pub group_to_isolation: HashMap<u32, Vec<(f64, f64)>>,
-    /// window_group -> list of (scan_lo, scan_hi) active scan ranges (from DiaFrameMsMsWindows)
+    /// window_group -> list of (scan_lo, scan_hi) active scan ranges (normalized, inclusive)
     pub group_to_scan_ranges: HashMap<u32, Vec<(u32, u32)>>,
+    /// window_group -> convex m/z union (lo, hi)
+    pub group_to_mz_union: HashMap<u32, (f64, f64)>,
+    /// window_group -> merged disjoint scan unions (inclusive)
+    pub group_to_scan_unions: HashMap<u32, Vec<(u32, u32)>>,
     /// frame_id -> time (seconds)
     pub frame_time: HashMap<u32, f64>,
 }
 
 impl DiaIndex {
-    pub fn new(meta: &[FrameMeta],
-               info: &[DiaMsMisInfo],
-               wins: &[DiaMsMsWindow]) -> Self {
-        let mut frame_to_group = HashMap::new();
+    pub fn new(meta: &[FrameMeta], info: &[DiaMsMisInfo], wins: &[DiaMsMsWindow]) -> Self {
+        // --- helpers ---
+        #[inline]
+        fn norm_f64_pair(a: f64, b: f64) -> Option<(f64, f64)> {
+            if !a.is_finite() || !b.is_finite() { return None; }
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            if hi > lo { Some((lo, hi)) } else { None }
+        }
+        #[inline]
+        fn norm_u32_pair(a: u32, b: u32) -> Option<(u32, u32)> {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            if hi >= lo { Some((lo, hi)) } else { None }
+        }
+        fn merge_scan_ranges(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
+            if ranges.is_empty() { return ranges; }
+            ranges.sort_unstable_by_key(|&(l, r)| (l, r));
+            let mut out: Vec<(u32,u32)> = Vec::with_capacity(ranges.len());
+            let mut cur = ranges[0];
+            for &(l, r) in &ranges[1..] {
+                if l <= cur.1.saturating_add(1) {
+                    // overlaps or touches → extend
+                    if r > cur.1 { cur.1 = r; }
+                } else {
+                    out.push(cur);
+                    cur = (l, r);
+                }
+            }
+            out.push(cur);
+            out
+        }
+
+        // frame_id -> time
+        let mut frame_time: HashMap<u32, f64> = HashMap::new();
+        for m in meta {
+            frame_time.insert(m.id as u32, m.time);
+        }
+
+        // frame_id -> group, and group -> frames (we'll sort by **time** later)
+        let mut frame_to_group: HashMap<u32, u32> = HashMap::new();
         let mut group_to_frames: HashMap<u32, Vec<u32>> = HashMap::new();
         for r in info {
             let fid = r.frame_id as u32;
             frame_to_group.insert(fid, r.window_group);
             group_to_frames.entry(r.window_group).or_default().push(fid);
         }
-        for v in group_to_frames.values_mut() {
-            v.sort_unstable(); // sorted by frame id; time lookup below will use frame_time
-        }
 
+        // Build raw (normalized) program windows
         let mut group_to_isolation: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         let mut group_to_scan_ranges: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
         for w in wins {
-            let lo = w.isolation_mz - 0.5 * w.isolation_width;
-            let hi = w.isolation_mz + 0.5 * w.isolation_width;
-            group_to_isolation.entry(w.window_group).or_default().push((lo, hi));
-            group_to_scan_ranges
-                .entry(w.window_group)
-                .or_default()
-                .push((w.scan_num_begin as u32, w.scan_num_end as u32));
+            // handle width<=0 safely
+            let half = 0.5 * w.isolation_width;
+            if half.is_finite() && half > 0.0 && w.isolation_mz.is_finite() {
+                let lo = (w.isolation_mz - half) as f64;
+                let hi = (w.isolation_mz + half) as f64;
+                if let Some(p) = norm_f64_pair(lo, hi) {
+                    group_to_isolation.entry(w.window_group).or_default().push(p);
+                }
+            }
+            if let Some(p) = norm_u32_pair(w.scan_num_begin as u32, w.scan_num_end as u32) {
+                group_to_scan_ranges.entry(w.window_group).or_default().push(p);
+            }
         }
 
-        let mut frame_time = HashMap::new();
-        for m in meta {
-            frame_time.insert(m.id as u32, m.time);
+        // Derive unions/merged ranges per group; also sort frames by **time**
+        let mut group_to_mz_union: HashMap<u32, (f64, f64)> = HashMap::new();
+        let mut group_to_scan_unions: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+
+        for (g, frames) in group_to_frames.iter_mut() {
+            frames.sort_unstable_by(|&a, &b| {
+                let ta = frame_time.get(&a).copied().unwrap_or(f64::NAN);
+                let tb = frame_time.get(&b).copied().unwrap_or(f64::NAN);
+                ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            if let Some(v) = group_to_isolation.get(g) {
+                if !v.is_empty() {
+                    let mut lo = f64::INFINITY;
+                    let mut hi = f64::NEG_INFINITY;
+                    for &(a, b) in v {
+                        if a < lo { lo = a; }
+                        if b > hi { hi = b; }
+                    }
+                    if lo.is_finite() && hi.is_finite() && hi > lo {
+                        group_to_mz_union.insert(*g, (lo, hi));
+                    }
+                }
+            }
+            // merged scan ranges (inclusive)
+            let merged = merge_scan_ranges(group_to_scan_ranges.get(g).cloned().unwrap_or_default());
+            group_to_scan_unions.insert(*g, merged);
         }
 
         DiaIndex {
@@ -79,72 +157,46 @@ impl DiaIndex {
             group_to_frames,
             group_to_isolation,
             group_to_scan_ranges,
+            group_to_mz_union,
+            group_to_scan_unions,
             frame_time,
         }
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct PrecursorEntry {
-    pub idx: usize,                  // index into ms1_clusters vec
-    pub mz_win: (f32, f32),
-    pub im_win: (usize, usize),
-    pub rt_win: (usize, usize),      // local frame indices in the same RtFrames
-}
+    /// Convenience: fully materialize a program description for a group.
+    pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
+        let mz_windows = self.group_to_isolation
+            .get(&g)
+            .map(|v| v.iter().map(|&(a,b)| (a as f32, b as f32)).collect())
+            .unwrap_or_else(Vec::new);
 
-#[derive(Clone, Debug)]
-pub struct PrecursorMzIndex {
-    /// bin -> precursor indices
-    pub bin_to_ms1: Vec<Vec<usize>>,
-    /// backref: idx -> entry (for filters and scoring)
-    pub entries: Vec<PrecursorEntry>,
-    pub scale: MzScale,
-}
+        let scan_ranges = self.group_to_scan_ranges
+            .get(&g)
+            .cloned()
+            .unwrap_or_else(Vec::new);
 
-impl PrecursorMzIndex {
-    pub fn build(
-        ms1: &[ClusterResult1D],
-        scale: MzScale,
-    ) -> Self {
-        let mut bin_to_ms1 = vec![Vec::new(); scale.num_bins()];
-        let mut entries = Vec::with_capacity(ms1.len());
+        let mz_union = self.group_to_mz_union
+            .get(&g)
+            .map(|&(a,b)| (a as f32, b as f32));
 
-        for (i, c) in ms1.iter().enumerate() {
-            if c.ms_level != 1 { continue; }
-            let (lo, hi) = c.mz_window;
-            let (b0, b1) = bin_range_for_win(&scale, (lo, hi));
-            let e = PrecursorEntry {
-                idx: i,
-                mz_win: (lo, hi),
-                im_win: c.im_window,
-                rt_win: c.rt_window,
-            };
-            entries.push(e);
-            for b in b0..=b1 {
-                bin_to_ms1[b].push(i);
-            }
-        }
+        // If no unions present, keep empty (treat as permissive in callers)
+        let scan_unions = self.group_to_scan_unions
+            .get(&g)
+            .cloned()
+            .unwrap_or_else(Vec::new);
 
-        Self { bin_to_ms1, entries, scale }
+        Ms2GroupProgram { mz_windows, scan_ranges, mz_union, scan_unions }
     }
 
-    /// Return deduplicated precursor indices for a given m/z window
-    pub fn candidates_for_mz(&self, mz_win: (f32, f32)) -> Vec<usize> {
-        let (b0, b1) = crate::cluster::utility::bin_range_for_win(&self.scale, mz_win);
-        let mut out: Vec<usize> = Vec::new();
-        for b in b0..=b1 {
-            out.extend_from_slice(&self.bin_to_ms1[b]);
-        }
-        out.sort_unstable();
-        out.dedup();
-        out
+    /// Minimal accessors used by your linker:
+    #[inline]
+    pub fn mz_bounds_for_window_group_core(&self, g: u32) -> Option<(f32, f32)> {
+        self.group_to_mz_union.get(&g).map(|&(a,b)| (a as f32, b as f32))
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Ms2GroupProgram {
-    pub mz_windows: Vec<(f32, f32)>,
-    pub scan_ranges: Vec<(u32, u32)>,
+    #[inline]
+    pub fn scan_unions_for_window_group_core(&self, g: u32) -> Option<Vec<(usize, usize)>> {
+        self.group_to_scan_unions.get(&g).map(|v| v.iter().map(|&(l,r)| (l as usize, r as usize)).collect())
+    }
 }
 
 pub struct TimsDatasetDIA {
@@ -237,17 +289,7 @@ impl TimsDatasetDIA {
     }
 
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
-        let mut mz_windows = Vec::new();
-        let mut scan_ranges = Vec::new();
-        if let Some(r) = self.dia_index.group_to_isolation.get(&g) {
-            for &(lo, hi) in r {
-                mz_windows.push((lo as f32, hi as f32));
-            }
-        }
-        if let Some(r) = self.dia_index.group_to_scan_ranges.get(&g) {
-            scan_ranges.extend_from_slice(r);
-        }
-        Ms2GroupProgram { mz_windows, scan_ranges }
+        self.dia_index.program_for_group(g)
     }
 
     /// Collect all program slices for a window group from DiaFrameMsMsWindows.
