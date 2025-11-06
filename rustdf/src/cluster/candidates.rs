@@ -348,6 +348,7 @@ impl PrecursorSearchIndex {
                 })
             })
             .collect::<Vec<(usize, usize)>>();
+
         // --- HARD DE-DUP step ---
         out.sort_unstable();
         out.dedup();

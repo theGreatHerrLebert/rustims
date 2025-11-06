@@ -47,6 +47,36 @@ fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
     if cap == 0 || total <= cap { 1 } else { (total + cap - 1) / cap }
 }
 
+#[inline]
+fn sanitize_fit(
+    f: &mut Fit1D,
+    mu_bounds: Option<(f32, f32)>,
+    min_sigma: f32,
+    enforce_nonneg: bool,
+) {
+    if !f.mu.is_finite() { f.mu = 0.0; }
+    if !f.sigma.is_finite() { f.sigma = 0.0; }
+    if !f.height.is_finite() { f.height = 0.0; }
+    if !f.baseline.is_finite() { f.baseline = 0.0; }
+    if !f.area.is_finite() { f.area = 0.0; }
+    if !f.r2.is_finite() { f.r2 = 0.0; }
+
+    if let Some((lo, hi)) = mu_bounds {
+        if lo.is_finite() && hi.is_finite() && lo < hi {
+            if f.mu < lo { f.mu = lo; }
+            if f.mu > hi { f.mu = hi; }
+        }
+    }
+    if f.sigma < 0.0 { f.sigma = 0.0; }
+    if f.sigma > 0.0 && f.sigma < min_sigma { f.sigma = min_sigma; }
+
+    if enforce_nonneg {
+        if f.baseline < 0.0 { f.baseline = 0.0; }
+        if f.height   < 0.0 { f.height   = 0.0; }
+        if f.area     < 0.0 { f.area     = 0.0; }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ClusterSpec1D {
     // local (RT) indices inside the provided RtFrames slice (inclusive)
@@ -204,7 +234,7 @@ pub fn evaluate_spec_1d(
     let scale = &*rt_frames.scale;
     let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.mz_win);
 
-    // 1) first pass
+    // --- 1) first pass
     let rt_marg1 = build_rt_marginal(
         &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
     let im_marg1 = build_im_marginal(
@@ -216,12 +246,13 @@ pub fn evaluate_spec_1d(
     let im_sum1: f32 = im_marg1.iter().copied().sum();
     let mz_sum1: f32 = mz_hist1.iter().copied().sum();
 
-    // cheap early exit
+    // --- Early exit on zero signal
     if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || mz_sum1 <= 0.0 {
+        let hi_edge_idx = (bin_hi0 + 1).min(scale.edges.len() - 1);
         return ClusterResult1D {
             rt_window: (spec.rt_lo, spec.rt_hi),
             im_window: (spec.im_lo, spec.im_hi),
-            mz_window: spec.mz_win,
+            mz_window: (scale.edges[bin_lo0], scale.edges[hi_edge_idx].min(scale.mz_max)),
             rt_fit: Fit1D::default(),
             im_fit: Fit1D::default(),
             mz_fit: Fit1D::default(),
@@ -243,36 +274,49 @@ pub fn evaluate_spec_1d(
     let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
     let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
 
-    // 2) optional m/z refine μ±kσ once
-    let (bin_lo, bin_hi, mz_centers2) = if opts.refine_mz_once && mz_fit1.sigma>0.0 && mz_fit1.area>0.0 {
+    // --- 2) optional m/z refine μ±kσ once
+    let (bin_lo, bin_hi, mz_centers2) = if opts.refine_mz_once && mz_fit1.sigma > 0.0 && mz_fit1.area > 0.0 {
         let k = opts.refine_k_sigma.max(1.0);
-        let lo_da = (mz_fit1.mu - k*mz_fit1.sigma).max(scale.mz_min);
-        let hi_da = (mz_fit1.mu + k*mz_fit1.sigma).min(scale.mz_max);
+        let lo_da = (mz_fit1.mu - k * mz_fit1.sigma).max(scale.mz_min);
+        let hi_da = (mz_fit1.mu + k * mz_fit1.sigma).min(scale.mz_max);
         let (bl, bh) = bin_range_for_win(scale, (lo_da, hi_da));
         (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
     } else {
         (bin_lo0, bin_hi0, mz_centers1.clone())
     };
 
-    // 3) re-accumulate with final m/z window
+    // --- 3) re-accumulate with refined m/z window
     let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
     let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
     let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
 
-    // 4) final fits
-    let rt_fit = fit1d_moment(&rt_marg, Some(&rt_times));
+    // --- 4) final fits
+    let mut rt_fit = fit1d_moment(&rt_marg, Some(&rt_times));
     let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
-    let im_fit = fit1d_moment(&im_marg, Some(&im_axis_f32));
-    let mz_fit = fit1d_moment(&mz_hist, Some(&mz_centers2));
+    let mut im_fit = fit1d_moment(&im_marg, Some(&im_axis_f32));
+    let mut mz_fit = fit1d_moment(&mz_hist, Some(&mz_centers2));
 
-    // 5) pack result
+    // --- 4b) sanitize fits (finite, non-negative, bounded μ, min σ)
+    let mz_mu_bounds = Some((scale.mz_min, scale.mz_max));
+    let rt_mu_bounds = Some((
+        *rt_frames.rt_times.get(spec.rt_lo).unwrap_or(&0.0),
+        *rt_frames.rt_times.get(spec.rt_hi).unwrap_or(&0.0),
+    ));
+    let im_mu_bounds = Some((spec.im_lo as f32, spec.im_hi as f32));
+
+    sanitize_fit(&mut mz_fit, mz_mu_bounds, 1e-6, true);
+    sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
+    sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
+
+    // --- 5) pack
     let raw_sum = rt_marg.iter().copied().sum();
-    let volume_proxy = rt_fit.area * im_fit.area * mz_fit.area.max(0.0);
+    let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
 
+    let hi_edge_idx = (bin_hi + 1).min(scale.edges.len() - 1);
     ClusterResult1D {
         rt_window: (spec.rt_lo, spec.rt_hi),
         im_window: (spec.im_lo, spec.im_hi),
-        mz_window: (scale.edges[bin_lo], scale.edges[bin_hi+1].min(scale.mz_max)),
+        mz_window: (scale.edges[bin_lo], scale.edges[hi_edge_idx].min(scale.mz_max)),
         rt_fit, im_fit, mz_fit,
         raw_sum, volume_proxy,
         frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),

@@ -624,22 +624,44 @@ pub fn quantile_mut(v: &mut [f32], q: f32) -> f32 {
 pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
     let n = y.len();
     if n == 0 { return Fit1D::default(); }
-    let mut ys = y.to_vec();
-    let b0 = quantile_mut(&mut ys, 0.10);
 
-    let mut wsum=0.0f64; let mut xsum=0.0f64; let mut x2sum=0.0f64;
+    // Baseline via 10% quantile
+    let mut ys = y.to_vec();
+    let mut b0 = quantile_mut(&mut ys, 0.10);
+    if !b0.is_finite() { b0 = 0.0; } // guard
+
+    let mut wsum=0.0f64;
+    let mut xsum=0.0f64;
+    let mut x2sum=0.0f64;
+
     let mut y_max = f32::MIN;
     let mut trap = 0.0f64;
+
+    // Precompute a sane fallback mu in case wsum==0
+    let mu_fallback: f32 = if let Some(xx) = x {
+        if !xx.is_empty() {
+            // midpoint of domain is a good, stable point estimate
+            let lo = *xx.first().unwrap_or(&0.0);
+            let hi = *xx.last().unwrap_or(&lo);
+            if lo.is_finite() && hi.is_finite() { 0.5 * (lo + hi) } else { 0.0 }
+        } else { 0.0 }
+    } else {
+        // index midpoint when x is None
+        if n > 0 { (n.saturating_sub(1) as f32) * 0.5 } else { 0.0 }
+    };
 
     for i in 0..n {
         let xi = x.map(|xx| xx[i]).unwrap_or(i as f32) as f64;
         let yi_pos = (y[i] - b0).max(0.0) as f64;
+
         if yi_pos > 0.0 {
             wsum += yi_pos;
             xsum += yi_pos * xi;
             x2sum += yi_pos * xi * xi;
         }
+
         y_max = y_max.max(y[i]);
+
         if let Some(xx) = x {
             if i>0 {
                 let dx = (xx[i]-xx[i-1]) as f64;
@@ -648,17 +670,44 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
             }
         }
     }
+
     if wsum <= 0.0 {
-        return Fit1D { baseline:b0, area: trap as f32, n, ..Default::default() };
+        // No positive mass after baseline -> return sane fallback:
+        // - mu at domain midpoint
+        // - sigma 0
+        // - non-negative baseline/height/area
+        let mut area = trap as f32;
+        if !area.is_finite() || area < 0.0 { area = 0.0; }
+
+        let mut f = Fit1D {
+            mu: mu_fallback,
+            sigma: 0.0,
+            height: (y_max - b0).max(0.0),
+            baseline: b0.max(0.0),
+            area,
+            r2: 0.0,
+            n
+        };
+
+        // final guards
+        if !f.mu.is_finite() { f.mu = 0.0; }
+        if !f.height.is_finite() || f.height < 0.0 { f.height = 0.0; }
+        if !f.baseline.is_finite() || f.baseline < 0.0 { f.baseline = 0.0; }
+        return f;
     }
-    let mu = (xsum/wsum) as f32;
+
+    let mut mu = (xsum/wsum) as f32;
+    if !mu.is_finite() { mu = mu_fallback; }
+
     let var = (x2sum/wsum - (mu as f64)*(mu as f64)).max(0.0) as f32;
-    let sigma = var.sqrt();
+    let mut sigma = var.sqrt();
+    if !sigma.is_finite() || sigma < 0.0 { sigma = 0.0; }
 
     // refine height/baseline by 2×2 LS (Gaussian @ mu, sigma)
     let mut s_gg=0.0f64; let mut s_g1=0.0f64; let s_11=n as f64;
     let mut s_yg=0.0f64; let mut s_y1=0.0f64;
-    if sigma.is_finite() && sigma>0.0 {
+
+    if sigma > 0.0 {
         for i in 0..n {
             let xi = x.map(|xx| xx[i]).unwrap_or(i as f32);
             let z = (xi - mu) as f64 / (sigma as f64);
@@ -668,9 +717,16 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
         }
         let det = s_11*s_gg - s_g1*s_g1;
         if det.abs() > 1e-12 {
-            let b = ( s_gg*s_y1 - s_g1*s_yg)/det;
-            let h = (-s_g1*s_y1 + s_11*s_yg)/det;
-            let area = (h as f32)*sigma*(std::f32::consts::TAU).sqrt();
+            let mut b = ( s_gg*s_y1 - s_g1*s_yg)/det;
+            let mut h = (-s_g1*s_y1 + s_11*s_yg)/det;
+
+            // clamp to non-negative (negative height/baseline is unphysical here)
+            if !b.is_finite() || b < 0.0 { b = 0.0; }
+            if !h.is_finite() || h < 0.0 { h = 0.0; }
+
+            let mut area = (h as f32)*sigma*(std::f32::consts::TAU).sqrt();
+            if !area.is_finite() || area < 0.0 { area = 0.0; }
+
             // crude r^2
             let mean = y.iter().sum::<f32>()/n as f32;
             let mut ss_res=0.0f64; let mut ss_tot=0.0f64;
@@ -681,14 +737,21 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
                 let e = (y[i]-yhat) as f64;
                 ss_res += e*e; let d=(y[i]-mean) as f64; ss_tot += d*d;
             }
-            let r2 = if ss_tot>0.0 { (1.0 - ss_res/ss_tot) as f32 } else { 0.0 };
+            let mut r2 = if ss_tot>0.0 { (1.0 - ss_res/ss_tot) as f32 } else { 0.0 };
+            if !r2.is_finite() { r2 = 0.0; }
+
             return Fit1D { mu, sigma, height: h as f32, baseline: b as f32, area, r2, n };
         }
     }
-    // fallback: keep baseline b0, height from (max-b0)
-    let height = (y_max - b0).max(0.0);
-    let area = if sigma.is_finite() && sigma>0.0 {
+
+    // fallback: moment sigma (possibly 0), positive height, non-negative area
+    let mut height = (y_max - b0).max(0.0);
+    if !height.is_finite() || height < 0.0 { height = 0.0; }
+
+    let mut area = if sigma>0.0 {
         height * sigma * (std::f32::consts::TAU).sqrt()
     } else { trap as f32 };
-    Fit1D { mu, sigma: sigma.max(0.0), height, baseline: b0, area, r2: f32::NAN, n }
+    if !area.is_finite() || area < 0.0 { area = 0.0; }
+
+    Fit1D { mu, sigma, height, baseline: b0.max(0.0), area, r2: 0.0, n }
 }
