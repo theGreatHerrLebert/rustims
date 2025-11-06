@@ -691,7 +691,7 @@ impl TimsDatasetDIA {
             im_peaks, &rt_groups, &rt, &build_opts_ms2, require_rt_overlap, num_threads
         );
 
-        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads);
+        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
     }
     pub fn clusters_for_precursor(
         &self,
