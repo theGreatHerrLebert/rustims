@@ -1541,27 +1541,40 @@ impl PyTimsDatasetDIA {
     ///   avoid attaching raw points to clusters before calling this method.
     /// - Heavy work runs without the GIL.
     #[pyo3(signature = (
-        ms1, ms2,
-        min_rt_jaccard = 0.10_f32,
-        rt_guard_sec = 0.0_f64,
-        rt_bucket_width = 1.0_f64,
-        max_ms1_rt_span_sec = Some(60.0_f64),
-        max_ms2_rt_span_sec = Some(60.0_f64),
-        min_raw_sum = 1.0_f32,
-    ))]
+    ms1, ms2,
+    // RT coarse guards
+    min_rt_jaccard = 0.10_f32,
+    rt_guard_sec = 0.0_f64,
+    rt_bucket_width = 1.0_f64,
+    // sanity limits
+    max_ms1_rt_span_sec = Some(60.0_f64),
+    max_ms2_rt_span_sec = Some(60.0_f64),
+    min_raw_sum = 1.0_f32,
+    // ---- NEW tight guards (keyword-only in Python) ----
+    max_rt_apex_delta_sec = Some(2.0_f32),
+    max_scan_apex_delta = Some(6_usize),
+    min_im_overlap_scans = 1_usize,
+))]
     pub fn enumerate_ms2_ms1_pairs(
         &self,
         py: Python<'_>,
         ms1: Vec<Py<PyClusterResult1D>>,
         ms2: Vec<Py<PyClusterResult1D>>,
+        // RT coarse guards
         min_rt_jaccard: f32,
         rt_guard_sec: f64,
         rt_bucket_width: f64,
+        // sanity limits
         max_ms1_rt_span_sec: Option<f64>,
         max_ms2_rt_span_sec: Option<f64>,
         min_raw_sum: f32,
+        // NEW tight guards
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
     ) -> PyResult<Vec<(usize, usize)>> {
-        // 1) Options (RT seconds + group reachability; no m/z matching)
+
+        // 1) Options (now includes tight guards)
         let opts = CandidateOpts {
             min_rt_jaccard,
             ms2_rt_guard_sec: rt_guard_sec,
@@ -1569,6 +1582,11 @@ impl PyTimsDatasetDIA {
             max_ms1_rt_span_sec,
             max_ms2_rt_span_sec,
             min_raw_sum,
+
+            // NEW:
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
         };
 
         // 2) Extract owned Rust clusters (clone, still cheap if no raw points attached)

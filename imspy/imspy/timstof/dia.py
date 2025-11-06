@@ -1208,28 +1208,34 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         return [ClusterResult1D(r) for r in py_results]
 
     def enumerate_ms2_ms1_pairs(
-        self,
-        ms1_clusters: List["ClusterResult1D"],
-        ms2_clusters: List["ClusterResult1D"],
-        *,
-        # Mirrors Rust CandidateOpts used by the new API:
-        min_rt_jaccard: float = 0.10,
-        rt_guard_sec: float = 0.0,
-        rt_bucket_width: float = 1.0,
-        max_ms1_rt_span_sec: float | None = 60.0,
-        max_ms2_rt_span_sec: float | None = 60.0,
-        min_raw_sum: float = 1.0,
-        # Back-compat shim: accept old kwargs but ignore them
-        **deprecated_kwargs,
+            self,
+            ms1_clusters: List["ClusterResult1D"],
+            ms2_clusters: List["ClusterResult1D"],
+            *,
+            # coarse RT guards (match Rust defaults)
+            min_rt_jaccard: float = 0.10,
+            rt_guard_sec: float = 0.0,
+            rt_bucket_width: float = 1.0,
+            max_ms1_rt_span_sec: float | None = 60.0,
+            max_ms2_rt_span_sec: float | None = 60.0,
+            min_raw_sum: float = 1.0,
+            # ---- NEW tight guards (keyword-only) ----
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            # Back-compat shim: accept old kwargs but ignore them
+            **deprecated_kwargs,
     ) -> List[Tuple[int, int]]:
         """
         Return (ms2_idx, ms1_idx) pairs based on:
-          • RT-overlap in seconds (Jaccard >= min_rt_jaccard, with MS2 guard),
-          • Window-group reachability (mz∩isolation AND IM∩scan-range), handled in Rust.
+          • RT overlap (Jaccard >= min_rt_jaccard with MS2 guard),
+          • Group reachability (mz∩isolation AND scans∩program),
+          • Tight guards: IM window overlap, IM apex proximity (scans), RT apex proximity (s).
 
-        Only the parameters above are used. Any deprecated kwargs are ignored with a warning.
+        All arguments are keyword-only; extra deprecated kwargs are ignored with a warning.
         """
         if deprecated_kwargs:
+            import warnings
             warnings.warn(
                 "enumerate_ms2_ms1_pairs: ignoring deprecated kwargs: "
                 + ", ".join(sorted(deprecated_kwargs.keys())),
@@ -1240,18 +1246,21 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         py_ms1 = [c._py for c in ms1_clusters]
         py_ms2 = [c._py for c in ms2_clusters]
 
-        # IMPORTANT: arg order must match the new Rust function:
-        # (ms1, ms2, min_rt_jaccard, rt_guard_sec, rt_bucket_width,
-        #  max_ms1_rt_span_sec, max_ms2_rt_span_sec, min_raw_sum)
+        # IMPORTANT: positional order must match the Rust signature exactly.
         return self.__dataset.enumerate_ms2_ms1_pairs(
             py_ms1,
             py_ms2,
-            min_rt_jaccard,
-            rt_guard_sec,
-            rt_bucket_width,
+            # coarse RT guards
+            float(min_rt_jaccard),
+            float(rt_guard_sec),
+            float(rt_bucket_width),
             max_ms1_rt_span_sec,
             max_ms2_rt_span_sec,
-            min_raw_sum,
+            float(min_raw_sum),
+            # tight guards
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            int(min_im_overlap_scans),
         )
 
     # Optional: tiny helper if you sometimes want objects instead of indices
