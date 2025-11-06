@@ -17,7 +17,7 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
 use std::collections::{HashMap};
-use crate::cluster::cluster_link::{build_precursor_fragment_annotation_ms2centric, link_ms2_to_ms1_candidates_noindex, Ms2ToMs1LinkerOpts, SelectionCfg};
+use crate::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -214,6 +214,28 @@ impl TimsDatasetDIA {
         }
     }
 
+    /// Build a reusable MS1 search index for candidate enumeration.
+    /// Use when you plan to enumerate pairs repeatedly (e.g., different MS2 subsets or knobs).
+    pub fn build_precursor_search_index(
+        &self,
+        ms1: &[ClusterResult1D],
+        opts: &CandidateOpts,
+    ) -> PrecursorSearchIndex {
+        PrecursorSearchIndex::build(self, ms1, opts)
+    }
+
+    /// One-shot helper: build a transient index and enumerate all (ms2_idx, ms1_idx) pairs.
+    /// If you’ll call this repeatedly, prefer `build_precursor_search_index` + `enumerate_pairs`.
+    pub fn enumerate_ms2_ms1_pairs(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        opts: &CandidateOpts,
+    ) -> Vec<(usize, usize)> {
+        let idx = PrecursorSearchIndex::build(self, ms1, opts);
+        idx.enumerate_pairs(ms1, ms2, opts)
+    }
+
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
         let mut mz_windows = Vec::new();
         let mut scan_ranges = Vec::new();
@@ -244,20 +266,6 @@ impl TimsDatasetDIA {
                 }
             })
             .collect()
-    }
-
-    /// MS2→MS1 linker that does NOT require a PrecursorMzIndex.
-    /// It uses the DIA program windows (mz + scan ranges) to pre-gate MS1.
-    pub fn link_ms2_to_ms1_noindex(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        opts: Ms2ToMs1LinkerOpts,
-        cfg: SelectionCfg,
-        pre_top_k_per_ms2: Option<usize>,
-    ) -> Vec<(ClusterResult1D, Vec<ClusterResult1D>)> {
-        let cands = link_ms2_to_ms1_candidates_noindex(self, ms1, ms2, &opts, pre_top_k_per_ms2);
-        build_precursor_fragment_annotation_ms2centric(ms1, ms2, &cands, &cfg)
     }
 
     pub fn sample_precursor_signal(

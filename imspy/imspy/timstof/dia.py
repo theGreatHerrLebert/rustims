@@ -1207,67 +1207,64 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         )
         return [ClusterResult1D(r) for r in py_results]
 
-    def link_ms2_to_ms1(
+    def enumerate_ms2_ms1_pairs(
             self,
             ms1_clusters: List["ClusterResult1D"],
             ms2_clusters: List["ClusterResult1D"],
             *,
-            # Ms2ToMs1LinkerOpts
-            min_rt_jaccard: float = 0.1,
-            max_rt_apex_sec: float | None = 5.0,
-            max_im_apex_scans: float | None = 25.0,
-            require_im_overlap: bool = True,
-            mz_ppm: float = 25.0,
+            # CandidateOpts (all primitives)
+            min_rt_jaccard: float = 0.10,
             rt_guard_sec: float = 0.0,
-            # NEW: pre-filters
-            max_rt_span_sec: float | None = 50.0,
+            max_rt_apex_sec: float | None = 8.0,
+            require_im_overlap: bool = True,
+            rt_bucket_width: float = 1.0,
+            max_ms1_rt_span_sec: float | None = 60.0,
+            max_ms2_rt_span_sec: float | None = 60.0,
             max_im_span_scans: int | None = 80,
             min_raw_sum: float = 1.0,
-            # SelectionCfg
-            min_score: float = 0.0,
-            top_k_per_ms2: int = 32,
-            top_k_per_ms1: int | None = 512,
-            cardinality_one_to_one: bool = False,
-            # Early prune (optional)
-            pre_top_k_per_ms2: int | None = None,
-    ) -> List[Tuple["ClusterResult1D", List["ClusterResult1D"]]]:
+    ) -> List[Tuple[int, int]]:
         """
-        Link MS2 clusters to MS1 clusters (no m/z index).
-        Returns a list of (precursor, [fragments]).
+        Enumerate candidate (MS2, MS1) pairs using DIA program + RT/IM constraints.
+
+        Returns
+        -------
+        List[Tuple[int, int]]
+            A list of (ms2_idx, ms1_idx) integer pairs. Indices refer to the
+            positions within the provided `ms2_clusters` and `ms1_clusters` lists.
         """
-        # Extract underlying Py objects:
+        # unwrap to the underlying PyO3 objects
         py_ms1 = [c._py for c in ms1_clusters]
         py_ms2 = [c._py for c in ms2_clusters]
 
-        pairs = self.__dataset.link_ms2_to_ms1(
+        # delegate to Rust (PyTimsDatasetDIA.enumerate_ms2_ms1_pairs)
+        pairs: list[tuple[int, int]] = self.__dataset.enumerate_ms2_ms1_pairs(
             py_ms1,
             py_ms2,
-            # Ms2ToMs1LinkerOpts
             min_rt_jaccard,
-            max_rt_apex_sec,
-            max_im_apex_scans,
-            require_im_overlap,
-            mz_ppm,
             rt_guard_sec,
-            # NEW: pre-filters
-            max_rt_span_sec,
+            max_rt_apex_sec,
+            require_im_overlap,
+            rt_bucket_width,
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
             max_im_span_scans,
             min_raw_sum,
-            # SelectionCfg
-            min_score,
-            top_k_per_ms2,
-            top_k_per_ms1,
-            cardinality_one_to_one,
-            # Early prune
-            pre_top_k_per_ms2,
         )
+        return pairs
 
-        # Wrap results back into high-level Python objects
-        out: list[tuple["ClusterResult1D", list["ClusterResult1D"]]] = []
-        for py_prec, py_frags in pairs:
-            prec = ClusterResult1D(py_prec)
-            frags = [ClusterResult1D(pf) for pf in py_frags]
-            out.append((prec, frags))
+    # Optional: tiny helper if you sometimes want objects instead of indices
+    def materialize_pairs(
+            self,
+            pairs: List[Tuple[int, int]],
+            ms1_clusters: List["ClusterResult1D"],
+            ms2_clusters: List["ClusterResult1D"],
+    ) -> List[Tuple["ClusterResult1D", "ClusterResult1D"]]:
+        """
+        Convert index pairs back to (ms2_obj, ms1_obj) for convenience.
+        """
+        out: list[tuple["ClusterResult1D", "ClusterResult1D"]] = []
+        for j_ms2, i_ms1 in pairs:
+            out.append((ms2_clusters[j_ms2], ms1_clusters[i_ms1]))
         return out
 
 from collections.abc import Iterable

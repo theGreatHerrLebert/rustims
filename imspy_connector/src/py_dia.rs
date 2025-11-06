@@ -9,8 +9,8 @@ use rustdf::cluster::io as cio;
 
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
+use rustdf::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, Fit1D, RawPoints};
-use rustdf::cluster::cluster_link::{Ms2ToMs1LinkerOpts, SelectionCfg};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, expand_many_im_peaks_along_rt};
@@ -1529,111 +1529,73 @@ impl PyTimsDatasetDIA {
         results_to_py(py, results)
     }
 
-    // inside impl PyTimsDatasetDIA
-
-    /// Link MS2 clusters to MS1 clusters without a precursor m/z index.
+    /// Enumerate (ms2_idx, ms1_idx) candidate pairs using DIA program + RT/IM constraints.
     ///
-    /// Returns a list of (precursor, [fragments...]) pairs.
+    /// Returns a list of (ms2_idx, ms1_idx) integer tuples.
+    ///
+    /// Notes:
+    /// - This clones the passed ClusterResult1D objects. For best memory behavior,
+    ///   avoid attaching raw points to clusters before calling this method.
+    /// - Heavy work runs without the GIL.
     #[pyo3(signature = (
-    ms1_clusters,
-    ms2_clusters,
-    // Ms2ToMs1LinkerOpts
-    min_rt_jaccard=0.1,
-    max_rt_apex_sec=Some(8.0),
-    max_im_apex_scans=Some(5.0),
-    require_im_overlap=true,
-    mz_ppm=25.0,
-    rt_guard_sec=0.0,
-    // NEW: pre-filters
-    max_rt_span_sec=None,
-    max_im_span_scans=None,
-    min_raw_sum=1.0,
-    // SelectionCfg
-    min_score=0.0,
-    top_k_per_ms2=32,
-    top_k_per_ms1=Some(512),
-    cardinality_one_to_one=false,
-    // Early prune (optional): fast top-K per-MS2 *before* greedy selection
-    pre_top_k_per_ms2=None,
-))]
-    pub fn link_ms2_to_ms1(
+        ms1, ms2,
+        min_rt_jaccard = 0.10_f32,
+        rt_guard_sec = 0.0_f64,
+        max_rt_apex_sec = Some(8.0_f32),
+        require_im_overlap = true,
+        rt_bucket_width = 1.0_f64,
+        max_ms1_rt_span_sec = Some(60.0_f64),
+        max_ms2_rt_span_sec = Some(60.0_f64),
+        max_im_span_scans = Some(80_usize),
+        min_raw_sum = 1.0_f32,
+    ))]
+    pub fn enumerate_ms2_ms1_pairs(
         &self,
         py: Python<'_>,
-        ms1_clusters: Vec<Py<PyClusterResult1D>>,
-        ms2_clusters: Vec<Py<PyClusterResult1D>>,
-        // Ms2ToMs1LinkerOpts
+        ms1: Vec<Py<PyClusterResult1D>>,
+        ms2: Vec<Py<PyClusterResult1D>>,
         min_rt_jaccard: f32,
-        max_rt_apex_sec: Option<f32>,
-        max_im_apex_scans: Option<f32>,
-        require_im_overlap: bool,
-        mz_ppm: f32,
         rt_guard_sec: f64,
-        // NEW: pre-filters
-        max_rt_span_sec: Option<f64>,
+        max_rt_apex_sec: Option<f32>,
+        require_im_overlap: bool,
+        rt_bucket_width: f64,
+        max_ms1_rt_span_sec: Option<f64>,
+        max_ms2_rt_span_sec: Option<f64>,
         max_im_span_scans: Option<usize>,
         min_raw_sum: f32,
-        // SelectionCfg
-        min_score: f32,
-        top_k_per_ms2: usize,
-        top_k_per_ms1: Option<usize>,
-        cardinality_one_to_one: bool,
-        // Early prune
-        pre_top_k_per_ms2: Option<usize>,
-    ) -> PyResult<Vec<(Py<PyClusterResult1D>, Vec<Py<PyClusterResult1D>>)>> {
-        // 1) Materialize Rust copies
-        let ms1_rs: Vec<ClusterResult1D> = ms1_clusters
-            .iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-        let ms2_rs: Vec<ClusterResult1D> = ms2_clusters
-            .iter()
-            .map(|p| p.borrow(py).inner.clone())
-            .collect();
-
-        // 2) Options (include new fields)
-        let linker_opts = Ms2ToMs1LinkerOpts {
+    ) -> PyResult<Vec<(usize, usize)>> {
+        // 1) Build CandidateOpts from plain values
+        let opts = CandidateOpts {
             min_rt_jaccard,
-            max_rt_apex_sec,
-            max_im_apex_scans,
-            require_im_overlap,
             rt_guard_sec,
-            mz_ppm,
-            max_rt_span_sec,
+            max_rt_apex_sec,
+            require_im_overlap,
+            rt_bucket_width,
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
             max_im_span_scans,
             min_raw_sum,
         };
-        let sel_cfg = SelectionCfg {
-            min_score,
-            top_k_per_ms2,
-            top_k_per_ms1,
-            cardinality_one_to_one,
-        };
 
-        // 3) Call optimized method on the inner dataset (no GIL)
-        let linked = py.allow_threads(|| {
-            self.inner.link_ms2_to_ms1_noindex(
-                &ms1_rs,
-                &ms2_rs,
-                linker_opts,
-                sel_cfg,
-                pre_top_k_per_ms2, // <- early prune
-            )
+        // 2) Pull out inner ClusterResult1D (clone to own them for no-GIL work)
+        let ms1_rust: Vec<ClusterResult1D> = Python::with_gil(|py| {
+            ms1.into_iter()
+                .map(|p| p.borrow(py).inner.clone())
+                .collect()
+        });
+        let ms2_rust: Vec<ClusterResult1D> = Python::with_gil(|py| {
+            ms2.into_iter()
+                .map(|p| p.borrow(py).inner.clone())
+                .collect()
         });
 
-        // 4) Pack back into Python objects
-        let out: Vec<(Py<PyClusterResult1D>, Vec<Py<PyClusterResult1D>>)> = linked
-            .into_iter()
-            .map(|(prec, frags)| -> PyResult<_> {
-                let py_prec = Py::new(py, PyClusterResult1D { inner: prec })?;
-                let py_frags: Vec<Py<PyClusterResult1D>> = frags
-                    .into_iter()
-                    .map(|f| Py::new(py, PyClusterResult1D { inner: f }))
-                    .collect::<PyResult<_>>()?;
-                Ok((py_prec, py_frags))
-            })
-            .collect::<PyResult<_>>()?;
+        // 3) Enumerate (ms2_idx, ms1_idx) pairs without the GIL
+        let pairs = py.allow_threads(|| {
+            let idx = PrecursorSearchIndex::build(&self.inner, &ms1_rust, &opts);
+            idx.enumerate_pairs(&ms1_rust, &ms2_rust, &opts)
+        });
 
-        Ok(out)
+        Ok(pairs)
     }
 }
 
