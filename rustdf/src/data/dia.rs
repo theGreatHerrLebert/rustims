@@ -19,6 +19,7 @@ use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_sp
 use std::collections::{HashMap};
 use crate::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
 
+
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct ProgramSlice {
@@ -60,7 +61,7 @@ pub struct DiaIndex {
 
 impl DiaIndex {
     pub fn new(meta: &[FrameMeta], info: &[DiaMsMisInfo], wins: &[DiaMsMsWindow]) -> Self {
-        // --- helpers ---
+        // helpers
         #[inline]
         fn norm_f64_pair(a: f64, b: f64) -> Option<(f64, f64)> {
             if !a.is_finite() || !b.is_finite() { return None; }
@@ -70,7 +71,7 @@ impl DiaIndex {
         #[inline]
         fn norm_u32_pair(a: u32, b: u32) -> Option<(u32, u32)> {
             let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-            if hi >= lo { Some((lo, hi)) } else { None }
+            Some((lo, hi))
         }
         fn merge_scan_ranges(mut ranges: Vec<(u32, u32)>) -> Vec<(u32, u32)> {
             if ranges.is_empty() { return ranges; }
@@ -79,7 +80,6 @@ impl DiaIndex {
             let mut cur = ranges[0];
             for &(l, r) in &ranges[1..] {
                 if l <= cur.1.saturating_add(1) {
-                    // overlaps or touches → extend
                     if r > cur.1 { cur.1 = r; }
                 } else {
                     out.push(cur);
@@ -96,7 +96,7 @@ impl DiaIndex {
             frame_time.insert(m.id as u32, m.time);
         }
 
-        // frame_id -> group, and group -> frames (we'll sort by **time** later)
+        // frame_id -> group; group -> frames
         let mut frame_to_group: HashMap<u32, u32> = HashMap::new();
         let mut group_to_frames: HashMap<u32, Vec<u32>> = HashMap::new();
         for r in info {
@@ -105,11 +105,10 @@ impl DiaIndex {
             group_to_frames.entry(r.window_group).or_default().push(fid);
         }
 
-        // Build raw (normalized) program windows
+        // raw program rows
         let mut group_to_isolation: HashMap<u32, Vec<(f64, f64)>> = HashMap::new();
         let mut group_to_scan_ranges: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
         for w in wins {
-            // handle width<=0 safely
             let half = 0.5 * w.isolation_width;
             if half.is_finite() && half > 0.0 && w.isolation_mz.is_finite() {
                 let lo = (w.isolation_mz - half) as f64;
@@ -123,7 +122,7 @@ impl DiaIndex {
             }
         }
 
-        // Derive unions/merged ranges per group; also sort frames by **time**
+        // unions + sort frames by time
         let mut group_to_mz_union: HashMap<u32, (f64, f64)> = HashMap::new();
         let mut group_to_scan_unions: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
 
@@ -136,18 +135,13 @@ impl DiaIndex {
 
             if let Some(v) = group_to_isolation.get(g) {
                 if !v.is_empty() {
-                    let mut lo = f64::INFINITY;
-                    let mut hi = f64::NEG_INFINITY;
-                    for &(a, b) in v {
-                        if a < lo { lo = a; }
-                        if b > hi { hi = b; }
-                    }
+                    let lo = v.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+                    let hi = v.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
                     if lo.is_finite() && hi.is_finite() && hi > lo {
                         group_to_mz_union.insert(*g, (lo, hi));
                     }
                 }
             }
-            // merged scan ranges (inclusive)
             let merged = merge_scan_ranges(group_to_scan_ranges.get(g).cloned().unwrap_or_default());
             group_to_scan_unions.insert(*g, merged);
         }
@@ -163,7 +157,7 @@ impl DiaIndex {
         }
     }
 
-    /// Convenience: fully materialize a program description for a group.
+    /// Convenience: materialize a program description for a group.
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
         let mz_windows = self.group_to_isolation
             .get(&g)
@@ -179,7 +173,6 @@ impl DiaIndex {
             .get(&g)
             .map(|&(a,b)| (a as f32, b as f32));
 
-        // If no unions present, keep empty (treat as permissive in callers)
         let scan_unions = self.group_to_scan_unions
             .get(&g)
             .cloned()
@@ -188,7 +181,6 @@ impl DiaIndex {
         Ms2GroupProgram { mz_windows, scan_ranges, mz_union, scan_unions }
     }
 
-    /// Minimal accessors used by your linker:
     #[inline]
     pub fn mz_bounds_for_window_group_core(&self, g: u32) -> Option<(f32, f32)> {
         self.group_to_mz_union.get(&g).map(|&(a,b)| (a as f32, b as f32))
