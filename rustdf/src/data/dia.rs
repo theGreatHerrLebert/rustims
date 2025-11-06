@@ -691,7 +691,27 @@ impl TimsDatasetDIA {
             im_peaks, &rt_groups, &rt, &build_opts_ms2, require_rt_overlap, num_threads
         );
 
-        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
+        let mut out = self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads);
+
+        // --- HARDENING: force ms_level and window_group on results ---
+        for r in &mut out {
+            r.ms_level = 2;
+            if r.window_group.is_none() {
+                r.window_group = Some(window_group);
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            let wrong = out.iter().filter(|c| c.ms_level != 2).count();
+            let missg = out.iter().filter(|c| c.window_group != Some(window_group)).count();
+            eprintln!("[clusters_for_group] g={} total={} wrong_ms_level={} missing_group={}",
+                      window_group, out.len(), wrong, missg);
+            debug_assert!(wrong == 0);
+            debug_assert!(missg == 0);
+        }
+
+        out
     }
     pub fn clusters_for_precursor(
         &self,
