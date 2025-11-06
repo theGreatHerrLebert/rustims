@@ -351,7 +351,10 @@ pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
 
 #[inline]
 pub fn im_peak_id(p: &ImPeak1D) -> PeakId {
-    // deterministic over the fields that define identity
+    use rustc_hash::FxHasher;
+    use std::hash::{Hash, Hasher};
+
+    // Deterministic over the identity-defining fields
     let mut h = FxHasher::default();
     p.window_group.hash(&mut h);
     p.mz_row.hash(&mut h);
@@ -359,7 +362,10 @@ pub fn im_peak_id(p: &ImPeak1D) -> PeakId {
     p.left.hash(&mut h);
     p.right.hash(&mut h);
     p.frame_id_bounds.hash(&mut h);
-    h.finish()
+
+    let u: u64 = h.finish();
+    // force into non-negative i64 space (avoids pandas/NumPy uint64 weirdness)
+    (u & 0x7FFF_FFFF_FFFF_FFFF) as i64
 }
 
 #[inline]
@@ -370,7 +376,9 @@ pub fn rt_peak_id(r: &RtPeak1D) -> PeakId {
     r.rt_idx.hash(&mut h);
     r.frame_id_bounds.hash(&mut h);
     r.window_group.hash(&mut h);
-    h.finish()
+    let u: u64 = h.finish();
+    // force into non-negative i64 space (avoids pandas/NumPy uint64 weirdness)
+    (u & 0x7FFF_FFFF_FFFF_FFFF) as i64
 }
 
 pub fn fallback_rt_peak_from_trace(

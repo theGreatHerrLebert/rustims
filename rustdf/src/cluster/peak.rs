@@ -75,7 +75,7 @@ pub struct RtPeak1D {
 }
 
 // Stable 64-bit id for peaks
-pub type PeakId = u64;
+pub type PeakId = i64;
 
 
 #[derive(Clone, Debug)]

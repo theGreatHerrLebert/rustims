@@ -260,7 +260,7 @@ impl PrecursorSearchIndex {
         // Share index across groups/threads
         let idx_arc = Arc::new(self.clone());
 
-        by_group
+        let mut out = by_group
             .into_par_iter()
             .flat_map(|(g, js)| {
                 // Resolve the eligibility mask once per group, materialize it so we
@@ -347,7 +347,12 @@ impl PrecursorSearchIndex {
                     local.into_par_iter()
                 })
             })
-            .collect::<Vec<(usize, usize)>>()
+            .collect::<Vec<(usize, usize)>>();
+        // --- HARD DE-DUP step ---
+        out.sort_unstable();
+        out.dedup();
+
+        out
     }
 }
 

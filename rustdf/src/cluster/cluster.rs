@@ -62,8 +62,8 @@ pub struct ClusterSpec1D {
 
     // provenance (optional)
     pub window_group: Option<u32>,
-    pub parent_im_id: Option<u64>,
-    pub parent_rt_id: Option<u64>,
+    pub parent_im_id: Option<i64>,
+    pub parent_rt_id: Option<i64>,
     pub ms_level: u8,
 }
 
@@ -90,8 +90,8 @@ pub struct ClusterResult1D {
     pub volume_proxy: f32,
     pub frame_ids_used: Vec<u32>,
     pub window_group: Option<u32>,
-    pub parent_im_id: Option<u64>,
-    pub parent_rt_id: Option<u64>,
+    pub parent_im_id: Option<i64>,
+    pub parent_rt_id: Option<i64>,
     pub ms_level: u8,
     pub rt_axis_sec: Option<Vec<f32>>,
     pub im_axis_scans: Option<Vec<usize>>,

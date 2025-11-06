@@ -170,8 +170,8 @@ impl PyClusterResult1D {
     #[getter] fn volume_proxy(&self) -> f32 { self.inner.volume_proxy }
     #[getter] fn ms_level(&self) -> u8 { self.inner.ms_level }
     #[getter] fn window_group(&self) -> Option<u32> { self.inner.window_group }
-    #[getter] fn parent_im_id(&self) -> Option<u64> { self.inner.parent_im_id }
-    #[getter] fn parent_rt_id(&self) -> Option<u64> { self.inner.parent_rt_id }
+    #[getter] fn parent_im_id(&self) -> Option<i64> { self.inner.parent_im_id }
+    #[getter] fn parent_rt_id(&self) -> Option<i64> { self.inner.parent_rt_id }
 
     // axes / frame IDs (optional arrays)
     fn frame_ids_used<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
@@ -265,8 +265,8 @@ impl PyRtPeak1D {
     #[getter] fn mz_bounds(&self) -> (f32, f32) { self.inner.mz_bounds }
 
     // --- linkage
-    #[getter] fn parent_im_id(&self) -> Option<u64> { self.inner.parent_im_id }
-    #[getter] fn id(&self) -> u64 { self.inner.id }
+    #[getter] fn parent_im_id(&self) -> Option<i64> { self.inner.parent_im_id }
+    #[getter] fn id(&self) -> i64 { self.inner.id }
 
     pub fn __repr__(&self) -> String {
         format!(
@@ -283,7 +283,7 @@ pub struct PyImPeak1D { pub inner: Arc<ImPeak1D> }
 #[pymethods]
 impl PyImPeak1D {
     /// Stable 64-bit identity of this IM peak
-    #[getter] fn id(&self) -> u64 { self.inner.id }
+    #[getter] fn id(&self) -> i64 { self.inner.id }
     /// Prefer this going forward (same value as rt_row)
     #[getter] fn mz_row(&self) -> usize { self.inner.mz_row }
 
@@ -1879,8 +1879,6 @@ fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
 
 #[inline]
 fn opt_u32_to_i64(x: Option<u32>) -> i64 { x.map(|v| v as i64).unwrap_or(-1) }
-#[inline]
-fn opt_u64_to_i64(x: Option<u64>) -> i64 { x.map(|v| v as i64).unwrap_or(-1) }
 
 #[pyfunction]
 #[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
@@ -2193,8 +2191,8 @@ pub fn export_cluster_arrays<'py>(
             // provenance / stats
             ms_level.push(cr.ms_level as i64);
             window_group.push(opt_u32_to_i64(cr.window_group));
-            parent_im_id.push(opt_u64_to_i64(cr.parent_im_id));
-            parent_rt_id.push(opt_u64_to_i64(cr.parent_rt_id));
+            parent_im_id.push(cr.parent_im_id.unwrap_or(-1));
+            parent_rt_id.push(cr.parent_rt_id.unwrap_or(-1));
 
             raw_sum.push(cr.raw_sum);
             volume_proxy.push(cr.volume_proxy);
