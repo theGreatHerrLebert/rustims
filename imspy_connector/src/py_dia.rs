@@ -1429,7 +1429,7 @@ impl PyTimsDatasetDIA {
         };
 
         // run without GIL
-        let results = py.allow_threads(|| {
+        let mut results = py.allow_threads(|| {
             self.inner.clusters_for_group(
                 window_group,
                 ppm_per_bin,
@@ -1441,6 +1441,11 @@ impl PyTimsDatasetDIA {
                 num_threads,
             )
         });
+
+        for r in &mut results {
+            r.ms_level = 2;
+            if r.window_group.is_none() { r.window_group = Some(window_group); }
+        }
 
         results_to_py(py, results)
     }
