@@ -79,9 +79,9 @@ def _iter_batches(n: int, batch_size: int) -> Iterable[Sequence[int]]:
         yield range(i, j)
         i = j
 
-def _maybe_tqdm(iterable, total: Optional[int], desc: str):
+def _maybe_tqdm(iterable, total: Optional[int], desc: str, ncols: int = 80):
     if TQDM:
-        return _tqdm(iterable, total=total, desc=desc)
+        return _tqdm(iterable, total=total, desc=desc, ncols=ncols)
     return iterable
 
 def _unique_window_groups(ds) -> List[int]:
@@ -117,6 +117,7 @@ def _pick_im_peaks_for_plan(plan, picking: PeakPickingParams, desc: str = "pick 
         _batches(num, picking.batch_size),
         total=(num + picking.batch_size - 1) // picking.batch_size,
         desc=desc,
+        ncols=80,
     )
     has_for_indices = hasattr(plan, "pick_im_peaks_for_indices")
     has_batched     = hasattr(plan, "pick_im_peaks_batched")
