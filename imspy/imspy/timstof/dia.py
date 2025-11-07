@@ -22,6 +22,63 @@ from pathlib import Path
 from typing import List, Sequence, Union, Tuple
 # --- helpers ---------------------------------------------------------------
 
+import warnings
+
+def _normalize_rt_kwargs(
+    *,
+    bin_pad: int,
+    smooth_sigma_sec: float | None = None,
+    smooth_trunc_k: float | None = None,
+    min_prom: float | None = None,
+    min_sep_sec: float | None = None,
+    min_width_sec: float | None = None,
+    # deprecated aliases:
+    smooth_sigma: float | None = None,
+    smooth_trunc: float | None = None,
+    min_sep_frames: int | None = None,
+    min_width_frames: int | None = None,
+    # passthrough:
+    ppm_per_bin: float,
+    fallback_if_frames_lt: int,
+    fallback_frac_width: float,
+):
+    # Back-compat mapping with warnings
+    if smooth_sigma_sec is None and smooth_sigma is not None:
+        warnings.warn("smooth_sigma is deprecated; use smooth_sigma_sec (seconds).",
+                      DeprecationWarning, stacklevel=2)
+        smooth_sigma_sec = float(smooth_sigma)
+    if smooth_trunc_k is None and smooth_trunc is not None:
+        warnings.warn("smooth_trunc is deprecated; use smooth_trunc_k (in σ).",
+                      DeprecationWarning, stacklevel=2)
+        smooth_trunc_k = float(smooth_trunc)
+    if min_sep_sec is None and min_sep_frames is not None:
+        warnings.warn("min_sep_frames is deprecated; use min_sep_sec (seconds).",
+                      DeprecationWarning, stacklevel=2)
+        min_sep_sec = float(min_sep_frames)
+    if min_width_sec is None and min_width_frames is not None:
+        warnings.warn("min_width_frames is deprecated; use min_width_sec (seconds).",
+                      DeprecationWarning, stacklevel=2)
+        min_width_sec = float(min_width_frames)
+
+    # Defaults if not provided (match your previous defaults, but in seconds)
+    if smooth_sigma_sec is None: smooth_sigma_sec = 1.25
+    if smooth_trunc_k  is None: smooth_trunc_k  = 3.0
+    if min_prom        is None: min_prom        = 50.0
+    if min_sep_sec     is None: min_sep_sec     = 2.0
+    if min_width_sec   is None: min_width_sec   = 2.0
+
+    return dict(
+        bin_pad=int(bin_pad),
+        smooth_sigma_sec=float(smooth_sigma_sec),
+        smooth_trunc_k=float(smooth_trunc_k),
+        min_prom=float(min_prom),
+        min_sep_sec=float(min_sep_sec),
+        min_width_sec=float(min_width_sec),
+        ppm_per_bin=float(ppm_per_bin),
+        fallback_if_frames_lt=int(fallback_if_frames_lt),
+        fallback_frac_width=float(fallback_frac_width),
+    )
+
 _BIN_SUFFIX = ".bin"
 _BINZ_SUFFIX = ".binz"  # suggest: compressed files end with .binz
 
@@ -1050,26 +1107,46 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             im_peaks: list["ImPeak1D"],
             *,
             bin_pad: int = 0,
-            smooth_sigma: float = 1.25,
-            smooth_trunc: float = 3.0,
+            smooth_sigma_sec: float = 1.25,
+            smooth_trunc_k: float = 3.0,
             min_prom: float = 50.0,
-            min_sep_frames: int = 2,
-            min_width_frames: int = 2,
+            min_sep_sec: float = 2.0,
+            min_width_sec: float = 2.0,
             ppm_per_bin: float = 10.0,
             fallback_if_frames_lt: int = 3,
-            fallback_frac_width: float = 0.10
+            fallback_frac_width: float = 0.10,
+            # deprecated aliases (kept to avoid breaking callers):
+            smooth_sigma: float | None = None,
+            smooth_trunc: float | None = None,
+            min_sep_frames: int | None = None,
+            min_width_frames: int | None = None,
     ) -> list[list["RtPeak1D"]]:
+        kw = _normalize_rt_kwargs(
+            bin_pad=bin_pad,
+            smooth_sigma_sec=smooth_sigma_sec,
+            smooth_trunc_k=smooth_trunc_k,
+            min_prom=min_prom,
+            min_sep_sec=min_sep_sec,
+            min_width_sec=min_width_sec,
+            smooth_sigma=smooth_sigma,
+            smooth_trunc=smooth_trunc,
+            min_sep_frames=min_sep_frames,
+            min_width_frames=min_width_frames,
+            ppm_per_bin=ppm_per_bin,
+            fallback_if_frames_lt=fallback_if_frames_lt,
+            fallback_frac_width=fallback_frac_width,
+        )
         nested = self.__dataset.expand_rt_for_im_peaks_in_precursor(
             [p.get_py_ptr() for p in im_peaks],
-            int(bin_pad),
-            float(smooth_sigma),
-            float(smooth_trunc),
-            float(min_prom),
-            int(min_sep_frames),
-            int(min_width_frames),
-            float(ppm_per_bin),
-            int(fallback_if_frames_lt),
-            float(fallback_frac_width)
+            kw["bin_pad"],
+            kw["smooth_sigma_sec"],
+            kw["smooth_trunc_k"],
+            kw["min_prom"],
+            kw["min_sep_sec"],
+            kw["min_width_sec"],
+            kw["ppm_per_bin"],
+            kw["fallback_if_frames_lt"],
+            kw["fallback_frac_width"],
         )
         return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
 
@@ -1079,27 +1156,47 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             im_peaks: list["ImPeak1D"],
             *,
             bin_pad: int = 0,
-            smooth_sigma: float = 1.25,
-            smooth_trunc: float = 3.0,
+            smooth_sigma_sec: float = 1.25,
+            smooth_trunc_k: float = 3.0,
             min_prom: float = 50.0,
-            min_sep_frames: int = 2,
-            min_width_frames: int = 2,
+            min_sep_sec: float = 2.0,
+            min_width_sec: float = 2.0,
             ppm_per_bin: float = 5.0,
             fallback_if_frames_lt: int = 3,
-            fallback_frac_width: float = 0.10
+            fallback_frac_width: float = 0.10,
+            # deprecated aliases:
+            smooth_sigma: float | None = None,
+            smooth_trunc: float | None = None,
+            min_sep_frames: int | None = None,
+            min_width_frames: int | None = None,
     ) -> list[list["RtPeak1D"]]:
+        kw = _normalize_rt_kwargs(
+            bin_pad=bin_pad,
+            smooth_sigma_sec=smooth_sigma_sec,
+            smooth_trunc_k=smooth_trunc_k,
+            min_prom=min_prom,
+            min_sep_sec=min_sep_sec,
+            min_width_sec=min_width_sec,
+            smooth_sigma=smooth_sigma,
+            smooth_trunc=smooth_trunc,
+            min_sep_frames=min_sep_frames,
+            min_width_frames=min_width_frames,
+            ppm_per_bin=ppm_per_bin,
+            fallback_if_frames_lt=fallback_if_frames_lt,
+            fallback_frac_width=fallback_frac_width,
+        )
         nested = self.__dataset.expand_rt_for_im_peaks_in_group(
             int(window_group),
             [p.get_py_ptr() for p in im_peaks],
-            int(bin_pad),
-            float(smooth_sigma),
-            float(smooth_trunc),
-            float(min_prom),
-            int(min_sep_frames),
-            int(min_width_frames),
-            float(ppm_per_bin),
-            int(fallback_if_frames_lt),
-            float(fallback_frac_width)
+            kw["bin_pad"],
+            kw["smooth_sigma_sec"],
+            kw["smooth_trunc_k"],
+            kw["min_prom"],
+            kw["min_sep_sec"],
+            kw["min_width_sec"],
+            kw["ppm_per_bin"],
+            kw["fallback_if_frames_lt"],
+            kw["fallback_frac_width"],
         )
         return [[RtPeak1D.from_py_ptr(r) for r in row] for row in nested]
 
@@ -1109,13 +1206,13 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             im_peaks: list["ImPeak1D"],
             *,
             ppm_per_bin: float = 5.0,
-            # RtExpandParams
+            # RtExpandParams (seconds)
             bin_pad: int = 0,
-            smooth_sigma: float = 1.25,
-            smooth_trunc: float = 3.0,
+            smooth_sigma_sec: float = 1.25,
+            smooth_trunc_k: float = 3.0,
             min_prom: float = 50.0,
-            min_sep_frames: int = 2,
-            min_width_frames: int = 2,
+            min_sep_sec: float = 2.0,
+            min_width_sec: float = 2.0,
             fallback_if_frames_lt: int = 5,
             fallback_frac_width: float = 0.5,
             # BuildSpecOpts
@@ -1133,20 +1230,41 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             require_rt_overlap: bool = True,
             num_threads: int = 0,
             min_im_span: int = 10,
+            # deprecated aliases:
+            smooth_sigma: float | None = None,
+            smooth_trunc: float | None = None,
+            min_sep_frames: int | None = None,
+            min_width_frames: int | None = None,
     ):
         """Cluster in MS2 space for one DIA window group."""
         if self.use_bruker_sdk:
             warnings.warn("Using Bruker SDK, forcing num_threads=1.")
             num_threads = 1
 
+        kw = _normalize_rt_kwargs(
+            bin_pad=bin_pad,
+            smooth_sigma_sec=smooth_sigma_sec,
+            smooth_trunc_k=smooth_trunc_k,
+            min_prom=min_prom,
+            min_sep_sec=min_sep_sec,
+            min_width_sec=min_width_sec,
+            smooth_sigma=smooth_sigma,
+            smooth_trunc=smooth_trunc,
+            min_sep_frames=min_sep_frames,
+            min_width_frames=min_width_frames,
+            ppm_per_bin=ppm_per_bin,
+            fallback_if_frames_lt=fallback_if_frames_lt,
+            fallback_frac_width=fallback_frac_width,
+        )
+
         py_results = self.__dataset.clusters_for_group(
             int(window_group),
             float(ppm_per_bin),
             [p.get_py_ptr() for p in im_peaks],
-            int(bin_pad),
-            float(smooth_sigma), float(smooth_trunc),
-            float(min_prom), int(min_sep_frames), int(min_width_frames),
-            int(fallback_if_frames_lt), float(fallback_frac_width),
+            kw["bin_pad"],
+            kw["smooth_sigma_sec"], kw["smooth_trunc_k"],
+            kw["min_prom"], kw["min_sep_sec"], kw["min_width_sec"],
+            kw["fallback_if_frames_lt"], kw["fallback_frac_width"],
             int(extra_rt_pad), int(extra_im_pad), float(mz_ppm_pad), int(mz_hist_bins),
             bool(refine_mz_once), float(refine_k_sigma),
             bool(attach_axes),
@@ -1161,13 +1279,13 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             im_peaks: list["ImPeak1D"],
             *,
             ppm_per_bin: float = 10.0,
-            # RtExpandParams
+            # RtExpandParams (seconds)
             bin_pad: int = 0,
-            smooth_sigma: float = 1.25,
-            smooth_trunc: float = 3.0,
+            smooth_sigma_sec: float = 1.25,
+            smooth_trunc_k: float = 3.0,
             min_prom: float = 50.0,
-            min_sep_frames: int = 2,
-            min_width_frames: int = 2,
+            min_sep_sec: float = 2.0,
+            min_width_sec: float = 2.0,
             fallback_if_frames_lt: int = 5,
             fallback_frac_width: float = 0.5,
             # BuildSpecOpts
@@ -1185,19 +1303,40 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             require_rt_overlap: bool = True,
             num_threads: int = 0,
             min_im_span: int = 10,
+            # deprecated aliases:
+            smooth_sigma: float | None = None,
+            smooth_trunc: float | None = None,
+            min_sep_frames: int | None = None,
+            min_width_frames: int | None = None,
     ):
         """Cluster in MS1 precursor space."""
         if self.use_bruker_sdk:
             warnings.warn("Using Bruker SDK, forcing num_threads=1.")
             num_threads = 1
 
+        kw = _normalize_rt_kwargs(
+            bin_pad=bin_pad,
+            smooth_sigma_sec=smooth_sigma_sec,
+            smooth_trunc_k=smooth_trunc_k,
+            min_prom=min_prom,
+            min_sep_sec=min_sep_sec,
+            min_width_sec=min_width_sec,
+            smooth_sigma=smooth_sigma,
+            smooth_trunc=smooth_trunc,
+            min_sep_frames=min_sep_frames,
+            min_width_frames=min_width_frames,
+            ppm_per_bin=ppm_per_bin,
+            fallback_if_frames_lt=fallback_if_frames_lt,
+            fallback_frac_width=fallback_frac_width,
+        )
+
         py_results = self.__dataset.clusters_for_precursor(
             float(ppm_per_bin),
             [p.get_py_ptr() for p in im_peaks],
-            int(bin_pad),
-            float(smooth_sigma), float(smooth_trunc),
-            float(min_prom), int(min_sep_frames), int(min_width_frames),
-            int(fallback_if_frames_lt), float(fallback_frac_width),
+            kw["bin_pad"],
+            kw["smooth_sigma_sec"], kw["smooth_trunc_k"],
+            kw["min_prom"], kw["min_sep_sec"], kw["min_width_sec"],
+            kw["fallback_if_frames_lt"], kw["fallback_frac_width"],
             int(extra_rt_pad), int(extra_im_pad), float(mz_ppm_pad), int(mz_hist_bins),
             bool(refine_mz_once), float(refine_k_sigma),
             bool(attach_axes),
