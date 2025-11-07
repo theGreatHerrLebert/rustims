@@ -1,226 +1,245 @@
-# imspy_pipeline/report.py
+# cluster_report.py
 from __future__ import annotations
-import base64, io, json
+import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Iterable
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# ---- helpers ----
-def _b64_png(fig) -> str:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", dpi=150)
-    plt.close(fig)
-    return base64.b64encode(buf.getvalue()).decode("ascii")
 
-def _safe_quantile(s: pd.Series, q: float) -> float:
-    try:
-        return float(np.nanquantile(s.to_numpy(), q))
-    except Exception:
-        return float("nan")
+# ---------- helpers: robust column resolution ----------
 
-def _ppm_from_sigma(row) -> Optional[float]:
-    mz_mu, mz_sigma = row.get("mz_apex"), row.get("mz_scale")
-    if mz_mu is None or mz_sigma is None or not np.isfinite(mz_mu) or mz_mu <= 0:
-        return np.nan
-    return float(mz_sigma / mz_mu * 1e6)
+def _first_present(df: pd.DataFrame, candidates: Iterable[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
 
-# ---- core metrics ----
+def canonicalize_cluster_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Make plotting/summary robust across schema variants.
+    Ensures presence of: intensity, rt_sigma, im_sigma, mz_mu, mz_sigma, mz_ppm, ms_level
+    """
+    out = df.copy()
+
+    # 1) intensity
+    if "intensity" not in out.columns:
+        src = _first_present(out, ["raw_sum", "area_raw", "area", "apex_raw", "apex_smoothed"])
+        if src is not None:
+            out["intensity"] = pd.to_numeric(out[src], errors="coerce")
+        else:
+            out["intensity"] = np.nan
+
+    # 2) rt_sigma / im_sigma / mz_sigma naming variants (e.g., *scale)
+    if "rt_sigma" not in out.columns:
+        if "rt_scale" in out.columns:
+            out["rt_sigma"] = pd.to_numeric(out["rt_scale"], errors="coerce")
+        else:
+            out["rt_sigma"] = np.nan
+
+    if "im_sigma" not in out.columns:
+        if "scan_scale" in out.columns:
+            out["im_sigma"] = pd.to_numeric(out["scan_scale"], errors="coerce")
+        elif "im_scale" in out.columns:
+            out["im_sigma"] = pd.to_numeric(out["im_scale"], errors="coerce")
+        else:
+            out["im_sigma"] = np.nan
+
+    if "mz_sigma" not in out.columns and "mz_scale" in out.columns:
+        out["mz_sigma"] = pd.to_numeric(out["mz_scale"], errors="coerce")
+
+    # 3) mz_mu (apex) must be numeric if present
+    if "mz_mu" in out.columns:
+        out["mz_mu"] = pd.to_numeric(out["mz_mu"], errors="coerce")
+
+    # 4) ms_level default
+    if "ms_level" not in out.columns:
+        out["ms_level"] = 1  # sensible default for precursor; MS2 callers will override upstream
+
+    # 5) mz_ppm: prefer explicit error; else derive from sigma/mu
+    if "mz_ppm" not in out.columns:
+        if "mz_error_ppm" in out.columns:
+            out["mz_ppm"] = pd.to_numeric(out["mz_error_ppm"], errors="coerce").abs()
+        elif "mz_sigma" in out.columns and "mz_mu" in out.columns:
+            mu = out["mz_mu"].replace(0, np.nan)
+            out["mz_ppm"] = (pd.to_numeric(out["mz_sigma"], errors="coerce") / mu) * 1e6
+        else:
+            out["mz_ppm"] = np.nan
+
+    # Coerce common numeric fields just in case
+    for col in ["rt_sigma", "im_sigma", "mz_sigma", "intensity", "mz_ppm"]:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    return out
+
+
+# ---------- summaries ----------
+
 def compute_summary(df: pd.DataFrame) -> Dict[str, Any]:
+    df = canonicalize_cluster_df(df)
+
+    inten     = df["intensity"].to_numpy()
+    rt_sigma  = df["rt_sigma"].to_numpy()
+    im_sigma  = df["im_sigma"].to_numpy()
+    mz_ppm    = df["mz_ppm"].to_numpy()
+
     res: Dict[str, Any] = {}
-    res["n_clusters"] = int(len(df))
-    inten = pd.to_numeric(df.get("intensity"), errors="coerce")
-    res["tic_sum"] = float(np.nansum(inten))
-    res["intensity_median"] = float(np.nanmedian(inten))
-    res["intensity_p90"] = float(_safe_quantile(inten, 0.90))
+    res["n_clusters"]        = int(len(df))
+    res["intensity_sum"]     = float(np.nansum(inten))
+    res["intensity_median"]  = float(np.nanmedian(inten))
+    res["rt_sigma_median"]   = float(np.nanmedian(rt_sigma))
+    res["im_sigma_median"]   = float(np.nanmedian(im_sigma))
+    res["mz_ppm_median"]     = float(np.nanmedian(mz_ppm))
 
-    # widths / scales
-    rt_sigma = pd.to_numeric(df.get("rt_scale"), errors="coerce")
-    im_sigma = pd.to_numeric(df.get("scan_scale"), errors="coerce")
-    res["rt_sigma_median"] = float(np.nanmedian(rt_sigma))
-    res["im_sigma_median"] = float(np.nanmedian(im_sigma))
-
-    # ppm proxy
-    mz_ppm = df.apply(_ppm_from_sigma, axis=1)
-    res["mz_ppm_median"] = float(np.nanmedian(mz_ppm))
-
-    # ms level / groups
-    if "ms_level" in df:
-        for lvl, sub in df.groupby("ms_level"):
-            res[f"ms{int(lvl)}_clusters"] = int(len(sub))
-            res[f"ms{int(lvl)}_tic"] = float(np.nansum(pd.to_numeric(sub["intensity"], errors="coerce")))
-    if "window_group" in df:
-        res["n_window_groups"] = int(df["window_group"].nunique())
+    # Per-MS-level TIC (robust to missing 'intensity')
+    for lvl in sorted(pd.unique(pd.to_numeric(df["ms_level"], errors="coerce").fillna(0))):
+        sub = df[df["ms_level"] == lvl]
+        res[f"ms{int(lvl)}_tic"] = float(np.nansum(pd.to_numeric(sub["intensity"], errors="coerce")))
 
     return res
 
-# ---- plotting ----
-def _hist(ax, s: pd.Series, title: str, bins=60, log=False):
-    s = pd.to_numeric(s, errors="coerce")
-    s = s[np.isfinite(s)]
-    ax.hist(s, bins=bins, log=log)
-    ax.set_title(title)
 
-def _scatter(ax, x, y, title: str, logy=False, alpha=0.5):
-    x = pd.to_numeric(x, errors="coerce")
-    y = pd.to_numeric(y, errors="coerce")
-    mask = np.isfinite(x) & np.isfinite(y)
-    ax.scatter(x[mask], y[mask], s=6, alpha=alpha)
-    if logy:
-        ax.set_yscale("log")
-    ax.set_title(title)
+# ---------- plotting (use canonical columns) ----------
 
-def _bar_by_group(ax, df: pd.DataFrame, col: str, agg="count", title="per window_group"):
-    if "window_group" not in df.columns:
-        ax.axis("off"); return
-    g = df.groupby("window_group")[col]
-    val = g.count() if agg == "count" else g.sum(min_count=1)
-    val.plot(kind="bar", ax=ax)
-    ax.set_title(title)
+def _hist(ax, data, bins=50, title=None, xlabel=None):
+    data = pd.to_numeric(pd.Series(data), errors="coerce").to_numpy()
+    data = data[np.isfinite(data)]
+    if data.size:
+        ax.hist(data, bins=bins)
+    ax.set_title(title or "")
+    ax.set_xlabel(xlabel or "")
+    ax.set_ylabel("count")
 
-def make_figures(df: pd.DataFrame, mode: str) -> Dict[str, str]:
-    figs: Dict[str, str] = {}
+def _kde_or_hist(ax, data, title=None, xlabel=None):
+    # Simple fallback to hist; keep it deterministic
+    _hist(ax, data, bins=50, title=title, xlabel=xlabel)
 
-    # 1) histogram of intensities (log y)
-    fig, ax = plt.subplots(figsize=(5,3))
-    _hist(ax, df["intensity"], "Intensity (log y)", bins=80, log=True)
-    ax.set_xlabel("intensity"); ax.set_ylabel("count")
-    figs["hist_intensity"] = _b64_png(fig)
+def plot_basic_panels(df: pd.DataFrame, out_dir: Path):
+    df = canonicalize_cluster_df(df)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 2) widths
-    fig, axs = plt.subplots(1,2, figsize=(8,3))
-    _hist(axs[0], df["rt_scale"], "RT σ (frames/sec)")
-    _hist(axs[1], df["scan_scale"], "IM σ (scans)")
-    figs["hist_widths"] = _b64_png(fig)
+    fig_int, ax_int = plt.subplots(figsize=(6,4))
+    _hist(ax_int, df["intensity"], bins=60, title="Intensity", xlabel="intensity (a.u.)")
+    fig_int.tight_layout()
+    fig_int.savefig(out_dir / "intensity_hist.png", dpi=150)
+    plt.close(fig_int)
 
-    # 3) ppm proxy
-    ppm = df.apply(_ppm_from_sigma, axis=1)
-    fig, ax = plt.subplots(figsize=(5,3))
-    ax.hist(ppm[np.isfinite(ppm)], bins=60)
-    ax.set_title("m/z width proxy (ppm)"); ax.set_xlabel("ppm"); ax.set_ylabel("count")
-    figs["hist_ppm"] = _b64_png(fig)
+    fig_rt, ax_rt = plt.subplots(figsize=(6,4))
+    _kde_or_hist(ax_rt, df["rt_sigma"], title="RT σ", xlabel="seconds")
+    fig_rt.tight_layout()
+    fig_rt.savefig(out_dir / "rt_sigma_hist.png", dpi=150)
+    plt.close(fig_rt)
 
-    # 4) apex scatter
-    fig, axs = plt.subplots(1,2, figsize=(8,3))
-    _scatter(axs[0], df["rt_apex"], df["scan_apex"], "RT apex vs IM apex", alpha=0.3)
-    _scatter(axs[1], df["rt_scale"], df["intensity"], "RT σ vs intensity (log y)", logy=True, alpha=0.3)
-    axs[0].set_xlabel("rt_apex (s or frames)"); axs[0].set_ylabel("scan_apex")
-    axs[1].set_xlabel("rt_scale"); axs[1].set_ylabel("intensity")
-    figs["scatter_apex"] = _b64_png(fig)
+    fig_im, ax_im = plt.subplots(figsize=(6,4))
+    _kde_or_hist(ax_im, df["im_sigma"], title="IM σ", xlabel="scans")
+    fig_im.tight_layout()
+    fig_im.savefig(out_dir / "im_sigma_hist.png", dpi=150)
+    plt.close(fig_im)
 
-    # 5) per-group bars for MS2
-    if str(mode).lower() == "ms2" and "window_group" in df.columns:
-        fig, axs = plt.subplots(1,2, figsize=(9,3))
-        _bar_by_group(axs[0], df, col="intensity", agg="count", title="#clusters per window_group")
-        _bar_by_group(axs[1], df, col="intensity", agg="sum",   title="TIC per window_group")
-        figs["bars_groups"] = _b64_png(fig)
+    fig_mz, ax_mz = plt.subplots(figsize=(6,4))
+    _kde_or_hist(ax_mz, df["mz_ppm"], title="m/z error", xlabel="ppm (abs)")
+    fig_mz.tight_layout()
+    fig_mz.savefig(out_dir / "mz_ppm_hist.png", dpi=150)
+    plt.close(fig_mz)
 
-    return figs
 
-# ---- HTML emit ----
-_HTML = """<!doctype html>
-<meta charset="utf-8">
-<title>{title}</title>
-<style>
-body{{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:24px;}}
-h1,h2{{margin:0 0 8px 0}}
-.card{{border:1px solid #ddd; border-radius:10px; padding:12px; margin-bottom:16px}}
-.grid{{display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:12px}}
-.kv td{{padding:2px 8px; vertical-align:top}}
-.kv td:first-child{{opacity:.7}}
-img{{max-width:100%}}
-code{{background:#f6f8fa; padding:2px 6px; border-radius:6px}}
-</style>
-<h1>{title}</h1>
-<div class="card">
-  <h2>Summary</h2>
-  <table class="kv">
-    {rows}
-  </table>
-  <p><b>Dataset:</b> <code>{dataset}</code></p>
-</div>
-<div class="grid">
-  <div class="card"><h3>Intensity</h3><img src="data:image/png;base64,{hist_intensity}"></div>
-  <div class="card"><h3>Widths</h3><img src="data:image/png;base64,{hist_widths}"></div>
-  <div class="card"><h3>m/z width (ppm proxy)</h3><img src="data:image/png;base64,{hist_ppm}"></div>
-  <div class="card"><h3>Apex & Width vs Intensity</h3><img src="data:image/png;base64,{scatter_apex}"></div>
-  {maybe_groups}
-</div>
-"""
-
-_GROUPS_CARD = """<div class="card"><h3>Per window_group</h3><img src="data:image/png;base64,{bars_groups}"></div>"""
+# ---------- top-level API ----------
 
 def save_run_report(
     df: pd.DataFrame,
-    out_dir: Path,
+    out_dir: Path | str,
     *,
-    title: str = "Cluster Report",
+    title: Optional[str] = None,
     mode: str = "ms1",
     extra_meta: Optional[Dict[str, Any]] = None,
 ) -> None:
-    out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Persist DF if not already
-    if not (out_dir / "clusters.parquet").exists():
-        df.to_parquet(out_dir / "clusters.parquet", index=False)
+    # Normalize first
+    df_norm = canonicalize_cluster_df(df)
 
-    # Compute summary & figures
-    summary = compute_summary(df)
-    figs = make_figures(df, mode=mode)
+    # Summary JSON
+    summary = compute_summary(df_norm)
+    if extra_meta:
+        summary["meta"] = extra_meta
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
-    # Write summary.json
-    meta = {"summary": summary, "mode": mode}
-    if extra_meta: meta["meta"] = extra_meta
-    (out_dir / "summary.json").write_text(json.dumps(meta, indent=2))
+    # Figures
+    plot_basic_panels(df_norm, out_dir)
 
-    # Save key PNGs to disk (thumbnails etc.)
-    for key, b64 in figs.items():
-        (out_dir / f"{key}.png").write_bytes(base64.b64decode(b64))
+    # Lightweight HTML
+    html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>{(title or 'Cluster Report')}</title>
+    <style>
+      body {{ font-family: sans-serif; margin: 1.5rem; }}
+      .row {{ display:flex; flex-wrap:wrap; gap:12px; }}
+      .card {{ border:1px solid #ddd; padding:12px; border-radius:8px; }}
+      img {{ max-width: 100%; height:auto; }}
+      .grid {{ display:grid; grid-template-columns: repeat(auto-fit,minmax(320px,1fr)); gap:12px; }}
+      code, pre {{ background:#f7f7f7; padding:4px 6px; border-radius:4px; }}
+    </style>
+  </head>
+  <body>
+    <h1>{(title or 'Cluster Report')}</h1>
+    <h3>Mode: {mode.upper()}</h3>
+    <pre>{json.dumps(summary, indent=2)}</pre>
+    <div class="grid">
+      <div class="card"><h3>Intensity</h3><img src="intensity_hist.png"/></div>
+      <div class="card"><h3>RT σ</h3><img src="rt_sigma_hist.png"/></div>
+      <div class="card"><h3>IM σ</h3><img src="im_sigma_hist.png"/></div>
+      <div class="card"><h3>m/z error (ppm)</h3><img src="mz_ppm_hist.png"/></div>
+    </div>
+  </body>
+</html>"""
+    (out_dir / "report.html").write_text(html)
 
-    # Build rows
-    rows = "\n".join(
-        f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in summary.items()
-    )
-    maybe_groups = _GROUPS_CARD.format(bars_groups=figs["bars_groups"]) if "bars_groups" in figs else ""
 
-    html = _HTML.format(
-        title=title,
-        rows=rows,
-        dataset=(extra_meta or {}).get("dataset", ""),
-        maybe_groups=maybe_groups,
-        **figs,
-    )
-    (out_dir / "report.html").write_text(html, encoding="utf-8")
+def save_sweep_index(root_out: Path | str) -> None:
+    """
+    Build a simple index.html that links to each run subdir containing a report.
+    """
+    root = Path(root_out)
+    cards = []
+    for sub in sorted([p for p in root.iterdir() if p.is_dir()]):
+        rep = sub / "report.html"
+        summ = sub / "summary.json"
+        if rep.exists() and summ.exists():
+            try:
+                meta = json.loads(summ.read_text())
+            except Exception:
+                meta = {}
+            n = meta.get("n_clusters", "NA")
+            tic = meta.get("intensity_sum", "NA")
+            cards.append(f"""
+            <div class="card">
+              <h3>{sub.name}</h3>
+              <p>clusters: <b>{n}</b> &nbsp; TIC: <b>{tic}</b></p>
+              <a href="{sub.name}/report.html">Open report</a>
+            </div>""")
 
-def _load_summary(p: Path) -> Optional[Dict[str, Any]]:
-    try:
-        return json.loads((p / "summary.json").read_text())
-    except Exception:
-        return None
-
-def save_sweep_index(root: Path) -> None:
-    root = Path(root)
-    items = []
-    for d in sorted(p for p in root.iterdir() if p.is_dir()):
-        meta = _load_summary(d)
-        if not meta: continue
-        thumb = "hist_intensity.png" if (d / "hist_intensity.png").exists() else None
-        items.append((d.name, meta["summary"], thumb))
-
-    html = ["<!doctype html><meta charset='utf-8'><title>Sweep index</title><style>body{font-family:system-ui;margin:24px} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px} .card{border:1px solid #ddd;border-radius:10px;padding:12px}</style><h1>Sweep index</h1><div class='grid'>"]
-    for name, s, thumb in items:
-        html.append("<div class='card'>")
-        html.append(f"<h3>{name}</h3>")
-        if thumb:
-            html.append(f"<img style='max-width:100%' src='{name}/{thumb}'/>")
-        html.append("<ul>")
-        for k in ["n_clusters","tic_sum","intensity_median","mz_ppm_median","rt_sigma_median","im_sigma_median"]:
-            if k in s:
-                html.append(f"<li><b>{k}</b>: {s[k]}</li>")
-        html.append("</ul>")
-        html.append(f"<a href='{name}/report.html'>open report</a>")
-        html.append("</div>")
-    html.append("</div>")
-    (root / "index.html").write_text("\n".join(html), encoding="utf-8")
+    html = f"""<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Cluster sweep index</title>
+    <style>
+      body {{ font-family: sans-serif; margin: 1.5rem; }}
+      .grid {{ display:grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap:12px; }}
+      .card {{ border:1px solid #ddd; padding:12px; border-radius:8px; }}
+      a {{ text-decoration:none; }}
+    </style>
+  </head>
+  <body>
+    <h1>Cluster sweep index</h1>
+    <div class="grid">
+      {''.join(cards) if cards else '<p>No reports found.</p>'}
+    </div>
+  </body>
+</html>"""
+    (root / "index.html").write_text(html)
