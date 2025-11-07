@@ -1459,20 +1459,30 @@ impl PyTimsDatasetDIA {
         self.inner.mz_bounds_for_window_group_core(window_group)
     }
 
-    #[pyo3(signature = (window_group, im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0,
-    min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=5.0,
-    fallback_if_frames_lt=5, fallback_frac_width=0.5))]
+    #[pyo3(signature = (
+    window_group,
+    im_peaks,
+    bin_pad=0,
+    smooth_sigma_sec=1.25,
+    smooth_trunc_k=3.0,
+    min_prom=50.0,
+    min_sep_sec=2.0,
+    min_width_sec=2.0,
+    ppm_per_bin=5.0,
+    fallback_if_frames_lt=5,
+    fallback_frac_width=0.5
+))]
     pub fn expand_rt_for_im_peaks_in_group(
         &self,
         py: Python<'_>,
         window_group: u32,
         im_peaks: Vec<Py<PyImPeak1D>>,
         bin_pad: usize,
-        smooth_sigma: f32,
-        smooth_trunc: f32,
+        smooth_sigma_sec: f32,
+        smooth_trunc_k: f32,
         min_prom: f32,
-        min_sep_frames: usize,
-        min_width_frames: usize,
+        min_sep_sec: f32,
+        min_width_sec: f32,
         ppm_per_bin: f32,
         fallback_if_frames_lt: usize,
         fallback_frac_width: f32,
@@ -1481,29 +1491,25 @@ impl PyTimsDatasetDIA {
             return Ok(Vec::new());
         }
 
-        // materialize IM peaks
         let im_rs: Vec<ImPeak1D> = im_peaks
             .iter()
             .map(|p| p.borrow(py).inner.as_ref().clone())
             .collect();
         debug_assert!(im_rs.iter().all(|p| p.window_group == Some(window_group)));
 
-        // RT frames & ctx
         let rt_frames = self.inner.make_rt_frames_for_group(window_group, ppm_per_bin);
         if !rt_frames.is_consistent() {
             return Err(exceptions::PyRuntimeError::new_err("inconsistent RT frames layout"));
         }
         let ctx = rt_frames.ctx();
 
-        // convert frame-based thresholds → seconds
-        let dt = median_dt_sec(&rt_frames.rt_times);
         let p = RtExpandParams {
             bin_pad,
-            smooth_sigma_sec: smooth_sigma,
-            smooth_trunc_k: smooth_trunc,
+            smooth_sigma_sec,
+            smooth_trunc_k,
             min_prom,
-            min_sep_sec: (min_sep_frames as f32) * dt,
-            min_width_sec: (min_width_frames as f32) * dt,
+            min_sep_sec,
+            min_width_sec,
             fallback_if_frames_lt,
             fallback_frac_width,
         };
@@ -1521,19 +1527,28 @@ impl PyTimsDatasetDIA {
         rtpeaks_to_py_nested(py, nested)
     }
 
-    #[pyo3(signature = (im_peaks, bin_pad=0, smooth_sigma=1.25, smooth_trunc=3.0,
-    min_prom=50.0, min_sep_frames=2, min_width_frames=2, ppm_per_bin=10.0,
-    fallback_if_frames_lt=5, fallback_frac_width=0.5))]
+    #[pyo3(signature = (
+    im_peaks,
+    bin_pad=0,
+    smooth_sigma_sec=1.25,
+    smooth_trunc_k=3.0,
+    min_prom=50.0,
+    min_sep_sec=2.0,
+    min_width_sec=2.0,
+    ppm_per_bin=10.0,
+    fallback_if_frames_lt=5,
+    fallback_frac_width=0.5
+))]
     pub fn expand_rt_for_im_peaks_in_precursor(
         &self,
         py: Python<'_>,
         im_peaks: Vec<Py<PyImPeak1D>>,
         bin_pad: usize,
-        smooth_sigma: f32,
-        smooth_trunc: f32,
+        smooth_sigma_sec: f32,
+        smooth_trunc_k: f32,
         min_prom: f32,
-        min_sep_frames: usize,
-        min_width_frames: usize,
+        min_sep_sec: f32,
+        min_width_sec: f32,
         ppm_per_bin: f32,
         fallback_if_frames_lt: usize,
         fallback_frac_width: f32,
@@ -1554,14 +1569,13 @@ impl PyTimsDatasetDIA {
         }
         let ctx = rt_frames.ctx();
 
-        let dt = median_dt_sec(&rt_frames.rt_times);
         let p = RtExpandParams {
             bin_pad,
-            smooth_sigma_sec: smooth_sigma,
-            smooth_trunc_k: smooth_trunc,
+            smooth_sigma_sec,
+            smooth_trunc_k,
             min_prom,
-            min_sep_sec: (min_sep_frames as f32) * dt,
-            min_width_sec: (min_width_frames as f32) * dt,
+            min_sep_sec,
+            min_width_sec,
             fallback_if_frames_lt,
             fallback_frac_width,
         };
@@ -1583,13 +1597,13 @@ impl PyTimsDatasetDIA {
     window_group,
     ppm_per_bin,
     im_peaks,
-    // RtExpandParams (frames→sec conversion happens inside)
+    // RtExpandParams (already in seconds)
     bin_pad=0,
-    smooth_sigma=1.25,
-    smooth_trunc=3.0,
+    smooth_sigma_sec=1.25,
+    smooth_trunc_k=3.0,
     min_prom=50.0,
-    min_sep_frames=2,
-    min_width_frames=2,
+    min_sep_sec=2.0,
+    min_width_sec=2.0,
     fallback_if_frames_lt=5,
     fallback_frac_width=0.5,
     // BuildSpecOpts
@@ -1615,8 +1629,8 @@ impl PyTimsDatasetDIA {
         ppm_per_bin: f32,
         im_peaks: Vec<Py<PyImPeak1D>>,
         bin_pad: usize,
-        smooth_sigma: f32, smooth_trunc: f32,
-        min_prom: f32, min_sep_frames: usize, min_width_frames: usize,
+        smooth_sigma_sec: f32, smooth_trunc_k: f32,
+        min_prom: f32, min_sep_sec: f32, min_width_sec: f32,
         fallback_if_frames_lt: usize, fallback_frac_width: f32,
         extra_rt_pad: usize, extra_im_pad: usize, mz_ppm_pad: f32, mz_hist_bins: usize,
         refine_mz_once: bool, refine_k_sigma: f32,
@@ -1625,30 +1639,21 @@ impl PyTimsDatasetDIA {
         require_rt_overlap: bool, num_threads: usize,
         min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
-
         let im_rs: Vec<ImPeak1D> = im_peaks.iter()
             .map(|p| p.borrow(py).inner.as_ref().clone())
             .collect();
         debug_assert!(im_rs.iter().all(|p| p.window_group == Some(window_group)));
 
-        // We need dt here too, because we build RtExpandParams for the clustering call
-        let rt_frames = self.inner.make_rt_frames_for_group(window_group, ppm_per_bin);
-        if !rt_frames.is_consistent() {
-            return Err(exceptions::PyRuntimeError::new_err("inconsistent RT frames layout"));
-        }
-        let dt = median_dt_sec(&rt_frames.rt_times);
-
         let rt_params = RtExpandParams {
             bin_pad,
-            smooth_sigma_sec: smooth_sigma,
-            smooth_trunc_k: smooth_trunc,
+            smooth_sigma_sec,
+            smooth_trunc_k,
             min_prom,
-            min_sep_sec: (min_sep_frames as f32) * dt,
-            min_width_sec: (min_width_frames as f32) * dt,
+            min_sep_sec,
+            min_width_sec,
             fallback_if_frames_lt,
             fallback_frac_width,
         };
-
         let build_opts = BuildSpecOpts {
             extra_rt_pad,
             extra_im_pad,
@@ -1688,8 +1693,8 @@ impl PyTimsDatasetDIA {
     ppm_per_bin,
     im_peaks,
     bin_pad=0,
-    smooth_sigma=1.25, smooth_trunc=3.0,
-    min_prom=50.0, min_sep_frames=2, min_width_frames=2,
+    smooth_sigma_sec=1.25, smooth_trunc_k=3.0,
+    min_prom=50.0, min_sep_sec=2.0, min_width_sec=2.0,
     fallback_if_frames_lt=5, fallback_frac_width=0.5,
     extra_rt_pad=0, extra_im_pad=0, mz_ppm_pad=5.0, mz_hist_bins=64,
     refine_mz_once=true, refine_k_sigma=3.0,
@@ -1704,8 +1709,8 @@ impl PyTimsDatasetDIA {
         ppm_per_bin: f32,
         im_peaks: Vec<Py<PyImPeak1D>>,
         bin_pad: usize,
-        smooth_sigma: f32, smooth_trunc: f32,
-        min_prom: f32, min_sep_frames: usize, min_width_frames: usize,
+        smooth_sigma_sec: f32, smooth_trunc_k: f32,
+        min_prom: f32, min_sep_sec: f32, min_width_sec: f32,
         fallback_if_frames_lt: usize, fallback_frac_width: f32,
         extra_rt_pad: usize, extra_im_pad: usize, mz_ppm_pad: f32, mz_hist_bins: usize,
         refine_mz_once: bool, refine_k_sigma: f32,
@@ -1714,29 +1719,21 @@ impl PyTimsDatasetDIA {
         require_rt_overlap: bool, num_threads: usize,
         min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
-
         let im_rs: Vec<ImPeak1D> = im_peaks.iter()
             .map(|p| p.borrow(py).inner.as_ref().clone())
             .collect();
         debug_assert!(im_rs.iter().all(|p| p.window_group.is_none()));
 
-        let rt_frames = self.inner.make_rt_frames_for_precursor(ppm_per_bin);
-        if !rt_frames.is_consistent() {
-            return Err(exceptions::PyRuntimeError::new_err("inconsistent RT frames layout"));
-        }
-        let dt = median_dt_sec(&rt_frames.rt_times);
-
         let rt_params = RtExpandParams {
             bin_pad,
-            smooth_sigma_sec: smooth_sigma,
-            smooth_trunc_k: smooth_trunc,
+            smooth_sigma_sec,
+            smooth_trunc_k,
             min_prom,
-            min_sep_sec: (min_sep_frames as f32) * dt,
-            min_width_sec: (min_width_frames as f32) * dt,
+            min_sep_sec,
+            min_width_sec,
             fallback_if_frames_lt,
             fallback_frac_width,
         };
-
         let build_opts = BuildSpecOpts {
             extra_rt_pad, extra_im_pad, mz_ppm_pad, mz_hist_bins,
             ms_level: 1,
