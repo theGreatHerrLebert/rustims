@@ -313,3 +313,76 @@ def run_ms2(ds: TimsDatasetDIA,
     cls = build_fragment_clusters(ds, planning, picking, stitch, cluster)
     df = clusters_to_df(cls, include_raw_stats=cluster.include_raw_stats)
     return cls, df
+
+from typing import Optional
+
+def get_slice_filtered_cluster(
+    r,
+    ds,
+    *,
+    is_precursor: bool = True,
+    mz_pad: float = 2.0,
+) -> Optional[np.ndarray]:
+    """
+    Build a dense RT×IM slice for the cluster's cuboid.
+
+    Notes
+    -----
+    - Rust frame bounds (rt_lo/rt_hi) are inclusive indices into the
+      *group-specific* frame list.
+    - Python slicing is end-exclusive, so we slice [: rt_hi+1].
+    - im_lo/im_hi are absolute scan indices (inclusive).
+    """
+    # 1) Resolve frame ids per space
+    if is_precursor:
+        frame_ids = getattr(ds, "precursor_frames", None)
+        if frame_ids is None:
+            raise AttributeError("Dataset missing 'precursor_frames'")
+    else:
+        if not hasattr(ds, "dia_ms_ms_info"):
+            raise AttributeError("Dataset missing 'dia_ms_ms_info'")
+        msms = ds.dia_ms_ms_info
+        if "WindowGroup" not in msms.columns or "Frame" not in msms.columns:
+            raise AttributeError("dia_ms_ms_info must have 'WindowGroup' and 'Frame' columns")
+        frame_ids = msms.loc[msms.WindowGroup == r.window_group, "Frame"].values
+
+    if frame_ids is None or len(frame_ids) == 0:
+        return None
+
+    # 2) Clamp & convert bounds (inclusive → exclusive)
+    n = len(frame_ids)
+    rt_lo = max(0, int(r.rt_lo))
+    rt_hi = min(n - 1, int(r.rt_hi))
+    if rt_lo > rt_hi:
+        return None
+
+    sel_fids = frame_ids[rt_lo: rt_hi + 1]  # inclusive hi
+
+    # 3) Fetch slice and filter
+    try:
+        # Prefer your TIMS-slice API; fall back if needed
+        if hasattr(ds, "get_tims_slice"):
+            S = ds.get_tims_slice(sel_fids)
+        elif hasattr(ds, "get_slice"):
+            S = ds.get_slice(sel_fids)  # maybe pass num_threads=...
+        else:
+            raise AttributeError("Dataset missing get_tims_slice/get_slice API")
+
+        S = S.filter(
+            scan_min=int(r.im_lo),
+            scan_max=int(r.im_hi),
+            mz_min=float(r.mz_lo) - mz_pad,
+            mz_max=float(r.mz_hi) + mz_pad,
+        )
+
+        # Vectorize → dense tensor (rt × im × mz)
+        T = S.vectorized(0).get_tensor_repr(dense=True, re_index=True).numpy()
+        if T.ndim != 3:
+            # Unexpected layout; try to coerce
+            return None
+
+        # Sum over m/z axis: (rt × im)
+        return np.sum(T, axis=2)
+
+    except Exception as e:
+        return None

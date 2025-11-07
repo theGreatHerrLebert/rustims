@@ -5,7 +5,6 @@ from .helpers import *               # expects run_ms1, run_ms2, etc.
 from .cluster_report import *        # expects save_run_report, save_sweep_index
 
 import argparse
-import os
 import sys
 import datetime as dt
 from dataclasses import replace
@@ -137,21 +136,17 @@ def _run_one(
 
     # 3) Optional report
     if do_report:
+        title = report_title or f"{base} ({mode.upper()})"
         save_run_report(
             df,
-            out_dir=run_dir,
-            title=report_title or config.get("name") or f"{base} report",
+            out_dir=run_dir,  # write report next to clusters.parquet
+            title=title,
             mode=mode,
-            extra_meta={
-                "dataset": ds_cfg.get("path", ""),
-                "params": {
-                    "planning": config.get("planning", {}),
-                    "picking":  config.get("picking",  {}),
-                    "stitch":   config.get("stitch",   {}),
-                    "cluster":  config.get("cluster",  {}),
-                    "mode": mode,
-                },
-            },
+            extra_meta={"run": base, "dataset": getattr(ds, "path", None)},
+            ds=ds,
+            slice_extractor=get_slice_filtered_cluster,  # your function
+            n_examples=8,
+            example_mz_pad=2.0,
         )
 
     return str(legacy_parquet)
@@ -189,7 +184,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             report_title=args.report_title,
         )
         print(out)
-        # Optional: build an index even for a single run? Keep it simple: only for multi-run.
         return 0
 
     # Multi-run path
@@ -229,14 +223,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             out_root,
             rname,
             do_report=args.report,
-            report_title=None,  # use per-run name
+            report_title=None,  # per-run name already in title
         )
         print(out)
         paths.append(out)
 
-    # Multi-run index only if --report
+    # Build an index if reports were requested
     if args.report:
         save_sweep_index(out_root)
+        print((out_root / "index.html").as_posix())
 
     return 0
 
