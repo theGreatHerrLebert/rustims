@@ -67,8 +67,9 @@ def canonicalize_cluster_df(df: pd.DataFrame) -> pd.DataFrame:
         else:
             out["mz_ppm"] = np.nan
 
-    # log10 intensity
-    out["log10_intensity"] = np.log10(pd.to_numeric(out["intensity"], errors="coerce"))
+    # log10 intensity (quietly; zeros/negatives -> NaN)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out["log10_intensity"] = np.log10(pd.to_numeric(out["intensity"], errors="coerce"))
     out.loc[~np.isfinite(out["log10_intensity"]), "log10_intensity"] = np.nan
 
     # FWHMs if sigmas exist: FWHM ≈ 2.3548 * σ
@@ -230,19 +231,36 @@ def plot_relationships(df: pd.DataFrame, out_dir: Path):
 def plot_correlations(df: pd.DataFrame, out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=True)
     df = canonicalize_cluster_df(df)
+
     cols = [c for c in [
         "log10_intensity","intensity","rt_sigma","im_sigma","mz_ppm",
         "rt_fwhm","im_fwhm","rt_r2","im_r2","mz_r2"
     ] if c in df.columns]
     if not cols:
         return
-    C = pd.to_numeric(df[cols], errors="coerce").corr(method="spearman")
+
+    # Coerce each column separately; drop columns that are entirely NaN
+    num = df[cols].apply(pd.to_numeric, errors="coerce")
+    num = num.loc[:, num.notna().any(axis=0)]
+
+    # Drop constant columns (<=1 unique non-NaN value)
+    const_cols = [c for c in num.columns if num[c].nunique(dropna=True) <= 1]
+    if const_cols:
+        num = num.drop(columns=const_cols)
+
+    # Need at least 2 columns and some non-NaN rows
+    if num.shape[1] < 2 or num.dropna(how="all").shape[0] == 0:
+        # Still write an empty CSV for reproducibility
+        (out_dir / "correlations_spearman.csv").write_text("")
+        return
+
+    C = num.corr(method="spearman")
     C.to_csv(out_dir / "correlations_spearman.csv")
 
-    fig, ax = plt.subplots(figsize=(0.9*len(cols)+2, 0.9*len(cols)+2))
+    fig, ax = plt.subplots(figsize=(0.9*len(C.columns)+2, 0.9*len(C.columns)+2))
     im = ax.imshow(C.values, aspect="auto")
-    ax.set_xticks(range(len(cols))); ax.set_xticklabels(cols, rotation=45, ha="right")
-    ax.set_yticks(range(len(cols))); ax.set_yticklabels(cols)
+    ax.set_xticks(range(len(C.columns))); ax.set_xticklabels(C.columns, rotation=45, ha="right")
+    ax.set_yticks(range(len(C.columns))); ax.set_yticklabels(C.columns)
     cb = plt.colorbar(im, ax=ax); cb.set_label("Spearman ρ")
     ax.set_title("Correlation matrix (Spearman)")
     fig.tight_layout()
