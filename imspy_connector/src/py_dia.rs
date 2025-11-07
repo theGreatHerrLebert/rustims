@@ -19,17 +19,6 @@ use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, M
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
-// helper: robust-ish median dt in seconds
-#[inline]
-fn median_dt_sec(rt_times: &[f32]) -> f32 {
-    if rt_times.len() < 2 { return 1.0; }
-    let mut d: Vec<f32> = rt_times.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
-    if d.is_empty() { return 1.0; }
-    let mid = d.len() / 2;                    // <-- take len() first (immutable borrow ends here)
-    d.select_nth_unstable_by(mid, |a, b| a.total_cmp(b));  // <-- mutable borrow only
-    d[mid].max(1e-3)
-}
-
 #[pyfunction]
 #[pyo3(signature = (path, clusters, compress=true, strip_points=false, strip_axes=false))]
 pub fn save_clusters_bin(
