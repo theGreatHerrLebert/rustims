@@ -332,7 +332,7 @@ pub fn evaluate_spec_1d(
 }
 
 #[inline]
-fn rt_overlap((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> usize {
+fn rt_overlap((a0,a1):(usize, usize),(b0,b1):(usize,usize)) -> usize {
     if a0 > a1 || b0 > b1 { return 0; }
     let lo = a0.max(b0);
     let hi = a1.min(b1);

@@ -446,12 +446,11 @@ pub fn fallback_rt_peak_from_trace(
         (lo.min(hi), lo.max(hi))
     };
 
-    let rt_sec = ctx.rt_times_sec.map(|t| {
-        let j0 = rt_idx.min(t.len()-1);
-        let j1 = (j0 + 1).min(t.len()-1);
-        let frac = (subframe + (rt_idx as f32) - j0 as f32).clamp(0.0, 1.0);
-        (1.0 - frac) * t[j0] + frac * t[j1]
-    });
+    let t = ctx.rt_times_sec;
+    let j0 = rt_idx.min(t.len() - 1);
+    let j1 = (j0 + 1).min(t.len() - 1);
+    let frac = (subframe + (rt_idx as f32) - j0 as f32).clamp(0.0, 1.0);
+    let rt_sec = Some((1.0 - frac) * t[j0] + frac * t[j1]);
 
     let mut rp = RtPeak1D {
         rt_idx,
