@@ -1,6 +1,8 @@
 # imspy_pipeline_cli.py
 from __future__ import annotations
-from .helpers import *
+
+from .helpers import *               # expects run_ms1, run_ms2, etc.
+from .cluster_report import *        # expects save_run_report, save_sweep_index
 
 import argparse
 import os
@@ -11,7 +13,31 @@ from typing import Any, Dict, List, Optional
 
 import tomllib  # Python 3.11+
 
+from pathlib import Path
 from imspy.timstof.dia import TimsDatasetDIA
+
+
+# ------------------------- arg parsing -------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="imspy-pipeline",
+        description="Run timsTOF IM-peak→stitch→cluster pipelines (MS1 or MS2) from TOML configs."
+    )
+    p.add_argument("-c", "--config", required=True, help="Path to TOML config.")
+    p.add_argument("-o", "--outdir", default="./out", help="Output directory.")
+    p.add_argument("--list", action="store_true", help="List runs found in config and exit.")
+    p.add_argument("--run", type=str, default=None,
+                   help="Run name or index to execute (for multi-run configs).")
+    # reporting
+    p.add_argument("--report", action="store_true",
+                   help="Generate HTML/PNG reports per run (report.html in each run dir).")
+    p.add_argument("--report-title", default=None,
+                   help="Optional report title for single-run; per-run name is used otherwise.")
+    return p
+
+
+# ------------------------- helpers -------------------------
 
 def _load_toml(path: str) -> Dict[str, Any]:
     with open(path, "rb") as f:
@@ -23,8 +49,8 @@ def _merge_dataclass(dc, overrides: Dict[str, Any]):
     filtered = {k: v for k, v in overrides.items() if k in fields}
     return replace(dc, **filtered)
 
-def _ensure_dir(p: str):
-    os.makedirs(p, exist_ok=True)
+def _ensure_dir(p: str | Path):
+    Path(p).mkdir(parents=True, exist_ok=True)
 
 def _ts() -> str:
     return dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -56,72 +82,121 @@ def _build_param_objects(cfg: Dict[str, Any]):
 
     return planning, picking, stitch, cluster
 
-def _run_one(config: Dict[str, Any], outdir: str, run_name: Optional[str] = None) -> str:
+
+# ------------------------- runner -------------------------
+
+def _run_one(
+    config: Dict[str, Any],
+    outdir: str | Path,
+    run_name: Optional[str] = None,
+    *,
+    do_report: bool = False,
+    report_title: Optional[str] = None,
+) -> str:
     """
-    Executes a single run; returns path to the written Parquet file.
+    Executes a single run.
+
+    Returns:
+        Path to the legacy top-level Parquet file (string).
+    Side-effects:
+        - Writes a per-run subdir with clusters.parquet, summary.json, report.html (if --report).
+        - Still writes the legacy top-level parquet: <outdir>/<name>.(ms1|ms2).parquet
     """
     ds_cfg = config.get("dataset", {})
     ds = _dataset_from_config(ds_cfg)
 
     planning, picking, stitch, cluster = _build_param_objects(config)
 
-    mode = config.get("mode", "ms1").lower()
+    mode = str(config.get("mode", "ms1")).lower()
     if mode not in ("ms1", "ms2"):
         raise ValueError("[mode] must be 'ms1' or 'ms2'")
 
     _ensure_dir(outdir)
+    outdir = Path(outdir)
 
-    base = run_name or config.get("name") or f"run-{_ts()}"
-    base = base.replace(" ", "_")
+    base = (run_name or config.get("name") or f"run-{_ts()}").replace(" ", "_")
 
+    # Per-run directory for reports/artifacts
+    run_dir = outdir / base
+    _ensure_dir(run_dir)
+
+    # Execute pipeline
     if mode == "ms1":
         clusters, df = run_ms1(ds, planning, picking, stitch, cluster)
-        outfile = os.path.join(outdir, f"{base}.ms1.parquet")
-        df.to_parquet(outfile, index=False)
-        return outfile
+        legacy_parquet = outdir / f"{base}.ms1.parquet"
+    else:
+        clusters, df = run_ms2(ds, planning, picking, stitch, cluster)
+        legacy_parquet = outdir / f"{base}.ms2.parquet"
 
-    # ms2
-    clusters, df = run_ms2(ds, planning, picking, stitch, cluster)
-    outfile = os.path.join(outdir, f"{base}.ms2.parquet")
-    df.to_parquet(outfile, index=False)
-    return outfile
+    # Write artifacts
+    # 1) Legacy parquet (keep old behavior)
+    df.to_parquet(legacy_parquet, index=False)
+
+    # 2) Run-local parquet
+    (run_dir / "clusters.parquet").write_bytes(legacy_parquet.read_bytes())
+
+    # 3) Optional report
+    if do_report:
+        save_run_report(
+            df,
+            out_dir=run_dir,
+            title=report_title or config.get("name") or f"{base} report",
+            mode=mode,
+            extra_meta={
+                "dataset": ds_cfg.get("path", ""),
+                "params": {
+                    "planning": config.get("planning", {}),
+                    "picking":  config.get("picking",  {}),
+                    "stitch":   config.get("stitch",   {}),
+                    "cluster":  config.get("cluster",  {}),
+                    "mode": mode,
+                },
+            },
+        )
+
+    return str(legacy_parquet)
+
+
+# ------------------------- CLI main -------------------------
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(
-        prog="imspy-pipeline",
-        description="Run timsTOF IM-peak→stitch→cluster pipelines (MS1 or MS2) from TOML configs."
-    )
-    ap.add_argument("-c", "--config", required=True, help="Path to TOML config.")
-    ap.add_argument("-o", "--outdir", default="./out", help="Output directory (Parquet files).")
-    ap.add_argument("--list", action="store_true", help="List runs found in config and exit.")
-    ap.add_argument("--run", type=str, default=None, help="Run name/index to execute (for multi-run configs).")
+    ap = build_parser()
     args = ap.parse_args(argv)
 
     cfg = _load_toml(args.config)
+    out_root = Path(args.outdir)
+    _ensure_dir(out_root)
 
-    # Two styles supported:
+    # Support two styles:
     # 1) Single run config with top-level [dataset], [planning], [picking], [stitch], [cluster], mode="ms1|ms2"
     # 2) Multi-run config with [[runs]] blocks, each containing the same structure.
     runs = cfg.get("runs", None)
 
+    # Single-run path
     if runs is None:
-        # single-run file
         if args.list:
             print("Single-run config:")
             print("  name:", cfg.get("name", "(none)"))
             print("  mode:", cfg.get("mode", "ms1"))
             print("  dataset.path:", cfg.get("dataset", {}).get("path"))
             return 0
-        out = _run_one(cfg, args.outdir, cfg.get("name"))
+
+        out = _run_one(
+            cfg,
+            out_root,
+            cfg.get("name"),
+            do_report=args.report,
+            report_title=args.report_title,
+        )
         print(out)
+        # Optional: build an index even for a single run? Keep it simple: only for multi-run.
         return 0
 
-    # multi-run
+    # Multi-run path
     if not isinstance(runs, list) or len(runs) == 0:
         print("ERROR: [[runs]] must be a non-empty array in the TOML.", file=sys.stderr)
         return 2
 
-    # list mode
     if args.list:
         print("Runs in config:")
         for i, r in enumerate(runs):
@@ -132,16 +207,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     # choose which run(s)
-    selected: List[Dict[str, Any]] = []
     if args.run is None:
-        selected = runs
+        selected: List[Dict[str, Any]] = runs
     else:
-        # allow index or name
         try:
             idx = int(args.run)
             selected = [runs[idx]]
         except ValueError:
-            # name match
             matched = [r for r in runs if r.get("name") == args.run]
             if not matched:
                 print(f"ERROR: No run with name '{args.run}'", file=sys.stderr)
@@ -152,11 +224,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     paths = []
     for i, r in enumerate(selected):
         rname = r.get("name", f"runs[{i}]")
-        out = _run_one(r, args.outdir, rname)
+        out = _run_one(
+            r,
+            out_root,
+            rname,
+            do_report=args.report,
+            report_title=None,  # use per-run name
+        )
         print(out)
         paths.append(out)
 
+    # Multi-run index only if --report
+    if args.report:
+        save_sweep_index(out_root)
+
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
