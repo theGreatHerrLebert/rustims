@@ -10,19 +10,17 @@ use rustdf::cluster::feature::{
 use crate::py_dia::PyClusterResult1D;
 
 #[pyclass]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PyAveragineLut {
     pub inner: AveragineLut,
 }
 
 #[pymethods]
 impl PyAveragineLut {
-    /// Construct and build an Averagine LUT.
-    ///
-    /// - If `resolution <= 12`, it is interpreted as *decimals* (points per Th = 10^resolution, capped).
-    /// - If `resolution > 12`, it is interpreted as *points per Th* directly (also capped).
+    /// Old semantics: `resolution` is the number of DECIMALS (0..=6).
+    /// Defaults match your previous Python wrapper: k=6, resolution=3, num_threads=4.
     #[new]
-    #[pyo3(signature = (mass_min, mass_max, step, z_min, z_max, k, resolution, num_threads))]
+    #[pyo3(signature = (mass_min, mass_max, step, z_min, z_max, k=6, resolution=3, num_threads=4))]
     pub fn new(
         mass_min: f32,
         mass_max: f32,
@@ -34,61 +32,34 @@ impl PyAveragineLut {
         num_threads: usize,
     ) -> Self {
         let inner = AveragineLut::build(
-            mass_min, mass_max, step, z_min, z_max, k, resolution, num_threads,
+            mass_min,
+            mass_max,
+            step,
+            z_min,
+            z_max,
+            k,
+            resolution,             // decimals, capped internally
+            num_threads,            // capped internally
         );
         PyAveragineLut { inner }
     }
 
-    /// Conservative defaults:
-    /// masses 300–4000 Da (step 50), z=1..6, k=6, resolution=4 (i.e., 4 decimals),
-    /// threads = available_parallelism() clamped to 16.
-    #[staticmethod]
-    pub fn default_grid() -> Self {
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(16);
+    #[getter] pub fn masses(&self) -> Vec<f32> { self.inner.masses.clone() }
+    #[getter] pub fn z_min(&self) -> u8 { self.inner.z_min }
+    #[getter] pub fn z_max(&self) -> u8 { self.inner.z_max }
+    #[getter] pub fn k(&self) -> usize { self.inner.k }
 
-        let inner = AveragineLut::build(
-            300.0,   // narrower default keeps it quick
-            4000.0,
-            50.0,
-            1, 6,
-            6,
-            4,       // 4 decimals → 10^4 points/Th (bounded internally)
-            threads,
-        );
-        PyAveragineLut { inner }
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (mass_min, mass_max, step, z_min, z_max, k, resolution, num_threads))]
-    pub fn build(
-        mass_min: f32,
-        mass_max: f32,
-        step: f32,
-        z_min: u8,
-        z_max: u8,
-        k: usize,
-        resolution: i32,
-        num_threads: usize,
-    ) -> Self {
-        let inner = AveragineLut::build(
-            mass_min, mass_max, step, z_min, z_max, k, resolution, num_threads,
-        );
-        PyAveragineLut { inner }
-    }
-
-    #[getter]
-    pub fn z_min(&self) -> u8 { self.inner.z_min }
-    #[getter]
-    pub fn z_max(&self) -> u8 { self.inner.z_max }
-    #[getter]
-    pub fn k(&self) -> usize { self.inner.k }
-
-    /// Nearest-neighbor lookup; returns a unit-length 8-vector (zero-padded).
+    /// Unit-length envelope (zero-padded to 8) for (neutral_mass, z).
+    #[pyo3(signature = (neutral_mass, z))]
     pub fn lookup(&self, neutral_mass: f32, z: u8, py: Python<'_>) -> Py<PyArray1<f32>> {
         self.inner.lookup(neutral_mass, z).to_vec().into_pyarray_bound(py).unbind()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "AveragineLut(grid={}, z=[{}..{}], k={})",
+            self.inner.masses.len(), self.inner.z_min, self.inner.z_max, self.inner.k
+        )
     }
 }
 

@@ -14,13 +14,13 @@ imsf = imspy_connector.py_feature  # <- the Rust PyO3 module you compiled
 class AveragineLut:
     def __init__(
         self,
-        mass_min: float = 200.0,
+        mass_min: float = 150.0,
         mass_max: float = 6000.0,
         step: float = 25.0,
         z_min: int = 1,
         z_max: int = 6,
         k: int = 6,
-        resolution: int = 60000,
+        resolution: int = 1,
         num_threads: Optional[int] = None,
     ):
         if num_threads is None:
@@ -28,7 +28,7 @@ class AveragineLut:
             # We don’t pass it; instead use the default_grid as a shortcut when exact defaults.
             if (
                 mass_min, mass_max, step, z_min, z_max, k, resolution
-            ) == (200.0, 6000.0, 25.0, 1, 6, 6, 60000):
+            ) == (200.0, 6000.0, 25.0, 1, 6, 6, 1):
                 self.__py_ptr = imsf.PyAveragineLut.default_grid()
             else:
                 # Fall back to 1 thread if not specified; feel free to wire a CPython

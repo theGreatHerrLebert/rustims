@@ -3,91 +3,118 @@ use std::collections::HashMap;
 use mscore::algorithm::isotope::generate_averagine_spectra;
 use crate::cluster::cluster::ClusterResult1D;
 
+
 #[derive(Clone, Debug)]
 pub struct AveragineLut {
-    pub masses: Vec<f32>,               // grid (neutral mass, Da)
+    pub masses: Vec<f32>,      // neutral-mass grid (Da)
     pub z_min: u8,
     pub z_max: u8,
-    pub k: usize,                       // peaks per envelope kept
-    // flattened: [(z=z_min..z_max) × mass grid] → [k intensities]
-    pub envs: Vec<[f32; 8]>,            // k≤8 for speed; pad with zeros
+    pub k: usize,              // kept peaks (<=8), zero-padded to 8
+    pub envs: Vec<[f32; 8]>,   // flattened by (z, mass_index)
 }
 
 impl AveragineLut {
     #[inline]
-    fn map_resolution_to_points_per_th(resolution: i32) -> usize {
-        // Convention:
-        // - resolution <= 12  => interpret as "decimals" (d), points_per_th = 10^d
-        // - resolution >  12  => interpret as "points per Th" directly
-        if resolution <= 12 {
-            let d = resolution.max(0).min(8) as u32; // cap decimals to 8
-            10usize.saturating_pow(d).max(1).min(20_000)
-        } else {
-            (resolution as usize).max(1).min(20_000)
-        }
+    fn clamp_resolution_decimals(resolution: i32) -> i32 {
+        // Preserve “decimals” meaning from the old impl; 0..=6 is already plenty.
+        resolution.clamp(0, 6)
+    }
+
+    #[inline]
+    fn clamp_threads(n: usize) -> usize {
+        n.clamp(1, 32)
     }
 
     pub fn build(
         mass_min: f32,
         mass_max: f32,
-        step: f32,          // e.g. 25–50 Da
+        step: f32,        // e.g. 25–50 Da
         z_min: u8,
         z_max: u8,
-        k: usize,           // keep first k peaks, ≤8
-        resolution: i32,    // decimals (<=12) OR points-per-Th (>12), mapped + capped
+        k: usize,         // keep first k peaks (<=8)
+        resolution: i32,  // interpreted as *decimals* like the old code
         num_threads: usize,
     ) -> Self {
+        // ---- grid & parameter guards -------------------------------------------------
         let mass_min = mass_min.max(50.0);
         let mass_max = mass_max.max(mass_min + 1.0);
         let step     = step.max(1.0);
-        let k        = k.min(8).max(1);
         let z_min    = z_min.max(1);
         let z_max    = z_max.max(z_min);
+        let k        = k.clamp(1, 8);
 
-        let mut masses = Vec::new();
+        let mut masses: Vec<f32> = Vec::new();
         let mut m = mass_min;
         while m <= mass_max + 1e-6 {
             masses.push(m);
             m += step;
         }
 
+        // If someone asks for a pathological grid, refuse early.
+        const MAX_GRID_POINTS: usize = 200_000; // generous hard-stop
+        if masses.len() > MAX_GRID_POINTS {
+            panic!("AveragineLut grid too large: {} points (> {})", masses.len(), MAX_GRID_POINTS);
+        }
+
+        // ---- prepare storage ---------------------------------------------------------
         let per_z = masses.len();
-        let n_env = per_z.saturating_mul((z_max - z_min + 1) as usize);
+        let n_env = per_z * (z_max - z_min + 1) as usize;
         let mut envs: Vec<[f32; 8]> = Vec::with_capacity(n_env);
 
-        // Map to sane generator resolution and threads
-        let points_per_th: usize = Self::map_resolution_to_points_per_th(resolution);
-        let gen_res: i32 = points_per_th as i32;
-        let threads = num_threads.clamp(1, 32);
+        // ---- clamp heavy knobs -------------------------------------------------------
+        let res_dec = Self::clamp_resolution_decimals(resolution);
+        let threads = Self::clamp_threads(num_threads);
+
+        // ---- CHUNKED generation to bound memory -------------------------------------
+        // We never build all spectra at once; do it in slices per charge.
+        const CHUNK: usize = 512;
+
+        // Reusable scratch buffers to avoid re-allocs in the loop.
+        let mut masses_f64: Vec<f64> = Vec::with_capacity(CHUNK);
+        let mut charges:     Vec<i32> = Vec::with_capacity(CHUNK);
 
         for z in z_min..=z_max {
-            let charges: Vec<i32>   = vec![z as i32; masses.len()];
-            let masses_f64: Vec<f64> = masses.iter().map(|&x| x as f64).collect();
+            let zi = z as i32;
 
-            // The generator should now be safe thanks to bounding. Still wrap to be extra robust.
-            let specs = generate_averagine_spectra(
-                masses_f64,
-                charges,
-                /*min_intensity*/ 1,
-                /*k*/ k as i32,
-                gen_res,
-                /*centroid*/ true,
-                threads,
-                /*amp*/ None,
-            );
+            let mut start = 0;
+            while start < masses.len() {
+                let end = (start + CHUNK).min(masses.len());
 
-            for sp in specs {
-                // take first k intensities, normalize to unit vector
-                let mut v = [0f32; 8];
-                let keep = k.min(sp.intensity.len());
-                for i in 0..keep {
-                    v[i] = sp.intensity[i] as f32;
+                // fill scratch
+                masses_f64.clear();
+                masses_f64.extend(masses[start..end].iter().map(|&x| x as f64));
+
+                charges.clear();
+                charges.resize(end - start, zi);
+
+                // generate only for this chunk
+                let specs = generate_averagine_spectra(
+                    masses_f64.clone(), // (the API takes owned Vecs)
+                    charges.clone(),
+                    /*min_intensity*/ 1,
+                    /*k*/ k as i32,
+                    /*resolution(decimals)*/ res_dec,
+                    /*centroid*/ true,
+                    /*threads*/  threads,
+                    /*amp*/ None,
+                );
+
+                // compact & normalize to unit-length k vector, zero-padded to 8
+                for sp in specs {
+                    let mut v = [0f32; 8];
+                    let keep = k.min(sp.intensity.len());
+                    for i in 0..keep {
+                        v[i] = sp.intensity[i] as f32;
+                    }
+                    // L2 normalize
+                    let norm = v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32;
+                    if norm > 0.0 {
+                        for x in &mut v { *x /= norm; }
+                    }
+                    envs.push(v);
                 }
-                let norm = v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt() as f32;
-                if norm > 0.0 {
-                    for x in &mut v { *x /= norm; }
-                }
-                envs.push(v);
+
+                start = end;
             }
         }
 
