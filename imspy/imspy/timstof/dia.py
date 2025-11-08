@@ -371,6 +371,9 @@ class ClusterResult1D:
         rp = self._py.raw_points()
         return None if rp is None else RawPoints(rp)
 
+    def get_py_ptr(self):
+        return self._py
+
     # ---- diagnostics ----
     @property
     def has_rt_axis(self) -> bool: return self.rt_axis_sec() is not None

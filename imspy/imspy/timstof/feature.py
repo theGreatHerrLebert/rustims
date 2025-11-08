@@ -269,7 +269,7 @@ def build_features_from_clusters(
     """
     # unwrap to raw PyO3 objects if the caller passed Python-side wrappers
     def to_py_ptr(x):
-        return getattr(x, "_py", lambda: x)()
+        return getattr(x, "get_py_ptr", lambda: x)()
 
     raw_list = [to_py_ptr(c) for c in clusters]
 
