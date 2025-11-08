@@ -19,6 +19,7 @@ pub mod py_unimod;
 pub mod py_utility;
 pub mod py_sumformula;
 pub mod py_ml_utility;
+pub mod py_feature;
 
 #[pymodule]
 fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -40,5 +41,6 @@ fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pymodule!(py_utility::py_utility))?;
     m.add_wrapped(wrap_pymodule!(py_sumformula::py_sum_formula))?;
     m.add_wrapped(wrap_pymodule!(py_ml_utility::py_ml_utility))?;
+    m.add_wrapped(wrap_pymodule!(py_feature::py_feature))?;
     Ok(())
 }

@@ -322,7 +322,7 @@ def get_slice_filtered_cluster(
     ds,
     *,
     is_precursor: bool = True,
-    mz_pad: float = 2.0,
+    mz_pad: float = 0.0,
 ) -> Optional[np.ndarray]:
     """
     Build a dense RT×IM slice for the cluster's cuboid.
