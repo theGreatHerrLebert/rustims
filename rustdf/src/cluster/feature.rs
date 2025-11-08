@@ -14,6 +14,19 @@ pub struct AveragineLut {
 }
 
 impl AveragineLut {
+    #[inline]
+    fn map_resolution_to_points_per_th(resolution: i32) -> usize {
+        // Convention:
+        // - resolution <= 12  => interpret as "decimals" (d), points_per_th = 10^d
+        // - resolution >  12  => interpret as "points per Th" directly
+        if resolution <= 12 {
+            let d = resolution.max(0).min(8) as u32; // cap decimals to 8
+            10usize.saturating_pow(d).max(1).min(20_000)
+        } else {
+            (resolution as usize).max(1).min(20_000)
+        }
+    }
+
     pub fn build(
         mass_min: f32,
         mass_max: f32,
@@ -21,32 +34,59 @@ impl AveragineLut {
         z_min: u8,
         z_max: u8,
         k: usize,           // keep first k peaks, ≤8
-        resolution: i32,    // pass-through to your generator
+        resolution: i32,    // decimals (<=12) OR points-per-Th (>12), mapped + capped
         num_threads: usize,
     ) -> Self {
+        let mass_min = mass_min.max(50.0);
+        let mass_max = mass_max.max(mass_min + 1.0);
+        let step     = step.max(1.0);
+        let k        = k.min(8).max(1);
+        let z_min    = z_min.max(1);
+        let z_max    = z_max.max(z_min);
+
         let mut masses = Vec::new();
-        let mut m = mass_min.max(200.0);
-        while m <= mass_max { masses.push(m); m += step; }
+        let mut m = mass_min;
+        while m <= mass_max + 1e-6 {
+            masses.push(m);
+            m += step;
+        }
 
-        let mut envs: Vec<[f32; 8]> = Vec::with_capacity(masses.len() * (z_max - z_min + 1) as usize);
+        let per_z = masses.len();
+        let n_env = per_z.saturating_mul((z_max - z_min + 1) as usize);
+        let mut envs: Vec<[f32; 8]> = Vec::with_capacity(n_env);
 
-        // generate averagine spectra for each mass/charge, then compact to k peaks (intensity-normalized)
+        // Map to sane generator resolution and threads
+        let points_per_th: usize = Self::map_resolution_to_points_per_th(resolution);
+        let gen_res: i32 = points_per_th as i32;
+        let threads = num_threads.clamp(1, 32);
+
         for z in z_min..=z_max {
-            let charges: Vec<i32> = vec![z as i32; masses.len()];
+            let charges: Vec<i32>   = vec![z as i32; masses.len()];
             let masses_f64: Vec<f64> = masses.iter().map(|&x| x as f64).collect();
+
+            // The generator should now be safe thanks to bounding. Still wrap to be extra robust.
             let specs = generate_averagine_spectra(
-                masses_f64, charges, /*min_intensity*/1, /*k*/k as i32,
-                resolution, /*centroid*/true, num_threads, /*amp*/None
+                masses_f64,
+                charges,
+                /*min_intensity*/ 1,
+                /*k*/ k as i32,
+                gen_res,
+                /*centroid*/ true,
+                threads,
+                /*amp*/ None,
             );
 
             for sp in specs {
                 // take first k intensities, normalize to unit vector
                 let mut v = [0f32; 8];
-                for i in 0..k.min(sp.intensity.len()) {
+                let keep = k.min(sp.intensity.len());
+                for i in 0..keep {
                     v[i] = sp.intensity[i] as f32;
                 }
                 let norm = v.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt() as f32;
-                if norm > 0.0 { for x in &mut v { *x /= norm; } }
+                if norm > 0.0 {
+                    for x in &mut v { *x /= norm; }
+                }
                 envs.push(v);
             }
         }
@@ -59,17 +99,17 @@ impl AveragineLut {
         if z < self.z_min || z > self.z_max || self.masses.is_empty() {
             return [0.0; 8];
         }
-        // nearest-neighbor on mass grid
         let zi = (z - self.z_min) as usize;
         let per_z = self.masses.len();
-        // clamp index
-        let i = match self.masses.binary_search_by(|m| m.partial_cmp(&neutral_mass).unwrap()) {
+        // nearest-neighbor on mass grid
+        let i = match self.masses.binary_search_by(|m| m.partial_cmp(&neutral_mass).unwrap_or(Ordering::Equal)) {
             Ok(i) => i,
             Err(i) => i.saturating_sub(1).min(per_z.saturating_sub(1)),
         };
         self.envs[zi * per_z + i]
     }
 }
+
 
 #[derive(Clone, Debug)]
 pub struct GroupingParams {
