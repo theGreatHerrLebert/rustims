@@ -244,19 +244,29 @@ fn infer_charge_from_members(mzs: &[f32], z_min:u8, z_max:u8) -> Option<u8> {
     if mzs.len() < 2 { return None; }
     let mut m = mzs.to_vec();
     m.sort_by(|a,b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+
+    // neighbor deltas
     let mut deltas = Vec::with_capacity(m.len().saturating_sub(1));
     for w in m.windows(2) {
         let dm = (w[1]-w[0]).abs();
         if dm > 0.0 { deltas.push(dm); }
     }
     if deltas.is_empty() { return None; }
+
     let mut best = (0u8, f32::MAX);
     for z in z_min..=z_max {
         let t = 1.003355f32 / (z as f32);
         let err = deltas.iter().map(|&d| (d - t).abs()).sum::<f32>() / (deltas.len() as f32);
         if err < best.1 { best = (z, err); }
     }
-    if best.0 == 0 { None } else { Some(best.0) }
+
+    if best.0 == 0 { return None; }
+
+    // accept only if both absolute and relative error are small
+    let t = 1.003355f32 / (best.0 as f32);
+    let abs_ok = best.1 < 0.02;          // < 0.02 Da mean abs error
+    let rel_ok = (best.1 / t) < 0.12;    // < 12% of target spacing
+    if abs_ok && rel_ok { Some(best.0) } else { None }
 }
 
 // ----- Near-duplicate merge (DSU) -------------------------------------------
@@ -352,11 +362,11 @@ fn summarize_super(group: &[usize], cl: &[ClusterResult1D], good_ids: &[usize]) 
 struct Edge { v: usize, z: u8, w: f32 }
 
 fn build_edges(super_nodes: &[Super], p: &GroupingParams, fb: &FeatureBuildParams) -> Vec<Vec<Edge>> {
-    // index by m/z
     let mut idx: Vec<usize> = (0..super_nodes.len()).collect();
     idx.sort_unstable_by(|&a,&b| super_nodes[a].mz_center.partial_cmp(&super_nodes[b].mz_center).unwrap_or(Ordering::Equal));
 
     let mut adj: Vec<Vec<Edge>> = vec![Vec::new(); super_nodes.len()];
+    let m: Vec<f32> = idx.iter().map(|&i| super_nodes[i].mz_center).collect();
 
     for z in p.z_min..=p.z_max {
         let d1 = 1.003355f32 / (z as f32);
@@ -365,32 +375,35 @@ fn build_edges(super_nodes: &[Super], p: &GroupingParams, fb: &FeatureBuildParam
         for &delta in &[d1, 2.0*d1] {
             let skip_one = delta > d1 * 1.5;
             let mut j = 0usize;
-            let m: Vec<f32> = idx.iter().map(|&i| super_nodes[i].mz_center).collect();
+
             for i_local in 0..idx.len() {
                 let mi = m[i_local];
                 let lo = (mi + delta - tol).max(0.0);
                 while j < idx.len() && m[j] < lo { j += 1; }
                 let mut k = j;
                 let hi = mi + delta + tol;
+
                 while k < idx.len() && m[k] <= hi {
                     let u = idx[i_local]; let v = idx[k];
                     if u != v {
-                        // sigma-aware RT/IM gate (plus padded windows)
                         let u_s = &super_nodes[u]; let v_s = &super_nodes[v];
+
                         let rt_ok = overlap1d(expand(u_s.rt_bounds, p.rt_pad_overlap), expand(v_s.rt_bounds, p.rt_pad_overlap)) > 0
                             && gaussian_overlap_ok(u_s.rt_mu, u_s.rt_sig, v_s.rt_mu, v_s.rt_sig, 2.5);
                         let im_ok = overlap1d(expand(u_s.im_bounds, p.im_pad_overlap), expand(v_s.im_bounds, p.im_pad_overlap)) > 0
                             && gaussian_overlap_ok(u_s.im_mu, u_s.im_sig, v_s.im_mu, v_s.im_sig, 2.5);
+
                         if rt_ok && im_ok {
-                            // edge weight
                             let spacing_err = ((m[k]-m[i_local]).abs() - delta).abs();
                             let tau = tol.max(1e-6);
                             let s_spacing = (-spacing_err / tau).exp();
                             let s_co = coelution_score((u_s.rt_mu,u_s.rt_sig),(u_s.im_mu,u_s.im_sig),
                                                        (v_s.rt_mu,v_s.rt_sig),(v_s.im_mu,v_s.im_sig));
-                            let s_mono = 1.0; // optional: intensity monotonicity prior on raw_sum
+                            let s_mono = 1.0;
+
                             let mut w = fb.w_spacing * s_spacing + fb.w_coelute * s_co + fb.w_monotonic * s_mono;
-                            if skip_one { w -= fb.penalty_skip_one; }
+                            if skip_one { w -= fb.penalty_skip_one; } // stronger, always subtract
+
                             adj[u].push(Edge{ v, z, w });
                         }
                     }
@@ -405,41 +418,35 @@ fn build_edges(super_nodes: &[Super], p: &GroupingParams, fb: &FeatureBuildParam
 // ----- DP best chain per seed × charge --------------------------------------
 
 #[derive(Clone, Debug)]
-struct Chain {
-    path: Vec<usize>, // super-node ids
-    score: f32,
-}
+struct Chain { path: Vec<usize>, score: f32 }
 
 fn dp_best_chain(seed: usize, z: u8, adj: &[Vec<Edge>], k_max: usize) -> Chain {
-    // simple DAG DP limited to nodes reachable from seed, charge-filtered
+    use std::collections::VecDeque;
+
+    // best_score[v] = (score, prev)
     let mut best_score: HashMap<usize, (f32, Option<usize>)> = HashMap::new();
     best_score.insert(seed, (0.0, None));
 
-    // frontier: nodes to expand (edges go to higher m/z effectively)
-    let mut queue = vec![seed];
-    let mut visited = HashMap::<usize, bool>::new();
-    visited.insert(seed, true);
+    let mut q = VecDeque::new();
+    q.push_back(seed);
 
-    while let Some(u) = queue.pop() {
-        let (score_u, _) = *best_score.get(&u).unwrap();
+    while let Some(u) = q.pop_front() {
+        let (s_u, _) = *best_score.get(&u).unwrap();
         for e in adj[u].iter().filter(|e| e.z == z) {
             let v = e.v;
-            let new_score = score_u + e.w;
+            let ns = s_u + e.w;
             let entry = best_score.entry(v).or_insert((f32::NEG_INFINITY, None));
-            if new_score > entry.0 {
-                *entry = (new_score, Some(u));
-                if !visited.contains_key(&v) {
-                    queue.push(v);
-                    visited.insert(v, true);
-                }
+            if ns > entry.0 {
+                *entry = (ns, Some(u));
+                q.push_back(v);
             }
         }
     }
 
-    // pick best end node among paths of length ≤ k_max
-    let mut best_end: Option<(usize, f32, usize)> = None;
+    // choose best endpoint with lexicographic (length desc, score desc) under k_max
+    let mut best: Option<(usize, usize, f32)> = None; // (end, len, score)
     for (&v, &(s, prev)) in &best_score {
-        // count length
+        // reconstruct length (bounded)
         let mut len = 1usize;
         let mut t = prev;
         while let Some(p) = t {
@@ -447,20 +454,20 @@ fn dp_best_chain(seed: usize, z: u8, adj: &[Vec<Edge>], k_max: usize) -> Chain {
             if len > k_max { break; }
             t = best_score.get(&p).and_then(|x| x.1);
         }
-        if len <= k_max {
-            match best_end {
-                None => best_end = Some((v, s, len)),
-                Some((_, s_best, l_best)) => {
-                    if s > s_best || (s == s_best && len > l_best) {
-                        best_end = Some((v, s, len));
-                    }
+        if len > k_max { continue; }
+
+        match best {
+            None => best = Some((v, len, s)),
+            Some((_, bl, bs)) => {
+                if len > bl || (len == bl && s > bs) {
+                    best = Some((v, len, s));
                 }
             }
         }
     }
 
-    if let Some((end, s, _len)) = best_end {
-        // reconstruct
+    if let Some((end, _len, s)) = best {
+        // reconstruct path
         let mut path = Vec::<usize>::new();
         let mut cur = end;
         path.push(cur);
@@ -469,15 +476,12 @@ fn dp_best_chain(seed: usize, z: u8, adj: &[Vec<Edge>], k_max: usize) -> Chain {
             cur = prev;
         }
         path.reverse();
-        let mut path2 = path;
-        if path2.len() > k_max { path2.truncate(k_max); }
-        Chain { path: path2, score: s }
+        if path.len() > k_max { path.truncate(k_max); }
+        Chain { path, score: s }
     } else {
         Chain { path: vec![seed], score: 0.0 }
     }
 }
-
-// ----- Envelope & intensity assembly ----------------------------------------
 
 fn chain_to_envelope(
     eid: usize,
@@ -501,6 +505,10 @@ fn chain_to_envelope(
         all.extend_from_slice(&s.member_cids);
     }
     let mz_center = if wsum>0.0 {(mz_weighted/wsum) as f32} else {(mz_lo+mz_hi)*0.5};
+
+    // Only trust a hint if there’s enough structure (≥3 nodes => ≥2 spacings)
+    let safe_hint = if chain.path.len() >= 3 { charge_hint } else { None };
+
     Envelope {
         id: eid,
         cluster_ids: all,
@@ -508,10 +516,9 @@ fn chain_to_envelope(
         im_bounds: (im_min, im_max),
         mz_center,
         mz_span_da: mz_hi - mz_lo,
-        charge_hint,
+        charge_hint: safe_hint,
     }
 }
-
 fn envelope_iso_vector_from_clusters(env: &Envelope, clusters: &[ClusterResult1D], mz_mono: f32, z: u8, k_max: usize) -> [f32; 8] {
     let mut iso = [0f32; 8];
     if z == 0 { // mono only
@@ -698,8 +705,9 @@ pub fn build_features_from_clusters(
 
     // D) build candidate envelopes via DP for best z
     let mut candidates: Vec<(Envelope, u8, f32, f32)> = Vec::new(); // env, z, score, cosine
+
     for &seed in &seeds {
-        // rough charge hint from member μ’s (original cluster ids)
+        // rough charge hint from member μ’s
         let mut mzs = Vec::<f32>::new();
         for &cid in &supers[seed].member_cids {
             let m = clusters[cid].mz_fit.mu;
@@ -707,17 +715,17 @@ pub fn build_features_from_clusters(
         }
         let hint = infer_charge_from_members(&mzs, gp.z_min, gp.z_max);
 
+        // if no hint, we still consider full range
         let z_list: Vec<u8> = if let Some(z) = hint { vec![z] } else { (gp.z_min..=gp.z_max).collect() };
 
         for z in z_list {
             let chain = dp_best_chain(seed, z, &adj, fp.k_max);
             if chain.path.len() < fp.min_members { continue; }
 
-            // convert to envelope on original cluster indices
             let env_id = candidates.len();
             let env = chain_to_envelope(env_id, &chain, &supers, hint);
 
-            // compute mz_mono (min μ)
+            // mz_mono
             let mut mz_mono = f32::INFINITY;
             for &cid in &env.cluster_ids {
                 let m = clusters[cid].mz_fit.mu;
@@ -725,7 +733,7 @@ pub fn build_features_from_clusters(
             }
             if !mz_mono.is_finite() || mz_mono <= 50.0 { continue; }
 
-            // build iso vector from member raw_sum
+            // iso vectors
             let iso_raw = envelope_iso_vector_from_clusters(&env, clusters, mz_mono, z, fp.k_max);
             let mut iso_l2 = iso_raw;
             let norm = l2_norm8(&iso_l2);
@@ -733,7 +741,7 @@ pub fn build_features_from_clusters(
                 for i in 0..8 { iso_l2[i] /= norm; }
             }
 
-            // cosine (optional if lut)
+            // cosine (optional)
             let cos = if let Some(lut) = lut {
                 if z >= lut.z_min && z <= lut.z_max {
                     let neutral = (mz_mono - 1.007_276_5_f32) * (z as f32);
@@ -742,8 +750,13 @@ pub fn build_features_from_clusters(
                 } else { f32::NAN }
             } else { f32::NAN };
 
-            // composite score = chain.score + w * cosine
-            let score = chain.score + if cos.is_finite() { 0.5 * cos } else { 0.0 };
+            // scoring:
+            // - lexicographic preference to longer chains happens earlier (dp_best_chain),
+            //   but we reinforce here by adding a small length bonus.
+            // - mild prior penalty against very high z to curb random tight spacings.
+            let len_bonus = 0.05 * (chain.path.len() as f32);          // small positive bonus
+            let z_prior   = ((z as i32 - 3).max(0) as f32) * 0.02;     // penalty for z>3
+            let score = chain.score + len_bonus + if cos.is_finite() { 0.5 * cos } else { 0.0 } - z_prior;
 
             candidates.push((env, z, score, cos));
         }
