@@ -2465,6 +2465,142 @@ pub fn export_cluster_arrays<'py>(
     Ok(out.unbind())
 }
 
+// Reuse your existing ImPeak1D, PyImPeak1D, StitchParams, compatible_fast, merge_into, owned_copy_im.
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+struct KeyFlat {
+    wg_norm: Option<u32>,
+    scan_bin: usize,
+    mz_bucket: usize,
+}
+
+#[pyfunction]
+#[pyo3(signature = (flat, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
+pub fn stitch_im_peaks_flat_unordered(
+    py: Python<'_>,
+    flat: Vec<Py<PyImPeak1D>>,
+    min_overlap_frames: usize,
+    max_scan_delta: usize,
+    jaccard_min: f32,
+    max_mz_row_delta: usize,
+    allow_cross_groups: bool,
+) -> PyResult<Vec<Py<PyImPeak1D>>> {
+    let params = StitchParams {
+        min_overlap_frames,
+        max_scan_delta: max_scan_delta.max(1),
+        jaccard_min,
+        max_mz_row_delta,
+        allow_cross_groups,
+    };
+
+    // Quick exit
+    if flat.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Normalize WG: if crossing groups is allowed, collapse all to None so they can meet.
+    #[inline]
+    fn norm_wg(wg: Option<u32>, allow_cross: bool) -> Option<u32> {
+        if allow_cross { None } else { wg }
+    }
+
+    // MZ bucketing to honor max_mz_row_delta without exploding comparisons.
+    // If delta == 0, each row stands alone; otherwise bucket size = delta+1.
+    #[inline]
+    fn mz_bucket(mz_row: usize, delta: usize) -> usize {
+        let w = delta.saturating_add(1);
+        mz_row / w
+    }
+
+    // 1) Collect Arcs and bucket
+    let mut buckets: FxHashMap<KeyFlat, Vec<Arc<ImPeak1D>>> = FxHashMap::default();
+    for p in flat.into_iter() {
+        let arc = p.borrow(py).inner.clone();
+        let r = arc.as_ref();
+
+        let k = KeyFlat {
+            wg_norm: norm_wg(r.window_group, allow_cross_groups),
+            scan_bin: r.scan / params.max_scan_delta,
+            mz_bucket: mz_bucket(r.mz_row, params.max_mz_row_delta),
+        };
+
+        buckets.entry(k).or_default().push(arc);
+    }
+
+    // 2) For each bucket, sort deterministically and fold using the same merge logic
+    let mut stitched: Vec<ImPeak1D> = Vec::new();
+
+    for (_k, mut vec_arc) in buckets.into_iter() {
+        // deterministic order within the bucket
+        vec_arc.sort_unstable_by(|a, b| {
+            let aa = a.as_ref();
+            let bb = b.as_ref();
+            aa.scan
+                .cmp(&bb.scan)
+                .then_with(|| aa.rt_bounds.0.cmp(&bb.rt_bounds.0))
+                .then_with(|| aa.mz_row.cmp(&bb.mz_row))
+                .then_with(|| aa.id.cmp(&bb.id))
+        });
+
+        let mut cur: Option<ImPeak1D> = None;
+
+        for a in vec_arc.into_iter() {
+            let p = a.as_ref();
+
+            if let Some(c) = cur.as_mut() {
+                // Fast check first; compatible_fast should already implement:
+                // - frame overlap / min_overlap_frames
+                // - scan proximity via params.max_scan_delta (we’re already binned)
+                // - mz_row proximity via params.max_mz_row_delta
+                // - jaccard_min on [left,right] or RT overlap (as in your impl)
+                // - (optional) window_group handling consistent with normalization
+                if compatible_fast(c, p, &params) {
+                    merge_into(c, p);
+                } else {
+                    // finalize current, start new
+                    stitched.push(std::mem::replace(c, owned_copy_im(p)));
+                }
+            } else {
+                cur = Some(owned_copy_im(p));
+            }
+        }
+
+        if let Some(c) = cur.take() {
+            stitched.push(c);
+        }
+    }
+
+    // 3) To make cross-bucket merges possible (edge cases near bucket boundaries),
+    // we can do ONE optional linear consolidation pass. This is cheap because
+    // stitched is already much smaller than the input. (Safe even if skipped.)
+    stitched.sort_unstable_by(|a, b| {
+        a.window_group
+            .cmp(&b.window_group)
+            .then_with(|| a.mz_row.cmp(&b.mz_row))
+            .then_with(|| a.scan.cmp(&b.scan))
+            .then_with(|| a.rt_bounds.0.cmp(&b.rt_bounds.0))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let mut final_out: Vec<ImPeak1D> = Vec::with_capacity(stitched.len());
+    for p in stitched.into_iter() {
+        if let Some(last) = final_out.last_mut() {
+            if compatible_fast(last, &p, &params) {
+                merge_into(last, &p);
+                continue;
+            }
+        }
+        final_out.push(p);
+    }
+
+    // 4) Wrap for Python
+    let mut out = Vec::with_capacity(final_out.len());
+    for v in final_out.into_iter() {
+        out.push(Py::new(py, PyImPeak1D { inner: Arc::new(v) })?);
+    }
+    Ok(out)
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -2477,6 +2613,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRawPoints>()?;
     m.add_class::<PyClusterResult1D>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_batched_streaming, m)?)?;
+    m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(export_cluster_arrays, m)?)?;

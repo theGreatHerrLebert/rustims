@@ -1722,6 +1722,24 @@ def stitch_im_peaks(
     )
     return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
 
+def stitch_im_peaks_flat(
+    peaks,                   # Sequence[ImPeak1D]
+    min_overlap_frames=1,
+    max_scan_delta=1,
+    jaccard_min=0.0,
+    max_mz_row_delta=0,
+    allow_cross_groups=False,
+):
+    from .dia import ImPeak1D
+    if not peaks:
+        return []
+    ptrs = [p.get_py_ptr() for p in peaks]
+    stitched_py = ims.stitch_im_peaks_flat_unordered(
+        ptrs, int(min_overlap_frames), int(max_scan_delta),
+        float(jaccard_min), int(max_mz_row_delta), bool(allow_cross_groups)
+    )
+    return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
+
 _DEFAULT_ORDER = [
     # provenance / windows
     "ms_level", "window_group", "parent_im_id", "parent_rt_id",
