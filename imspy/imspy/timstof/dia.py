@@ -815,6 +815,28 @@ class RtPeak1D(RustWrapperObject):
     def __repr__(self):
         return repr(self.__py_ptr)
 
+def _fnv1a64_signed(parts):
+    h = 0xcbf29ce484222325
+    for x in parts:
+        x &= 0xFFFFFFFFFFFFFFFF
+        h ^= x
+        h = (h * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return h - (1 << 64) if (h & (1 << 63)) else h
+
+def _mz_bounds_from_centers(mz_centers: np.ndarray, row: int, pad_ppm: float = 0.0) -> tuple[float, float]:
+    c = float(mz_centers[row])
+    if pad_ppm > 0.0:
+        f = 1.0 + pad_ppm * 1e-6
+        return c / f, c * f
+    # half-neighbour spacing
+    if row + 1 < len(mz_centers):
+        dz = abs(float(mz_centers[row + 1]) - c)
+    else:
+        dz = abs(c - float(mz_centers[max(row - 1, 0)]))
+    dz = dz if dz > 0 else 1.0
+    return c - 0.5 * dz, c + 0.5 * dz
+
+
 class ImPeak1D(RustWrapperObject):
     """Python wrapper for Rust PyImPeak1D."""
     def __init__(
@@ -936,6 +958,149 @@ class ImPeak1D(RustWrapperObject):
         inst = cls.__new__(cls)
         inst.__py_ptr = p
         return inst
+
+    @classmethod
+    def from_detected(cls,
+                      det_row,
+                      # dict | pandas.Series with keys: mu_scan, mu_mz, sigma_scan, sigma_mz, amplitude, baseline, area, i, j
+                      *,
+                      window_grid,  # MzScanWindowGrid
+                      mz_centers=None,  # np.ndarray | None (if None, will try to read from a plan/plan-group)
+                      plan=None,  # optional MzScanPlan (for mz_centers)
+                      plan_group=None,  # optional MzScanPlanGroup (for mz_centers)
+                      k_sigma: float = 3.0,
+                      min_width: int = 3,
+                      clamp_to_grid: bool = True,
+                      mz_bounds_pad_ppm: float = 0.0):
+
+        # normalize row access
+        if isinstance(det_row, pd.Series):
+            r = det_row
+        else:
+            r = pd.Series(det_row)
+
+        # get mz_centers
+        if mz_centers is None:
+            if plan is not None:
+                mz_centers = plan.mz_centers
+            elif plan_group is not None:
+                mz_centers = plan_group.mz_centers
+            else:
+                raise ValueError("Provide mz_centers or (plan | plan_group).")
+        mz_centers = np.asarray(mz_centers, dtype=np.float32)
+
+        # grid metadata
+        rt_lo, rt_hi = window_grid.rt_range_frames
+        fid_lo, fid_hi = window_grid.frame_id_bounds
+        wg = window_grid.window_group
+        n_rows = window_grid.rows
+        n_cols = window_grid.cols
+
+        # indices from detector (i=row=m/z bin, j=col=scan)
+        mz_row = int(r["i"])
+        j_scan = int(r["j"])
+        if clamp_to_grid:
+            mz_row = max(0, min(n_rows - 1, mz_row))
+            j_scan = max(0, min(n_cols - 1, j_scan))
+
+        mu_scan = float(r["mu_scan"])
+        s_scan = float(r["sigma_scan"])
+        amp = float(r["amplitude"])
+        base = float(r["baseline"])
+        area = float(r["area"])
+
+        # integer window bounds in scan from σ
+        half = int(np.ceil(k_sigma * max(1e-6, s_scan)))
+        left = max(0, j_scan - half)
+        right = min(n_cols - 1, j_scan + half)
+        width = max(min_width, right - left + 1)
+        if width > (right - left + 1):
+            extra = width - (right - left + 1)
+            dl = extra // 2
+            dr = extra - dl
+            left = max(0, left - dl)
+            right = min(n_cols - 1, right + dr)
+
+        left_x = float(j_scan) - k_sigma * s_scan
+        right_x = float(j_scan) + k_sigma * s_scan
+
+        mz_center = float(mz_centers[mz_row])
+        mz_bounds = _mz_bounds_from_centers(mz_centers, mz_row, pad_ppm=mz_bounds_pad_ppm)
+
+        apex_smoothed = amp + base
+        apex_raw = apex_smoothed
+        prominence = amp
+        subscan = mu_scan - float(j_scan)
+
+        scan_abs = j_scan
+        left_abs, right_abs = left, right
+
+        pid = int(_fnv1a64_signed([
+            int(wg) if wg is not None else 0,
+            mz_row,
+            scan_abs,
+            left_abs,
+            right_abs,
+            int(np.round(mz_center * 1e3)),
+        ]))
+
+        # Rust-side construction (tuples & primitives only)
+        p = ims.PyImPeak1D.new_from_detected(
+            int(mz_row),
+            float(mz_center),
+            (float(mz_bounds[0]), float(mz_bounds[1])),
+            (int(rt_lo), int(rt_hi)),
+            (int(fid_lo), int(fid_hi)),
+            (int(wg) if wg is not None else None),
+            int(j_scan),
+            int(left),
+            int(right),
+            int(scan_abs),
+            int(left_abs),
+            int(right_abs),
+            None,  # mobility: Option<f32>
+            float(apex_smoothed),
+            float(apex_raw),
+            float(prominence),
+            float(left_x),
+            float(right_x),
+            int(width),
+            float(area),
+            float(subscan),
+            int(pid),
+        )
+        return cls.from_py_ptr(p)
+
+    @classmethod
+    def batch_from_detected(cls,
+                            detected_dict_or_df,
+                            *,
+                            window_grid,
+                            mz_centers=None,
+                            plan=None,
+                            plan_group=None,
+                            k_sigma: float = 3.0,
+                            min_width: int = 3,
+                            clamp_to_grid: bool = True,
+                            mz_bounds_pad_ppm: float = 0.0):
+        """
+        Vectorized convenience: dict-of-arrays/DataFrame -> list[ImPeak1D].
+        """
+        D = pd.DataFrame(detected_dict_or_df)
+        out = []
+        for _, row in D.iterrows():
+            out.append(cls.from_detected(
+                row,
+                window_grid=window_grid,
+                mz_centers=mz_centers,
+                plan=plan,
+                plan_group=plan_group,
+                k_sigma=k_sigma,
+                min_width=min_width,
+                clamp_to_grid=clamp_to_grid,
+                mz_bounds_pad_ppm=mz_bounds_pad_ppm,
+            ))
+        return out
 
     def __repr__(self):
         rt_lo, rt_hi = self.rt_bounds
