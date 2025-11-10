@@ -528,85 +528,199 @@ pub fn expand_im_peak_along_rt(
     rt_scale: &MzScale,
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
-    let trace_raw = rt_trace_for_im_peak_by_bounds(
-        frames_sorted, rt_scale, im_peak.mz_bounds, p.bin_pad, im_peak.left_abs, im_peak.right_abs,
+
+    // ------------------------------------------------------------
+    // 1) Map absolute frame IDs → local precursor RT index range
+    // ------------------------------------------------------------
+    // We binary-search the sorted precursor frame_ids to locate
+    // where this IM peak is allowed to exist in RT.
+    let (fid_lo_abs, fid_hi_abs) = im_peak.frame_id_bounds;
+
+    let allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
+        Ok(i) => i,
+        Err(_) => return Vec::new(),      // this IM peak does not exist in this precursor trace
+    };
+    let allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
+        Ok(i) => i,
+        Err(_) => return Vec::new(),
+    };
+    let (allow_lo, allow_hi) = (allow_lo.min(allow_hi), allow_lo.max(allow_hi));
+
+    // Safety: the peak RT cannot exceed the range of available frames
+    if allow_lo >= frames_sorted.len() || allow_hi >= frames_sorted.len() {
+        return Vec::new();
+    }
+
+    // ------------------------------------------------------------
+    // 2) Compute the full raw RT trace (over all precursor frames)
+    // ------------------------------------------------------------
+    let trace_raw_full = rt_trace_for_im_peak_by_bounds(
+        frames_sorted,
+        rt_scale,
+        im_peak.mz_bounds,
+        p.bin_pad,
+        im_peak.left_abs,
+        im_peak.right_abs,
     );
-    let has_signal = trace_raw.iter().any(|&x| x.is_finite() && x > 0.0);
-    if trace_raw.is_empty() || !has_signal { return Vec::new(); }
 
-    let rt_times = rt_ctx.rt_times_sec;
-    debug_assert_eq!(rt_times.len(), frames_sorted.len());
+    if trace_raw_full.is_empty() {
+        return Vec::new();
+    }
 
-    if (im_peak.rt_bounds.1.saturating_sub(im_peak.rt_bounds.0) + 1) < p.fallback_if_frames_lt {
-        if let Some(pk) = fallback_rt_peak_from_trace(&trace_raw, rt_ctx, im_peak, p.fallback_frac_width) {
-            return vec![pk];
+    // ------------------------------------------------------------
+    // 3) CLAMP the trace strictly to the IM peak's allowed RT region
+    // ------------------------------------------------------------
+    let trace_raw = &trace_raw_full[allow_lo ..= allow_hi];
+    let rt_times_clamped = &rt_ctx.rt_times_sec[allow_lo ..= allow_hi];
+    let n_clamped = trace_raw.len();
+
+    if n_clamped == 0 || !trace_raw.iter().any(|x| *x > 0.0) {
+        return Vec::new();
+    }
+
+    // ------------------------------------------------------------
+    // 4) If very narrow RT region → fallback peak logic
+    // ------------------------------------------------------------
+    if n_clamped < p.fallback_if_frames_lt {
+        if let Some(pk) =
+            fallback_rt_peak_from_trace(trace_raw, rt_ctx, im_peak, p.fallback_frac_width)
+        {
+            // map local clamped bounds back to global indices
+            let l = allow_lo + pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let r = allow_lo + pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let lo_fid = rt_ctx.frame_ids_sorted[l];
+            let hi_fid = rt_ctx.frame_ids_sorted[r];
+
+            return vec![
+                RtPeak1D {
+                    parent_im_id: Some(im_peak.id),
+                    mz_row: im_peak.mz_row,
+                    mz_center: im_peak.mz_center,
+                    mz_bounds: im_peak.mz_bounds,
+                    window_group: im_peak.window_group,
+
+                    rt_idx: allow_lo + pk.rt_idx,
+                    rt_sec: pk.rt_sec,
+                    apex_smoothed: pk.apex_smoothed,
+                    apex_raw: pk.apex_raw,
+                    prominence: pk.prominence,
+                    left_x: pk.left_x + allow_lo as f32,
+                    right_x: pk.right_x + allow_lo as f32,
+                    width_frames: pk.width_frames,
+                    area_raw: pk.area_raw,
+                    subframe: pk.subframe,
+
+                    rt_bounds_frames: (l, r),
+                    frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
+                    id: rt_peak_id(&pk),
+                }
+            ];
         }
         return Vec::new();
     }
 
-    // seconds→frames for smoothing
-    let dt = effective_dt(rt_times);
+    // ------------------------------------------------------------
+    // 5) Smooth the *clamped* trace
+    // ------------------------------------------------------------
+    let dt = effective_dt(rt_times_clamped);
     let sigma_frames = (p.smooth_sigma_sec / dt).max(0.75);
-    let trunc = p.smooth_trunc_k;
+    let mut trace_smooth = trace_raw.to_vec();
+    smooth_vector_gaussian(&mut trace_smooth[..], sigma_frames, p.smooth_trunc_k);
 
-    let mut trace_smooth = trace_raw.clone();
-    smooth_vector_gaussian(&mut trace_smooth[..], sigma_frames, trunc);
-
+    // ------------------------------------------------------------
+    // 6) Peak finding on the *clamped* region
+    // ------------------------------------------------------------
     let base = find_rt_peaks(
         &trace_smooth,
-        &trace_raw,
-        rt_times,
+        trace_raw,
+        rt_times_clamped,
         p.min_prom,
         p.min_sep_sec,
         p.min_width_sec,
     );
 
     if base.is_empty() {
-        if let Some(pk) = fallback_rt_peak_from_trace(&trace_raw, rt_ctx, im_peak, p.fallback_frac_width) {
-            return vec![pk];
+        if let Some(pk) =
+            fallback_rt_peak_from_trace(trace_raw, rt_ctx, im_peak, p.fallback_frac_width)
+        {
+            // same handling as fallback above
+            let l = allow_lo + pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let r = allow_lo + pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let lo_fid = rt_ctx.frame_ids_sorted[l];
+            let hi_fid = rt_ctx.frame_ids_sorted[r];
+
+            return vec![
+                RtPeak1D {
+                    parent_im_id: Some(im_peak.id),
+                    mz_row: im_peak.mz_row,
+                    mz_center: im_peak.mz_center,
+                    mz_bounds: im_peak.mz_bounds,
+                    window_group: im_peak.window_group,
+
+                    rt_idx: allow_lo + pk.rt_idx,
+                    rt_sec: pk.rt_sec,
+                    apex_smoothed: pk.apex_smoothed,
+                    apex_raw: pk.apex_raw,
+                    prominence: pk.prominence,
+                    left_x: pk.left_x + allow_lo as f32,
+                    right_x: pk.right_x + allow_lo as f32,
+                    width_frames: pk.width_frames,
+                    area_raw: pk.area_raw,
+                    subframe: pk.subframe,
+
+                    rt_bounds_frames: (l, r),
+                    frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
+                    id: rt_peak_id(&pk),
+                }
+            ];
         }
         return Vec::new();
     }
 
-    // map into enriched RtPeak1D (unchanged)
+    // ------------------------------------------------------------
+    // 7) Normal multi-peak mapping: map clamped indices → global RT indices
+    // ------------------------------------------------------------
     let n_frames = frames_sorted.len();
-    let (fid_lo, fid_hi) = im_peak.frame_id_bounds;
-    base.into_iter().map(|r0| {
-        let l  = r0.left_x.floor().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
-        let rr = r0.right_x.ceil().clamp(0.0, (n_frames.saturating_sub(1)) as f32) as usize;
-        let rt_bounds_frames = (l, rr);
 
-        let frame_id_bounds = if rt_ctx.frame_ids_sorted.is_empty() {
-            (fid_lo, fid_hi)
-        } else {
-            let lo = rt_ctx.frame_ids_sorted[l.min(rt_ctx.frame_ids_sorted.len()-1)];
-            let hi = rt_ctx.frame_ids_sorted[rr.min(rt_ctx.frame_ids_sorted.len()-1)];
-            (lo.min(hi), lo.max(hi))
-        };
+    base.into_iter()
+        .map(|r0| {
+            let local_left  =
+                r0.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let local_right =
+                r0.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
 
-        let mut r = RtPeak1D {
-            rt_idx: r0.rt_idx,
-            rt_sec: r0.rt_sec,
-            apex_smoothed: r0.apex_smoothed,
-            apex_raw: r0.apex_raw,
-            prominence: r0.prominence,
-            left_x: r0.left_x,
-            right_x: r0.right_x,
-            width_frames: r0.width_frames,
-            area_raw: r0.area_raw,
-            subframe: r0.subframe,
-            rt_bounds_frames,
-            frame_id_bounds,
-            window_group: im_peak.window_group,
-            mz_row: im_peak.mz_row,
-            mz_center: im_peak.mz_center,
-            mz_bounds: im_peak.mz_bounds,
-            parent_im_id: Some(im_peak.id),
-            id: 0,
-        };
-        r.id = rt_peak_id(&r);
-        r
-    }).collect()
+            let global_left = allow_lo + local_left;
+            let global_right = allow_hi.min(allow_lo + local_right).min(n_frames - 1);
+
+            let lo_fid = rt_ctx.frame_ids_sorted[global_left];
+            let hi_fid = rt_ctx.frame_ids_sorted[global_right];
+
+            let mut r = RtPeak1D {
+                parent_im_id: Some(im_peak.id),
+                mz_row: im_peak.mz_row,
+                mz_center: im_peak.mz_center,
+                mz_bounds: im_peak.mz_bounds,
+                window_group: im_peak.window_group,
+
+                rt_idx: allow_lo + r0.rt_idx,
+                rt_sec: r0.rt_sec,
+                apex_smoothed: r0.apex_smoothed,
+                apex_raw: r0.apex_raw,
+                prominence: r0.prominence,
+                left_x: r0.left_x + allow_lo as f32,
+                right_x: r0.right_x + allow_lo as f32,
+                width_frames: r0.width_frames,
+                area_raw: r0.area_raw,
+                subframe: r0.subframe,
+
+                rt_bounds_frames: (global_left, global_right),
+                frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
+                id: 0,
+            };
+            r.id = rt_peak_id(&r);
+            r
+        })
+        .collect()
 }
 
 // add param
