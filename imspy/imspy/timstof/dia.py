@@ -1045,7 +1045,7 @@ class ImPeak1D(RustWrapperObject):
         ]))
 
         # Rust-side construction (tuples & primitives only)
-        p = ims.PyImPeak1D.new_from_detected(
+        p = ims.PyImPeak1D(
             int(mz_row),
             float(mz_center),
             (float(mz_bounds[0]), float(mz_bounds[1])),
