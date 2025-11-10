@@ -816,9 +816,63 @@ class RtPeak1D(RustWrapperObject):
         return repr(self.__py_ptr)
 
 class ImPeak1D(RustWrapperObject):
-    """Python wrapper for Rust PyImPeak1D (read-only)."""
-    def __init__(self, *a, **k):
-        raise RuntimeError("ImPeak1D is created in Rust; use ImPeak1D.from_py_ptr().")
+    """Python wrapper for Rust PyImPeak1D."""
+    def __init__(
+            self,
+            mz_row: int,
+            mz_center: float,
+            mz_bounds: tuple[float, float],
+            rt_bounds: tuple[int, int],
+            frame_id_bounds: tuple[int, int],
+            window_group: int | None,
+            scan: int,
+            left: int,
+            right: int,
+            scan_abs: int,
+            left_abs: int,
+            right_abs: int,
+            mobility: float | None,
+            apex_smoothed: float,
+            apex_raw: float,
+            prominence: float,
+            left_x: float,
+            right_x: float,
+            width_scans: int,
+            area_raw: float,
+            subscan: float,
+            id: int,
+    ):
+        """
+        Direct constructor that creates a Rust-side PyImPeak1D
+        using only primitive arguments and tuples.
+        """
+        # Call the Rust @new constructor
+        p = ims.PyImPeak1D(
+            mz_row,
+            mz_center,
+            mz_bounds,
+            rt_bounds,
+            frame_id_bounds,
+            window_group,
+            scan,
+            left,
+            right,
+            scan_abs,
+            left_abs,
+            right_abs,
+            mobility,
+            apex_smoothed,
+            apex_raw,
+            prominence,
+            left_x,
+            right_x,
+            width_scans,
+            area_raw,
+            subscan,
+            id,
+        )
+        # assign raw pointer for all getters
+        self.__py_ptr = p
 
     @property
     def id(self) -> int: return self.__py_ptr.id

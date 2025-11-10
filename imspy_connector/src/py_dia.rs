@@ -282,6 +282,87 @@ pub struct PyImPeak1D { pub inner: Arc<ImPeak1D> }
 
 #[pymethods]
 impl PyImPeak1D {
+    #[new]
+    #[pyo3(signature = (
+        mz_row,
+        mz_center,
+        mz_bounds,
+        rt_bounds,
+        frame_id_bounds,
+        window_group,
+        scan,
+        left,
+        right,
+        scan_abs,
+        left_abs,
+        right_abs,
+        mobility,
+        apex_smoothed,
+        apex_raw,
+        prominence,
+        left_x,
+        right_x,
+        width_scans,
+        area_raw,
+        subscan,
+        id
+    ))]
+    pub fn new(
+        mz_row: usize,
+        mz_center: f32,
+        mz_bounds: (f32, f32),
+        rt_bounds: (usize, usize),
+        frame_id_bounds: (u32, u32),
+        window_group: Option<u32>,
+
+        scan: usize,
+        left: usize,
+        right: usize,
+
+        scan_abs: usize,
+        left_abs: usize,
+        right_abs: usize,
+
+        mobility: Option<f32>,
+        apex_smoothed: f32,
+        apex_raw: f32,
+        prominence: f32,
+        left_x: f32,
+        right_x: f32,
+        width_scans: usize,
+        area_raw: f32,
+        subscan: f32,
+        id: i64,
+    ) -> Self {
+        let inner = ImPeak1D {
+            mz_row,
+            mz_center,
+            mz_bounds,
+            rt_bounds,
+            frame_id_bounds,
+            window_group,
+
+            scan,
+            left,
+            right,
+
+            scan_abs,
+            left_abs,
+            right_abs,
+
+            mobility,
+            apex_smoothed,
+            apex_raw,
+            prominence,
+            left_x,
+            right_x,
+            width_scans,
+            area_raw,
+            subscan,
+            id,
+        };
+        Self { inner: Arc::new(inner) }
+    }
     /// Stable 64-bit identity of this IM peak
     #[getter] fn id(&self) -> i64 { self.inner.id }
     /// Prefer this going forward (same value as rt_row)
