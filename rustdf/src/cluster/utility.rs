@@ -767,3 +767,125 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
 
     Fit1D { mu, sigma, height, baseline, area, r2: 0.0, n }
 }
+
+fn gaussian_kernel_bins(sigma_bins: f32, truncate_k: f32) -> (Vec<i32>, Vec<f32>) {
+    let sigma = sigma_bins.max(0.3);
+    let radius = (truncate_k * sigma).ceil() as i32;
+    let mut offs = Vec::with_capacity((2*radius + 1) as usize);
+    let mut w    = Vec::with_capacity(offs.capacity());
+    let two_s2 = 2.0 * sigma * sigma;
+    let mut sum = 0.0f32;
+    for d in -radius..=radius {
+        let x = d as f32;
+        let wd = (-x*x / two_s2).exp();
+        offs.push(d);
+        w.push(wd);
+        sum += wd;
+    }
+    for wi in &mut w { *wi /= sum.max(1e-12); }
+    (offs, w)
+}
+
+use rustc_hash::FxHashMap;
+
+// Key for accumulation
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Key { bin: usize, scan: u32 }
+
+pub fn gaussian_blur_mz_sparse(
+    fbv: &FrameBinView,
+    sigma_bins: f32,
+    truncate_k: f32,
+) -> FrameBinView {
+    if fbv.unique_bins.is_empty() { return fbv.clone(); }
+
+    let (deltas, weights) = gaussian_kernel_bins(sigma_bins, truncate_k);
+    let nnz = fbv.intensity.len();
+    let k = deltas.len() as usize;
+
+    // Reserve: heuristic ~ nnz * effective support (not all deltas hit valid bins)
+    let mut acc: FxHashMap<Key, f32> = FxHashMap::with_capacity_and_hasher(nnz.saturating_mul(k/2), Default::default());
+
+    // Optional: quick bounds to avoid branching
+    let bin_min = *fbv.unique_bins.first().unwrap();
+    let bin_max = *fbv.unique_bins.last().unwrap();
+
+    // Iterate bins in order
+    for (i, &bin) in fbv.unique_bins.iter().enumerate() {
+        let lo = fbv.offsets[i];
+        let hi = fbv.offsets[i + 1];
+        for j in lo..hi {
+            let scan = fbv.scan_idx[j];   // u32 absolute scan
+            let val  = fbv.intensity[j];
+            if val <= 0.0 { continue; }
+
+            // Spread to neighbors
+            for (d, &w) in deltas.iter().zip(weights.iter()) {
+                let b2 = if d.is_negative() {
+                    bin.saturating_sub((-d) as usize)
+                } else {
+                    bin.saturating_add(*d as usize)
+                };
+                if b2 < bin_min || b2 > bin_max { continue; }
+                let key = Key { bin: b2, scan };
+                *acc.entry(key).or_insert(0.0) += val * w;
+            }
+        }
+    }
+
+    // Compact back into FrameBinView: group by bin, then by insertion order build CSR
+    let mut items: Vec<(usize, u32, f32)> = Vec::with_capacity(acc.len());
+    for (k, v) in acc.into_iter() {
+        if v > 0.0 && k.bin >= bin_min && k.bin <= bin_max {
+            items.push((k.bin, k.scan, v));
+        }
+    }
+    items.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let mut unique_bins = Vec::new();
+    let mut offsets = Vec::new();
+    let mut scan_idx = Vec::with_capacity(items.len());
+    let mut intensity = Vec::with_capacity(items.len());
+
+    offsets.push(0);
+    let mut cur_bin: Option<usize> = None;
+    for (bin, scan, val) in items.into_iter() {
+        if cur_bin.map_or(true, |cb| cb != bin) {
+            unique_bins.push(bin);
+            offsets.push(offsets.last().copied().unwrap());
+            cur_bin = Some(bin);
+        }
+        scan_idx.push(scan);
+        intensity.push(val);
+        *offsets.last_mut().unwrap() += 1;
+    }
+    // Guarantee at least one offset (if frame is empty after filtering)
+    if unique_bins.is_empty() {
+        return FrameBinView {
+            _frame_id: fbv._frame_id,
+            unique_bins: Vec::new(),
+            offsets: vec![0],
+            scan_idx: Vec::new(),
+            intensity: Vec::new(),
+        };
+    }
+
+    FrameBinView {
+        _frame_id: fbv._frame_id,
+        unique_bins,
+        offsets,
+        scan_idx,
+        intensity,
+    }
+}
+
+pub fn blur_mz_all_frames(
+    frames: &[FrameBinView],
+    sigma_bins: f32,
+    truncate_k: f32,
+) -> Vec<FrameBinView> {
+    use rayon::prelude::*;
+    frames.par_iter()
+        .map(|f| gaussian_blur_mz_sparse(f, sigma_bins, truncate_k))
+        .collect()
+}

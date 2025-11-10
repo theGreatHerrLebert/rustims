@@ -989,6 +989,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         rt_hop_sec: float,
         num_threads: int = 4,
         im_sigma_scans: Optional[float] = None,
+        mz_sigma_bins: Optional[float] = None,
         truncate: float = 3.0,
         precompute_views: bool = False,
     ) -> MzScanPlan:
@@ -1005,6 +1006,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             rt_hop_sec,
             num_threads,
             im_sigma_scans,
+            mz_sigma_bins,
             truncate,
             precompute_views,
         )
@@ -1020,6 +1022,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         rt_hop_sec: float,
         num_threads: int = 4,
         im_sigma_scans: Optional[float] = None,
+        mz_sigma_bins: Optional[float] = None,
         truncate: float = 3.0,
         precompute_views: bool = False,
         clamp_mz_to_group: bool = True,
@@ -1044,6 +1047,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             float(rt_hop_sec),
             int(num_threads),
             im_sigma_scans,          # None or float
+            mz_sigma_bins,           # None or float
             float(truncate),
             bool(precompute_views),
             bool(clamp_mz_to_group),

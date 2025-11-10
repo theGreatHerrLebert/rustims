@@ -15,7 +15,7 @@ use rustdf::cluster::cluster_scoring::{best_ms1_for_each_ms2, score_pairs, Score
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{MzScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, expand_many_im_peaks_along_rt};
-use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, MobilityFn, trapezoid_area_fractional, quad_subsample, find_im_peaks_row, im_peak_id};
+use rustdf::cluster::utility::{MzScale, scan_mz_range, smooth_vector_gaussian, MobilityFn, trapezoid_area_fractional, quad_subsample, find_im_peaks_row, im_peak_id, blur_mz_all_frames};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
@@ -455,6 +455,7 @@ pub struct PyMzScanPlanGroup {
 
     // exec params
     maybe_sigma_scans: Option<f32>,
+    maybe_sigma_mz_bins: Option<f32>,
     truncate: f32,
     num_threads: usize,
 
@@ -477,6 +478,7 @@ impl PyMzScanPlanGroup {
         rt_hop_sec,
         num_threads=4,
         maybe_sigma_scans=None,
+        maybe_sigma_mz_bins=None,
         truncate=3.0,
         precompute_views=false,
         clamp_mz_to_group=true
@@ -491,6 +493,7 @@ impl PyMzScanPlanGroup {
         rt_hop_sec: f32,
         num_threads: usize,
         maybe_sigma_scans: Option<f32>,
+        maybe_sigma_mz_bins: Option<f32>,
         truncate: f32,
         precompute_views: bool,
         clamp_mz_to_group: bool,
@@ -573,6 +576,7 @@ impl PyMzScanPlanGroup {
             rows,
             global_num_scans,
             maybe_sigma_scans,
+            maybe_sigma_mz_bins,
             truncate,
             num_threads,
             views,
@@ -716,9 +720,10 @@ impl PyMzScanPlanGroup {
         let rows = self.rows;
         let cols = self.global_num_scans;
         let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+        let do_blur_mz = self.maybe_sigma_mz_bins.unwrap_or(0.0) > 0.0;
 
         // Views for this window (group frames only)
-        let views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
+        let mut views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
             (lo..=hi).map(|k| views[k].clone()).collect()
         } else {
             let fids = self.frame_ids_sorted[lo..=hi].to_vec();
@@ -732,6 +737,12 @@ impl PyMzScanPlanGroup {
                 .map(|fr| build_frame_bin_view(fr, &self.scale, cols))
                 .collect()
         };
+
+        if do_blur_mz {
+            let sigma_bins = self.maybe_sigma_mz_bins.unwrap();
+            let trunc = self.truncate;
+            views_local = blur_mz_all_frames(&views_local, sigma_bins, trunc);
+        }
 
         // Accumulate onto the **global** scan axis (same as MS1 plan)
         let mut raw = vec![0.0f32; rows * cols];
@@ -777,7 +788,7 @@ impl PyMzScanPlanGroup {
             data,
             rows,
             cols,
-            data_raw: if do_smooth { Some(raw) } else { None },
+            data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
         })
     }
 }
@@ -796,6 +807,7 @@ pub struct PyMzScanPlan {
 
     // exec params
     maybe_sigma_scans: Option<f32>,
+    maybe_sigma_mz_bins: Option<f32>,
     truncate: f32,
     num_threads: usize,
 
@@ -817,6 +829,7 @@ impl PyMzScanPlan {
         rt_hop_sec,
         num_threads=4,
         maybe_sigma_scans=None,
+        maybe_sigma_mz_bins=None,
         truncate=3.0,
         precompute_views=false
     ))]
@@ -829,6 +842,7 @@ impl PyMzScanPlan {
         rt_hop_sec: f32,
         num_threads: usize,
         maybe_sigma_scans: Option<f32>,
+        maybe_sigma_mz_bins: Option<f32>,
         truncate: f32,
         precompute_views: bool,
     ) -> PyResult<Self> {
@@ -896,6 +910,7 @@ impl PyMzScanPlan {
             rows,
             global_num_scans,
             maybe_sigma_scans,
+            maybe_sigma_mz_bins,
             truncate,
             num_threads,
             views,
@@ -1074,8 +1089,10 @@ impl PyMzScanPlan {
         let rows = self.rows;
         let cols = self.global_num_scans;
         let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+        let do_blur_mz = self.maybe_sigma_mz_bins.unwrap_or(0.0) > 0.0;
+
         // Views for this window; borrow the dataset only around get_slice
-        let views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
+        let mut views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
             (lo..=hi).map(|k| views[k].clone()).collect()
         } else {
             let fids = self.frame_ids_sorted[lo..=hi].to_vec();
@@ -1089,6 +1106,13 @@ impl PyMzScanPlan {
                 .map(|fr| build_frame_bin_view(fr, &self.scale, cols))
                 .collect()
         };
+
+        // 2) OPTIONAL: m/z blur on sparse frames (separable, stable)
+        if do_blur_mz {
+            let sigma_bins = self.maybe_sigma_mz_bins.unwrap();
+            let trunc = self.truncate;
+            views_local = blur_mz_all_frames(&views_local, sigma_bins, trunc);
+        }
 
         // Accumulate onto the fixed global scan axis
         let mut raw = vec![0.0f32; rows * cols];
@@ -1134,7 +1158,7 @@ impl PyMzScanPlan {
             data,
             rows,
             cols,
-            data_raw: if do_smooth { Some(raw) } else { None },
+            data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
         })
     }
 }
