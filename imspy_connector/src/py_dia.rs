@@ -664,7 +664,6 @@ impl PyMzScanPlanGroup {
             cur: 0,
         })
     }
-
     // ---- Introspection (parity with PyMzScanPlan)
     #[getter] fn rows(&self) -> usize { self.rows }
     #[getter] fn global_num_scans(&self) -> usize { self.global_num_scans }
@@ -753,6 +752,53 @@ impl PyMzScanPlanGroup {
         Ok(out)
     }
 
+    #[pyo3(name = "get_batch_par")]
+    pub fn get_batch_par(
+        &self,
+        py: Python<'_>,
+        start: usize,
+        count: usize,
+    ) -> PyResult<Vec<Py<PyMzScanWindowGrid>>> {
+        let n = self.windows_idx.len();
+        if start >= n { return Ok(Vec::new()); }
+        let end = (start + count).min(n);
+
+        let indices: Vec<usize> = (start..end).collect();
+
+        // Build all grids without holding the GIL
+        let built: Vec<Result<MzScanWindowGrid, String>> = py.allow_threads(|| {
+            if self.views.is_some() {
+                // Fully GIL-free path when views are precomputed
+                indices.par_iter()
+                    .map(|&i| {
+                        // No Python touches here
+                        Ok(self.build_window_from_views(i))
+                    })
+                    .collect()
+            } else {
+                // Fall back to calling build_window under an assumed GIL.
+                // (Matches pattern used elsewhere in your codebase.)
+                indices.par_iter()
+                    .map(|&i| {
+                        // SAFETY: we don't touch Python objects other than the brief borrow inside build_window.
+                        let py = unsafe { Python::assume_gil_acquired() };
+                        self.build_window(py, i).map_err(|e| format!("{e}"))
+                    })
+                    .collect()
+            }
+        });
+
+        // Convert to Python objects, preserving order and surfacing any errors
+        let mut out = Vec::with_capacity(built.len());
+        for item in built {
+            match item {
+                Ok(grid) => out.push(Py::new(py, PyMzScanWindowGrid { inner: grid })?),
+                Err(msg) => return Err(pyo3::exceptions::PyRuntimeError::new_err(msg)),
+            }
+        }
+        Ok(out)
+    }
+
     #[pyo3(signature = (indices, min_prom=50.0, min_distance_scans=2, min_width_scans=10, use_mobility=false))]
     pub fn pick_im_peaks_for_indices(
         &self,
@@ -797,6 +843,11 @@ impl PyMzScanPlanGroup {
 
 impl PyMzScanPlanGroup {
     fn build_window(&self, py: Python<'_>, i: usize) -> PyResult<MzScanWindowGrid> {
+        if self.views.is_some() {
+            // Fast path: no dataset access, no GIL work
+            return Ok(self.build_window_from_views(i));
+        }
+
         let (lo, hi) = self.windows_idx[i];
         let rows = self.rows;
         let cols = self.global_num_scans;
@@ -804,9 +855,7 @@ impl PyMzScanPlanGroup {
         let do_blur_mz = self.maybe_sigma_mz_bins.unwrap_or(0.0) > 0.0;
 
         // Views for this window (group frames only)
-        let mut views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
-            (lo..=hi).map(|k| views[k].clone()).collect()
-        } else {
+        let mut views_local: Vec<FrameBinView> = {
             let fids = self.frame_ids_sorted[lo..=hi].to_vec();
             let frames = {
                 let ds_bound = self.ds.bind(py);
@@ -825,7 +874,7 @@ impl PyMzScanPlanGroup {
             views_local = blur_mz_all_frames(&views_local, sigma_bins, trunc);
         }
 
-        // Accumulate onto the **global** scan axis (same as MS1 plan)
+        // Accumulate onto the **global** scan axis
         let mut raw = vec![0.0f32; rows * cols];
         for v in &views_local {
             for b_i in 0..v.unique_bins.len() {
@@ -853,7 +902,6 @@ impl PyMzScanPlanGroup {
             raw.clone()
         };
 
-        let (lo, hi) = self.windows_idx[i];
         let frame_id_bounds = (
             self.frame_ids_sorted[lo],
             self.frame_ids_sorted[hi],
@@ -871,6 +919,68 @@ impl PyMzScanPlanGroup {
             cols,
             data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
         })
+    }
+
+    #[inline]
+    fn build_window_from_views(&self, i: usize) -> MzScanWindowGrid {
+        let (lo, hi) = self.windows_idx[i];
+        let rows = self.rows;
+        let cols = self.global_num_scans;
+        let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+        let do_blur_mz = self.maybe_sigma_mz_bins.unwrap_or(0.0) > 0.0;
+
+        // Views for this window are already precomputed; no Python / dataset needed.
+        let mut views_local: Vec<FrameBinView> =
+            (lo..=hi).map(|k| self.views.as_ref().unwrap()[k].clone()).collect();
+
+        if do_blur_mz {
+            let sigma_bins = self.maybe_sigma_mz_bins.unwrap();
+            let trunc = self.truncate;
+            views_local = blur_mz_all_frames(&views_local, sigma_bins, trunc);
+        }
+
+        // Accumulate onto the fixed global scan axis
+        let mut raw = vec![0.0f32; rows * cols];
+        for v in &views_local {
+            for b_i in 0..v.unique_bins.len() {
+                let row = v.unique_bins[b_i];
+                let start = v.offsets[b_i];
+                let end   = v.offsets[b_i + 1];
+                for j in start..end {
+                    let s_phys = v.scan_idx[j] as usize;
+                    if s_phys < cols {
+                        raw[s_phys * rows + row] += v.intensity[j];
+                    }
+                }
+            }
+        }
+
+        let data = if do_smooth {
+            let mut sm = raw.clone();
+            for r in 0..rows {
+                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
+                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
+                for c in 0..cols { sm[c * rows + r] = y[c]; }
+            }
+            sm
+        } else {
+            raw.clone()
+        };
+
+        let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
+
+        MzScanWindowGrid {
+            scale: self.scale.clone(),
+            rt_range_frames: (lo, hi),
+            rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
+            frame_id_bounds,
+            window_group: Some(self.window_group),
+            scans: (0..cols).collect(),
+            data,
+            rows,
+            cols,
+            data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
+        }
     }
 }
 
@@ -1115,6 +1225,49 @@ impl PyMzScanPlan {
         Ok(out)
     }
 
+    // Materialize a batch of windows [start, start+count) **in parallel**.
+    /// Keeps output order stable. Uses GIL-free path if `precompute_views=true`.
+    #[pyo3(name = "get_batch_par")]
+    pub fn get_batch_par(
+        &self,
+        py: Python<'_>,
+        start: usize,
+        count: usize,
+    ) -> PyResult<Vec<Py<PyMzScanWindowGrid>>> {
+        let n = self.windows_idx.len();
+        if start >= n { return Ok(Vec::new()); }
+        let end = (start + count).min(n);
+        let indices: Vec<usize> = (start..end).collect();
+
+        // Build all grids without holding the GIL
+        let built: Vec<Result<MzScanWindowGrid, String>> = py.allow_threads(|| {
+            if self.views.is_some() {
+                // Fully GIL-free when views are precomputed
+                indices.par_iter()
+                    .map(|&i| Ok(self.build_window_from_views(i)))
+                    .collect()
+            } else {
+                // Fall back to calling build_window under an assumed GIL
+                indices.par_iter()
+                    .map(|&i| {
+                        let py = unsafe { Python::assume_gil_acquired() };
+                        self.build_window(py, i).map_err(|e| format!("{e}"))
+                    })
+                    .collect()
+            }
+        });
+
+        // Convert to Python objects, preserve order, surface errors
+        let mut out = Vec::with_capacity(built.len());
+        for item in built {
+            match item {
+                Ok(grid) => out.push(Py::new(py, PyMzScanWindowGrid { inner: grid })?),
+                Err(msg) => return Err(pyo3::exceptions::PyRuntimeError::new_err(msg)),
+            }
+        }
+        Ok(out)
+    }
+
     /// Pick IM peaks for a set of window indices in one Rust call.
     /// Returns: List[ List[ List[PyImPeak1D] ] ]  ==> windows × rows × peaks
     #[pyo3(signature = (indices, min_prom=50.0, min_distance_scans=2, min_width_scans=2, use_mobility=false))]
@@ -1166,16 +1319,19 @@ impl PyMzScanPlan {
 
 impl PyMzScanPlan {
     fn build_window(&self, py: Python<'_>, i: usize) -> PyResult<MzScanWindowGrid> {
+        if self.views.is_some() {
+            // Fast path: pure Rust, no dataset/GIL work
+            return Ok(self.build_window_from_views(i));
+        }
+
         let (lo, hi) = self.windows_idx[i];
         let rows = self.rows;
         let cols = self.global_num_scans;
         let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
         let do_blur_mz = self.maybe_sigma_mz_bins.unwrap_or(0.0) > 0.0;
 
-        // Views for this window; borrow the dataset only around get_slice
-        let mut views_local: Vec<FrameBinView> = if let Some(ref views) = self.views {
-            (lo..=hi).map(|k| views[k].clone()).collect()
-        } else {
+        // Build views from dataset (short, scoped borrow)
+        let mut views_local: Vec<FrameBinView> = {
             let fids = self.frame_ids_sorted[lo..=hi].to_vec();
             let frames = {
                 let ds_bound = self.ds.bind(py);
@@ -1188,7 +1344,6 @@ impl PyMzScanPlan {
                 .collect()
         };
 
-        // 2) OPTIONAL: m/z blur on sparse frames (separable, stable)
         if do_blur_mz {
             let sigma_bins = self.maybe_sigma_mz_bins.unwrap();
             let trunc = self.truncate;
@@ -1223,24 +1378,82 @@ impl PyMzScanPlan {
             raw.clone()
         };
 
-        let (lo, hi) = self.windows_idx[i];
-        let frame_id_bounds = (
-            self.frame_ids_sorted[lo],
-            self.frame_ids_sorted[hi],
-        );
+        let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
 
         Ok(MzScanWindowGrid {
             scale: self.scale.clone(),
             rt_range_frames: (lo, hi),
             rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
-            frame_id_bounds,           // NEW
-            window_group: None,        // NEW
+            frame_id_bounds,
+            window_group: None,
             scans: (0..cols).collect(),
             data,
             rows,
             cols,
             data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
         })
+    }
+
+    #[inline]
+    fn build_window_from_views(&self, i: usize) -> MzScanWindowGrid {
+        let (lo, hi) = self.windows_idx[i];
+        let rows = self.rows;
+        let cols = self.global_num_scans;
+        let do_smooth = self.maybe_sigma_scans.unwrap_or(0.0) > 0.0;
+        let do_blur_mz = self.maybe_sigma_mz_bins.unwrap_or(0.0) > 0.0;
+
+        // Views are precomputed; no Python or dataset access
+        let mut views_local: Vec<FrameBinView> =
+            (lo..=hi).map(|k| self.views.as_ref().unwrap()[k].clone()).collect();
+
+        if do_blur_mz {
+            let sigma_bins = self.maybe_sigma_mz_bins.unwrap();
+            let trunc = self.truncate;
+            views_local = blur_mz_all_frames(&views_local, sigma_bins, trunc);
+        }
+
+        // Accumulate onto the fixed global scan axis
+        let mut raw = vec![0.0f32; rows * cols];
+        for v in &views_local {
+            for b_i in 0..v.unique_bins.len() {
+                let row = v.unique_bins[b_i];
+                let start = v.offsets[b_i];
+                let end   = v.offsets[b_i + 1];
+                for j in start..end {
+                    let s_phys = v.scan_idx[j] as usize;
+                    if s_phys < cols {
+                        raw[s_phys * rows + row] += v.intensity[j];
+                    }
+                }
+            }
+        }
+
+        let data = if do_smooth {
+            let mut sm = raw.clone();
+            for r in 0..rows {
+                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
+                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
+                for c in 0..cols { sm[c * rows + r] = y[c]; }
+            }
+            sm
+        } else {
+            raw.clone()
+        };
+
+        let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
+
+        MzScanWindowGrid {
+            scale: self.scale.clone(),
+            rt_range_frames: (lo, hi),
+            rt_range_sec: (self.frame_times[lo], self.frame_times[hi]),
+            frame_id_bounds,
+            window_group: None,
+            scans: (0..cols).collect(),
+            data,
+            rows,
+            cols,
+            data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
+        }
     }
 }
 

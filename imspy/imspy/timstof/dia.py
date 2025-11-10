@@ -639,6 +639,10 @@ class MzScanPlanGroup(RustWrapperObject):
         grids = self.__py_ptr.get_batch(int(start), int(count))
         return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
 
+    def get_batch_par(self, start: int, count: int, num_threads: int) -> list["MzScanWindowGrid"]:
+        grids = self.__py_ptr.get_batch_par(int(start), int(count))
+        return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
+
     def pick_im_peaks_batched(
             self,
             indices: list[int],
@@ -733,6 +737,10 @@ class MzScanPlan(RustWrapperObject):
 
     def get_batch(self, start: int, count: int) -> list["MzScanWindowGrid"]:
         grids = self.__py_ptr.get_batch(int(start), int(count))
+        return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
+
+    def get_batch_par(self, start: int, count: int, num_threads: int) -> list["MzScanWindowGrid"]:
+        grids = self.__py_ptr.get_batch_par(int(start), int(count))
         return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
 
     def pick_im_peaks_batched(
