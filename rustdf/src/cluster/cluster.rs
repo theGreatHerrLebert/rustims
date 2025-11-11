@@ -333,6 +333,18 @@ pub fn evaluate_spec_1d(
     sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
     sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
 
+    // If IM μ is zero (forbidden), replace by midpoint of the window
+    if im_fit.mu == 0.0 {
+        let lo = spec.im_lo as f32;
+        let hi = spec.im_hi as f32;
+        if hi > lo {
+            im_fit.mu = 0.5 * (lo + hi);
+        } else {
+            // degenerate window → pick the only point or push slightly inside
+            im_fit.mu = lo.max(1.0);
+        }
+    }
+
     // --- 5) pack (respect chosen bins)
     let raw_sum = use_rt_marg.iter().copied().sum();
     let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
