@@ -831,18 +831,39 @@ def _fnv1a64_signed(parts):
         h = (h * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
     return h - (1 << 64) if (h & (1 << 63)) else h
 
-def _mz_bounds_from_centers(mz_centers: np.ndarray, row: int, pad_ppm: float = 0.0) -> tuple[float, float]:
+def _mz_bounds_from_centers(
+    mz_centers: np.ndarray,
+    row: int,
+    pad_ppm: float = 0.0,
+    pad_abs: float = 0.0,   # <-- NEW absolute Th padding
+) -> tuple[float, float]:
+
     c = float(mz_centers[row])
+
+    # --- apply ppm-based symmetric expansion first ---
     if pad_ppm > 0.0:
         f = 1.0 + pad_ppm * 1e-6
-        return c / f, c * f
-    # half-neighbour spacing
-    if row + 1 < len(mz_centers):
-        dz = abs(float(mz_centers[row + 1]) - c)
+        lo, hi = c / f, c * f
     else:
-        dz = abs(c - float(mz_centers[max(row - 1, 0)]))
-    dz = dz if dz > 0 else 1.0
-    return c - 0.5 * dz, c + 0.5 * dz
+        # --- fallback: half-neighbour spacing ---
+        if row + 1 < len(mz_centers):
+            dz = abs(float(mz_centers[row + 1]) - c)
+        else:
+            dz = abs(c - float(mz_centers[max(row - 1, 0)]))
+        dz = dz if dz > 0 else 1.0
+        lo, hi = c - 0.5 * dz, c + 0.5 * dz
+
+    # --- NEW: absolute padding ---
+    if pad_abs > 0.0:
+        lo -= pad_abs
+        hi += pad_abs
+
+    # --- guards: no negative m/z ---
+    lo = max(0.0, lo)
+    if hi <= lo:
+        hi = lo + 1e-6
+
+    return float(lo), float(hi)
 
 
 class ImPeak1D(RustWrapperObject):
@@ -979,7 +1000,9 @@ class ImPeak1D(RustWrapperObject):
                       k_sigma: float = 3.0,
                       min_width: int = 3,
                       clamp_to_grid: bool = True,
-                      mz_bounds_pad_ppm: float = 0.0):
+                      mz_bounds_pad_ppm: float = 0.0,
+                      mz_bounds_pad_abs: float = 0.0
+                      ):
 
         # normalize row access
         if isinstance(det_row, pd.Series):
@@ -1033,7 +1056,7 @@ class ImPeak1D(RustWrapperObject):
         right_x = float(j_scan) + k_sigma * s_scan
 
         mz_center = float(mz_centers[mz_row])
-        mz_bounds = _mz_bounds_from_centers(mz_centers, mz_row, pad_ppm=mz_bounds_pad_ppm)
+        mz_bounds = _mz_bounds_from_centers(mz_centers, mz_row, pad_ppm=mz_bounds_pad_ppm, pad_abs=mz_bounds_pad_abs)
 
         apex_smoothed = amp + base
         apex_raw = apex_smoothed
