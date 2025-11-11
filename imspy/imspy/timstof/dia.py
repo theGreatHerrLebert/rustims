@@ -1719,25 +1719,46 @@ from collections.abc import Iterable
 from typing import List, Sequence
 
 def stitch_im_peaks(
-    peaks: Sequence[Sequence[Sequence['ImPeak1D']]],  # windows × rows × peaks
+    peaks: Sequence[Sequence[Sequence['ImPeak1D']]] ,  # windows × rows × peaks
     min_overlap_frames: int = 1,
     max_scan_delta: int = 1,
-    jaccard_min: float = 0.0,
+    jaccard_min: float = 0.0,             # RT Jaccard (unchanged)
     max_mz_row_delta: int = 0,
     allow_cross_groups: bool = False,
+    # --- NEW IM constraints ---
+    min_im_overlap_scans: int = 1,
+    im_jaccard_min: float = 0.0,
+    require_mutual_apex_inside: bool = True,
 ) -> List['ImPeak1D']:
     """
     Stitch IM 1D peaks across overlapping RT windows.
 
-    Accepts either:
-      - flat:   List[ImPeak1D]
-      - nested: List[List[List[ImPeak1D]]] (windows × rows × peaks)
+    Parameters
+    ----------
+    peaks : windows × rows × peaks (nested)
+    min_overlap_frames : int
+        Minimum RT frame overlap (inclusive).
+    max_scan_delta : int
+        Maximum allowed distance between IM apex scans.
+    jaccard_min : float
+        Minimum RT Jaccard; set 0.0 to disable.
+    max_mz_row_delta : int
+        Allowed |Δ mz_row|.
+    allow_cross_groups : bool
+        Permit stitching across DIA window groups.
+    min_im_overlap_scans : int
+        Minimum IM (half-prom) overlap in scans (inclusive).
+    im_jaccard_min : float
+        Minimum IM Jaccard on [left,right]; set 0.0 to disable.
+    require_mutual_apex_inside : bool
+        Require each apex scan to lie inside the other's half-prom interval.
 
-    Returns:
-      flat, deduplicated List[ImPeak1D]
+    Returns
+    -------
+    List[ImPeak1D]
+        Flat, deduplicated stitched peaks.
     """
     from .dia import ImPeak1D
-
     # empty fast-path
     if not peaks:
         return []
@@ -1753,27 +1774,48 @@ def stitch_im_peaks(
         float(jaccard_min),
         int(max_mz_row_delta),
         bool(allow_cross_groups),
+        # NEW args (must match Rust order)
+        int(min_im_overlap_scans),
+        float(im_jaccard_min),
+        bool(require_mutual_apex_inside),
     )
     return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
 
+
 def stitch_im_peaks_flat(
     peaks,                   # Sequence[ImPeak1D]
-    min_overlap_frames=1,
-    max_scan_delta=1,
-    jaccard_min=0.0,
-    max_mz_row_delta=0,
-    allow_cross_groups=False,
+    min_overlap_frames: int = 1,
+    max_scan_delta: int = 1,
+    jaccard_min: float = 0.0,
+    max_mz_row_delta: int = 0,
+    allow_cross_groups: bool = False,
+    # --- NEW IM constraints ---
+    min_im_overlap_scans: int = 1,
+    im_jaccard_min: float = 0.0,
+    require_mutual_apex_inside: bool = True,
 ):
+    """
+    Stitch IM 1D peaks from a flat list (unordered).
+
+    See `stitch_im_peaks` for parameter semantics.
+    """
     from .dia import ImPeak1D
     if not peaks:
         return []
     ptrs = [p.get_py_ptr() for p in peaks]
     stitched_py = ims.stitch_im_peaks_flat_unordered(
-        ptrs, int(min_overlap_frames), int(max_scan_delta),
-        float(jaccard_min), int(max_mz_row_delta), bool(allow_cross_groups)
+        ptrs,
+        int(min_overlap_frames),
+        int(max_scan_delta),
+        float(jaccard_min),
+        int(max_mz_row_delta),
+        bool(allow_cross_groups),
+        # NEW args (must match Rust order)
+        int(min_im_overlap_scans),
+        float(im_jaccard_min),
+        bool(require_mutual_apex_inside),
     )
     return [ImPeak1D.from_py_ptr(p) for p in stitched_py]
-
 _DEFAULT_ORDER = [
     # provenance / windows
     "ms_level", "window_group", "parent_im_id", "parent_rt_id",

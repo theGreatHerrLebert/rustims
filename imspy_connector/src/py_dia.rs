@@ -2135,6 +2135,27 @@ pub struct StitchParams {
     pub jaccard_min: f32,
     pub max_mz_row_delta: usize,   // NEW, e.g. 0 (current), 1 or 2
     pub allow_cross_groups: bool,  // NEW if you want to stitch across groups
+
+    // NEW: IM constraints
+    pub min_im_overlap_scans: usize, // e.g. 1–3
+    pub im_jaccard_min: f32,         // e.g. 0.10–0.30, or 0.0 to disable
+    pub require_mutual_apex_inside: bool, // safer stitching in IM
+}
+
+#[inline]
+fn im_overlap(a: (usize, usize), b: (usize, usize)) -> usize {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    hi.saturating_sub(lo).saturating_add(1)
+}
+
+#[inline]
+fn im_jaccard(a: (usize, usize), b: (usize, usize)) -> f32 {
+    let inter = im_overlap(a, b) as f32;
+    if inter <= 0.0 { return 0.0; }
+    let len_a = (a.1 - a.0 + 1) as f32;
+    let len_b = (b.1 - b.0 + 1) as f32;
+    inter / (len_a + len_b - inter)
 }
 
 fn same_row_or_close(p:&ImPeak1D, q:&ImPeak1D, d:usize) -> bool {
@@ -2157,10 +2178,33 @@ struct Key { wg: Option<u32>, mz_row: usize, scan_bin: usize }
 fn compatible_fast(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
     if !same_row_or_close(p, q, sp.max_mz_row_delta) { return false; }
     if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
+
+    // --- IM apex proximity (existing coarse check via centers)
     if (p.scan as isize - q.scan as isize).abs() as usize > sp.max_scan_delta { return false; }
-    let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
-    if ov < sp.min_overlap_frames { return false; }
+
+    // --- RT must overlap (existing)
+    let ov_rt = rt_overlap(p.rt_bounds, q.rt_bounds);
+    if ov_rt < sp.min_overlap_frames { return false; }
     if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min { return false; }
+
+    // --- NEW: IM interval constraints (use half-prom indices [left, right])
+    let a = (p.left, p.right);
+    let b = (q.left, q.right);
+
+    // minimum integer scan overlap
+    let ov_im = im_overlap(a, b);
+    if ov_im < sp.min_im_overlap_scans { return false; }
+
+    // optional IM Jaccard
+    if sp.im_jaccard_min > 0.0 && im_jaccard(a, b) < sp.im_jaccard_min { return false; }
+
+    // optional: each apex (integer scan) must lie inside the other's half-prom span
+    if sp.require_mutual_apex_inside {
+        let p_in_q = q.left <= p.scan && p.scan <= q.right;
+        let q_in_p = p.left <= q.scan && q.scan <= p.right;
+        if !(p_in_q && q_in_p) { return false; }
+    }
+
     true
 }
 #[inline]
@@ -2193,15 +2237,30 @@ fn merge_into(a: &mut ImPeak1D, b: &ImPeak1D) {
 fn opt_u32_to_i64(x: Option<u32>) -> i64 { x.map(|v| v as i64).unwrap_or(-1) }
 
 #[pyfunction]
-#[pyo3(signature = (batched, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
+#[pyo3(signature = (
+    batched,
+    min_overlap_frames=1,
+    max_scan_delta=1,
+    jaccard_min=0.0,
+    max_mz_row_delta=0,
+    allow_cross_groups=false,
+    // NEW:
+    min_im_overlap_scans=1,
+    im_jaccard_min=0.0,
+    require_mutual_apex_inside=true
+))]
 pub fn stitch_im_peaks_batched_streaming(
     py: Python<'_>,
-    batched: Vec<Vec<Vec<Py<PyImPeak1D>>>>, // windows × rows × peaks
+    batched: Vec<Vec<Vec<Py<PyImPeak1D>>>>,
     min_overlap_frames: usize,
     max_scan_delta: usize,
     jaccard_min: f32,
     max_mz_row_delta: usize,
     allow_cross_groups: bool,
+    // NEW:
+    min_im_overlap_scans: usize,
+    im_jaccard_min: f32,
+    require_mutual_apex_inside: bool,
 ) -> PyResult<Vec<Py<PyImPeak1D>>> {
     let params = StitchParams {
         min_overlap_frames,
@@ -2209,6 +2268,10 @@ pub fn stitch_im_peaks_batched_streaming(
         jaccard_min,
         max_mz_row_delta,
         allow_cross_groups,
+        // NEW:
+        min_im_overlap_scans,
+        im_jaccard_min,
+        require_mutual_apex_inside,
     };
 
     // Active accumulators keyed by (wg, mz_row, scan_bin)
@@ -2688,7 +2751,18 @@ struct KeyFlat {
 }
 
 #[pyfunction]
-#[pyo3(signature = (flat, min_overlap_frames=1, max_scan_delta=1, jaccard_min=0.0, max_mz_row_delta=0, allow_cross_groups=false))]
+#[pyo3(signature = (
+    flat,
+    min_overlap_frames=1,
+    max_scan_delta=1,
+    jaccard_min=0.0,
+    max_mz_row_delta=0,
+    allow_cross_groups=false,
+    // NEW:
+    min_im_overlap_scans=1,
+    im_jaccard_min=0.0,
+    require_mutual_apex_inside=true
+))]
 pub fn stitch_im_peaks_flat_unordered(
     py: Python<'_>,
     flat: Vec<Py<PyImPeak1D>>,
@@ -2697,6 +2771,10 @@ pub fn stitch_im_peaks_flat_unordered(
     jaccard_min: f32,
     max_mz_row_delta: usize,
     allow_cross_groups: bool,
+    // NEW:
+    min_im_overlap_scans: usize,
+    im_jaccard_min: f32,
+    require_mutual_apex_inside: bool,
 ) -> PyResult<Vec<Py<PyImPeak1D>>> {
     let params = StitchParams {
         min_overlap_frames,
@@ -2704,6 +2782,10 @@ pub fn stitch_im_peaks_flat_unordered(
         jaccard_min,
         max_mz_row_delta,
         allow_cross_groups,
+        // NEW:
+        min_im_overlap_scans,
+        im_jaccard_min,
+        require_mutual_apex_inside,
     };
 
     // Quick exit
