@@ -74,7 +74,7 @@ def detect_and_stitch_for_plan(
         collected = []
 
     num_batches = (len(plan) + int(run_cfg["batch_size"]) - 1) // int(run_cfg["batch_size"])
-    log(f"[detect] plan has {len(plan)} window-groups in ~{num_batches} batches")
+    log(f"[detect] plan has {len(plan)} window-groups (~{num_batches} batches)")
 
     for peak_batch in iter_im_peaks_batches(
         plan,
@@ -108,7 +108,6 @@ def detect_and_stitch_for_plan(
         mz_bounds_pad_abs=float(det_cfg["mz_bounds_pad_abs"]),
     ):
         if use_batch_stitch:
-            # local condense then merge
             stitched_batch = stitch_im_peaks_flat(
                 peak_batch,
                 max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
@@ -159,6 +158,11 @@ def run_precursor(ds, cfg):
 
 def run_fragments(ds, cfg):
     log("[stage] fragments")
+    # Guard: if fragment plans missing, skip gracefully
+    if "fragment" not in cfg.get("plans", {}) or "fragment" not in cfg.get("stitch", {}):
+        log("[skip] fragments: no [plans.fragment] or [stitch.fragment] in config")
+        return
+
     precompute_views = bool(cfg["run"]["precompute_views"])
     plan_cfg = cfg["plans"]["fragment"]
     stitch_cfg = cfg["stitch"]["fragment"]
@@ -193,10 +197,19 @@ def run_fragments(ds, cfg):
 def load_config(path: str) -> dict:
     with open(path, "rb") as f:
         cfg = toml.load(f)
+
     # light validation / defaults
     for section in ("dataset", "output", "run", "detector", "stitch", "plans"):
         if section not in cfg:
             raise ValueError(f"Missing [{section}] in config.")
+
+    # defaults
+    cfg["run"].setdefault("stage", "both")
+    cfg["run"].setdefault("device", "cuda")
+    cfg["run"].setdefault("batch_size", 64)
+    cfg["run"].setdefault("precompute_views", True)
+    cfg["run"].setdefault("fragments_enabled", False)  # <-- default OFF (opt-in)
+
     # stitching defaults
     cfg["stitch"].setdefault("precursor", {})
     cfg["stitch"].setdefault("fragment", {})
@@ -206,13 +219,22 @@ def load_config(path: str) -> dict:
         cfg["stitch"][s].setdefault("jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("use_batch_stitch", False)
+
     return cfg
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="IM peak detection → stitching → clustering (TOML-configured).")
     parser.add_argument("-c", "--config", required=True, help="Path to config.toml")
-    parser.add_argument("--stage", choices=["precursor", "fragments", "both"], help="Override run.stage from config")
+    parser.add_argument("--stage", choices=["precursor", "fragments", "both"],
+                        help="Override run.stage from config")
     parser.add_argument("--device", help="Override run.device (e.g., 'cuda', 'cpu')")
+    # --- NEW: explicit opt-in/out for fragments ---
+    parser.add_argument("--fragments", dest="fragments", action="store_true",
+                        help="Opt-in to fragment processing (overrides config)")
+    parser.add_argument("--no-fragments", dest="fragments", action="store_false",
+                        help="Opt-out of fragment processing (overrides config)")
+    parser.set_defaults(fragments=None)
+
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -220,17 +242,27 @@ def main(argv=None):
         cfg["run"]["stage"] = args.stage
     if args.device:
         cfg["run"]["device"] = args.device
+    if args.fragments is not None:
+        cfg["run"]["fragments_enabled"] = bool(args.fragments)
 
     ds = TimsDatasetDIA(
         cfg["dataset"]["path"],
         use_bruker_sdk=bool(cfg["dataset"].get("use_bruker_sdk", False)),
     )
 
+    # Decide which stages to run
     stage = cfg["run"].get("stage", "both")
+    fragments_enabled = bool(cfg["run"].get("fragments_enabled", False))
+
+    # Precursor: always allowed unless stage=="fragments"
     if stage in ("precursor", "both"):
         run_precursor(ds, cfg)
-    if stage in ("fragments", "both"):
+
+    # Fragments: run if (stage says so) AND (opt-in true)
+    if stage in ("fragments", "both") and fragments_enabled:
         run_fragments(ds, cfg)
+    elif stage in ("fragments", "both") and not fragments_enabled:
+        log("[skip] fragments disabled (opt-in required)")
 
     log("[done]")
     return 0
