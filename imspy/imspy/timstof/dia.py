@@ -1113,7 +1113,9 @@ class ImPeak1D(RustWrapperObject):
                             k_sigma: float = 3.0,
                             min_width: int = 3,
                             clamp_to_grid: bool = True,
-                            mz_bounds_pad_ppm: float = 0.0):
+                            mz_bounds_pad_ppm: float = 0.0,
+                            mz_bounds_pad_abs: float = 0.0
+                            ) -> list["ImPeak1D"]:
         """
         Vectorized convenience: dict-of-arrays/DataFrame -> list[ImPeak1D].
         """
@@ -1130,6 +1132,7 @@ class ImPeak1D(RustWrapperObject):
                 min_width=min_width,
                 clamp_to_grid=clamp_to_grid,
                 mz_bounds_pad_ppm=mz_bounds_pad_ppm,
+                mz_bounds_pad_abs=mz_bounds_pad_abs
             ))
         return out
 
