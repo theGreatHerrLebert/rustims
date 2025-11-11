@@ -2095,7 +2095,6 @@ fn impeaks_to_py_nested(py: Python<'_>, rows: Vec<Vec<ImPeak1D>>) -> PyResult<Ve
     }).collect())
 }
 
-// ── REPLACE the helper pick_im_peaks_rows_from_grid with this ──
 #[inline]
 fn pick_im_peaks_rows_from_grid(
     grid: &MzScanWindowGrid,
@@ -2104,41 +2103,37 @@ fn pick_im_peaks_rows_from_grid(
     min_width_scans: usize,
     use_mobility: bool,
 ) -> Vec<Vec<ImPeak1D>> {
-    use rustdf::cluster::utility::MobilityFn;
-
     let rows = grid.rows;
     let cols = grid.cols;
-    let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
+
+    let data_ref = grid.data.as_ref().expect("grid.data missing");
+    let data: &[f32] = data_ref.as_slice();
+    let data_raw_opt: Option<&[f32]> = grid.data_raw.as_ref().map(|v| v.as_slice());
 
     (0..rows).map(|r| {
-        // gather row across scans (column-major)
         let mut y_s = Vec::with_capacity(cols);
         let mut y_r = Vec::with_capacity(cols);
         for s in 0..cols {
-            let data_ref = grid.data.as_ref().ok_or_else(|| exceptions::PyRuntimeError::new_err("grid.data missing")).unwrap();
-            let val_s = data_ref[s * rows + r];
+            let idx = s * rows + r;
+            let val_s = data[idx];
             y_s.push(val_s);
-            let val_r = grid.data_raw.as_ref().map(|dr| dr[s * rows + r]).unwrap_or(val_s);
-            y_r.push(val_r);
+            y_r.push(data_raw_opt.map(|raw| raw[idx]).unwrap_or(val_s));
         }
-
-        let mz_center = grid.mz_center_for_row(r);
-        let mz_bounds = grid.mz_bounds_for_row(r);
 
         find_im_peaks_row(
             &y_s,
             &y_r,
             r,
-            mz_center,
-            mz_bounds,
+            grid.mz_center_for_row(r),
+            grid.mz_bounds_for_row(r),
             grid.rt_range_frames,
             grid.frame_id_bounds,
             grid.window_group,
-            mob_fn,
+            if use_mobility { Some(|scan| scan as f32) } else { None },
             min_prom,
-            min_distance_scans,   // <-- distance first
-            min_width_scans,      // <-- then width
-            &grid.scans,          // <-- scan_axis LAST
+            min_distance_scans,
+            min_width_scans,
+            &grid.scans,
         )
     }).collect()
 }
