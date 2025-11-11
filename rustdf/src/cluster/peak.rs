@@ -151,7 +151,7 @@ pub struct MzScanWindowGrid {
     pub scale: Arc<MzScale>,
 
     pub scans: Vec<usize>,
-    pub data: Vec<f32>,
+    pub data: Option<Vec<f32>>,
     pub rows: usize,
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,

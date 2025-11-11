@@ -2,7 +2,7 @@ use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyIterator, PyList, PySlice};
-use numpy::{PyArray1, PyArray2};
+use numpy::{ndarray, PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rustdf::cluster::io as cio;
@@ -433,10 +433,17 @@ impl PyMzScanWindowGrid {
 
     /// Dense window matrix (smoothed if smoothing was applied), Fortran order (rows, cols).
     #[getter]
-    fn data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray2<f32>>> {
-        let arr_f = Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), self.inner.data.clone())
-            .map_err(|e| exceptions::PyValueError::new_err(format!("shape error: {e}")))?;
-        Ok(PyArray2::from_owned_array_bound(py, arr_f).unbind())
+    fn data<'py>(&mut self, py: Python<'py>) -> PyResult<Py<PyArray2<f32>>> {
+        let v = self.inner.data
+            .take()
+            .ok_or_else(|| exceptions::PyRuntimeError::new_err("data already moved"))?;
+        // No copy: from_shape_vec takes ownership of v
+        let arr = numpy::PyArray2::from_owned_array_bound(
+            py,
+            ndarray::Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), v)
+                .map_err(|e| exceptions::PyValueError::new_err(format!("shape error: {e}")))?,
+        );
+        Ok(arr.unbind())
     }
 
     /// Optional raw (pre-smoothing) matrix, Fortran order (rows, cols).
@@ -472,52 +479,59 @@ impl PyMzScanWindowGrid {
     min_distance_scans=2,
     min_width_scans=2,
     use_mobility=false
-))]
+    ))]
     pub fn pick_im_peaks<'py>(
         &self,
-        py: Python<'py>,
+        _py: Python<'py>,
         min_prom: f32,
         min_distance_scans: usize,
         min_width_scans: usize,
         use_mobility: bool,
     ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
-    let rows = self.inner.rows;
-    let cols = self.inner.cols;
+        let rows = self.inner.rows;
+        let cols = self.inner.cols;
 
-    let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
+        // Borrow slices from Options
+        let data_ref: &Vec<f32> = self.inner.data.as_ref()
+            .ok_or_else(|| exceptions::PyRuntimeError::new_err("window.data not available"))?;
+        let data: &[f32] = data_ref.as_slice();
 
-    let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|r| {
-    let mut y_s = Vec::with_capacity(cols);
-    let mut y_r = Vec::with_capacity(cols);
-    for s in 0..cols {
-    let val_s = self.inner.data[s * rows + r];
-    y_s.push(val_s);
-    let val_r = self.inner
-    .data_raw
-    .as_ref()
-    .map(|dr| dr[s * rows + r])
-    .unwrap_or(val_s);
-    y_r.push(val_r);
-    }
+        let data_raw_opt: Option<&[f32]> = self.inner.data_raw.as_ref().map(|v| v.as_slice());
 
-    find_im_peaks_row_nocontext(
-    &y_s,
-    &y_r,
-    r, // mz_row
-    self.inner.mz_center_for_row(r),
-    self.inner.mz_bounds_for_row(r),
-    self.inner.rt_range_frames,
-    self.inner.frame_id_bounds,
-    self.inner.window_group,
-    &self.inner.scans,            // <-- NEW ARG: absolute scan axis
-    mob_fn,
-    min_prom,
-    min_distance_scans,
-    min_width_scans,
-    )
-    }).collect();
+        let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
 
-    impeaks_to_py_nested(py, rows_rs)
+        let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|r| {
+            let mut y_s = Vec::with_capacity(cols);
+            let mut y_r = Vec::with_capacity(cols);
+
+            // column-major (Fortran) layout: idx = s * rows + r
+            for s in 0..cols {
+                let idx = s * rows + r;
+                let val_s = data[idx];
+                y_s.push(val_s);
+
+                let val_r = data_raw_opt.map(|raw| raw[idx]).unwrap_or(val_s);
+                y_r.push(val_r);
+            }
+
+            find_im_peaks_row_nocontext(
+                &y_s,
+                &y_r,
+                r, // mz_row
+                self.inner.mz_center_for_row(r),
+                self.inner.mz_bounds_for_row(r),
+                self.inner.rt_range_frames,
+                self.inner.frame_id_bounds,
+                self.inner.window_group,
+                &self.inner.scans, // absolute scan axis
+                mob_fn,
+                min_prom,
+                min_distance_scans,
+                min_width_scans,
+            )
+        }).collect();
+
+        impeaks_to_py_nested(_py, rows_rs)
     }
 }
 
@@ -793,7 +807,7 @@ impl PyMzScanPlanGroup {
         for item in built {
             match item {
                 Ok(grid) => out.push(Py::new(py, PyMzScanWindowGrid { inner: grid })?),
-                Err(msg) => return Err(pyo3::exceptions::PyRuntimeError::new_err(msg)),
+                Err(msg) => return Err(exceptions::PyRuntimeError::new_err(msg)),
             }
         }
         Ok(out)
@@ -914,7 +928,7 @@ impl PyMzScanPlanGroup {
             frame_id_bounds,
             window_group: Some(self.window_group),
             scans: (0..cols).collect(),
-            data,
+            data: Some(data),
             rows,
             cols,
             data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
@@ -976,7 +990,7 @@ impl PyMzScanPlanGroup {
             frame_id_bounds,
             window_group: Some(self.window_group),
             scans: (0..cols).collect(),
-            data,
+            data: Some(data),
             rows,
             cols,
             data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
@@ -1050,7 +1064,7 @@ impl PyMzScanPlan {
             // 2) Discover scale
             let frames = ds_ref.inner.get_slice(frame_ids_sorted.clone(), num_threads).frames;
             let (mut mz_min, mut mz_max) =
-                scan_mz_range(&frames).ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("no m/z found"))?;
+                scan_mz_range(&frames).ok_or_else(|| exceptions::PyRuntimeError::new_err("no m/z found"))?;
             if mz_pad_ppm > 0.0 {
                 let f = 1.0 + mz_pad_ppm * 1e-6;
                 mz_min /= f; mz_max *= f;
@@ -1262,7 +1276,7 @@ impl PyMzScanPlan {
         for item in built {
             match item {
                 Ok(grid) => out.push(Py::new(py, PyMzScanWindowGrid { inner: grid })?),
-                Err(msg) => return Err(pyo3::exceptions::PyRuntimeError::new_err(msg)),
+                Err(msg) => return Err(exceptions::PyRuntimeError::new_err(msg)),
             }
         }
         Ok(out)
@@ -1387,7 +1401,7 @@ impl PyMzScanPlan {
             frame_id_bounds,
             window_group: None,
             scans: (0..cols).collect(),
-            data,
+            data: Some(data),
             rows,
             cols,
             data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
@@ -1449,7 +1463,7 @@ impl PyMzScanPlan {
             frame_id_bounds,
             window_group: None,
             scans: (0..cols).collect(),
-            data,
+            data: Some(data),
             rows,
             cols,
             data_raw: if do_smooth || do_blur_mz { Some(raw) } else { None },
@@ -2101,7 +2115,8 @@ fn pick_im_peaks_rows_from_grid(
         let mut y_s = Vec::with_capacity(cols);
         let mut y_r = Vec::with_capacity(cols);
         for s in 0..cols {
-            let val_s = grid.data[s * rows + r];
+            let data_ref = grid.data.as_ref().ok_or_else(|| exceptions::PyRuntimeError::new_err("grid.data missing")).unwrap();
+            let val_s = data_ref[s * rows + r];
             y_s.push(val_s);
             let val_r = grid.data_raw.as_ref().map(|dr| dr[s * rows + r]).unwrap_or(val_s);
             y_r.push(val_r);
