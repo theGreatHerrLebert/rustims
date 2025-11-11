@@ -149,11 +149,16 @@ def run_precursor(ds, cfg):
         plan, cfg["run"], cfg["detector"], cfg["stitch"]["precursor"]
     )
 
+    attach_raw = bool(cfg["run"].get("attach_raw_data", False))
+
     clusters = ds.clusters_for_precursor(
         stitched,
         ppm_per_bin=15.0,
         bin_pad=30.0,
         min_prom=50,
+        attach_raw_data=attach_raw,
+        attach_axes=attach_raw,
+        attach_max_points=5000,
     )
 
     # ---- binary save ----
@@ -197,12 +202,17 @@ def run_fragments(ds, cfg):
             plan, cfg["run"], cfg["detector"], stitch_cfg
         )
 
+        attach_raw = bool(cfg["run"].get("attach_raw_data", False))
+
         clusters_wg = ds.clusters_for_group(
             window_group=int(wg),
             im_peaks=stitched_wg,
             ppm_per_bin=15.0,
             bin_pad=30.0,
             min_prom=25,
+            attach_raw_data=attach_raw,
+            attach_axes=attach_raw,
+            attach_max_points=5000,
         )
         all_clusters.extend(clusters_wg)
 
@@ -242,6 +252,7 @@ def load_config(path: str) -> dict:
     cfg["run"].setdefault("batch_size", 64)
     cfg["run"].setdefault("precompute_views", True)
     cfg["run"].setdefault("fragments_enabled", False)  # <-- default OFF (opt-in)
+    cfg["run"].setdefault("attach_raw_data", False)
 
     # stitching defaults
     cfg["stitch"].setdefault("precursor", {})
