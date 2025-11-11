@@ -490,11 +490,182 @@ def iter_detect_peaks_from_blurred(
             torch.cuda.empty_cache()
 
 
-def detect_peaks_from_blurred_streaming(**kwargs):
-    acc = {k: [] for k in ["mu_scan","mu_mz","sigma_scan","sigma_mz",
-                           "amplitude","baseline","area","i","j"]}
-    for chunk in iter_detect_peaks_from_blurred(**kwargs):
+import gc
+from tqdm import tqdm
+
+# ---- plan -> batches of window groups ---------------------------------------
+def iter_plan_batches(plan, batch_size: int):
+    total = len(plan)
+    for start in range(0, total, batch_size):
+        count = min(batch_size, total - start)
+        if hasattr(plan, "get_batch_par"):
+            wgs = plan.get_batch_par(start, count, 1)   # 1 worker hint (adjust if you want)
+        elif hasattr(plan, "get_batch"):
+            wgs = plan.get_batch(start, count, 1)
+        else:
+            raise AttributeError("plan has neither get_batch_par nor get_batch")
+        yield wgs
+
+# --- collect streaming chunks into dict-of-arrays -----------------------------
+def _collect_stream(peaks_iter):
+    acc = {k: [] for k in [
+        "mu_scan","mu_mz","sigma_scan","sigma_mz",
+        "amplitude","baseline","area","i","j"
+    ]}
+    for chunk in peaks_iter:
         for k, v in chunk.items():
             acc[k].append(v)
-    return {k: (np.concatenate(v, axis=0) if len(v) else np.empty((0,), np.float32))
-            for k, v in acc.items()}
+    return {k: (np.concatenate(vs, axis=0) if vs else np.empty((0,), np.float32))
+            for k, vs in acc.items()}
+
+# --- light dedup across tiles (keep max amplitude per coarse cell) ------------
+def _dedup_peaks(peaks, tol_scan=0.75, tol_mz=0.25):
+    if peaks["mu_scan"].size == 0:
+        return peaks
+    s = peaks["mu_scan"]; m = peaks["mu_mz"]; amp = peaks["amplitude"]
+    g_s = np.floor(s / tol_scan).astype(np.int64)
+    g_m = np.floor(m / tol_mz).astype(np.int64)
+    key = (g_s << 32) ^ (g_m & 0xFFFFFFFF)
+    order = np.argsort(amp)
+    seen = {}
+    for idx in order:
+        seen[key[idx]] = idx
+    keep = np.fromiter(seen.values(), dtype=np.int64)
+    return {k: v[keep] for k, v in peaks.items()}
+
+# --- per-WG detection -> list[ImPeak1D] --------------------------------------
+def _detect_im_peaks_for_wgs(
+    wgs, plan_group, *,
+    device="cuda",
+    pool_scan=15, pool_mz=3,
+    min_intensity_scaled=1.0,
+    tile_rows=433_873, tile_overlap=64,
+    fit_h=35, fit_w=11,
+    refine="adam", refine_iters=8, refine_lr=0.2, refine_mask_k=2.5,
+    refine_scan=True, refine_mz=True, refine_sigma_scan=True, refine_sigma_mz=True,
+    scale="sqrt", output_units="original", gn_float64=False,
+    do_dedup=True, tol_scan=0.75, tol_mz=0.25,
+    k_sigma=3.0, min_width=3,
+    mz_bounds_pad_ppm=50.0, mz_bounds_pad_abs=0.05,
+):
+    from imspy.timstof.dia import ImPeak1D
+
+    batch_objs = []
+
+    for wg in tqdm(wgs, desc="Detecting peaks (WG)", leave=False, ncols=80):
+        peaks_iter = iter_detect_peaks_from_blurred(
+            B_blurred=wg.data,
+            device=device,
+            pool_scan=pool_scan, pool_mz=pool_mz,
+            min_intensity=min_intensity_scaled,
+            tile_rows=tile_rows, tile_overlap=tile_overlap,
+            fit_h=fit_h, fit_w=fit_w,
+            rows_are_mz=True,
+            refine=refine, refine_iters=refine_iters, refine_lr=refine_lr, refine_mask_k=refine_mask_k,
+            refine_scan=refine_scan, refine_mz=refine_mz,
+            refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+            scale=scale, output_units=output_units, gn_float64=gn_float64,
+        )
+
+        peaks = _collect_stream(peaks_iter)
+        if do_dedup:
+            peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_mz=tol_mz)
+
+        objs = ImPeak1D.batch_from_detected(
+            peaks,
+            window_grid=wg,
+            plan_group=plan_group,
+            k_sigma=k_sigma,
+            min_width=min_width,
+            mz_bounds_pad_ppm=mz_bounds_pad_ppm,
+            mz_bounds_pad_abs=mz_bounds_pad_abs,
+        )
+        batch_objs.extend(objs)
+
+        # free WG buffers
+        try:
+            if hasattr(wg, "clear_cache") and callable(wg.clear_cache):
+                wg.clear_cache()
+            if hasattr(wg, "release") and callable(wg.release):
+                wg.release()
+            if hasattr(wg, "data"):
+                wg.data = None
+        except Exception:
+            pass
+
+        del peaks, objs, peaks_iter
+        if torch.cuda.is_available() and device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        gc.collect()
+
+    return batch_objs
+
+# --- PUBLIC: iterate batches -> yield list[ImPeak1D] per batch ----------------
+def iter_im_peaks_batches(
+    plan,
+    *,
+    batch_size=64,
+    device="cuda",
+    # detector / refinement
+    pool_scan=15,
+    pool_mz=3,
+    min_intensity_scaled=1.0,
+    tile_rows=433_873,
+    tile_overlap=64,
+    fit_h=35,
+    fit_w=11,
+    refine="adam",
+    refine_iters=8,
+    refine_lr=0.2,
+    refine_mask_k=2.5,
+    refine_scan=True,
+    refine_mz=True,
+    refine_sigma_scan=True,
+    refine_sigma_mz=True,
+    # scaling + stability
+    scale="sqrt",
+    output_units="original",
+    gn_float64=False,
+    # dedup
+    do_dedup=True,
+    tol_scan=0.75,
+    tol_mz=0.25,
+    # conversion
+    k_sigma=3.0,
+    min_width=3,
+    mz_bounds_pad_ppm=15.0,
+    mz_bounds_pad_abs=0.05,
+):
+    """Yields one list[ImPeak1D] per plan batch (e.g., 64 WGs)."""
+    num_batches = (len(plan) + batch_size - 1) // batch_size
+    for wgs in tqdm(iter_plan_batches(plan, batch_size), total=num_batches, desc="Batches", ncols=80):
+        # process this batch of WGs -> list[ImPeak1D]
+        batch_objs = _detect_im_peaks_for_wgs(
+            wgs, plan_group=plan, device=device,
+            pool_scan=pool_scan, pool_mz=pool_mz,
+            min_intensity_scaled=min_intensity_scaled,
+            tile_rows=tile_rows, tile_overlap=tile_overlap,
+            fit_h=fit_h, fit_w=fit_w,
+            refine=refine, refine_iters=refine_iters, refine_lr=refine_lr, refine_mask_k=refine_mask_k,
+            refine_scan=refine_scan, refine_mz=refine_mz, refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+            scale=scale, output_units=output_units, gn_float64=gn_float64,
+            do_dedup=do_dedup, tol_scan=tol_scan, tol_mz=tol_mz,
+            k_sigma=k_sigma, min_width=min_width,
+            mz_bounds_pad_ppm=mz_bounds_pad_ppm, mz_bounds_pad_abs=mz_bounds_pad_abs,
+        )
+
+        # yield the result of THIS batch
+        yield batch_objs
+
+        # try evicting plan-side cached views for this batch
+        try:
+            if hasattr(plan, "evict_views") and callable(plan.evict_views):
+                plan.evict_views(wgs)
+        except Exception:
+            pass
+
+        # drop the WG list itself
+        del wgs, batch_objs
+        if torch.cuda.is_available() and device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        gc.collect()
