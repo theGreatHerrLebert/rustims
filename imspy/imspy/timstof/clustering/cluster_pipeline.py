@@ -74,7 +74,7 @@ def detect_and_stitch_for_plan(
         collected = []
 
     num_batches = (len(plan) + int(run_cfg["batch_size"]) - 1) // int(run_cfg["batch_size"])
-    log(f"[detect] plan has {len(plan)} window-groups (~{num_batches} batches)")
+    log(f"[detect] plan has {len(plan)} mz-im planes -> (~{num_batches} batches)")
 
     for peak_batch in iter_im_peaks_batches(
         plan,
