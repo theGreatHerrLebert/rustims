@@ -156,7 +156,7 @@ def run_precursor(ds, cfg):
         ppm_per_bin=15.0,
         bin_pad=30.0,
         min_prom=50,
-        attach_raw_data=attach_raw,
+        attach_points=attach_raw,
         attach_axes=attach_raw,
         attach_max_points=5000,
     )
@@ -210,7 +210,7 @@ def run_fragments(ds, cfg):
             ppm_per_bin=15.0,
             bin_pad=30.0,
             min_prom=25,
-            attach_raw_data=attach_raw,
+            attach_points=attach_raw,
             attach_axes=attach_raw,
             attach_max_points=5000,
         )
