@@ -140,10 +140,14 @@ def detect_and_stitch_for_plan(
         )
 
 def run_precursor(ds, cfg):
+    from imspy.timstof.dia import clusters_to_dataframe
     log("[stage] precursor")
     precompute_views = bool(cfg["run"]["precompute_views"])
     plan = build_plan(ds, cfg["plans"]["precursor"], precompute_views, for_group=None)
-    stitched = detect_and_stitch_for_plan(plan, cfg["run"], cfg["detector"], cfg["stitch"]["precursor"])
+
+    stitched = detect_and_stitch_for_plan(
+        plan, cfg["run"], cfg["detector"], cfg["stitch"]["precursor"]
+    )
 
     clusters = ds.clusters_for_precursor(
         stitched,
@@ -151,14 +155,28 @@ def run_precursor(ds, cfg):
         bin_pad=30.0,
         min_prom=50,
     )
-    out = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_file"]
-    ensure_dir_for_file(out)
-    save_clusters_bin(clusters=clusters, path=str(out), compress=True)
-    log(f"[ok] wrote precursor clusters -> {out}")
+
+    # ---- binary save ----
+    out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_file"]
+    ensure_dir_for_file(out_bin)
+    save_clusters_bin(clusters=clusters, path=str(out_bin), compress=True)
+    log(f"[ok] wrote precursor clusters -> {out_bin}")
+
+    # ---- optional parquet ----
+    if bool(cfg["output"].get("parquet_enabled", False)):
+        out_parq = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_parquet"]
+        ensure_dir_for_file(out_parq)
+        df = clusters_to_dataframe(clusters)
+        df.to_parquet(out_parq, index=False)
+        log(f"[ok] wrote precursor parquet -> {out_parq}")
+
+    del stitched, clusters
+    cuda_gc()
 
 def run_fragments(ds, cfg):
+    from imspy.timstof.dia import clusters_to_dataframe
     log("[stage] fragments")
-    # Guard: if fragment plans missing, skip gracefully
+
     if "fragment" not in cfg.get("plans", {}) or "fragment" not in cfg.get("stitch", {}):
         log("[skip] fragments: no [plans.fragment] or [stitch.fragment] in config")
         return
@@ -175,7 +193,9 @@ def run_fragments(ds, cfg):
         log(f"[fragment] WG={wg}")
         plan = build_plan(ds, plan_cfg, precompute_views, for_group=wg)
 
-        stitched_wg = detect_and_stitch_for_plan(plan, cfg["run"], cfg["detector"], stitch_cfg)
+        stitched_wg = detect_and_stitch_for_plan(
+            plan, cfg["run"], cfg["detector"], stitch_cfg
+        )
 
         clusters_wg = ds.clusters_for_group(
             window_group=int(wg),
@@ -185,13 +205,26 @@ def run_fragments(ds, cfg):
             min_prom=25,
         )
         all_clusters.extend(clusters_wg)
+
         del stitched_wg, clusters_wg
         cuda_gc()
 
-    out = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_file"]
-    ensure_dir_for_file(out)
-    save_clusters_bin(clusters=all_clusters, path=str(out), compress=True)
-    log(f"[ok] wrote fragment clusters -> {out}")
+    # ---- binary save ----
+    out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_file"]
+    ensure_dir_for_file(out_bin)
+    save_clusters_bin(clusters=all_clusters, path=str(out_bin), compress=True)
+    log(f"[ok] wrote fragment clusters -> {out_bin}")
+
+    # ---- optional parquet ----
+    if bool(cfg["output"].get("parquet_enabled", False)):
+        out_parq = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_parquet"]
+        ensure_dir_for_file(out_parq)
+        df = clusters_to_dataframe(all_clusters)
+        df.to_parquet(out_parq, index=False)
+        log(f"[ok] wrote fragment parquet -> {out_parq}")
+
+    del all_clusters
+    cuda_gc()
 
 # ---------- CLI ---------------------------------------------------------------
 def load_config(path: str) -> dict:
