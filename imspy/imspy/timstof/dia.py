@@ -882,6 +882,7 @@ class ImPeak1D(RustWrapperObject):
             scan_abs: int,
             left_abs: int,
             right_abs: int,
+            scan_sigma: float | None,
             mobility: float | None,
             apex_smoothed: float,
             apex_raw: float,
@@ -911,6 +912,7 @@ class ImPeak1D(RustWrapperObject):
             scan_abs,
             left_abs,
             right_abs,
+            scan_sigma,
             mobility,
             apex_smoothed,
             apex_raw,
@@ -947,6 +949,8 @@ class ImPeak1D(RustWrapperObject):
     # --- Existing fields (note: mobility is Optional now) ---
     @property
     def scan(self) -> int: return self.__py_ptr.scan
+    @property
+    def scan_sigma(self) -> float | None: return self.__py_ptr.scan_sigma
     @property
     def mobility(self) -> float | None: return self.__py_ptr.mobility
     @property
@@ -1089,6 +1093,7 @@ class ImPeak1D(RustWrapperObject):
             int(scan_abs),
             int(left_abs),
             int(right_abs),
+            float(s_scan) if s_scan is not 0.0 else None,
             None,  # mobility: Option<f32>
             float(apex_smoothed),
             float(apex_raw),

@@ -217,6 +217,7 @@ fn owned_copy_im(p: &ImPeak1D) -> ImPeak1D {
         window_group: p.window_group,
 
         // scan geometry
+        scan_sigma: p.scan_sigma,
         scan: p.scan,
         left: p.left,
         right: p.right,
@@ -296,6 +297,7 @@ impl PyImPeak1D {
         scan_abs,
         left_abs,
         right_abs,
+        scan_sigma,
         mobility,
         apex_smoothed,
         apex_raw,
@@ -323,6 +325,7 @@ impl PyImPeak1D {
         left_abs: usize,
         right_abs: usize,
 
+        scan_sigma: Option<f32>,
         mobility: Option<f32>,
         apex_smoothed: f32,
         apex_raw: f32,
@@ -350,6 +353,7 @@ impl PyImPeak1D {
             left_abs,
             right_abs,
 
+            scan_sigma,
             mobility,
             apex_smoothed,
             apex_raw,
@@ -382,6 +386,7 @@ impl PyImPeak1D {
     #[getter] fn window_group(&self) -> Option<u32> { self.inner.window_group }
 
     #[getter] fn scan(&self) -> usize { self.inner.scan }
+    #[getter] fn scan_sigma(&self) -> Option<f32> { self.inner.scan_sigma }
     #[getter] fn mobility(&self) -> Option<f32> { self.inner.mobility }
     #[getter] fn apex_smoothed(&self) -> f32 { self.inner.apex_smoothed }
     #[getter] fn apex_raw(&self) -> f32 { self.inner.apex_raw }
@@ -2437,6 +2442,7 @@ fn find_im_peaks_row_nocontext(
             scan_abs,                       // NEW
             left_abs,                       // NEW
             right_abs,
+            scan_sigma: None,
             mobility,
             apex_smoothed: apex,
             apex_raw: y_raw[i],

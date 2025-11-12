@@ -43,6 +43,15 @@ fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
     out
 }
 
+#[inline]
+fn scans_from_sigma(k: f32, sigma: f32) -> usize {
+    // cover ±kσ around the apex, +1 for inclusive range
+    let k = k.max(0.0);
+    let s = sigma.max(0.0);
+    let span = (2.0 * k * s).ceil() as isize + 1;
+    span.max(1) as usize
+}
+
 #[inline] fn thin_stride(total: usize, cap: usize) -> usize {
     if cap == 0 || total <= cap { 1 } else { (total + cap - 1) / cap }
 }
@@ -107,6 +116,8 @@ pub struct ClusterSpec1D {
     pub parent_im_id: Option<i64>,
     pub parent_rt_id: Option<i64>,
     pub ms_level: u8,
+    // NEW: prior σ in scan units, from detector/refiner
+    pub im_prior_sigma: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -152,6 +163,7 @@ pub struct BuildSpecOpts {
     pub ms_level: u8,
     // NEW: ensure we never end up with a 1-scan window
     pub min_im_span: usize,   // e.g., 10
+    pub im_k_sigma: f32,       // NEW: e.g., 3.0
 }
 
 impl BuildSpecOpts {
@@ -187,18 +199,25 @@ pub fn make_spec_from_pair(
     rt_hi = rt_hi.saturating_add(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
     if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
 
-    // --- IM (scan) window: start from IM peak bounds + padding ...
+    // --- Start from IM peak bounds + padding ...
     let mut im_lo = im.left.saturating_sub(opts.extra_im_pad);
     let mut im_hi = im.right.saturating_add(opts.extra_im_pad);
     if im_lo > im_hi { std::mem::swap(&mut im_lo, &mut im_hi); }
 
-    // ... then hard-enforce a minimum span around the IM apex scan
-    let want = opts.min_im_span.max(im.width_scans.max(2)); // at least peak width, minimum 2
+    // --- Compute a desired span using prior σ if available
+    let prior_sigma = im.scan_sigma.unwrap_or(0.0).max(0.0);
+    let k = if opts.im_k_sigma.is_finite() { opts.im_k_sigma.max(0.0) } else { 3.0 };
+    let want_from_prior = if prior_sigma > 0.0 { scans_from_sigma(k, prior_sigma) } else { 0 };
+    let want_from_measured = im.width_scans.max(2); // observed width on the grid (≥2)
+    let mut want = opts.min_im_span.max(want_from_measured);
+    if want_from_prior > 0 { want = want.max(want_from_prior); }
+
+    // --- Enforce desired span around the apex scan
     let (wo_lo, wo_hi) = widen_scan_window(im_lo, im_hi, want, im.scan);
     im_lo = wo_lo;
     im_hi = wo_hi;
 
-    // m/z window identical
+    // --- m/z window
     let mz0 = im.mz_bounds;
     let mz_win = ppm_expand(mz0, opts.mz_ppm_pad, im.mz_center);
 
@@ -210,6 +229,7 @@ pub fn make_spec_from_pair(
         parent_im_id: Some(im.id),
         parent_rt_id: Some(rt.id),
         ms_level: opts.ms_level,
+        im_prior_sigma: if prior_sigma > 0.0 { Some(prior_sigma) } else { None },
     }
 }
 
@@ -333,16 +353,28 @@ pub fn evaluate_spec_1d(
     sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
     sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
 
-    // If IM μ is zero (forbidden), replace by midpoint of the window
+    // --- IM μ fallback (unchanged from your version)
     if im_fit.mu == 0.0 {
         let lo = spec.im_lo as f32;
         let hi = spec.im_hi as f32;
-        if hi > lo {
-            im_fit.mu = 0.5 * (lo + hi);
-        } else {
-            // degenerate window → pick the only point or push slightly inside
-            im_fit.mu = lo.max(1.0);
-        }
+        if hi > lo { im_fit.mu = 0.5 * (lo + hi); } else { im_fit.mu = lo.max(1.0); }
+    }
+
+    // --- NEW: IM σ fallback using prior σ from detection
+    if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
+        // span implied by the final window and kσ
+        let k = opts.refine_k_sigma.max(1.0); // reuse this; or add a dedicated im_k_sigma in Eval1DOpts
+        let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
+        let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
+
+        // prior from detector (if present)
+        let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
+
+        // choose the strongest usable prior
+        let mut s = prior.max(from_window).max(1e-3);
+        if !s.is_finite() { s = 1e-3; }
+
+        im_fit.sigma = s;
     }
 
     // --- 5) pack (respect chosen bins)

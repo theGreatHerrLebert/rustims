@@ -225,6 +225,7 @@ pub fn find_im_peaks_row(
             frame_id_bounds,
             window_group,
             scan: i,
+            scan_sigma: None,
             mobility,
             apex_smoothed: apex,
             apex_raw: y_raw[i],

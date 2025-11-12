@@ -97,7 +97,8 @@ pub struct ImPeak1D {
     pub scan_abs: usize,
     pub left_abs: usize,
     pub right_abs: usize,
-
+    
+    pub scan_sigma: Option<f32>,
     pub mobility: Option<f32>,
     pub apex_smoothed: f32,
     pub apex_raw: f32,
