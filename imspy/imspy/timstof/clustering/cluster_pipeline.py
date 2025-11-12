@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+IM peak detection → stitching → clustering (TOML-configured) with logging and CLI overrides.
+"""
+from __future__ import annotations
+
 import argparse
-import os
-import sys
 import gc
-from pathlib import Path
-from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -14,8 +20,8 @@ import torch
 # Python 3.11+ has tomllib; otherwise optional tomli fallback
 try:
     import tomllib as toml
-except Exception as e:
-    print("Warning: tomllib not found, using default toml")
+except Exception:
+    print("Warning: tomllib not found, falling back to tomli")
     import tomli as toml  # type: ignore
 
 from imspy.timstof.clustering.torch_extractor import iter_im_peaks_batches
@@ -28,6 +34,7 @@ from imspy.timstof.dia import (
 # --------------------------- logging ------------------------------------------
 _LOGGER_NAME = "timsim"
 _logger = logging.getLogger(_LOGGER_NAME)
+
 
 def setup_logging(
     log_file: str | os.PathLike | None,
@@ -65,30 +72,25 @@ def setup_logging(
     # capture unhandled exceptions into log
     def _excepthook(exc_type, exc, tb):
         logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
-        # also print default behavior to stderr for visibility
+        # also pass to default hook (so behavior stays familiar)
         sys.__excepthook__(exc_type, exc, tb)
+
     sys.excepthook = _excepthook
+
 
 def log(msg: str, level: int = logging.INFO) -> None:
     _logger.log(level, msg)
 
+
 # ------------------------ config summary --------------------------------------
 def print_config_summary(cfg: dict) -> None:
-    """Pretty-print an actionable summary of the effective configuration."""
-    def get(d, *keys, default=None):
-        cur = d
-        for k in keys:
-            if not isinstance(cur, dict) or k not in cur:
-                return default
-            cur = cur[k]
-        return cur
-
-    ds_cfg   = cfg.get("dataset", {})
-    out_cfg  = cfg.get("output", {})
-    run_cfg  = cfg.get("run", {})
-    det_cfg  = cfg.get("detector", {})
-    st_cfg   = cfg.get("stitch", {})
+    ds_cfg = cfg.get("dataset", {})
+    out_cfg = cfg.get("output", {})
+    run_cfg = cfg.get("run", {})
+    det_cfg = cfg.get("detector", {})
+    st_cfg = cfg.get("stitch", {})
     plan_cfg = cfg.get("plans", {})
+    clus_cfg = cfg.get("cluster", {})
 
     lines = []
     lines.append("──────────────── CONFIG SUMMARY ────────────────")
@@ -118,6 +120,7 @@ def print_config_summary(cfg: dict) -> None:
             lines.append(f"  precursor_parquet    : {out_cfg.get('precursor_parquet')}")
         if "fragment_parquet" in out_cfg:
             lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
+    lines.append(f"  compress_bin         : {bool(out_cfg.get('compress_bin', True))}")
 
     # Plans + Stitch
     for sec in ("precursor", "fragment"):
@@ -139,29 +142,16 @@ def print_config_summary(cfg: dict) -> None:
             lines.append(f"  im_jaccard_min       : {float(s.get('im_jaccard_min', 0.0))}")
             lines.append(f"  use_batch_stitch     : {bool(s.get('use_batch_stitch', False))}")
 
-    # Detector (grouped for readability)
-    lines.append("[detector]")
-    # pooling/tiling
-    lines.append(f"  pool_scan            : {int(det_cfg.get('pool_scan'))}")
-    lines.append(f"  pool_mz              : {int(det_cfg.get('pool_mz'))}")
-    lines.append(f"  min_intensity_scaled : {float(det_cfg.get('min_intensity_scaled'))}")
-    lines.append(f"  tile_rows            : {int(det_cfg.get('tile_rows'))}")
-    lines.append(f"  tile_overlap         : {int(det_cfg.get('tile_overlap'))}")
-    # fits
-    lines.append(f"  fit_h × fit_w        : {int(det_cfg.get('fit_h'))} × {int(det_cfg.get('fit_w'))}")
-    lines.append(f"  refine               : {det_cfg.get('refine')}")
-    lines.append(f"  refine_iters / lr    : {int(det_cfg.get('refine_iters'))} / {float(det_cfg.get('refine_lr'))}")
-    lines.append(f"  refine_mask_k        : {float(det_cfg.get('refine_mask_k'))}")
-    lines.append(f"  refine_scan|mz|σscan|σmz : "
-                 f"{bool(det_cfg.get('refine_scan'))}|{bool(det_cfg.get('refine_mz'))}|"
-                 f"{bool(det_cfg.get('refine_sigma_scan'))}|{bool(det_cfg.get('refine_sigma_mz'))}")
-    # thresholds/tolerances
-    lines.append(f"  scale / units        : {det_cfg.get('scale')} / {det_cfg.get('output_units')}")
-    lines.append(f"  gn_float64           : {bool(det_cfg.get('gn_float64'))}")
-    lines.append(f"  do_dedup             : {bool(det_cfg.get('do_dedup'))}")
-    lines.append(f"  tol_scan / tol_mz    : {float(det_cfg.get('tol_scan'))} / {float(det_cfg.get('tol_mz'))}")
-    lines.append(f"  k_sigma / min_width  : {float(det_cfg.get('k_sigma'))} / {int(det_cfg.get('min_width'))}")
-    lines.append(f"  mz_bounds_pad_ppm/abs: {float(det_cfg.get('mz_bounds_pad_ppm'))} / {float(det_cfg.get('mz_bounds_pad_abs'))}")
+    # Cluster (new)
+    if "cluster" in cfg:
+        for sec in ("precursor", "fragment"):
+            if sec in clus_cfg:
+                cc = clus_cfg[sec]
+                lines.append(f"[cluster.{sec}]")
+                lines.append(f"  ppm_per_bin          : {float(cc.get('ppm_per_bin'))}")
+                lines.append(f"  bin_pad              : {float(cc.get('bin_pad'))}")
+                lines.append(f"  min_prom             : {float(cc.get('min_prom'))}")
+                lines.append(f"  attach_max_points    : {int(cc.get('attach_max_points'))}")
 
     # Light sanity notes
     lines.append("──────────────── NOTES ─────────────────────────")
@@ -187,16 +177,19 @@ def print_config_summary(cfg: dict) -> None:
     for ln in lines:
         log(ln)
 
+
 # ---------- small helpers -----------------------------------------------------
 def ensure_dir_for_file(path: str | os.PathLike) -> None:
     p = Path(path)
     if p.parent and not p.parent.exists():
         p.parent.mkdir(parents=True, exist_ok=True)
 
+
 def cuda_gc() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
+
 
 # ---------- core runners ------------------------------------------------------
 def build_plan(ds, plan_cfg: dict, precompute_views: bool, *, for_group: int | None = None):
@@ -221,6 +214,7 @@ def build_plan(ds, plan_cfg: dict, precompute_views: bool, *, for_group: int | N
             mz_sigma_bins=float(plan_cfg["mz_sigma_bins"]),
             precompute_views=bool(precompute_views),
         )
+
 
 def detect_and_stitch_for_plan(
     plan,
@@ -301,8 +295,10 @@ def detect_and_stitch_for_plan(
             im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
         )
 
+
 def run_precursor(ds, cfg):
     from imspy.timstof.dia import clusters_to_dataframe
+
     log("[stage] precursor")
     precompute_views = bool(cfg["run"]["precompute_views"])
     plan = build_plan(ds, cfg["plans"]["precursor"], precompute_views, for_group=None)
@@ -312,22 +308,24 @@ def run_precursor(ds, cfg):
     )
 
     attach_raw = bool(cfg["run"].get("attach_raw_data", False))
+    c = cfg["cluster"]["precursor"]
 
     clusters = ds.clusters_for_precursor(
         stitched,
-        ppm_per_bin=5.0,
-        bin_pad=10.0,
-        min_prom=50,
+        ppm_per_bin=float(c["ppm_per_bin"]),
+        bin_pad=float(c["bin_pad"]),
+        min_prom=float(c["min_prom"]),
         attach_points=attach_raw,
         attach_axes=attach_raw,
-        attach_max_points=1024,
+        attach_max_points=int(c["attach_max_points"]),
     )
 
     # ---- binary save ----
     out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_file"]
     ensure_dir_for_file(out_bin)
-    save_clusters_bin(clusters=clusters, path=str(out_bin), compress=True)
-    log(f"[ok] wrote precursor clusters -> {out_bin}")
+    compress = bool(cfg["output"].get("compress_bin", True))
+    save_clusters_bin(clusters=clusters, path=str(out_bin), compress=compress)
+    log(f"[ok] wrote precursor clusters -> {out_bin} (compress={compress})")
 
     # ---- optional parquet ----
     if bool(cfg["output"].get("parquet_enabled", False)):
@@ -340,9 +338,11 @@ def run_precursor(ds, cfg):
     del stitched, clusters
     cuda_gc()
 
+
 def run_fragments(ds, cfg):
     from imspy.timstof.dia import clusters_to_dataframe
-    log("[stage] fragments]")
+
+    log("[stage] fragments")
 
     if "fragment" not in cfg.get("plans", {}) or "fragment" not in cfg.get("stitch", {}):
         log("[skip] fragments: no [plans.fragment] or [stitch.fragment] in config")
@@ -351,6 +351,7 @@ def run_fragments(ds, cfg):
     precompute_views = bool(cfg["run"]["precompute_views"])
     plan_cfg = cfg["plans"]["fragment"]
     stitch_cfg = cfg["stitch"]["fragment"]
+    c = cfg["cluster"]["fragment"]
 
     all_clusters = []
     wgs = sorted(set(ds.dia_ms_ms_info.WindowGroup))
@@ -369,12 +370,12 @@ def run_fragments(ds, cfg):
         clusters_wg = ds.clusters_for_group(
             window_group=int(wg),
             im_peaks=stitched_wg,
-            ppm_per_bin=5.0,
-            bin_pad=10.0,
-            min_prom=25,
+            ppm_per_bin=float(c["ppm_per_bin"]),
+            bin_pad=float(c["bin_pad"]),
+            min_prom=float(c["min_prom"]),
             attach_points=attach_raw,
             attach_axes=attach_raw,
-            attach_max_points=1024,
+            attach_max_points=int(c["attach_max_points"]),
         )
         all_clusters.extend(clusters_wg)
 
@@ -384,8 +385,9 @@ def run_fragments(ds, cfg):
     # ---- binary save ----
     out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_file"]
     ensure_dir_for_file(out_bin)
-    save_clusters_bin(clusters=all_clusters, path=str(out_bin), compress=True)
-    log(f"[ok] wrote fragment clusters -> {out_bin}")
+    compress = bool(cfg["output"].get("compress_bin", True))
+    save_clusters_bin(clusters=all_clusters, path=str(out_bin), compress=compress)
+    log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
 
     # ---- optional parquet ----
     if bool(cfg["output"].get("parquet_enabled", False)):
@@ -398,7 +400,8 @@ def run_fragments(ds, cfg):
     del all_clusters
     cuda_gc()
 
-# ---------- CLI ---------------------------------------------------------------
+
+# ---------- CLI & config ------------------------------------------------------
 def load_config(path: str) -> dict:
     with open(path, "rb") as f:
         cfg = toml.load(f)
@@ -408,12 +411,15 @@ def load_config(path: str) -> dict:
         if section not in cfg:
             raise ValueError(f"Missing [{section}] in config.")
 
-    # defaults
+    # output
+    cfg["output"].setdefault("compress_bin", True)
+
+    # run defaults
     cfg["run"].setdefault("stage", "both")
     cfg["run"].setdefault("device", "cuda")
     cfg["run"].setdefault("batch_size", 64)
     cfg["run"].setdefault("precompute_views", True)
-    cfg["run"].setdefault("fragments_enabled", False)  # <-- default OFF (opt-in)
+    cfg["run"].setdefault("fragments_enabled", False)  # default OFF (opt-in)
     cfg["run"].setdefault("attach_raw_data", False)
 
     # stitching defaults
@@ -426,7 +432,25 @@ def load_config(path: str) -> dict:
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("use_batch_stitch", False)
 
+    # clustering defaults (NEW)
+    cfg.setdefault("cluster", {})
+    cfg["cluster"].setdefault("precursor", {})
+    cfg["cluster"].setdefault("fragment", {})
+
+    # precursor clustering defaults
+    cfg["cluster"]["precursor"].setdefault("ppm_per_bin", 15.0)
+    cfg["cluster"]["precursor"].setdefault("bin_pad", 30.0)
+    cfg["cluster"]["precursor"].setdefault("min_prom", 50.0)
+    cfg["cluster"]["precursor"].setdefault("attach_max_points", 5000)
+
+    # fragment clustering defaults
+    cfg["cluster"]["fragment"].setdefault("ppm_per_bin", 15.0)
+    cfg["cluster"]["fragment"].setdefault("bin_pad", 30.0)
+    cfg["cluster"]["fragment"].setdefault("min_prom", 25.0)
+    cfg["cluster"]["fragment"].setdefault("attach_max_points", 1000)
+
     return cfg
+
 
 def _default_log_path_from_cfg(cfg: dict) -> Path | None:
     out_dir = cfg.get("output", {}).get("dir")
@@ -435,29 +459,64 @@ def _default_log_path_from_cfg(cfg: dict) -> Path | None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path(out_dir) / "logs" / f"timsim_{ts}.log"
 
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="IM peak detection → stitching → clustering (TOML-configured).")
+    parser = argparse.ArgumentParser(
+        description="IM peak detection → stitching → clustering (TOML-configured)."
+    )
     parser.add_argument("-c", "--config", required=True, help="Path to config.toml")
     parser.add_argument("--stage", choices=["precursor", "fragments", "both"],
                         help="Override run.stage from config")
     parser.add_argument("--device", help="Override run.device (e.g., 'cuda', 'cpu')")
-    # --- NEW: explicit opt-in/out for fragments ---
+
+    # explicit opt-in/out for fragments
     parser.add_argument("--fragments", dest="fragments", action="store_true",
                         help="Opt-in to fragment processing (overrides config)")
     parser.add_argument("--no-fragments", dest="fragments", action="store_false",
                         help="Opt-out of fragment processing (overrides config)")
     parser.set_defaults(fragments=None)
-    # --- NEW: logging flags ---
-    parser.add_argument("--log-file", default=None, help="Log file path (defaults to [output]/logs/timsim_*.log)")
-    parser.add_argument("--log-level", default="INFO", help="Log level (DEBUG, INFO, WARNING, ERROR)")
-    parser.add_argument("--no-console-log", action="store_true", help="Disable console logging")
+
+    # logging flags
+    parser.add_argument("--log-file", default=None,
+                        help="Log file path (defaults to [output]/logs/timsim_*.log)")
+    parser.add_argument("--log-level", default="INFO",
+                        help="Log level (DEBUG, INFO, WARNING, ERROR)")
+    parser.add_argument("--no-console-log", action="store_true",
+                        help="Disable console logging")
+
+    # clustering overrides
+    # precursor
+    parser.add_argument("--prec-ppm-per-bin", type=float,
+                        help="Override cluster.precursor.ppm_per_bin")
+    parser.add_argument("--prec-bin-pad", type=float,
+                        help="Override cluster.precursor.bin_pad")
+    parser.add_argument("--prec-min-prom", type=float,
+                        help="Override cluster.precursor.min_prom")
+    parser.add_argument("--prec-attach-max", type=int,
+                        help="Override cluster.precursor.attach_max_points")
+    # fragment
+    parser.add_argument("--frag-ppm-per-bin", type=float,
+                        help="Override cluster.fragment.ppm_per_bin")
+    parser.add_argument("--frag-bin-pad", type=float,
+                        help="Override cluster.fragment.bin_pad")
+    parser.add_argument("--frag-min-prom", type=float,
+                        help="Override cluster.fragment.min_prom")
+    parser.add_argument("--frag-attach-max", type=int,
+                        help="Override cluster.fragment.attach_max_points")
+
+    # output compression toggle
+    parser.add_argument("--compress-bin", dest="compress_bin", action="store_true",
+                        help="Enable compression for .binz outputs")
+    parser.add_argument("--no-compress-bin", dest="compress_bin", action="store_false",
+                        help="Disable compression for .binz outputs")
+    parser.set_defaults(compress_bin=None)
 
     args = parser.parse_args(argv)
 
     # load config first (we need output dir to auto-pick log path)
     cfg = load_config(args.config)
 
-    # decide log file path
+    # decide log file path & init logging
     log_file = args.log_file or _default_log_path_from_cfg(cfg)
     setup_logging(
         log_file=log_file,
@@ -475,6 +534,29 @@ def main(argv=None):
     if args.fragments is not None:
         cfg["run"]["fragments_enabled"] = bool(args.fragments)
 
+    # clustering overrides
+    if args.prec_ppm_per_bin is not None:
+        cfg["cluster"]["precursor"]["ppm_per_bin"] = float(args.prec_ppm_per_bin)
+    if args.prec_bin_pad is not None:
+        cfg["cluster"]["precursor"]["bin_pad"] = float(args.prec_bin_pad)
+    if args.prec_min_prom is not None:
+        cfg["cluster"]["precursor"]["min_prom"] = float(args.prec_min_prom)
+    if args.prec_attach_max is not None:
+        cfg["cluster"]["precursor"]["attach_max_points"] = int(args.prec_attach_max)
+
+    if args.frag_ppm_per_bin is not None:
+        cfg["cluster"]["fragment"]["ppm_per_bin"] = float(args.frag_ppm_per_bin)
+    if args.frag_bin_pad is not None:
+        cfg["cluster"]["fragment"]["bin_pad"] = float(args.frag_bin_pad)
+    if args.frag_min_prom is not None:
+        cfg["cluster"]["fragment"]["min_prom"] = float(args.frag_min_prom)
+    if args.frag_attach_max is not None:
+        cfg["cluster"]["fragment"]["attach_max_points"] = int(args.frag_attach_max)
+
+    # output compression override
+    if args.compress_bin is not None:
+        cfg["output"]["compress_bin"] = bool(args.compress_bin)
+
     # environment preamble
     log(f"[env] Python {sys.version.split()[0]}")
     log(f"[env] Torch {torch.__version__} | CUDA available={torch.cuda.is_available()}")
@@ -486,6 +568,7 @@ def main(argv=None):
 
     print_config_summary(cfg)
 
+    # open dataset
     ds = TimsDatasetDIA(
         cfg["dataset"]["path"],
         use_bruker_sdk=bool(cfg["dataset"].get("use_bruker_sdk", False)),
@@ -507,6 +590,7 @@ def main(argv=None):
 
     log("[done]")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
