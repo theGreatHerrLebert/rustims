@@ -4,6 +4,9 @@ import os
 import sys
 import gc
 from pathlib import Path
+from datetime import datetime
+import logging
+from logging.handlers import RotatingFileHandler
 
 import numpy as np
 import torch
@@ -22,6 +25,54 @@ from imspy.timstof.dia import (
     TimsDatasetDIA,
 )
 
+# --------------------------- logging ------------------------------------------
+_LOGGER_NAME = "timsim"
+_logger = logging.getLogger(_LOGGER_NAME)
+
+def setup_logging(
+    log_file: str | os.PathLike | None,
+    level: str = "INFO",
+    also_console: bool = True,
+    rotate_bytes: int = 50 * 1024 * 1024,  # 50 MB
+    backup_count: int = 5,
+) -> None:
+    """Initialize rotating file logging + optional console."""
+    logger = logging.getLogger(_LOGGER_NAME)
+    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.handlers.clear()
+    logger.propagate = False
+
+    fmt = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | %(process)d | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    if log_file:
+        log_path = Path(log_file)
+        if log_path.parent and not log_path.parent.exists():
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = RotatingFileHandler(log_path, maxBytes=rotate_bytes, backupCount=backup_count)
+        fh.setFormatter(fmt)
+        fh.setLevel(logger.level)
+        logger.addHandler(fh)
+
+    if also_console:
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setFormatter(fmt)
+        ch.setLevel(logger.level)
+        logger.addHandler(ch)
+
+    # capture unhandled exceptions into log
+    def _excepthook(exc_type, exc, tb):
+        logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
+        # also print default behavior to stderr for visibility
+        sys.__excepthook__(exc_type, exc, tb)
+    sys.excepthook = _excepthook
+
+def log(msg: str, level: int = logging.INFO) -> None:
+    _logger.log(level, msg)
+
+# ------------------------ config summary --------------------------------------
 def print_config_summary(cfg: dict) -> None:
     """Pretty-print an actionable summary of the effective configuration."""
     def get(d, *keys, default=None):
@@ -116,9 +167,10 @@ def print_config_summary(cfg: dict) -> None:
     lines.append("──────────────── NOTES ─────────────────────────")
     cuda_avail = torch.cuda.is_available()
     lines.append(f"  CUDA available       : {cuda_avail}")
-    if run_cfg.get("device") == "cpu" and cuda_avail:
+    dev = run_cfg.get("device")
+    if dev == "cpu" and cuda_avail:
         lines.append("  ⚠ You selected CPU but CUDA is available.")
-    if run_cfg.get("device") == "cuda" and not cuda_avail:
+    if dev == "cuda" and not cuda_avail:
         lines.append("  ⚠ CUDA requested but not available; this will fall back or fail.")
 
     # Output existence hints
@@ -145,9 +197,6 @@ def cuda_gc() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
-
-def log(msg: str) -> None:
-    print(msg, flush=True)
 
 # ---------- core runners ------------------------------------------------------
 def build_plan(ds, plan_cfg: dict, precompute_views: bool, *, for_group: int | None = None):
@@ -266,12 +315,12 @@ def run_precursor(ds, cfg):
 
     clusters = ds.clusters_for_precursor(
         stitched,
-        ppm_per_bin=15.0,
-        bin_pad=30.0,
+        ppm_per_bin=5.0,
+        bin_pad=10.0,
         min_prom=50,
         attach_points=attach_raw,
         attach_axes=attach_raw,
-        attach_max_points=5000,
+        attach_max_points=1024,
     )
 
     # ---- binary save ----
@@ -293,7 +342,7 @@ def run_precursor(ds, cfg):
 
 def run_fragments(ds, cfg):
     from imspy.timstof.dia import clusters_to_dataframe
-    log("[stage] fragments")
+    log("[stage] fragments]")
 
     if "fragment" not in cfg.get("plans", {}) or "fragment" not in cfg.get("stitch", {}):
         log("[skip] fragments: no [plans.fragment] or [stitch.fragment] in config")
@@ -320,12 +369,12 @@ def run_fragments(ds, cfg):
         clusters_wg = ds.clusters_for_group(
             window_group=int(wg),
             im_peaks=stitched_wg,
-            ppm_per_bin=15.0,
-            bin_pad=30.0,
+            ppm_per_bin=5.0,
+            bin_pad=10.0,
             min_prom=25,
             attach_points=attach_raw,
             attach_axes=attach_raw,
-            attach_max_points=1000,
+            attach_max_points=1024,
         )
         all_clusters.extend(clusters_wg)
 
@@ -379,6 +428,13 @@ def load_config(path: str) -> dict:
 
     return cfg
 
+def _default_log_path_from_cfg(cfg: dict) -> Path | None:
+    out_dir = cfg.get("output", {}).get("dir")
+    if not out_dir:
+        return None
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Path(out_dir) / "logs" / f"timsim_{ts}.log"
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="IM peak detection → stitching → clustering (TOML-configured).")
     parser.add_argument("-c", "--config", required=True, help="Path to config.toml")
@@ -391,16 +447,42 @@ def main(argv=None):
     parser.add_argument("--no-fragments", dest="fragments", action="store_false",
                         help="Opt-out of fragment processing (overrides config)")
     parser.set_defaults(fragments=None)
+    # --- NEW: logging flags ---
+    parser.add_argument("--log-file", default=None, help="Log file path (defaults to [output]/logs/timsim_*.log)")
+    parser.add_argument("--log-level", default="INFO", help="Log level (DEBUG, INFO, WARNING, ERROR)")
+    parser.add_argument("--no-console-log", action="store_true", help="Disable console logging")
 
     args = parser.parse_args(argv)
 
+    # load config first (we need output dir to auto-pick log path)
     cfg = load_config(args.config)
+
+    # decide log file path
+    log_file = args.log_file or _default_log_path_from_cfg(cfg)
+    setup_logging(
+        log_file=log_file,
+        level=args.log_level,
+        also_console=not args.no_console_log,
+    )
+    if log_file:
+        log(f"[log] writing logfile -> {log_file}")
+
+    # reflect CLI overrides
     if args.stage:
         cfg["run"]["stage"] = args.stage
     if args.device:
         cfg["run"]["device"] = args.device
     if args.fragments is not None:
         cfg["run"]["fragments_enabled"] = bool(args.fragments)
+
+    # environment preamble
+    log(f"[env] Python {sys.version.split()[0]}")
+    log(f"[env] Torch {torch.__version__} | CUDA available={torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        try:
+            log(f"[env] CUDA device: {torch.cuda.get_device_name(0)}")
+        except Exception:
+            pass
 
     print_config_summary(cfg)
 
