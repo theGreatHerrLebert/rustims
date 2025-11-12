@@ -382,8 +382,7 @@ def get_slice_filtered_cluster(
             # Unexpected layout; try to coerce
             return None
 
-        # Sum over m/z axis: (rt × im)
-        return np.sum(T, axis=2)
+        return T
 
     except Exception as e:
         return None
