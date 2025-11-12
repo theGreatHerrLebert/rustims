@@ -258,6 +258,7 @@ fn ppm_expand((lo, hi):(f32, f32), ppm: f32, center_hint: f32) -> (f32, f32) {
     (lo - d, hi + d)
 }
 
+/*
 pub fn evaluate_spec_1d(
     rt_frames: &RtFrames,
     spec: &ClusterSpec1D,
@@ -407,6 +408,198 @@ pub fn evaluate_spec_1d(
     let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
 
     let hi_edge_idx = (use_bins_hi + 1).min(scale.edges.len() - 1);
+    ClusterResult1D {
+        rt_window: (spec.rt_lo, spec.rt_hi),
+        im_window: (spec.im_lo, spec.im_hi),
+        mz_window: (scale.edges[use_bins_lo], scale.edges[hi_edge_idx].min(scale.mz_max)),
+        rt_fit, im_fit, mz_fit,
+        raw_sum, volume_proxy,
+        frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
+        window_group: spec.window_group,
+        parent_im_id: spec.parent_im_id,
+        parent_rt_id: spec.parent_rt_id,
+        ms_level: spec.ms_level,
+        rt_axis_sec: opts.attach_axes.then_some(rt_times),
+        im_axis_scans: opts.attach_axes.then_some(im_axis),
+        mz_axis_da:   opts.attach_axes.then_some(use_mz_centers.clone()),
+        raw_points: None,
+    }
+}
+*/
+
+pub fn evaluate_spec_1d(
+    rt_frames: &RtFrames,
+    spec: &ClusterSpec1D,
+    opts: &Eval1DOpts,
+) -> ClusterResult1D {
+    #[inline]
+    fn argmax_idx(v: &[f32]) -> usize {
+        let mut i_max = 0usize;
+        let mut best = f32::NEG_INFINITY;
+        for (i, &y) in v.iter().enumerate() {
+            if y > best {
+                best = y;
+                i_max = i;
+            }
+        }
+        i_max
+    }
+    #[inline]
+    fn ppm_radius_da(center_da: f32, ppm: f32) -> f32 {
+        (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0)
+    }
+    // Optional: sub-bin tweak around argmax using a quadratic on the 3 neighboring bins.
+    #[inline]
+    fn parabolic_refine(centers: &[f32], hist: &[f32], i: usize) -> f32 {
+        if i == 0 || i + 1 >= hist.len() { return centers[i]; }
+        let y0 = hist[i - 1];
+        let y1 = hist[i];
+        let y2 = hist[i + 1];
+        let x0 = centers[i - 1];
+        let x1 = centers[i];
+        let x2 = centers[i + 1];
+        let denom = y0 - 2.0 * y1 + y2;
+        if denom.abs() <= 1e-12 { return centers[i]; }
+        // Offset from x1 scaled by discrete curvature; clamp to neighborhood
+        let dx = 0.5 * (y0 - y2) / denom * ((x2 - x0) * 0.5);
+        let x = x1 + dx;
+        // Guard against silly jumps: keep within half a bin around the argmax center
+        let half_bin = ((x2 - x0) * 0.5).abs();
+        x.clamp(x1 - half_bin, x1 + half_bin)
+    }
+
+    debug_assert!(rt_frames.is_consistent());
+    let scale = &*rt_frames.scale;
+    let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.mz_win);
+
+    // --- 1) first pass accumulation (uses spec.mz_hist_bins internally)
+    let rt_marg1 = build_rt_marginal(
+        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
+    let im_marg1 = build_im_marginal(
+        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
+    let (mz_hist1, mz_centers1) = build_mz_hist(
+        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi, scale);
+
+    let rt_sum1: f32 = rt_marg1.iter().copied().sum();
+    let im_sum1: f32 = im_marg1.iter().copied().sum();
+    let mz_sum1: f32 = mz_hist1.iter().copied().sum();
+
+    // --- Early exit on zero signal
+    if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || mz_sum1 <= 0.0 {
+        let hi_edge_idx = (bin_hi0 + 1).min(scale.edges.len() - 1);
+        return ClusterResult1D {
+            rt_window: (spec.rt_lo, spec.rt_hi),
+            im_window: (spec.im_lo, spec.im_hi),
+            mz_window: (scale.edges[bin_lo0], scale.edges[hi_edge_idx].min(scale.mz_max)),
+            rt_fit: Fit1D::default(),
+            im_fit: Fit1D::default(),
+            mz_fit: Fit1D::default(),
+            raw_sum: 0.0,
+            volume_proxy: 0.0,
+            frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
+            window_group: spec.window_group,
+            parent_im_id: spec.parent_im_id,
+            parent_rt_id: spec.parent_rt_id,
+            ms_level: spec.ms_level,
+            rt_axis_sec: opts.attach_axes.then_some(rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec()),
+            im_axis_scans: opts.attach_axes.then_some((spec.im_lo..=spec.im_hi).collect()),
+            mz_axis_da:   opts.attach_axes.then_some(mz_centers1.clone()),
+            raw_points: None,
+        };
+    }
+
+    // --- Argmax center on first pass (with tiny parabola refine)
+    let i_max1 = argmax_idx(&mz_hist1);
+    let center1 = parabolic_refine(&mz_centers1, &mz_hist1, i_max1);
+
+    // --- 2) optional m/z refine: re-bin tightly around the argmax center (± ppm cap)
+    let (bin_lo, bin_hi, mz_centers2) = {
+        if opts.refine_mz_once {
+            let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 5.0 };
+            let half_da = ppm_radius_da(center1, ppm_cap);
+            let lo_da = (center1 - half_da).max(scale.mz_min);
+            let hi_da = (center1 + half_da).min(scale.mz_max);
+            if hi_da > lo_da {
+                let (bl, bh) = bin_range_for_win(scale, (lo_da, hi_da));
+                (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
+            } else {
+                (bin_lo0, bin_hi0, mz_centers1.clone())
+            }
+        } else {
+            (bin_lo0, bin_hi0, mz_centers1.clone())
+        }
+    };
+
+    // --- 3) re-accumulate in refined window and pick argmax again
+    let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
+    let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
+    let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
+
+    let rt_sum: f32 = rt_marg.iter().copied().sum();
+    let im_sum: f32 = im_marg.iter().copied().sum();
+    let mz_sum: f32 = mz_hist.iter().copied().sum();
+
+    // --- 3b) Fallback if refine killed signal
+    let (use_bins_lo, use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
+        if rt_sum <= 0.0 || im_sum <= 0.0 || mz_sum <= 0.0 {
+            (bin_lo0, bin_hi0, &rt_marg1, &im_marg1, &mz_hist1, &mz_centers1)
+        } else {
+            (bin_lo,  bin_hi,  &rt_marg,  &im_marg,  &mz_hist,  &mz_centers2)
+        };
+
+    // --- 4) final fits
+    let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
+    let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
+    let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
+
+    let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
+    let mut im_fit = fit1d_moment(use_im_marg, Some(&im_axis_f32));
+
+    // m/z: ARGMAX-BASED
+    let i_max = argmax_idx(use_mz_hist);
+    let mu_raw = parabolic_refine(use_mz_centers, use_mz_hist, i_max);
+    // Build a minimal Fit1D: keep sigma small (unknown), area as sum, height as peak bin
+    let mut mz_fit = Fit1D {
+        mu: mu_raw,
+        sigma: 0.0,                  // unknown here; set 0.0 or a tiny proxy if you prefer
+        height: use_mz_hist[i_max],  // peak height
+        baseline: 0.0,
+        area: use_mz_hist.iter().copied().sum(),
+        r2: 1.0,
+        n: use_mz_hist.len(),
+    };
+
+    // --- 4b) sanitize + IM fallbacks
+    let rt_mu_bounds = if spec.rt_lo < rt_frames.rt_times.len() && spec.rt_hi < rt_frames.rt_times.len() {
+        Some((rt_frames.rt_times[spec.rt_lo], rt_frames.rt_times[spec.rt_hi]))
+    } else { None };
+    let mz_mu_bounds = Some((scale.mz_min, scale.mz_max));
+    let im_mu_bounds = Some((spec.im_lo as f32, spec.im_hi as f32));
+
+    sanitize_fit(&mut mz_fit, mz_mu_bounds, 1e-6, true);
+    sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
+    sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
+
+    if im_fit.mu == 0.0 {
+        let lo = spec.im_lo as f32;
+        let hi = spec.im_hi as f32;
+        im_fit.mu = if hi > lo { 0.5 * (lo + hi) } else { lo.max(1.0) };
+    }
+    if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
+        let k = opts.refine_k_sigma.max(1.0);
+        let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
+        let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
+        let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
+        let mut s = prior.max(from_window).max(1e-3);
+        if !s.is_finite() { s = 1e-3; }
+        im_fit.sigma = s;
+    }
+
+    // --- 5) pack
+    let raw_sum = use_rt_marg.iter().copied().sum();
+    let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
+    let hi_edge_idx = (use_bins_hi + 1).min(scale.edges.len() - 1);
+
     ClusterResult1D {
         rt_window: (spec.rt_lo, spec.rt_hi),
         im_window: (spec.im_lo, spec.im_hi),

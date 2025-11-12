@@ -325,7 +325,7 @@ def run_fragments(ds, cfg):
             min_prom=25,
             attach_points=attach_raw,
             attach_axes=attach_raw,
-            attach_max_points=5000,
+            attach_max_points=1000,
         )
         all_clusters.extend(clusters_wg)
 
