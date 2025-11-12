@@ -552,7 +552,7 @@ def _detect_im_peaks_for_wgs(
 
     batch_objs = []
 
-    for wg in tqdm(wgs, desc="Detecting peaks (WG)", leave=False, ncols=80):
+    for wg in tqdm(wgs, desc="Detecting peaks (BATCH)", leave=False, ncols=80):
         peaks_iter = iter_detect_peaks_from_blurred(
             B_blurred=wg.data,
             device=device,
