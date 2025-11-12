@@ -248,10 +248,11 @@ pub struct Eval1DOpts {
     pub refine_k_sigma: f32,
     pub attach_axes: bool,
     pub attach: Attach1DOptions,   // <-- NEW
+    pub mz_ppm_cap: f32, // e.g., 5.0
 }
 
 #[inline]
-fn ppm_expand((lo, hi):(f32,f32), ppm: f32, center_hint: f32) -> (f32,f32) {
+fn ppm_expand((lo, hi):(f32, f32), ppm: f32, center_hint: f32) -> (f32, f32) {
     if ppm <= 0.0 { return (lo, hi); }
     let d = center_hint.abs() * ppm * 1e-6;
     (lo - d, hi + d)
@@ -262,6 +263,16 @@ pub fn evaluate_spec_1d(
     spec: &ClusterSpec1D,
     opts: &Eval1DOpts,
 ) -> ClusterResult1D {
+    #[inline]
+    fn ppm_radius_da(center_da: f32, ppm: f32) -> f32 {
+        (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0)
+    }
+    #[inline]
+    fn clamp_center_to_ppm(anchor_da: f32, candidate_da: f32, ppm_cap: f32) -> f32 {
+        let r = (anchor_da.abs() * ppm_cap.max(0.0) * 1e-6).max(0.0);
+        candidate_da.clamp(anchor_da - r, anchor_da + r)
+    }
+
     debug_assert!(rt_frames.is_consistent());
     let scale = &*rt_frames.scale;
     let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.mz_win);
@@ -278,7 +289,7 @@ pub fn evaluate_spec_1d(
     let im_sum1: f32 = im_marg1.iter().copied().sum();
     let mz_sum1: f32 = mz_hist1.iter().copied().sum();
 
-    // --- Early exit on zero signal (unchanged)
+    // --- Early exit on zero signal
     if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || mz_sum1 <= 0.0 {
         let hi_edge_idx = (bin_hi0 + 1).min(scale.edges.len() - 1);
         return ClusterResult1D {
@@ -307,12 +318,32 @@ pub fn evaluate_spec_1d(
     let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
     let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
 
-    // --- 2) optional m/z refine
+    // --- 2) optional m/z refine WITH 5-ppm CAPS (center drift and half-width)
     let (bin_lo, bin_hi, mz_centers2) = if opts.refine_mz_once && mz_fit1.sigma > 0.0 && mz_fit1.area > 0.0 {
         let k = opts.refine_k_sigma.max(1.0);
-        let lo_da = (mz_fit1.mu - k * mz_fit1.sigma).max(scale.mz_min);
-        let hi_da = (mz_fit1.mu + k * mz_fit1.sigma).min(scale.mz_max);
-        let (bl, bh) = bin_range_for_win(scale, (lo_da, hi_da));
+        let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 5.0 };
+
+        // Use the current spec window midpoint as the anchor (apex prior used to form the window).
+        let anchor_center = 0.5 * (spec.mz_win.0 + spec.mz_win.1);
+
+        // Candidate refine center, capped to ±ppm_cap around the anchor.
+        let center_capped = clamp_center_to_ppm(anchor_center, mz_fit1.mu, ppm_cap);
+
+        // Refine half-width = min(k·σ_fit, ppm_cap in Da), never negative.
+        let half_cap_da  = ppm_radius_da(anchor_center, ppm_cap);
+        let raw_half_da  = k * mz_fit1.sigma;
+        let half_da      = raw_half_da.min(half_cap_da).max(0.0_f32);
+
+        // Final refine window (guard against degeneracy)
+        let lo_da = (center_capped - half_da).max(scale.mz_min);
+        let hi_da = (center_capped + half_da).min(scale.mz_max);
+
+        let (bl, bh) = if hi_da > lo_da {
+            bin_range_for_win(scale, (lo_da, hi_da))
+        } else {
+            (bin_lo0, bin_hi0)
+        };
+
         (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
     } else {
         (bin_lo0, bin_hi0, mz_centers1.clone())
@@ -327,7 +358,7 @@ pub fn evaluate_spec_1d(
     let im_sum: f32 = im_marg.iter().copied().sum();
     let mz_sum: f32 = mz_hist.iter().copied().sum();
 
-    // --- 3b) If refinement killed the signal, fall back to first pass
+    // --- 3b) fallback if refine killed signal
     let (use_bins_lo, use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
         if rt_sum <= 0.0 || im_sum <= 0.0 || mz_sum <= 0.0 {
             (bin_lo0, bin_hi0, &rt_marg1, &im_marg1, &mz_hist1, &mz_centers1)
@@ -353,27 +384,21 @@ pub fn evaluate_spec_1d(
     sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
     sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
 
-    // --- IM μ fallback (unchanged from your version)
+    // --- IM μ fallback
     if im_fit.mu == 0.0 {
         let lo = spec.im_lo as f32;
         let hi = spec.im_hi as f32;
         if hi > lo { im_fit.mu = 0.5 * (lo + hi); } else { im_fit.mu = lo.max(1.0); }
     }
 
-    // --- NEW: IM σ fallback using prior σ from detection
+    // --- IM σ fallback using prior σ from detection or window
     if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
-        // span implied by the final window and kσ
-        let k = opts.refine_k_sigma.max(1.0); // reuse this; or add a dedicated im_k_sigma in Eval1DOpts
+        let k = opts.refine_k_sigma.max(1.0);
         let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
         let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
-
-        // prior from detector (if present)
         let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
-
-        // choose the strongest usable prior
         let mut s = prior.max(from_window).max(1e-3);
         if !s.is_finite() { s = 1e-3; }
-
         im_fit.sigma = s;
     }
 
