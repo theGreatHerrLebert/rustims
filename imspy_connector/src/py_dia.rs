@@ -1993,6 +1993,7 @@ impl PyTimsDatasetDIA {
             refine_mz_once,
             refine_k_sigma,
             attach_axes,
+            mz_ppm_cap: 5.0,
             attach: Attach1DOptions {
                 attach_points,
                 attach_axes,
@@ -2071,6 +2072,7 @@ impl PyTimsDatasetDIA {
             refine_mz_once,
             refine_k_sigma,
             attach_axes,
+            mz_ppm_cap: 5.0,
             attach: Attach1DOptions {
                 attach_points,
                 attach_axes,
