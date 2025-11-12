@@ -32,7 +32,7 @@ from imspy.timstof.dia import (
 )
 
 # --------------------------- logging ------------------------------------------
-_LOGGER_NAME = "timsim"
+_LOGGER_NAME = "t-tracer"
 _logger = logging.getLogger(_LOGGER_NAME)
 
 
