@@ -118,7 +118,6 @@ pub struct ClusterSpec1D {
     pub ms_level: u8,
     // NEW: prior σ in scan units, from detector/refiner
     pub im_prior_sigma: Option<f32>,
-    pub rt_prior_sigma: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -165,7 +164,6 @@ pub struct BuildSpecOpts {
     // NEW: ensure we never end up with a 1-scan window
     pub min_im_span: usize,   // e.g., 10
     pub im_k_sigma: f32,       // NEW: e.g., 3.0
-    pub rt_k_sigma: f32,
 }
 
 impl BuildSpecOpts {
@@ -195,32 +193,11 @@ pub fn make_spec_from_pair(
 ) -> ClusterSpec1D {
     let frames_len = rt_frames.frames.len();
 
-    // --- RT base window from peak + pad (you already have this)
+    // --- RT clamp as before
     let (mut rt_lo, mut rt_hi) = rt.rt_bounds_frames;
     rt_lo = rt_lo.saturating_sub(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
     rt_hi = rt_hi.saturating_add(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
     if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
-
-    // --- Enforce a minimum RT span from prior σ (if available)
-    let rtk = if opts.rt_k_sigma.is_finite() { opts.rt_k_sigma.max(0.0) } else { 3.0 };
-    let rt_prior_sigma = rt.rt_sigma.unwrap_or(0.0);          // <— if your RtPeak1D exposes one
-    let want_from_prior_rt = if rt_prior_sigma > 0.0 { scans_from_sigma(rtk, rt_prior_sigma) } else { 0 };
-
-    let mut want_rt = opts.min_im_span.max(2);             // reuse min span knob, or add a dedicated min_rt_span
-    if want_from_prior_rt > 0 { want_rt = want_rt.max(want_from_prior_rt); }
-
-    // widen around the RT apex center if you have it; otherwise widen symmetrically
-    if want_rt > (rt_hi.saturating_sub(rt_lo) + 1) {
-        let center = (rt_lo + rt_hi) / 2;
-        let half   = want_rt / 2;
-        let new_lo = center.saturating_sub(half);
-        let new_hi = center.saturating_add(want_rt - 1 - half);
-        rt_lo = new_lo.min(rt_lo);
-        rt_hi = new_hi.max(rt_hi);
-        rt_lo = rt_lo.min(frames_len.saturating_sub(1));
-        rt_hi = rt_hi.min(frames_len.saturating_sub(1));
-        if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
-    }
 
     // --- Start from IM peak bounds + padding ...
     let mut im_lo = im.left.saturating_sub(opts.extra_im_pad);
@@ -252,8 +229,7 @@ pub fn make_spec_from_pair(
         parent_im_id: Some(im.id),
         parent_rt_id: Some(rt.id),
         ms_level: opts.ms_level,
-        im_prior_sigma: im.scan_sigma.filter(|s| *s > 0.0),
-        rt_prior_sigma: (if rt_prior_sigma > 0.0 { Some(rt_prior_sigma) } else { None }),
+        im_prior_sigma: if prior_sigma > 0.0 { Some(prior_sigma) } else { None },
     }
 }
 
@@ -399,12 +375,6 @@ pub fn evaluate_spec_1d(
         if !s.is_finite() { s = 1e-3; }
 
         im_fit.sigma = s;
-    }
-    // --- RT σ fallback: use prior, else window-implied span
-    if !rt_fit.sigma.is_finite() || rt_fit.sigma <= 0.0 {
-        let mut s = spec.rt_prior_sigma.unwrap_or(0.0).max(0.0);
-        if !s.is_finite() { s = 1e-6; }
-        rt_fit.sigma = s;
     }
 
     // --- 5) pack (respect chosen bins)
