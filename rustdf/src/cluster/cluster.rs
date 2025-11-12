@@ -185,54 +185,6 @@ fn widen_scan_window(lo: usize, hi: usize, want_span: usize, center: usize) -> (
     (new_lo.min(lo), new_hi.max(hi))  // keep original covered, but ensure ≥ want_span overall
 }
 
-pub fn make_spec_from_pair(
-    im: &ImPeak1D,
-    rt: &RtPeak1D,
-    rt_frames: &RtFrames,
-    opts: &BuildSpecOpts,
-) -> ClusterSpec1D {
-    let frames_len = rt_frames.frames.len();
-
-    // --- RT clamp as before
-    let (mut rt_lo, mut rt_hi) = rt.rt_bounds_frames;
-    rt_lo = rt_lo.saturating_sub(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
-    rt_hi = rt_hi.saturating_add(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
-    if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
-
-    // --- Start from IM peak bounds + padding ...
-    let mut im_lo = im.left.saturating_sub(opts.extra_im_pad);
-    let mut im_hi = im.right.saturating_add(opts.extra_im_pad);
-    if im_lo > im_hi { std::mem::swap(&mut im_lo, &mut im_hi); }
-
-    // --- Compute a desired span using prior σ if available
-    let prior_sigma = im.scan_sigma.unwrap_or(0.0).max(0.0);
-    let k = if opts.im_k_sigma.is_finite() { opts.im_k_sigma.max(0.0) } else { 3.0 };
-    let want_from_prior = if prior_sigma > 0.0 { scans_from_sigma(k, prior_sigma) } else { 0 };
-    let want_from_measured = im.width_scans.max(2); // observed width on the grid (≥2)
-    let mut want = opts.min_im_span.max(want_from_measured);
-    if want_from_prior > 0 { want = want.max(want_from_prior); }
-
-    // --- Enforce desired span around the apex scan
-    let (wo_lo, wo_hi) = widen_scan_window(im_lo, im_hi, want, im.scan);
-    im_lo = wo_lo;
-    im_hi = wo_hi;
-
-    // --- m/z window
-    let mz0 = im.mz_bounds;
-    let mz_win = ppm_expand(mz0, opts.mz_ppm_pad, im.mz_center);
-
-    ClusterSpec1D {
-        rt_lo, rt_hi, im_lo, im_hi,
-        mz_win,
-        mz_hist_bins: opts.mz_hist_bins.max(128),
-        window_group: im.window_group,
-        parent_im_id: Some(im.id),
-        parent_rt_id: Some(rt.id),
-        ms_level: opts.ms_level,
-        im_prior_sigma: if prior_sigma > 0.0 { Some(prior_sigma) } else { None },
-    }
-}
-
 // --- new: options, same spirit as before ---
 #[derive(Clone, Debug, Default)]
 pub struct Attach1DOptions {
@@ -256,256 +208,6 @@ fn ppm_expand((lo, hi):(f32, f32), ppm: f32, center_hint: f32) -> (f32, f32) {
     if ppm <= 0.0 { return (lo, hi); }
     let d = center_hint.abs() * ppm * 1e-6;
     (lo - d, hi + d)
-}
-
-/// Compute σ from FWHM around the apex bin using linear interpolation on each side.
-/// Returns (sigma, x_left_50, x_right_50).
-fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(f32, f32, f32)> {
-    let peak = *hist.get(i_max)?;
-    if !peak.is_finite() || peak <= 0.0 { return None; }
-    let half = 0.5 * peak;
-
-    // search left crossing
-    let mut left = i_max;
-    while left > 0 && hist[left] >= half { left -= 1; }
-    if left == i_max { return None; }
-    let (xl0, yl0) = (centers[left], hist[left]);
-    let (xl1, yl1) = (centers[left + 1], hist[left + 1]);
-    if (yl1 - yl0).abs() <= 1e-12 { return None; }
-    let x_left = xl0 + (half - yl0) * (xl1 - xl0) / (yl1 - yl0);
-
-    // search right crossing
-    let mut right = i_max;
-    while right + 1 < hist.len() && hist[right] >= half { right += 1; }
-    if right == i_max { return None; }
-    let (xr0, yr0) = (centers[right - 1], hist[right - 1]);
-    let (xr1, yr1) = (centers[right], hist[right]);
-    if (yr1 - yr0).abs() <= 1e-12 { return None; }
-    let x_right = xr0 + (half - yr0) * (xr1 - xr0) / (yr1 - yr0);
-
-    let fwhm = (x_right - x_left).abs();
-    if !fwhm.is_finite() || fwhm <= 0.0 { return None; }
-
-    // σ = FWHM / (2*sqrt(2 ln 2))
-    let two_sqrt_two_ln2 = 2.0 * (2.0_f32.ln()).sqrt();
-    let sigma = fwhm / two_sqrt_two_ln2;
-    if sigma.is_finite() && sigma > 0.0 {
-        Some((sigma, x_left.min(x_right), x_left.max(x_right)))
-    } else {
-        None
-    }
-}
-
-pub fn evaluate_spec_1d(
-    rt_frames: &RtFrames,
-    spec: &ClusterSpec1D,
-    opts: &Eval1DOpts,
-) -> ClusterResult1D {
-    #[inline]
-    fn argmax_idx(v: &[f32]) -> usize {
-        let mut i_max = 0usize;
-        let mut best = f32::NEG_INFINITY;
-        for (i, &y) in v.iter().enumerate() {
-            if y > best {
-                best = y;
-                i_max = i;
-            }
-        }
-        i_max
-    }
-    #[inline]
-    fn ppm_radius_da(center_da: f32, ppm: f32, pad: f32) -> f32 {
-        (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0) + pad.max(0.0)
-    }
-    // Sub-bin tweak around argmax using a quadratic on the 3 neighboring bins.
-    #[inline]
-    fn parabolic_refine(centers: &[f32], hist: &[f32], i: usize) -> f32 {
-        if i == 0 || i + 1 >= hist.len() { return centers[i]; }
-        let y0 = hist[i - 1];
-        let y1 = hist[i];
-        let y2 = hist[i + 1];
-        let x0 = centers[i - 1];
-        let x1 = centers[i];
-        let x2 = centers[i + 1];
-        let denom = y0 - 2.0 * y1 + y2;
-        if denom.abs() <= 1e-12 { return centers[i]; }
-        let dx = 0.5 * (y0 - y2) / denom * ((x2 - x0) * 0.5);
-        let x = x1 + dx;
-        let half_bin = ((x2 - x0) * 0.5).abs();
-        x.clamp(x1 - half_bin, x1 + half_bin)
-    }
-
-    debug_assert!(rt_frames.is_consistent());
-    let scale = &*rt_frames.scale;
-    let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.mz_win);
-
-    // --- 1) first pass accumulation (uses spec.mz_hist_bins internally)
-    let rt_marg1 = build_rt_marginal(
-        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
-    let im_marg1 = build_im_marginal(
-        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
-    let (mz_hist1, mz_centers1) = build_mz_hist(
-        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi, scale);
-
-    let rt_sum1: f32 = rt_marg1.iter().copied().sum();
-    let im_sum1: f32 = im_marg1.iter().copied().sum();
-    let mz_sum1: f32 = mz_hist1.iter().copied().sum();
-
-    // --- Early exit on zero signal
-    if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || mz_sum1 <= 0.0 {
-        let hi_edge_idx = (bin_hi0 + 1).min(scale.edges.len() - 1);
-        return ClusterResult1D {
-            rt_window: (spec.rt_lo, spec.rt_hi),
-            im_window: (spec.im_lo, spec.im_hi),
-            mz_window: (scale.edges[bin_lo0], scale.edges[hi_edge_idx].min(scale.mz_max)),
-            rt_fit: Fit1D::default(),
-            im_fit: Fit1D::default(),
-            mz_fit: Fit1D::default(),
-            raw_sum: 0.0,
-            volume_proxy: 0.0,
-            frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
-            window_group: spec.window_group,
-            parent_im_id: spec.parent_im_id,
-            parent_rt_id: spec.parent_rt_id,
-            ms_level: spec.ms_level,
-            rt_axis_sec: opts.attach_axes.then_some(rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec()),
-            im_axis_scans: opts.attach_axes.then_some((spec.im_lo..=spec.im_hi).collect()),
-            mz_axis_da:   opts.attach_axes.then_some(mz_centers1.clone()),
-            raw_points: None,
-        };
-    }
-
-    // --- Argmax center on first pass (with tiny parabola refine)
-    let i_max1 = argmax_idx(&mz_hist1);
-    let center1 = parabolic_refine(&mz_centers1, &mz_hist1, i_max1);
-
-    // --- 2) optional m/z refine: re-bin tightly around the argmax center (± ppm cap)
-    let (bin_lo, bin_hi, mz_centers2) = {
-        if opts.refine_mz_once {
-            let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 25.0 };
-            let half_da = ppm_radius_da(center1, ppm_cap, 0.015);
-            let lo_da = (center1 - half_da).max(scale.mz_min);
-            let hi_da = (center1 + half_da).min(scale.mz_max);
-            if hi_da > lo_da {
-                let (bl, bh) = bin_range_for_win(scale, (lo_da, hi_da));
-                (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
-            } else {
-                (bin_lo0, bin_hi0, mz_centers1.clone())
-            }
-        } else {
-            (bin_lo0, bin_hi0, mz_centers1.clone())
-        }
-    };
-
-    // --- 3) re-accumulate in refined window
-    let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
-    let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
-    let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
-
-    let rt_sum: f32 = rt_marg.iter().copied().sum();
-    let im_sum: f32 = im_marg.iter().copied().sum();
-    let mz_sum: f32 = mz_hist.iter().copied().sum();
-
-    // --- 3b) Fallback if refine killed signal
-    let (_use_bins_lo, _use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
-        if rt_sum <= 0.0 || im_sum <= 0.0 || mz_sum <= 0.0 {
-            (bin_lo0, bin_hi0, &rt_marg1, &im_marg1, &mz_hist1, &mz_centers1)
-        } else {
-            (bin_lo,  bin_hi,  &rt_marg,  &im_marg,  &mz_hist,  &mz_centers2)
-        };
-
-    // --- 4) final fits (RT/IM via moments as before)
-    let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
-    let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
-    let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
-
-    let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
-    let mut im_fit = fit1d_moment(use_im_marg, Some(&im_axis_f32));
-
-    // --- m/z: argmax μ + σ from FWHM (using your helper), with robust fallback
-    let i_max = argmax_idx(use_mz_hist);
-    let mu_raw = parabolic_refine(use_mz_centers, use_mz_hist, i_max);
-
-    let (sigma_est, fit_lo_50, fit_hi_50) = match fwhm_sigma_from_hist(use_mz_centers, use_mz_hist, i_max) {
-        Some((s, xl, xr)) => (s, xl, xr),
-        None => {
-            // Fallback: use local bin width as a tiny σ proxy
-            let bw = if i_max + 1 < use_mz_centers.len() {
-                (use_mz_centers[i_max + 1] - use_mz_centers[i_max]).abs()
-            } else if i_max > 0 {
-                (use_mz_centers[i_max] - use_mz_centers[i_max - 1]).abs()
-            } else { 0.0 };
-            let s = (bw / 2.355).max(1e-6);
-            let fwhm = 2.355 * s;
-            (s, mu_raw - 0.5 * fwhm, mu_raw + 0.5 * fwhm)
-        }
-    };
-
-    // Optionally expand to k·σ. Here we keep the 50% crossings as primary bounds (k=1.0),
-    // but ensure at least ±k·σ around μ are included.
-    let k_bounds = 1.0_f32; // set to 3.0 for μ ± 3σ bounds
-    let prelim_lo = mu_raw - k_bounds * sigma_est;
-    let prelim_hi = mu_raw + k_bounds * sigma_est;
-    let fit_lo = prelim_lo.min(fit_lo_50).max(scale.mz_min);
-    let fit_hi = prelim_hi.max(fit_hi_50).min(scale.mz_max);
-
-    // Build Fit1D with real σ from FWHM
-    let mut mz_fit = Fit1D {
-        mu: mu_raw,
-        sigma: sigma_est,
-        height: use_mz_hist[i_max],
-        baseline: 0.0,
-        area: use_mz_hist.iter().copied().sum(),
-        r2: 1.0,
-        n: use_mz_hist.len(),
-    };
-
-    // --- 4b) sanitize + IM fallbacks
-    let rt_mu_bounds = if spec.rt_lo < rt_frames.rt_times.len() && spec.rt_hi < rt_frames.rt_times.len() {
-        Some((rt_frames.rt_times[spec.rt_lo], rt_frames.rt_times[spec.rt_hi]))
-    } else { None };
-    let mz_mu_bounds = Some((scale.mz_min, scale.mz_max));
-    let im_mu_bounds = Some((spec.im_lo as f32, spec.im_hi as f32));
-
-    sanitize_fit(&mut mz_fit, mz_mu_bounds, 1e-6, true);
-    sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
-    sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
-
-    if im_fit.mu == 0.0 {
-        let lo = spec.im_lo as f32;
-        let hi = spec.im_hi as f32;
-        im_fit.mu = if hi > lo { 0.5 * (lo + hi) } else { lo.max(1.0) };
-    }
-    if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
-        let k = opts.refine_k_sigma.max(1.0);
-        let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
-        let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
-        let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
-        let mut s = prior.max(from_window).max(1e-3);
-        if !s.is_finite() { s = 1e-3; }
-        im_fit.sigma = s;
-    }
-
-    // --- 5) pack (mz_window from the fit-derived bounds, not grid edges)
-    let raw_sum = use_rt_marg.iter().copied().sum();
-    let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
-
-    ClusterResult1D {
-        rt_window: (spec.rt_lo, spec.rt_hi),
-        im_window: (spec.im_lo, spec.im_hi),
-        mz_window: (fit_lo, fit_hi), // <-- fit-derived peak bounds
-        rt_fit, im_fit, mz_fit,
-        raw_sum, volume_proxy,
-        frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
-        window_group: spec.window_group,
-        parent_im_id: spec.parent_im_id,
-        parent_rt_id: spec.parent_rt_id,
-        ms_level: spec.ms_level,
-        rt_axis_sec: opts.attach_axes.then_some(rt_times),
-        im_axis_scans: opts.attach_axes.then_some(im_axis),
-        mz_axis_da:   opts.attach_axes.then_some(use_mz_centers.clone()),
-        raw_points: None,
-    }
 }
 
 #[inline]
@@ -838,4 +540,349 @@ pub fn attach_raw_points_for_spec_1d_threads(
         }
     }
     pts
+}
+
+// =====================
+// Helpers (ppm clamps, argmax, sub-bin refine, FWHM→σ)
+// =====================
+
+#[inline]
+fn ppm_halfwidth_da(center_da: f32, ppm_cap: f32) -> f32 {
+    (center_da.abs() * ppm_cap.max(0.0) * 1e-6).max(0.0)
+}
+
+/// Clamp (lo,hi) around `center` to ±ppm_cap; also intersects with [mz_min, mz_max].
+#[inline]
+fn clamp_window_ppm(center: f32, lo: f32, hi: f32, ppm_cap: f32, mz_min: f32, mz_max: f32) -> (f32, f32) {
+    let r_ppm = ppm_halfwidth_da(center, ppm_cap);
+    let lo_ppm = (center - r_ppm).max(mz_min);
+    let hi_ppm = (center + r_ppm).min(mz_max);
+    // intersect proposed with ±ppm leash
+    let lo_final = lo.max(lo_ppm);
+    let hi_final = hi.min(hi_ppm);
+    if hi_final >= lo_final { (lo_final, hi_final) } else { (lo_ppm, hi_ppm) }
+}
+
+/// Clamp σ so that μ ± k·σ stays within the ppm cap.
+#[inline]
+fn clamp_sigma_by_ppm(center: f32, sigma: f32, k: f32, ppm_cap: f32, min_sigma: f32) -> f32 {
+    let s = if sigma.is_finite() && sigma > 0.0 { sigma } else { min_sigma.max(0.0) };
+    let r_ppm = ppm_halfwidth_da(center, ppm_cap);
+    let s_max = if k > 0.0 { r_ppm / k } else { r_ppm };
+    s.min(s_max.max(min_sigma))
+}
+
+/// Optional per-level policy (tweak to your instrument/processing).
+#[inline]
+fn ppm_cap_for(level: u8) -> f32 {
+    match level {
+        1 => 10.0, // MS1 tighter
+        2 => 15.0, // MS2 looser
+        _ => 15.0,
+    }
+}
+
+#[inline]
+fn argmax_idx(v: &[f32]) -> usize {
+    let mut i_max = 0usize;
+    let mut best = f32::NEG_INFINITY;
+    for (i, &y) in v.iter().enumerate() {
+        if y > best {
+            best = y;
+            i_max = i;
+        }
+    }
+    i_max
+}
+
+/// Sub-bin parabolic apex around the argmax bin.
+#[inline]
+fn parabolic_refine(centers: &[f32], hist: &[f32], i: usize) -> f32 {
+    if i == 0 || i + 1 >= hist.len() { return centers[i]; }
+    let y0 = hist[i - 1];
+    let y1 = hist[i];
+    let y2 = hist[i + 1];
+    let x0 = centers[i - 1];
+    let x1 = centers[i];
+    let x2 = centers[i + 1];
+    let denom = y0 - 2.0 * y1 + y2;
+    if denom.abs() <= 1e-12 { return centers[i]; }
+    let dx = 0.5 * (y0 - y2) / denom * ((x2 - x0) * 0.5);
+    let x = x1 + dx;
+    let half_bin = ((x2 - x0) * 0.5).abs();
+    x.clamp(x1 - half_bin, x1 + half_bin)
+}
+
+/// σ from FWHM (linear interpolation across half-height crossings).
+/// Returns (sigma, x_left_50, x_right_50).
+fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(f32, f32, f32)> {
+    let peak = *hist.get(i_max)?;
+    if !peak.is_finite() || peak <= 0.0 { return None; }
+    let half = 0.5 * peak;
+
+    // left crossing
+    let mut left = i_max;
+    while left > 0 && hist[left] >= half { left -= 1; }
+    if left == i_max { return None; }
+    let (xl0, yl0) = (centers[left], hist[left]);
+    let (xl1, yl1) = (centers[left + 1], hist[left + 1]);
+    if (yl1 - yl0).abs() <= 1e-12 { return None; }
+    let x_left = xl0 + (half - yl0) * (xl1 - xl0) / (yl1 - yl0);
+
+    // right crossing
+    let mut right = i_max;
+    while right + 1 < hist.len() && hist[right] >= half { right += 1; }
+    if right == i_max { return None; }
+    let (xr0, yr0) = (centers[right - 1], hist[right - 1]);
+    let (xr1, yr1) = (centers[right], hist[right]);
+    if (yr1 - yr0).abs() <= 1e-12 { return None; }
+    let x_right = xr0 + (half - yr0) * (xr1 - xr0) / (yr1 - yr0);
+
+    let fwhm = (x_right - x_left).abs();
+    if !fwhm.is_finite() || fwhm <= 0.0 { return None; }
+
+    // σ = FWHM / (2*sqrt(2 ln 2))
+    let two_sqrt_two_ln2 = 2.0 * (2.0_f32.ln()).sqrt();
+    let sigma = fwhm / two_sqrt_two_ln2;
+    if sigma.is_finite() && sigma > 0.0 {
+        Some((sigma, x_left.min(x_right), x_left.max(x_right)))
+    } else {
+        None
+    }
+}
+
+// (keep your existing scans_from_sigma, thin_stride, sanitize_fit, ppm_expand, etc.)
+
+pub fn make_spec_from_pair(
+    im: &ImPeak1D,
+    rt: &RtPeak1D,
+    rt_frames: &RtFrames,
+    opts: &BuildSpecOpts,
+) -> ClusterSpec1D {
+    let frames_len = rt_frames.frames.len();
+
+    // --- RT clamp as before
+    let (mut rt_lo, mut rt_hi) = rt.rt_bounds_frames;
+    rt_lo = rt_lo.saturating_sub(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
+    rt_hi = rt_hi.saturating_add(opts.extra_rt_pad).min(frames_len.saturating_sub(1));
+    if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
+
+    // --- IM window with minimum span (prior σ if available)
+    let mut im_lo = im.left.saturating_sub(opts.extra_im_pad);
+    let mut im_hi = im.right.saturating_add(opts.extra_im_pad);
+    if im_lo > im_hi { std::mem::swap(&mut im_lo, &mut im_hi); }
+
+    let prior_sigma = im.scan_sigma.unwrap_or(0.0).max(0.0);
+    let k = if opts.im_k_sigma.is_finite() { opts.im_k_sigma.max(0.0) } else { 3.0 };
+    let want_from_prior = if prior_sigma > 0.0 { scans_from_sigma(k, prior_sigma) } else { 0 };
+    let want_from_measured = im.width_scans.max(2);
+    let mut want = opts.min_im_span.max(want_from_measured);
+    if want_from_prior > 0 { want = want.max(want_from_prior); }
+
+    let (wo_lo, wo_hi) = widen_scan_window(im_lo, im_hi, want, im.scan);
+    im_lo = wo_lo;
+    im_hi = wo_hi;
+
+    // --- m/z window: pad, then clamp to ±ppm cap around apex
+    let center = im.mz_center;
+    let (lo0, hi0) = ppm_expand(im.mz_bounds, opts.mz_ppm_pad, center);
+    let cap_ppm = ppm_cap_for(opts.ms_level); // e.g. 10 (MS1) / 15 (MS2)
+    let mz_min = rt_frames.scale.mz_min;
+    let mz_max = rt_frames.scale.mz_max;
+    let (lo_c, hi_c) = clamp_window_ppm(center, lo0, hi0, cap_ppm, mz_min, mz_max);
+
+    ClusterSpec1D {
+        rt_lo, rt_hi, im_lo, im_hi,
+        mz_win: (lo_c, hi_c),
+        mz_hist_bins: opts.mz_hist_bins.max(128),
+        window_group: im.window_group,
+        parent_im_id: Some(im.id),
+        parent_rt_id: Some(rt.id),
+        ms_level: opts.ms_level,
+        im_prior_sigma: if prior_sigma > 0.0 { Some(prior_sigma) } else { None },
+    }
+}
+
+pub fn evaluate_spec_1d(
+    rt_frames: &RtFrames,
+    spec: &ClusterSpec1D,
+    opts: &Eval1DOpts,
+) -> ClusterResult1D {
+    debug_assert!(rt_frames.is_consistent());
+    let scale = &*rt_frames.scale;
+    let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.mz_win);
+
+    // --- 1) first pass accumulation
+    let rt_marg1 = build_rt_marginal(
+        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
+    let im_marg1 = build_im_marginal(
+        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
+    let (mz_hist1, mz_centers1) = build_mz_hist(
+        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi, scale);
+
+    let rt_sum1: f32 = rt_marg1.iter().copied().sum();
+    let im_sum1: f32 = im_marg1.iter().copied().sum();
+    let mz_sum1: f32 = mz_hist1.iter().copied().sum();
+
+    if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || mz_sum1 <= 0.0 {
+        let hi_edge_idx = (bin_hi0 + 1).min(scale.edges.len() - 1);
+        return ClusterResult1D {
+            rt_window: (spec.rt_lo, spec.rt_hi),
+            im_window: (spec.im_lo, spec.im_hi),
+            mz_window: (scale.edges[bin_lo0], scale.edges[hi_edge_idx].min(scale.mz_max)),
+            rt_fit: Fit1D::default(),
+            im_fit: Fit1D::default(),
+            mz_fit: Fit1D::default(),
+            raw_sum: 0.0,
+            volume_proxy: 0.0,
+            frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
+            window_group: spec.window_group,
+            parent_im_id: spec.parent_im_id,
+            parent_rt_id: spec.parent_rt_id,
+            ms_level: spec.ms_level,
+            rt_axis_sec: opts.attach_axes.then_some(rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec()),
+            im_axis_scans: opts.attach_axes.then_some((spec.im_lo..=spec.im_hi).collect()),
+            mz_axis_da:   opts.attach_axes.then_some(mz_centers1.clone()),
+            raw_points: None,
+        };
+    }
+
+    // --- Argmax center on first pass (with small sub-bin refine)
+    let i_max1 = argmax_idx(&mz_hist1);
+    let center1 = parabolic_refine(&mz_centers1, &mz_hist1, i_max1);
+
+    // --- 2) optional m/z refine: re-bin tightly around argmax center (ppm-capped)
+    let (bin_lo, bin_hi, mz_centers2) = {
+        if opts.refine_mz_once {
+            let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 {
+                opts.mz_ppm_cap
+            } else {
+                ppm_cap_for(spec.ms_level)
+            };
+            let (lo_ref, hi_ref) = clamp_window_ppm(center1, center1, center1, ppm_cap, scale.mz_min, scale.mz_max);
+            let (bl, bh) = bin_range_for_win(scale, (lo_ref, hi_ref));
+            (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
+        } else {
+            (bin_lo0, bin_hi0, mz_centers1.clone())
+        }
+    };
+
+    // --- 3) re-accumulate in refined window
+    let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
+    let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
+    let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
+
+    let rt_sum: f32 = rt_marg.iter().copied().sum();
+    let im_sum: f32 = im_marg.iter().copied().sum();
+    let mz_sum: f32 = mz_hist.iter().copied().sum();
+
+    // Fallback to first pass if refine killed signal
+    let (_use_bins_lo, _use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
+        if rt_sum <= 0.0 || im_sum <= 0.0 || mz_sum <= 0.0 {
+            (bin_lo0, bin_hi0, &rt_marg1, &im_marg1, &mz_hist1, &mz_centers1)
+        } else {
+            (bin_lo,  bin_hi,  &rt_marg,  &im_marg,  &mz_hist,  &mz_centers2)
+        };
+
+    // --- 4) final fits: RT/IM moments (typically unimodal), m/z argmax + FWHM σ
+    let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
+    let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
+    let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
+
+    let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
+    let mut im_fit = fit1d_moment(use_im_marg, Some(&im_axis_f32));
+
+    // m/z
+    let i_max = argmax_idx(use_mz_hist);
+    let mu_raw = parabolic_refine(use_mz_centers, use_mz_hist, i_max);
+
+    let (sigma_est, fit_lo_50, fit_hi_50) = match fwhm_sigma_from_hist(use_mz_centers, use_mz_hist, i_max) {
+        Some((s, xl, xr)) => (s, xl, xr),
+        None => {
+            // fallback σ from local bin width
+            let bw = if i_max + 1 < use_mz_centers.len() {
+                (use_mz_centers[i_max + 1] - use_mz_centers[i_max]).abs()
+            } else if i_max > 0 {
+                (use_mz_centers[i_max] - use_mz_centers[i_max - 1]).abs()
+            } else { 0.0 };
+            let s = (bw / 2.355).max(1e-6);
+            let fwhm = 2.355 * s;
+            (s, mu_raw - 0.5 * fwhm, mu_raw + 0.5 * fwhm)
+        }
+    };
+
+    // build initial shape-driven bounds (keep 50% crossings, include ±k·σ)
+    let k_bounds = 1.0_f32; // set to 3.0 to report μ±3σ
+    let prelim_lo = mu_raw - k_bounds * sigma_est;
+    let prelim_hi = mu_raw + k_bounds * sigma_est;
+    let mut fit_lo = prelim_lo.min(fit_lo_50);
+    let mut fit_hi = prelim_hi.max(fit_hi_50);
+
+    // ppm clamp on output window and σ
+    let ppm_cap_out = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 {
+        opts.mz_ppm_cap
+    } else {
+        ppm_cap_for(spec.ms_level)
+    };
+    (fit_lo, fit_hi) = clamp_window_ppm(mu_raw, fit_lo, fit_hi, ppm_cap_out, scale.mz_min, scale.mz_max);
+
+    let min_sigma = 1e-6;
+    let sigma_clamped = clamp_sigma_by_ppm(mu_raw, sigma_est, k_bounds, ppm_cap_out, min_sigma);
+
+    let mut mz_fit = Fit1D {
+        mu: mu_raw,
+        sigma: sigma_clamped,
+        height: use_mz_hist[i_max],
+        baseline: 0.0,
+        area: use_mz_hist.iter().copied().sum(),
+        r2: 1.0,
+        n: use_mz_hist.len(),
+    };
+
+    // sanitize + IM fallbacks
+    let rt_mu_bounds = if spec.rt_lo < rt_frames.rt_times.len() && spec.rt_hi < rt_frames.rt_times.len() {
+        Some((rt_frames.rt_times[spec.rt_lo], rt_frames.rt_times[spec.rt_hi]))
+    } else { None };
+    let mz_mu_bounds = Some((scale.mz_min, scale.mz_max));
+    let im_mu_bounds = Some((spec.im_lo as f32, spec.im_hi as f32));
+
+    sanitize_fit(&mut mz_fit, mz_mu_bounds, 1e-6, true);
+    sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
+    sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
+
+    if im_fit.mu == 0.0 {
+        let lo = spec.im_lo as f32;
+        let hi = spec.im_hi as f32;
+        im_fit.mu = if hi > lo { 0.5 * (lo + hi) } else { lo.max(1.0) };
+    }
+    if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
+        let k = opts.refine_k_sigma.max(1.0);
+        let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
+        let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
+        let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
+        let mut s = prior.max(from_window).max(1e-3);
+        if !s.is_finite() { s = 1e-3; }
+        im_fit.sigma = s;
+    }
+
+    // --- 5) pack: report fit-derived, ppm-clamped m/z window
+    let raw_sum = use_rt_marg.iter().copied().sum();
+    let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
+
+    ClusterResult1D {
+        rt_window: (spec.rt_lo, spec.rt_hi),
+        im_window: (spec.im_lo, spec.im_hi),
+        mz_window: (fit_lo, fit_hi),
+        rt_fit, im_fit, mz_fit,
+        raw_sum, volume_proxy,
+        frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
+        window_group: spec.window_group,
+        parent_im_id: spec.parent_im_id,
+        parent_rt_id: spec.parent_rt_id,
+        ms_level: spec.ms_level,
+        rt_axis_sec: opts.attach_axes.then_some(rt_times),
+        im_axis_scans: opts.attach_axes.then_some(im_axis),
+        mz_axis_da:   opts.attach_axes.then_some(use_mz_centers.clone()),
+        raw_points: None,
+    }
 }
