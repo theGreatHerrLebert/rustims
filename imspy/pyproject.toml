@@ -40,6 +40,7 @@ timsim = "imspy.simulation.timsim.simulator:main"
 timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
 imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
 teschner_tracer = "imspy.timstof.clustering.cluster_pipeline:main"
+cluster_report = "imspy.timstof.clustering.cluster_report:main"
 
 [build-system]
 requires = ["poetry-core"]
