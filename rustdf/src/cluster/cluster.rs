@@ -400,7 +400,7 @@ pub fn evaluate_spec_1d(
 
         im_fit.sigma = s;
     }
-
+    /*
     // --- RT σ fallback: use prior, else window-implied span
     if !rt_fit.sigma.is_finite() || rt_fit.sigma <= 0.0 {
         let k = opts.refine_k_sigma.max(1.0); // or add opts.rt_fallback_k_sigma
@@ -413,6 +413,7 @@ pub fn evaluate_spec_1d(
         if !s.is_finite() { s = 1e-6; }
         rt_fit.sigma = s;
     }
+     */
 
     // --- 5) pack (respect chosen bins)
     let raw_sum = use_rt_marg.iter().copied().sum();
