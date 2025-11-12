@@ -377,7 +377,7 @@ def get_slice_filtered_cluster(
         )
 
         # Vectorize → dense tensor (rt × im × mz)
-        T = S.vectorized(2).get_tensor_repr(dense=True, re_index=True).numpy()
+        T = S.vectorized(4).get_tensor_repr(dense=True, re_index=True).numpy()
         if T.ndim != 3:
             # Unexpected layout; try to coerce
             return None
