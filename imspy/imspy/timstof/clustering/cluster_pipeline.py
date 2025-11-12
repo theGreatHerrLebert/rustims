@@ -22,6 +22,119 @@ from imspy.timstof.dia import (
     TimsDatasetDIA,
 )
 
+def print_config_summary(cfg: dict) -> None:
+    """Pretty-print an actionable summary of the effective configuration."""
+    def get(d, *keys, default=None):
+        cur = d
+        for k in keys:
+            if not isinstance(cur, dict) or k not in cur:
+                return default
+            cur = cur[k]
+        return cur
+
+    ds_cfg   = cfg.get("dataset", {})
+    out_cfg  = cfg.get("output", {})
+    run_cfg  = cfg.get("run", {})
+    det_cfg  = cfg.get("detector", {})
+    st_cfg   = cfg.get("stitch", {})
+    plan_cfg = cfg.get("plans", {})
+
+    lines = []
+    lines.append("──────────────── CONFIG SUMMARY ────────────────")
+    # Dataset
+    lines.append("[dataset]")
+    lines.append(f"  path                 : {ds_cfg.get('path')}")
+    lines.append(f"  use_bruker_sdk       : {bool(ds_cfg.get('use_bruker_sdk', False))}")
+    # Run
+    lines.append("[run]")
+    lines.append(f"  stage                : {run_cfg.get('stage')}")
+    lines.append(f"  device               : {run_cfg.get('device')}")
+    lines.append(f"  batch_size           : {int(run_cfg.get('batch_size', 0))}")
+    lines.append(f"  precompute_views     : {bool(run_cfg.get('precompute_views', False))}")
+    lines.append(f"  fragments_enabled    : {bool(run_cfg.get('fragments_enabled', False))}")
+    lines.append(f"  attach_raw_data      : {bool(run_cfg.get('attach_raw_data', False))}")
+    # Output
+    lines.append("[output]")
+    lines.append(f"  dir                  : {out_cfg.get('dir')}")
+    if "precursor_file" in out_cfg:
+        lines.append(f"  precursor_file       : {out_cfg.get('precursor_file')}")
+    if "fragment_file" in out_cfg:
+        lines.append(f"  fragment_file        : {out_cfg.get('fragment_file')}")
+    pq_enabled = bool(out_cfg.get("parquet_enabled", False))
+    lines.append(f"  parquet_enabled      : {pq_enabled}")
+    if pq_enabled:
+        if "precursor_parquet" in out_cfg:
+            lines.append(f"  precursor_parquet    : {out_cfg.get('precursor_parquet')}")
+        if "fragment_parquet" in out_cfg:
+            lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
+
+    # Plans + Stitch
+    for sec in ("precursor", "fragment"):
+        if sec in plan_cfg:
+            p = plan_cfg[sec]
+            lines.append(f"[plans.{sec}]")
+            lines.append(f"  ppm_per_bin          : {float(p.get('ppm_per_bin'))}")
+            lines.append(f"  mz_pad_ppm           : {float(p.get('mz_pad_ppm'))}")
+            lines.append(f"  rt_window_sec        : {float(p.get('rt_window_sec'))}")
+            lines.append(f"  rt_hop_sec           : {float(p.get('rt_hop_sec'))}")
+            lines.append(f"  im_sigma_scans       : {float(p.get('im_sigma_scans'))}")
+            lines.append(f"  mz_sigma_bins        : {float(p.get('mz_sigma_bins'))}")
+        if sec in st_cfg:
+            s = st_cfg[sec]
+            lines.append(f"[stitch.{sec}]")
+            lines.append(f"  max_mz_row_delta     : {int(s.get('max_mz_row_delta', 0))}")
+            lines.append(f"  max_scan_delta       : {int(s.get('max_scan_delta', 0))}")
+            lines.append(f"  jaccard_min          : {float(s.get('jaccard_min', 0.0))}")
+            lines.append(f"  im_jaccard_min       : {float(s.get('im_jaccard_min', 0.0))}")
+            lines.append(f"  use_batch_stitch     : {bool(s.get('use_batch_stitch', False))}")
+
+    # Detector (grouped for readability)
+    lines.append("[detector]")
+    # pooling/tiling
+    lines.append(f"  pool_scan            : {int(det_cfg.get('pool_scan'))}")
+    lines.append(f"  pool_mz              : {int(det_cfg.get('pool_mz'))}")
+    lines.append(f"  min_intensity_scaled : {float(det_cfg.get('min_intensity_scaled'))}")
+    lines.append(f"  tile_rows            : {int(det_cfg.get('tile_rows'))}")
+    lines.append(f"  tile_overlap         : {int(det_cfg.get('tile_overlap'))}")
+    # fits
+    lines.append(f"  fit_h × fit_w        : {int(det_cfg.get('fit_h'))} × {int(det_cfg.get('fit_w'))}")
+    lines.append(f"  refine               : {det_cfg.get('refine')}")
+    lines.append(f"  refine_iters / lr    : {int(det_cfg.get('refine_iters'))} / {float(det_cfg.get('refine_lr'))}")
+    lines.append(f"  refine_mask_k        : {float(det_cfg.get('refine_mask_k'))}")
+    lines.append(f"  refine_scan|mz|σscan|σmz : "
+                 f"{bool(det_cfg.get('refine_scan'))}|{bool(det_cfg.get('refine_mz'))}|"
+                 f"{bool(det_cfg.get('refine_sigma_scan'))}|{bool(det_cfg.get('refine_sigma_mz'))}")
+    # thresholds/tolerances
+    lines.append(f"  scale / units        : {det_cfg.get('scale')} / {det_cfg.get('output_units')}")
+    lines.append(f"  gn_float64           : {bool(det_cfg.get('gn_float64'))}")
+    lines.append(f"  do_dedup             : {bool(det_cfg.get('do_dedup'))}")
+    lines.append(f"  tol_scan / tol_mz    : {float(det_cfg.get('tol_scan'))} / {float(det_cfg.get('tol_mz'))}")
+    lines.append(f"  k_sigma / min_width  : {float(det_cfg.get('k_sigma'))} / {int(det_cfg.get('min_width'))}")
+    lines.append(f"  mz_bounds_pad_ppm/abs: {float(det_cfg.get('mz_bounds_pad_ppm'))} / {float(det_cfg.get('mz_bounds_pad_abs'))}")
+
+    # Light sanity notes
+    lines.append("──────────────── NOTES ─────────────────────────")
+    cuda_avail = torch.cuda.is_available()
+    lines.append(f"  CUDA available       : {cuda_avail}")
+    if run_cfg.get("device") == "cpu" and cuda_avail:
+        lines.append("  ⚠ You selected CPU but CUDA is available.")
+    if run_cfg.get("device") == "cuda" and not cuda_avail:
+        lines.append("  ⚠ CUDA requested but not available; this will fall back or fail.")
+
+    # Output existence hints
+    out_dir = out_cfg.get("dir")
+    if out_dir and not Path(out_dir).exists():
+        lines.append(f"  ℹ Output dir will be created: {out_dir}")
+
+    # Dataset path check
+    ds_path = ds_cfg.get("path")
+    if ds_path and not Path(ds_path).exists():
+        lines.append(f"  ⚠ Dataset path does not exist: {ds_path}")
+
+    lines.append("───────────────────────────────────────────────")
+    for ln in lines:
+        log(ln)
+
 # ---------- small helpers -----------------------------------------------------
 def ensure_dir_for_file(path: str | os.PathLike) -> None:
     p = Path(path)
@@ -288,6 +401,8 @@ def main(argv=None):
         cfg["run"]["device"] = args.device
     if args.fragments is not None:
         cfg["run"]["fragments_enabled"] = bool(args.fragments)
+
+    print_config_summary(cfg)
 
     ds = TimsDatasetDIA(
         cfg["dataset"]["path"],
