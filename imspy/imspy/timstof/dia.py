@@ -1093,7 +1093,7 @@ class ImPeak1D(RustWrapperObject):
             int(scan_abs),
             int(left_abs),
             int(right_abs),
-            float(s_scan) if s_scan is not 0.0 else None,
+            float(s_scan) if s_scan > 0.0 else None,
             None,  # mobility: Option<f32>
             float(apex_smoothed),
             float(apex_raw),
