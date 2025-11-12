@@ -204,9 +204,9 @@ pub struct Eval1DOpts {
 }
 
 #[inline]
-fn ppm_expand((lo, hi):(f32, f32), ppm: f32, center_hint: f32) -> (f32, f32) {
+fn ppm_expand((lo, hi):(f32, f32), ppm: f32, center_hint: f32, abs_da_add: f32) -> (f32, f32) {
     if ppm <= 0.0 { return (lo, hi); }
-    let d = center_hint.abs() * ppm * 1e-6;
+    let d = center_hint.abs() * ppm * 1e-6 + abs_da_add;
     (lo - d, hi + d)
 }
 
@@ -685,7 +685,7 @@ pub fn make_spec_from_pair(
 
     // --- m/z window: pad, then clamp to ±ppm cap around apex
     let center = im.mz_center;
-    let (lo0, hi0) = ppm_expand(im.mz_bounds, opts.mz_ppm_pad, center);
+    let (lo0, hi0) = ppm_expand(im.mz_bounds, opts.mz_ppm_pad, center, 0.015);
     let cap_ppm = ppm_cap_for(opts.ms_level); // e.g. 10 (MS1) / 15 (MS2)
     let mz_min = rt_frames.scale.mz_min;
     let mz_max = rt_frames.scale.mz_max;
