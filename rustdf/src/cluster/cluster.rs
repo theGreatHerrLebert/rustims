@@ -224,7 +224,7 @@ pub fn make_spec_from_pair(
     ClusterSpec1D {
         rt_lo, rt_hi, im_lo, im_hi,
         mz_win,
-        mz_hist_bins: opts.mz_hist_bins.max(16),
+        mz_hist_bins: opts.mz_hist_bins.max(128),
         window_group: im.window_group,
         parent_im_id: Some(im.id),
         parent_rt_id: Some(rt.id),
