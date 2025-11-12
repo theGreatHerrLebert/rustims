@@ -553,14 +553,16 @@ fn ppm_halfwidth_da(center_da: f32, ppm_cap: f32) -> f32 {
 
 /// Clamp (lo,hi) around `center` to ±ppm_cap; also intersects with [mz_min, mz_max].
 #[inline]
-fn clamp_window_ppm(center: f32, lo: f32, hi: f32, ppm_cap: f32, mz_min: f32, mz_max: f32) -> (f32, f32) {
-    let r_ppm = ppm_halfwidth_da(center, ppm_cap);
-    let lo_ppm = (center - r_ppm).max(mz_min);
-    let hi_ppm = (center + r_ppm).min(mz_max);
-    // intersect proposed with ±ppm leash
-    let lo_final = lo.max(lo_ppm);
-    let hi_final = hi.min(hi_ppm);
-    if hi_final >= lo_final { (lo_final, hi_final) } else { (lo_ppm, hi_ppm) }
+fn clamp_window_ppm(center: f32, lo: f32, hi: f32, ppm: f32,
+                    mz_min: Option<f32>, mz_max: Option<f32>) -> (f32,f32) {
+    let r = (center.abs() * ppm.max(0.0) * 1e-6).max(0.0);
+    let mut lo_ppm = center - r;
+    let mut hi_ppm = center + r;
+    if let Some(v) = mz_min { lo_ppm = lo_ppm.max(v); }
+    if let Some(v) = mz_max { hi_ppm = hi_ppm.min(v); }
+    let lo_f = lo.max(lo_ppm);
+    let hi_f = hi.min(hi_ppm);
+    if hi_f >= lo_f { (lo_f, hi_f) } else { (lo_ppm, hi_ppm) }
 }
 
 /// Clamp σ so that μ ± k·σ stays within the ppm cap.
@@ -689,7 +691,7 @@ pub fn make_spec_from_pair(
     let cap_ppm = ppm_cap_for(opts.ms_level); // e.g. 10 (MS1) / 15 (MS2)
     let mz_min = rt_frames.scale.mz_min;
     let mz_max = rt_frames.scale.mz_max;
-    let (lo_c, hi_c) = clamp_window_ppm(center, lo0, hi0, cap_ppm, mz_min, mz_max);
+    let (lo_c, hi_c) = clamp_window_ppm(center, lo0, hi0, cap_ppm, Some(mz_min), Some(mz_max));
 
     ClusterSpec1D {
         rt_lo, rt_hi, im_lo, im_hi,
@@ -759,7 +761,7 @@ pub fn evaluate_spec_1d(
             } else {
                 ppm_cap_for(spec.ms_level)
             };
-            let (lo_ref, hi_ref) = clamp_window_ppm(center1, center1, center1, ppm_cap, scale.mz_min, scale.mz_max);
+            let (lo_ref, hi_ref) = clamp_window_ppm(center1, center1, center1, ppm_cap, Some(scale.mz_min), Some(scale.mz_max));
             let (bl, bh) = bin_range_for_win(scale, (lo_ref, hi_ref));
             (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
         } else {
@@ -824,7 +826,7 @@ pub fn evaluate_spec_1d(
     } else {
         ppm_cap_for(spec.ms_level)
     };
-    (fit_lo, fit_hi) = clamp_window_ppm(mu_raw, fit_lo, fit_hi, ppm_cap_out, scale.mz_min, scale.mz_max);
+    (fit_lo, fit_hi) = clamp_window_ppm(mu_raw, fit_lo, fit_hi, ppm_cap_out, Some(scale.mz_min), Some(scale.mz_max));
 
     let min_sigma = 1e-6;
     let sigma_clamped = clamp_sigma_by_ppm(mu_raw, sigma_est, k_bounds, ppm_cap_out, min_sigma);
@@ -885,4 +887,243 @@ pub fn evaluate_spec_1d(
         mz_axis_da:   opts.attach_axes.then_some(use_mz_centers.clone()),
         raw_points: None,
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ClusterStitchParams {
+    pub allow_cross_groups: bool,
+    pub min_overlap_frames: usize,
+    pub max_rt_gap_frames: usize,
+    pub min_im_overlap_scans: usize,
+    pub max_im_gap_scans: usize,
+    pub jaccard_rt_min: f32,
+    pub jaccard_im_min: f32,
+
+    /// PPM leash for deciding "same m/z" and for clamping merged window & sigma.
+    pub ppm_cap: f32,            // e.g. 10.0 (MS1) or 15.0 (MS2)
+
+    /// Bound μ ± kσ to stay within ppm_cap.
+    pub k_sigma_bounds: f32,     // e.g. 1.0 (tight) or 3.0 (looser reporting)
+
+    /// Allow a tiny absolute gap between two m/z windows scaled by ppm at μ̄.
+    /// Effective gap in Da = max_mz_gap_ppm * μ̄ * 1e-6.
+    pub max_mz_gap_ppm: f32,     // e.g. 1.0 .. 3.0; set 0 to disable
+
+    /// Optional hard instrument bounds; None = unbounded.
+    pub mz_min: Option<f32>,
+    pub mz_max: Option<f32>,
+}
+
+// -------- Small helpers -------------------------------------------------------
+
+#[inline]
+fn jaccard_u((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
+    if a0>a1 || b0>b1 { return 0.0; }
+    let lo = a0.max(b0);
+    let hi = a1.min(b1);
+    let inter = hi.saturating_sub(lo).saturating_add(1) as f32;
+    if inter <= 0.0 { return 0.0; }
+    let ua = a1.saturating_sub(a0).saturating_add(1) as f32;
+    let ub = b1.saturating_sub(b0).saturating_add(1) as f32;
+    inter / (ua + ub - inter).max(1.0)
+}
+
+#[inline]
+fn ppm_half(center: f32, ppm: f32) -> f32 {
+    (center.abs() * ppm.max(0.0) * 1e-6).max(0.0)
+}
+
+#[inline]
+fn abs_gap_da((lo1,hi1):(f32,f32),(lo2,hi2):(f32,f32)) -> f32 {
+    if hi1 < lo2 { lo2 - hi1 }
+    else if hi2 < lo1 { lo1 - hi2 }
+    else { 0.0 }
+}
+
+// -------- Compatibility & merge ----------------------------------------------
+
+#[inline]
+fn compatible_clusters(a: &ClusterResult1D, b: &ClusterResult1D, p: &ClusterStitchParams) -> bool {
+    if !p.allow_cross_groups && a.window_group != b.window_group { return false; }
+    if a.ms_level != b.ms_level { return false; }
+
+    // m/z center proximity with ppm leash at mean μ
+    let mu_a = a.mz_fit.mu;
+    let mu_b = b.mz_fit.mu;
+    let mu_m = 0.5*(mu_a + mu_b);
+    let d = (mu_a - mu_b).abs();
+    if d > ppm_half(mu_m, p.ppm_cap) { return false; }
+
+    // also allow a tiny absolute gap between their windows scaled by ppm
+    if p.max_mz_gap_ppm > 0.0 {
+        let gap = abs_gap_da(a.mz_window, b.mz_window);
+        let max_gap = ppm_half(mu_m, p.max_mz_gap_ppm);
+        if gap > max_gap { return false; }
+    } else {
+        // require overlap if no gap allowed
+        if abs_gap_da(a.mz_window, b.mz_window) > 0.0 { return false; }
+    }
+
+    // RT: overlap or small gap
+    let jac_rt = jaccard_u(a.rt_window, b.rt_window);
+    let rt_gap = if a.rt_window.1 < b.rt_window.0 {
+        b.rt_window.0 - a.rt_window.1
+    } else if b.rt_window.1 < a.rt_window.0 {
+        a.rt_window.0 - b.rt_window.1
+    } else { 0 };
+    if jac_rt < p.jaccard_rt_min && rt_gap > p.max_rt_gap_frames { return false; }
+
+    // IM: overlap or small gap
+    let jac_im = jaccard_u(a.im_window, b.im_window);
+    let im_gap = if a.im_window.1 < b.im_window.0 {
+        b.im_window.0 - a.im_window.1
+    } else if b.im_window.1 < a.im_window.0 {
+        a.im_window.0 - b.im_window.1
+    } else { 0 };
+    if jac_im < p.jaccard_im_min && im_gap > p.max_im_gap_scans { return false; }
+
+    true
+}
+
+#[inline]
+fn merge_clusters(a: &ClusterResult1D, b: &ClusterResult1D, p: &ClusterStitchParams) -> ClusterResult1D {
+    // μ: area-weighted
+    let area_a = a.mz_fit.area.max(0.0);
+    let area_b = b.mz_fit.area.max(0.0);
+    let wsum = (area_a + area_b).max(1e-12);
+    let mu = (a.mz_fit.mu*area_a + b.mz_fit.mu*area_b) / wsum;
+
+    // σ: take max, then clamp to ppm leash (μ ± kσ)
+    let mut sigma = a.mz_fit.sigma.max(b.mz_fit.sigma);
+    sigma = clamp_sigma_by_ppm(mu, sigma, p.k_sigma_bounds, p.ppm_cap, 1e-6);
+
+    // m/z window: union then clamp to ppm leash
+    let mz_lo = a.mz_window.0.min(b.mz_window.0);
+    let mz_hi = a.mz_window.1.max(b.mz_window.1);
+    let (mz_lo, mz_hi) = clamp_window_ppm(mu, mz_lo, mz_hi, p.ppm_cap, p.mz_min, p.mz_max);
+
+    // RT/IM windows: union
+    let rt_window = (a.rt_window.0.min(b.rt_window.0), a.rt_window.1.max(b.rt_window.1));
+    let im_window = (a.im_window.0.min(b.im_window.0), a.im_window.1.max(b.im_window.1));
+
+    // Build out
+    let mut out = a.clone();
+    out.rt_window = rt_window;
+    out.im_window = im_window;
+    out.mz_window = (mz_lo, mz_hi);
+
+    out.mz_fit.mu = mu;
+    out.mz_fit.sigma = sigma;
+    out.mz_fit.area = area_a + area_b;
+    out.mz_fit.height = a.mz_fit.height.max(b.mz_fit.height);
+
+    // Cheap RT/IM shape combine
+    let rt_w = (a.rt_fit.area.max(0.0) + b.rt_fit.area.max(0.0)).max(1e-12);
+    out.rt_fit.mu = (a.rt_fit.mu*a.rt_fit.area.max(0.0) + b.rt_fit.mu*b.rt_fit.area.max(0.0)) / rt_w;
+    out.rt_fit.sigma = a.rt_fit.sigma.max(b.rt_fit.sigma);
+
+    let im_w = (a.im_fit.area.max(0.0) + b.im_fit.area.max(0.0)).max(1e-12);
+    out.im_fit.mu = (a.im_fit.mu*a.im_fit.area.max(0.0) + b.im_fit.mu*b.im_fit.area.max(0.0)) / im_w;
+    out.im_fit.sigma = a.im_fit.sigma.max(b.im_fit.sigma);
+
+    out
+}
+
+#[inline]
+fn mu_bucket_key(mu: f32, ppm_key: f32) -> i64 {
+    // Group μ values that are within ~ppm_key ppm into the same coarse bucket.
+    // Linear (no logs), stable for all positive μ. ppm_key is clamped to ≥1.
+    ((mu * 1e6) / ppm_key.max(1.0)).round() as i64
+}
+
+/// O(N log N) with coarse μ bucketing; no MzScale required.
+pub fn stitch_clusters_1d_ppm(mut clusters: Vec<ClusterResult1D>, params: ClusterStitchParams) -> Vec<ClusterResult1D> {
+    if clusters.is_empty() { return clusters; }
+
+    // ---- 1) Coarse bucketing on a linear ppm grid
+    use rustc_hash::FxHashMap;
+    let mut buckets: FxHashMap<(Option<u32>, u8, i64), Vec<ClusterResult1D>> = FxHashMap::default();
+    let ppm_key = params.ppm_cap.max(1.0);
+
+    for c in clusters.drain(..) {
+        // Skip obviously bad μ to avoid weird ordering/merging later.
+        let mu = c.mz_fit.mu;
+        if !mu.is_finite() || mu <= 0.0 {
+            // If you prefer to keep them, you could map them to a special key instead.
+            continue;
+        }
+        let wg = if params.allow_cross_groups { None } else { c.window_group };
+        let ms = c.ms_level;
+        let key = mu_bucket_key(mu, ppm_key);
+        buckets.entry((wg, ms, key)).or_default().push(c);
+    }
+
+    // ---- 2) Merge within each bucket (sorted, single pass + fringe fold)
+    let mut merged_all: Vec<ClusterResult1D> = Vec::new();
+
+    for ((_wg, _ms, _key), mut vecs) in buckets {
+        vecs.sort_by(|a, b|
+            a.mz_fit.mu
+                .partial_cmp(&b.mz_fit.mu).unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.rt_window.0.cmp(&b.rt_window.0))
+                .then(a.im_window.0.cmp(&b.im_window.0))
+        );
+
+        let mut out: Vec<ClusterResult1D> = Vec::with_capacity(vecs.len());
+        for c in vecs.into_iter() {
+            if let Some(last) = out.last_mut() {
+                if compatible_clusters(last, &c, &params) {
+                    *last = merge_clusters(last, &c, &params);
+                    continue;
+                }
+            }
+            out.push(c);
+        }
+
+        // Small within-bucket consolidation pass for fringe cases
+        out.sort_by(|a, b|
+            a.mz_fit.mu
+                .partial_cmp(&b.mz_fit.mu).unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.rt_window.0.cmp(&b.rt_window.0))
+                .then(a.im_window.0.cmp(&b.im_window.0))
+        );
+
+        let mut folded: Vec<ClusterResult1D> = Vec::with_capacity(out.len());
+        for c in out.into_iter() {
+            if let Some(last) = folded.last_mut() {
+                if compatible_clusters(last, &c, &params) {
+                    *last = merge_clusters(last, &c, &params);
+                    continue;
+                }
+            }
+            folded.push(c);
+        }
+
+        merged_all.extend(folded.into_iter());
+    }
+
+    // ---- 3) Final global consolidation pass (cross-bucket neighbors)
+    if merged_all.len() <= 1 {
+        return merged_all;
+    }
+
+    merged_all.sort_by(|a, b|
+        a.mz_fit.mu
+            .partial_cmp(&b.mz_fit.mu).unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.rt_window.0.cmp(&b.rt_window.0))
+            .then(a.im_window.0.cmp(&b.im_window.0))
+    );
+
+    let mut final_fold: Vec<ClusterResult1D> = Vec::with_capacity(merged_all.len());
+    for c in merged_all.into_iter() {
+        if let Some(last) = final_fold.last_mut() {
+            if compatible_clusters(last, &c, &params) {
+                *last = merge_clusters(last, &c, &params);
+                continue;
+            }
+        }
+        final_fold.push(c);
+    }
+
+    final_fold
 }

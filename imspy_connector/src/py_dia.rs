@@ -10,7 +10,7 @@ use rustdf::cluster::io as cio;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use rustdf::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
-use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, Fit1D, RawPoints};
+use rustdf::cluster::cluster::{stitch_clusters_1d_ppm, Attach1DOptions, BuildSpecOpts, ClusterResult1D, ClusterStitchParams, Eval1DOpts, Fit1D, RawPoints};
 use rustdf::cluster::cluster_scoring::{best_ms1_for_each_ms2, score_pairs, ScoreOpts};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
@@ -2014,7 +2014,24 @@ impl PyTimsDatasetDIA {
             )
         });
 
-        results_to_py(py, results)
+        let p = ClusterStitchParams {
+            allow_cross_groups: false,
+            min_overlap_frames: 1,
+            max_rt_gap_frames: 3,
+            min_im_overlap_scans: 1,
+            max_im_gap_scans: 10,
+            jaccard_rt_min: 0.05,
+            jaccard_im_min: 0.05,
+            ppm_cap: 25.0,
+            k_sigma_bounds: 1.0,
+            max_mz_gap_ppm: 15.0,
+            mz_min: None,
+            mz_max: None,
+        };
+
+        let stitched = stitch_clusters_1d_ppm(results, p);
+
+        results_to_py(py, stitched)
     }
 
     #[pyo3(signature = (
@@ -2092,7 +2109,24 @@ impl PyTimsDatasetDIA {
             )
         });
 
-        results_to_py(py, results)
+        let p = ClusterStitchParams {
+            allow_cross_groups: false,
+            min_overlap_frames: 1,
+            max_rt_gap_frames: 3,
+            min_im_overlap_scans: 1,
+            max_im_gap_scans: 2,
+            jaccard_rt_min: 0.05,
+            jaccard_im_min: 0.05,
+            ppm_cap: 25.0,
+            k_sigma_bounds: 1.0,
+            max_mz_gap_ppm: 1.0,     // ~1 ppm absolute gap allowed
+            mz_min: None,
+            mz_max: None,
+        };
+
+        let stitched = stitch_clusters_1d_ppm(results, p);
+
+        results_to_py(py, stitched)
     }
 }
 
