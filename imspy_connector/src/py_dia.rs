@@ -2327,7 +2327,7 @@ pub fn stitch_im_peaks_batched_streaming(
         min_im_overlap_scans,
         im_jaccard_min,
         require_mutual_apex_inside,
-        mz_ppm_cap_merge: 25.0,
+        mz_ppm_cap_merge: 50.0,
     };
 
     // Active accumulators keyed by (wg, mz_row, scan_bin)
@@ -2843,7 +2843,7 @@ pub fn stitch_im_peaks_flat_unordered(
         min_im_overlap_scans,
         im_jaccard_min,
         require_mutual_apex_inside,
-        mz_ppm_cap_merge: 25.0,
+        mz_ppm_cap_merge: 50.0,
     };
 
     // Quick exit
