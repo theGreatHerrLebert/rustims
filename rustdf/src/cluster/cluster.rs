@@ -383,7 +383,7 @@ pub fn evaluate_spec_1d(
     let (bin_lo, bin_hi, mz_centers2) = {
         if opts.refine_mz_once {
             let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 25.0 };
-            let half_da = ppm_radius_da(center1, ppm_cap, 0.025);
+            let half_da = ppm_radius_da(center1, ppm_cap, 0.015);
             let lo_da = (center1 - half_da).max(scale.mz_min);
             let hi_da = (center1 + half_da).min(scale.mz_max);
             if hi_da > lo_da {
