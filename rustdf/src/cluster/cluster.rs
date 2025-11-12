@@ -438,19 +438,19 @@ fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(
     let mut left = i_max;
     while left > 0 && hist[left] >= half { left -= 1; }
     if left == i_max { return None; }
-    let (xL0, yL0) = (centers[left], hist[left]);
-    let (xL1, yL1) = (centers[left + 1], hist[left + 1]);
-    if (yL1 - yL0).abs() <= 1e-12 { return None; }
-    let x_left = xL0 + (half - yL0) * (xL1 - xL0) / (yL1 - yL0);
+    let (xl0, yl0) = (centers[left], hist[left]);
+    let (xl1, yl1) = (centers[left + 1], hist[left + 1]);
+    if (yl1 - yl0).abs() <= 1e-12 { return None; }
+    let x_left = xl0 + (half - yl0) * (xl1 - xl0) / (yl1 - yl0);
 
     // search right crossing
     let mut right = i_max;
     while right + 1 < hist.len() && hist[right] >= half { right += 1; }
     if right == i_max { return None; }
-    let (xR0, yR0) = (centers[right - 1], hist[right - 1]);
-    let (xR1, yR1) = (centers[right], hist[right]);
-    if (yR1 - yR0).abs() <= 1e-12 { return None; }
-    let x_right = xR0 + (half - yR0) * (xR1 - xR0) / (yR1 - yR0);
+    let (xr0, yr0) = (centers[right - 1], hist[right - 1]);
+    let (xr1, yr1) = (centers[right], hist[right]);
+    if (yr1 - yr0).abs() <= 1e-12 { return None; }
+    let x_right = xr0 + (half - yr0) * (xr1 - xr0) / (yr1 - yr0);
 
     let fwhm = (x_right - x_left).abs();
     if !fwhm.is_finite() || fwhm <= 0.0 { return None; }
@@ -551,7 +551,7 @@ pub fn evaluate_spec_1d(
     // --- 2) optional m/z refine: re-bin tightly around the argmax center (± ppm cap)
     let (bin_lo, bin_hi, mz_centers2) = {
         if opts.refine_mz_once {
-            let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 5.0 };
+            let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 25.0 };
             let half_da = ppm_radius_da(center1, ppm_cap);
             let lo_da = (center1 - half_da).max(scale.mz_min);
             let hi_da = (center1 + half_da).min(scale.mz_max);
