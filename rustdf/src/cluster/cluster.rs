@@ -427,6 +427,44 @@ pub fn evaluate_spec_1d(
 }
 */
 
+/// Compute σ from FWHM around the apex bin using linear interpolation on each side.
+/// Returns (sigma, x_left_50, x_right_50).
+fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(f32, f32, f32)> {
+    let peak = *hist.get(i_max)?;
+    if !peak.is_finite() || peak <= 0.0 { return None; }
+    let half = 0.5 * peak;
+
+    // search left crossing
+    let mut left = i_max;
+    while left > 0 && hist[left] >= half { left -= 1; }
+    if left == i_max { return None; }
+    let (xL0, yL0) = (centers[left], hist[left]);
+    let (xL1, yL1) = (centers[left + 1], hist[left + 1]);
+    if (yL1 - yL0).abs() <= 1e-12 { return None; }
+    let x_left = xL0 + (half - yL0) * (xL1 - xL0) / (yL1 - yL0);
+
+    // search right crossing
+    let mut right = i_max;
+    while right + 1 < hist.len() && hist[right] >= half { right += 1; }
+    if right == i_max { return None; }
+    let (xR0, yR0) = (centers[right - 1], hist[right - 1]);
+    let (xR1, yR1) = (centers[right], hist[right]);
+    if (yR1 - yR0).abs() <= 1e-12 { return None; }
+    let x_right = xR0 + (half - yR0) * (xR1 - xR0) / (yR1 - yR0);
+
+    let fwhm = (x_right - x_left).abs();
+    if !fwhm.is_finite() || fwhm <= 0.0 { return None; }
+
+    // σ = FWHM / (2*sqrt(2 ln 2))
+    let two_sqrt_two_ln2 = 2.0 * (2.0_f32.ln()).sqrt();
+    let sigma = fwhm / two_sqrt_two_ln2;
+    if sigma.is_finite() && sigma > 0.0 {
+        Some((sigma, x_left.min(x_right), x_left.max(x_right)))
+    } else {
+        None
+    }
+}
+
 pub fn evaluate_spec_1d(
     rt_frames: &RtFrames,
     spec: &ClusterSpec1D,
@@ -448,7 +486,7 @@ pub fn evaluate_spec_1d(
     fn ppm_radius_da(center_da: f32, ppm: f32) -> f32 {
         (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0)
     }
-    // Optional: sub-bin tweak around argmax using a quadratic on the 3 neighboring bins.
+    // Sub-bin tweak around argmax using a quadratic on the 3 neighboring bins.
     #[inline]
     fn parabolic_refine(centers: &[f32], hist: &[f32], i: usize) -> f32 {
         if i == 0 || i + 1 >= hist.len() { return centers[i]; }
@@ -460,10 +498,8 @@ pub fn evaluate_spec_1d(
         let x2 = centers[i + 1];
         let denom = y0 - 2.0 * y1 + y2;
         if denom.abs() <= 1e-12 { return centers[i]; }
-        // Offset from x1 scaled by discrete curvature; clamp to neighborhood
         let dx = 0.5 * (y0 - y2) / denom * ((x2 - x0) * 0.5);
         let x = x1 + dx;
-        // Guard against silly jumps: keep within half a bin around the argmax center
         let half_bin = ((x2 - x0) * 0.5).abs();
         x.clamp(x1 - half_bin, x1 + half_bin)
     }
@@ -530,7 +566,7 @@ pub fn evaluate_spec_1d(
         }
     };
 
-    // --- 3) re-accumulate in refined window and pick argmax again
+    // --- 3) re-accumulate in refined window
     let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
     let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
     let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
@@ -540,14 +576,14 @@ pub fn evaluate_spec_1d(
     let mz_sum: f32 = mz_hist.iter().copied().sum();
 
     // --- 3b) Fallback if refine killed signal
-    let (use_bins_lo, use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
+    let (_use_bins_lo, _use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
         if rt_sum <= 0.0 || im_sum <= 0.0 || mz_sum <= 0.0 {
             (bin_lo0, bin_hi0, &rt_marg1, &im_marg1, &mz_hist1, &mz_centers1)
         } else {
             (bin_lo,  bin_hi,  &rt_marg,  &im_marg,  &mz_hist,  &mz_centers2)
         };
 
-    // --- 4) final fits
+    // --- 4) final fits (RT/IM via moments as before)
     let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
     let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
     let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
@@ -555,14 +591,38 @@ pub fn evaluate_spec_1d(
     let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
     let mut im_fit = fit1d_moment(use_im_marg, Some(&im_axis_f32));
 
-    // m/z: ARGMAX-BASED
+    // --- m/z: argmax μ + σ from FWHM (using your helper), with robust fallback
     let i_max = argmax_idx(use_mz_hist);
     let mu_raw = parabolic_refine(use_mz_centers, use_mz_hist, i_max);
-    // Build a minimal Fit1D: keep sigma small (unknown), area as sum, height as peak bin
+
+    let (sigma_est, fit_lo_50, fit_hi_50) = match fwhm_sigma_from_hist(use_mz_centers, use_mz_hist, i_max) {
+        Some((s, xl, xr)) => (s, xl, xr),
+        None => {
+            // Fallback: use local bin width as a tiny σ proxy
+            let bw = if i_max + 1 < use_mz_centers.len() {
+                (use_mz_centers[i_max + 1] - use_mz_centers[i_max]).abs()
+            } else if i_max > 0 {
+                (use_mz_centers[i_max] - use_mz_centers[i_max - 1]).abs()
+            } else { 0.0 };
+            let s = (bw / 2.355).max(1e-6);
+            let fwhm = 2.355 * s;
+            (s, mu_raw - 0.5 * fwhm, mu_raw + 0.5 * fwhm)
+        }
+    };
+
+    // Optionally expand to k·σ. Here we keep the 50% crossings as primary bounds (k=1.0),
+    // but ensure at least ±k·σ around μ are included.
+    let k_bounds = 1.0_f32; // set to 3.0 for μ ± 3σ bounds
+    let prelim_lo = mu_raw - k_bounds * sigma_est;
+    let prelim_hi = mu_raw + k_bounds * sigma_est;
+    let fit_lo = prelim_lo.min(fit_lo_50).max(scale.mz_min);
+    let fit_hi = prelim_hi.max(fit_hi_50).min(scale.mz_max);
+
+    // Build Fit1D with real σ from FWHM
     let mut mz_fit = Fit1D {
         mu: mu_raw,
-        sigma: 0.0,                  // unknown here; set 0.0 or a tiny proxy if you prefer
-        height: use_mz_hist[i_max],  // peak height
+        sigma: sigma_est,
+        height: use_mz_hist[i_max],
         baseline: 0.0,
         area: use_mz_hist.iter().copied().sum(),
         r2: 1.0,
@@ -595,15 +655,14 @@ pub fn evaluate_spec_1d(
         im_fit.sigma = s;
     }
 
-    // --- 5) pack
+    // --- 5) pack (mz_window from the fit-derived bounds, not grid edges)
     let raw_sum = use_rt_marg.iter().copied().sum();
     let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
-    let hi_edge_idx = (use_bins_hi + 1).min(scale.edges.len() - 1);
 
     ClusterResult1D {
         rt_window: (spec.rt_lo, spec.rt_hi),
         im_window: (spec.im_lo, spec.im_hi),
-        mz_window: (scale.edges[use_bins_lo], scale.edges[hi_edge_idx].min(scale.mz_max)),
+        mz_window: (fit_lo, fit_hi), // <-- fit-derived peak bounds
         rt_fit, im_fit, mz_fit,
         raw_sum, volume_proxy,
         frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
