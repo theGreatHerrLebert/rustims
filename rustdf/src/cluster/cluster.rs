@@ -258,175 +258,6 @@ fn ppm_expand((lo, hi):(f32, f32), ppm: f32, center_hint: f32) -> (f32, f32) {
     (lo - d, hi + d)
 }
 
-/*
-pub fn evaluate_spec_1d(
-    rt_frames: &RtFrames,
-    spec: &ClusterSpec1D,
-    opts: &Eval1DOpts,
-) -> ClusterResult1D {
-    #[inline]
-    fn ppm_radius_da(center_da: f32, ppm: f32) -> f32 {
-        (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0)
-    }
-    #[inline]
-    fn clamp_center_to_ppm(anchor_da: f32, candidate_da: f32, ppm_cap: f32) -> f32 {
-        let r = (anchor_da.abs() * ppm_cap.max(0.0) * 1e-6).max(0.0);
-        candidate_da.clamp(anchor_da - r, anchor_da + r)
-    }
-
-    debug_assert!(rt_frames.is_consistent());
-    let scale = &*rt_frames.scale;
-    let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.mz_win);
-
-    // --- 1) first pass accumulation
-    let rt_marg1 = build_rt_marginal(
-        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
-    let im_marg1 = build_im_marginal(
-        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
-    let (mz_hist1, mz_centers1) = build_mz_hist(
-        &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi, scale);
-
-    let rt_sum1: f32 = rt_marg1.iter().copied().sum();
-    let im_sum1: f32 = im_marg1.iter().copied().sum();
-    let mz_sum1: f32 = mz_hist1.iter().copied().sum();
-
-    // --- Early exit on zero signal
-    if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || mz_sum1 <= 0.0 {
-        let hi_edge_idx = (bin_hi0 + 1).min(scale.edges.len() - 1);
-        return ClusterResult1D {
-            rt_window: (spec.rt_lo, spec.rt_hi),
-            im_window: (spec.im_lo, spec.im_hi),
-            mz_window: (scale.edges[bin_lo0], scale.edges[hi_edge_idx].min(scale.mz_max)),
-            rt_fit: Fit1D::default(),
-            im_fit: Fit1D::default(),
-            mz_fit: Fit1D::default(),
-            raw_sum: 0.0,
-            volume_proxy: 0.0,
-            frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
-            window_group: spec.window_group,
-            parent_im_id: spec.parent_im_id,
-            parent_rt_id: spec.parent_rt_id,
-            ms_level: spec.ms_level,
-            rt_axis_sec: opts.attach_axes.then_some(rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec()),
-            im_axis_scans: opts.attach_axes.then_some((spec.im_lo..=spec.im_hi).collect()),
-            mz_axis_da:   opts.attach_axes.then_some(mz_centers1.clone()),
-            raw_points: None,
-        };
-    }
-
-    let mz_fit1 = fit1d_moment(&mz_hist1, Some(&mz_centers1));
-    let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
-    let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
-    let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
-
-    // --- 2) optional m/z refine WITH 5-ppm CAPS (center drift and half-width)
-    let (bin_lo, bin_hi, mz_centers2) = if opts.refine_mz_once && mz_fit1.sigma > 0.0 && mz_fit1.area > 0.0 {
-        let k = opts.refine_k_sigma.max(1.0);
-        let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 5.0 };
-
-        // Use the current spec window midpoint as the anchor (apex prior used to form the window).
-        let anchor_center = 0.5 * (spec.mz_win.0 + spec.mz_win.1);
-
-        // Candidate refine center, capped to ±ppm_cap around the anchor.
-        let center_capped = clamp_center_to_ppm(anchor_center, mz_fit1.mu, ppm_cap);
-
-        // Refine half-width = min(k·σ_fit, ppm_cap in Da), never negative.
-        let half_cap_da  = ppm_radius_da(anchor_center, ppm_cap);
-        let raw_half_da  = k * mz_fit1.sigma;
-        let half_da      = raw_half_da.min(half_cap_da).max(0.0_f32);
-
-        // Final refine window (guard against degeneracy)
-        let lo_da = (center_capped - half_da).max(scale.mz_min);
-        let hi_da = (center_capped + half_da).min(scale.mz_max);
-
-        let (bl, bh) = if hi_da > lo_da {
-            bin_range_for_win(scale, (lo_da, hi_da))
-        } else {
-            (bin_lo0, bin_hi0)
-        };
-
-        (bl, bh, (bl..=bh).map(|i| scale.center(i)).collect::<Vec<_>>())
-    } else {
-        (bin_lo0, bin_hi0, mz_centers1.clone())
-    };
-
-    // --- 3) re-accumulate
-    let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
-    let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
-    let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
-
-    let rt_sum: f32 = rt_marg.iter().copied().sum();
-    let im_sum: f32 = im_marg.iter().copied().sum();
-    let mz_sum: f32 = mz_hist.iter().copied().sum();
-
-    // --- 3b) fallback if refine killed signal
-    let (use_bins_lo, use_bins_hi, use_rt_marg, use_im_marg, use_mz_hist, use_mz_centers) =
-        if rt_sum <= 0.0 || im_sum <= 0.0 || mz_sum <= 0.0 {
-            (bin_lo0, bin_hi0, &rt_marg1, &im_marg1, &mz_hist1, &mz_centers1)
-        } else {
-            (bin_lo,  bin_hi,  &rt_marg,  &im_marg,  &mz_hist,  &mz_centers2)
-        };
-
-    // --- 4) final fits on the chosen pass
-    let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
-    let mut im_fit = fit1d_moment(use_im_marg, Some(&im_axis_f32));
-    let mut mz_fit = fit1d_moment(use_mz_hist, Some(use_mz_centers));
-
-    // --- 4b) bounds WITHOUT unwrap_or(0.0)
-    let rt_mu_bounds = if spec.rt_lo < rt_frames.rt_times.len() && spec.rt_hi < rt_frames.rt_times.len() {
-        Some((rt_frames.rt_times[spec.rt_lo], rt_frames.rt_times[spec.rt_hi]))
-    } else {
-        None
-    };
-    let mz_mu_bounds = Some((scale.mz_min, scale.mz_max));
-    let im_mu_bounds = Some((spec.im_lo as f32, spec.im_hi as f32));
-
-    sanitize_fit(&mut mz_fit, mz_mu_bounds, 1e-6, true);
-    sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
-    sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
-
-    // --- IM μ fallback
-    if im_fit.mu == 0.0 {
-        let lo = spec.im_lo as f32;
-        let hi = spec.im_hi as f32;
-        if hi > lo { im_fit.mu = 0.5 * (lo + hi); } else { im_fit.mu = lo.max(1.0); }
-    }
-
-    // --- IM σ fallback using prior σ from detection or window
-    if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
-        let k = opts.refine_k_sigma.max(1.0);
-        let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
-        let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
-        let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
-        let mut s = prior.max(from_window).max(1e-3);
-        if !s.is_finite() { s = 1e-3; }
-        im_fit.sigma = s;
-    }
-
-    // --- 5) pack (respect chosen bins)
-    let raw_sum = use_rt_marg.iter().copied().sum();
-    let volume_proxy = (rt_fit.area.max(0.0)) * (im_fit.area.max(0.0)) * (mz_fit.area.max(0.0));
-
-    let hi_edge_idx = (use_bins_hi + 1).min(scale.edges.len() - 1);
-    ClusterResult1D {
-        rt_window: (spec.rt_lo, spec.rt_hi),
-        im_window: (spec.im_lo, spec.im_hi),
-        mz_window: (scale.edges[use_bins_lo], scale.edges[hi_edge_idx].min(scale.mz_max)),
-        rt_fit, im_fit, mz_fit,
-        raw_sum, volume_proxy,
-        frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
-        window_group: spec.window_group,
-        parent_im_id: spec.parent_im_id,
-        parent_rt_id: spec.parent_rt_id,
-        ms_level: spec.ms_level,
-        rt_axis_sec: opts.attach_axes.then_some(rt_times),
-        im_axis_scans: opts.attach_axes.then_some(im_axis),
-        mz_axis_da:   opts.attach_axes.then_some(use_mz_centers.clone()),
-        raw_points: None,
-    }
-}
-*/
-
 /// Compute σ from FWHM around the apex bin using linear interpolation on each side.
 /// Returns (sigma, x_left_50, x_right_50).
 fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(f32, f32, f32)> {
@@ -483,8 +314,8 @@ pub fn evaluate_spec_1d(
         i_max
     }
     #[inline]
-    fn ppm_radius_da(center_da: f32, ppm: f32) -> f32 {
-        (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0)
+    fn ppm_radius_da(center_da: f32, ppm: f32, pad: f32) -> f32 {
+        (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0) + pad.max(0.0)
     }
     // Sub-bin tweak around argmax using a quadratic on the 3 neighboring bins.
     #[inline]
@@ -552,7 +383,7 @@ pub fn evaluate_spec_1d(
     let (bin_lo, bin_hi, mz_centers2) = {
         if opts.refine_mz_once {
             let ppm_cap = if opts.mz_ppm_cap.is_finite() && opts.mz_ppm_cap > 0.0 { opts.mz_ppm_cap } else { 25.0 };
-            let half_da = ppm_radius_da(center1, ppm_cap);
+            let half_da = ppm_radius_da(center1, ppm_cap, 0.025);
             let lo_da = (center1 - half_da).max(scale.mz_min);
             let hi_da = (center1 + half_da).min(scale.mz_max);
             if hi_da > lo_da {
