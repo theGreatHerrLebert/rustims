@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
+use crate::cluster::utility::{fallback_rt_peak_from_trace, gauss_sigma_from_fwhm, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
 
 #[derive(Clone, Debug)]
 pub struct RtFrames {
@@ -40,6 +40,7 @@ pub struct RtLocalPeak {
     pub left_sec: Option<f32>,
     pub right_sec: Option<f32>,
     pub width_sec: Option<f32>,
+    pub rt_sigma_frames: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +62,8 @@ pub struct RtPeak1D {
     pub width_frames: usize,
     pub area_raw: f32,
     pub subframe: f32,
+
+    pub rt_sigma: Option<f32>,
 
     // provenance / bounds in frames and frame_ids
     pub rt_bounds_frames: (usize, usize),   // inclusive in local RT trace
@@ -97,7 +100,7 @@ pub struct ImPeak1D {
     pub scan_abs: usize,
     pub left_abs: usize,
     pub right_abs: usize,
-    
+
     pub scan_sigma: Option<f32>,
     pub mobility: Option<f32>,
     pub apex_smoothed: f32,
@@ -491,6 +494,10 @@ pub fn find_rt_peaks(
         // apex time (subsampled)
         let apex_t = t_at_index_frac(rt_times, i as f32 + sub);
 
+        let dt = effective_dt(rt_times); // median Δt (s/frame)
+        let sigma_sec   = gauss_sigma_from_fwhm(width_sec);
+        let sigma_frames = (sigma_sec / dt).max(1e-6);
+
         peaks.push(RtLocalPeak {
             rt_idx: i,
             rt_sec: Some(apex_t),
@@ -499,12 +506,14 @@ pub fn find_rt_peaks(
             prominence: prom,
             left_x,
             right_x,
-            width_frames: ((right_x - left_x).max(0.0)).round() as usize, // legacy
+            width_frames: ((right_x - left_x).max(0.0)).round() as usize,
             area_raw: area,
             subframe: sub,
             left_sec: Some(left_t),
             right_sec: Some(right_t),
             width_sec: Some(width_sec),
+
+            rt_sigma_frames: Some(sigma_frames),  // <-- NEW
         });
     }
     peaks
@@ -610,6 +619,7 @@ pub fn expand_im_peak_along_rt(
                     width_frames: pk.width_frames,
                     area_raw: pk.area_raw,
                     subframe: pk.subframe,
+                    rt_sigma: pk.rt_sigma,
 
                     rt_bounds_frames: (l, r),
                     frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
@@ -668,6 +678,7 @@ pub fn expand_im_peak_along_rt(
                     width_frames: pk.width_frames,
                     area_raw: pk.area_raw,
                     subframe: pk.subframe,
+                    rt_sigma: pk.rt_sigma,
 
                     rt_bounds_frames: (l, r),
                     frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
@@ -713,6 +724,8 @@ pub fn expand_im_peak_along_rt(
                 width_frames: r0.width_frames,
                 area_raw: r0.area_raw,
                 subframe: r0.subframe,
+
+                rt_sigma: r0.rt_sigma_frames,
 
                 rt_bounds_frames: (global_left, global_right),
                 frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),

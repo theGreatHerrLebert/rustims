@@ -382,6 +382,23 @@ pub fn rt_peak_id(r: &RtPeak1D) -> PeakId {
     (u & 0x7FFF_FFFF_FFFF_FFFF) as i64
 }
 
+#[inline]
+pub fn gauss_sigma_from_fwhm(width: f32) -> f32 {
+    let k = 2.35482004503_f32;
+    if width.is_finite() && width > 0.0 { (width / k).max(1e-6) } else { 1e-6 }
+}
+
+#[inline]
+pub fn gauss_sigma_from_frac_width(width: f32, frac: f32) -> f32 {
+    // width at level y = frac * A
+    // width = 2 * σ * sqrt(-2 ln(frac))  =>  σ = width / (2 * sqrt(-2 ln frac))
+    if !(frac.is_finite()) || frac <= 0.0 || frac >= 1.0 { return 1e-6; }
+    let denom = 2.0 * (-2.0 * frac.ln()).sqrt();
+    if width.is_finite() && width > 0.0 && denom.is_finite() && denom > 0.0 {
+        (width / denom).max(1e-6)
+    } else { 1e-6 }
+}
+
 pub fn fallback_rt_peak_from_trace(
     trace_raw: &[f32],
     ctx: RtTraceCtx<'_>,
@@ -453,10 +470,14 @@ pub fn fallback_rt_peak_from_trace(
     let frac = (subframe + (rt_idx as f32) - j0 as f32).clamp(0.0, 1.0);
     let rt_sec = Some((1.0 - frac) * t[j0] + frac * t[j1]);
 
+    let width_cont = (right_x - left_x).max(0.0);
+    let sigma_frames = gauss_sigma_from_frac_width(width_cont, frac);
+
+    // ---- pack
     let mut rp = RtPeak1D {
         rt_idx,
         rt_sec,
-        apex_smoothed: y_max, // no smoothing in fallback
+        apex_smoothed: y_max,
         apex_raw: y_max,
         prominence: prom,
         left_x,
@@ -464,6 +485,8 @@ pub fn fallback_rt_peak_from_trace(
         width_frames,
         area_raw,
         subframe,
+
+        rt_sigma: Some(sigma_frames),   // <-- NEW
 
         rt_bounds_frames,
         frame_id_bounds,

@@ -1988,6 +1988,7 @@ impl PyTimsDatasetDIA {
             ms_level: 2,
             min_im_span,
             im_k_sigma: 3.0,
+            rt_k_sigma: 3.0,
         };
         let eval_opts = Eval1DOpts {
             refine_mz_once,
@@ -2066,6 +2067,7 @@ impl PyTimsDatasetDIA {
             ms_level: 1,
             min_im_span,
             im_k_sigma: 3.0,
+            rt_k_sigma: 3.0,
         };
         let eval_opts = Eval1DOpts {
             refine_mz_once,
