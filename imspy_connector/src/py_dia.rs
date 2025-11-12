@@ -2,7 +2,7 @@ use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyIterator, PyList, PySlice};
-use numpy::{ndarray, PyArray1, PyArray2};
+use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rustdf::cluster::io as cio;
@@ -443,9 +443,9 @@ impl PyMzScanWindowGrid {
             .take()
             .ok_or_else(|| exceptions::PyRuntimeError::new_err("data already moved"))?;
         // No copy: from_shape_vec takes ownership of v
-        let arr = numpy::PyArray2::from_owned_array_bound(
+        let arr = PyArray2::from_owned_array_bound(
             py,
-            ndarray::Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), v)
+            Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), v)
                 .map_err(|e| exceptions::PyValueError::new_err(format!("shape error: {e}")))?,
         );
         Ok(arr.unbind())
@@ -1140,12 +1140,12 @@ impl PyMzScanPlan {
 
     #[getter]
     fn frame_ids<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
-        Ok(numpy::PyArray1::from_vec_bound(py, self.frame_ids_sorted.clone()).unbind())
+        Ok(PyArray1::from_vec_bound(py, self.frame_ids_sorted.clone()).unbind())
     }
 
     #[getter]
     fn mz_centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(numpy::PyArray1::from_vec_bound(py, self.scale.centers.clone()).unbind())
+        Ok(PyArray1::from_vec_bound(py, self.scale.centers.clone()).unbind())
     }
 
     pub fn bounds(&self, i: usize) -> Option<(usize, usize)> {
@@ -2147,6 +2147,24 @@ fn pick_im_peaks_rows_from_grid(
     }).collect()
 }
 
+#[inline]
+fn ppm_halfwidth_da(center_da: f32, ppm: f32) -> f32 {
+    (center_da.abs() * ppm.max(0.0) * 1e-6).max(0.0)
+}
+
+#[inline]
+fn within_ppm(a: f32, b: f32, ppm: f32) -> bool {
+    if !a.is_finite() || !b.is_finite() { return false; }
+    let d = (a - b).abs();
+    let r = ppm_halfwidth_da(a, ppm).max(ppm_halfwidth_da(b, ppm));
+    d <= r
+}
+
+#[inline]
+fn ordered_pair_u(a: usize, b: usize) -> (usize, usize) {
+    if a <= b { (a,b) } else { (b,a) }
+}
+
 #[derive(Clone, Copy)]
 pub struct StitchParams {
     pub min_overlap_frames: usize,
@@ -2159,6 +2177,7 @@ pub struct StitchParams {
     pub min_im_overlap_scans: usize, // e.g. 1–3
     pub im_jaccard_min: f32,         // e.g. 0.10–0.30, or 0.0 to disable
     pub require_mutual_apex_inside: bool, // safer stitching in IM
+    mz_ppm_cap_merge: f32,          // for apex mz merging
 }
 
 #[inline]
@@ -2195,32 +2214,49 @@ struct Key { wg: Option<u32>, mz_row: usize, scan_bin: usize }
 
 #[inline]
 fn compatible_fast(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
-    if !same_row_or_close(p, q, sp.max_mz_row_delta) { return false; }
+    // 0) Window-group policy
     if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
 
-    // --- IM apex proximity (existing coarse check via centers)
-    if (p.scan as isize - q.scan as isize).abs() as usize > sp.max_scan_delta { return false; }
+    // 1) Physical m/z consistency (required)
+    //    Row proximity alone can be misleading; require ppm match too.
+    if !same_row_or_close(p, q, sp.max_mz_row_delta) { return false; }
+    if sp.mz_ppm_cap_merge > 0.0 && !within_ppm(p.mz_center, q.mz_center, sp.mz_ppm_cap_merge) {
+        return false;
+    }
 
-    // --- RT must overlap (existing)
-    let ov_rt = rt_overlap(p.rt_bounds, q.rt_bounds);
+    // 2) IM apex proximity (integer scans)
+    let d_scan = (p.scan as isize - q.scan as isize).unsigned_abs();
+    if d_scan > sp.max_scan_delta { return false; }
+
+    // 3) RT overlap + Jaccard (frames)
+    let (prt0, prt1) = ordered_pair_u(p.rt_bounds.0, p.rt_bounds.1);
+    let (qrt0, qrt1) = ordered_pair_u(q.rt_bounds.0, q.rt_bounds.1);
+
+    // empty intervals (defensive)
+    if prt0 > prt1 || qrt0 > qrt1 { return false; }
+
+    let ov_rt = rt_overlap((prt0, prt1), (qrt0, qrt1));
     if ov_rt < sp.min_overlap_frames { return false; }
-    if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min { return false; }
+    if sp.jaccard_min > 0.0 && jaccard((prt0, prt1), (qrt0, qrt1)) < sp.jaccard_min {
+        return false;
+    }
 
-    // --- NEW: IM interval constraints (use half-prom indices [left, right])
-    let a = (p.left, p.right);
-    let b = (q.left, q.right);
+    // 4) IM span (half-prom indices [left,right])
+    let (pl, pr) = ordered_pair_u(p.left, p.right);
+    let (ql, qr) = ordered_pair_u(q.left, q.right);
+    if pl > pr || ql > qr { return false; }
 
-    // minimum integer scan overlap
-    let ov_im = im_overlap(a, b);
+    let ov_im = im_overlap((pl, pr), (ql, qr));
     if ov_im < sp.min_im_overlap_scans { return false; }
 
-    // optional IM Jaccard
-    if sp.im_jaccard_min > 0.0 && im_jaccard(a, b) < sp.im_jaccard_min { return false; }
+    if sp.im_jaccard_min > 0.0 && im_jaccard((pl, pr), (ql, qr)) < sp.im_jaccard_min {
+        return false;
+    }
 
-    // optional: each apex (integer scan) must lie inside the other's half-prom span
+    // 5) Mutual apex containment (optional)
     if sp.require_mutual_apex_inside {
-        let p_in_q = q.left <= p.scan && p.scan <= q.right;
-        let q_in_p = p.left <= q.scan && q.scan <= p.right;
+        let p_in_q = (ql <= p.scan) && (p.scan <= qr);
+        let q_in_p = (pl <= q.scan) && (q.scan <= pr);
         if !(p_in_q && q_in_p) { return false; }
     }
 
@@ -2291,6 +2327,7 @@ pub fn stitch_im_peaks_batched_streaming(
         min_im_overlap_scans,
         im_jaccard_min,
         require_mutual_apex_inside,
+        mz_ppm_cap_merge: 25.0,
     };
 
     // Active accumulators keyed by (wg, mz_row, scan_bin)
@@ -2806,6 +2843,7 @@ pub fn stitch_im_peaks_flat_unordered(
         min_im_overlap_scans,
         im_jaccard_min,
         require_mutual_apex_inside,
+        mz_ppm_cap_merge: 25.0,
     };
 
     // Quick exit
