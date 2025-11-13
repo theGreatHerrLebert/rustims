@@ -597,7 +597,6 @@ def _detect_im_peaks_for_wgs(
     scale="sqrt", output_units="original", gn_float64=False,
     do_dedup=True, tol_scan=0.75, tol_tof=0.25,
     k_sigma=3.0, min_width=3,
-    mz_bounds_pad_ppm=50.0, mz_bounds_pad_abs=0.05,
 ):
     from imspy.timstof.clustering.data import ImPeak1D
 
@@ -630,8 +629,6 @@ def _detect_im_peaks_for_wgs(
             plan_group=plan_group,    # TofScanPlanGroup wrapper
             k_sigma=k_sigma,
             min_width=min_width,
-            mz_bounds_pad_ppm=mz_bounds_pad_ppm,
-            mz_bounds_pad_abs=mz_bounds_pad_abs,
         )
         batch_objs.extend(objs)
 
@@ -684,8 +681,6 @@ def iter_im_peaks_batches(
     # conversion
     k_sigma=3.0,
     min_width=3,
-    mz_bounds_pad_ppm=15.0,
-    mz_bounds_pad_abs=0.05,
 ):
     """
     Yields one list[ImPeak1D] per plan batch (e.g., 64 WGs).
@@ -713,7 +708,6 @@ def iter_im_peaks_batches(
             scale=scale, output_units=output_units, gn_float64=gn_float64,
             do_dedup=do_dedup, tol_scan=tol_scan, tol_tof=tol_tof,
             k_sigma=k_sigma, min_width=min_width,
-            mz_bounds_pad_ppm=mz_bounds_pad_ppm, mz_bounds_pad_abs=mz_bounds_pad_abs,
         )
 
         yield batch_objs
