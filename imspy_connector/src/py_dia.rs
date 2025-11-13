@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D};
-use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames};
+use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 #[pyclass]
@@ -1383,6 +1383,63 @@ impl PyTimsDatasetDIA {
     }
 }
 
+#[pyfunction]
+#[pyo3(signature = (
+    flat,
+    min_overlap_frames=1,
+    max_scan_delta=1,
+    jaccard_min=0.0,
+    max_mz_row_delta=0,
+    allow_cross_groups=false,
+    // IM-specific:
+    min_im_overlap_scans=1,
+    im_jaccard_min=0.0,
+    require_mutual_apex_inside=true,
+))]
+pub fn stitch_im_peaks_flat_unordered(
+    py: Python<'_>,
+    flat: Vec<Py<PyImPeak1D>>,
+    min_overlap_frames: usize,
+    max_scan_delta: usize,
+    jaccard_min: f32,
+    max_mz_row_delta: usize,
+    allow_cross_groups: bool,
+    min_im_overlap_scans: usize,
+    im_jaccard_min: f32,
+    require_mutual_apex_inside: bool,
+) -> PyResult<Vec<Py<PyImPeak1D>>> {
+    let params = StitchParams {
+        min_overlap_frames,
+        max_scan_delta: max_scan_delta.max(1),
+        jaccard_min,
+        max_mz_row_delta,
+        allow_cross_groups,
+        min_im_overlap_scans,
+        im_jaccard_min,
+        require_mutual_apex_inside,
+        mz_ppm_cap_merge: 50.0, // unchanged, but now effectively unused for pure TOF IM-peaks
+    };
+
+    if flat.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Convert to Vec<Arc<ImPeak1D>>
+    let arcs: Vec<Arc<ImPeak1D>> = flat
+        .into_iter()
+        .map(|p| p.borrow(py).inner.clone())
+        .collect();
+
+    let stitched = stitch_im_peaks_flat_unordered_impl(arcs, &params);
+
+    // Wrap back into PyImPeak1D
+    let mut out = Vec::with_capacity(stitched.len());
+    for v in stitched.into_iter() {
+        out.push(Py::new(py, PyImPeak1D { inner: Arc::new(v) })?);
+    }
+    Ok(out)
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -1392,5 +1449,6 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyImPeak1D>()?;
     m.add_class::<PyRtPeak1D>()?;
     m.add_class::<PyFit1D>()?;
+    m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     Ok(())
 }

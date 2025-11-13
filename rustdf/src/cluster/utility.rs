@@ -2,8 +2,9 @@ use mscore::timstof::frame::TimsFrame;
 use crate::cluster::peak::{FrameBinView, ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use rustc_hash::FxHashMap;
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
@@ -924,4 +925,319 @@ fn gaussian_kernel_bins(sigma_bins: f32, truncate_k: f32) -> (Vec<i32>, Vec<f32>
     }
     for wi in &mut w { *wi /= sum.max(1e-12); }
     (offs, w)
+}
+
+// --- Stitching helpers for ImPeak1D in TOF/IM space ------------------------
+
+fn owned_copy_im(p: &ImPeak1D) -> ImPeak1D {
+    // ImPeak1D is Clone, so this is just a convenience wrapper
+    p.clone()
+}
+
+fn interval_overlap_usize(a: (usize, usize), b: (usize, usize)) -> usize {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    if lo > hi {
+        0
+    } else {
+        hi - lo + 1
+    }
+}
+
+fn jaccard_1d_usize(a: (usize, usize), b: (usize, usize)) -> f32 {
+    let inter = interval_overlap_usize(a, b) as f32;
+    if inter <= 0.0 {
+        return 0.0;
+    }
+    let len_a = if a.1 >= a.0 { (a.1 - a.0 + 1) as f32 } else { 0.0 };
+    let len_b = if b.1 >= b.0 { (b.1 - b.0 + 1) as f32 } else { 0.0 };
+    let union = (len_a + len_b - inter).max(1.0);
+    inter / union
+}
+
+/// Fast compatibility check for deciding whether two ImPeak1D should be merged.
+///
+/// All checks are *conservative*: if any condition fails, we do NOT merge.
+fn compatible_fast(a: &ImPeak1D, b: &ImPeak1D, params: &StitchParams) -> bool {
+    // 1) Window group (unless crossing allowed)
+    if !params.allow_cross_groups {
+        if a.window_group != b.window_group {
+            return false;
+        }
+    }
+
+    // 2) TOF row proximity (we now use max_mz_row_delta in tof_row space)
+    if params.max_mz_row_delta > 0 {
+        let d = if a.tof_row > b.tof_row {
+            a.tof_row - b.tof_row
+        } else {
+            b.tof_row - a.tof_row
+        };
+        if d > params.max_mz_row_delta {
+            return false;
+        }
+    }
+
+    // 3) RT overlap (rt_bounds are indices in a frame grid, inclusive)
+    let rt_a = a.rt_bounds;
+    let rt_b = b.rt_bounds;
+    let rt_overlap = interval_overlap_usize(rt_a, rt_b);
+    if rt_overlap < params.min_overlap_frames {
+        return false;
+    }
+
+    if params.jaccard_min > 0.0 {
+        let j_rt = jaccard_1d_usize(rt_a, rt_b);
+        if j_rt < params.jaccard_min {
+            return false;
+        }
+    }
+
+    // 4) IM (scan) overlap; left/right are inclusive scan indices on the grid
+    let im_a = (a.left, a.right);
+    let im_b = (b.left, b.right);
+    let im_overlap = interval_overlap_usize(im_a, im_b);
+    if im_overlap < params.min_im_overlap_scans {
+        return false;
+    }
+
+    if params.im_jaccard_min > 0.0 {
+        let j_im = jaccard_1d_usize(im_a, im_b);
+        if j_im < params.im_jaccard_min {
+            return false;
+        }
+    }
+
+    // 5) Mutual apex inside overlap band (in absolute scan coords)
+    if params.require_mutual_apex_inside {
+        let left_abs_overlap = a.left_abs.max(b.left_abs);
+        let right_abs_overlap = a.right_abs.min(b.right_abs);
+        if left_abs_overlap > right_abs_overlap {
+            return false;
+        }
+        let lo_f = left_abs_overlap as f32;
+        let hi_f = right_abs_overlap as f32;
+
+        let a_apex = a.subscan; // subscan is absolute scan coordinate
+        let b_apex = b.subscan;
+
+        if !(a_apex >= lo_f && a_apex <= hi_f && b_apex >= lo_f && b_apex <= hi_f) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Merge peak `src` into `dst` in-place.
+///
+/// The strategy is:
+///   - bounds (RT, frames, TOF, IM) → take the union
+///   - positions (scan, tof, subscan) → area-weighted average
+///   - intensities → max (for apex-like) / sum (for area)
+///   - IDs → keep the smaller for determinism
+fn merge_into(dst: &mut ImPeak1D, src: &ImPeak1D) {
+    use std::cmp::{min, max};
+
+    // Weights for averaging based on area_raw (fall back to 1.0)
+    let w_dst = dst.area_raw.max(1.0);
+    let w_src = src.area_raw.max(1.0);
+    let w_sum = w_dst + w_src;
+
+    // --- TOF geometry ------------------------------------------------------
+    dst.tof_bounds.0 = min(dst.tof_bounds.0, src.tof_bounds.0);
+    dst.tof_bounds.1 = max(dst.tof_bounds.1, src.tof_bounds.1);
+
+    // TOF row / center: weighted average
+    let tof_row = ((dst.tof_row as f32 * w_dst + src.tof_row as f32 * w_src) / w_sum).round();
+    dst.tof_row = tof_row.max(0.0) as usize;
+
+    let tof_center = ((dst.tof_center as f32 * w_dst + src.tof_center as f32 * w_src) / w_sum).round();
+    dst.tof_center = tof_center as i32;
+
+    // --- RT / frame context -----------------------------------------------
+    dst.rt_bounds.0 = min(dst.rt_bounds.0, src.rt_bounds.0);
+    dst.rt_bounds.1 = max(dst.rt_bounds.1, src.rt_bounds.1);
+
+    dst.frame_id_bounds.0 = min(dst.frame_id_bounds.0, src.frame_id_bounds.0);
+    dst.frame_id_bounds.1 = max(dst.frame_id_bounds.1, src.frame_id_bounds.1);
+
+    // --- IM / scan geometry -----------------------------------------------
+    dst.left = min(dst.left, src.left);
+    dst.right = max(dst.right, src.right);
+
+    dst.left_abs = min(dst.left_abs, src.left_abs);
+    dst.right_abs = max(dst.right_abs, src.right_abs);
+    dst.width_scans = dst
+        .right_abs
+        .saturating_sub(dst.left_abs)
+        .saturating_add(1);
+
+    // scan (local) & scan_abs (global) from weighted average
+    let scan = ((dst.scan as f32 * w_dst + src.scan as f32 * w_src) / w_sum).round();
+    dst.scan = scan.max(0.0) as usize;
+
+    let scan_abs = ((dst.scan_abs as f32 * w_dst + src.scan_abs as f32 * w_src) / w_sum).round();
+    dst.scan_abs = scan_abs.max(0.0) as usize;
+
+    // apex coordinate (absolute)
+    dst.subscan = (dst.subscan * w_dst + src.subscan * w_src) / w_sum;
+
+    // --- intensity / shape -------------------------------------------------
+    // Apex-like quantities: keep the larger
+    if src.apex_smoothed > dst.apex_smoothed {
+        dst.apex_smoothed = src.apex_smoothed;
+    }
+    if src.apex_raw > dst.apex_raw {
+        dst.apex_raw = src.apex_raw;
+    }
+    if src.prominence > dst.prominence {
+        dst.prominence = src.prominence;
+    }
+
+    // Area: additive
+    dst.area_raw += src.area_raw;
+
+    // scan_sigma: weighted average if both Some, or take the one that exists
+    dst.scan_sigma = match (dst.scan_sigma, src.scan_sigma) {
+        (Some(a), Some(b)) => Some((a * w_dst as f32 + b * w_src as f32) / (w_sum as f32)),
+        (None, Some(b)) => Some(b),
+        (Some(a), None) => Some(a),
+        (None, None) => None,
+    };
+
+    // mobility: keep existing, or take from src if dst has None
+    if dst.mobility.is_none() {
+        dst.mobility = src.mobility;
+    }
+
+    // window_group: if they differ (and cross-groups were allowed), you can
+    // choose to collapse to None; otherwise keep dst's.
+    if dst.window_group != src.window_group {
+        // conservative: mark as mixed
+        dst.window_group = None;
+    }
+
+    // ID: keep the smaller one for determinism
+    if src.id < dst.id {
+        dst.id = src.id;
+    }
+}
+
+pub struct StitchParams {
+    pub min_overlap_frames: usize,
+    pub max_scan_delta: usize,
+    pub jaccard_min: f32,
+    pub max_mz_row_delta: usize,  // now acts on tof_row
+    pub allow_cross_groups: bool,
+    pub min_im_overlap_scans: usize,
+    pub im_jaccard_min: f32,
+    pub require_mutual_apex_inside: bool,
+    pub mz_ppm_cap_merge: f32,
+}
+
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+struct KeyFlat {
+    pub wg_norm: Option<u32>,
+    pub scan_bin: usize,
+    pub tof_bucket: usize,
+}
+
+#[inline]
+fn norm_wg(wg: Option<u32>, allow_cross: bool) -> Option<u32> {
+    if allow_cross { None } else { wg }
+}
+
+#[inline]
+fn tof_bucket(tof_row: usize, delta: usize) -> usize {
+    // Behaves like old mz_bucket() but in TOF-row space.
+    // delta == 0 → each row stands alone; otherwise bucket size = delta+1.
+    let w = delta.saturating_add(1);
+    tof_row / w
+}
+
+/// Core stitching logic on ImPeak1D in TOF space.
+///
+/// - Buckets by (normed window_group, scan_bin, tof_bucket)
+/// - Runs an in-bucket fold using `compatible_fast` + `merge_into`
+/// - Then a single consolidation pass across bucket boundaries
+pub fn stitch_im_peaks_flat_unordered_impl(
+    flat: Vec<Arc<ImPeak1D>>,
+    params: &StitchParams,
+) -> Vec<ImPeak1D> {
+    if flat.is_empty() {
+        return Vec::new();
+    }
+
+    let mut buckets: FxHashMap<KeyFlat, Vec<Arc<ImPeak1D>>> = FxHashMap::default();
+
+    // 1) Collect into buckets
+    for arc in flat.into_iter() {
+        let r = arc.as_ref();
+        let key = KeyFlat {
+            wg_norm: norm_wg(r.window_group, params.allow_cross_groups),
+            scan_bin: r.scan / params.max_scan_delta.max(1),
+            tof_bucket: tof_bucket(r.tof_row, params.max_mz_row_delta),
+            // NOTE: we keep the field name max_mz_row_delta in StitchParams
+            // for API compatibility, but it now applies to tof_row.
+        };
+        buckets.entry(key).or_default().push(arc);
+    }
+
+    // 2) In-bucket folding with deterministic order
+    let mut stitched: Vec<ImPeak1D> = Vec::new();
+
+    for (_k, mut vec_arc) in buckets.into_iter() {
+        vec_arc.sort_unstable_by(|a, b| {
+            let aa = a.as_ref();
+            let bb = b.as_ref();
+            aa.scan
+                .cmp(&bb.scan)
+                .then_with(|| aa.rt_bounds.0.cmp(&bb.rt_bounds.0))
+                .then_with(|| aa.tof_row.cmp(&bb.tof_row))
+                .then_with(|| aa.id.cmp(&bb.id))
+        });
+
+        let mut cur: Option<ImPeak1D> = None;
+
+        for a in vec_arc.into_iter() {
+            let p = a.as_ref();
+            if let Some(c) = cur.as_mut() {
+                if compatible_fast(c, p, params) {
+                    merge_into(c, p);
+                } else {
+                    stitched.push(std::mem::replace(c, owned_copy_im(p)));
+                }
+            } else {
+                cur = Some(owned_copy_im(p));
+            }
+        }
+
+        if let Some(c) = cur.take() {
+            stitched.push(c);
+        }
+    }
+
+    // 3) Optional cross-bucket consolidation pass
+    stitched.sort_unstable_by(|a, b| {
+        a.window_group
+            .cmp(&b.window_group)
+            .then_with(|| a.tof_row.cmp(&b.tof_row))
+            .then_with(|| a.scan.cmp(&b.scan))
+            .then_with(|| a.rt_bounds.0.cmp(&b.rt_bounds.0))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let mut final_out: Vec<ImPeak1D> = Vec::with_capacity(stitched.len());
+    for p in stitched.into_iter() {
+        if let Some(last) = final_out.last_mut() {
+            if compatible_fast(last, &p, params) {
+                merge_into(last, &p);
+                continue;
+            }
+        }
+        final_out.push(p);
+    }
+
+    final_out
 }

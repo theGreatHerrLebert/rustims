@@ -264,7 +264,7 @@ pub fn build_features_from_clusters_py(
  */
 
 #[pymodule]
-pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn py_feature(_py: Python<'_>, _m: &Bound<'_, PyModule>) -> PyResult<()> {
     /*
     m.add_class::<PyAveragineLut>()?;
     m.add_class::<PyGroupingParams>()?;
