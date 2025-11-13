@@ -1,14 +1,7 @@
 use std::sync::Arc;
 use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{
-    fallback_rt_peak_from_trace,
-    quad_subsample,
-    rt_peak_id,
-    smooth_vector_gaussian,
-    trapezoid_area_fractional,
-    TofScale,
-};
+use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, TofScale};
 
 // Stable 64-bit id for peaks
 pub type PeakId = i64;
@@ -227,7 +220,7 @@ pub struct RtFrames {
     pub frames: Vec<FrameBinView>,
     pub frame_ids: Vec<u32>,
     pub rt_times: Vec<f32>,
-    pub scale: Arc<TofScale>,       // TOF scale used for these frames
+    pub scale: Arc<TofScale>,
 }
 
 impl RtFrames {
@@ -238,29 +231,11 @@ impl RtFrames {
             rt_times_sec: &self.rt_times,
         }
     }
-
     #[inline]
     pub fn is_consistent(&self) -> bool {
         self.frames.len() == self.frame_ids.len()
             && self.frame_ids.len() == self.rt_times.len()
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct RtLocalPeak {
-    pub rt_idx: usize,
-    pub rt_sec: Option<f32>,
-    pub apex_smoothed: f32,
-    pub apex_raw: f32,
-    pub prominence: f32,
-    pub left_x: f32,
-    pub right_x: f32,
-    pub width_frames: usize,
-    pub area_raw: f32,
-    pub subframe: f32,
-    pub left_sec: Option<f32>,
-    pub right_sec: Option<f32>,
-    pub width_sec: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -298,126 +273,28 @@ pub struct RtPeak1D {
     pub id: PeakId,
 }
 
-pub fn find_rt_peaks(
-    y_smoothed: &[f32],
-    y_raw: &[f32],
-    rt_times: &[f32],
-    min_prom: f32,
-    min_sep_sec: f32,
-    min_width_sec: f32,
-) -> Vec<RtLocalPeak> {
-    let n = y_smoothed.len();
-    if n < 3 || y_raw.len() != n || rt_times.len() != n {
-        return Vec::new();
-    }
+#[derive(Clone, Debug)]
+pub struct RtPeaksForIm {
+    pub im_index: usize,       // index into the input im_peaks slice
+    pub im_id: PeakId,         // parent id for convenience
+    pub peaks: Vec<RtPeak1D>,
+}
 
-    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
-    if row_max < min_prom { return Vec::new(); }
-
-    // 1) candidates
-    let mut cands = Vec::new();
-    for i in 1..n - 1 {
-        let yi = y_smoothed[i];
-        if yi > y_smoothed[i - 1] && yi >= y_smoothed[i + 1] {
-            cands.push(i);
-        }
-    }
-
-    let mut peaks: Vec<RtLocalPeak> = Vec::new();
-    for &i in &cands {
-        let apex = y_smoothed[i];
-
-        // 2) prominence baseline
-        let mut l = i;
-        let mut left_min = apex;
-        while l > 0 {
-            l -= 1;
-            left_min = left_min.min(y_smoothed[l]);
-            if y_smoothed[l] > apex { break; }
-        }
-        let mut r = i;
-        let mut right_min = apex;
-        while r + 1 < n {
-            r += 1;
-            right_min = right_min.min(y_smoothed[r]);
-            if y_smoothed[r] > apex { break; }
-        }
-
-        let baseline = left_min.max(right_min);
-        let prom = apex - baseline;
-        if prom < min_prom { continue; }
-
-        // 3) half-prom fractional crossings
-        let half = baseline + 0.5 * prom;
-
-        let mut wl = i;
-        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
-        let left_x = if wl < i && wl + 1 < n {
-            let y0 = y_smoothed[wl];
-            let y1 = y_smoothed[wl + 1];
-            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else {
-            wl as f32
-        };
-
-        let mut wr = i;
-        while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
-        let right_x = if wr > i && wr < n {
-            let y0 = y_smoothed[wr - 1];
-            let y1 = y_smoothed[wr];
-            (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else {
-            wr as f32
-        };
-
-        let left_t  = t_at_index_frac(rt_times, left_x.max(0.0));
-        let right_t = t_at_index_frac(rt_times, right_x.min((n - 1) as f32));
-        let width_sec = (right_t - left_t).max(0.0);
-        if width_sec < min_width_sec { continue; }
-
-        // 4) sub-frame apex offset
-        let sub = if i > 0 && i + 1 < n {
-            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1])
-                .clamp(-0.5, 0.5)
-        } else {
-            0.0
-        };
-
-        // 5) time-based NMS (seconds)
-        if let Some(last) = peaks.last() {
-            let dt = (rt_times[i] - last.rt_sec.unwrap_or(rt_times[last.rt_idx])).abs();
-            if dt < min_sep_sec {
-                if apex <= last.apex_smoothed { continue; }
-                let _ = peaks.pop();
-            }
-        }
-
-        // 6) area under raw
-        let area = trapezoid_area_fractional(
-            y_raw,
-            left_x.max(0.0),
-            right_x.min((n - 1) as f32),
-        );
-
-        let apex_t = t_at_index_frac(rt_times, i as f32 + sub);
-
-        peaks.push(RtLocalPeak {
-            rt_idx: i,
-            rt_sec: Some(apex_t),
-            apex_smoothed: apex,
-            apex_raw: y_raw[i],
-            prominence: prom,
-            left_x,
-            right_x,
-            width_frames: ((right_x - left_x).max(0.0)).round() as usize,
-            area_raw: area,
-            subframe: sub,
-            left_sec: Some(left_t),
-            right_sec: Some(right_t),
-            width_sec: Some(width_sec),
-        });
-    }
-    peaks
+#[derive(Clone, Debug)]
+pub struct RtLocalPeak {
+    pub rt_idx: usize,
+    pub rt_sec: Option<f32>,
+    pub apex_smoothed: f32,
+    pub apex_raw: f32,
+    pub prominence: f32,
+    pub left_x: f32,
+    pub right_x: f32,
+    pub width_frames: usize,
+    pub area_raw: f32,
+    pub subframe: f32,
+    pub left_sec: Option<f32>,
+    pub right_sec: Option<f32>,
+    pub width_sec: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -432,36 +309,57 @@ pub struct RtExpandParams {
     pub fallback_frac_width: f32,
 }
 
+#[inline]
+pub fn rt_trace_for_im_peak_by_bounds(
+    frames: &[FrameBinView],
+    rt_scale: &TofScale,            // RtFrames.scale
+    tof_bounds: (i32, i32),         // im_peak.mz_bounds
+    extra_bins_pad: usize,         // 0–2
+    scan_lo: usize,
+    scan_hi: usize,
+) -> Vec<f32> {
+    // Map physical m/z bounds into the RT CSR scale, then pad by bins.
+    let (mut bin_l, mut bin_r) = rt_scale.index_range_for_tof_window(tof_bounds.0, tof_bounds.1);
+    bin_l = bin_l.saturating_sub(extra_bins_pad);
+    bin_r = bin_r.saturating_add(extra_bins_pad);
+
+    let mut v = Vec::with_capacity(frames.len());
+    for fbv in frames {
+        v.push(sum_frame_bins_scans(fbv, bin_l, bin_r, scan_lo, scan_hi));
+    }
+    v
+}
+
+
 pub fn expand_im_peak_along_rt(
     im_peak: &ImPeak1D,
     frames_sorted: &[FrameBinView],
     rt_ctx: RtTraceCtx<'_>,
-    _rt_scale: &TofScale,          // TOF scale, currently unused here
+    tof_scale: &TofScale,
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
+    // 1) Map absolute frame IDs → local RT index range, unchanged:
     let (fid_lo_abs, fid_hi_abs) = im_peak.frame_id_bounds;
 
-    // Map absolute frame IDs → local RT index range
-    let mut allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
+    let allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
         Ok(i) => i,
         Err(_) => return Vec::new(),
     };
-    let mut allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
+    let allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
         Ok(i) => i,
         Err(_) => return Vec::new(),
     };
-    if allow_lo > allow_hi {
-        std::mem::swap(&mut allow_lo, &mut allow_hi);
-    }
+    let (allow_lo, allow_hi) = (allow_lo.min(allow_hi), allow_lo.max(allow_hi));
 
     if allow_lo >= frames_sorted.len() || allow_hi >= frames_sorted.len() {
         return Vec::new();
     }
 
-    // Full raw RT trace over all frames (same group)
-    let trace_raw_full = rt_trace_for_im_peak(
+    // 2) TOF-window RT trace
+    let trace_raw_full = rt_trace_for_im_peak_by_bounds(
         frames_sorted,
-        im_peak.tof_row,
+        tof_scale,
+        im_peak.tof_bounds,
         p.bin_pad,
         im_peak.left_abs,
         im_peak.right_abs,
@@ -470,43 +368,31 @@ pub fn expand_im_peak_along_rt(
         return Vec::new();
     }
 
-    // Clamp to allowed RT region
-    let trace_raw = &trace_raw_full[allow_lo ..= allow_hi];
-    let rt_times_clamped = &rt_ctx.rt_times_sec[allow_lo ..= allow_hi];
+    // 3) Clamp to allowed region
+    let trace_raw = &trace_raw_full[allow_lo..=allow_hi];
+    let rt_times_clamped = &rt_ctx.rt_times_sec[allow_lo..=allow_hi];
     let n_clamped = trace_raw.len();
-
     if n_clamped == 0 || !trace_raw.iter().any(|x| *x > 0.0) {
         return Vec::new();
     }
 
-    // Local context for the clamped slice
-    let local_ctx = RtTraceCtx {
-        frame_ids_sorted: &rt_ctx.frame_ids_sorted[allow_lo ..= allow_hi],
-        rt_times_sec: rt_times_clamped,
-    };
-
-    // --- Fallback for very few frames ---
+    // 4) Fallback branch – unchanged except for TOF fields in RtPeak1D
     if n_clamped < p.fallback_if_frames_lt {
         if let Some(pk) =
-            fallback_rt_peak_from_trace(trace_raw, local_ctx, im_peak, p.fallback_frac_width)
+            fallback_rt_peak_from_trace(trace_raw, rt_ctx, im_peak, p.fallback_frac_width)
         {
-            let local_left =
-                pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
-            let local_right =
-                pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let l = allow_lo + pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let r = allow_lo + pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let lo_fid = rt_ctx.frame_ids_sorted[l];
+            let hi_fid = rt_ctx.frame_ids_sorted[r];
 
-            let global_left = allow_lo + local_left;
-            let global_right = allow_lo + local_right;
-
-            let lo_fid = local_ctx.frame_ids_sorted[local_left];
-            let hi_fid = local_ctx.frame_ids_sorted[local_right];
-
-            let mut r = RtPeak1D {
+            return vec![RtPeak1D {
                 parent_im_id: Some(im_peak.id),
+                window_group: im_peak.window_group,
+
                 tof_row: im_peak.tof_row,
                 tof_center: im_peak.tof_center,
                 tof_bounds: im_peak.tof_bounds,
-                window_group: im_peak.window_group,
 
                 rt_idx: allow_lo + pk.rt_idx,
                 rt_sec: pk.rt_sec,
@@ -519,23 +405,21 @@ pub fn expand_im_peak_along_rt(
                 area_raw: pk.area_raw,
                 subframe: pk.subframe,
 
-                rt_bounds_frames: (global_left, global_right),
+                rt_bounds_frames: (l, r),
                 frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
-                id: 0,
-            };
-            r.id = rt_peak_id(&r);
-            return vec![r];
+                id: rt_peak_id(&pk),
+            }];
         }
         return Vec::new();
     }
 
-    // --- Smooth clamped trace ---
+    // 5) Smooth clamped trace
     let dt = effective_dt(rt_times_clamped);
     let sigma_frames = (p.smooth_sigma_sec / dt).max(0.75);
     let mut trace_smooth = trace_raw.to_vec();
     smooth_vector_gaussian(&mut trace_smooth[..], sigma_frames, p.smooth_trunc_k);
 
-    // --- Normal peak finding ---
+    // 6) Peak finding (unchanged)
     let base = find_rt_peaks(
         &trace_smooth,
         trace_raw,
@@ -546,27 +430,21 @@ pub fn expand_im_peak_along_rt(
     );
 
     if base.is_empty() {
-        // Try fallback once more on the clamped trace
         if let Some(pk) =
-            fallback_rt_peak_from_trace(trace_raw, local_ctx, im_peak, p.fallback_frac_width)
+            fallback_rt_peak_from_trace(trace_raw, rt_ctx, im_peak, p.fallback_frac_width)
         {
-            let local_left =
-                pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
-            let local_right =
-                pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let l = allow_lo + pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let r = allow_lo + pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let lo_fid = rt_ctx.frame_ids_sorted[l];
+            let hi_fid = rt_ctx.frame_ids_sorted[r];
 
-            let global_left = allow_lo + local_left;
-            let global_right = allow_lo + local_right;
-
-            let lo_fid = local_ctx.frame_ids_sorted[local_left];
-            let hi_fid = local_ctx.frame_ids_sorted[local_right];
-
-            let mut r = RtPeak1D {
+            return vec![RtPeak1D {
                 parent_im_id: Some(im_peak.id),
+                window_group: im_peak.window_group,
+
                 tof_row: im_peak.tof_row,
                 tof_center: im_peak.tof_center,
                 tof_bounds: im_peak.tof_bounds,
-                window_group: im_peak.window_group,
 
                 rt_idx: allow_lo + pk.rt_idx,
                 rt_sec: pk.rt_sec,
@@ -579,17 +457,15 @@ pub fn expand_im_peak_along_rt(
                 area_raw: pk.area_raw,
                 subframe: pk.subframe,
 
-                rt_bounds_frames: (global_left, global_right),
+                rt_bounds_frames: (l, r),
                 frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
-                id: 0,
-            };
-            r.id = rt_peak_id(&r);
-            return vec![r];
+                id: rt_peak_id(&pk),
+            }];
         }
         return Vec::new();
     }
 
-    // --- Map local (clamped) indices back to global RT indices ---
+    // 7) Normal multi-peak mapping
     let n_frames = frames_sorted.len();
 
     base.into_iter()
@@ -604,15 +480,16 @@ pub fn expand_im_peak_along_rt(
                 .min(allow_lo + local_right)
                 .min(n_frames - 1);
 
-            let lo_fid = local_ctx.frame_ids_sorted[local_left];
-            let hi_fid = local_ctx.frame_ids_sorted[local_right];
+            let lo_fid = rt_ctx.frame_ids_sorted[global_left];
+            let hi_fid = rt_ctx.frame_ids_sorted[global_right];
 
             let mut r = RtPeak1D {
                 parent_im_id: Some(im_peak.id),
+                window_group: im_peak.window_group,
+
                 tof_row: im_peak.tof_row,
                 tof_center: im_peak.tof_center,
                 tof_bounds: im_peak.tof_bounds,
-                window_group: im_peak.window_group,
 
                 rt_idx: allow_lo + r0.rt_idx,
                 rt_sec: r0.rt_sec,
@@ -635,12 +512,11 @@ pub fn expand_im_peak_along_rt(
         .collect()
 }
 
-// Vector-of-vectors variant
 pub fn expand_many_im_peaks_along_rt(
     im_peaks: &[ImPeak1D],
     frames_sorted: &[FrameBinView],
     ctx: RtTraceCtx<'_>,
-    rt_scale: &TofScale,
+    tof_scale: &TofScale,      // <-- was &MzScale
     p: RtExpandParams,
 ) -> Vec<Vec<RtPeak1D>> {
     if im_peaks.is_empty() { return Vec::new(); }
@@ -654,23 +530,15 @@ pub fn expand_many_im_peaks_along_rt(
 
     im_peaks
         .par_iter()
-        .map(|im| expand_im_peak_along_rt(im, frames_sorted, ctx, rt_scale, p))
+        .map(|im| expand_im_peak_along_rt(im, frames_sorted, ctx, tof_scale, p))
         .collect()
-}
-
-// Flat variant with parent indices
-#[derive(Clone, Debug)]
-pub struct RtPeaksForIm {
-    pub im_index: usize,   // index into the input im_peaks slice
-    pub im_id: PeakId,     // parent id for convenience
-    pub peaks: Vec<RtPeak1D>,
 }
 
 pub fn expand_many_im_peaks_along_rt_flat(
     im_peaks: &[ImPeak1D],
     frames_sorted: &[FrameBinView],
     ctx: RtTraceCtx<'_>,
-    rt_scale: &TofScale,
+    tof_scale: &TofScale,      // <-- was &MzScale
     p: RtExpandParams,
 ) -> Vec<RtPeaksForIm> {
     if im_peaks.is_empty() { return Vec::new(); }
@@ -679,10 +547,117 @@ pub fn expand_many_im_peaks_along_rt_flat(
         .into_par_iter()
         .map(|i| {
             let im = &im_peaks[i];
-            let peaks = expand_im_peak_along_rt(im, frames_sorted, ctx, rt_scale, p);
+            let peaks = expand_im_peak_along_rt(im, frames_sorted, ctx, tof_scale, p);
             RtPeaksForIm { im_index: i, im_id: im.id, peaks }
         })
         .collect()
+}
+
+pub fn find_rt_peaks(
+    y_smoothed: &[f32],
+    y_raw: &[f32],
+    rt_times: &[f32],
+    min_prom: f32,
+    min_sep_sec: f32,
+    min_width_sec: f32,
+) -> Vec<RtLocalPeak> {
+    let n = y_smoothed.len();
+    if n < 3 || y_raw.len() != n || rt_times.len() != n { return Vec::new(); }
+
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom { return Vec::new(); }
+
+    // 1) candidates
+    let mut cands = Vec::new();
+    for i in 1..n-1 {
+        let yi = y_smoothed[i];
+        if yi > y_smoothed[i-1] && yi >= y_smoothed[i+1] { cands.push(i); }
+    }
+
+    let mut peaks: Vec<RtLocalPeak> = Vec::new();
+    for &i in &cands {
+        let apex = y_smoothed[i];
+
+        // 2) prominence baseline
+        let mut l = i; let mut left_min = apex;
+        while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
+        let mut r = i; let mut right_min = apex;
+        while r + 1 < n { r += 1; right_min = right_min.min(y_smoothed[r]); if y_smoothed[r] > apex { break; } }
+
+        let baseline = left_min.max(right_min);
+        let prom = apex - baseline;
+        if prom < min_prom { continue; }
+
+        // 3) half-prom fractional crossings
+        let half = baseline + 0.5 * prom;
+
+        let mut wl = i;
+        while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
+        let left_x = if wl < i && wl + 1 < n {
+            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl + 1];
+            wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wl as f32 };
+
+        let mut wr = i;
+        while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
+        let right_x = if wr > i && wr < n {
+            let y0 = y_smoothed[wr - 1]; let y1 = y_smoothed[wr];
+            (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
+        } else { wr as f32 };
+
+        // seconds-based width check
+        let left_t  = t_at_index_frac(rt_times, left_x.max(0.0));
+        let right_t = t_at_index_frac(rt_times, right_x.min((n - 1) as f32));
+        let width_sec = (right_t - left_t).max(0.0);
+        if width_sec < min_width_sec { continue; }
+
+        // 4) sub-frame apex offset
+        let sub = if i > 0 && i + 1 < n {
+            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
+        } else { 0.0 };
+
+        // 5) time-based NMS (seconds)
+        if let Some(last) = peaks.last() {
+            let dt = (rt_times[i] - last.rt_sec.unwrap_or(rt_times[last.rt_idx])).abs();
+            if dt < min_sep_sec {
+                if apex <= last.apex_smoothed { continue; }
+                let _ = peaks.pop();
+            }
+        }
+
+        // 6) area under raw
+        let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n - 1) as f32));
+
+        // apex time (subsampled)
+        let apex_t = t_at_index_frac(rt_times, i as f32 + sub);
+
+        peaks.push(RtLocalPeak {
+            rt_idx: i,
+            rt_sec: Some(apex_t),
+            apex_smoothed: apex,
+            apex_raw: y_raw[i],
+            prominence: prom,
+            left_x,
+            right_x,
+            width_frames: ((right_x - left_x).max(0.0)).round() as usize, // legacy
+            area_raw: area,
+            subframe: sub,
+            left_sec: Some(left_t),
+            right_sec: Some(right_t),
+            width_sec: Some(width_sec),
+        });
+    }
+    peaks
+}
+
+
+// robust-ish effective dt for converting σ_sec → σ_frames
+#[inline]
+fn effective_dt(rt_times: &[f32]) -> f32 {
+    if rt_times.len() < 2 { return 1.0; }
+    let mut d: Vec<f32> = rt_times.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+    d.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    d[d.len()/2].max(1e-3) // median, clamp
 }
 
 #[inline]
@@ -690,18 +665,9 @@ fn t_at_index_frac(t: &[f32], x: f32) -> f32 {
     if t.is_empty() { return 0.0; }
     if x <= 0.0 { return t[0]; }
     let n1 = (t.len() - 1) as f32;
-    if x >= n1 { return t[t.len() - 1]; }
+    if x >= n1 { return t[t.len()-1]; }
     let j0 = x.floor() as usize;
-    let j1 = (j0 + 1).min(t.len() - 1);
+    let j1 = (j0 + 1).min(t.len()-1);
     let frac = x - j0 as f32;
     (1.0 - frac) * t[j0] + frac * t[j1]
-}
-
-// robust-ish effective dt for converting σ_sec → σ_frames
-#[inline]
-fn effective_dt(rt_times: &[f32]) -> f32 {
-    if rt_times.len() < 2 { return 1.0; }
-    let mut d: Vec<f32> = rt_times.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
-    d.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    d[d.len() / 2].max(1e-3) // median, clamp
 }
