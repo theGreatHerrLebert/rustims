@@ -10,15 +10,18 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use rayon::iter::IntoParallelRefIterator;
-use crate::cluster::peak::{build_frame_bin_view, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames, RtPeak1D};
-use crate::cluster::utility::{bin_range_for_win, scan_mz_range, MzScale};
+use crate::cluster::peak::{build_frame_bin_view, FrameBinView, RtFrames};
+use crate::cluster::utility::{TofScale};
 use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
-use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
 use std::collections::{HashMap};
+
+/*
 use crate::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
 use crate::cluster::cluster_scoring::{best_ms1_for_each_ms2, ms1_to_ms2_map, score_pairs, AssignmentResult, PairFeatures, ScoreOpts};
+use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
+*/
+
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -258,75 +261,6 @@ impl TimsDatasetDIA {
         }
     }
 
-    /// Build a reusable MS1 search index for candidate enumeration.
-    /// Use when you plan to enumerate pairs repeatedly (e.g., different MS2 subsets or knobs).
-    pub fn build_precursor_search_index(
-        &self,
-        ms1: &[ClusterResult1D],
-        opts: &CandidateOpts,
-    ) -> PrecursorSearchIndex {
-        PrecursorSearchIndex::build(self, ms1, opts)
-    }
-
-    /// One-shot helper: build a transient index and enumerate all (ms2_idx, ms1_idx) pairs.
-    /// If you’ll call this repeatedly, prefer `build_precursor_search_index` + `enumerate_pairs`.
-    pub fn enumerate_ms2_ms1_pairs(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        opts: &CandidateOpts,
-    ) -> Vec<(usize, usize)> {
-        let idx = PrecursorSearchIndex::build(self, ms1, opts);
-        idx.enumerate_pairs(ms1, ms2, opts)
-    }
-    
-    /// Score already-enumerated pairs using width-aware / robust features.
-    /// Returns (ms2_idx, ms1_idx, features, score).
-    pub fn score_ms2_ms1_pairs(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        pairs: &[(usize, usize)],
-        sopts: &ScoreOpts,
-    ) -> Vec<(usize, usize, PairFeatures, f32)> {
-        score_pairs(ms1, ms2, pairs, sopts)
-    }
-
-    /// For each MS2, pick the best MS1 (or None if nothing decent).
-    pub fn best_ms1_per_ms2(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        pairs: &[(usize, usize)],
-        sopts: &ScoreOpts,
-    ) -> Vec<Option<usize>> {
-        best_ms1_for_each_ms2(ms1, ms2, pairs, sopts)
-    }
-
-    /// Build MS1 → Vec<MS2> from a winners vector.
-    pub fn ms1_to_ms2_assignments(
-        &self,
-        ms1_len: usize,
-        ms2_best_ms1: &[Option<usize>],
-    ) -> Vec<Vec<usize>> {
-        ms1_to_ms2_map(ms1_len, ms2_best_ms1)
-    }
-
-    /// End-to-end helper: enumerate → select best MS1 for each MS2 → build MS1→MS2 map.
-    /// Returns both the raw pairs and the final assignments.
-    pub fn enumerate_and_assign_best(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        copts: &CandidateOpts,
-        sopts: &ScoreOpts,
-    ) -> AssignmentResult {
-        let pairs = self.enumerate_ms2_ms1_pairs(ms1, ms2, copts);
-        let ms2_best_ms1 = self.best_ms1_per_ms2(ms1, ms2, &pairs, sopts);
-        let ms1_to_ms2 = self.ms1_to_ms2_assignments(ms1.len(), &ms2_best_ms1);
-        AssignmentResult { pairs, ms2_best_ms1, ms1_to_ms2 }
-    }
-
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
         self.dia_index.program_for_group(g)
     }
@@ -507,34 +441,47 @@ impl TimsDatasetDIA {
             None
         }
     }
-    /// Suggest an MzScale for a DIA group. Prefer table bounds; fallback to global acquisition range.
-    pub fn mzscale_for_group(&self, window_group: u32, ppm_per_bin: f32) -> MzScale {
-        let (lo, hi) = self
-            .mz_bounds_for_window_group_core(window_group)
-            .unwrap_or((
-                self.global_meta_data.mz_acquisition_range_lower as f32,
-                self.global_meta_data.mz_acquisition_range_upper as f32,
-            ));
-        MzScale::build(lo.max(1.0), hi, ppm_per_bin)
+    /// Build a TOF-based MzScale for a DIA group.
+    /// `tof_step = 1` → max TOF resolution; larger steps downsample.
+    pub fn mzscale_for_group(&self, window_group: u32, tof_step: i32) -> TofScale {
+        assert!(tof_step > 0);
+
+        let (ids, _times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
+        assert!(
+            !ids.is_empty(),
+            "mzscale_for_group: no MS2 frames for window_group {}",
+            window_group
+        );
+
+        let frames: Vec<_> = ids.iter().map(|&fid| self.get_frame(fid)).collect();
+
+        TofScale::build_from_tof(&frames, tof_step)
+            .expect("mzscale_for_group: failed to build TOF scale (empty or degenerate)")
     }
 
-    /// Conservative: derive an MzScale by scanning actual frame data (rarely needed; slower).
-    pub fn mzscale_from_frames_scan(&self, frame_ids: &[u32], ppm_per_bin: f32) -> Option<MzScale> {
+    /// Conservative: derive a TOF-scale by scanning actual frame data.
+    pub fn mzscale_from_frames_scan(&self, frame_ids: &[u32], tof_step: i32) -> Option<TofScale> {
+        assert!(tof_step > 0);
         let frames: Vec<_> = frame_ids.iter().map(|&fid| self.get_frame(fid)).collect();
-        scan_mz_range(&frames).map(|(lo, hi)| MzScale::build(lo.max(1.0), hi, ppm_per_bin))
+        TofScale::build_from_tof(&frames, tof_step)
     }
 
     /// RT-sorted FRAGMENT frames + times for a DIA group, then converted into FrameBinView rows.
-    /// `ppm_per_bin` sets the m/z granularity of CSR binning.
+    /// `tof_step` controls TOF granularity of CSR binning.
     pub fn make_rt_frames_for_group(
         &self,
         window_group: u32,
-        ppm_per_bin: f32,
+        tof_step: i32,
     ) -> RtFrames {
-        let (ids, times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
-        assert!(!ids.is_empty(), "No MS2 frames for window_group {}", window_group);
+        assert!(tof_step > 0);
 
-        // global number of scans: max in this provenance
+        let (ids, times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
+        assert!(
+            !ids.is_empty(),
+            "No MS2 frames for window_group {}",
+            window_group
+        );
+
         let global_num_scans = self.meta_data
             .iter()
             .filter(|m| ids.binary_search(&(m.id as u32)).is_ok())
@@ -542,45 +489,183 @@ impl TimsDatasetDIA {
             .max()
             .unwrap_or(0);
 
-        // scale for this group
-        let scale = self.mzscale_for_group(window_group, ppm_per_bin);
+        // TOF scale for this group
+        let scale = self.mzscale_for_group(window_group, tof_step);
 
-        // Build CSR rows (parallel)
         let frames: Vec<FrameBinView> = ids.par_iter()
             .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
             .collect();
 
-        RtFrames { frames, frame_ids: ids, rt_times: times, scale: Arc::new(scale) }
+        RtFrames {
+            frames,
+            frame_ids: ids,
+            rt_times: times,
+            scale: Arc::new(scale),
+        }
     }
 
-    /// RT-sorted PRECURSOR frames (ms_ms_type==0) into FrameBinView rows.
+    /// RT-sorted PRECURSOR frames (ms_ms_type == 0) into FrameBinView rows.
+    /// `tof_step` controls TOF granularity of CSR binning.
     pub fn make_rt_frames_for_precursor(
         &self,
-        ppm_per_bin: f32,
+        tof_step: i32,
     ) -> RtFrames {
-        // Collect (frame_id, time) for precursor frames and sort by time
+        assert!(tof_step > 0);
+
         let mut rows: Vec<(u32, f32, usize)> = self.meta_data
             .iter()
             .filter(|m| m.ms_ms_type == 0)
             .map(|m| (m.id as u32, m.time as f32, m.num_scans as usize))
             .collect();
+
         assert!(!rows.is_empty(), "No precursor (MS1) frames found");
-        rows.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap());
+        rows.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
         let frame_ids: Vec<u32> = rows.iter().map(|r| r.0).collect();
         let rt_times:  Vec<f32> = rows.iter().map(|r| r.1).collect();
         let global_num_scans = rows.iter().map(|r| r.2).max().unwrap_or(1);
 
-        // A broad scale for MS1 (use global acquisition range from metadata)
-        let lo = self.global_meta_data.mz_acquisition_range_lower as f32;
-        let hi = self.global_meta_data.mz_acquisition_range_upper as f32;
-        let scale = MzScale::build(lo.max(1.0), hi, ppm_per_bin);
+        // Build TOF scale from precursor frames
+        let frames_for_scale: Vec<_> = frame_ids.iter().map(|&fid| self.get_frame(fid)).collect();
+        let scale = TofScale::build_from_tof(&frames_for_scale, tof_step)
+            .expect("make_rt_frames_for_precursor: failed to build TOF scale");
 
         let frames: Vec<FrameBinView> = frame_ids.par_iter()
             .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
             .collect();
 
-        RtFrames { frames, frame_ids, rt_times , scale: Arc::new(scale) }
+        RtFrames {
+            frames,
+            frame_ids,
+            rt_times,
+            scale: Arc::new(scale),
+        }
+    }
+}
+
+impl TimsData for TimsDatasetDIA {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+        self.loader.get_frame(frame_id)
+    }
+
+    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
+        self.loader.get_raw_frame(frame_id)
+    }
+
+    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
+        self.loader.get_slice(frame_ids, num_threads)
+    }
+    fn get_acquisition_mode(&self) -> AcquisitionMode {
+        self.loader.get_acquisition_mode().clone()
+    }
+
+    fn get_frame_count(&self) -> i32 {
+        self.loader.get_frame_count()
+    }
+
+    fn get_data_path(&self) -> &str {
+        &self.loader.get_data_path()
+    }
+}
+
+impl IndexConverter for TimsDatasetDIA {
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        self.loader
+            .get_index_converter()
+            .tof_to_mz(frame_id, tof_values)
+    }
+
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        self.loader
+            .get_index_converter()
+            .mz_to_tof(frame_id, mz_values)
+    }
+
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+        self.loader
+            .get_index_converter()
+            .scan_to_inverse_mobility(frame_id, scan_values)
+    }
+
+    fn inverse_mobility_to_scan(
+        &self,
+        frame_id: u32,
+        inverse_mobility_values: &Vec<f64>,
+    ) -> Vec<u32> {
+        self.loader
+            .get_index_converter()
+            .inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+    }
+}
+
+/*
+/// Build a reusable MS1 search index for candidate enumeration.
+    /// Use when you plan to enumerate pairs repeatedly (e.g., different MS2 subsets or knobs).
+    pub fn build_precursor_search_index(
+        &self,
+        ms1: &[ClusterResult1D],
+        opts: &CandidateOpts,
+    ) -> PrecursorSearchIndex {
+        PrecursorSearchIndex::build(self, ms1, opts)
+    }
+
+    /// One-shot helper: build a transient index and enumerate all (ms2_idx, ms1_idx) pairs.
+    /// If you’ll call this repeatedly, prefer `build_precursor_search_index` + `enumerate_pairs`.
+    pub fn enumerate_ms2_ms1_pairs(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        opts: &CandidateOpts,
+    ) -> Vec<(usize, usize)> {
+        let idx = PrecursorSearchIndex::build(self, ms1, opts);
+        idx.enumerate_pairs(ms1, ms2, opts)
+    }
+
+    /// Score already-enumerated pairs using width-aware / robust features.
+    /// Returns (ms2_idx, ms1_idx, features, score).
+    pub fn score_ms2_ms1_pairs(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        pairs: &[(usize, usize)],
+        sopts: &ScoreOpts,
+    ) -> Vec<(usize, usize, PairFeatures, f32)> {
+        score_pairs(ms1, ms2, pairs, sopts)
+    }
+
+    /// For each MS2, pick the best MS1 (or None if nothing decent).
+    pub fn best_ms1_per_ms2(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        pairs: &[(usize, usize)],
+        sopts: &ScoreOpts,
+    ) -> Vec<Option<usize>> {
+        best_ms1_for_each_ms2(ms1, ms2, pairs, sopts)
+    }
+
+    /// Build MS1 → Vec<MS2> from a winners vector.
+    pub fn ms1_to_ms2_assignments(
+        &self,
+        ms1_len: usize,
+        ms2_best_ms1: &[Option<usize>],
+    ) -> Vec<Vec<usize>> {
+        ms1_to_ms2_map(ms1_len, ms2_best_ms1)
+    }
+
+    /// End-to-end helper: enumerate → select best MS1 for each MS2 → build MS1→MS2 map.
+    /// Returns both the raw pairs and the final assignments.
+    pub fn enumerate_and_assign_best(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        copts: &CandidateOpts,
+        sopts: &ScoreOpts,
+    ) -> AssignmentResult {
+        let pairs = self.enumerate_ms2_ms1_pairs(ms1, ms2, copts);
+        let ms2_best_ms1 = self.best_ms1_per_ms2(ms1, ms2, &pairs, sopts);
+        let ms1_to_ms2 = self.ms1_to_ms2_assignments(ms1.len(), &ms2_best_ms1);
+        AssignmentResult { pairs, ms2_best_ms1, ms1_to_ms2 }
     }
     /// Expand a batch of IM peaks along RT within a DIA `window_group`.
     /// Returns Vec<Vec<RtPeak1D>> aligned to `im_peaks` order.
@@ -771,59 +856,4 @@ impl TimsDatasetDIA {
 
         self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
     }
-}
-
-impl TimsData for TimsDatasetDIA {
-    fn get_frame(&self, frame_id: u32) -> TimsFrame {
-        self.loader.get_frame(frame_id)
-    }
-
-    fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
-        self.loader.get_raw_frame(frame_id)
-    }
-
-    fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> TimsSlice {
-        self.loader.get_slice(frame_ids, num_threads)
-    }
-    fn get_acquisition_mode(&self) -> AcquisitionMode {
-        self.loader.get_acquisition_mode().clone()
-    }
-
-    fn get_frame_count(&self) -> i32 {
-        self.loader.get_frame_count()
-    }
-
-    fn get_data_path(&self) -> &str {
-        &self.loader.get_data_path()
-    }
-}
-
-impl IndexConverter for TimsDatasetDIA {
-    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
-        self.loader
-            .get_index_converter()
-            .tof_to_mz(frame_id, tof_values)
-    }
-
-    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
-        self.loader
-            .get_index_converter()
-            .mz_to_tof(frame_id, mz_values)
-    }
-
-    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
-        self.loader
-            .get_index_converter()
-            .scan_to_inverse_mobility(frame_id, scan_values)
-    }
-
-    fn inverse_mobility_to_scan(
-        &self,
-        frame_id: u32,
-        inverse_mobility_values: &Vec<f64>,
-    ) -> Vec<u32> {
-        self.loader
-            .get_index_converter()
-            .inverse_mobility_to_scan(frame_id, inverse_mobility_values)
-    }
-}
+ */

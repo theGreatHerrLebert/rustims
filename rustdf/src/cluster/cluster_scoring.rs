@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 use std::cmp::Ordering;
 
+/*
 use crate::cluster::cluster::ClusterResult1D;
 
 /// Compact feature bundle per pair for traceability.
@@ -287,3 +288,4 @@ pub struct AssignmentResult {
     /// For each MS1 i, the list of MS2 indices assigned to it.
     pub ms1_to_ms2: Vec<Vec<usize>>,
 }
+ */

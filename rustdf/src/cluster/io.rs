@@ -1,8 +1,8 @@
 // src/cluster/io.rs
-use super::cluster::ClusterResult1D;
 use serde::{Serialize, Deserialize};
 use std::{fs::File, io::{BufReader, BufWriter}};
-
+/*
+use super::cluster::ClusterResult1D;
 #[derive(Serialize, Deserialize)]
 pub struct ClusterFile {
     pub version: u32,
@@ -67,3 +67,4 @@ pub fn strip_heavy(mut clusters: Vec<ClusterResult1D>, keep_points: bool, keep_a
     }
     clusters
 }
+ */

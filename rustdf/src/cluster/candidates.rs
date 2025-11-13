@@ -1,11 +1,11 @@
 // rustdf/src/cluster/candidates.rs
 
-use crate::cluster::cluster::ClusterResult1D;
 use crate::data::dia::TimsDatasetDIA;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-
+/*
+use crate::cluster::cluster::ClusterResult1D;
 /// Jaccard overlap in **absolute seconds** for two closed intervals.
 #[inline]
 fn jaccard_time(a_lo: f64, a_hi: f64, b_lo: f64, b_hi: f64) -> f32 {
@@ -367,3 +367,4 @@ pub fn enumerate_ms2_ms1_pairs_simple(
     let idx = PrecursorSearchIndex::build(ds, ms1, opts);
     idx.enumerate_pairs(ms1, ms2, opts)
 }
+ */

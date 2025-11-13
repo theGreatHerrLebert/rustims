@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use mscore::timstof::frame::TimsFrame;
 use crate::cluster::peak::{ImPeak1D, RtFrames, RtPeak1D};
-use crate::cluster::utility::{bin_range_for_win, build_im_marginal, build_mz_hist, build_rt_marginal, fit1d_moment};
-
+use crate::cluster::utility::{build_im_marginal, build_tof_hist, build_rt_marginal, fit1d_moment};
+/*
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use crate::data::dia::TimsDatasetDIA;
@@ -118,17 +118,6 @@ pub struct ClusterSpec1D {
     pub ms_level: u8,
     // NEW: prior σ in scan units, from detector/refiner
     pub im_prior_sigma: Option<f32>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Fit1D {
-    pub mu: f32,
-    pub sigma: f32,
-    pub height: f32,
-    pub baseline: f32,
-    pub area: f32,
-    pub r2: f32,
-    pub n: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -310,14 +299,14 @@ fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
     lo
 }
 #[inline]
-fn cushion_hi_edge(scale: &crate::cluster::utility::MzScale, mz_hi_edge: f32) -> f32 {
+fn cushion_hi_edge(scale: &crate::cluster::utility::TofScale, mz_hi_edge: f32) -> f32 {
     let cushion_ppm = 0.6 * scale.ppm_per_bin;
     let eps = mz_hi_edge * cushion_ppm * 1e-6;
     (mz_hi_edge + eps).min(scale.mz_max)
 }
 
 #[inline]
-fn cushion_lo_edge(scale: &crate::cluster::utility::MzScale, mz_lo_edge: f32) -> f32 {
+fn cushion_lo_edge(scale: &crate::cluster::utility::TofScale, mz_lo_edge: f32) -> f32 {
     let cushion_ppm = 0.6 * scale.ppm_per_bin;
     let eps = mz_lo_edge * cushion_ppm * 1e-6;
     (mz_lo_edge - eps).max(scale.mz_min)
@@ -686,8 +675,8 @@ pub fn make_spec_from_pair(
     im_hi = wo_hi;
 
     // --- m/z window: pad, then clamp to ±ppm cap around apex
-    let center = im.mz_center;
-    let (lo0, hi0) = ppm_expand(im.mz_bounds, opts.mz_ppm_pad, center, 0.015);
+    let center = im.tof_center;
+    let (lo0, hi0) = ppm_expand(im.tof_bounds, opts.mz_ppm_pad, center, 0.015);
     let cap_ppm = ppm_cap_for(opts.ms_level); // e.g. 10 (MS1) / 15 (MS2)
     let mz_min = rt_frames.scale.mz_min;
     let mz_max = rt_frames.scale.mz_max;
@@ -719,7 +708,7 @@ pub fn evaluate_spec_1d(
         &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
     let im_marg1 = build_im_marginal(
         &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi);
-    let (mz_hist1, mz_centers1) = build_mz_hist(
+    let (mz_hist1, mz_centers1) = build_tof_hist(
         &rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo0, bin_hi0, spec.im_lo, spec.im_hi, scale);
 
     let rt_sum1: f32 = rt_marg1.iter().copied().sum();
@@ -772,7 +761,7 @@ pub fn evaluate_spec_1d(
     // --- 3) re-accumulate in refined window
     let rt_marg = build_rt_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
     let im_marg = build_im_marginal(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi);
-    let (mz_hist, _mz_centers_final) = build_mz_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
+    let (mz_hist, _mz_centers_final) = build_tof_hist(&rt_frames.frames, spec.rt_lo, spec.rt_hi, bin_lo, bin_hi, spec.im_lo, spec.im_hi, scale);
 
     let rt_sum: f32 = rt_marg.iter().copied().sum();
     let im_sum: f32 = im_marg.iter().copied().sum();
@@ -1127,3 +1116,4 @@ pub fn stitch_clusters_1d_ppm(mut clusters: Vec<ClusterResult1D>, params: Cluste
 
     final_fold
 }
+ */

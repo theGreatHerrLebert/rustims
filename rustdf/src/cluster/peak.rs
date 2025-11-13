@@ -1,20 +1,26 @@
 use std::sync::Arc;
 use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
+use crate::cluster::utility::{
+    fallback_rt_peak_from_trace,
+    quad_subsample,
+    rt_peak_id,
+    smooth_vector_gaussian,
+    trapezoid_area_fractional,
+    TofScale,
+};
 
 // Stable 64-bit id for peaks
 pub type PeakId = i64;
 
-
 #[derive(Clone, Debug)]
 pub struct ImPeak1D {
-    pub mz_row: usize,                 // row in current m/z grid
-    pub mz_center: f32,                // center m/z
-    pub mz_bounds: (f32, f32),         // min, max m/z
-    pub rt_bounds: (usize, usize),     // columns [lo, hi] in current RT grid
-    pub frame_id_bounds: (u32, u32),   // materialized for robustness
-    pub window_group: Option<u32>,     // DIA group provenance
+    pub tof_row: usize,                  // row in current TOF grid
+    pub tof_center: i32,                 // center TOF index
+    pub tof_bounds: (i32, i32),          // min, max TOF index
+    pub rt_bounds: (usize, usize),       // columns [lo, hi] in current RT grid
+    pub frame_id_bounds: (u32, u32),     // materialized for robustness
+    pub window_group: Option<u32>,       // DIA group provenance
 
     pub scan: usize,
     pub left: usize,
@@ -31,7 +37,7 @@ pub struct ImPeak1D {
     pub prominence: f32,
     pub left_x: f32,
     pub right_x: f32,
-    pub width_scans: usize,            // interpreted as ABSOLUTE width
+    pub width_scans: usize,              // interpreted as ABSOLUTE width
     pub area_raw: f32,
     pub subscan: f32,
     pub id: PeakId,
@@ -42,40 +48,41 @@ pub struct FrameBinView {
     pub _frame_id: u32,
     pub unique_bins: Vec<usize>,
     pub offsets: Vec<usize>,
-    pub scan_idx: Vec<u32>,            // ABSOLUTE scan indices
+    pub scan_idx: Vec<u32>,              // ABSOLUTE scan indices
     pub intensity: Vec<f32>,
 }
 
 #[derive(Clone, Debug)]
-pub struct MzScanGrid {
+pub struct TofScanGrid {
     pub scans: Vec<usize>,
     pub data: Vec<f32>,
     pub rows: usize,
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,
-    pub scale: MzScale,
+    pub scale: TofScale,                 // TOF scale internally
 }
 
-impl MzScanGrid {
+impl TofScanGrid {
     #[inline]
-    pub fn mz_center_for_row(&self, r: usize) -> f32 {
+    pub fn tof_center_for_row(&self, r: usize) -> f32 {
+        // In TOF mode this is actually the TOF center; higher levels can
+        // convert to m/z using calibration if needed.
         self.scale.center(r)
     }
     #[inline]
-    pub fn mz_bounds_for_row(&self, r: usize) -> (f32, f32) {
-        // safe: edges.len() == rows + 1
+    pub fn tof_bounds_for_row(&self, r: usize) -> (f32, f32) {
         (self.scale.edges[r], self.scale.edges[r + 1])
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct MzScanWindowGrid {
+pub struct TofScanWindowGrid {
     pub rt_range_frames: (usize, usize),
     pub rt_range_sec:    (f32, f32),
     pub frame_id_bounds: (u32, u32),
     pub window_group:    Option<u32>,
 
-    pub scale: Arc<MzScale>,
+    pub scale: Arc<TofScale>,            // TOF scale
 
     pub scans: Vec<usize>,
     pub data: Option<Vec<f32>>,
@@ -84,14 +91,13 @@ pub struct MzScanWindowGrid {
     pub data_raw: Option<Vec<f32>>,
 }
 
-impl MzScanWindowGrid {
+impl TofScanWindowGrid {
     #[inline]
-    pub fn mz_center_for_row(&self, r: usize) -> f32 {
+    pub fn tof_center_for_row(&self, r: usize) -> f32 {
         self.scale.center(r)
     }
     #[inline]
-    pub fn mz_bounds_for_row(&self, r: usize) -> (f32, f32) {
-        // safe: edges.len() == rows + 1
+    pub fn tof_bounds_for_row(&self, r: usize) -> (f32, f32) {
         (self.scale.edges[r], self.scale.edges[r + 1])
     }
 }
@@ -101,15 +107,15 @@ pub struct StitchParams {
     pub min_overlap_frames: usize,
     pub max_scan_delta: usize,
     pub jaccard_min: f32,
-    pub max_mz_row_delta: usize,   // NEW, e.g. 0 (current), 1 or 2
-    pub allow_cross_groups: bool,  // NEW if you want to stitch across groups
+    pub max_tof_row_delta: usize,  
+    pub allow_cross_groups: bool,
 }
 
-fn same_row_or_close_im(p:&ImPeak1D, q:&ImPeak1D, d:usize) -> bool {
-    p.mz_row.abs_diff(q.mz_row) <= d
+fn same_row_or_close_im(p: &ImPeak1D, q: &ImPeak1D, d: usize) -> bool {
+    p.tof_row.abs_diff(q.tof_row) <= d
 }
 
-/// Allow slight disagreement between mz rows picked by IM vs RT passes
+/// Allow slight disagreement between rows picked by IM vs RT passes
 #[inline]
 fn _same_row_or_close(a_row: usize, b_row: usize, max_delta: usize) -> bool {
     a_row.abs_diff(b_row) <= max_delta
@@ -129,31 +135,37 @@ fn jaccard((a0,a1):(usize,usize),(b0,b1):(usize,usize)) -> f32 {
     inter / (len_a + len_b - inter)
 }
 
-fn compatible(p:&ImPeak1D, q:&ImPeak1D, sp:&StitchParams) -> bool {
-    if !same_row_or_close_im(p, q, sp.max_mz_row_delta) { return false; }
+fn compatible(p: &ImPeak1D, q: &ImPeak1D, sp: &StitchParams) -> bool {
+    if !same_row_or_close_im(p, q, sp.max_tof_row_delta) { return false; }
     if !sp.allow_cross_groups && p.window_group != q.window_group { return false; }
     // Use ABSOLUTE scan centers for cross-window compatibility
-    if (p.scan_abs as isize - q.scan_abs as isize).abs() as usize > sp.max_scan_delta { return false; }
+    if (p.scan_abs as isize - q.scan_abs as isize).abs() as usize > sp.max_scan_delta {
+        return false;
+    }
     let ov = rt_overlap(p.rt_bounds, q.rt_bounds);
     if ov < sp.min_overlap_frames { return false; }
-    if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min { return false; }
+    if sp.jaccard_min > 0.0 && jaccard(p.rt_bounds, q.rt_bounds) < sp.jaccard_min {
+        return false;
+    }
     true
 }
 
 fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
     // union of RT/frame bounds
     a.rt_bounds = (a.rt_bounds.0.min(b.rt_bounds.0), a.rt_bounds.1.max(b.rt_bounds.1));
-    a.frame_id_bounds = (a.frame_id_bounds.0.min(b.frame_id_bounds.0),
-                         a.frame_id_bounds.1.max(b.frame_id_bounds.1));
+    a.frame_id_bounds = (
+        a.frame_id_bounds.0.min(b.frame_id_bounds.0),
+        a.frame_id_bounds.1.max(b.frame_id_bounds.1),
+    );
 
     // scan / subscan (weighted by apex_smoothed)
     let w0 = a.apex_smoothed.max(1e-6);
     let w1 = b.apex_smoothed.max(1e-6);
-    a.subscan  = (a.subscan*w0 + b.subscan*w1) / (w0 + w1);
-    a.scan     = ((a.scan as f32*w0 + b.scan as f32*w1) / (w0+w1)).round() as usize;
-    a.scan_abs = ((a.scan_abs as f32*w0 + b.scan_abs as f32*w1) / (w0+w1)).round() as usize;
+    a.subscan  = (a.subscan * w0 + b.subscan * w1) / (w0 + w1);
+    a.scan     = ((a.scan as f32 * w0 + b.scan as f32 * w1) / (w0 + w1)).round() as usize;
+    a.scan_abs = ((a.scan_abs as f32 * w0 + b.scan_abs as f32 * w1) / (w0 + w1)).round() as usize;
 
-    // bounds union (both local and absolute maintained)
+    // bounds union (both local and absolute)
     a.left      = a.left.min(b.left);
     a.right     = a.right.max(b.right);
     a.left_abs  = a.left_abs.min(b.left_abs);
@@ -169,7 +181,9 @@ fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
     a.area_raw     += b.area_raw;
 
     // keep mobility if any (prefer non-None)
-    if a.mobility.is_none() { a.mobility = b.mobility; }
+    if a.mobility.is_none() {
+        a.mobility = b.mobility;
+    }
 
     a
 }
@@ -180,51 +194,58 @@ fn merge_two(mut a: ImPeak1D, b: &ImPeak1D) -> ImPeak1D {
 pub fn stitch_im_peaks_across_windows(mut peaks: Vec<ImPeak1D>, sp: StitchParams) -> Vec<ImPeak1D> {
     if peaks.is_empty() { return peaks; }
 
-    // bucket by (window_group, mz_row)
     use std::collections::BTreeMap;
-    let mut buckets: BTreeMap<(Option<u32>,usize), Vec<ImPeak1D>> = BTreeMap::new();
+    let mut buckets: BTreeMap<(Option<u32>, usize), Vec<ImPeak1D>> = BTreeMap::new();
     for p in peaks.drain(..) {
-        buckets.entry((p.window_group, p.mz_row)).or_default().push(p);
+        buckets.entry((p.window_group, p.tof_row)).or_default().push(p);
     }
 
     // parallel stitch per bucket
-    buckets.into_par_iter().flat_map(|((_wg, _row), mut v)| {
-        // sort by ABSOLUTE scan center, then by rt start (helps the sweep)
-        v.sort_unstable_by_key(|p| (p.scan_abs, p.rt_bounds.0));
+    buckets
+        .into_par_iter()
+        .flat_map(|((_wg, _row), mut v)| {
+            // sort by ABSOLUTE scan center, then by rt start (helps the sweep)
+            v.sort_unstable_by_key(|p| (p.scan_abs, p.rt_bounds.0));
 
-        let mut out: Vec<ImPeak1D> = Vec::with_capacity(v.len());
-        for p in v.into_iter() {
-            if let Some(last) = out.last_mut() {
-                if compatible(last, &p, &sp) {
-                    let merged = merge_two(last.clone(), &p);
-                    *last = merged;
-                    continue;
+            let mut out: Vec<ImPeak1D> = Vec::with_capacity(v.len());
+            for p in v.into_iter() {
+                if let Some(last) = out.last_mut() {
+                    if compatible(last, &p, &sp) {
+                        let merged = merge_two(last.clone(), &p);
+                        *last = merged;
+                        continue;
+                    }
                 }
+                out.push(p);
             }
-            out.push(p);
-        }
-        out
-    }).collect()
+            out
+        })
+        .collect()
 }
 
 pub fn build_frame_bin_view(
     fr: TimsFrame,
-    scale: &MzScale,
+    scale: &TofScale,          // TOF-based CSR scale
     global_num_scans: usize,
 ) -> FrameBinView {
-    let n = fr.ims_frame.mz.len();
+    let n = fr.tof.len();
     let mut bins_idx: Vec<usize> = Vec::with_capacity(n);
     let mut scans_u:  Vec<u32>   = Vec::with_capacity(n);
     let mut intens:   Vec<f32>   = Vec::with_capacity(n);
 
     let scans_vec: &Vec<i32> = &fr.scan;
+    let tofs: &Vec<i32>      = &fr.tof;
+
     for i in 0..n {
-        if let Some(idx) = scale.index_of(fr.ims_frame.mz[i] as f32) {
+        let tof = tofs[i];
+        if let Some(idx) = scale.index_of_tof(tof) {
             bins_idx.push(idx);
+
             let s_val = scans_vec[i];
             debug_assert!(s_val >= 0, "Negative scan index in frame {}", fr.frame_id);
-            let s_u32: u32 = u32::try_from(s_val).expect("scan index does not fit u16");
+            let s_u32: u32 = u32::try_from(s_val).expect("scan index does not fit u32");
             scans_u.push((s_u32 as usize).min(global_num_scans.saturating_sub(1)) as u32);
+
             intens.push(fr.ims_frame.intensity[i] as f32);
         }
     }
@@ -234,9 +255,9 @@ pub fn build_frame_bin_view(
     idx.sort_unstable_by_key(|&i| bins_idx[i]);
 
     let mut unique_bins: Vec<usize> = Vec::new();
-    let mut counts: Vec<usize> = Vec::new();
-    let mut scan_sorted: Vec<u32> = Vec::with_capacity(idx.len());
-    let mut inten_sorted: Vec<f32> = Vec::with_capacity(idx.len());
+    let mut counts: Vec<usize>      = Vec::new();
+    let mut scan_sorted: Vec<u32>   = Vec::with_capacity(idx.len());
+    let mut inten_sorted: Vec<f32>  = Vec::with_capacity(idx.len());
 
     let mut cur: Option<usize> = None;
     for &i in &idx {
@@ -253,7 +274,10 @@ pub fn build_frame_bin_view(
 
     let mut offsets = Vec::with_capacity(unique_bins.len() + 1);
     offsets.push(0);
-    for c in &counts { offsets.push(offsets.last().unwrap() + *c); }
+    for c in &counts {
+        offsets.push(offsets.last().unwrap() + *c);
+    }
+
     FrameBinView {
         _frame_id: fr.frame_id as u32,
         unique_bins,
@@ -266,11 +290,11 @@ pub fn build_frame_bin_view(
 #[inline]
 fn sum_frame_bins_scans(
     fbv: &FrameBinView,
-    bin_lo: usize, bin_hi: usize,
-    scan_lo: usize, scan_hi: usize,
+    bin_lo: usize,
+    bin_hi: usize,
+    scan_lo: usize,
+    scan_hi: usize,
 ) -> f32 {
-    // Locate contiguous block of unique_bins in [bin_lo..bin_hi]
-    // Since unique_bins is sorted, two binary searches:
     let ub = &fbv.unique_bins;
     if ub.is_empty() || bin_lo > bin_hi { return 0.0; }
 
@@ -285,56 +309,36 @@ fn sum_frame_bins_scans(
     while i < ub.len() {
         let b = ub[i];
         if b > end_bin { break; }
-        // entries for this bin: offsets[i]..offsets[i+1]
+
         let lo = fbv.offsets[i];
         let hi = fbv.offsets[i + 1];
-        // scan filter (ABSOLUTE axis)
         let scans = &fbv.scan_idx[lo..hi];
         let ints  = &fbv.intensity[lo..hi];
-        // linear scan; if this becomes hot, keep scans sorted and do two lower_bounds
+
         for (s, val) in scans.iter().zip(ints.iter()) {
             let s = *s as usize;
-            if s >= scan_lo && s <= scan_hi { acc += *val; }
+            if s >= scan_lo && s <= scan_hi {
+                acc += *val;
+            }
         }
         i += 1;
     }
     acc
 }
 
-/// Returns an RT trace for a single IM peak using bin padding around a row
+/// Returns an RT trace for a single IM peak using bin padding around a TOF row.
 pub fn rt_trace_for_im_peak(
     frames: &[FrameBinView],        // RT-sorted, same group
-    mz_row: usize,
+    tof_row: usize,
     bin_pad: usize,                 // e.g., 0 or 1
     scan_lo: usize,
     scan_hi: usize,
 ) -> Vec<f32> {
-    let bin_lo = mz_row.saturating_sub(bin_pad);
-    let bin_hi = mz_row.saturating_add(bin_pad);
+    let bin_lo = tof_row.saturating_sub(bin_pad);
+    let bin_hi = tof_row.saturating_add(bin_pad);
     let mut v = Vec::with_capacity(frames.len());
     for fbv in frames {
         v.push(sum_frame_bins_scans(fbv, bin_lo, bin_hi, scan_lo, scan_hi));
-    }
-    v
-}
-
-#[inline]
-pub fn rt_trace_for_im_peak_by_bounds(
-    frames: &[FrameBinView],
-    rt_scale: &MzScale,            // RtFrames.scale
-    mz_bounds: (f32, f32),         // im_peak.mz_bounds
-    extra_bins_pad: usize,         // 0–2
-    scan_lo: usize,
-    scan_hi: usize,
-) -> Vec<f32> {
-    // Map physical m/z bounds into the RT CSR scale, then pad by bins.
-    let (mut bin_l, mut bin_r) = rt_scale.index_range_for_mz_window(mz_bounds.0, mz_bounds.1);
-    bin_l = bin_l.saturating_sub(extra_bins_pad);
-    bin_r = bin_r.saturating_add(extra_bins_pad);
-
-    let mut v = Vec::with_capacity(frames.len());
-    for fbv in frames {
-        v.push(sum_frame_bins_scans(fbv, bin_l, bin_r, scan_lo, scan_hi));
     }
     v
 }
@@ -344,8 +348,9 @@ pub struct RtFrames {
     pub frames: Vec<FrameBinView>,
     pub frame_ids: Vec<u32>,
     pub rt_times: Vec<f32>,
-    pub scale: Arc<MzScale>,       // NEW: the CSR scale used for these frames
+    pub scale: Arc<TofScale>,       // TOF scale used for these frames
 }
+
 impl RtFrames {
     #[inline]
     pub fn ctx(&self) -> RtTraceCtx<'_> {
@@ -357,7 +362,8 @@ impl RtFrames {
 
     #[inline]
     pub fn is_consistent(&self) -> bool {
-        self.frames.len() == self.frame_ids.len() && self.frame_ids.len() == self.rt_times.len()
+        self.frames.len() == self.frame_ids.len()
+            && self.frame_ids.len() == self.rt_times.len()
     }
 }
 
@@ -403,14 +409,14 @@ pub struct RtPeak1D {
     pub frame_id_bounds: (u32, u32),        // materialized
     pub window_group: Option<u32>,
 
-    // m/z context carried from the IM parent (exact row + physical window)
-    pub mz_row: usize,
-    pub mz_center: f32,
-    pub mz_bounds: (f32, f32),
+    // TOF context carried from the IM parent
+    pub tof_row: usize,
+    pub tof_center: i32,
+    pub tof_bounds: (i32, i32),
 
     // linkage
     pub parent_im_id: Option<PeakId>,
-    pub id: PeakId,                          // optional: RT-level id
+    pub id: PeakId,
 }
 
 pub fn find_rt_peaks(
@@ -422,16 +428,20 @@ pub fn find_rt_peaks(
     min_width_sec: f32,
 ) -> Vec<RtLocalPeak> {
     let n = y_smoothed.len();
-    if n < 3 || y_raw.len() != n || rt_times.len() != n { return Vec::new(); }
+    if n < 3 || y_raw.len() != n || rt_times.len() != n {
+        return Vec::new();
+    }
 
     let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
     if row_max < min_prom { return Vec::new(); }
 
     // 1) candidates
     let mut cands = Vec::new();
-    for i in 1..n-1 {
+    for i in 1..n - 1 {
         let yi = y_smoothed[i];
-        if yi > y_smoothed[i-1] && yi >= y_smoothed[i+1] { cands.push(i); }
+        if yi > y_smoothed[i - 1] && yi >= y_smoothed[i + 1] {
+            cands.push(i);
+        }
     }
 
     let mut peaks: Vec<RtLocalPeak> = Vec::new();
@@ -439,10 +449,20 @@ pub fn find_rt_peaks(
         let apex = y_smoothed[i];
 
         // 2) prominence baseline
-        let mut l = i; let mut left_min = apex;
-        while l > 0 { l -= 1; left_min = left_min.min(y_smoothed[l]); if y_smoothed[l] > apex { break; } }
-        let mut r = i; let mut right_min = apex;
-        while r + 1 < n { r += 1; right_min = right_min.min(y_smoothed[r]); if y_smoothed[r] > apex { break; } }
+        let mut l = i;
+        let mut left_min = apex;
+        while l > 0 {
+            l -= 1;
+            left_min = left_min.min(y_smoothed[l]);
+            if y_smoothed[l] > apex { break; }
+        }
+        let mut r = i;
+        let mut right_min = apex;
+        while r + 1 < n {
+            r += 1;
+            right_min = right_min.min(y_smoothed[r]);
+            if y_smoothed[r] > apex { break; }
+        }
 
         let baseline = left_min.max(right_min);
         let prom = apex - baseline;
@@ -454,18 +474,23 @@ pub fn find_rt_peaks(
         let mut wl = i;
         while wl > 0 && y_smoothed[wl] > half { wl -= 1; }
         let left_x = if wl < i && wl + 1 < n {
-            let y0 = y_smoothed[wl]; let y1 = y_smoothed[wl + 1];
+            let y0 = y_smoothed[wl];
+            let y1 = y_smoothed[wl + 1];
             wl as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else { wl as f32 };
+        } else {
+            wl as f32
+        };
 
         let mut wr = i;
         while wr + 1 < n && y_smoothed[wr] > half { wr += 1; }
         let right_x = if wr > i && wr < n {
-            let y0 = y_smoothed[wr - 1]; let y1 = y_smoothed[wr];
+            let y0 = y_smoothed[wr - 1];
+            let y1 = y_smoothed[wr];
             (wr - 1) as f32 + if y1 != y0 { (half - y0) / (y1 - y0) } else { 0.0 }
-        } else { wr as f32 };
+        } else {
+            wr as f32
+        };
 
-        // seconds-based width check
         let left_t  = t_at_index_frac(rt_times, left_x.max(0.0));
         let right_t = t_at_index_frac(rt_times, right_x.min((n - 1) as f32));
         let width_sec = (right_t - left_t).max(0.0);
@@ -473,8 +498,11 @@ pub fn find_rt_peaks(
 
         // 4) sub-frame apex offset
         let sub = if i > 0 && i + 1 < n {
-            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
-        } else { 0.0 };
+            quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1])
+                .clamp(-0.5, 0.5)
+        } else {
+            0.0
+        };
 
         // 5) time-based NMS (seconds)
         if let Some(last) = peaks.last() {
@@ -486,9 +514,12 @@ pub fn find_rt_peaks(
         }
 
         // 6) area under raw
-        let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n - 1) as f32));
+        let area = trapezoid_area_fractional(
+            y_raw,
+            left_x.max(0.0),
+            right_x.min((n - 1) as f32),
+        );
 
-        // apex time (subsampled)
         let apex_t = t_at_index_frac(rt_times, i as f32 + sub);
 
         peaks.push(RtLocalPeak {
@@ -499,7 +530,7 @@ pub fn find_rt_peaks(
             prominence: prom,
             left_x,
             right_x,
-            width_frames: ((right_x - left_x).max(0.0)).round() as usize, // legacy
+            width_frames: ((right_x - left_x).max(0.0)).round() as usize,
             area_raw: area,
             subframe: sub,
             left_sec: Some(left_t),
@@ -526,51 +557,41 @@ pub fn expand_im_peak_along_rt(
     im_peak: &ImPeak1D,
     frames_sorted: &[FrameBinView],
     rt_ctx: RtTraceCtx<'_>,
-    rt_scale: &MzScale,
+    _rt_scale: &TofScale,          // TOF scale, currently unused here
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
-
-    // ------------------------------------------------------------
-    // 1) Map absolute frame IDs → local precursor RT index range
-    // ------------------------------------------------------------
-    // We binary-search the sorted precursor frame_ids to locate
-    // where this IM peak is allowed to exist in RT.
     let (fid_lo_abs, fid_hi_abs) = im_peak.frame_id_bounds;
 
-    let allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
-        Ok(i) => i,
-        Err(_) => return Vec::new(),      // this IM peak does not exist in this precursor trace
-    };
-    let allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
+    // Map absolute frame IDs → local RT index range
+    let mut allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
         Ok(i) => i,
         Err(_) => return Vec::new(),
     };
-    let (allow_lo, allow_hi) = (allow_lo.min(allow_hi), allow_lo.max(allow_hi));
+    let mut allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
+        Ok(i) => i,
+        Err(_) => return Vec::new(),
+    };
+    if allow_lo > allow_hi {
+        std::mem::swap(&mut allow_lo, &mut allow_hi);
+    }
 
-    // Safety: the peak RT cannot exceed the range of available frames
     if allow_lo >= frames_sorted.len() || allow_hi >= frames_sorted.len() {
         return Vec::new();
     }
 
-    // ------------------------------------------------------------
-    // 2) Compute the full raw RT trace (over all precursor frames)
-    // ------------------------------------------------------------
-    let trace_raw_full = rt_trace_for_im_peak_by_bounds(
+    // Full raw RT trace over all frames (same group)
+    let trace_raw_full = rt_trace_for_im_peak(
         frames_sorted,
-        rt_scale,
-        im_peak.mz_bounds,
+        im_peak.tof_row,
         p.bin_pad,
         im_peak.left_abs,
         im_peak.right_abs,
     );
-
     if trace_raw_full.is_empty() {
         return Vec::new();
     }
 
-    // ------------------------------------------------------------
-    // 3) CLAMP the trace strictly to the IM peak's allowed RT region
-    // ------------------------------------------------------------
+    // Clamp to allowed RT region
     let trace_raw = &trace_raw_full[allow_lo ..= allow_hi];
     let rt_times_clamped = &rt_ctx.rt_times_sec[allow_lo ..= allow_hi];
     let n_clamped = trace_raw.len();
@@ -579,58 +600,63 @@ pub fn expand_im_peak_along_rt(
         return Vec::new();
     }
 
-    // ------------------------------------------------------------
-    // 4) If very narrow RT region → fallback peak logic
-    // ------------------------------------------------------------
+    // Local context for the clamped slice
+    let local_ctx = RtTraceCtx {
+        frame_ids_sorted: &rt_ctx.frame_ids_sorted[allow_lo ..= allow_hi],
+        rt_times_sec: rt_times_clamped,
+    };
+
+    // --- Fallback for very few frames ---
     if n_clamped < p.fallback_if_frames_lt {
         if let Some(pk) =
-            fallback_rt_peak_from_trace(trace_raw, rt_ctx, im_peak, p.fallback_frac_width)
+            fallback_rt_peak_from_trace(trace_raw, local_ctx, im_peak, p.fallback_frac_width)
         {
-            // map local clamped bounds back to global indices
-            let l = allow_lo + pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
-            let r = allow_lo + pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
-            let lo_fid = rt_ctx.frame_ids_sorted[l];
-            let hi_fid = rt_ctx.frame_ids_sorted[r];
+            let local_left =
+                pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let local_right =
+                pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
 
-            return vec![
-                RtPeak1D {
-                    parent_im_id: Some(im_peak.id),
-                    mz_row: im_peak.mz_row,
-                    mz_center: im_peak.mz_center,
-                    mz_bounds: im_peak.mz_bounds,
-                    window_group: im_peak.window_group,
+            let global_left = allow_lo + local_left;
+            let global_right = allow_lo + local_right;
 
-                    rt_idx: allow_lo + pk.rt_idx,
-                    rt_sec: pk.rt_sec,
-                    apex_smoothed: pk.apex_smoothed,
-                    apex_raw: pk.apex_raw,
-                    prominence: pk.prominence,
-                    left_x: pk.left_x + allow_lo as f32,
-                    right_x: pk.right_x + allow_lo as f32,
-                    width_frames: pk.width_frames,
-                    area_raw: pk.area_raw,
-                    subframe: pk.subframe,
+            let lo_fid = local_ctx.frame_ids_sorted[local_left];
+            let hi_fid = local_ctx.frame_ids_sorted[local_right];
 
-                    rt_bounds_frames: (l, r),
-                    frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
-                    id: rt_peak_id(&pk),
-                }
-            ];
+            let mut r = RtPeak1D {
+                parent_im_id: Some(im_peak.id),
+                tof_row: im_peak.tof_row,
+                tof_center: im_peak.tof_center,
+                tof_bounds: im_peak.tof_bounds,
+                window_group: im_peak.window_group,
+
+                rt_idx: allow_lo + pk.rt_idx,
+                rt_sec: pk.rt_sec,
+                apex_smoothed: pk.apex_smoothed,
+                apex_raw: pk.apex_raw,
+                prominence: pk.prominence,
+                left_x: pk.left_x + allow_lo as f32,
+                right_x: pk.right_x + allow_lo as f32,
+                width_frames: pk.width_frames,
+                area_raw: pk.area_raw,
+                subframe: pk.subframe,
+
+                rt_bounds_frames: (global_left, global_right),
+                frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
+                id: 0,
+            };
+            r.id = rt_peak_id(&r);
+            return vec![r];
         }
         return Vec::new();
     }
 
-    // ------------------------------------------------------------
-    // 5) Smooth the *clamped* trace
-    // ------------------------------------------------------------
+    // --- Smooth clamped trace ---
     let dt = effective_dt(rt_times_clamped);
     let sigma_frames = (p.smooth_sigma_sec / dt).max(0.75);
     let mut trace_smooth = trace_raw.to_vec();
     smooth_vector_gaussian(&mut trace_smooth[..], sigma_frames, p.smooth_trunc_k);
 
-    // ------------------------------------------------------------
-    // 6) Peak finding on the *clamped* region
-    // ------------------------------------------------------------
+    // --- Normal peak finding ---
     let base = find_rt_peaks(
         &trace_smooth,
         trace_raw,
@@ -641,66 +667,72 @@ pub fn expand_im_peak_along_rt(
     );
 
     if base.is_empty() {
+        // Try fallback once more on the clamped trace
         if let Some(pk) =
-            fallback_rt_peak_from_trace(trace_raw, rt_ctx, im_peak, p.fallback_frac_width)
+            fallback_rt_peak_from_trace(trace_raw, local_ctx, im_peak, p.fallback_frac_width)
         {
-            // same handling as fallback above
-            let l = allow_lo + pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
-            let r = allow_lo + pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
-            let lo_fid = rt_ctx.frame_ids_sorted[l];
-            let hi_fid = rt_ctx.frame_ids_sorted[r];
+            let local_left =
+                pk.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
+            let local_right =
+                pk.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
 
-            return vec![
-                RtPeak1D {
-                    parent_im_id: Some(im_peak.id),
-                    mz_row: im_peak.mz_row,
-                    mz_center: im_peak.mz_center,
-                    mz_bounds: im_peak.mz_bounds,
-                    window_group: im_peak.window_group,
+            let global_left = allow_lo + local_left;
+            let global_right = allow_lo + local_right;
 
-                    rt_idx: allow_lo + pk.rt_idx,
-                    rt_sec: pk.rt_sec,
-                    apex_smoothed: pk.apex_smoothed,
-                    apex_raw: pk.apex_raw,
-                    prominence: pk.prominence,
-                    left_x: pk.left_x + allow_lo as f32,
-                    right_x: pk.right_x + allow_lo as f32,
-                    width_frames: pk.width_frames,
-                    area_raw: pk.area_raw,
-                    subframe: pk.subframe,
+            let lo_fid = local_ctx.frame_ids_sorted[local_left];
+            let hi_fid = local_ctx.frame_ids_sorted[local_right];
 
-                    rt_bounds_frames: (l, r),
-                    frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
-                    id: rt_peak_id(&pk),
-                }
-            ];
+            let mut r = RtPeak1D {
+                parent_im_id: Some(im_peak.id),
+                tof_row: im_peak.tof_row,
+                tof_center: im_peak.tof_center,
+                tof_bounds: im_peak.tof_bounds,
+                window_group: im_peak.window_group,
+
+                rt_idx: allow_lo + pk.rt_idx,
+                rt_sec: pk.rt_sec,
+                apex_smoothed: pk.apex_smoothed,
+                apex_raw: pk.apex_raw,
+                prominence: pk.prominence,
+                left_x: pk.left_x + allow_lo as f32,
+                right_x: pk.right_x + allow_lo as f32,
+                width_frames: pk.width_frames,
+                area_raw: pk.area_raw,
+                subframe: pk.subframe,
+
+                rt_bounds_frames: (global_left, global_right),
+                frame_id_bounds: (lo_fid.min(hi_fid), lo_fid.max(hi_fid)),
+                id: 0,
+            };
+            r.id = rt_peak_id(&r);
+            return vec![r];
         }
         return Vec::new();
     }
 
-    // ------------------------------------------------------------
-    // 7) Normal multi-peak mapping: map clamped indices → global RT indices
-    // ------------------------------------------------------------
+    // --- Map local (clamped) indices back to global RT indices ---
     let n_frames = frames_sorted.len();
 
     base.into_iter()
         .map(|r0| {
-            let local_left  =
+            let local_left =
                 r0.left_x.floor().clamp(0.0, (n_clamped - 1) as f32) as usize;
             let local_right =
                 r0.right_x.ceil().clamp(0.0, (n_clamped - 1) as f32) as usize;
 
             let global_left = allow_lo + local_left;
-            let global_right = allow_hi.min(allow_lo + local_right).min(n_frames - 1);
+            let global_right = allow_hi
+                .min(allow_lo + local_right)
+                .min(n_frames - 1);
 
-            let lo_fid = rt_ctx.frame_ids_sorted[global_left];
-            let hi_fid = rt_ctx.frame_ids_sorted[global_right];
+            let lo_fid = local_ctx.frame_ids_sorted[local_left];
+            let hi_fid = local_ctx.frame_ids_sorted[local_right];
 
             let mut r = RtPeak1D {
                 parent_im_id: Some(im_peak.id),
-                mz_row: im_peak.mz_row,
-                mz_center: im_peak.mz_center,
-                mz_bounds: im_peak.mz_bounds,
+                tof_row: im_peak.tof_row,
+                tof_center: im_peak.tof_center,
+                tof_bounds: im_peak.tof_bounds,
                 window_group: im_peak.window_group,
 
                 rt_idx: allow_lo + r0.rt_idx,
@@ -724,12 +756,12 @@ pub fn expand_im_peak_along_rt(
         .collect()
 }
 
-// add param
+// Vector-of-vectors variant
 pub fn expand_many_im_peaks_along_rt(
     im_peaks: &[ImPeak1D],
     frames_sorted: &[FrameBinView],
     ctx: RtTraceCtx<'_>,
-    rt_scale: &MzScale,              // <-- NEW
+    rt_scale: &TofScale,
     p: RtExpandParams,
 ) -> Vec<Vec<RtPeak1D>> {
     if im_peaks.is_empty() { return Vec::new(); }
@@ -741,22 +773,31 @@ pub fn expand_many_im_peaks_along_rt(
         debug_assert!(same, "expand_many_im_peaks_along_rt: mixed window_group in batch");
     }
 
-    im_peaks.par_iter()
+    im_peaks
+        .par_iter()
         .map(|im| expand_im_peak_along_rt(im, frames_sorted, ctx, rt_scale, p))
         .collect()
 }
 
-// flat variant
+// Flat variant with parent indices
+#[derive(Clone, Debug)]
+pub struct RtPeaksForIm {
+    pub im_index: usize,   // index into the input im_peaks slice
+    pub im_id: PeakId,     // parent id for convenience
+    pub peaks: Vec<RtPeak1D>,
+}
+
 pub fn expand_many_im_peaks_along_rt_flat(
     im_peaks: &[ImPeak1D],
     frames_sorted: &[FrameBinView],
     ctx: RtTraceCtx<'_>,
-    rt_scale: &MzScale,              // <-- NEW
+    rt_scale: &TofScale,
     p: RtExpandParams,
 ) -> Vec<RtPeaksForIm> {
     if im_peaks.is_empty() { return Vec::new(); }
 
-    (0..im_peaks.len()).into_par_iter()
+    (0..im_peaks.len())
+        .into_par_iter()
         .map(|i| {
             let im = &im_peaks[i];
             let peaks = expand_im_peak_along_rt(im, frames_sorted, ctx, rt_scale, p);
@@ -764,23 +805,15 @@ pub fn expand_many_im_peaks_along_rt_flat(
         })
         .collect()
 }
-// 3) Variant that returns a flat stream with the input index for downstream use
-#[derive(Clone, Debug)]
-pub struct RtPeaksForIm {
-    pub im_index: usize,       // index into the input im_peaks slice
-    pub im_id: PeakId,         // parent id for convenience
-    pub peaks: Vec<RtPeak1D>,
-}
-
 
 #[inline]
 fn t_at_index_frac(t: &[f32], x: f32) -> f32 {
     if t.is_empty() { return 0.0; }
     if x <= 0.0 { return t[0]; }
     let n1 = (t.len() - 1) as f32;
-    if x >= n1 { return t[t.len()-1]; }
+    if x >= n1 { return t[t.len() - 1]; }
     let j0 = x.floor() as usize;
-    let j1 = (j0 + 1).min(t.len()-1);
+    let j1 = (j0 + 1).min(t.len() - 1);
     let frac = x - j0 as f32;
     (1.0 - frac) * t[j0] + frac * t[j1]
 }
@@ -790,6 +823,6 @@ fn t_at_index_frac(t: &[f32], x: f32) -> f32 {
 fn effective_dt(rt_times: &[f32]) -> f32 {
     if rt_times.len() < 2 { return 1.0; }
     let mut d: Vec<f32> = rt_times.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
-    d.sort_by(|a,b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    d[d.len()/2].max(1e-3) // median, clamp
+    d.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    d[d.len() / 2].max(1e-3) // median, clamp
 }

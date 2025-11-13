@@ -2,149 +2,126 @@ use mscore::timstof::frame::TimsFrame;
 use crate::cluster::peak::{FrameBinView, ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
-use crate::cluster::cluster::{Fit1D};
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
 
 #[derive(Clone, Debug)]
-pub struct MzScale {
-    pub mz_min: f32,
-    pub mz_max: f32,
-    pub ppm_per_bin: f32,   // e.g., 5.0 => each bin is ~5 ppm wide
-    pub ratio: f32,         // 1.0 + ppm_per_bin*1e-6
-    pub inv_ln_ratio: f32,  // 1.0 / ln(ratio) for O(1) indexing
-    pub edges: Vec<f32>,    // monotonically increasing, len = num_bins + 1
-    pub centers: Vec<f32>,  // geometric mean of edges[i..i+1], len = num_bins
+pub struct TofScale {
+    /// Smallest TOF index we include in the grid (inclusive).
+    pub tof_min: i32,
+    /// Largest TOF index we include in the grid (inclusive).
+    pub tof_max: i32,
+    /// Step between bins in TOF units (usually 1, 2, 4, …).
+    pub tof_step: i32,
+    /// Bin edges and centers in TOF space.
+    pub edges: Vec<f32>,    // len = num_bins + 1
+    pub centers: Vec<f32>,  // len = num_bins
 }
 
-impl MzScale {
-    pub fn build(mz_min: f32, mz_max: f32, ppm_per_bin: f32) -> Self {
+impl TofScale {
+    /// Build a TOF grid from a set of frames.
+    ///
+    /// - `tof_step = 1` => 1 bin per raw TOF index (max resolution).
+    /// - Larger steps downsample TOF to reduce rows.
+    pub fn build_from_tof(frames: &[TimsFrame], tof_step: i32) -> Option<Self> {
+        assert!(tof_step > 0);
 
-        let est_bins = ((mz_max / mz_min).ln() / (1.0 + ppm_per_bin * 1e-6).ln()).ceil() as usize;
-        let max_bins = 1_000_000; // tune
-        assert!(est_bins <= max_bins, "ppm_per_bin too fine for mz range ({} bins)", est_bins);
+        let mut tof_min = i32::MAX;
+        let mut tof_max = i32::MIN;
 
-        assert!(mz_min > 0.0 && mz_max > mz_min && ppm_per_bin > 0.0);
-        let ratio = 1.0 + ppm_per_bin * 1e-6;
-        let inv_ln_ratio = 1.0 / ratio.ln();
-
-        // Generate edges multiplicatively: e[k+1] = e[k] * ratio
-        let mut edges = Vec::new();
-        let mut x = mz_min;
-        edges.push(x);
-        while x < mz_max {
-            x *= ratio;
-            edges.push(x);
-            // Guard against numerical stickiness
-            if edges.len() > 10_000_000 { break; }
-        }
-        // Ensure last edge ≥ mz_max
-        if *edges.last().unwrap() < mz_max {
-            edges.push(mz_max);
+        for fr in frames {
+            // ADAPT THIS if your TimsFrame layout is different:
+            // e.g. you might have `fr.ims_frame.tof: Vec<i32>` or similar.
+            let tofs: &[i32] = &fr.tof;
+            for &t in tofs {
+                if t < tof_min { tof_min = t; }
+                if t > tof_max { tof_max = t; }
+            }
         }
 
-        let mut centers = Vec::with_capacity(edges.len().saturating_sub(1));
-        for w in edges.windows(2) {
-            let c = (w[0] * w[1]).sqrt(); // geometric center
-            centers.push(c);
-        }
-        MzScale { mz_min, mz_max, ppm_per_bin, ratio, inv_ln_ratio, edges, centers }
-    }
-
-    pub fn from_centers(centers: &[f32]) -> Self {
-        assert!(centers.len() >= 2, "need at least 2 centers");
-        for w in centers.windows(2) { assert!(w[1] > w[0]); }
-        // Estimate ratio as geometric mean of consecutive ratios
-        let mut acc = 0.0f64; let mut n = 0usize;
-        for w in centers.windows(2) {
-            acc += (w[1] as f64 / w[0] as f64).ln();
-            n += 1;
-        }
-        let ln_r = acc / (n as f64);
-        let ratio = (ln_r as f32).exp();
-        // Sanity: consecutive ratios within ~0.1% (tune as you like)
-        let tol = 1e-3;
-        for w in centers.windows(2) {
-            let r = w[1] / w[0];
-            debug_assert!(((r / ratio) - 1.0).abs() < tol, "centers not constant-ppm spaced");
+        if tof_min >= tof_max {
+            return None;
         }
 
-        let inv_ln_ratio = 1.0 / ratio.ln();
-        let sqrt_r = ratio.sqrt();
-        let mut edges = Vec::with_capacity(centers.len() + 1);
-        edges.push(centers[0] / sqrt_r);
-        for &c in centers { edges.push(c * sqrt_r); }
-        let mz_min = edges[0];
-        let mz_max = *edges.last().unwrap();
-        let ppm_per_bin = (ratio - 1.0) * 1e6;
+        // Snap min/max to step
+        let tof_min_aligned = tof_min - (tof_min % tof_step);
+        let tof_max_aligned = tof_max - (tof_max % tof_step);
 
-        Self { mz_min, mz_max, ppm_per_bin, ratio, inv_ln_ratio, centers: centers.to_vec(), edges }
+        let num_bins = ((tof_max_aligned - tof_min_aligned) / tof_step + 1) as usize;
+        let mut edges = Vec::with_capacity(num_bins + 1);
+        let mut centers = Vec::with_capacity(num_bins);
+
+        for i in 0..=num_bins {
+            let tof_edge = tof_min_aligned + (i as i32) * tof_step;
+            edges.push(tof_edge as f32);
+        }
+        for i in 0..num_bins {
+            let a = edges[i];
+            let b = edges[i + 1];
+            centers.push(0.5 * (a + b)); // arithmetic center in TOF space
+        }
+
+        Some(Self {
+            tof_min: tof_min_aligned,
+            tof_max: tof_max_aligned,
+            tof_step,
+            edges,
+            centers,
+        })
     }
 
     #[inline(always)]
     pub fn num_bins(&self) -> usize { self.centers.len() }
 
-    /// O(1) map: m/z -> bin index (usize). Returns None if outside [mz_min, mz_max].
+    /// Map TOF → bin index (usize). Returns None if outside range.
     #[inline(always)]
-    pub fn index_of(&self, mz: f32) -> Option<usize> {
-        if !(mz.is_finite()) || mz < self.mz_min || mz > self.mz_max { return None; }
-        let i = ((mz / self.mz_min).ln() * self.inv_ln_ratio).floor() as isize;
-        if i < 0 { return Some(0) }
-        let i = i as usize;
-        if i >= self.num_bins() { Some(self.num_bins() - 1) } else { Some(i) }
-    }
-
-    /// Return a bin‐index range that covers [mz_lo, mz_hi] (inclusive, clamped).
-    #[inline(always)]
-    pub fn index_range_for_mz_window(&self, a: f32, b: f32) -> (usize, usize) {
-        let (mz_lo, mz_hi) = if a <= b { (a, b) } else { (b, a) };
-        if mz_hi <= self.mz_min { return (0, 0); }
-        if mz_lo >= self.mz_max { return (self.num_bins()-1, self.num_bins()-1); }
-        let lo = self.index_of(mz_lo.max(self.mz_min)).unwrap_or(0);
-        let hi = self.index_of(mz_hi.min(self.mz_max)).unwrap_or(self.num_bins()-1);
-        (lo.min(hi), hi.max(lo))
-    }
-
-    #[inline(always)]
-    pub fn center(&self, idx: usize) -> f32 { self.centers[idx] }
-
-    /// Continuous bin center for a fractional index mu.
-    /// mu = 0.0 corresponds to the first bin; 0.5 is halfway to the next one, etc.
-    #[inline]
-    pub fn center_at(&self, mu: f32) -> f32 {
-        if !mu.is_finite() {
-            return self.mz_min;
+    pub fn index_of_tof(&self, tof: i32) -> Option<usize> {
+        if tof < self.tof_min || tof > self.tof_max {
+            return None;
         }
-        // edges[k] ~ mz_min * ratio^k
-        // centers[k] ~ mz_min * ratio^(k + 0.5)
-        self.mz_min * self.ratio.powf(mu + 0.5)
-    }
-
-    /// Continuous bin bounds for a fractional index mu (no extra pad).
-    /// This mirrors how edges/centers are generated in build().
-    #[inline]
-    pub fn bounds_at(&self, mu: f32) -> (f32, f32) {
-        let c = self.center_at(mu);
-        let half = self.ratio.sqrt();
-        (c / half, c * half)
-    }
-}
-
-pub fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
-    let mut minv = f32::INFINITY;
-    let mut maxv = f32::NEG_INFINITY;
-    for fr in frames {
-        for &mz in &fr.ims_frame.mz {
-            let mz = mz as f32;
-            if mz.is_finite() {
-                if mz < minv { minv = mz; }
-                if mz > maxv { maxv = mz; }
-            }
+        let delta = tof - self.tof_min;
+        let idx = (delta / self.tof_step) as isize;
+        if idx < 0 {
+            None
+        } else {
+            let u = idx as usize;
+            if u >= self.num_bins() { None } else { Some(u) }
         }
     }
-    if minv.is_finite() && maxv.is_finite() && maxv > minv { Some((minv, maxv)) } else { None }
+
+    /// Return a bin-index range for a TOF window [a, b] (inclusive, clamped).
+    #[inline(always)]
+    pub fn index_range_for_tof_window(&self, a: i32, b: i32) -> (usize, usize) {
+        let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+        if hi <= self.tof_min {
+            return (0, 0);
+        }
+        if lo >= self.tof_max {
+            let last = self.num_bins().saturating_sub(1);
+            return (last, last);
+        }
+        let lo_idx = self
+            .index_of_tof(lo.max(self.tof_min))
+            .unwrap_or(0);
+        let hi_idx = self
+            .index_of_tof(hi.min(self.tof_max))
+            .unwrap_or(self.num_bins().saturating_sub(1));
+        (lo_idx.min(hi_idx), hi_idx.max(lo_idx))
+    }
+
+    #[inline(always)]
+    pub fn center(&self, idx: usize) -> f32 {
+        self.centers[idx]
+    }
+
+    /// Optional helper: get TOF edges (for debug / plotting).
+    #[inline(always)]
+    pub fn tof_bounds_for_row(&self, r: usize) -> (f32, f32) {
+        (self.edges[r], self.edges[r + 1])
+    }
 }
 
 /// light 1D Gaussian smoothing on a vector (along scans)
@@ -214,7 +191,7 @@ pub fn build_im_marginal(
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Key { bin: usize, scan: u32 }
 
-pub fn gaussian_blur_mz_sparse(
+pub fn gaussian_blur_tof_sparse(
     fbv: &FrameBinView,
     sigma_bins: f32,
     truncate_k: f32,
@@ -223,7 +200,7 @@ pub fn gaussian_blur_mz_sparse(
 
     let (deltas, weights) = gaussian_kernel_bins(sigma_bins, truncate_k);
     let nnz = fbv.intensity.len();
-    let k = deltas.len() as usize;
+    let k = deltas.len();
 
     // Reserve: heuristic ~ nnz * effective support (not all deltas hit valid bins)
     let mut acc: FxHashMap<Key, f32> = FxHashMap::with_capacity_and_hasher(nnz.saturating_mul(k/2), Default::default());
@@ -301,14 +278,14 @@ pub fn gaussian_blur_mz_sparse(
     }
 }
 
-pub fn blur_mz_all_frames(
+pub fn blur_tof_all_frames(
     frames: &[FrameBinView],
     sigma_bins: f32,
     truncate_k: f32,
 ) -> Vec<FrameBinView> {
     use rayon::prelude::*;
     frames.par_iter()
-        .map(|f| gaussian_blur_mz_sparse(f, sigma_bins, truncate_k))
+        .map(|f| gaussian_blur_tof_sparse(f, sigma_bins, truncate_k))
         .collect()
 }
 
@@ -329,9 +306,9 @@ pub fn build_rt_marginal(
 pub fn find_im_peaks_row(
     y_smoothed: &[f32],
     y_raw: &[f32],
-    mz_row: usize,
-    mz_center: f32,
-    mz_bounds: (f32, f32),
+    tof_row: usize,
+    tof_center: i32,
+    tof_bounds: (i32, i32),
     rt_bounds: (usize, usize),
     frame_id_bounds: (u32, u32),
     window_group: Option<u32>,
@@ -419,9 +396,9 @@ pub fn find_im_peaks_row(
         let right_abs = scan_axis[right_idx.min(scan_axis.len()-1)];
 
         let mut peak = ImPeak1D {
-            mz_row,
-            mz_center,
-            mz_bounds,
+            tof_row,
+            tof_center,
+            tof_bounds,
             rt_bounds,
             frame_id_bounds,
             window_group,
@@ -530,7 +507,7 @@ pub fn im_peak_id(p: &ImPeak1D) -> PeakId {
     // Deterministic over the identity-defining fields
     let mut h = FxHasher::default();
     p.window_group.hash(&mut h);
-    p.mz_row.hash(&mut h);
+    p.tof_row.hash(&mut h);
     p.scan.hash(&mut h);
     p.left.hash(&mut h);
     p.right.hash(&mut h);
@@ -545,7 +522,7 @@ pub fn im_peak_id(p: &ImPeak1D) -> PeakId {
 pub fn rt_peak_id(r: &RtPeak1D) -> PeakId {
     let mut h = FxHasher::default();
     r.parent_im_id.hash(&mut h);
-    r.mz_row.hash(&mut h);
+    r.tof_row.hash(&mut h);
     r.rt_idx.hash(&mut h);
     r.frame_id_bounds.hash(&mut h);
     r.window_group.hash(&mut h);
@@ -607,8 +584,8 @@ pub fn fallback_rt_peak_from_trace(
     let prom = (y_max - base).max(0.0);
 
     // integer bounds & frame ids
-    let l_i = left_x.floor().clamp(0.0, (n.saturating_sub(1)) as f32) as usize;
-    let r_i = right_x.ceil().clamp(0.0, (n.saturating_sub(1)) as f32) as usize;
+    let l_i = left_x.floor().clamp(0.0, n.saturating_sub(1) as f32) as usize;
+    let r_i = right_x.ceil().clamp(0.0, n.saturating_sub(1) as f32) as usize;
     let rt_bounds_frames = (l_i.min(r_i), r_i.max(l_i));
 
     let frame_id_bounds = if ctx.frame_ids_sorted.is_empty() {
@@ -641,23 +618,15 @@ pub fn fallback_rt_peak_from_trace(
         frame_id_bounds,
         window_group: im_peak.window_group,
 
-        mz_row: im_peak.mz_row,
-        mz_center: im_peak.mz_center,
-        mz_bounds: im_peak.mz_bounds,
+        tof_row: im_peak.tof_row,
+        tof_center: im_peak.tof_center,
+        tof_bounds: im_peak.tof_bounds,
 
         parent_im_id: Some(im_peak.id),
         id: 0,
     };
     rp.id = rt_peak_id(&rp);
     Some(rp)
-}
-
-#[inline]
-pub fn bin_range_for_win(scale: &MzScale, mz_win:(f32,f32)) -> (usize, usize) {
-    let (a,b) = mz_win;
-    let (mut lo, mut hi) = scale.index_range_for_mz_window(a,b);
-    if lo > hi { std::mem::swap(&mut lo, &mut hi); }
-    (lo, hi)
 }
 
 /// Sum across a single frame in bin [bin_lo..bin_hi], scan [im_lo..im_hi]
@@ -685,13 +654,17 @@ fn sum_frame_block(fbv:&FrameBinView, bin_lo:usize, bin_hi:usize, im_lo:usize, i
     acc
 }
 
-/// Build m/z histogram (one bin per CSR bin in [bin_lo..bin_hi])
-pub fn build_mz_hist(
+/// Build a histogram over CSR bins (one value per bin in [bin_lo..bin_hi]).
+///
+/// Returns (hist, centers) where:
+///   - `hist[k]` = summed intensity for bin (bin_lo + k)
+///   - `centers[k]` = TOF center of that bin (scale.center)
+pub fn build_tof_hist(
     frames: &[FrameBinView],
     rt_lo: usize, rt_hi: usize,
     bin_lo: usize, bin_hi: usize,
     im_lo: usize, im_hi: usize,
-    scale: &MzScale,
+    scale: &TofScale,
 ) -> (Vec<f32>, Vec<f32>) {
     let r = bin_hi + 1 - bin_lo;
     let mut hist = vec![0.0f32; r];
@@ -746,6 +719,17 @@ pub fn quantile_mut(v: &mut [f32], q: f32) -> f32 {
     *nth
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Fit1D {
+    pub mu: f32,
+    pub sigma: f32,
+    pub height: f32,
+    pub baseline: f32,
+    pub area: f32,
+    pub r2: f32,
+    pub n: usize,
+}
+
 pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
     let n = y.len();
     if n == 0 { return Fit1D::default(); }
@@ -763,7 +747,7 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
             (if lo.is_finite(){lo}else{0.0}, if hi.is_finite(){hi}else{0.0})
         } else { (0.0, 0.0) }
     } else {
-        if n > 0 { (0.0, (n.saturating_sub(1)) as f32) } else { (0.0, 0.0) }
+        if n > 0 { (0.0, n.saturating_sub(1) as f32) } else { (0.0, 0.0) }
     };
 
     let mu_fallback: f32 = 0.5 * (x_lo + x_hi);
@@ -853,7 +837,7 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
             if !b.is_finite() || b < 0.0 { b = 0.0; }
             if !h.is_finite() || h < 0.0 { h = 0.0; }
 
-            let mut area = (h as f32)*sigma*(std::f32::consts::TAU).sqrt();
+            let mut area = (h as f32)*sigma*std::f32::consts::TAU.sqrt();
             if !area.is_finite() || area < 0.0 { area = 0.0; }
 
             // --- Baseline-aware, clamped R^2 ---
@@ -884,7 +868,7 @@ pub fn fit1d_moment(y:&[f32], x: Option<&[f32]>) -> Fit1D {
     if !height.is_finite() || height < 0.0 { height = 0.0; }
 
     let mut area = if sigma > 0.0 {
-        height * sigma * (std::f32::consts::TAU).sqrt()
+        height * sigma * std::f32::consts::TAU.sqrt()
     } else { trap as f32 };
     if !area.is_finite() || area < 0.0 { area = 0.0; }
 
