@@ -34,7 +34,7 @@ def _apply_scale_tensor(X: torch.Tensor, scale: str):
 
 
 # ---------------------------
-# Batched refiners
+# Batched refiners (unchanged semantics)
 # ---------------------------
 
 def _batched_refine_adam(
@@ -48,9 +48,9 @@ def _batched_refine_adam(
     loss: str = "huber",
     mask_k: float = 2.5,
     refine_scan: bool = True,
-    refine_mz: bool = False,
+    refine_tof: bool = False,
     refine_sigma_scan: bool = True,
-    refine_sigma_mz: bool = False,
+    refine_sigma_tof: bool = False,
 ):
     if patches.numel() == 0:
         z = patches.new_zeros((0,))
@@ -65,11 +65,11 @@ def _batched_refine_adam(
 
     with torch.enable_grad():
         mu_i = mu_i0.detach().to(dev).clone(); mu_i.requires_grad_(refine_scan)
-        mu_j = mu_j0.detach().to(dev).clone(); mu_j.requires_grad_(refine_mz)
+        mu_j = mu_j0.detach().to(dev).clone(); mu_j.requires_grad_(refine_tof)
         lsi  = sigma_i0.clamp_min(1e-3).log().detach().to(dev).clone()
         lsj  = sigma_j0.clamp_min(1e-3).log().detach().to(dev).clone()
         lsi.requires_grad_(refine_scan and refine_sigma_scan)
-        lsj.requires_grad_(refine_mz   and refine_sigma_mz)
+        lsj.requires_grad_(refine_tof   and refine_sigma_tof)
         la   = amp0.clamp_min(1e-6).log().detach().to(dev).clone(); la.requires_grad_(True)
         b    = base0.detach().to(dev).clone(); b.requires_grad_(True)
 
@@ -93,6 +93,8 @@ def _batched_refine_adam(
             else:
                 return (r * r).mean()
 
+        import numpy as _np
+
         for _ in range(iters):
             opt.zero_grad(set_to_none=True)
             si = lsi.exp(); sj = lsj.exp()
@@ -111,7 +113,6 @@ def _batched_refine_adam(
             opt.step()
 
             # guards on logs
-            import numpy as _np
             lsi.data.clamp_(min=_np.log(1e-3))
             lsj.data.clamp_(min=_np.log(1e-3))
             la.data.clamp_(min=_np.log(1e-6))
@@ -132,9 +133,9 @@ def _batched_refine_gauss_newton(
     iters: int = 5,
     damping: float = 1e-2,          # slightly stronger default
     refine_scan: bool = True,
-    refine_mz: bool = False,
+    refine_tof: bool = False,
     refine_sigma_scan: bool = True,
-    refine_sigma_mz: bool = False,
+    refine_sigma_tof: bool = False,
     mask_k: float = 2.5,            # NEW: match ADAM’s mask behavior
     force_dtype: torch.dtype | None = None,
 ):
@@ -167,11 +168,11 @@ def _batched_refine_gauss_newton(
     cols = []
     if refine_scan:
         cols.append("mu_i")
-    if refine_mz:
+    if refine_tof:
         cols.append("mu_j")
     if refine_scan and refine_sigma_scan:
         cols.append("lsi")
-    if refine_mz and refine_sigma_mz:
+    if refine_tof and refine_sigma_tof:
         cols.append("lsj")
     cols += ["la", "b"]
 
@@ -208,7 +209,7 @@ def _batched_refine_gauss_newton(
     import numpy as _np
 
     for _ in range(iters):
-        # Partials for enabled params (Jacobian of residuals: J = dR/dθ = -dyhat/dθ) with mask M applied
+        # Partials for enabled params with mask M applied
         Jcols = []
         if "mu_i" in cols:
             J_mu_i = -(A * G * (di / (si.view(-1, 1, 1) ** 2))) * M
@@ -300,7 +301,7 @@ def iter_detect_peaks_from_blurred(
     *,
     device: str = "cuda",
     pool_scan: int = 15,
-    pool_mz: int = 3,
+    pool_tof: int = 3,
     min_intensity: float = 75.0,            # interpreted in the SCALED domain
     tile_rows: int = 80_000,
     tile_overlap: int = 512,
@@ -308,33 +309,44 @@ def iter_detect_peaks_from_blurred(
     fit_w: int = 7,
     topk_per_tile: int | None = None,
     patch_batch_target_mb: int = 128,
-    rows_are_mz: bool = True,
     # refinement knobs
     refine: str = "none",               # "none" | "adam" | "gauss_newton" | "gn"
     refine_iters: int = 8,
     refine_lr: float = 0.2,
     refine_mask_k: float = 2.5,
     refine_scan: bool = True,
-    refine_mz: bool = False,
+    refine_tof: bool = False,
     refine_sigma_scan: bool = True,
-    refine_sigma_mz: bool = False,
-    # --- NEW ---
+    refine_sigma_tof: bool = False,
+    # scaling + numeric stability
     scale: str = "none",                # "none" | "sqrt" | "log1p"
     output_units: str = "scaled",       # "scaled" | "original"
     gn_float64: bool = False,           # leave False; sqrt scaling keeps fp32 stable
 ):
     """
-    Stream peak stats. If rows_are_mz=True, input is (mz, scan) and will be
-    transposed internally so the algorithm always works on (scan, mz).
-    Returned fields (mu_scan, mu_mz, i, j) are in the ORIGINAL orientation.
-    Amplitude/baseline/area are in `output_units` (scaled or original).
+    Stream peak stats on a 2D image derived from TOF×scan.
+
+    Expected orientation of B_blurred (from TofScanWindowGrid.data):
+      - rows: TOF bins (tof_row)
+      - cols: global scans (scan_idx)
+
+    Internally we transpose to (scan, tof) so that `mu_scan` is always along the
+    0th axis and `mu_tof` along the 1st axis.
+
+    Returned fields:
+      - mu_scan,  mu_tof        (float, in ORIGINAL orientation)
+      - sigma_scan, sigma_tof   (float, patch moments)
+      - amplitude, baseline, area
+      - tof_row, scan_idx       (integer-ish indices in ORIGINAL orientation)
     """
     assert B_blurred.ndim == 2
-    B_np_int = B_blurred.T if rows_are_mz else B_blurred  # internal: (scan, mz)
 
-    H, W = B_np_int.shape
+    # Original orientation: (tof_row, scan_idx) -> internal: (scan, tof_row)
+    B_np_int = B_blurred.T
+
+    H, W = B_np_int.shape   # H: scan, W: tof_row
     fit_h = _ensure_odd(max(fit_h, 2 * pool_scan + 5))
-    fit_w = _ensure_odd(max(fit_w, 2 * pool_mz   + 5))
+    fit_w = _ensure_odd(max(fit_w, 2 * pool_tof   + 5))
     hr, wr = fit_h // 2, fit_w // 2
 
     # Torch tensors
@@ -347,8 +359,8 @@ def iter_detect_peaks_from_blurred(
     # Apply scaling for detection
     B_int, inv_scale = _apply_scale_tensor(B_int, scale)
 
-    # pooling across scan (rows) x m/z (cols) on the **scaled** image
-    kH, kW = pool_scan, pool_mz
+    # pooling across scan (rows) x TOF (cols) on the **scaled** image
+    kH, kW = pool_scan, pool_tof
     padH, padW = kH // 2, kW // 2
 
     def _extract_patches_pad(tile: torch.Tensor, peaks_ij: torch.Tensor) -> torch.Tensor:
@@ -407,7 +419,7 @@ def iter_detect_peaks_from_blurred(
     while i < H:
         lo = max(0, i - tile_overlap)
         hi = min(H, i + tile_rows + tile_overlap)
-        tile_scaled = B_int[lo:hi]  # scaled internal (scan,mz)
+        tile_scaled = B_int[lo:hi]  # scaled internal (scan, tof)
 
         thr = torch.tensor(float(min_intensity), dtype=tile_scaled.dtype, device=tile_scaled.device)
         pooled = F.max_pool2d(
@@ -417,7 +429,7 @@ def iter_detect_peaks_from_blurred(
             padding=(padH, padW),
         )[0, 0]
         mask = (tile_scaled >= thr) & (tile_scaled == pooled)
-        idxs = mask.nonzero(as_tuple=False)  # [N, 2] in (scan_row, mz_col)
+        idxs = mask.nonzero(as_tuple=False)  # [N, 2] in (scan_row, tof_col) INTERNAL
 
         # optional access to original (unscaled) tile
         tile_orig = B_int_unscaled[lo:hi] if need_orig else None
@@ -442,16 +454,16 @@ def iter_detect_peaks_from_blurred(
                     mu_i, mu_j, s_i, s_j, amp, base = _batched_refine_adam(
                         patches, mu_i, mu_j, s_i, s_j, amp, base,
                         iters=refine_iters, lr=refine_lr, mask_k=refine_mask_k,
-                        refine_scan=refine_scan, refine_mz=refine_mz,
-                        refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+                        refine_scan=refine_scan, refine_tof=refine_tof,
+                        refine_sigma_scan=refine_sigma_scan, refine_sigma_tof=refine_sigma_tof,
                     )
                 elif refine in ("gauss_newton", "gn"):
                     mu_i, mu_j, s_i, s_j, amp, base = _batched_refine_gauss_newton(
                         patches, mu_i, mu_j, s_i, s_j, amp, base,
                         iters=max(1, refine_iters),
                         damping=1e-2,
-                        refine_scan=refine_scan, refine_mz=refine_mz,
-                        refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+                        refine_scan=refine_scan, refine_tof=refine_tof,
+                        refine_sigma_scan=refine_sigma_scan, refine_sigma_tof=refine_sigma_tof,
                         mask_k=refine_mask_k,
                         force_dtype=(torch.float64 if gn_float64 else None),
                     )
@@ -471,41 +483,35 @@ def iter_detect_peaks_from_blurred(
                         area_o.to(area.dtype),
                     )
 
-                # INTERNAL absolute coords (scan,mz)
+                # INTERNAL absolute coords (scan,tof)
                 abs_ij = idxb.clone()
                 abs_ij[:, 0] += lo
 
                 # convert patch-local μ to global INTERNAL coords
                 mu_scan_int = abs_ij[:, 0].to(patches.dtype) + (mu_i - hr)
-                mu_mz_int   = abs_ij[:, 1].to(patches.dtype) + (mu_j - wr)
+                mu_tof_int  = abs_ij[:, 1].to(patches.dtype) + (mu_j - wr)
 
-                # Map back to ORIGINAL orientation
-                if rows_are_mz:
-                    mu_scan = mu_scan_int
-                    mu_mz   = mu_mz_int
-                    i_idx   = abs_ij[:, 1].to(patches.dtype)  # integer mz row (orig)
-                    j_idx   = abs_ij[:, 0].to(patches.dtype)  # integer scan col (orig)
-                else:
-                    mu_scan = mu_scan_int
-                    mu_mz   = mu_mz_int
-                    i_idx   = abs_ij[:, 0].to(patches.dtype)
-                    j_idx   = abs_ij[:, 1].to(patches.dtype)
+                # Map back to ORIGINAL orientation (tof_row, scan_idx)
+                mu_scan = mu_scan_int
+                mu_tof  = mu_tof_int
+                tof_row_idx = abs_ij[:, 1].to(patches.dtype)   # original row index
+                scan_idx    = abs_ij[:, 0].to(patches.dtype)   # original column index
 
                 out = torch.stack(
-                    [mu_scan, mu_mz, s_i, s_j, amp, base, area, i_idx, j_idx],
+                    [mu_scan, mu_tof, s_i, s_j, amp, base, area, tof_row_idx, scan_idx],
                     dim=1,
                 ).detach().cpu().numpy()
 
                 yield {
-                    "mu_scan":   out[:, 0].astype(np.float32),
-                    "mu_mz":     out[:, 1].astype(np.float32),
-                    "sigma_scan":out[:, 2].astype(np.float32),
-                    "sigma_mz":  out[:, 3].astype(np.float32),
-                    "amplitude": out[:, 4].astype(np.float32),  # scaled or original per output_units
-                    "baseline":  out[:, 5].astype(np.float32),
-                    "area":      out[:, 6].astype(np.float32),
-                    "i":         out[:, 7].astype(np.float32),
-                    "j":         out[:, 8].astype(np.float32),
+                    "mu_scan":     out[:, 0].astype(np.float32),
+                    "mu_tof":      out[:, 1].astype(np.float32),
+                    "sigma_scan":  out[:, 2].astype(np.float32),
+                    "sigma_tof":   out[:, 3].astype(np.float32),
+                    "amplitude":   out[:, 4].astype(np.float32),  # scaled or original per output_units
+                    "baseline":    out[:, 5].astype(np.float32),
+                    "area":        out[:, 6].astype(np.float32),
+                    "tof_row":     out[:, 7].astype(np.float32),
+                    "scan_idx":    out[:, 8].astype(np.float32),
                 }
 
                 # free transients early
@@ -534,7 +540,6 @@ def iter_plan_batches(plan, batch_size: int):
     for start in range(0, total, batch_size):
         count = min(batch_size, total - start)
         if hasattr(plan, "get_batch_par"):
-            # NEW: wrapper API (no worker arg)
             wgs = plan.get_batch_par(start, count)
         elif hasattr(plan, "get_batch"):
             wgs = plan.get_batch(start, count)
@@ -548,12 +553,13 @@ def iter_plan_batches(plan, batch_size: int):
 
 def _collect_stream(peaks_iter):
     acc = {k: [] for k in [
-        "mu_scan","mu_mz","sigma_scan","sigma_mz",
-        "amplitude","baseline","area","i","j"
+        "mu_scan", "mu_tof", "sigma_scan", "sigma_tof",
+        "amplitude", "baseline", "area", "tof_row", "scan_idx",
     ]}
     for chunk in peaks_iter:
         for k, v in chunk.items():
-            acc[k].append(v)
+            if k in acc:
+                acc[k].append(v)
     return {
         k: (np.concatenate(vs, axis=0) if vs else np.empty((0,), np.float32))
         for k, vs in acc.items()
@@ -562,13 +568,13 @@ def _collect_stream(peaks_iter):
 
 # --- light dedup across tiles (keep max amplitude per coarse cell) ------------
 
-def _dedup_peaks(peaks, tol_scan=0.75, tol_mz=0.25):
+def _dedup_peaks(peaks, tol_scan=0.75, tol_tof=0.25):
     if peaks["mu_scan"].size == 0:
         return peaks
-    s = peaks["mu_scan"]; m = peaks["mu_mz"]; amp = peaks["amplitude"]
+    s = peaks["mu_scan"]; t = peaks["mu_tof"]; amp = peaks["amplitude"]
     g_s = np.floor(s / tol_scan).astype(np.int64)
-    g_m = np.floor(m / tol_mz).astype(np.int64)
-    key = (g_s << 32) ^ (g_m & 0xFFFFFFFF)
+    g_t = np.floor(t / tol_tof).astype(np.int64)
+    key = (g_s << 32) ^ (g_t & 0xFFFFFFFF)
     order = np.argsort(amp)
     seen = {}
     for idx in order:
@@ -582,14 +588,14 @@ def _dedup_peaks(peaks, tol_scan=0.75, tol_mz=0.25):
 def _detect_im_peaks_for_wgs(
     wgs, plan_group, *,
     device="cuda",
-    pool_scan=15, pool_mz=3,
+    pool_scan=15, pool_tof=3,
     min_intensity_scaled=1.0,
     tile_rows=433_873, tile_overlap=64,
     fit_h=35, fit_w=11,
     refine="adam", refine_iters=8, refine_lr=0.2, refine_mask_k=2.5,
-    refine_scan=True, refine_mz=True, refine_sigma_scan=True, refine_sigma_mz=True,
+    refine_scan=True, refine_tof=True, refine_sigma_scan=True, refine_sigma_tof=True,
     scale="sqrt", output_units="original", gn_float64=False,
-    do_dedup=True, tol_scan=0.75, tol_mz=0.25,
+    do_dedup=True, tol_scan=0.75, tol_tof=0.25,
     k_sigma=3.0, min_width=3,
     mz_bounds_pad_ppm=50.0, mz_bounds_pad_abs=0.05,
 ):
@@ -598,32 +604,30 @@ def _detect_im_peaks_for_wgs(
     batch_objs = []
 
     for wg in tqdm(wgs, desc="Detecting peaks (BATCH)", leave=False, ncols=80):
-        # NOTE: wg is a TofScanWindowGrid wrapper. .data returns a NumPy array and
-        # *moves* the underlying Rust buffer, so only call it once per WG.
+        # wg is a TofScanWindowGrid wrapper; .data moves the Rust buffer
         B = wg.data
         peaks_iter = iter_detect_peaks_from_blurred(
             B_blurred=B,
             device=device,
-            pool_scan=pool_scan, pool_mz=pool_mz,
+            pool_scan=pool_scan, pool_tof=pool_tof,
             min_intensity=min_intensity_scaled,
             tile_rows=tile_rows, tile_overlap=tile_overlap,
             fit_h=fit_h, fit_w=fit_w,
-            rows_are_mz=True,
             refine=refine, refine_iters=refine_iters, refine_lr=refine_lr,
             refine_mask_k=refine_mask_k,
-            refine_scan=refine_scan, refine_mz=refine_mz,
-            refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+            refine_scan=refine_scan, refine_tof=refine_tof,
+            refine_sigma_scan=refine_sigma_scan, refine_sigma_tof=refine_sigma_tof,
             scale=scale, output_units=output_units, gn_float64=gn_float64,
         )
 
         peaks = _collect_stream(peaks_iter)
         if do_dedup:
-            peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_mz=tol_mz)
+            peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
 
         objs = ImPeak1D.batch_from_detected(
             peaks,
-            window_grid=wg,           # wrapper TofScanWindowGrid
-            plan_group=plan_group,    # wrapper TofScanPlanGroup
+            window_grid=wg,           # TofScanWindowGrid wrapper
+            plan_group=plan_group,    # TofScanPlanGroup wrapper
             k_sigma=k_sigma,
             min_width=min_width,
             mz_bounds_pad_ppm=mz_bounds_pad_ppm,
@@ -631,8 +635,7 @@ def _detect_im_peaks_for_wgs(
         )
         batch_objs.extend(objs)
 
-        # free WG buffers – we already moved data once via wg.data, so there is
-        # nothing more to null manually on the wrapper.
+        # free WG buffers
         try:
             if hasattr(wg, "clear_cache") and callable(wg.clear_cache):
                 wg.clear_cache()
@@ -656,7 +659,7 @@ def iter_im_peaks_batches(
     device="cuda",
     # detector / refinement
     pool_scan=15,
-    pool_mz=3,
+    pool_tof=3,
     min_intensity_scaled=1.0,
     tile_rows=433_873,
     tile_overlap=64,
@@ -667,9 +670,9 @@ def iter_im_peaks_batches(
     refine_lr=0.2,
     refine_mask_k=2.5,
     refine_scan=True,
-    refine_mz=True,
+    refine_tof=True,
     refine_sigma_scan=True,
-    refine_sigma_mz=True,
+    refine_sigma_tof=True,
     # scaling + stability
     scale="sqrt",
     output_units="original",
@@ -677,7 +680,7 @@ def iter_im_peaks_batches(
     # dedup
     do_dedup=True,
     tol_scan=0.75,
-    tol_mz=0.25,
+    tol_tof=0.25,
     # conversion
     k_sigma=3.0,
     min_width=3,
@@ -699,16 +702,16 @@ def iter_im_peaks_batches(
     ):
         batch_objs = _detect_im_peaks_for_wgs(
             wgs, plan_group=plan, device=device,
-            pool_scan=pool_scan, pool_mz=pool_mz,
+            pool_scan=pool_scan, pool_tof=pool_tof,
             min_intensity_scaled=min_intensity_scaled,
             tile_rows=tile_rows, tile_overlap=tile_overlap,
             fit_h=fit_h, fit_w=fit_w,
             refine=refine, refine_iters=refine_iters, refine_lr=refine_lr,
             refine_mask_k=refine_mask_k,
-            refine_scan=refine_scan, refine_mz=refine_mz,
-            refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+            refine_scan=refine_scan, refine_tof=refine_tof,
+            refine_sigma_scan=refine_sigma_scan, refine_sigma_tof=refine_sigma_tof,
             scale=scale, output_units=output_units, gn_float64=gn_float64,
-            do_dedup=do_dedup, tol_scan=tol_scan, tol_mz=tol_mz,
+            do_dedup=do_dedup, tol_scan=tol_scan, tol_tof=tol_tof,
             k_sigma=k_sigma, min_width=min_width,
             mz_bounds_pad_ppm=mz_bounds_pad_ppm, mz_bounds_pad_abs=mz_bounds_pad_abs,
         )
