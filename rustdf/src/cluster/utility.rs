@@ -26,15 +26,14 @@ impl TofScale {
     ///
     /// - `tof_step = 1` => 1 bin per raw TOF index (max resolution).
     /// - Larger steps downsample TOF to reduce rows.
-    pub fn build_from_tof(frames: &[TimsFrame], tof_step: i32) -> Option<Self> {
+    pub fn build_from_frames(frames: &[TimsFrame], tof_step: i32) -> Option<Self> {
         assert!(tof_step > 0);
 
         let mut tof_min = i32::MAX;
         let mut tof_max = i32::MIN;
 
         for fr in frames {
-            // ADAPT THIS if your TimsFrame layout is different:
-            // e.g. you might have `fr.ims_frame.tof: Vec<i32>` or similar.
+            // ADAPT THIS if your TimsFrame layout is different
             let tofs: &[i32] = &fr.tof;
             for &t in tofs {
                 if t < tof_min { tof_min = t; }
@@ -51,6 +50,10 @@ impl TofScale {
         let tof_max_aligned = tof_max - (tof_max % tof_step);
 
         let num_bins = ((tof_max_aligned - tof_min_aligned) / tof_step + 1) as usize;
+        if num_bins == 0 {
+            return None;
+        }
+
         let mut edges = Vec::with_capacity(num_bins + 1);
         let mut centers = Vec::with_capacity(num_bins);
 
@@ -71,6 +74,12 @@ impl TofScale {
             edges,
             centers,
         })
+    }
+
+    /// Backwards-compatible alias if you already referenced `build_from_tof`.
+    #[inline]
+    pub fn build_from_tof(frames: &[TimsFrame], tof_step: i32) -> Option<Self> {
+        Self::build_from_frames(frames, tof_step)
     }
 
     #[inline(always)]
@@ -115,6 +124,27 @@ impl TofScale {
     #[inline(always)]
     pub fn center(&self, idx: usize) -> f32 {
         self.centers[idx]
+    }
+
+    /// Continuous center for a *fractional* TOF-bin index mu.
+    /// Used by `tof_center_at` on the Py side.
+    #[inline]
+    pub fn center_at(&self, mu: f32) -> f32 {
+        let n = self.num_bins();
+        if n == 0 {
+            return 0.0;
+        }
+        if mu <= 0.0 {
+            return self.centers[0];
+        }
+        let last = (n - 1) as f32;
+        if mu >= last {
+            return self.centers[n - 1];
+        }
+        let i0 = mu.floor() as usize;
+        let i1 = (i0 + 1).min(n - 1);
+        let t = mu - (i0 as f32);
+        self.centers[i0] * (1.0 - t) + self.centers[i1] * t
     }
 
     /// Optional helper: get TOF edges (for debug / plotting).

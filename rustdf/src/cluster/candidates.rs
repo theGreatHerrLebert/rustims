@@ -1,9 +1,5 @@
 // rustdf/src/cluster/candidates.rs
 
-use crate::data::dia::TimsDatasetDIA;
-use rayon::prelude::*;
-use std::collections::HashMap;
-use std::sync::Arc;
 /*
 use crate::cluster::cluster::ClusterResult1D;
 /// Jaccard overlap in **absolute seconds** for two closed intervals.

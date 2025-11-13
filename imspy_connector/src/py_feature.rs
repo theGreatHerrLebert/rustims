@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use numpy::{IntoPyArray, PyArray1};
+/*
 
 use rustdf::cluster::cluster::ClusterResult1D;
 use rustdf::cluster::feature::{
@@ -261,9 +261,11 @@ pub fn build_features_from_clusters_py(
         grouping: py_grouping,
     })
 }
+ */
 
 #[pymodule]
 pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    /*
     m.add_class::<PyAveragineLut>()?;
     m.add_class::<PyGroupingParams>()?;
     m.add_class::<PyFeatureBuildParams>()?;
@@ -272,5 +274,6 @@ pub fn py_feature(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBuildResult>()?;
 
     m.add_function(wrap_pyfunction!(build_features_from_clusters_py, m)?)?;
+     */
     Ok(())
 }
