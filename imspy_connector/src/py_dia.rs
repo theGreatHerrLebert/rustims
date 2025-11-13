@@ -12,6 +12,7 @@ use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_vie
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+
 #[pyclass]
 pub struct PyTofScanPlanGroup {
     ds: Py<PyAny>,
@@ -401,15 +402,13 @@ impl PyTofScanPlanGroup {
         }
 
         let data = if do_smooth {
-            let mut sm = raw.clone();
-            for r in 0..rows {
-                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
-                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
-                for c in 0..cols {
-                    sm[c * rows + r] = y[c];
-                }
-            }
-            sm
+            smooth_rows_parallel(
+                &raw,
+                rows,
+                cols,
+                self.maybe_sigma_scans.unwrap(),
+                self.truncate,
+            )
         } else {
             raw.clone()
         };
@@ -465,15 +464,13 @@ impl PyTofScanPlanGroup {
         }
 
         let data = if do_smooth {
-            let mut sm = raw.clone();
-            for r in 0..rows {
-                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
-                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
-                for c in 0..cols {
-                    sm[c * rows + r] = y[c];
-                }
-            }
-            sm
+            smooth_rows_parallel(
+                &raw,
+                rows,
+                cols,
+                self.maybe_sigma_scans.unwrap(),
+                self.truncate,
+            )
         } else {
             raw.clone()
         };
@@ -877,15 +874,13 @@ impl PyTofScanPlan {
         }
 
         let data = if do_smooth {
-            let mut sm = raw.clone();
-            for r in 0..rows {
-                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
-                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
-                for c in 0..cols {
-                    sm[c * rows + r] = y[c];
-                }
-            }
-            sm
+            smooth_rows_parallel(
+                &raw,
+                rows,
+                cols,
+                self.maybe_sigma_scans.unwrap(),
+                self.truncate,
+            )
         } else {
             raw.clone()
         };
@@ -939,15 +934,13 @@ impl PyTofScanPlan {
         }
 
         let data = if do_smooth {
-            let mut sm = raw.clone();
-            for r in 0..rows {
-                let mut y: Vec<f32> = (0..cols).map(|c| sm[c * rows + r]).collect();
-                smooth_vector_gaussian(&mut y, self.maybe_sigma_scans.unwrap(), self.truncate);
-                for c in 0..cols {
-                    sm[c * rows + r] = y[c];
-                }
-            }
-            sm
+            smooth_rows_parallel(
+                &raw,
+                rows,
+                cols,
+                self.maybe_sigma_scans.unwrap(),
+                self.truncate,
+            )
         } else {
             raw.clone()
         };
@@ -1438,6 +1431,44 @@ pub fn stitch_im_peaks_flat_unordered(
         out.push(Py::new(py, PyImPeak1D { inner: Arc::new(v) })?);
     }
     Ok(out)
+}
+
+/// Smooth along the **scan axis** for each TOF row in parallel.
+///
+/// Layout convention:
+///   raw[c * rows + r]  == intensity at (tof_row = r, scan = c)
+fn smooth_rows_parallel(
+    raw: &[f32],
+    rows: usize,
+    cols: usize,
+    sigma_scans: f32,
+    truncate: f32,
+) -> Vec<f32> {
+    // 1) Build a per-row view: Vec< Vec<f32> >, each row = all scans for that TOF row.
+    let mut per_row: Vec<Vec<f32>> = (0..rows)
+        .map(|r| {
+            let mut row_vec = Vec::with_capacity(cols);
+            for c in 0..cols {
+                row_vec.push(raw[c * rows + r]);
+            }
+            row_vec
+        })
+        .collect();
+
+    // 2) Smooth each row independently, in parallel.
+    per_row
+        .par_iter_mut()
+        .for_each(|row_vec| smooth_vector_gaussian(row_vec, sigma_scans, truncate));
+
+    // 3) Flatten back to the original layout (scan-major, TOF-fast).
+    let mut out = vec![0.0f32; rows * cols];
+    for r in 0..rows {
+        let row_vec = &per_row[r];
+        for c in 0..cols {
+            out[c * rows + r] = row_vec[c];
+        }
+    }
+    out
 }
 
 #[pymodule]

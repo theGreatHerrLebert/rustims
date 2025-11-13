@@ -927,13 +927,6 @@ fn gaussian_kernel_bins(sigma_bins: f32, truncate_k: f32) -> (Vec<i32>, Vec<f32>
     (offs, w)
 }
 
-// --- Stitching helpers for ImPeak1D in TOF/IM space ------------------------
-
-fn owned_copy_im(p: &ImPeak1D) -> ImPeak1D {
-    // ImPeak1D is Clone, so this is just a convenience wrapper
-    p.clone()
-}
-
 fn interval_overlap_usize(a: (usize, usize), b: (usize, usize)) -> usize {
     let lo = a.0.max(b.0);
     let hi = a.1.min(b.1);
@@ -1029,98 +1022,156 @@ fn compatible_fast(a: &ImPeak1D, b: &ImPeak1D, params: &StitchParams) -> bool {
     true
 }
 
-/// Merge peak `src` into `dst` in-place.
-///
-/// The strategy is:
-///   - bounds (RT, frames, TOF, IM) → take the union
-///   - positions (scan, tof, subscan) → area-weighted average
-///   - intensities → max (for apex-like) / sum (for area)
-///   - IDs → keep the smaller for determinism
-fn merge_into(dst: &mut ImPeak1D, src: &ImPeak1D) {
+fn merge_group(peaks: &[&ImPeak1D]) -> ImPeak1D {
     use std::cmp::{min, max};
 
-    // Weights for averaging based on area_raw (fall back to 1.0)
-    let w_dst = dst.area_raw.max(1.0);
-    let w_src = src.area_raw.max(1.0);
-    let w_sum = w_dst + w_src;
+    assert!(!peaks.is_empty());
 
-    // --- TOF geometry ------------------------------------------------------
-    dst.tof_bounds.0 = min(dst.tof_bounds.0, src.tof_bounds.0);
-    dst.tof_bounds.1 = max(dst.tof_bounds.1, src.tof_bounds.1);
+    // --- initialize accumulators -----------------------------------------
+    let mut rt_lo = usize::MAX;
+    let mut rt_hi = 0usize;
 
-    // TOF row / center: weighted average
-    let tof_row = ((dst.tof_row as f32 * w_dst + src.tof_row as f32 * w_src) / w_sum).round();
-    dst.tof_row = tof_row.max(0.0) as usize;
+    let mut fid_lo = u32::MAX;
+    let mut fid_hi = 0u32;
 
-    let tof_center = ((dst.tof_center as f32 * w_dst + src.tof_center as f32 * w_src) / w_sum).round();
-    dst.tof_center = tof_center as i32;
+    let mut tof_lo = i32::MAX;
+    let mut tof_hi = i32::MIN;
 
-    // --- RT / frame context -----------------------------------------------
-    dst.rt_bounds.0 = min(dst.rt_bounds.0, src.rt_bounds.0);
-    dst.rt_bounds.1 = max(dst.rt_bounds.1, src.rt_bounds.1);
+    let mut left = usize::MAX;
+    let mut right = 0usize;
 
-    dst.frame_id_bounds.0 = min(dst.frame_id_bounds.0, src.frame_id_bounds.0);
-    dst.frame_id_bounds.1 = max(dst.frame_id_bounds.1, src.frame_id_bounds.1);
+    let mut left_abs = usize::MAX;
+    let mut right_abs = 0usize;
 
-    // --- IM / scan geometry -----------------------------------------------
-    dst.left = min(dst.left, src.left);
-    dst.right = max(dst.right, src.right);
+    let mut area_sum = 0.0f32;
 
-    dst.left_abs = min(dst.left_abs, src.left_abs);
-    dst.right_abs = max(dst.right_abs, src.right_abs);
-    dst.width_scans = dst
-        .right_abs
-        .saturating_sub(dst.left_abs)
+    // weighted centers
+    let mut w_sum   = 0.0f32;
+    let mut w_tof_row = 0.0f32;
+    let mut w_tof_center = 0.0f32;
+    let mut w_scan      = 0.0f32;
+    let mut w_scan_abs  = 0.0f32;
+    let mut w_subscan   = 0.0f32;
+
+    // apex-like
+    let mut apex_smoothed_max = f32::MIN;
+    let mut apex_raw_max      = f32::MIN;
+    let mut prominence_max    = f32::MIN;
+
+    // scan_sigma aggregation (only over Some)
+    let mut scan_sigma_w_sum = 0.0f32;
+    let mut scan_sigma_w_val = 0.0f32;
+
+    // mobility: keep first non-None
+    let mut mobility_agg: Option<f32> = None;
+
+    // window_group: if they differ, collapse to None
+    let mut wg_agg = peaks[0].window_group;
+    let mut id_min = peaks[0].id;
+
+    for p in peaks {
+        let w = p.area_raw.max(1.0);
+        w_sum += w;
+        area_sum += p.area_raw;
+
+        // bounds
+        let (rt0, rt1) = p.rt_bounds;
+        rt_lo = min(rt_lo, rt0);
+        rt_hi = max(rt_hi, rt1);
+
+        let (fid0, fid1) = p.frame_id_bounds;
+        fid_lo = min(fid_lo, fid0);
+        fid_hi = max(fid_hi, fid1);
+
+        let (tof0, tof1) = p.tof_bounds;
+        tof_lo = min(tof_lo, tof0);
+        tof_hi = max(tof_hi, tof1);
+
+        left     = min(left, p.left);
+        right    = max(right, p.right);
+        left_abs = min(left_abs, p.left_abs);
+        right_abs= max(right_abs, p.right_abs);
+
+        // centers
+        w_tof_row    += (p.tof_row as f32)    * w;
+        w_tof_center += (p.tof_center as f32) * w;
+        w_scan       += (p.scan as f32)       * w;
+        w_scan_abs   += (p.scan_abs as f32)   * w;
+        w_subscan    +=  p.subscan            * w;
+
+        // apex
+        apex_smoothed_max = apex_smoothed_max.max(p.apex_smoothed);
+        apex_raw_max      = apex_raw_max.max(p.apex_raw);
+        prominence_max    = prominence_max.max(p.prominence);
+
+        // scan_sigma
+        if let Some(s) = p.scan_sigma {
+            scan_sigma_w_sum += w;
+            scan_sigma_w_val += s * w;
+        }
+
+        // mobility
+        if mobility_agg.is_none() {
+            mobility_agg = p.mobility;
+        }
+
+        // window_group
+        if wg_agg != p.window_group {
+            wg_agg = None;
+        }
+
+        // ID
+        if p.id < id_min {
+            id_min = p.id;
+        }
+    }
+
+    // --- finalize weighted centers ----------------------------------------
+    let w_sum_safe = if w_sum > 0.0 { w_sum } else { 1.0 };
+
+    let tof_row = (w_tof_row / w_sum_safe).round().max(0.0) as usize;
+    let tof_center = (w_tof_center / w_sum_safe).round() as i32;
+    let scan = (w_scan / w_sum_safe).round().max(0.0) as usize;
+    let scan_abs = (w_scan_abs / w_sum_safe).round().max(0.0) as usize;
+    let subscan = w_subscan / w_sum_safe;
+
+    let width_scans = right_abs
+        .saturating_sub(left_abs)
         .saturating_add(1);
 
-    // scan (local) & scan_abs (global) from weighted average
-    let scan = ((dst.scan as f32 * w_dst + src.scan as f32 * w_src) / w_sum).round();
-    dst.scan = scan.max(0.0) as usize;
-
-    let scan_abs = ((dst.scan_abs as f32 * w_dst + src.scan_abs as f32 * w_src) / w_sum).round();
-    dst.scan_abs = scan_abs.max(0.0) as usize;
-
-    // apex coordinate (absolute)
-    dst.subscan = (dst.subscan * w_dst + src.subscan * w_src) / w_sum;
-
-    // --- intensity / shape -------------------------------------------------
-    // Apex-like quantities: keep the larger
-    if src.apex_smoothed > dst.apex_smoothed {
-        dst.apex_smoothed = src.apex_smoothed;
-    }
-    if src.apex_raw > dst.apex_raw {
-        dst.apex_raw = src.apex_raw;
-    }
-    if src.prominence > dst.prominence {
-        dst.prominence = src.prominence;
-    }
-
-    // Area: additive
-    dst.area_raw += src.area_raw;
-
-    // scan_sigma: weighted average if both Some, or take the one that exists
-    dst.scan_sigma = match (dst.scan_sigma, src.scan_sigma) {
-        (Some(a), Some(b)) => Some((a * w_dst as f32 + b * w_src as f32) / (w_sum as f32)),
-        (None, Some(b)) => Some(b),
-        (Some(a), None) => Some(a),
-        (None, None) => None,
+    let scan_sigma = if scan_sigma_w_sum > 0.0 {
+        Some(scan_sigma_w_val / scan_sigma_w_sum)
+    } else {
+        None
     };
 
-    // mobility: keep existing, or take from src if dst has None
-    if dst.mobility.is_none() {
-        dst.mobility = src.mobility;
-    }
+    ImPeak1D {
+        tof_row,
+        tof_center,
+        tof_bounds: (tof_lo, tof_hi),
+        rt_bounds: (rt_lo, rt_hi),
+        frame_id_bounds: (fid_lo, fid_hi),
+        window_group: wg_agg,
 
-    // window_group: if they differ (and cross-groups were allowed), you can
-    // choose to collapse to None; otherwise keep dst's.
-    if dst.window_group != src.window_group {
-        // conservative: mark as mixed
-        dst.window_group = None;
-    }
+        scan,
+        left,
+        right,
 
-    // ID: keep the smaller one for determinism
-    if src.id < dst.id {
-        dst.id = src.id;
+        scan_abs,
+        left_abs,
+        right_abs,
+
+        scan_sigma,
+        mobility: mobility_agg,
+        apex_smoothed: apex_smoothed_max,
+        apex_raw: apex_raw_max,
+        prominence: prominence_max,
+        left_x: left_abs as f32,
+        right_x: right_abs as f32,
+        width_scans,
+        area_raw: area_sum,
+        subscan,
+        id: id_min,
     }
 }
 
@@ -1184,10 +1235,11 @@ pub fn stitch_im_peaks_flat_unordered_impl(
         buckets.entry(key).or_default().push(arc);
     }
 
-    // 2) In-bucket folding with deterministic order
+    // 2) In-bucket folding with deterministic order + group merge
     let mut stitched: Vec<ImPeak1D> = Vec::new();
 
     for (_k, mut vec_arc) in buckets.into_iter() {
+        // deterministic order within bucket
         vec_arc.sort_unstable_by(|a, b| {
             let aa = a.as_ref();
             let bb = b.as_ref();
@@ -1198,27 +1250,36 @@ pub fn stitch_im_peaks_flat_unordered_impl(
                 .then_with(|| aa.id.cmp(&bb.id))
         });
 
-        let mut cur: Option<ImPeak1D> = None;
+        let mut group: Vec<Arc<ImPeak1D>> = Vec::new();
 
-        for a in vec_arc.into_iter() {
-            let p = a.as_ref();
-            if let Some(c) = cur.as_mut() {
-                if compatible_fast(c, p, params) {
-                    merge_into(c, p);
+        for arc in vec_arc.into_iter() {
+            let p = arc.as_ref();
+            if let Some(last) = group.last() {
+                if compatible_fast(last.as_ref(), p, params) {
+                    // still same cluster → extend group
+                    group.push(arc);
                 } else {
-                    stitched.push(std::mem::replace(c, owned_copy_im(p)));
+                    // finalize previous group
+                    let refs: Vec<&ImPeak1D> =
+                        group.iter().map(|a| a.as_ref()).collect();
+                    stitched.push(merge_group(&refs));
+                    group.clear();
+                    group.push(arc);
                 }
             } else {
-                cur = Some(owned_copy_im(p));
+                // first element in this bucket
+                group.push(arc);
             }
         }
 
-        if let Some(c) = cur.take() {
-            stitched.push(c);
+        // flush final group in this bucket
+        if !group.is_empty() {
+            let refs: Vec<&ImPeak1D> = group.iter().map(|a| a.as_ref()).collect();
+            stitched.push(merge_group(&refs));
         }
     }
 
-    // 3) Optional cross-bucket consolidation pass
+    // 3) Optional cross-bucket consolidation pass (again using group merge)
     stitched.sort_unstable_by(|a, b| {
         a.window_group
             .cmp(&b.window_group)
@@ -1229,14 +1290,28 @@ pub fn stitch_im_peaks_flat_unordered_impl(
     });
 
     let mut final_out: Vec<ImPeak1D> = Vec::with_capacity(stitched.len());
+    let mut group: Vec<ImPeak1D> = Vec::new();
+
     for p in stitched.into_iter() {
-        if let Some(last) = final_out.last_mut() {
+        if let Some(last) = group.last() {
             if compatible_fast(last, &p, params) {
-                merge_into(last, &p);
-                continue;
+                // still same stitched cluster
+                group.push(p);
+            } else {
+                // finish previous chain
+                let refs: Vec<&ImPeak1D> = group.iter().collect();
+                final_out.push(merge_group(&refs));
+                group.clear();
+                group.push(p);
             }
+        } else {
+            group.push(p);
         }
-        final_out.push(p);
+    }
+
+    if !group.is_empty() {
+        let refs: Vec<&ImPeak1D> = group.iter().collect();
+        final_out.push(merge_group(&refs));
     }
 
     final_out
