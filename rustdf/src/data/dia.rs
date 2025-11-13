@@ -302,7 +302,7 @@ impl TimsDatasetDIA {
             let frame_data = self
                 .loader
                 .get_frame(frame_id as u32)
-                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity)
+                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity, 0, i32::MAX)
                 .generate_random_sample(take_probability);
             sampled_frames.push(frame_data);
         }
@@ -345,7 +345,7 @@ impl TimsDatasetDIA {
             let frame_data = self
                 .loader
                 .get_frame(frame_id)
-                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity)
+                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity, 0, i32::MAX)
                 .generate_random_sample(take_probability);
             sampled_frames.push(frame_data);
         }

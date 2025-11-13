@@ -623,6 +623,8 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             10.0,
             intensity_min.unwrap_or(1.0),
             1e9,
+            0,
+            i32::MAX,
         )
     }
 

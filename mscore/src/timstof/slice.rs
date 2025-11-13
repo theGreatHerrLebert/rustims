@@ -59,16 +59,16 @@ impl TimsSlice {
     /// use mscore::timstof::slice::TimsSlice;
     ///
     /// let slice = TimsSlice::new(vec![]);
-    /// let filtered_slice = slice.filter_ranged(400.0, 2000.0, 0, 1000, 0.0, 100000.0, 0.0, 1.6, 4);
+    /// let filtered_slice = slice.filter_ranged(100.0, 1000.0, 1, 100, 0.0, 1.0, 100.0, 10000.0, 0, 10000, 1);
     /// ```
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, num_threads: usize) -> TimsSlice {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, tof_min: i32, tof_max: i32, num_threads: usize) -> TimsSlice {
 
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
 
         // Use the thread pool
         let filtered_frames = pool.install(|| {
             let result: Vec<_> =  self.frames.par_iter()
-                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max))
+                .map(|f| f.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, tof_min, tof_max))
                 .collect();
             result
         });
@@ -85,6 +85,8 @@ impl TimsSlice {
                                           inv_mob_max_ms1: f64,
                                           intensity_min_ms1: f64,
                                           intensity_max_ms1: f64,
+                                          tof_min_ms1: i32,
+                                          tof_max_ms1: i32,
                                           mz_min_ms2: f64,
                                           mz_max_ms2: f64,
                                           scan_min_ms2: i32,
@@ -93,6 +95,8 @@ impl TimsSlice {
                                           inv_mob_max_ms2: f64,
                                           intensity_min_ms2: f64,
                                           intensity_max_ms2: f64,
+                                          tof_min_ms2: i32,
+                                          tof_max_ms2: i32,
                                           num_threads: usize) -> TimsSlice {
 
         let pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap(); // Set to the desired number of threads
@@ -101,8 +105,8 @@ impl TimsSlice {
         let filtered_frames = pool.install(|| {
             let result: Vec<_> =  self.frames.par_iter()
                 .map(|f| match f.ms_type {
-                    MsType::Precursor => f.filter_ranged(mz_min_ms1, mz_max_ms1, scan_min_ms1, scan_max_ms1, inv_mob_min_ms1, inv_mob_max_ms1, intensity_min_ms1, intensity_max_ms1),
-                    _ => f.filter_ranged(mz_min_ms2, mz_max_ms2, scan_min_ms2, scan_max_ms2, inv_mob_min_ms2, inv_mob_max_ms2, intensity_min_ms2, intensity_max_ms2),
+                    MsType::Precursor => f.filter_ranged(mz_min_ms1, mz_max_ms1, scan_min_ms1, scan_max_ms1, inv_mob_min_ms1, inv_mob_max_ms1, intensity_min_ms1, intensity_max_ms1, tof_min_ms1, tof_max_ms1),
+                    _ => f.filter_ranged(mz_min_ms2, mz_max_ms2, scan_min_ms2, scan_max_ms2, inv_mob_min_ms2, inv_mob_max_ms2, intensity_min_ms2, intensity_max_ms2, tof_min_ms2, tof_max_ms2),
                 })
                 .collect();
             result

@@ -129,7 +129,7 @@ impl TimsDatasetDDA {
             .par_iter()
             .map(|frame| {
                 frame
-                    .filter_ranged(0.0, 2000.0, 0, 2000, 0.0, 5.0, min_intensity, 1e9)
+                    .filter_ranged(0.0, 2000.0, 0, 2000, 0.0, 5.0, min_intensity, 1e9, 0, i32::MAX)
                     .top_n(max_num_peaks)
             })
             .collect();
@@ -171,6 +171,8 @@ impl TimsDatasetDDA {
                         5.0,
                         0.0,
                         1e9,
+                        0,
+                        i32::MAX,
                     );
 
                     PASEFDDAFragment {
@@ -214,6 +216,8 @@ impl TimsDatasetDDA {
             5.0,
             0.0,
             1e9,
+            0,
+            i32::MAX,
         );
 
         // Safety check
@@ -244,6 +248,8 @@ impl TimsDatasetDDA {
             5.0,
             0.0,
             1e9,
+            0,
+            i32::MAX,
         );
 
         re_filtered
@@ -312,7 +318,7 @@ impl TimsDatasetDDA {
             let frame_data = self
                 .loader
                 .get_frame(frame_id as u32)
-                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity)
+                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity, 0, i32::MAX)
                 .generate_random_sample(take_probability);
             sampled_frames.push(frame_data);
         }
