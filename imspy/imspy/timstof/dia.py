@@ -995,7 +995,8 @@ class ImPeak1D(RustWrapperObject):
     @classmethod
     def from_detected(cls,
                       det_row,
-                      # dict | pandas.Series with keys: mu_scan, mu_mz, sigma_scan, sigma_mz, amplitude, baseline, area, i, j
+                      # dict | pandas.Series with keys: mu_scan, mu_mz, sigma_scan, sigma_mz,
+                      # amplitude, baseline, area, i, j
                       *,
                       window_grid,  # MzScanWindowGrid
                       mz_centers=None,  # np.ndarray | None (if None, will try to read from a plan/plan-group)
@@ -1031,15 +1032,31 @@ class ImPeak1D(RustWrapperObject):
         n_rows = window_grid.rows
         n_cols = window_grid.cols
 
-        # indices from detector (i=row=m/z bin, j=col=scan)
-        mz_row = int(r["i"])
+        # --- detector outputs ---
+        # integer indices from detector (i=row≈m/z bin, j=col=scan)
+        mz_row_int = int(r["i"])
         j_scan = int(r["j"])
+
+        # continuous centers from detector
+        mu_scan = float(r["mu_scan"])
+        mu_mz = float(r["mu_mz"])
+        s_scan = float(r["sigma_scan"])
+        # keep sigma_mz around for future use (e.g. 3D clustering),
+        # but we don't need it yet for bounds
+        s_mz = float(r.get("sigma_mz", 0.0)) if isinstance(r, dict) or "sigma_mz" in r else 0.0
+
+        if clamp_to_grid:
+            # clamp integer indices
+            mz_row_int = max(0, min(n_rows - 1, mz_row_int))
+            j_scan = max(0, min(n_cols - 1, j_scan))
+            # clamp fractional m/z index
+            mu_mz = float(np.clip(mu_mz, 0.0, n_rows - 1.0))
+
+        # derive an integer bin index for bookkeeping from the *continuous* center
+        mz_row = int(np.round(mu_mz))
         if clamp_to_grid:
             mz_row = max(0, min(n_rows - 1, mz_row))
-            j_scan = max(0, min(n_cols - 1, j_scan))
 
-        mu_scan = float(r["mu_scan"])
-        s_scan = float(r["sigma_scan"])
         amp = float(r["amplitude"])
         base = float(r["baseline"])
         area = float(r["area"])
@@ -1056,11 +1073,19 @@ class ImPeak1D(RustWrapperObject):
             left = max(0, left - dl)
             right = min(n_cols - 1, right + dr)
 
+        # float scan bounds (still centered on the integer scan for now)
         left_x = float(j_scan) - k_sigma * s_scan
         right_x = float(j_scan) + k_sigma * s_scan
 
-        mz_center = float(mz_centers[mz_row])
-        mz_bounds = _mz_bounds_from_centers(mz_centers, mz_row, pad_ppm=mz_bounds_pad_ppm, pad_abs=mz_bounds_pad_abs)
+        # --- m/z center: use fractional index mu_mz → interpolate mz_centers ---
+        idx = np.arange(len(mz_centers), dtype=np.float32)
+        mz_center = float(np.interp(mu_mz, idx, mz_centers))
+        mz_bounds = _mz_bounds_from_centers(
+            mz_centers,
+            mz_row,
+            pad_ppm=mz_bounds_pad_ppm,
+            pad_abs=mz_bounds_pad_abs,
+        )
 
         apex_smoothed = amp + base
         apex_raw = apex_smoothed
@@ -1094,7 +1119,7 @@ class ImPeak1D(RustWrapperObject):
             int(left_abs),
             int(right_abs),
             float(s_scan) if s_scan > 0.0 else None,
-            None,  # mobility: Option<f32>
+            None,  # mobility: Option[f32]
             float(apex_smoothed),
             float(apex_raw),
             float(prominence),
