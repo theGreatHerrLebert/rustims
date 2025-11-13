@@ -17,7 +17,6 @@ ims = imspy_connector.py_dia
 
 import os
 import tempfile
-import warnings
 from pathlib import Path
 from typing import List, Sequence, Union, Tuple
 # --- helpers ---------------------------------------------------------------
@@ -605,6 +604,27 @@ class MzScanPlanGroup(RustWrapperObject):
     def mz_centers(self) -> np.ndarray:
         return np.asarray(self.__py_ptr.mz_centers, dtype=np.float32)
 
+    # --- NEW: scale metadata / helpers ---
+    @property
+    def mz_min(self) -> float:
+        return float(self.__py_ptr.mz_min)
+
+    @property
+    def mz_max(self) -> float:
+        return float(self.__py_ptr.mz_max)
+
+    def mz_center_at(self, mu_mz: float) -> float:
+        """Continuous m/z center for a fractional grid index mu_mz."""
+        return float(self.__py_ptr.mz_center_at(float(mu_mz)))
+
+    def mz_center_for_row(self, row: int) -> float:
+        """Discrete m/z center for an integer row."""
+        return float(self.__py_ptr.mz_center_for_row(int(row)))
+
+    def mz_index_of(self, mz: float) -> int | None:
+        """Return integer row index for a physical m/z, or None if out of range."""
+        return self.__py_ptr.mz_index_of(float(mz))
+
     def bounds(self, i: int) -> tuple[int, int] | None:
         return self.__py_ptr.bounds(i)
 
@@ -616,7 +636,7 @@ class MzScanPlanGroup(RustWrapperObject):
         return self.__py_ptr.fragment_frame_id_bounds
 
     # ---- materialization / iteration ----
-    def get(self, i: int) -> MzScanWindowGrid | None:
+    def get(self, i: int) -> "MzScanWindowGrid | None":
         w = self.__py_ptr.get(i)
         if w is None:
             return None
@@ -640,17 +660,17 @@ class MzScanPlanGroup(RustWrapperObject):
         return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
 
     def get_batch_par(self, start: int, count: int, num_threads: int) -> list["MzScanWindowGrid"]:
-        grids = self.__py_ptr.get_batch_par(int(start), int(count))
+        grids = self.__py_ptr.get_batch_par(int(start), int(count), int(num_threads))
         return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
 
     def pick_im_peaks_batched(
-            self,
-            indices: list[int],
-            *,
-            min_prom: float = 50.0,
-            min_distance_scans: int = 2,
-            min_width_scans: int = 2,
-            use_mobility: bool = False,
+        self,
+        indices: list[int],
+        *,
+        min_prom: float = 50.0,
+        min_distance_scans: int = 2,
+        min_width_scans: int = 2,
+        use_mobility: bool = False,
     ) -> list[list[list["ImPeak1D"]]]:
         rows = self.__py_ptr.pick_im_peaks_for_indices(
             [int(i) for i in indices],
@@ -660,6 +680,8 @@ class MzScanPlanGroup(RustWrapperObject):
             bool(use_mobility),
         )
         return [[[ImPeak1D.from_py_ptr(p) for p in row] for row in win] for win in rows]
+
+
 
 class MzScanPlan(RustWrapperObject):
     """Python wrapper for ims.PyMzScanPlan (iterable over MzScanWindowGrid)."""
@@ -701,11 +723,35 @@ class MzScanPlan(RustWrapperObject):
     def mz_centers(self) -> np.ndarray:
         return np.asarray(self.__py_ptr.mz_centers, dtype=np.float32)
 
+    # --- NEW: scale metadata / helpers ---
+    @property
+    def mz_min(self) -> float:
+        return float(self.__py_ptr.mz_min)
+
+    @property
+    def mz_max(self) -> float:
+        return float(self.__py_ptr.mz_max)
+
+    def mz_center_at(self, mu_mz: float) -> float:
+        """
+        Continuous m/z center for a fractional grid index mu_mz
+        (same convention as detector's mu_mz).
+        """
+        return float(self.__py_ptr.mz_center_at(float(mu_mz)))
+
+    def mz_center_for_row(self, row: int) -> float:
+        """Discrete m/z center for an integer row index."""
+        return float(self.__py_ptr.mz_center_for_row(int(row)))
+
+    def mz_index_of(self, mz: float) -> int | None:
+        """Return integer row index for a physical m/z, or None if out of range."""
+        return self.__py_ptr.mz_index_of(float(mz))
+
     def bounds(self, i: int) -> tuple[int, int] | None:
         return self.__py_ptr.bounds(i)
 
     # ---- materialization / iteration ----
-    def get(self, i: int) -> MzScanWindowGrid | None:
+    def get(self, i: int) -> "MzScanWindowGrid | None":
         w = self.__py_ptr.get(i)
         if w is None:
             return None
@@ -740,17 +786,17 @@ class MzScanPlan(RustWrapperObject):
         return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
 
     def get_batch_par(self, start: int, count: int, num_threads: int) -> list["MzScanWindowGrid"]:
-        grids = self.__py_ptr.get_batch_par(int(start), int(count))
+        grids = self.__py_ptr.get_batch_par(int(start), int(count), int(num_threads))
         return [MzScanWindowGrid.from_py_ptr(g) for g in grids]
 
     def pick_im_peaks_batched(
-            self,
-            indices: list[int],
-            *,
-            min_prom: float = 50.0,
-            min_distance_scans: int = 2,
-            min_width_scans: int = 2,
-            use_mobility: bool = False,
+        self,
+        indices: list[int],
+        *,
+        min_prom: float = 50.0,
+        min_distance_scans: int = 2,
+        min_width_scans: int = 2,
+        use_mobility: bool = False,
     ) -> list[list[list["ImPeak1D"]]]:
         rows = self.__py_ptr.pick_im_peaks_for_indices(
             [int(i) for i in indices],
@@ -993,75 +1039,92 @@ class ImPeak1D(RustWrapperObject):
         return inst
 
     @classmethod
-    def from_detected(cls,
-                      det_row,
-                      # dict | pandas.Series with keys: mu_scan, mu_mz, sigma_scan, sigma_mz,
-                      # amplitude, baseline, area, i, j
-                      *,
-                      window_grid,  # MzScanWindowGrid
-                      mz_centers=None,  # np.ndarray | None (if None, will try to read from a plan/plan-group)
-                      plan=None,  # optional MzScanPlan (for mz_centers)
-                      plan_group=None,  # optional MzScanPlanGroup (for mz_centers)
-                      k_sigma: float = 3.0,
-                      min_width: int = 3,
-                      clamp_to_grid: bool = True,
-                      mz_bounds_pad_ppm: float = 0.0,
-                      mz_bounds_pad_abs: float = 0.0
-                      ):
-
+    def from_detected(
+            cls,
+            det_row,
+            # dict | pandas.Series with keys:
+            #   mu_scan, mu_mz, sigma_scan, sigma_mz, amplitude, baseline, area, i, j
+            *,
+            window_grid,  # MzScanWindowGrid
+            mz_centers=None,  # np.ndarray | None (if None, will try to read from a plan/plan-group)
+            plan=None,  # optional MzScanPlan (for mz_centers / mz_center_at)
+            plan_group=None,  # optional MzScanPlanGroup (for mz_centers)
+            k_sigma: float = 3.0,
+            min_width: int = 3,
+            clamp_to_grid: bool = True,
+            mz_bounds_pad_ppm: float = 0.0,
+            mz_bounds_pad_abs: float = 0.0,
+    ) -> "ImPeak1D":
         # normalize row access
         if isinstance(det_row, pd.Series):
             r = det_row
         else:
             r = pd.Series(det_row)
 
-        # get mz_centers
-        if mz_centers is None:
-            if plan is not None:
-                mz_centers = plan.mz_centers
-            elif plan_group is not None:
-                mz_centers = plan_group.mz_centers
-            else:
-                raise ValueError("Provide mz_centers or (plan | plan_group).")
-        mz_centers = np.asarray(mz_centers, dtype=np.float32)
-
-        # grid metadata
+        # --- grid metadata ---
         rt_lo, rt_hi = window_grid.rt_range_frames
         fid_lo, fid_hi = window_grid.frame_id_bounds
         wg = window_grid.window_group
         n_rows = window_grid.rows
         n_cols = window_grid.cols
 
-        # --- detector outputs ---
-        # integer indices from detector (i=row≈m/z bin, j=col=scan)
-        mz_row_int = int(r["i"])
+        # --- indices from detector ---
+        # i, j are integer bin indices from the pooling operator
+        i_raw = int(r["i"])
         j_scan = int(r["j"])
 
-        # continuous centers from detector
+        # fitted sub-bin centers (float)
         mu_scan = float(r["mu_scan"])
         mu_mz = float(r["mu_mz"])
         s_scan = float(r["sigma_scan"])
-        # keep sigma_mz around for future use (e.g. 3D clustering),
-        # but we don't need it yet for bounds
-        s_mz = float(r.get("sigma_mz", 0.0)) if isinstance(r, dict) or "sigma_mz" in r else 0.0
-
-        if clamp_to_grid:
-            # clamp integer indices
-            mz_row_int = max(0, min(n_rows - 1, mz_row_int))
-            j_scan = max(0, min(n_cols - 1, j_scan))
-            # clamp fractional m/z index
-            mu_mz = float(np.clip(mu_mz, 0.0, n_rows - 1.0))
-
-        # derive an integer bin index for bookkeeping from the *continuous* center
-        mz_row = int(np.round(mu_mz))
-        if clamp_to_grid:
-            mz_row = max(0, min(n_rows - 1, mz_row))
-
         amp = float(r["amplitude"])
         base = float(r["baseline"])
         area = float(r["area"])
 
-        # integer window bounds in scan from σ
+        # --- m/z row index: align to fitted mu_mz, not just i_raw ---
+        # This keeps the "row" close to the actual fitted center in grid space.
+        mz_row = int(np.round(mu_mz)) if np.isfinite(mu_mz) else i_raw
+
+        # clamp to grid
+        if clamp_to_grid:
+            mz_row = max(0, min(n_rows - 1, mz_row))
+            j_scan = max(0, min(n_cols - 1, j_scan))
+
+        # --- m/z centers / bounds ---
+        # If we have a plan with mz_center_at, use continuous mapping;
+        # otherwise fall back to discrete centers.
+        if mz_centers is None:
+            if plan is not None:
+                try:
+                    mz_centers = plan.mz_centers
+                except AttributeError:
+                    mz_centers = None
+            if mz_centers is None and plan_group is not None:
+                try:
+                    mz_centers = plan_group.mz_centers
+                except AttributeError:
+                    mz_centers = None
+            if mz_centers is None:
+                raise ValueError("Provide mz_centers or (plan | plan_group).")
+
+        mz_centers = np.asarray(mz_centers, dtype=np.float32)
+
+        # Continuous m/z center from fractional index if possible
+        if plan is not None and hasattr(plan, "mz_center_at"):
+            mz_center = float(plan.mz_center_at(float(mu_mz)))
+        else:
+            # fallback: discrete bin center
+            mz_center = float(mz_centers[mz_row])
+
+        # For now, keep bounds tied to the integer row, then pad in ppm/Da.
+        mz_bounds = _mz_bounds_from_centers(
+            mz_centers,
+            mz_row,
+            pad_ppm=mz_bounds_pad_ppm,
+            pad_abs=mz_bounds_pad_abs,
+        )
+
+        # --- scan / IM bounds from σ in scan space ---
         half = int(np.ceil(k_sigma * max(1e-6, s_scan)))
         left = max(0, j_scan - half)
         right = min(n_cols - 1, j_scan + half)
@@ -1073,19 +1136,8 @@ class ImPeak1D(RustWrapperObject):
             left = max(0, left - dl)
             right = min(n_cols - 1, right + dr)
 
-        # float scan bounds (still centered on the integer scan for now)
         left_x = float(j_scan) - k_sigma * s_scan
         right_x = float(j_scan) + k_sigma * s_scan
-
-        # --- m/z center: use fractional index mu_mz → interpolate mz_centers ---
-        idx = np.arange(len(mz_centers), dtype=np.float32)
-        mz_center = float(np.interp(mu_mz, idx, mz_centers))
-        mz_bounds = _mz_bounds_from_centers(
-            mz_centers,
-            mz_row,
-            pad_ppm=mz_bounds_pad_ppm,
-            pad_abs=mz_bounds_pad_abs,
-        )
 
         apex_smoothed = amp + base
         apex_raw = apex_smoothed
@@ -1095,14 +1147,18 @@ class ImPeak1D(RustWrapperObject):
         scan_abs = j_scan
         left_abs, right_abs = left, right
 
-        pid = int(_fnv1a64_signed([
-            int(wg) if wg is not None else 0,
-            mz_row,
-            scan_abs,
-            left_abs,
-            right_abs,
-            int(np.round(mz_center * 1e3)),
-        ]))
+        pid = int(
+            _fnv1a64_signed(
+                [
+                    int(wg) if wg is not None else 0,
+                    mz_row,
+                    scan_abs,
+                    left_abs,
+                    right_abs,
+                    int(np.round(mz_center * 1e3)),
+                ]
+            )
+        )
 
         # Rust-side construction (tuples & primitives only)
         p = ims.PyImPeak1D(
@@ -1133,37 +1189,40 @@ class ImPeak1D(RustWrapperObject):
         return cls.from_py_ptr(p)
 
     @classmethod
-    def batch_from_detected(cls,
-                            detected_dict_or_df,
-                            *,
-                            window_grid,
-                            mz_centers=None,
-                            plan=None,
-                            plan_group=None,
-                            k_sigma: float = 3.0,
-                            min_width: int = 3,
-                            clamp_to_grid: bool = True,
-                            mz_bounds_pad_ppm: float = 0.0,
-                            mz_bounds_pad_abs: float = 0.0
-                            ) -> list["ImPeak1D"]:
+    def batch_from_detected(
+            cls,
+            detected_dict_or_df,
+            *,
+            window_grid,
+            mz_centers=None,
+            plan=None,
+            plan_group=None,
+            k_sigma: float = 3.0,
+            min_width: int = 3,
+            clamp_to_grid: bool = True,
+            mz_bounds_pad_ppm: float = 0.0,
+            mz_bounds_pad_abs: float = 0.0,
+    ) -> list["ImPeak1D"]:
         """
         Vectorized convenience: dict-of-arrays/DataFrame -> list[ImPeak1D].
         """
         D = pd.DataFrame(detected_dict_or_df)
-        out = []
+        out: list[ImPeak1D] = []
         for _, row in D.iterrows():
-            out.append(cls.from_detected(
-                row,
-                window_grid=window_grid,
-                mz_centers=mz_centers,
-                plan=plan,
-                plan_group=plan_group,
-                k_sigma=k_sigma,
-                min_width=min_width,
-                clamp_to_grid=clamp_to_grid,
-                mz_bounds_pad_ppm=mz_bounds_pad_ppm,
-                mz_bounds_pad_abs=mz_bounds_pad_abs
-            ))
+            out.append(
+                cls.from_detected(
+                    row,
+                    window_grid=window_grid,
+                    mz_centers=mz_centers,
+                    plan=plan,
+                    plan_group=plan_group,
+                    k_sigma=k_sigma,
+                    min_width=min_width,
+                    clamp_to_grid=clamp_to_grid,
+                    mz_bounds_pad_ppm=mz_bounds_pad_ppm,
+                    mz_bounds_pad_abs=mz_bounds_pad_abs,
+                )
+            )
         return out
 
     def __repr__(self):

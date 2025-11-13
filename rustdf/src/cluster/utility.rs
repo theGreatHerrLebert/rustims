@@ -3,6 +3,7 @@ use crate::cluster::peak::{FrameBinView, ImPeak1D, PeakId, RtPeak1D, RtTraceCtx}
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
 use crate::cluster::cluster::{Fit1D};
+use rustc_hash::FxHashMap;
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
@@ -108,6 +109,27 @@ impl MzScale {
 
     #[inline(always)]
     pub fn center(&self, idx: usize) -> f32 { self.centers[idx] }
+
+    /// Continuous bin center for a fractional index mu.
+    /// mu = 0.0 corresponds to the first bin; 0.5 is halfway to the next one, etc.
+    #[inline]
+    pub fn center_at(&self, mu: f32) -> f32 {
+        if !mu.is_finite() {
+            return self.mz_min;
+        }
+        // edges[k] ~ mz_min * ratio^k
+        // centers[k] ~ mz_min * ratio^(k + 0.5)
+        self.mz_min * self.ratio.powf(mu + 0.5)
+    }
+
+    /// Continuous bin bounds for a fractional index mu (no extra pad).
+    /// This mirrors how edges/centers are generated in build().
+    #[inline]
+    pub fn bounds_at(&self, mu: f32) -> (f32, f32) {
+        let c = self.center_at(mu);
+        let half = self.ratio.sqrt();
+        (c / half, c * half)
+    }
 }
 
 pub fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
@@ -123,6 +145,185 @@ pub fn scan_mz_range(frames: &[TimsFrame]) -> Option<(f32, f32)> {
         }
     }
     if minv.is_finite() && maxv.is_finite() && maxv > minv { Some((minv, maxv)) } else { None }
+}
+
+/// light 1D Gaussian smoothing on a vector (along scans)
+pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
+    if v.is_empty() || sigma <= 0.0 { return; }
+    let radius = (truncate * sigma).ceil() as i32;
+    let two_sigma2 = 2.0 * sigma * sigma;
+    let mut w = Vec::with_capacity((2*radius + 1) as usize);
+    for dx in -radius..=radius {
+        let x = dx as f32;
+        w.push((-x*x / two_sigma2).exp());
+    }
+    let sum: f32 = w.iter().copied().sum();
+    for v_ in &mut w { *v_ /= sum; }
+
+    let n = v.len();
+    let mut out = vec![0.0f32; n];
+    for i in 0..n {
+        let mut acc = 0.0f32;
+        let mut norm = 0.0f32;
+        for (k,&wk) in w.iter().enumerate() {
+            let di = i as isize + (k as isize - (w.len() as isize -1)/2);
+            if di >= 0 && (di as usize) < n {
+                acc += wk * v[di as usize];
+                norm += wk;
+            }
+        }
+        out[i] = if norm > 0.0 { acc / norm } else { 0.0 };
+    }
+    v.copy_from_slice(&out);
+}
+
+/// Build IM marginal (absolute scan axis). We have to touch selected entries:
+pub fn build_im_marginal(
+    frames: &[FrameBinView],
+    rt_lo: usize, rt_hi: usize,
+    bin_lo: usize, bin_hi: usize,
+    im_lo: usize, im_hi: usize,
+) -> Vec<f32> {
+    let len = im_hi + 1 - im_lo;
+    let mut out = vec![0.0f32; len];
+
+    for fbv in &frames[rt_lo..=rt_hi] {
+        let ub = &fbv.unique_bins;
+        if ub.is_empty() { continue; }
+        let start = match ub.binary_search(&bin_lo) { Ok(i)=>i, Err(i)=>i.min(ub.len()) };
+        let mut i = start;
+        while i < ub.len() {
+            let b = ub[i];
+            if b > bin_hi { break; }
+            let lo = fbv.offsets[i]; let hi = fbv.offsets[i+1];
+            let scans = &fbv.scan_idx[lo..hi];
+            let ints  = &fbv.intensity[lo..hi];
+            for (s, val) in scans.iter().zip(ints.iter()) {
+                let s_abs = *s as usize;
+                if s_abs >= im_lo && s_abs <= im_hi {
+                    out[s_abs - im_lo] += *val;
+                }
+            }
+            i += 1;
+        }
+    }
+    out
+}
+
+// Key for accumulation
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Key { bin: usize, scan: u32 }
+
+pub fn gaussian_blur_mz_sparse(
+    fbv: &FrameBinView,
+    sigma_bins: f32,
+    truncate_k: f32,
+) -> FrameBinView {
+    if fbv.unique_bins.is_empty() { return fbv.clone(); }
+
+    let (deltas, weights) = gaussian_kernel_bins(sigma_bins, truncate_k);
+    let nnz = fbv.intensity.len();
+    let k = deltas.len() as usize;
+
+    // Reserve: heuristic ~ nnz * effective support (not all deltas hit valid bins)
+    let mut acc: FxHashMap<Key, f32> = FxHashMap::with_capacity_and_hasher(nnz.saturating_mul(k/2), Default::default());
+
+    // Optional: quick bounds to avoid branching
+    let bin_min = *fbv.unique_bins.first().unwrap();
+    let bin_max = *fbv.unique_bins.last().unwrap();
+
+    // Iterate bins in order
+    for (i, &bin) in fbv.unique_bins.iter().enumerate() {
+        let lo = fbv.offsets[i];
+        let hi = fbv.offsets[i + 1];
+        for j in lo..hi {
+            let scan = fbv.scan_idx[j];   // u32 absolute scan
+            let val  = fbv.intensity[j];
+            if val <= 0.0 { continue; }
+
+            // Spread to neighbors
+            for (d, &w) in deltas.iter().zip(weights.iter()) {
+                let b2 = if d.is_negative() {
+                    bin.saturating_sub((-d) as usize)
+                } else {
+                    bin.saturating_add(*d as usize)
+                };
+                if b2 < bin_min || b2 > bin_max { continue; }
+                let key = Key { bin: b2, scan };
+                *acc.entry(key).or_insert(0.0) += val * w;
+            }
+        }
+    }
+
+    // Compact back into FrameBinView: group by bin, then by insertion order build CSR
+    let mut items: Vec<(usize, u32, f32)> = Vec::with_capacity(acc.len());
+    for (k, v) in acc.into_iter() {
+        if v > 0.0 && k.bin >= bin_min && k.bin <= bin_max {
+            items.push((k.bin, k.scan, v));
+        }
+    }
+    items.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+
+    let mut unique_bins = Vec::new();
+    let mut offsets = Vec::new();
+    let mut scan_idx = Vec::with_capacity(items.len());
+    let mut intensity = Vec::with_capacity(items.len());
+
+    offsets.push(0);
+    let mut cur_bin: Option<usize> = None;
+    for (bin, scan, val) in items.into_iter() {
+        if cur_bin.map_or(true, |cb| cb != bin) {
+            unique_bins.push(bin);
+            offsets.push(offsets.last().copied().unwrap());
+            cur_bin = Some(bin);
+        }
+        scan_idx.push(scan);
+        intensity.push(val);
+        *offsets.last_mut().unwrap() += 1;
+    }
+    // Guarantee at least one offset (if frame is empty after filtering)
+    if unique_bins.is_empty() {
+        return FrameBinView {
+            _frame_id: fbv._frame_id,
+            unique_bins: Vec::new(),
+            offsets: vec![0],
+            scan_idx: Vec::new(),
+            intensity: Vec::new(),
+        };
+    }
+
+    FrameBinView {
+        _frame_id: fbv._frame_id,
+        unique_bins,
+        offsets,
+        scan_idx,
+        intensity,
+    }
+}
+
+pub fn blur_mz_all_frames(
+    frames: &[FrameBinView],
+    sigma_bins: f32,
+    truncate_k: f32,
+) -> Vec<FrameBinView> {
+    use rayon::prelude::*;
+    frames.par_iter()
+        .map(|f| gaussian_blur_mz_sparse(f, sigma_bins, truncate_k))
+        .collect()
+}
+
+/// Build RT marginal (len = frames in [rt_lo..rt_hi]), using (bin,scan) window
+pub fn build_rt_marginal(
+    frames: &[FrameBinView],
+    rt_lo: usize, rt_hi: usize,
+    bin_lo: usize, bin_hi: usize,
+    im_lo: usize, im_hi: usize,
+) -> Vec<f32> {
+    let mut out = vec![0.0f32; rt_hi + 1 - rt_lo];
+    for (k, fbv) in frames[rt_lo..=rt_hi].iter().enumerate() {
+        out[k] = sum_frame_block(fbv, bin_lo, bin_hi, im_lo, im_hi);
+    }
+    out
 }
 
 pub fn find_im_peaks_row(
@@ -320,35 +521,6 @@ pub fn quad_subsample(y0: f32, y1: f32, y2: f32) -> f32 {
     if denom.abs() < 1e-12 { 0.0 } else { 0.5 * (y0 - y2) / denom }
 }
 
-/// light 1D Gaussian smoothing on a vector (along scans)
-pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
-    if v.is_empty() || sigma <= 0.0 { return; }
-    let radius = (truncate * sigma).ceil() as i32;
-    let two_sigma2 = 2.0 * sigma * sigma;
-    let mut w = Vec::with_capacity((2*radius + 1) as usize);
-    for dx in -radius..=radius {
-        let x = dx as f32;
-        w.push((-x*x / two_sigma2).exp());
-    }
-    let sum: f32 = w.iter().copied().sum();
-    for v_ in &mut w { *v_ /= sum; }
-
-    let n = v.len();
-    let mut out = vec![0.0f32; n];
-    for i in 0..n {
-        let mut acc = 0.0f32;
-        let mut norm = 0.0f32;
-        for (k,&wk) in w.iter().enumerate() {
-            let di = i as isize + (k as isize - (w.len() as isize -1)/2);
-            if di >= 0 && (di as usize) < n {
-                acc += wk * v[di as usize];
-                norm += wk;
-            }
-        }
-        out[i] = if norm > 0.0 { acc / norm } else { 0.0 };
-    }
-    v.copy_from_slice(&out);
-}
 
 #[inline]
 pub fn im_peak_id(p: &ImPeak1D) -> PeakId {
@@ -511,53 +683,6 @@ fn sum_frame_block(fbv:&FrameBinView, bin_lo:usize, bin_hi:usize, im_lo:usize, i
         i += 1;
     }
     acc
-}
-
-/// Build RT marginal (len = frames in [rt_lo..rt_hi]), using (bin,scan) window
-pub fn build_rt_marginal(
-    frames: &[FrameBinView],
-    rt_lo: usize, rt_hi: usize,
-    bin_lo: usize, bin_hi: usize,
-    im_lo: usize, im_hi: usize,
-) -> Vec<f32> {
-    let mut out = vec![0.0f32; rt_hi + 1 - rt_lo];
-    for (k, fbv) in frames[rt_lo..=rt_hi].iter().enumerate() {
-        out[k] = sum_frame_block(fbv, bin_lo, bin_hi, im_lo, im_hi);
-    }
-    out
-}
-
-/// Build IM marginal (absolute scan axis). We have to touch selected entries:
-pub fn build_im_marginal(
-    frames: &[FrameBinView],
-    rt_lo: usize, rt_hi: usize,
-    bin_lo: usize, bin_hi: usize,
-    im_lo: usize, im_hi: usize,
-) -> Vec<f32> {
-    let len = im_hi + 1 - im_lo;
-    let mut out = vec![0.0f32; len];
-
-    for fbv in &frames[rt_lo..=rt_hi] {
-        let ub = &fbv.unique_bins;
-        if ub.is_empty() { continue; }
-        let start = match ub.binary_search(&bin_lo) { Ok(i)=>i, Err(i)=>i.min(ub.len()) };
-        let mut i = start;
-        while i < ub.len() {
-            let b = ub[i];
-            if b > bin_hi { break; }
-            let lo = fbv.offsets[i]; let hi = fbv.offsets[i+1];
-            let scans = &fbv.scan_idx[lo..hi];
-            let ints  = &fbv.intensity[lo..hi];
-            for (s, val) in scans.iter().zip(ints.iter()) {
-                let s_abs = *s as usize;
-                if s_abs >= im_lo && s_abs <= im_hi {
-                    out[s_abs - im_lo] += *val;
-                }
-            }
-            i += 1;
-        }
-    }
-    out
 }
 
 /// Build m/z histogram (one bin per CSR bin in [bin_lo..bin_hi])
@@ -785,108 +910,4 @@ fn gaussian_kernel_bins(sigma_bins: f32, truncate_k: f32) -> (Vec<i32>, Vec<f32>
     }
     for wi in &mut w { *wi /= sum.max(1e-12); }
     (offs, w)
-}
-
-use rustc_hash::FxHashMap;
-
-// Key for accumulation
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct Key { bin: usize, scan: u32 }
-
-pub fn gaussian_blur_mz_sparse(
-    fbv: &FrameBinView,
-    sigma_bins: f32,
-    truncate_k: f32,
-) -> FrameBinView {
-    if fbv.unique_bins.is_empty() { return fbv.clone(); }
-
-    let (deltas, weights) = gaussian_kernel_bins(sigma_bins, truncate_k);
-    let nnz = fbv.intensity.len();
-    let k = deltas.len() as usize;
-
-    // Reserve: heuristic ~ nnz * effective support (not all deltas hit valid bins)
-    let mut acc: FxHashMap<Key, f32> = FxHashMap::with_capacity_and_hasher(nnz.saturating_mul(k/2), Default::default());
-
-    // Optional: quick bounds to avoid branching
-    let bin_min = *fbv.unique_bins.first().unwrap();
-    let bin_max = *fbv.unique_bins.last().unwrap();
-
-    // Iterate bins in order
-    for (i, &bin) in fbv.unique_bins.iter().enumerate() {
-        let lo = fbv.offsets[i];
-        let hi = fbv.offsets[i + 1];
-        for j in lo..hi {
-            let scan = fbv.scan_idx[j];   // u32 absolute scan
-            let val  = fbv.intensity[j];
-            if val <= 0.0 { continue; }
-
-            // Spread to neighbors
-            for (d, &w) in deltas.iter().zip(weights.iter()) {
-                let b2 = if d.is_negative() {
-                    bin.saturating_sub((-d) as usize)
-                } else {
-                    bin.saturating_add(*d as usize)
-                };
-                if b2 < bin_min || b2 > bin_max { continue; }
-                let key = Key { bin: b2, scan };
-                *acc.entry(key).or_insert(0.0) += val * w;
-            }
-        }
-    }
-
-    // Compact back into FrameBinView: group by bin, then by insertion order build CSR
-    let mut items: Vec<(usize, u32, f32)> = Vec::with_capacity(acc.len());
-    for (k, v) in acc.into_iter() {
-        if v > 0.0 && k.bin >= bin_min && k.bin <= bin_max {
-            items.push((k.bin, k.scan, v));
-        }
-    }
-    items.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-
-    let mut unique_bins = Vec::new();
-    let mut offsets = Vec::new();
-    let mut scan_idx = Vec::with_capacity(items.len());
-    let mut intensity = Vec::with_capacity(items.len());
-
-    offsets.push(0);
-    let mut cur_bin: Option<usize> = None;
-    for (bin, scan, val) in items.into_iter() {
-        if cur_bin.map_or(true, |cb| cb != bin) {
-            unique_bins.push(bin);
-            offsets.push(offsets.last().copied().unwrap());
-            cur_bin = Some(bin);
-        }
-        scan_idx.push(scan);
-        intensity.push(val);
-        *offsets.last_mut().unwrap() += 1;
-    }
-    // Guarantee at least one offset (if frame is empty after filtering)
-    if unique_bins.is_empty() {
-        return FrameBinView {
-            _frame_id: fbv._frame_id,
-            unique_bins: Vec::new(),
-            offsets: vec![0],
-            scan_idx: Vec::new(),
-            intensity: Vec::new(),
-        };
-    }
-
-    FrameBinView {
-        _frame_id: fbv._frame_id,
-        unique_bins,
-        offsets,
-        scan_idx,
-        intensity,
-    }
-}
-
-pub fn blur_mz_all_frames(
-    frames: &[FrameBinView],
-    sigma_bins: f32,
-    truncate_k: f32,
-) -> Vec<FrameBinView> {
-    use rayon::prelude::*;
-    frames.par_iter()
-        .map(|f| gaussian_blur_mz_sparse(f, sigma_bins, truncate_k))
-        .collect()
 }

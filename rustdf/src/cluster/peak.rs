@@ -3,80 +3,6 @@ use rayon::prelude::*;
 use mscore::timstof::frame::TimsFrame;
 use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MzScale};
 
-#[derive(Clone, Debug)]
-pub struct RtFrames {
-    pub frames: Vec<FrameBinView>,
-    pub frame_ids: Vec<u32>,
-    pub rt_times: Vec<f32>,
-    pub scale: Arc<MzScale>,       // NEW: the CSR scale used for these frames
-}
-impl RtFrames {
-    #[inline]
-    pub fn ctx(&self) -> RtTraceCtx<'_> {
-        RtTraceCtx {
-            frame_ids_sorted: &self.frame_ids,
-            rt_times_sec: &self.rt_times,
-        }
-    }
-
-    #[inline]
-    pub fn is_consistent(&self) -> bool {
-        self.frames.len() == self.frame_ids.len() && self.frame_ids.len() == self.rt_times.len()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct RtLocalPeak {
-    pub rt_idx: usize,
-    pub rt_sec: Option<f32>,
-    pub apex_smoothed: f32,
-    pub apex_raw: f32,
-    pub prominence: f32,
-    pub left_x: f32,
-    pub right_x: f32,
-    pub width_frames: usize,
-    pub area_raw: f32,
-    pub subframe: f32,
-    pub left_sec: Option<f32>,
-    pub right_sec: Option<f32>,
-    pub width_sec: Option<f32>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RtTraceCtx<'a> {
-    pub frame_ids_sorted: &'a [u32],
-    pub rt_times_sec: &'a [f32],
-}
-
-#[derive(Clone, Debug)]
-pub struct RtPeak1D {
-    // geometry in RT index/time
-    pub rt_idx: usize,
-    pub rt_sec: Option<f32>,
-    pub apex_smoothed: f32,
-    pub apex_raw: f32,
-    pub prominence: f32,
-    pub left_x: f32,
-    pub right_x: f32,
-    pub width_frames: usize,
-    pub area_raw: f32,
-    pub subframe: f32,
-
-    // provenance / bounds in frames and frame_ids
-    pub rt_bounds_frames: (usize, usize),   // inclusive in local RT trace
-    pub frame_id_bounds: (u32, u32),        // materialized
-    pub window_group: Option<u32>,
-
-    // m/z context carried from the IM parent (exact row + physical window)
-    pub mz_row: usize,
-    pub mz_center: f32,
-    pub mz_bounds: (f32, f32),
-
-    // linkage
-    pub parent_im_id: Option<PeakId>,
-    pub id: PeakId,                          // optional: RT-level id
-}
-
 // Stable 64-bit id for peaks
 pub type PeakId = i64;
 
@@ -411,6 +337,80 @@ pub fn rt_trace_for_im_peak_by_bounds(
         v.push(sum_frame_bins_scans(fbv, bin_l, bin_r, scan_lo, scan_hi));
     }
     v
+}
+
+#[derive(Clone, Debug)]
+pub struct RtFrames {
+    pub frames: Vec<FrameBinView>,
+    pub frame_ids: Vec<u32>,
+    pub rt_times: Vec<f32>,
+    pub scale: Arc<MzScale>,       // NEW: the CSR scale used for these frames
+}
+impl RtFrames {
+    #[inline]
+    pub fn ctx(&self) -> RtTraceCtx<'_> {
+        RtTraceCtx {
+            frame_ids_sorted: &self.frame_ids,
+            rt_times_sec: &self.rt_times,
+        }
+    }
+
+    #[inline]
+    pub fn is_consistent(&self) -> bool {
+        self.frames.len() == self.frame_ids.len() && self.frame_ids.len() == self.rt_times.len()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RtLocalPeak {
+    pub rt_idx: usize,
+    pub rt_sec: Option<f32>,
+    pub apex_smoothed: f32,
+    pub apex_raw: f32,
+    pub prominence: f32,
+    pub left_x: f32,
+    pub right_x: f32,
+    pub width_frames: usize,
+    pub area_raw: f32,
+    pub subframe: f32,
+    pub left_sec: Option<f32>,
+    pub right_sec: Option<f32>,
+    pub width_sec: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RtTraceCtx<'a> {
+    pub frame_ids_sorted: &'a [u32],
+    pub rt_times_sec: &'a [f32],
+}
+
+#[derive(Clone, Debug)]
+pub struct RtPeak1D {
+    // geometry in RT index/time
+    pub rt_idx: usize,
+    pub rt_sec: Option<f32>,
+    pub apex_smoothed: f32,
+    pub apex_raw: f32,
+    pub prominence: f32,
+    pub left_x: f32,
+    pub right_x: f32,
+    pub width_frames: usize,
+    pub area_raw: f32,
+    pub subframe: f32,
+
+    // provenance / bounds in frames and frame_ids
+    pub rt_bounds_frames: (usize, usize),   // inclusive in local RT trace
+    pub frame_id_bounds: (u32, u32),        // materialized
+    pub window_group: Option<u32>,
+
+    // m/z context carried from the IM parent (exact row + physical window)
+    pub mz_row: usize,
+    pub mz_center: f32,
+    pub mz_bounds: (f32, f32),
+
+    // linkage
+    pub parent_im_id: Option<PeakId>,
+    pub id: PeakId,                          // optional: RT-level id
 }
 
 pub fn find_rt_peaks(

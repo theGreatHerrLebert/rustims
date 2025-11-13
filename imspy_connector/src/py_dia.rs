@@ -858,6 +858,33 @@ impl PyMzScanPlanGroup {
         }
         Ok(out)
     }
+    /// Continuous m/z center for a fractional grid index mu_mz (float).
+    #[pyo3(name = "mz_center_at")]
+    pub fn mz_center_at(&self, mu_mz: f32) -> f32 {
+        self.scale.center_at(mu_mz)
+    }
+
+    /// Optional: direct access to mz_min / mz_max if you want them in Python later.
+    #[getter]
+    pub fn mz_min(&self) -> f32 {
+        self.scale.mz_min
+    }
+
+    #[getter]
+    pub fn mz_max(&self) -> f32 {
+        self.scale.mz_max
+    }
+
+    /// Optional: debug helper for self-tests
+    #[pyo3(name = "mz_index_of")]
+    pub fn mz_index_of(&self, mz: f32) -> Option<usize> {
+        self.scale.index_of(mz)
+    }
+
+    #[pyo3(name = "mz_center_for_row")]
+    pub fn mz_center_for_row(&self, row: usize) -> f32 {
+        self.scale.center(row)
+    }
 }
 
 impl PyMzScanPlanGroup {
@@ -1150,6 +1177,34 @@ impl PyMzScanPlan {
 
     pub fn bounds(&self, i: usize) -> Option<(usize, usize)> {
         self.windows_idx.get(i).copied()
+    }
+
+    /// Continuous m/z center for a fractional grid index mu_mz (float).
+    #[pyo3(name = "mz_center_at")]
+    pub fn mz_center_at(&self, mu_mz: f32) -> f32 {
+        self.scale.center_at(mu_mz)
+    }
+
+    /// Optional: direct access to mz_min / mz_max if you want them in Python later.
+    #[getter]
+    pub fn mz_min(&self) -> f32 {
+        self.scale.mz_min
+    }
+
+    #[getter]
+    pub fn mz_max(&self) -> f32 {
+        self.scale.mz_max
+    }
+
+    /// Optional: debug helper for self-tests
+    #[pyo3(name = "mz_index_of")]
+    pub fn mz_index_of(&self, mz: f32) -> Option<usize> {
+        self.scale.index_of(mz)
+    }
+
+    #[pyo3(name = "mz_center_for_row")]
+    pub fn mz_center_for_row(&self, row: usize) -> f32 {
+        self.scale.center(row)
     }
 
     // ---- Materialization (random access + Python iteration protocol)
