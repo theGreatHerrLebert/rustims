@@ -101,7 +101,10 @@ class TimsSlice:
     def filter(self, mz_min: float = 0.0, mz_max: float = 2000.0, scan_min: int = 0, scan_max: int = 1000,
                mobility_min: float = 0.0,
                mobility_max: float = 2.0,
-               intensity_min: float = 0.0, intensity_max: float = 1e9, num_threads: int = 4) -> 'TimsSlice':
+               intensity_min: float = 0.0, intensity_max: float = 1e9,
+               tof_min: int = 0,
+               tof_max: int = int(1e9),
+               num_threads: int = 4) -> 'TimsSlice':
         """Filter the slice by m/z, scan and intensity.
 
         Args:
@@ -113,6 +116,8 @@ class TimsSlice:
             mobility_max (float, optional): Maximum inverse mobility value. Defaults to 2.0.
             intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
             intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
+            tof_min (int, optional): Minimum tof value. Defaults to 0.
+            tof_max (int, optional): Maximum tof value. Defaults to 1e9.
             num_threads (int, optional): Number of threads to use. Defaults to 4.
 
         Returns:
@@ -120,7 +125,9 @@ class TimsSlice:
         """
         return TimsSlice.from_py_tims_slice(
             self.__slice_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
-                                           intensity_min, intensity_max, num_threads))
+                                           intensity_min, intensity_max,
+                                           tof_min, tof_max,
+                                           num_threads))
 
     def filter_by_type(self,
                        mz_min_ms1: float = 0,
