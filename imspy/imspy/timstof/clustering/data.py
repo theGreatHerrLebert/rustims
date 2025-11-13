@@ -164,55 +164,60 @@ class ImPeak1D(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyImPeak1D:
         return self.__py_ptr
 
-    # ------------------------------------------------------------------
-    # High-level constructors
-    # ------------------------------------------------------------------
     @classmethod
     def from_detected(
-        cls,
-        peaks: Dict[str, np.ndarray],
-        idx: int,
-        *,
-        window_grid,
-        plan_group=None,
-        k_sigma: float = 3.0,
-        min_width: int = 3,
+            cls,
+            peaks: Dict[str, np.ndarray],
+            idx: int,
+            *,
+            window_grid,
+            plan_group=None,
+            k_sigma: float = 3.0,
+            min_width: int = 3,
     ) -> "ImPeak1D":
         """
-        Build a single ImPeak1D from one row of the dict-of-arrays produced by
+        Build a single ImPeak1D from the dict-of-arrays produced by
         `iter_detect_peaks_from_blurred(...)`.
+
+        Accepts either:
+          - peaks["tof_row"], peaks["scan_idx"]
+          - or peaks["i"], peaks["j"] for backward compatibility.
 
         Assumes:
           - peaks["mu_scan"], peaks["sigma_scan"]
           - peaks["amplitude"], peaks["baseline"], peaks["area"]
-          - peaks["i"] (TOF row index in grid)
-          - peaks["j"] (scan index in grid)
         """
         mu_scan = peaks["mu_scan"]
         sigma_scan = peaks["sigma_scan"]
         amp = peaks["amplitude"]
-        base = peaks["baseline"]      # currently unused but kept for later
+        base = peaks["baseline"]
         area = peaks["area"]
-        tof_row_arr = peaks["i"]      # TOF row in the grid
-        scan_idx_arr = peaks["j"]     # scan index in the grid
+
+        # support both new and old names
+        tof_row_arr = peaks.get("tof_row", peaks.get("i"))
+        scan_idx_arr = peaks.get("scan_idx", peaks.get("j"))
+
+        if tof_row_arr is None or scan_idx_arr is None:
+            raise KeyError(
+                "Expected tof_row/scan_idx or i/j in peaks dict, "
+                f"got keys={list(peaks.keys())}"
+            )
 
         n = mu_scan.shape[0]
         if idx < 0 or idx >= n:
             raise IndexError(f"idx {idx} out of range for {n} detected peaks")
 
-        # ---- scalar values for this peak -----------------------------------
         mu_scan_v = float(mu_scan[idx])
         sigma_scan_v = float(sigma_scan[idx])
         amp_v = float(amp[idx])
-        base_v = float(base[idx])     # not used yet, but you might want it later
+        base_v = float(base[idx])  # unused for now
         area_v = float(area[idx])
 
         tof_row = int(round(float(tof_row_arr[idx])))
         scan_idx = int(round(float(scan_idx_arr[idx])))
 
-        # ---- grid-level geometry -------------------------------------------
+        # --- grid-level geometry -------------------------------------------
         rows = window_grid.rows
-        # derive cols from the scan axis
         scans_global = np.asarray(window_grid.scans, dtype=np.uint32)
         cols = scans_global.shape[0]
 
@@ -221,9 +226,8 @@ class ImPeak1D(RustWrapperObject):
         if not (0 <= scan_idx < cols):
             raise ValueError(f"scan_idx={scan_idx} outside grid cols={cols}")
 
-        # TOF centers / edges from grid
-        tof_centers = window_grid.tof_centers   # shape [rows]
-        tof_edges   = window_grid.tof_edges     # shape [rows+1]
+        tof_centers = window_grid.tof_centers
+        tof_edges = window_grid.tof_edges
 
         tof_center = int(round(float(tof_centers[tof_row])))
 
@@ -231,7 +235,6 @@ class ImPeak1D(RustWrapperObject):
             tof_min = int(round(float(tof_edges[tof_row])))
             tof_max = int(round(float(tof_edges[tof_row + 1])))
         else:
-            # last row: approximate bounds symmetrically
             e_last = float(tof_edges[tof_row])
             width = (
                 float(tof_edges[tof_row] - tof_edges[tof_row - 1])
@@ -242,47 +245,41 @@ class ImPeak1D(RustWrapperObject):
 
         tof_bounds: Tuple[int, int] = (tof_min, tof_max)
 
-        # RT / frame context from grid (still fairly coarse, but consistent)
         rt_bounds: Tuple[int, int] = window_grid.rt_range_frames
         frame_id_bounds: Tuple[int, int] = window_grid.frame_id_bounds
-        window_group = window_grid.window_group  # may be None
+        window_group = window_grid.window_group
 
-        # global scan axis
         scan_abs = int(scans_global[scan_idx])
 
-        # ---- left/right & width from sigma_scan ----------------------------
+        # --- left/right from sigma_scan ------------------------------------
         half = max(min_width / 2.0, k_sigma * max(sigma_scan_v, 1e-3))
-        left  = int(max(0, np.floor(scan_idx - half)))
+        left = int(max(0, np.floor(scan_idx - half)))
         right = int(min(cols - 1, np.ceil(scan_idx + half)))
         width_scans = max(1, right - left + 1)
 
-        left_abs  = int(scans_global[left])
+        left_abs = int(scans_global[left])
         right_abs = int(scans_global[right])
 
-        # ---- IM / mobility: not yet calibrated -----------------------------
         mobility: Optional[float] = None
         scan_sigma = float(sigma_scan_v) if np.isfinite(sigma_scan_v) else None
 
-        # For now, amplitude stands in for apex/prominence
         apex_smoothed = amp_v
-        apex_raw      = amp_v
-        prominence    = amp_v
+        apex_raw = amp_v
+        prominence = amp_v
 
-        left_x  = float(left_abs)
+        left_x = float(left_abs)
         right_x = float(right_abs)
-        subscan = float(mu_scan_v)    # fine coordinate in scan dimension
+        subscan = float(mu_scan_v)
 
-        # ---- deterministic-ish ID -----------------------------------------
         wg_val = int(window_group) if window_group is not None else 0
         fid_lo = int(frame_id_bounds[0])
         peak_id = (
-            (wg_val  & 0xFF)      << 56 |
-            (fid_lo  & 0xFFFF)    << 40 |
-            (tof_row & 0xFFFF)    << 24 |
-            (scan_abs & 0xFFFFFF)
+                (wg_val & 0xFF) << 56 |
+                (fid_lo & 0xFFFF) << 40 |
+                (tof_row & 0xFFFF) << 24 |
+                (scan_abs & 0xFFFFFF)
         )
 
-        # ---- construct underlying PyImPeak1D -------------------------------
         py_peak = ims.PyImPeak1D(
             tof_row,
             tof_center,
@@ -290,15 +287,12 @@ class ImPeak1D(RustWrapperObject):
             rt_bounds,
             frame_id_bounds,
             window_group,
-            # scan-local indices in grid
             scan_idx,
             left,
             right,
-            # absolute global scan indices
             scan_abs,
             left_abs,
             right_abs,
-            # shape / intensity
             scan_sigma,
             mobility,
             float(apex_smoothed),
@@ -307,7 +301,7 @@ class ImPeak1D(RustWrapperObject):
             float(left_x),
             float(right_x),
             int(width_scans),
-            float(area_v),      # detector area → area_raw
+            float(area_v),
             float(subscan),
             int(peak_id),
         )
@@ -316,13 +310,13 @@ class ImPeak1D(RustWrapperObject):
 
     @classmethod
     def batch_from_detected(
-        cls,
-        peaks: Dict[str, np.ndarray],
-        *,
-        window_grid,
-        plan_group=None,
-        k_sigma: float = 3.0,
-        min_width: int = 3,
+            cls,
+            peaks: Dict[str, np.ndarray],
+            *,
+            window_grid,
+            plan_group=None,
+            k_sigma: float = 3.0,
+            min_width: int = 3,
     ) -> List["ImPeak1D"]:
         n = int(peaks["mu_scan"].shape[0])
         if n == 0:
@@ -338,6 +332,7 @@ class ImPeak1D(RustWrapperObject):
             )
             for i in range(n)
         ]
+
     @property
     def id(self) -> int:
         return self.__py_ptr.id
