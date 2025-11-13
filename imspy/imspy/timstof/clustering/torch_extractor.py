@@ -1,12 +1,18 @@
+import gc
+from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
+
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 # ---------------------------
 # Small utilities
 # ---------------------------
+
 def _ensure_odd(x: int) -> int:
     return int(x) if (x % 2 == 1) else (int(x) + 1)
+
 
 def _apply_scale_tensor(X: torch.Tensor, scale: str):
     """
@@ -17,14 +23,15 @@ def _apply_scale_tensor(X: torch.Tensor, scale: str):
     if scale == "sqrt":
         # classic variance stabilization for Poisson-ish intensities
         Xs = torch.sqrt(torch.clamp(X, min=0.0))
-        return Xs, (lambda y: torch.clamp(y, min=0.0)**2)
+        return Xs, (lambda y: torch.clamp(y, min=0.0) ** 2)
     if scale == "cbrt":
         Xs = torch.cbrt(torch.clamp(X, min=0.0))
-        return Xs, (lambda y: torch.clamp(y, min=0.0)**3)
+        return Xs, (lambda y: torch.clamp(y, min=0.0) ** 3)
     if scale == "log1p":
         Xs = torch.log1p(torch.clamp(X, min=0.0))
         return Xs, (lambda y: torch.expm1(y))
     raise ValueError(f"unknown scale={scale!r}")
+
 
 # ---------------------------
 # Batched refiners
@@ -68,7 +75,11 @@ def _batched_refine_adam(
 
         params = [p for p in (mu_i, mu_j, lsi, lsj, la, b) if p.requires_grad]
         if not params:
-            return mu_i.detach(), mu_j.detach(), lsi.exp().detach(), lsj.exp().detach(), la.exp().detach(), b.detach()
+            return (
+                mu_i.detach(), mu_j.detach(),
+                lsi.exp().detach(), lsj.exp().detach(),
+                la.exp().detach(), b.detach()
+            )
 
         opt = torch.optim.Adam(params, lr=lr, betas=(0.9, 0.999))
 
@@ -76,35 +87,40 @@ def _batched_refine_adam(
             r = yhat - y
             if loss == "huber":
                 absr = r.abs()
-                return torch.where(absr <= delta, 0.5*r*r, delta*(absr - 0.5*delta)).mean()
+                return torch.where(absr <= delta, 0.5 * r * r, delta * (absr - 0.5 * delta)).mean()
             elif loss == "cauchy":
-                return (delta**2 * torch.log1p((r/delta)**2)).mean()
+                return (delta ** 2 * torch.log1p((r / delta) ** 2)).mean()
             else:
-                return (r*r).mean()
+                return (r * r).mean()
 
         for _ in range(iters):
             opt.zero_grad(set_to_none=True)
             si = lsi.exp(); sj = lsj.exp()
-            di = I - mu_i.view(-1,1,1)
-            dj = J - mu_j.view(-1,1,1)
+            di = I - mu_i.view(-1, 1, 1)
+            dj = J - mu_j.view(-1, 1, 1)
 
             # detached mask narrows the influence region
-            Mi = torch.exp(-0.5*(di/(mask_k*si.view(-1,1,1)))**2)
-            Mj = torch.exp(-0.5*(dj/(mask_k*sj.view(-1,1,1)))**2)
-            M = (Mi*Mj).detach()
+            Mi = torch.exp(-0.5 * (di / (mask_k * si.view(-1, 1, 1))) ** 2)
+            Mj = torch.exp(-0.5 * (dj / (mask_k * sj.view(-1, 1, 1))) ** 2)
+            M = (Mi * Mj).detach()
 
-            q = (di/si.view(-1,1,1))**2 + (dj/sj.view(-1,1,1))**2
-            yhat = b.view(-1,1,1) + la.exp().view(-1,1,1) * torch.exp(-0.5*q)
-            L = loss_fn(yhat*M, P*M)
+            q = (di / si.view(-1, 1, 1)) ** 2 + (dj / sj.view(-1, 1, 1)) ** 2
+            yhat = b.view(-1, 1, 1) + la.exp().view(-1, 1, 1) * torch.exp(-0.5 * q)
+            L = loss_fn(yhat * M, P * M)
             L.backward()
             opt.step()
 
             # guards on logs
-            lsi.data.clamp_(min=np.log(1e-3))
-            lsj.data.clamp_(min=np.log(1e-3))
-            la.data.clamp_(min=np.log(1e-6))
+            import numpy as _np
+            lsi.data.clamp_(min=_np.log(1e-3))
+            lsj.data.clamp_(min=_np.log(1e-3))
+            la.data.clamp_(min=_np.log(1e-6))
 
-    return mu_i.detach(), mu_j.detach(), lsi.exp().detach(), lsj.exp().detach(), la.exp().detach(), b.detach()
+    return (
+        mu_i.detach(), mu_j.detach(),
+        lsi.exp().detach(), lsj.exp().detach(),
+        la.exp().detach(), b.detach()
+    )
 
 
 def _batched_refine_gauss_newton(
@@ -149,10 +165,14 @@ def _batched_refine_gauss_newton(
 
     # Which parameters to include
     cols = []
-    if refine_scan: cols.append("mu_i")
-    if refine_mz:   cols.append("mu_j")
-    if refine_scan and refine_sigma_scan: cols.append("lsi")
-    if refine_mz   and refine_sigma_mz:   cols.append("lsj")
+    if refine_scan:
+        cols.append("mu_i")
+    if refine_mz:
+        cols.append("mu_j")
+    if refine_scan and refine_sigma_scan:
+        cols.append("lsi")
+    if refine_mz and refine_sigma_mz:
+        cols.append("lsj")
     cols += ["la", "b"]
 
     # Per-batch dynamic clamps for amplitude (prevents exp overflow)
@@ -165,42 +185,44 @@ def _batched_refine_gauss_newton(
     # Initial residual (for LM acceptance test)
     def forward_and_residual(mu_i, mu_j, lsi, lsj, la, b):
         si = lsi.exp(); sj = lsj.exp()
-        di = I - mu_i.view(-1,1,1)
-        dj = J - mu_j.view(-1,1,1)
+        di = I - mu_i.view(-1, 1, 1)
+        dj = J - mu_j.view(-1, 1, 1)
 
         # Detached Gaussian mask like ADAM to localize influence
-        Mi = torch.exp(-0.5*(di/(mask_k*si.view(-1,1,1)))**2)
-        Mj = torch.exp(-0.5*(dj/(mask_k*sj.view(-1,1,1)))**2)
-        M  = (Mi*Mj).detach()
+        Mi = torch.exp(-0.5 * (di / (mask_k * si.view(-1, 1, 1))) ** 2)
+        Mj = torch.exp(-0.5 * (dj / (mask_k * sj.view(-1, 1, 1))) ** 2)
+        M  = (Mi * Mj).detach()
 
-        q    = (di/si.view(-1,1,1))**2 + (dj/sj.view(-1,1,1))**2
-        A    = la.exp().view(-1,1,1)
-        G    = torch.exp(-0.5*q)
-        yhat = b.view(-1,1,1) + A*G
+        q    = (di / si.view(-1, 1, 1)) ** 2 + (dj / sj.view(-1, 1, 1)) ** 2
+        A    = la.exp().view(-1, 1, 1)
+        G    = torch.exp(-0.5 * q)
+        yhat = b.view(-1, 1, 1) + A * G
         R    = (P - yhat) * M
         return R, M, di, dj, si, sj, A, G
 
     R, M, di, dj, si, sj, A, G = forward_and_residual(mu_i, mu_j, lsi, lsj, la, b)
-    prev_loss = torch.mean(R*R)
+    prev_loss = torch.mean(R * R)
 
     lam = torch.as_tensor(damping, device=dev, dtype=P.dtype)
+
+    import numpy as _np
 
     for _ in range(iters):
         # Partials for enabled params (Jacobian of residuals: J = dR/dθ = -dyhat/dθ) with mask M applied
         Jcols = []
         if "mu_i" in cols:
-            J_mu_i = -(A*G * (di/(si.view(-1,1,1)**2))) * M
+            J_mu_i = -(A * G * (di / (si.view(-1, 1, 1) ** 2))) * M
             Jcols.append(J_mu_i)
         if "mu_j" in cols:
-            J_mu_j = -(A*G * (dj/(sj.view(-1,1,1)**2))) * M
+            J_mu_j = -(A * G * (dj / (sj.view(-1, 1, 1) ** 2))) * M
             Jcols.append(J_mu_j)
         if "lsi" in cols:
-            J_lsi  = -(A*G * (di**2) / (si.view(-1,1,1)**2)) * M
+            J_lsi  = -(A * G * (di ** 2) / (si.view(-1, 1, 1) ** 2)) * M
             Jcols.append(J_lsi)
         if "lsj" in cols:
-            J_lsj  = -(A*G * (dj**2) / (sj.view(-1,1,1)**2)) * M
+            J_lsj  = -(A * G * (dj ** 2) / (sj.view(-1, 1, 1) ** 2)) * M
             Jcols.append(J_lsj)
-        J_la = -(A*G) * M
+        J_la = -(A * G) * M
         J_b  = -(torch.ones_like(R)) * M
         Jcols.extend([J_la, J_b])
 
@@ -209,12 +231,12 @@ def _batched_refine_gauss_newton(
         rvec = R.reshape(N, -1, 1)                                     # [N, HW, 1]
 
         JT  = Jmat.transpose(1, 2)                                     # [N, P, HW]
-        JTJ = torch.matmul(JT, Jmat)                                    # [N, P, P]
-        JTr = torch.matmul(JT, rvec)                                    # [N, P, 1]
+        JTJ = torch.matmul(JT, Jmat)                                   # [N, P, P]
+        JTr = torch.matmul(JT, rvec)                                   # [N, P, 1]
 
         # LM damping
         eye = torch.eye(JTJ.shape[-1], device=dev, dtype=P.dtype).unsqueeze(0).expand_as(JTJ)
-        JTJ_damped = JTJ + lam.view(-1,1,1) * eye
+        JTJ_damped = JTJ + lam.view(-1, 1, 1) * eye
 
         # Solve; fall back to pinv if needed
         try:
@@ -230,10 +252,10 @@ def _batched_refine_gauss_newton(
         if "mu_j" in cols:
             mu_j_new = (mu_j + delta[:, k]).clamp(-1e6, 1e6); k += 1
         if "lsi" in cols:
-            lsi_new  = (lsi  + delta[:, k]).clamp_min(np.log(1e-3));   k += 1
+            lsi_new  = (lsi  + delta[:, k]).clamp_min(_np.log(1e-3));   k += 1
         if "lsj" in cols:
-            lsj_new  = (lsj  + delta[:, k]).clamp_min(np.log(1e-3));   k += 1
-        la_new  = (la + delta[:, k]).clamp_min(np.log(1e-6));           k += 1
+            lsj_new  = (lsj  + delta[:, k]).clamp_min(_np.log(1e-3));   k += 1
+        la_new  = (la + delta[:, k]).clamp_min(_np.log(1e-6));          k += 1
         b_new   =  b + delta[:, k]                                     # last
 
         # Amplitude upper clamp to avoid exp overflow
@@ -244,13 +266,12 @@ def _batched_refine_gauss_newton(
         R_new, M_new, di, dj, si, sj, A, G = forward_and_residual(
             mu_i_new, mu_j_new, lsi_new, lsj_new, la_new, b_new
         )
-        loss_new = torch.mean(R_new*R_new)
+        loss_new = torch.mean(R_new * R_new)
 
         # If NaN/Inf or not improved, increase damping and retry this iteration
         bad = torch.isnan(loss_new) | torch.isinf(loss_new) | (loss_new > prev_loss)
         if bool(bad):
             lam = lam * 10.0
-            # Recompute with stronger damping next loop (no state change)
             continue
         else:
             # Accept
@@ -312,8 +333,8 @@ def iter_detect_peaks_from_blurred(
     B_np_int = B_blurred.T if rows_are_mz else B_blurred  # internal: (scan, mz)
 
     H, W = B_np_int.shape
-    fit_h = _ensure_odd(max(fit_h, 2*pool_scan + 5))
-    fit_w = _ensure_odd(max(fit_w, 2*pool_mz   + 5))
+    fit_h = _ensure_odd(max(fit_h, 2 * pool_scan + 5))
+    fit_w = _ensure_odd(max(fit_w, 2 * pool_mz   + 5))
     hr, wr = fit_h // 2, fit_w // 2
 
     # Torch tensors
@@ -363,23 +384,23 @@ def iter_detect_peaks_from_blurred(
         cj = (fit_w - 1) / 2.0
         wi = (ii - ci) / (0.6 * max(1.0, float(kH)))
         wj = (jj - cj) / (0.6 * max(1.0, float(kW)))
-        Wsoft = torch.exp(-0.5 * (wi**2 + wj**2))
+        Wsoft = torch.exp(-0.5 * (wi ** 2 + wj ** 2))
         Yw = Y * Wsoft
         s   = Yw.sum(dim=(1, 2)) + 1e-12
         mu_i = (Yw * ii).sum(dim=(1, 2)) / s
         mu_j = (Yw * jj).sum(dim=(1, 2)) / s
-        var_i = (Yw * (ii - mu_i.view(-1, 1, 1))**2).sum(dim=(1, 2)) / s
-        var_j = (Yw * (jj - mu_j.view(-1, 1, 1))**2).sum(dim=(1, 2)) / s
+        var_i = (Yw * (ii - mu_i.view(-1, 1, 1)) ** 2).sum(dim=(1, 2)) / s
+        var_j = (Yw * (jj - mu_j.view(-1, 1, 1)) ** 2).sum(dim=(1, 2)) / s
         sigma_i = var_i.clamp_min_(0).sqrt_()
         sigma_j = var_j.clamp_min_(0).sqrt_()
         i_n = mu_i.round().clamp_(0, fit_h - 1).to(torch.long)
         j_n = mu_j.round().clamp_(0, fit_w - 1).to(torch.long)
         amp = P[torch.arange(n, device=P.device), i_n, j_n] - base
-        area = (Y).sum(dim=(1,2))
+        area = (Y).sum(dim=(1, 2))
         return mu_i, mu_j, sigma_i, sigma_j, amp, base, area
 
     bytes_per_patch = fit_h * fit_w * 4
-    target_bytes = max(16, int(patch_batch_target_mb)) * (1024**2)
+    target_bytes = max(16, int(patch_batch_target_mb)) * (1024 ** 2)
     patch_batch = max(512, min(1_000_000, target_bytes // max(1, bytes_per_patch)))
 
     i = 0
@@ -389,8 +410,12 @@ def iter_detect_peaks_from_blurred(
         tile_scaled = B_int[lo:hi]  # scaled internal (scan,mz)
 
         thr = torch.tensor(float(min_intensity), dtype=tile_scaled.dtype, device=tile_scaled.device)
-        pooled = F.max_pool2d(tile_scaled[None, None], kernel_size=(kH, kW),
-                              stride=1, padding=(padH, padW))[0, 0]
+        pooled = F.max_pool2d(
+            tile_scaled[None, None],
+            kernel_size=(kH, kW),
+            stride=1,
+            padding=(padH, padW),
+        )[0, 0]
         mask = (tile_scaled >= thr) & (tile_scaled == pooled)
         idxs = mask.nonzero(as_tuple=False)  # [N, 2] in (scan_row, mz_col)
 
@@ -439,8 +464,12 @@ def iter_detect_peaks_from_blurred(
                     i_n = mu_i.round().clamp_(0, fit_h - 1).to(torch.long)
                     j_n = mu_j.round().clamp_(0, fit_w - 1).to(torch.long)
                     amp_o = patches_o[torch.arange(n_o, device=patches_o.device), i_n, j_n] - base_o
-                    area_o = (patches_o - base_o.view(-1,1,1)).clamp_min_(0.0).sum(dim=(1,2))
-                    amp, base, area = amp_o.to(amp.dtype), base_o.to(base.dtype), area_o.to(area.dtype)
+                    area_o = (patches_o - base_o.view(-1, 1, 1)).clamp_min_(0.0).sum(dim=(1, 2))
+                    amp, base, area = (
+                        amp_o.to(amp.dtype),
+                        base_o.to(base.dtype),
+                        area_o.to(area.dtype),
+                    )
 
                 # INTERNAL absolute coords (scan,mz)
                 abs_ij = idxb.clone()
@@ -462,9 +491,10 @@ def iter_detect_peaks_from_blurred(
                     i_idx   = abs_ij[:, 0].to(patches.dtype)
                     j_idx   = abs_ij[:, 1].to(patches.dtype)
 
-                out = torch.stack([
-                    mu_scan, mu_mz, s_i, s_j, amp, base, area, i_idx, j_idx
-                ], dim=1).detach().cpu().numpy()
+                out = torch.stack(
+                    [mu_scan, mu_mz, s_i, s_j, amp, base, area, i_idx, j_idx],
+                    dim=1,
+                ).detach().cpu().numpy()
 
                 yield {
                     "mu_scan":   out[:, 0].astype(np.float32),
@@ -490,23 +520,32 @@ def iter_detect_peaks_from_blurred(
             torch.cuda.empty_cache()
 
 
-import gc
-from tqdm import tqdm
-
 # ---- plan -> batches of window groups ---------------------------------------
+
 def iter_plan_batches(plan, batch_size: int):
+    """
+    Iterate over plan in chunks, using get_batch_par / get_batch if available.
+
+    Compatible with the new TofScanPlan / TofScanPlanGroup wrappers:
+      - get_batch_par(start, count) -> list[TofScanWindowGrid]
+      - get_batch(start, count)     -> list[TofScanWindowGrid]
+    """
     total = len(plan)
     for start in range(0, total, batch_size):
         count = min(batch_size, total - start)
         if hasattr(plan, "get_batch_par"):
-            wgs = plan.get_batch_par(start, count, 1)   # 1 worker hint (adjust if you want)
+            # NEW: wrapper API (no worker arg)
+            wgs = plan.get_batch_par(start, count)
         elif hasattr(plan, "get_batch"):
-            wgs = plan.get_batch(start, count, 1)
+            wgs = plan.get_batch(start, count)
         else:
-            raise AttributeError("plan has neither get_batch_par nor get_batch")
+            # fallback: plain slicing
+            wgs = [plan[i] for i in range(start, start + count)]
         yield wgs
 
+
 # --- collect streaming chunks into dict-of-arrays -----------------------------
+
 def _collect_stream(peaks_iter):
     acc = {k: [] for k in [
         "mu_scan","mu_mz","sigma_scan","sigma_mz",
@@ -515,10 +554,14 @@ def _collect_stream(peaks_iter):
     for chunk in peaks_iter:
         for k, v in chunk.items():
             acc[k].append(v)
-    return {k: (np.concatenate(vs, axis=0) if vs else np.empty((0,), np.float32))
-            for k, vs in acc.items()}
+    return {
+        k: (np.concatenate(vs, axis=0) if vs else np.empty((0,), np.float32))
+        for k, vs in acc.items()
+    }
+
 
 # --- light dedup across tiles (keep max amplitude per coarse cell) ------------
+
 def _dedup_peaks(peaks, tol_scan=0.75, tol_mz=0.25):
     if peaks["mu_scan"].size == 0:
         return peaks
@@ -533,7 +576,9 @@ def _dedup_peaks(peaks, tol_scan=0.75, tol_mz=0.25):
     keep = np.fromiter(seen.values(), dtype=np.int64)
     return {k: v[keep] for k, v in peaks.items()}
 
+
 # --- per-WG detection -> list[ImPeak1D] --------------------------------------
+
 def _detect_im_peaks_for_wgs(
     wgs, plan_group, *,
     device="cuda",
@@ -548,20 +593,24 @@ def _detect_im_peaks_for_wgs(
     k_sigma=3.0, min_width=3,
     mz_bounds_pad_ppm=50.0, mz_bounds_pad_abs=0.05,
 ):
-    from imspy.timstof.dia import ImPeak1D
+    from imspy.timstof.clustering.data import ImPeak1D
 
     batch_objs = []
 
     for wg in tqdm(wgs, desc="Detecting peaks (BATCH)", leave=False, ncols=80):
+        # NOTE: wg is a TofScanWindowGrid wrapper. .data returns a NumPy array and
+        # *moves* the underlying Rust buffer, so only call it once per WG.
+        B = wg.data
         peaks_iter = iter_detect_peaks_from_blurred(
-            B_blurred=wg.data,
+            B_blurred=B,
             device=device,
             pool_scan=pool_scan, pool_mz=pool_mz,
             min_intensity=min_intensity_scaled,
             tile_rows=tile_rows, tile_overlap=tile_overlap,
             fit_h=fit_h, fit_w=fit_w,
             rows_are_mz=True,
-            refine=refine, refine_iters=refine_iters, refine_lr=refine_lr, refine_mask_k=refine_mask_k,
+            refine=refine, refine_iters=refine_iters, refine_lr=refine_lr,
+            refine_mask_k=refine_mask_k,
             refine_scan=refine_scan, refine_mz=refine_mz,
             refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
             scale=scale, output_units=output_units, gn_float64=gn_float64,
@@ -573,8 +622,8 @@ def _detect_im_peaks_for_wgs(
 
         objs = ImPeak1D.batch_from_detected(
             peaks,
-            window_grid=wg,
-            plan_group=plan_group,
+            window_grid=wg,           # wrapper TofScanWindowGrid
+            plan_group=plan_group,    # wrapper TofScanPlanGroup
             k_sigma=k_sigma,
             min_width=min_width,
             mz_bounds_pad_ppm=mz_bounds_pad_ppm,
@@ -582,25 +631,24 @@ def _detect_im_peaks_for_wgs(
         )
         batch_objs.extend(objs)
 
-        # free WG buffers
+        # free WG buffers – we already moved data once via wg.data, so there is
+        # nothing more to null manually on the wrapper.
         try:
             if hasattr(wg, "clear_cache") and callable(wg.clear_cache):
                 wg.clear_cache()
-            if hasattr(wg, "release") and callable(wg.release):
-                wg.release()
-            if hasattr(wg, "data"):
-                wg.data = None
         except Exception:
             pass
 
-        del peaks, objs, peaks_iter
+        del B, peaks, objs, peaks_iter, wg
         if torch.cuda.is_available() and device.startswith("cuda"):
             torch.cuda.empty_cache()
         gc.collect()
 
     return batch_objs
 
+
 # --- PUBLIC: iterate batches -> yield list[ImPeak1D] per batch ----------------
+
 def iter_im_peaks_batches(
     plan,
     *,
@@ -636,35 +684,43 @@ def iter_im_peaks_batches(
     mz_bounds_pad_ppm=15.0,
     mz_bounds_pad_abs=0.05,
 ):
-    """Yields one list[ImPeak1D] per plan batch (e.g., 64 WGs)."""
+    """
+    Yields one list[ImPeak1D] per plan batch (e.g., 64 WGs).
+
+    `plan` is expected to be a TofScanPlanGroup wrapper (or something with
+    len(), get_batch_par/get_batch, and __getitem__ defined).
+    """
     num_batches = (len(plan) + batch_size - 1) // batch_size
-    for wgs in tqdm(iter_plan_batches(plan, batch_size), total=num_batches, desc="Batches", ncols=80):
-        # process this batch of WGs -> list[ImPeak1D]
+    for wgs in tqdm(
+        iter_plan_batches(plan, batch_size),
+        total=num_batches,
+        desc="Batches",
+        ncols=80,
+    ):
         batch_objs = _detect_im_peaks_for_wgs(
             wgs, plan_group=plan, device=device,
             pool_scan=pool_scan, pool_mz=pool_mz,
             min_intensity_scaled=min_intensity_scaled,
             tile_rows=tile_rows, tile_overlap=tile_overlap,
             fit_h=fit_h, fit_w=fit_w,
-            refine=refine, refine_iters=refine_iters, refine_lr=refine_lr, refine_mask_k=refine_mask_k,
-            refine_scan=refine_scan, refine_mz=refine_mz, refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
+            refine=refine, refine_iters=refine_iters, refine_lr=refine_lr,
+            refine_mask_k=refine_mask_k,
+            refine_scan=refine_scan, refine_mz=refine_mz,
+            refine_sigma_scan=refine_sigma_scan, refine_sigma_mz=refine_sigma_mz,
             scale=scale, output_units=output_units, gn_float64=gn_float64,
             do_dedup=do_dedup, tol_scan=tol_scan, tol_mz=tol_mz,
             k_sigma=k_sigma, min_width=min_width,
             mz_bounds_pad_ppm=mz_bounds_pad_ppm, mz_bounds_pad_abs=mz_bounds_pad_abs,
         )
 
-        # yield the result of THIS batch
         yield batch_objs
 
-        # try evicting plan-side cached views for this batch
         try:
             if hasattr(plan, "evict_views") and callable(plan.evict_views):
                 plan.evict_views(wgs)
         except Exception:
             pass
 
-        # drop the WG list itself
         del wgs, batch_objs
         if torch.cuda.is_available() and device.startswith("cuda"):
             torch.cuda.empty_cache()
