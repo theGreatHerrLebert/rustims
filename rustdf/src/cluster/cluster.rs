@@ -1,13 +1,46 @@
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
-
+use mscore::timstof::frame::TimsFrame;
+use mscore::timstof::slice::TimsSlice;
 use crate::cluster::peak::{FrameBinView, ImPeak1D, RtFrames, RtPeak1D};
 use crate::cluster::utility::{Fit1D, TofScale, fit1d_moment};
+use crate::data::handle::IndexConverter;
 
-// ==========================================================
-// Options / specs / results
-// ==========================================================
+#[derive(Copy, Clone, Debug)]
+pub struct ScanSlice {
+    pub scan: usize,
+    pub start: usize,
+    pub end: usize
+}
+
+pub fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
+    let scv = &fr.scan;
+    let mut out = Vec::new();
+    if scv.is_empty() { return out; }
+    let mut s_cur = scv[0];
+    let mut i_start = 0usize;
+    for i in 1..scv.len() {
+        if scv[i] != s_cur {
+            if s_cur >= 0 {
+                out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: i });
+            }
+            s_cur = scv[i];
+            i_start = i;
+        }
+    }
+    if s_cur >= 0 {
+        out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: scv.len() });
+    }
+    out
+}
+
+pub struct RawAttachContext {
+    pub slice: TimsSlice,
+    pub scan_slices: Vec<Vec<ScanSlice>>,
+    pub frame_ids_local: Vec<u32>,
+    pub rt_axis_sec: Vec<f32>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Attach1DOptions {
@@ -26,6 +59,7 @@ pub struct Eval1DOpts {
     pub attach_axes: bool,
     /// Raw point attachment options.
     pub attach: Attach1DOptions,
+    pub compute_mz_from_tof: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -96,6 +130,100 @@ pub struct ClusterResult1D {
     pub raw_points: Option<RawPoints>,
 }
 
+pub fn decorate_with_mz_for_cluster<D: IndexConverter>(
+    ds: &D,
+    rt_frames: &RtFrames,
+    spec: &ClusterSpec1D,
+    scale: &TofScale,
+    res: &mut ClusterResult1D,
+) {
+    // ----------------------------------------------------
+    // 1) Choose a representative frame (mid-RT) for calib
+    // ----------------------------------------------------
+    let n_frames = rt_frames.frame_ids.len();
+    if n_frames == 0 {
+        return;
+    }
+
+    // Normalize RT bounds
+    let mut rt_lo = spec.rt_lo.min(spec.rt_hi);
+    let mut rt_hi = spec.rt_lo.max(spec.rt_hi);
+
+    // Clamp to available frames
+    if rt_lo >= n_frames {
+        return;
+    }
+    rt_hi = rt_hi.min(n_frames.saturating_sub(1));
+    if rt_lo > rt_hi {
+        std::mem::swap(&mut rt_lo, &mut rt_hi);
+    }
+
+    let frame_slice = &rt_frames.frame_ids[rt_lo..=rt_hi];
+    if frame_slice.is_empty() {
+        return;
+    }
+    let mid_idx = frame_slice.len() / 2;
+    let frame_id = frame_slice[mid_idx];
+
+    // ----------------------------------------------------
+    // 2) Map TOF-bin window → axis range and m/z axis
+    // ----------------------------------------------------
+    let (bin_lo, bin_hi) = bin_range_for_win(scale, spec.tof_win);
+    if bin_lo > bin_hi {
+        return;
+    }
+
+    let n_bins = scale.num_bins();
+    if n_bins == 0 || bin_lo >= n_bins {
+        return;
+    }
+    let bin_hi = bin_hi.min(n_bins.saturating_sub(1));
+
+    // Build a "raw" axis in whatever domain TofScale.center uses.
+    // Historically this is m/z, but if your TofScale is TOF-like, you
+    // should adapt this section to call ds.tof_to_mz instead.
+    let axis_vals: Vec<f32> = (bin_lo..=bin_hi)
+        .map(|b| scale.center(b))
+        .collect();
+
+    if axis_vals.is_empty() {
+        return;
+    }
+
+    // m/z window from axis endpoints
+    let mz_lo = *axis_vals.first().unwrap();
+    let mz_hi = *axis_vals.last().unwrap();
+    if !mz_lo.is_finite() || !mz_hi.is_finite() || mz_hi <= mz_lo {
+        return;
+    }
+
+    // ----------------------------------------------------
+    // 3) Optionally refine via calibration (TOF → m/z)
+    // ----------------------------------------------------
+    // If TofScale.center() is already in m/z, this is enough.
+    // If it is TOF-like and you want "true" m/z, uncomment/adapt:
+    // Example: interpret axis_vals as TOF indices and convert
+    let tof_vals_u32: Vec<u32> = axis_vals
+        .iter()
+        .map(|v| v.round().max(0.0) as u32)
+        .collect();
+
+    let mz_vals_f64 = ds.tof_to_mz(frame_id, &tof_vals_u32);
+    if mz_vals_f64.len() == tof_vals_u32.len() && !mz_vals_f64.is_empty() {
+        let mz_axis_da: Vec<f32> = mz_vals_f64.iter().map(|&x| x as f32).collect();
+        let mz_lo = *mz_axis_da.first().unwrap();
+        let mz_hi = *mz_axis_da.last().unwrap();
+        if mz_hi > mz_lo && mz_lo.is_finite() && mz_hi.is_finite() {
+            res.mz_window = Some((mz_lo, mz_hi));
+            res.mz_axis_da = Some(mz_axis_da);
+        }
+        return;
+    }
+
+    // Fallback: assume axis_vals are already m/z
+    res.mz_window = Some((mz_lo, mz_hi));
+    res.mz_axis_da = Some(axis_vals);
+}
 // ==========================================================
 // Core CSR helpers (RT / IM / TOF axis)
 // ==========================================================
@@ -415,7 +543,7 @@ fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(
     }
 
     // σ = FWHM / (2*sqrt(2 ln 2))
-    let two_sqrt_two_ln2 = 2.0 * (2.0_f32.ln()).sqrt();
+    let two_sqrt_two_ln2 = 2.0 * 2.0_f32.ln().sqrt();
     let sigma = fwhm / two_sqrt_two_ln2;
 
     if sigma.is_finite() && sigma > 0.0 {
@@ -959,4 +1087,209 @@ pub fn make_specs_from_im_and_rt_groups_threads(
     } else {
         ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap().install(build)
     }
+}
+
+// ==========================================================
+// Helpers for axis padding + search
+// ==========================================================
+
+#[inline]
+fn cushion_hi_edge(scale: &TofScale, hi_edge: f32) -> f32 {
+    // Generic: expand the upper edge by a small fraction of a bin width,
+    // clamp to the axis max (last edge).
+    let axis_max = scale
+        .edges
+        .last()
+        .copied()
+        .unwrap_or(hi_edge);
+
+    let n = scale.edges.len();
+    let bin_width = if n >= 2 {
+        let span = scale.edges[n - 1] - scale.edges[0];
+        if span.is_finite() && span != 0.0 {
+            (span / (n as f32 - 1.0)).abs()
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    let eps = 0.25 * bin_width; // small cushion, axis-agnostic
+    (hi_edge + eps).min(axis_max)
+}
+
+#[inline]
+fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] < xf {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+#[inline]
+fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] <= xf {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+#[inline]
+fn thin_stride(total: usize, cap: usize) -> usize {
+    if cap == 0 || total <= cap {
+        1
+    } else {
+        (total + cap - 1) / cap
+    }
+}
+
+// ==========================================================
+// Context-based raw attachment (no I/O here)
+// ==========================================================
+
+pub fn attach_raw_points_for_spec_1d_in_ctx(
+    ctx: &RawAttachContext,
+    scale: &TofScale,
+    final_bin_lo: usize,
+    final_bin_hi: usize,
+    final_im_lo: usize,
+    final_im_hi: usize,
+    final_rt_lo: usize,
+    final_rt_hi: usize,
+    max_points: Option<usize>,
+) -> RawPoints {
+    let n_bins = scale.num_bins();
+    if n_bins == 0 {
+        return RawPoints::default();
+    }
+
+    // clamp bin indices
+    let mut bin_lo = final_bin_lo.min(n_bins.saturating_sub(1));
+    let mut bin_hi = final_bin_hi.min(n_bins.saturating_sub(1));
+    if bin_lo > bin_hi {
+        std::mem::swap(&mut bin_lo, &mut bin_hi);
+    }
+
+    // axis window from bin edges
+    let axis_lo = scale.edges[bin_lo];
+    let hi_edge_idx = (bin_hi + 1).min(scale.edges.len().saturating_sub(1));
+    let axis_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx]);
+
+    // reuse the pre-built slice and scan_slices
+    let slice = &ctx.slice;
+    let scan_slices = &ctx.scan_slices;
+
+    // defensive clamp of RT window to slice length
+    let n_frames = slice.frames.len();
+    if n_frames == 0 {
+        return RawPoints::default();
+    }
+    let rt_lo = final_rt_lo.min(n_frames.saturating_sub(1));
+    let rt_hi = final_rt_hi.min(n_frames.saturating_sub(1));
+    if rt_lo > rt_hi {
+        return RawPoints::default();
+    }
+
+    // 1) count
+    let mut total = 0usize;
+    for fi in rt_lo..=rt_hi {
+        let fr = &slice.frames[fi];
+        let mz = &fr.ims_frame.mz;
+        for sl in &scan_slices[fi] {
+            if sl.scan < final_im_lo || sl.scan > final_im_hi {
+                continue;
+            }
+            let l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
+            total += r.saturating_sub(l);
+        }
+    }
+
+    // If you still want a "last chance widen", you can re-introduce it here
+    // by expanding bin_lo/bin_hi ±1 and recomputing total. For now we keep it
+    // simple and just bail out when total == 0.
+    if total == 0 {
+        return RawPoints::default();
+    }
+
+    let stride = max_points
+        .map(|cap| thin_stride(total, cap))
+        .unwrap_or(1);
+    let reserve = total / stride + 8;
+
+    let mut pts = RawPoints {
+        mz: Vec::with_capacity(reserve),
+        rt: Vec::with_capacity(reserve),
+        im: Vec::with_capacity(reserve),
+        scan: Vec::with_capacity(reserve),
+        intensity: Vec::with_capacity(reserve),
+        tof: Vec::with_capacity(reserve),
+        frame: Vec::with_capacity(reserve),
+    };
+
+    let rt_axis_sec = &ctx.rt_axis_sec[rt_lo..=rt_hi];
+    let frame_ids_local = &ctx.frame_ids_local[rt_lo..=rt_hi];
+
+    // 2) extract with thinning
+    let mut seen = 0usize;
+    for fi in rt_lo..=rt_hi {
+        let fr = &slice.frames[fi];
+        let mz   = &fr.ims_frame.mz;
+        let it   = &fr.ims_frame.intensity;
+        let ims  = &fr.ims_frame.mobility;
+        let tofs = &fr.tof;
+
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+        let rt_val = rt_axis_sec[fi - rt_lo];
+        let frame_id = frame_ids_local[fi - rt_lo];
+
+        for sl in &scan_slices[fi] {
+            let s_abs = sl.scan;
+            if s_abs < final_im_lo || s_abs > final_im_hi {
+                continue;
+            }
+
+            let mut l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
+            let mut r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
+            if r > len_all {
+                r = len_all;
+            }
+            if l >= r {
+                continue;
+            }
+
+            while l < r {
+                if stride == 1 || (seen % stride == 0) {
+                    pts.mz.push(mz[l] as f32);
+                    pts.rt.push(rt_val);
+                    pts.im.push(ims[l] as f32);
+                    pts.scan.push(s_abs as u32);
+                    pts.intensity.push(it[l] as f32);
+                    pts.frame.push(frame_id);
+                    pts.tof.push(tofs[l]);
+                }
+                seen += 1;
+                l += 1;
+            }
+        }
+    }
+
+    pts
 }

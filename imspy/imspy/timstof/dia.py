@@ -109,6 +109,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             attach_max_points: int | None = None,
             # pairing + threads
             require_rt_overlap: bool = True,
+            compute_mz_from_tof: bool = True,
             num_threads: int = 0,
             min_im_span: int = 10,
     ):
@@ -156,6 +157,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_points),
             attach_max_points,
             bool(require_rt_overlap),
+            bool(compute_mz_from_tof),
             int(num_threads),
             int(min_im_span),
         )
@@ -188,6 +190,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             attach_max_points: int | None = None,
             # pairing + threads
             require_rt_overlap: bool = True,
+            compute_mz_from_tof: bool = True,
             num_threads: int = 0,
             min_im_span: int = 10,
     ):
@@ -232,6 +235,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_points),
             attach_max_points,
             bool(require_rt_overlap),
+            bool(compute_mz_from_tof),
             int(num_threads),
             int(min_im_span),
         )

@@ -16,31 +16,7 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
 use rayon::ThreadPoolBuilder;
-use crate::cluster::cluster::{evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawPoints};
-
-#[derive(Copy, Clone, Debug)]
-struct ScanSlice { scan: usize, start: usize, end: usize }
-
-fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
-    let scv = &fr.scan;
-    let mut out = Vec::new();
-    if scv.is_empty() { return out; }
-    let mut s_cur = scv[0];
-    let mut i_start = 0usize;
-    for i in 1..scv.len() {
-        if scv[i] != s_cur {
-            if s_cur >= 0 {
-                out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: i });
-            }
-            s_cur = scv[i];
-            i_start = i;
-        }
-    }
-    if s_cur >= 0 {
-        out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: scv.len() });
-    }
-    out
-}
+use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
 
 
 #[derive(Clone, Debug)]
@@ -123,7 +99,7 @@ impl DiaIndex {
         let mut frame_to_group: HashMap<u32, u32> = HashMap::new();
         let mut group_to_frames: HashMap<u32, Vec<u32>> = HashMap::new();
         for r in info {
-            let fid = r.frame_id as u32;
+            let fid = r.frame_id;
             frame_to_group.insert(fid, r.window_group);
             group_to_frames.entry(r.window_group).or_default().push(fid);
         }
@@ -134,13 +110,13 @@ impl DiaIndex {
         for w in wins {
             let half = 0.5 * w.isolation_width;
             if half.is_finite() && half > 0.0 && w.isolation_mz.is_finite() {
-                let lo = (w.isolation_mz - half) as f64;
-                let hi = (w.isolation_mz + half) as f64;
+                let lo = w.isolation_mz - half;
+                let hi = w.isolation_mz + half;
                 if let Some(p) = norm_f64_pair(lo, hi) {
                     group_to_isolation.entry(w.window_group).or_default().push(p);
                 }
             }
-            if let Some(p) = norm_u32_pair(w.scan_num_begin as u32, w.scan_num_end as u32) {
+            if let Some(p) = norm_u32_pair(w.scan_num_begin, w.scan_num_end) {
                 group_to_scan_ranges.entry(w.window_group).or_default().push(p);
             }
         }
@@ -294,10 +270,10 @@ impl TimsDatasetDIA {
             .map(|w| {
                 let half = 0.5 * w.isolation_width;
                 ProgramSlice {
-                    mz_lo: (w.isolation_mz - half) as f64,
-                    mz_hi: (w.isolation_mz + half) as f64,
-                    scan_lo: w.scan_num_begin as u32,
-                    scan_hi: w.scan_num_end as u32,
+                    mz_lo: w.isolation_mz - half,
+                    mz_hi: w.isolation_mz + half,
+                    scan_lo: w.scan_num_begin,
+                    scan_hi: w.scan_num_end,
                 }
             })
             .collect()
@@ -386,7 +362,7 @@ impl TimsDatasetDIA {
         let mut gs: Vec<u32> = self
             .dia_ms_ms_info
             .iter()
-            .map(|x| x.window_group as u32)
+            .map(|x| x.window_group)
             .collect();
         gs.sort_unstable();
         gs.dedup();
@@ -428,7 +404,7 @@ impl TimsDatasetDIA {
         let ranges: Vec<(usize, usize)> = self
             .dia_ms_ms_windows
             .iter()
-            .filter(|w| w.window_group as u32 == window_group)
+            .filter(|w| w.window_group == window_group)
             .map(|w| {
                 let l = w.scan_num_begin as usize;
                 let r = w.scan_num_end as usize;
@@ -447,7 +423,7 @@ impl TimsDatasetDIA {
         let mut hi = f32::NEG_INFINITY;
         let mut hit = false;
         for w in &self.dia_ms_ms_windows {
-            if w.window_group as u32 == window_group {
+            if w.window_group == window_group {
                 let c = w.isolation_mz as f32;
                 let half = 0.5f32 * (w.isolation_width as f32);
                 lo = lo.min(c - half);
@@ -611,33 +587,53 @@ impl TimsDatasetDIA {
             return Vec::new();
         }
 
+        let scale = &*rt_frames.scale;
+
         let run = || {
+            // Pre-build raw attach context once if needed
+            let attach_ctx = if opts.attach.attach_points {
+                let frame_ids_local = rt_frames.frame_ids.clone();
+                let slice = self.get_slice(frame_ids_local.clone(), num_threads.max(1));
+                let scan_slices = slice
+                    .frames
+                    .iter()
+                    .map(|fr| build_scan_slices(fr))
+                    .collect::<Vec<_>>();
+                let rt_axis_sec = rt_frames.rt_times.clone();
+
+                Some(RawAttachContext {
+                    slice,
+                    scan_slices,
+                    frame_ids_local,
+                    rt_axis_sec,
+                })
+            } else {
+                None
+            };
+
             specs
                 .par_iter()
                 .map(|spec| {
-                    // 1) compute fits/marginals from CSR-binned `rt_frames`
+                    // 1) core 1D evaluation (RT/IM/TOF fits etc.)
                     let mut res = evaluate_spec_1d(rt_frames, spec, opts);
 
-                    // 2) optional raw attachment (pull real frames only when requested)
+                    // 2) decorate with m/z axis + mz_fit/mz_window
                     //
-                    // We are now **TOF-first**:
-                    //   - res.tof_window = (bin_lo, bin_hi) in CSR bin space
-                    //   - res.tof_fit    = Fit1D on that axis
-                    //
-                    if opts.attach.attach_points
-                        && res.raw_sum > 0.0
-                        && res.tof_fit.area > 0.0
-                    {
-                        let (bin_lo, bin_hi) = res.tof_window;
+                    //    - uses the already-computed TOF window in `spec.tof_win`
+                    //    - does *not* depend on raw_points being attached
+                    //    - keeps the logic local and cheap
+                    decorate_with_mz_for_cluster(self, rt_frames, spec, scale, &mut res);
 
-                        if bin_lo <= bin_hi {
-                            // Use the spec’s IM and RT windows (IM is not refined in evaluate_spec_1d)
+                    // 3) optional raw point attachment (using shared context)
+                    if let Some(ref ctx) = attach_ctx {
+                        if opts.attach.attach_points && res.raw_sum > 0.0 && res.tof_fit.area > 0.0 {
+                            let (bin_lo, bin_hi) = bin_range_for_win(scale, spec.tof_win);
                             let (im_lo, im_hi) = (spec.im_lo, spec.im_hi);
-                            let (rt_lo, rt_hi) = res.rt_window;
+                            let (rt_lo, rt_hi) = (spec.rt_lo, spec.rt_hi);
 
-                            let raw = attach_raw_points_for_spec_1d_threads(
-                                &self,
-                                rt_frames,
+                            let raw = attach_raw_points_for_spec_1d_in_ctx(
+                                ctx,
+                                scale,
                                 bin_lo,
                                 bin_hi,
                                 im_lo,
@@ -645,14 +641,9 @@ impl TimsDatasetDIA {
                                 rt_lo,
                                 rt_hi,
                                 opts.attach.max_points,
-                                num_threads.max(1),
                             );
                             res.raw_points = Some(raw);
-                        } else {
-                            res.raw_points = None;
                         }
-                    } else {
-                        res.raw_points = None;
                     }
 
                     res
@@ -860,7 +851,7 @@ pub fn attach_raw_points_for_spec_1d_threads(
     if total == 0 {
         let lo_idx = bin_lo.saturating_sub(1);
         let hi_edge_idx_wide =
-            ((bin_hi + 2).min(n_bins)).min(scale.edges.len().saturating_sub(1));
+            (bin_hi + 2).min(n_bins).min(scale.edges.len().saturating_sub(1));
 
         let try_lo = scale.edges[lo_idx];
         let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx_wide]);

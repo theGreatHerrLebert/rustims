@@ -1656,6 +1656,7 @@ impl PyTimsDatasetDIA {
         attach_max_points=None,
         // matching constraint + threads
         require_rt_overlap=true,
+        compute_mz_from_tof=true,
         num_threads=0,
         min_im_span=12,
     ))]
@@ -1687,6 +1688,7 @@ impl PyTimsDatasetDIA {
         attach_max_points: Option<usize>,
         // matching + threads
         require_rt_overlap: bool,
+        compute_mz_from_tof: bool,
         num_threads: usize,
         min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
@@ -1733,6 +1735,7 @@ impl PyTimsDatasetDIA {
                 attach_axes,
                 max_points: attach_max_points,
             },
+            compute_mz_from_tof,
         };
 
         // ---- Run the core DIA clustering --------------------------------
@@ -1749,26 +1752,6 @@ impl PyTimsDatasetDIA {
             )
         });
 
-        /*
-        // ---- Stitching still uses mz/ppm-based logic on the *results* ----
-        // (this can stay as-is for now; it works off the derived cluster m/z)
-        let p = ClusterStitchParams {
-            allow_cross_groups: false,
-            min_overlap_frames: 1,
-            max_rt_gap_frames: 3,
-            min_im_overlap_scans: 1,
-            max_im_gap_scans: 10,
-            jaccard_rt_min: 0.05,
-            jaccard_im_min: 0.05,
-            ppm_cap: 25.0,
-            k_sigma_bounds: 1.0,
-            max_mz_gap_ppm: 15.0,
-            mz_min: None,
-            mz_max: None,
-        };
-
-        let stitched = stitch_clusters_1d_ppm(results, p);
-         */
         results_to_py(py, results)
     }
 
@@ -1780,10 +1763,14 @@ impl PyTimsDatasetDIA {
         min_prom=50.0, min_sep_sec=2.0, min_width_sec=2.0,
         fallback_if_frames_lt=5, fallback_frac_width=0.5,
         extra_rt_pad=0, extra_im_pad=0, tof_bin_pad=0, tof_hist_bins=64,
-        refine_tof_once=true, refine_k_sigma=3.0,
+        refine_tof_once=true,
+        refine_k_sigma=3.0,
         attach_axes=true,
-        attach_points=false, attach_max_points=None,
-        require_rt_overlap=true, num_threads=0,
+        attach_points=false,
+        attach_max_points=None,
+        require_rt_overlap=true,
+        compute_mz_from_tof=true,
+        num_threads=0,
         min_im_span=12,
     ))]
     pub fn clusters_for_precursor(
@@ -1813,6 +1800,7 @@ impl PyTimsDatasetDIA {
         attach_max_points: Option<usize>,
         // matching + threads
         require_rt_overlap: bool,
+        compute_mz_from_tof: bool,
         num_threads: usize,
         min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
@@ -1859,6 +1847,7 @@ impl PyTimsDatasetDIA {
                 attach_axes,
                 max_points: attach_max_points,
             },
+            compute_mz_from_tof,
         };
 
         // ---- Run the core MS1 clustering --------------------------------
