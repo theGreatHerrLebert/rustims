@@ -1,17 +1,20 @@
 # imspy/feature.py
 from __future__ import annotations
-from typing import Optional, Sequence
+
+from typing import Optional, Sequence, Any
 
 import imspy_connector
-imsf = imspy_connector.py_feature  # <- the Rust PyO3 module you compiled
 
-# If you already have a PyClusterResult1D wrapper in Python, you can accept that.
-# Otherwise we assume you pass the raw PyO3 instances (from imspy_connector).
+imsf = imspy_connector.py_feature  # Rust PyO3 module
 
-# ---------------------------
-# Averagine LUT (ergonomic)
-# ---------------------------
 class AveragineLut:
+    """
+    Thin Python wrapper around PyAveragineLut.
+
+    Currently not used by `build_simple_features_from_clusters`, but we keep it
+    for future scoring / diagnostics (e.g. cosine vs averagine).
+    """
+
     def __init__(
         self,
         mass_min: float = 150.0,
@@ -21,262 +24,241 @@ class AveragineLut:
         z_max: int = 6,
         k: int = 6,
         resolution: int = 1,
-        num_threads: Optional[int] = None,
-    ):
+        num_threads: Optional[int] = 4,
+    ) -> None:
         if num_threads is None:
-            # Let Rust decide based on available_parallelism
-            # We don’t pass it; instead use the default_grid as a shortcut when exact defaults.
-            if (
-                mass_min, mass_max, step, z_min, z_max, k, resolution
-            ) == (200.0, 6000.0, 25.0, 1, 6, 6, 1):
-                self.__py_ptr = imsf.PyAveragineLut.default_grid()
-            else:
-                # Fall back to 1 thread if not specified; feel free to wire a CPython
-                # CPU count if you want it dynamic.
-                self.__py_ptr = imsf.PyAveragineLut(
-                    mass_min, mass_max, step, z_min, z_max, k, resolution, 1
-                )
-        else:
-            self.__py_ptr = imsf.PyAveragineLut(
-                mass_min, mass_max, step, z_min, z_max, k, resolution, int(num_threads)
-            )
+            num_threads = 4
+
+        self.__py_ptr = imsf.PyAveragineLut(
+            float(mass_min),
+            float(mass_max),
+            float(step),
+            int(z_min),
+            int(z_max),
+            int(k),
+            int(resolution),
+            int(num_threads),
+        )
 
     @classmethod
-    def from_py_ptr(cls, py_ptr):
+    def from_py_ptr(cls, py_ptr: Any) -> "AveragineLut":
         self = cls.__new__(cls)
         self.__py_ptr = py_ptr
         return self
 
-    def get_py_ptr(self):
+    def get_py_ptr(self) -> Any:
         return self.__py_ptr
 
     @property
     def z_min(self) -> int:
-        return self.__py_ptr.z_min
+        return int(self.__py_ptr.z_min)
 
     @property
     def z_max(self) -> int:
-        return self.__py_ptr.z_max
+        return int(self.__py_ptr.z_max)
 
     @property
     def k(self) -> int:
-        return self.__py_ptr.k
+        return int(self.__py_ptr.k)
 
     def lookup(self, neutral_mass: float, z: int):
-        return self.__py_ptr.lookup(neutral_mass, z)
+        """
+        Returns a numpy array (len=8) with the averagine envelope (L2-normalized).
+        """
+        return self.__py_ptr.lookup(float(neutral_mass), int(z))
 
     def __repr__(self) -> str:
-        return f"AveragineLut(z={self.z_min}..{self.z_max}, k={self.k})"
+        return repr(self.__py_ptr)
 
 
-# ---------------------------
-# Params
-# ---------------------------
-class GroupingParams:
+# -----------------------------------------------------------------------------
+# SimpleFeatureParams – controls the greedy isotopic grouping
+# -----------------------------------------------------------------------------
+
+
+class SimpleFeatureParams:
+    """
+    Python wrapper around PySimpleFeatureParams.
+
+    Parameters mirror the Rust struct:
+
+        z_min, z_max: allowed charge range
+        iso_ppm_tol: ppm tolerance for isotopic spacing
+        iso_abs_da: absolute m/z tolerance (safety floor)
+        min_members: minimal number of isotopes in a chain
+        max_members: maximal number of isotopes in a chain
+        min_raw_sum: minimal cluster raw_sum
+        min_mz: minimal m/z to consider
+        min_rt_overlap_frac: minimal fractional RT overlap between neighboring isotopes
+        min_im_overlap_frac: minimal fractional IM overlap between neighboring isotopes
+    """
+
     def __init__(
         self,
-        rt_pad_overlap: int,
-        im_pad_overlap: int,
-        mz_ppm_tol: float,
-        iso_ppm_tol: float,
-        iso_abs_da: float,
-        z_min: int,
-        z_max: int,
-    ):
-        self.__py_ptr = imsf.PyGroupingParams(
-            rt_pad_overlap, im_pad_overlap, mz_ppm_tol, iso_ppm_tol, iso_abs_da, z_min, z_max
+        z_min: int = 1,
+        z_max: int = 5,
+        iso_ppm_tol: float = 10.0,
+        iso_abs_da: float = 0.003,
+        min_members: int = 2,
+        max_members: int = 5,
+        min_raw_sum: float = 0.0,
+        min_mz: float = 100.0,
+        min_rt_overlap_frac: float = 0.3,
+        min_im_overlap_frac: float = 0.3,
+    ) -> None:
+        self.__py_ptr = imsf.PySimpleFeatureParams(
+            int(z_min),
+            int(z_max),
+            float(iso_ppm_tol),
+            float(iso_abs_da),
+            int(min_members),
+            int(max_members),
+            float(min_raw_sum),
+            float(min_mz),
+            float(min_rt_overlap_frac),
+            float(min_im_overlap_frac),
         )
 
     @classmethod
-    def from_py_ptr(cls, py_ptr):
+    def default(cls) -> "SimpleFeatureParams":
+        """
+        Convenience: Rust-side Default.
+        """
+        return cls.from_py_ptr(imsf.PySimpleFeatureParams.default())
+
+    @classmethod
+    def from_py_ptr(cls, py_ptr: Any) -> "SimpleFeatureParams":
         self = cls.__new__(cls)
         self.__py_ptr = py_ptr
         return self
 
-    def get_py_ptr(self):
+    def get_py_ptr(self) -> Any:
         return self.__py_ptr
 
     def __repr__(self) -> str:
-        return (
-            f"GroupingParams(rt_pad={self.__py_ptr.inner.rt_pad_overlap}, "
-            f"im_pad={self.__py_ptr.inner.im_pad_overlap}, "
-            f"mz_ppm_tol={self.__py_ptr.inner.mz_ppm_tol}, "
-            f"iso_ppm_tol={self.__py_ptr.inner.iso_ppm_tol}, "
-            f"iso_abs_da={self.__py_ptr.inner.iso_abs_da}, "
-            f"z={self.__py_ptr.inner.z_min}..{self.__py_ptr.inner.z_max})"
-        )
+        return repr(self.__py_ptr)
 
 
-class FeatureBuildParams:
-    def __init__(
-        self,
-        k_max: int,
-        min_members: int,
-        min_cosine: float,
-        w_spacing: float,
-        w_coelute: float,
-        w_monotonic: float,
-        penalty_skip_one: float,
-        steal_delta: float,
-        require_lowest_is_mono: bool,
-    ):
-        self.__py_ptr = imsf.PyFeatureBuildParams(
-            k_max,
-            min_members,
-            min_cosine,
-            w_spacing,
-            w_coelute,
-            w_monotonic,
-            penalty_skip_one,
-            steal_delta,
-            require_lowest_is_mono,
-        )
-
-    @classmethod
-    def from_py_ptr(cls, py_ptr):
-        self = cls.__new__(cls)
-        self.__py_ptr = py_ptr
-        return self
-
-    def get_py_ptr(self):
-        return self.__py_ptr
-
-    def __repr__(self) -> str:
-        return (
-            f"FeatureBuildParams(k_max={self.__py_ptr.inner.k_max}, "
-            f"min_members={self.__py_ptr.inner.min_members}, "
-            f"min_cosine={self.__py_ptr.inner.min_cosine})"
-        )
+# -----------------------------------------------------------------------------
+# SimpleFeature – output of the simple builder
+# -----------------------------------------------------------------------------
 
 
-# ---------------------------
-# Outputs
-# ---------------------------
-class Feature:
-    def __init__(self, py_ptr):
+class SimpleFeature:
+    """
+    Thin wrapper around the Rust `SimpleFeature`.
+
+    We deliberately expose only the things you actually care about for downstream:
+    - feature_id, charge, mz_mono, neutral_mass
+    - rt_bounds, im_bounds
+    - mz_center, n_members, member_cluster_ids
+    - raw_sum
+    """
+
+    def __init__(self, py_ptr: Any) -> None:
         self.__py_ptr = py_ptr
 
     @classmethod
-    def from_py_ptr(cls, py_ptr):
+    def from_py_ptr(cls, py_ptr: Any) -> "SimpleFeature":
         return cls(py_ptr)
 
-    def get_py_ptr(self):
+    def get_py_ptr(self) -> Any:
         return self.__py_ptr
 
     @property
-    def envelope_id(self) -> int:
-        return self.__py_ptr.envelope_id
+    def feature_id(self) -> int:
+        return int(self.__py_ptr.feature_id)
 
     @property
     def charge(self) -> int:
-        return self.__py_ptr.charge
+        return int(self.__py_ptr.charge)
 
     @property
     def mz_mono(self) -> float:
-        return self.__py_ptr.mz_mono
+        return float(self.__py_ptr.mz_mono)
 
     @property
     def neutral_mass(self) -> float:
-        return self.__py_ptr.neutral_mass
+        return float(self.__py_ptr.neutral_mass)
 
     @property
     def rt_bounds(self) -> tuple[int, int]:
-        return self.__py_ptr.rt_bounds
+        return tuple(self.__py_ptr.rt_bounds)
 
     @property
     def im_bounds(self) -> tuple[int, int]:
-        return self.__py_ptr.im_bounds
+        return tuple(self.__py_ptr.im_bounds)
 
     @property
     def mz_center(self) -> float:
-        return self.__py_ptr.mz_center
+        return float(self.__py_ptr.mz_center)
 
     @property
     def n_members(self) -> int:
-        return self.__py_ptr.n_members
+        return int(self.__py_ptr.n_members)
 
     @property
     def member_cluster_ids(self) -> list[int]:
-        return self.__py_ptr.member_cluster_ids
+        return list(self.__py_ptr.member_cluster_ids)
 
     @property
-    def iso_raw(self):
-        return self.__py_ptr.iso_raw  # numpy array
-
-    @property
-    def iso_l2(self):
-        return self.__py_ptr.iso_l2  # numpy array
-
-    @property
-    def cos_averagine(self) -> float:
-        return self.__py_ptr.cos_averagine
+    def raw_sum(self) -> float:
+        return float(self.__py_ptr.raw_sum)
 
     def __repr__(self) -> str:
         return (
-            f"Feature(eid={self.envelope_id}, z={self.charge}, "
-            f"mono={self.mz_mono:.4f}, members={self.n_members})"
+            f"SimpleFeature(id={self.feature_id}, z={self.charge}, "
+            f"mz_mono={self.mz_mono:.4f}, members={self.n_members}, "
+            f"raw_sum={self.raw_sum:.1f})"
         )
 
 
-class GroupingOutput:
-    def __init__(self, py_ptr):
-        self.__py_ptr = py_ptr
-
-    @property
-    def envelopes(self) -> list[tuple[int, tuple[int, int], tuple[int, int], float, Optional[int]]]:
-        return self.__py_ptr.envelopes
-
-    @property
-    def assignment(self) -> list[Optional[int]]:
-        return self.__py_ptr.assignment
-
-    def __repr__(self) -> str:
-        return f"GroupingOutput(n_env={len(self.envelopes)})"
-
-
-class BuildResult:
-    def __init__(self, py_ptr):
-        self.__py_ptr = py_ptr
-
-    @property
-    def features(self) -> list[Feature]:
-        return [Feature.from_py_ptr(f) for f in self.__py_ptr.features]
-
-    @property
-    def grouping(self) -> GroupingOutput:
-        return GroupingOutput(self.__py_ptr.grouping)
-
-    def __repr__(self) -> str:
-        return f"BuildResult(n_features={len(self.features)})"
-
-
-# ---------------------------
+# -----------------------------------------------------------------------------
 # Top-level convenience API
-# ---------------------------
-def build_features_from_clusters(
-    clusters: Sequence,  # list of PyClusterResult1D wrappers (your Python side) or raw PyO3 objects
-    gp: GroupingParams,
-    fp: FeatureBuildParams,
-    lut: Optional[AveragineLut] = None,
-) -> BuildResult:
+# -----------------------------------------------------------------------------
+
+
+def _to_py_cluster_ptr(x: Any) -> Any:
     """
-    clusters: e.g. [py_cluster1, py_cluster2, ...] where each element is the Python wrapper
-              around your PyO3 `PyClusterResult1D`. Both wrapper and raw PyO3 object work,
-              as long as they expose the underlying `PyClusterResult1D` to Rust.
+    Helper: unwrap Python-side wrappers to the underlying PyO3 handle.
 
-    gp, fp: parameter wrappers defined above.
-    lut: optional AveragineLut wrapper for cosine gating.
+    - If `x` has a `get_py_ptr()` method (like your usual RustWrapperObject),
+      that is used.
+    - Otherwise `x` is assumed to already be a PyO3 object from imspy_connector.
     """
-    # unwrap to raw PyO3 objects if the caller passed Python-side wrappers
-    def to_py_ptr(x):
-        return getattr(x, "get_py_ptr", lambda: x)()
+    return getattr(x, "get_py_ptr", lambda: x)()
 
-    raw_list = [to_py_ptr(c) for c in clusters]
 
-    res = imsf.build_features_from_clusters_py(
-        raw_list,
-        gp.get_py_ptr(),
-        fp.get_py_ptr(),
-        None if lut is None else lut.get_py_ptr(),
+def build_simple_features_from_clusters(
+    clusters: Sequence[Any],
+    params: SimpleFeatureParams | None = None,
+) -> list[SimpleFeature]:
+    """
+    Build simple isotopic features from a list of MS1 clusters.
+
+    Parameters
+    ----------
+    clusters:
+        Sequence of cluster objects. Each element can be:
+        - a Python wrapper of `PyClusterResult1D` exposing `.get_py_ptr()`, or
+        - the raw `PyClusterResult1D` PyO3 object from `imspy_connector`.
+
+    params:
+        SimpleFeatureParams instance. If None, Rust defaults are used.
+
+    Returns
+    -------
+    list[SimpleFeature]
+        One SimpleFeature per grouped isotopic envelope.
+    """
+    if params is None:
+        params = SimpleFeatureParams.default()
+
+    raw_clusters = [_to_py_cluster_ptr(c) for c in clusters]
+
+    py_feats = imsf.build_simple_features_from_clusters_py(
+        raw_clusters,
+        params.get_py_ptr(),
     )
-    return BuildResult(res)
+
+    return [SimpleFeature.from_py_ptr(f) for f in py_feats]
