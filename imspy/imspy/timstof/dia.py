@@ -1,4 +1,5 @@
 import sqlite3
+import warnings
 from typing import List
 
 from imspy.simulation.annotation import RustWrapperObject
@@ -79,6 +80,162 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             List[bytes]: Compressed data.
         """
         return self.__dataset.read_compressed_data_full()
+
+    def clusters_for_group(
+            self,
+            window_group: int,
+            im_peaks: list["ImPeak1D"],
+            *,
+            tof_step: int = 1,
+            # RtExpandParams (seconds)
+            bin_pad: int = 0,
+            smooth_sigma_sec: float = 1.25,
+            smooth_trunc_k: float = 3.0,
+            min_prom: float = 50.0,
+            min_sep_sec: float = 2.0,
+            min_width_sec: float = 2.0,
+            fallback_if_frames_lt: int = 5,
+            fallback_frac_width: float = 0.50,
+            # BuildSpecOpts
+            extra_rt_pad: int = 0,
+            extra_im_pad: int = 0,
+            mz_ppm_pad: float = 5.0,
+            mz_hist_bins: int = 64,
+            # Eval1DOpts
+            refine_mz_once: bool = True,
+            refine_k_sigma: float = 3.0,
+            attach_axes: bool = True,
+            attach_points: bool = False,
+            attach_max_points: int | None = None,
+            # pairing + threads
+            require_rt_overlap: bool = True,
+            num_threads: int = 0,
+            min_im_span: int = 10,
+    ):
+        from imspy.timstof.clustering.data import ClusterResult1D
+        """
+        Cluster in **MS2** for one DIA window group.
+
+        Parameters
+        ----------
+        window_group : int
+            DIA window_group ID.
+        im_peaks : list[ImPeak1D]
+            IM 1D peaks for this window_group (must all carry this group ID).
+        tof_step : int, default 1
+            TOF binning factor for the CSR grid.
+            1 = full TOF resolution, 2 = every 2nd TOF index, etc.
+        Time-related parameters are in seconds.
+        """
+        if tof_step <= 0:
+            raise ValueError(f"tof_step must be > 0, got {tof_step}")
+
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_results = self.__dataset.clusters_for_group(
+            int(window_group),
+            int(tof_step),
+            [p.get_py_ptr() for p in im_peaks],
+            int(bin_pad),
+            float(smooth_sigma_sec),
+            float(smooth_trunc_k),
+            float(min_prom),
+            float(min_sep_sec),
+            float(min_width_sec),
+            int(fallback_if_frames_lt),
+            float(fallback_frac_width),
+            int(extra_rt_pad),
+            int(extra_im_pad),
+            float(mz_ppm_pad),
+            int(mz_hist_bins),
+            bool(refine_mz_once),
+            float(refine_k_sigma),
+            bool(attach_axes),
+            bool(attach_points),
+            attach_max_points,
+            bool(require_rt_overlap),
+            int(num_threads),
+            int(min_im_span),
+        )
+        return [ClusterResult1D(r) for r in py_results]
+
+    def clusters_for_precursor(
+            self,
+            im_peaks: list["ImPeak1D"],
+            *,
+            tof_step: int = 1,
+            # RtExpandParams (seconds)
+            bin_pad: int = 0,
+            smooth_sigma_sec: float = 1.25,
+            smooth_trunc_k: float = 3.0,
+            min_prom: float = 50.0,
+            min_sep_sec: float = 2.0,
+            min_width_sec: float = 2.0,
+            fallback_if_frames_lt: int = 5,
+            fallback_frac_width: float = 0.50,
+            # BuildSpecOpts
+            extra_rt_pad: int = 0,
+            extra_im_pad: int = 0,
+            mz_ppm_pad: float = 5.0,
+            mz_hist_bins: int = 64,
+            # Eval1DOpts
+            refine_mz_once: bool = True,
+            refine_k_sigma: float = 3.0,
+            attach_axes: bool = True,
+            attach_points: bool = False,
+            attach_max_points: int | None = None,
+            # pairing + threads
+            require_rt_overlap: bool = True,
+            num_threads: int = 0,
+            min_im_span: int = 10,
+    ):
+        from imspy.timstof.clustering.data import ClusterResult1D
+        """
+        Cluster in **MS1 precursor** space.
+
+        Parameters
+        ----------
+        im_peaks : list[ImPeak1D]
+            IM 1D peaks for MS1 (must have window_group=None).
+        tof_step : int, default 1
+            TOF binning factor for the CSR grid.
+            1 = full TOF resolution, 2 = every 2nd TOF index, etc.
+        Time-related parameters are in seconds.
+        """
+        if tof_step <= 0:
+            raise ValueError(f"tof_step must be > 0, got {tof_step}")
+
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_results = self.__dataset.clusters_for_precursor(
+            int(tof_step),
+            [p.get_py_ptr() for p in im_peaks],
+            int(bin_pad),
+            float(smooth_sigma_sec),
+            float(smooth_trunc_k),
+            float(min_prom),
+            float(min_sep_sec),
+            float(min_width_sec),
+            int(fallback_if_frames_lt),
+            float(fallback_frac_width),
+            int(extra_rt_pad),
+            int(extra_im_pad),
+            float(mz_ppm_pad),
+            int(mz_hist_bins),
+            bool(refine_mz_once),
+            float(refine_k_sigma),
+            bool(attach_axes),
+            bool(attach_points),
+            attach_max_points,
+            bool(require_rt_overlap),
+            int(num_threads),
+            int(min_im_span),
+        )
+        return [ClusterResult1D(r) for r in py_results]
 
     @classmethod
     def from_py_ptr(cls, obj):
