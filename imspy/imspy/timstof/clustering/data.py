@@ -11,8 +11,8 @@ ims = imspy_connector.py_dia
 class Fit1D(RustWrapperObject):
     """Python wrapper around ims.PyFit1D."""
 
-    def __init__(self, *args, **kwargs):
-        raise RuntimeError("Use Fit1D.from_py_ptr(...) instead.")
+    def __init__(self, ptr):
+        self.__py_ptr = ptr
 
     @classmethod
     def from_py_ptr(cls, p: ims.PyFit1D) -> "Fit1D":
