@@ -832,106 +832,92 @@ class RawPoints:
 
 
 class ClusterResult1D:
-    """Ergonomic wrapper around ims.PyClusterResult1D (RT × IM × TOF, optional m/z fit)."""
+    """Ergonomic wrapper around ims.PyClusterResult1D."""
 
     def __init__(self, py):
         self._py = py
 
-    # ---- windows --------------------------------------------------------
-
+    # --- windows ---------------------------------------------------------
     @property
-    def rt_window(self) -> tuple[int, int]:
+    def rt_window(self):
         return self._py.rt_window
 
     @property
-    def im_window(self) -> tuple[int, int]:
+    def im_window(self):
         return self._py.im_window
 
     @property
-    def tof_window(self) -> tuple[int, int]:
+    def tof_window(self):
         return self._py.tof_window
 
     @property
-    def mz_window(self) -> tuple[float, float] | None:
-        # Optional: may be None if no m/z fit/window attached
+    def mz_window(self):
+        # Optional[(float, float)]
         return self._py.mz_window
 
-    # ---- fit summaries (scalars from Rust) ------------------------------
-
-    # RT
+    # --- fits ------------------------------------------------------------
     @property
-    def rt_mu(self) -> float:
-        return float(self._py.rt_mu)
+    def rt_fit(self) -> Fit1D:
+        return Fit1D(self._py.rt_fit)
 
     @property
-    def rt_sigma(self) -> float:
-        return float(self._py.rt_sigma)
+    def im_fit(self) -> Fit1D:
+        return Fit1D(self._py.im_fit)
 
     @property
-    def rt_height(self) -> float:
-        return float(self._py.rt_height)
+    def tof_fit(self) -> Fit1D:
+        return Fit1D(self._py.tof_fit)
 
     @property
-    def rt_area(self) -> float:
-        return float(self._py.rt_area)
+    def mz_fit(self) -> Fit1D | None:
+        f = self._py.mz_fit
+        return None if f is None else Fit1D(f)
 
-    # IM
+    # convenience scalar shortcuts
     @property
-    def im_mu(self) -> float:
-        return float(self._py.im_mu)
-
+    def rt_mu(self) -> float:        return float(self.rt_fit.mu)
     @property
-    def im_sigma(self) -> float:
-        return float(self._py.im_sigma)
-
+    def rt_sigma(self) -> float:     return float(self.rt_fit.sigma)
     @property
-    def im_height(self) -> float:
-        return float(self._py.im_height)
+    def rt_height(self) -> float:    return float(self.rt_fit.height)
+    @property
+    def rt_area(self) -> float:      return float(self.rt_fit.area)
 
     @property
-    def im_area(self) -> float:
-        return float(self._py.im_area)
-
-    # TOF (primary third axis)
+    def im_mu(self) -> float:        return float(self.im_fit.mu)
     @property
-    def tof_mu(self) -> float:
-        return float(self._py.tof_mu)
-
+    def im_sigma(self) -> float:     return float(self.im_fit.sigma)
     @property
-    def tof_sigma(self) -> float:
-        return float(self._py.tof_sigma)
+    def im_height(self) -> float:    return float(self.im_fit.height)
+    @property
+    def im_area(self) -> float:      return float(self.im_fit.area)
 
     @property
-    def tof_height(self) -> float:
-        return float(self._py.tof_height)
-
+    def tof_mu(self) -> float:       return float(self.tof_fit.mu)
     @property
-    def tof_area(self) -> float:
-        return float(self._py.tof_area)
+    def tof_sigma(self) -> float:    return float(self.tof_fit.sigma)
+    @property
+    def tof_height(self) -> float:   return float(self.tof_fit.height)
+    @property
+    def tof_area(self) -> float:     return float(self.tof_fit.area)
 
-    # Optional m/z-domain fit (if provided elsewhere)
     @property
     def mz_mu(self) -> float | None:
-        mu = self._py.mz_mu
-        return None if mu is None else float(mu)
+        return None if self.mz_fit is None else float(self.mz_fit.mu)
 
     @property
     def mz_sigma(self) -> float | None:
-        s = self._py.mz_sigma
-        return None if s is None else float(s)
+        return None if self.mz_fit is None else float(self.mz_fit.sigma)
 
     @property
     def mz_height(self) -> float | None:
-        h = self._py.mz_height
-        return None if h is None else float(h)
+        return None if self.mz_fit is None else float(self.mz_fit.height)
 
     @property
     def mz_area(self) -> float | None:
-        a = self._py.mz_area
-        return None if a is None else float(a)
+        return None if self.mz_fit is None else float(self.mz_fit.area)
 
-    # ---- stats / provenance ---------------------------------------------
-
+    # --- stats / provenance ----------------------------------------------
     @property
     def raw_sum(self) -> float:
         return float(self._py.raw_sum)
@@ -956,37 +942,33 @@ class ClusterResult1D:
     def parent_rt_id(self):
         return self._py.parent_rt_id
 
-    # ---- axes (may be None) --------------------------------------------
-
+    # --- axes (may be None) ----------------------------------------------
     def frame_ids_used(self) -> np.ndarray:
-        return np.asarray(self._py.frame_ids_used(), dtype=np.uint32)
+        # NOTE: now a property, *not* a method
+        return np.asarray(self._py.frame_ids_used, dtype=np.uint32)
 
     def rt_axis_sec(self) -> np.ndarray | None:
-        arr = self._py.rt_axis_sec()
+        arr = self._py.rt_axis_sec  # property, may be None
         return None if arr is None else np.asarray(arr, dtype=np.float32)
 
     def im_axis_scans(self) -> np.ndarray | None:
-        arr = self._py.im_axis_scans()
+        arr = self._py.im_axis_scans  # property, may be None
         return None if arr is None else np.asarray(arr, dtype=np.int64)
 
     def mz_axis_da(self) -> np.ndarray | None:
-        arr = self._py.mz_axis_da()
+        arr = self._py.mz_axis_da  # property, may be None
         return None if arr is None else np.asarray(arr, dtype=np.float32)
 
-    # ---- raw points (optional attachment) -------------------------------
-
+    # --- optional raw points ---------------------------------------------
     def raw_points(self) -> RawPoints | None:
-        if not self._py.has_raw_points:
-            return None
+        # raw_points is still a *method* on the PyO3 side
         rp = self._py.raw_points()
         return None if rp is None else RawPoints(rp)
 
     def get_py_ptr(self):
-        """Return the underlying PyClusterResult1D (for low-level tinkering)."""
         return self._py
 
-    # ---- diagnostics flags ----------------------------------------------
-
+    # ---- diagnostics flags -----------------------------------------------
     @property
     def has_rt_axis(self) -> bool:
         return self.rt_axis_sec() is not None
@@ -1016,34 +998,35 @@ class ClusterResult1D:
 
     @property
     def empty_rt(self) -> bool:
-        # Same semantics: no area or no samples → "empty"
-        return (self.rt_area == 0.0)
+        f = self.rt_fit
+        return (f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
 
     @property
     def empty_im(self) -> bool:
-        return (self.im_area == 0.0)
+        f = self.im_fit
+        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
 
     @property
     def empty_tof(self) -> bool:
-        return (self.tof_area == 0.0)
+        f = self.tof_fit
+        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
 
     @property
     def empty_mz(self) -> bool:
-        # If there is no m/z fit at all, treat as empty in that dimension.
-        area = self.mz_area
-        return (area is None) or (area == 0.0)
+        f = self.mz_fit
+        if f is None:
+            return True
+        return (f.n is None or f.n == 0) or (abs(getattr(f, "area", 0.0)) <= 0.0)
 
     @property
     def any_empty_dim(self) -> bool:
-        # Consider the actual 3D grid (RT, IM, TOF); m/z is auxiliary.
-        return self.empty_rt or self.empty_im or self.empty_tof
+        return self.empty_rt or self.empty_im or self.empty_tof or self.empty_mz
 
     @property
     def raw_empty(self) -> bool:
         return not self.raw_points_attached
 
-    # ---- summaries ------------------------------------------------------
-
+    # --- flatten to dict / dataframe -------------------------------------
     def to_dict(self) -> dict:
         """Flatten cluster stats + optional raw diagnostics into a dict."""
         d: dict[str, object] = {
@@ -1099,35 +1082,32 @@ class ClusterResult1D:
         if rp is not None:
             d.update(rp.to_dict())
         else:
-            d.update(
-                {
-                    "raw_n": 0,
-                    "raw_empty": True,
-                    "raw_intensity_sum": 0.0,
-                    "raw_intensity_max": 0.0,
-                    "raw_n_frames": 0,
-                    "raw_n_scans": 0,
-                    "raw_mz_min": None,
-                    "raw_mz_max": None,
-                    "raw_rt_min": None,
-                    "raw_rt_max": None,
-                    "raw_im_min": None,
-                    "raw_im_max": None,
-                }
-            )
+            d.update({
+                "raw_n": 0,
+                "raw_empty": True,
+                "raw_intensity_sum": 0.0,
+                "raw_intensity_max": 0.0,
+                "raw_n_frames": 0,
+                "raw_n_scans": 0,
+                "raw_mz_min": None, "raw_mz_max": None,
+                "raw_rt_min": None, "raw_rt_max": None,
+                "raw_im_min": None, "raw_im_max": None,
+            })
         return d
 
     def to_dataframe_row(self) -> pd.DataFrame:
         return pd.DataFrame([self.to_dict()])
 
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+    def __repr__(self):
         return (
-            "ClusterResult1D("
-            f"ms_level={self.ms_level}, window_group={self.window_group}, "
+            f"ClusterResult1D(ms_level={self.ms_level}, "
+            f"window_group={self.window_group}, "
             f"raw_points_n={self.raw_points_n}, "
             f"rt_window={self.rt_window}, im_window={self.im_window}, "
             f"tof_window={self.tof_window}, mz_window={self.mz_window}, "
-            f"rt_mu={self.rt_mu:.3f}, im_mu={self.im_mu:.3f}, tof_mu={self.tof_mu:.3f}, "
-            f"raw_sum={self.raw_sum:.1f}, volume_proxy={self.volume_proxy:.1e}, "
-            f"parent_im_id={self.parent_im_id}, parent_rt_id={self.parent_rt_id})"
+            f"rt_fit={self.rt_fit}, im_fit={self.im_fit}, "
+            f"tof_fit={self.tof_fit}, mz_fit={self.mz_fit}, "
+            f"raw_sum={self.raw_sum}, volume_proxy={self.volume_proxy}, "
+            f"parent_im_id={self.parent_im_id}, "
+            f"parent_rt_id={self.parent_rt_id})"
         )
