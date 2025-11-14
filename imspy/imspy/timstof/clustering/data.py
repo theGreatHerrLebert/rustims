@@ -962,7 +962,7 @@ class ClusterResult1D:
     # --- optional raw points ---------------------------------------------
     def raw_points(self) -> RawPoints | None:
         # raw_points is still a *method* on the PyO3 side
-        rp = self._py.raw_points()
+        rp = self._py.raw_points
         return None if rp is None else RawPoints(rp)
 
     def get_py_ptr(self):
