@@ -837,6 +837,10 @@ class ClusterResult1D:
     def __init__(self, py):
         self._py = py
 
+    @property
+    def cluster_id(self):
+        return self._py.cluster_id
+
     # --- windows ---------------------------------------------------------
     @property
     def rt_window(self):
@@ -1030,6 +1034,7 @@ class ClusterResult1D:
     def to_dict(self) -> dict:
         """Flatten cluster stats + optional raw diagnostics into a dict."""
         d: dict[str, object] = {
+            "cluster_id": self.cluster_id,
             "ms_level": self.ms_level,
             "window_group": self.window_group,
             "parent_im_id": self.parent_im_id,

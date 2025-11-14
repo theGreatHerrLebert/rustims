@@ -1,3 +1,4 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
@@ -6,6 +7,34 @@ use mscore::timstof::slice::TimsSlice;
 use crate::cluster::peak::{FrameBinView, ImPeak1D, RtFrames, RtPeak1D};
 use crate::cluster::utility::{Fit1D, TofScale, fit1d_moment};
 use crate::data::handle::IndexConverter;
+
+fn compute_cluster_id_from_spec(spec: &ClusterSpec1D) -> u64 {
+    let mut h = DefaultHasher::new();
+
+    // Integer stuff is straightforward
+    spec.rt_lo.hash(&mut h);
+    spec.rt_hi.hash(&mut h);
+    spec.im_lo.hash(&mut h);
+    spec.im_hi.hash(&mut h);
+    spec.tof_win.0.hash(&mut h);
+    spec.tof_win.1.hash(&mut h);
+    spec.tof_hist_bins.hash(&mut h);
+    spec.ms_level.hash(&mut h);
+
+    // Options: encode presence + value
+    spec.window_group.unwrap_or(0).hash(&mut h);
+    spec.parent_im_id.unwrap_or(-1).hash(&mut h);
+    spec.parent_rt_id.unwrap_or(-1).hash(&mut h);
+
+    // im_prior_sigma is f32 – hash the bit pattern if present
+    let sigma_bits: u32 = spec
+        .im_prior_sigma
+        .map(|s| s.to_bits())
+        .unwrap_or(0u32);
+    sigma_bits.hash(&mut h);
+
+    h.finish()
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct ScanSlice {
@@ -98,6 +127,7 @@ pub struct RawPoints {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterResult1D {
+    pub cluster_id: u64,
     pub rt_window: (usize, usize),
     pub im_window: (usize, usize),
     pub tof_window: (usize, usize),
@@ -643,9 +673,12 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
     let im_sum1: f32 = im_marg1.iter().copied().sum();
     let ax_sum1: f32 = axis_hist1.iter().copied().sum();
 
+    let cluster_id = compute_cluster_id_from_spec(spec);
+
     // Early exit: no signal in any axis
     if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || ax_sum1 <= 0.0 {
         return ClusterResult1D {
+            cluster_id,
             rt_window: (spec.rt_lo, spec.rt_hi),
             im_window: (spec.im_lo, spec.im_hi),
             tof_window: (bin_lo0, bin_hi0),
@@ -831,6 +864,7 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
         * (tof_fit.area.max(0.0));
 
     ClusterResult1D {
+        cluster_id,
         rt_window: (spec.rt_lo, spec.rt_hi),
         im_window: (spec.im_lo, spec.im_hi),
         tof_window: (use_bin_lo, use_bin_hi),

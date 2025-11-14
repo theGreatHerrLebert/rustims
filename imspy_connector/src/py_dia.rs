@@ -95,6 +95,9 @@ impl PyClusterResult1D {
     // -------- windows ----------------------------------------------------
 
     #[getter]
+    pub fn cluster_id(&self) -> u64 { self.inner.cluster_id }
+
+    #[getter]
     fn rt_window(&self) -> (usize, usize) {
         self.inner.rt_window
     }
