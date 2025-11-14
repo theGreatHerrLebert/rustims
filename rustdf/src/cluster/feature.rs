@@ -2,7 +2,6 @@ use std::cmp::Ordering;
 use mscore::algorithm::isotope::generate_averagine_spectra;
 use crate::cluster::cluster::ClusterResult1D;
 
-
 #[derive(Clone, Debug)]
 pub struct AveragineLut {
     pub masses: Vec<f32>,      // neutral-mass grid (Da)
@@ -136,7 +135,6 @@ impl AveragineLut {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub struct GroupingParams {
     pub rt_pad_overlap: usize,   // pad windows for edge gating
@@ -174,7 +172,14 @@ pub struct SimpleFeature {
     pub im_bounds: (usize, usize),
     pub mz_center: f32,
     pub n_members: usize,
-    pub member_cluster_ids: Vec<usize>,   // indices into original clusters slice
+
+    /// Indices into the *input slice* of clusters (for local lookups).
+    pub member_cluster_indices: Vec<usize>,
+
+    /// Stable cluster IDs copied from `ClusterResult1D::cluster_id`.
+    /// NOTE: assumes `cluster_id: i64`; switch to `u64` here if your struct uses that.
+    pub member_cluster_ids: Vec<u64>,
+
     pub raw_sum: f32,
 }
 
@@ -236,6 +241,7 @@ fn _sigma_from_fwhm(fwhm: f32) -> Option<f32> {
         None
     }
 }
+
 fn _cluster_mz_sigma(c: &ClusterResult1D) -> Option<f32> {
     if let Some(ref f) = c.mz_fit {
         if f.sigma.is_finite() && f.sigma > 0.0 {
@@ -273,7 +279,13 @@ fn iso_tolerance_da(mz: f32, p: &SimpleFeatureParams) -> f32 {
 
 #[derive(Clone, Debug)]
 struct GoodCluster {
-    orig_id: usize,
+    /// index in the original `clusters` slice
+    orig_idx: usize,
+
+    /// stable ID from `ClusterResult1D`
+    /// NOTE: i64 here; change if you used u64.
+    cluster_id: u64,
+
     mz_mu: f32,
     _rt_mu: f32,
     rt_win: (usize, usize),
@@ -308,7 +320,8 @@ pub fn build_simple_features_from_clusters(
                 return None;
             }
             Some(GoodCluster {
-                orig_id: i,
+                orig_idx: i,
+                cluster_id: c.cluster_id, // <-- new: propagate stable ID
                 mz_mu,
                 _rt_mu: c.rt_fit.mu,
                 rt_win: c.rt_window,
@@ -371,7 +384,9 @@ pub fn build_simple_features_from_clusters(
                 let hi = target_m + tol;
 
                 // binary search window [lo, hi] in sorted mzs
-                let left = mzs.binary_search_by(|x| x.partial_cmp(&lo).unwrap_or(Ordering::Equal)).unwrap_or_else(|i| i);
+                let left = mzs
+                    .binary_search_by(|x| x.partial_cmp(&lo).unwrap_or(Ordering::Equal))
+                    .unwrap_or_else(|i| i);
                 let mut right = match mzs.binary_search_by(|x| x.partial_cmp(&hi).unwrap_or(Ordering::Equal)) {
                     Ok(i) => i + 1,
                     Err(i) => i,
@@ -452,7 +467,8 @@ pub fn build_simple_features_from_clusters(
         let mut im_max = 0usize;
         let mut raw_sum_total = 0.0_f32;
 
-        let mut member_cluster_ids: Vec<usize> = Vec::with_capacity(best_chain.len());
+        let mut member_cluster_indices: Vec<usize> = Vec::with_capacity(best_chain.len());
+        let mut member_cluster_ids: Vec<u64> = Vec::with_capacity(best_chain.len());
 
         for &idx in &best_chain {
             let g = &good[idx];
@@ -465,7 +481,9 @@ pub fn build_simple_features_from_clusters(
             im_min = im_min.min(g.im_win.0);
             im_max = im_max.max(g.im_win.1);
             raw_sum_total += g.raw_sum;
-            member_cluster_ids.push(g.orig_id);
+
+            member_cluster_indices.push(g.orig_idx);
+            member_cluster_ids.push(g.cluster_id);
         }
 
         if !mz_mono.is_finite() || mz_mono <= params.min_mz {
@@ -477,8 +495,7 @@ pub fn build_simple_features_from_clusters(
             mz_mono
         };
 
-        let neutral_mass =
-            (mz_mono - 1.007_276_5_f32).max(0.0) * (best_z as f32);
+        let neutral_mass = (mz_mono - 1.007_276_5_f32).max(0.0) * (best_z as f32);
 
         let feat_id = features.len();
         features.push(SimpleFeature {
@@ -490,6 +507,7 @@ pub fn build_simple_features_from_clusters(
             im_bounds: (im_min, im_max),
             mz_center,
             n_members: best_chain.len(),
+            member_cluster_indices,
             member_cluster_ids,
             raw_sum: raw_sum_total,
         });

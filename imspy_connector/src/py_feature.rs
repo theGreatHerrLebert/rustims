@@ -234,7 +234,7 @@ impl PySimpleFeature {
     }
 
     #[getter]
-    pub fn member_cluster_ids(&self) -> Vec<usize> {
+    pub fn member_cluster_ids(&self) -> Vec<u64> {
         self.inner.member_cluster_ids.clone()
     }
 
