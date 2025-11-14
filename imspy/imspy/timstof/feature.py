@@ -212,6 +212,24 @@ class SimpleFeature:
             f"raw_sum={self.raw_sum:.1f})"
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Convert the SimpleFeature to a dictionary representation.
+        """
+        return {
+            "feature_id": self.feature_id,
+            "charge": self.charge,
+            "mz_mono": self.mz_mono,
+            "neutral_mass": self.neutral_mass,
+            "rt_bounds": self.rt_bounds,
+            "im_bounds": self.im_bounds,
+            "mz_center": self.mz_center,
+            "n_members": self.n_members,
+            "member_cluster_ids": self.member_cluster_ids,
+            "raw_sum": self.raw_sum,
+            "first_member_cluster_id": self.member_cluster_ids[0] if self.n_members > 0 else None,
+        }
+
 
 # -----------------------------------------------------------------------------
 # Top-level convenience API
