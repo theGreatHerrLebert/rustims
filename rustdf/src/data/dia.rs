@@ -10,17 +10,37 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use rayon::iter::IntoParallelRefIterator;
-use crate::cluster::peak::{build_frame_bin_view, FrameBinView, RtFrames};
+use crate::cluster::peak::{build_frame_bin_view, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames};
 use crate::cluster::utility::{TofScale};
 use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
+use rayon::ThreadPoolBuilder;
+use crate::cluster::cluster::{evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawPoints};
 
-/*
-use crate::cluster::candidates::{CandidateOpts, PrecursorSearchIndex};
-use crate::cluster::cluster_scoring::{best_ms1_for_each_ms2, ms1_to_ms2_map, score_pairs, AssignmentResult, PairFeatures, ScoreOpts};
-use crate::cluster::cluster::{attach_raw_points_for_spec_1d_threads, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts};
-*/
+#[derive(Copy, Clone, Debug)]
+struct ScanSlice { scan: usize, start: usize, end: usize }
+
+fn build_scan_slices(fr: &TimsFrame) -> Vec<ScanSlice> {
+    let scv = &fr.scan;
+    let mut out = Vec::new();
+    if scv.is_empty() { return out; }
+    let mut s_cur = scv[0];
+    let mut i_start = 0usize;
+    for i in 1..scv.len() {
+        if scv[i] != s_cur {
+            if s_cur >= 0 {
+                out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: i });
+            }
+            s_cur = scv[i];
+            i_start = i;
+        }
+    }
+    if s_cur >= 0 {
+        out.push(ScanSlice { scan: s_cur as usize, start: i_start, end: scv.len() });
+    }
+    out
+}
 
 
 #[derive(Clone, Debug)]
@@ -441,38 +461,10 @@ impl TimsDatasetDIA {
             None
         }
     }
-    /// Build a TOF-based MzScale for a DIA group.
-    /// `tof_step = 1` → max TOF resolution; larger steps downsample.
-    pub fn mzscale_for_group(&self, window_group: u32, tof_step: i32) -> TofScale {
-        assert!(tof_step > 0);
 
-        let (ids, _times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
-        assert!(
-            !ids.is_empty(),
-            "mzscale_for_group: no MS2 frames for window_group {}",
-            window_group
-        );
-
-        let frames: Vec<_> = ids.iter().map(|&fid| self.get_frame(fid)).collect();
-
-        TofScale::build_from_tof(&frames, tof_step)
-            .expect("mzscale_for_group: failed to build TOF scale (empty or degenerate)")
-    }
-
-    /// Conservative: derive a TOF-scale by scanning actual frame data.
-    pub fn mzscale_from_frames_scan(&self, frame_ids: &[u32], tof_step: i32) -> Option<TofScale> {
-        assert!(tof_step > 0);
-        let frames: Vec<_> = frame_ids.iter().map(|&fid| self.get_frame(fid)).collect();
-        TofScale::build_from_tof(&frames, tof_step)
-    }
-
-    /// RT-sorted FRAGMENT frames + times for a DIA group, then converted into FrameBinView rows.
+    /// RT-sorted FRAGMENT frames + times for a DIA group, converted into FrameBinView rows.
     /// `tof_step` controls TOF granularity of CSR binning.
-    pub fn make_rt_frames_for_group(
-        &self,
-        window_group: u32,
-        tof_step: i32,
-    ) -> RtFrames {
+    pub fn make_rt_frames_for_group(&self, window_group: u32, tof_step: i32) -> RtFrames {
         assert!(tof_step > 0);
 
         let (ids, times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
@@ -490,7 +482,7 @@ impl TimsDatasetDIA {
             .unwrap_or(0);
 
         // TOF scale for this group
-        let scale = self.mzscale_for_group(window_group, tof_step);
+        let scale = self.tof_scale_for_group(window_group, tof_step);
 
         let frames: Vec<FrameBinView> = ids.par_iter()
             .map(|&fid| build_frame_bin_view(self.get_frame(fid), &scale, global_num_scans))
@@ -506,10 +498,7 @@ impl TimsDatasetDIA {
 
     /// RT-sorted PRECURSOR frames (ms_ms_type == 0) into FrameBinView rows.
     /// `tof_step` controls TOF granularity of CSR binning.
-    pub fn make_rt_frames_for_precursor(
-        &self,
-        tof_step: i32,
-    ) -> RtFrames {
+    pub fn make_rt_frames_for_precursor(&self, tof_step: i32) -> RtFrames {
         assert!(tof_step > 0);
 
         let mut rows: Vec<(u32, f32, usize)> = self.meta_data
@@ -540,6 +529,215 @@ impl TimsDatasetDIA {
             rt_times,
             scale: Arc::new(scale),
         }
+    }
+
+    /// Build a TOF-based scale for a DIA group.
+    /// `tof_step = 1` → max TOF resolution; larger steps downsample.
+    pub fn tof_scale_for_group(&self, window_group: u32, tof_step: i32) -> TofScale {
+        assert!(tof_step > 0);
+
+        let (ids, _times) = self.fragment_frame_ids_and_times_for_group_core(window_group);
+        assert!(
+            !ids.is_empty(),
+            "tof_scale_for_group: no MS2 frames for window_group {}",
+            window_group
+        );
+
+        let frames: Vec<_> = ids.iter().map(|&fid| self.get_frame(fid)).collect();
+
+        TofScale::build_from_tof(&frames, tof_step)
+            .expect("tof_scale_for_group: failed to build TOF scale (empty or degenerate)")
+    }
+
+    /// Conservative: derive a TOF scale by scanning actual frame data.
+    pub fn tof_scale_from_frames_scan(
+        &self,
+        frame_ids: &[u32],
+        tof_step: i32,
+    ) -> Option<TofScale> {
+        assert!(tof_step > 0);
+        let frames: Vec<_> = frame_ids.iter().map(|&fid| self.get_frame(fid)).collect();
+        TofScale::build_from_tof(&frames, tof_step)
+    }
+
+    /// Internal helper: go from a set of IM peaks to evaluated 1D clusters
+    /// on a given RtFrames grid (precursor or DIA group).
+    fn clusters_for_im_peaks_on_rt_frames(
+        &self,
+        rt: RtFrames,
+        im_peaks: &[ImPeak1D],
+        rt_params: RtExpandParams,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        require_rt_overlap: bool,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        // 1) Expand IM peaks along RT on this grid
+        let rt_groups = expand_many_im_peaks_along_rt(
+            im_peaks,
+            &rt.frames,
+            rt.ctx(),
+            rt.scale.as_ref(),
+            rt_params,
+        );
+
+        // 2) Build 1D specs (RT × IM × TOF-window)
+        let specs: Vec<ClusterSpec1D> = make_specs_from_im_and_rt_groups_threads(
+            im_peaks,
+            &rt_groups,
+            &rt,
+            build_opts,
+            require_rt_overlap,
+            num_threads,
+        );
+
+        // 3) Evaluate all specs on this RtFrames grid
+        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
+    }
+
+    /// Evaluate a batch of 1D cluster specs on the given RtFrames.
+    /// - Runs spec evaluation (marginals + moment fits) in parallel.
+    /// - Optionally attaches raw points using the finalized **TOF-bin window**
+    ///   and the spec’s IM/RT windows.
+    /// - `num_threads == 0` => use rayon’s global pool.
+    pub fn evaluate_specs_1d_threads(
+        &self,
+        rt_frames: &RtFrames,
+        specs: &[ClusterSpec1D],
+        opts: &Eval1DOpts,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        if specs.is_empty() {
+            return Vec::new();
+        }
+
+        let run = || {
+            specs
+                .par_iter()
+                .map(|spec| {
+                    // 1) compute fits/marginals from CSR-binned `rt_frames`
+                    let mut res = evaluate_spec_1d(rt_frames, spec, opts);
+
+                    // 2) optional raw attachment (pull real frames only when requested)
+                    //
+                    // We are now **TOF-first**:
+                    //   - res.tof_window = (bin_lo, bin_hi) in CSR bin space
+                    //   - res.tof_fit    = Fit1D on that axis
+                    //
+                    if opts.attach.attach_points
+                        && res.raw_sum > 0.0
+                        && res.tof_fit.area > 0.0
+                    {
+                        let (bin_lo, bin_hi) = res.tof_window;
+
+                        if bin_lo <= bin_hi {
+                            // Use the spec’s IM and RT windows (IM is not refined in evaluate_spec_1d)
+                            let (im_lo, im_hi) = (spec.im_lo, spec.im_hi);
+                            let (rt_lo, rt_hi) = res.rt_window;
+
+                            let raw = attach_raw_points_for_spec_1d_threads(
+                                &self,
+                                rt_frames,
+                                bin_lo,
+                                bin_hi,
+                                im_lo,
+                                im_hi,
+                                rt_lo,
+                                rt_hi,
+                                opts.attach.max_points,
+                                num_threads.max(1),
+                            );
+                            res.raw_points = Some(raw);
+                        } else {
+                            res.raw_points = None;
+                        }
+                    } else {
+                        res.raw_points = None;
+                    }
+
+                    res
+                })
+                .collect::<Vec<_>>()
+        };
+
+        if num_threads == 0 {
+            run()
+        } else {
+            ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .unwrap()
+                .install(run)
+        }
+    }
+
+    pub fn clusters_for_group(
+        &self,
+        window_group: u32,
+        tof_step: i32,
+        im_peaks: &[ImPeak1D],
+        rt_params: RtExpandParams,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        require_rt_overlap: bool,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        // Guard: all IM peaks must belong to this DIA group
+        debug_assert!(
+            im_peaks
+                .iter()
+                .all(|p| p.window_group == Some(window_group)),
+            "clusters_for_group: some IM peaks have wrong or missing window_group"
+        );
+
+        // Build RT+TOF grid for this DIA isolation window group.
+        let rt = self.make_rt_frames_for_group(window_group, tof_step);
+
+        // Force MS level 2 for DIA fragments
+        let build_opts_ms2 = build_opts.with_ms_level(2);
+
+        self.clusters_for_im_peaks_on_rt_frames(
+            rt,
+            im_peaks,
+            rt_params,
+            &build_opts_ms2,
+            eval_opts,
+            require_rt_overlap,
+            num_threads,
+        )
+    }
+
+    pub fn clusters_for_precursor(
+        &self,
+        tof_step: i32,
+        im_peaks: &[ImPeak1D],
+        rt_params: RtExpandParams,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        require_rt_overlap: bool,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        // Guard: all IM peaks must be MS1 (no window_group)
+        debug_assert!(
+            im_peaks.iter().all(|p| p.window_group.is_none()),
+            "clusters_for_precursor: IM peaks unexpectedly carry a window_group"
+        );
+
+        // RT+TOF grid for precursor (MS1) frames
+        let rt = self.make_rt_frames_for_precursor(tof_step);
+
+        // Force MS level 1 for precursor
+        let build_opts_ms1 = build_opts.with_ms_level(1);
+
+        self.clusters_for_im_peaks_on_rt_frames(
+            rt,
+            im_peaks,
+            rt_params,
+            &build_opts_ms1,
+            eval_opts,
+            require_rt_overlap,
+            num_threads,
+        )
     }
 }
 
@@ -598,262 +796,229 @@ impl IndexConverter for TimsDatasetDIA {
     }
 }
 
-/*
-/// Build a reusable MS1 search index for candidate enumeration.
-    /// Use when you plan to enumerate pairs repeatedly (e.g., different MS2 subsets or knobs).
-    pub fn build_precursor_search_index(
-        &self,
-        ms1: &[ClusterResult1D],
-        opts: &CandidateOpts,
-    ) -> PrecursorSearchIndex {
-        PrecursorSearchIndex::build(self, ms1, opts)
-    }
+pub fn attach_raw_points_for_spec_1d_threads(
+    ds: &TimsDatasetDIA,
+    rt_frames: &RtFrames,
+    final_bin_lo: usize,
+    final_bin_hi: usize,
+    final_im_lo: usize,
+    final_im_hi: usize,
+    final_rt_lo: usize,
+    final_rt_hi: usize,
+    max_points: Option<usize>,
+    num_threads: usize,
+) -> RawPoints {
+    let scale = &*rt_frames.scale;
 
-    /// One-shot helper: build a transient index and enumerate all (ms2_idx, ms1_idx) pairs.
-    /// If you’ll call this repeatedly, prefer `build_precursor_search_index` + `enumerate_pairs`.
-    pub fn enumerate_ms2_ms1_pairs(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        opts: &CandidateOpts,
-    ) -> Vec<(usize, usize)> {
-        let idx = PrecursorSearchIndex::build(self, ms1, opts);
-        idx.enumerate_pairs(ms1, ms2, opts)
-    }
-
-    /// Score already-enumerated pairs using width-aware / robust features.
-    /// Returns (ms2_idx, ms1_idx, features, score).
-    pub fn score_ms2_ms1_pairs(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        pairs: &[(usize, usize)],
-        sopts: &ScoreOpts,
-    ) -> Vec<(usize, usize, PairFeatures, f32)> {
-        score_pairs(ms1, ms2, pairs, sopts)
-    }
-
-    /// For each MS2, pick the best MS1 (or None if nothing decent).
-    pub fn best_ms1_per_ms2(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        pairs: &[(usize, usize)],
-        sopts: &ScoreOpts,
-    ) -> Vec<Option<usize>> {
-        best_ms1_for_each_ms2(ms1, ms2, pairs, sopts)
-    }
-
-    /// Build MS1 → Vec<MS2> from a winners vector.
-    pub fn ms1_to_ms2_assignments(
-        &self,
-        ms1_len: usize,
-        ms2_best_ms1: &[Option<usize>],
-    ) -> Vec<Vec<usize>> {
-        ms1_to_ms2_map(ms1_len, ms2_best_ms1)
-    }
-
-    /// End-to-end helper: enumerate → select best MS1 for each MS2 → build MS1→MS2 map.
-    /// Returns both the raw pairs and the final assignments.
-    pub fn enumerate_and_assign_best(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        copts: &CandidateOpts,
-        sopts: &ScoreOpts,
-    ) -> AssignmentResult {
-        let pairs = self.enumerate_ms2_ms1_pairs(ms1, ms2, copts);
-        let ms2_best_ms1 = self.best_ms1_per_ms2(ms1, ms2, &pairs, sopts);
-        let ms1_to_ms2 = self.ms1_to_ms2_assignments(ms1.len(), &ms2_best_ms1);
-        AssignmentResult { pairs, ms2_best_ms1, ms1_to_ms2 }
-    }
-    /// Expand a batch of IM peaks along RT within a DIA `window_group`.
-    /// Returns Vec<Vec<RtPeak1D>> aligned to `im_peaks` order.
-    pub fn expand_rt_for_im_peaks_in_group(
-        &self,
-        window_group: u32,
-        im_peaks: &[ImPeak1D],
-        p: RtExpandParams,
-        ppm_per_bin: f32,   // CSR resolution; keep consistent with how im_peaks were found
-    ) -> Vec<Vec<RtPeak1D>> {
-        if im_peaks.is_empty() {
-            return Vec::new();
-        }
-        // Debug guard: single-provenance assumption
-        debug_assert!(im_peaks.iter().all(|x| x.window_group == Some(window_group)));
-
-        let rt = self.make_rt_frames_for_group(window_group, ppm_per_bin);
-        debug_assert!(rt.is_consistent());
-        expand_many_im_peaks_along_rt(
-            im_peaks,
-            &rt.frames,
-            rt.ctx(),
-            rt.scale.as_ref(),              // <-- pass the CSR scale
-            p,
-        )
-    }
-
-    /// Expand a batch of IM peaks along RT in PRECURSOR space (ms_ms_type==0).
-    pub fn expand_rt_for_im_peaks_in_precursor(
-        &self,
-        im_peaks: &[ImPeak1D],
-        p: RtExpandParams,
-        ppm_per_bin: f32,
-    ) -> Vec<Vec<RtPeak1D>> {
-        if im_peaks.is_empty() {
-            return Vec::new();
-        }
-        // Debug guard: precursor provenance
-        debug_assert!(im_peaks.iter().all(|x| x.window_group.is_none()));
-
-        let rt = self.make_rt_frames_for_precursor(ppm_per_bin);
-        debug_assert!(rt.is_consistent());
-        expand_many_im_peaks_along_rt(
-            im_peaks,
-            &rt.frames,
-            rt.ctx(),
-            rt.scale.as_ref(),             // <-- pass the CSR scale
-            p,
-        )
-    }
-
-    /// Evaluate a batch of 1D cluster specs on the given RtFrames.
-    /// - Runs spec evaluation (marginals + moment fits) in parallel.
-    /// - Optionally attaches raw points using the finalized m/z window and the spec’s IM/RT windows.
-    /// - `num_threads == 0` => use rayon’s global pool.
-    pub fn evaluate_specs_1d_threads(
-        &self,
-        rt_frames: &RtFrames,
-        specs: &[ClusterSpec1D],
-        opts: &Eval1DOpts,
-        num_threads: usize,
-    ) -> Vec<ClusterResult1D> {
-        if specs.is_empty() { return Vec::new(); }
-
-        let scale = &*rt_frames.scale;
-
-        let run = || {
-            specs.par_iter()
-                .map(|spec| {
-                    // 1) compute fits/marginals from CSR-binned `rt_frames`
-                    let mut res = evaluate_spec_1d(rt_frames, spec, opts);
-
-                    // 2) optional raw attachment (pull real frames only when requested)
-                    if opts.attach.attach_points
-                        && res.raw_sum > 0.0
-                        && res.mz_fit.area > 0.0
-                    {
-                        // Recreate the final bin bounds from the result’s m/z window
-                        // (evaluate_spec_1d may have refined μ±kσ already).
-                        let (bin_lo, bin_hi) = bin_range_for_win(scale, res.mz_window);
-
-                        // Use the spec’s IM and RT windows (evaluate_spec_1d currently does not refine IM)
-                        let (im_lo, im_hi) = (spec.im_lo, spec.im_hi);
-                        let (rt_lo, rt_hi) = res.rt_window;
-
-                        let raw = attach_raw_points_for_spec_1d_threads(
-                            self,
-                            rt_frames,
-                            bin_lo, bin_hi,
-                            im_lo, im_hi,
-                            rt_lo, rt_hi,
-                            opts.attach.max_points,
-                            num_threads.max(1),
-                        );
-                        res.raw_points = Some(raw);
-                    } else {
-                        res.raw_points = None;
-                    }
-
-                    res
-                })
-                .collect::<Vec<_>>()
+    // Defensive clamp of bin indices to the valid bin range.
+    let n_bins = scale.num_bins();
+    if n_bins == 0 {
+        return RawPoints {
+            mz: Vec::new(),
+            rt: Vec::new(),
+            im: Vec::new(),
+            scan: Vec::new(),
+            intensity: Vec::new(),
+            tof: Vec::new(),
+            frame: Vec::new(),
         };
+    }
 
-        if num_threads == 0 {
-            run()
-        } else {
-            ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap().install(run)
+    let mut bin_lo = final_bin_lo.min(n_bins.saturating_sub(1));
+    let mut bin_hi = final_bin_hi.min(n_bins.saturating_sub(1));
+    if bin_lo > bin_hi {
+        std::mem::swap(&mut bin_lo, &mut bin_hi);
+    }
+
+    // Axis window from bin edges:
+    //   [edges[bin_lo], cushion_hi_edge(edges[bin_hi+1])]
+    let mut axis_lo = scale.edges[bin_lo];
+    let hi_edge_idx = (bin_hi + 1).min(scale.edges.len().saturating_sub(1));
+    let mut axis_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx]);
+
+    // RT frames and slice
+    let frame_ids_local = rt_frames.frame_ids[final_rt_lo..=final_rt_hi].to_vec();
+    let slice = ds.get_slice(frame_ids_local.clone(), num_threads.max(1));
+    let scan_slices: Vec<Vec<ScanSlice>> =
+        slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
+
+    // 1) Count
+    let mut total = 0usize;
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let mz = &fr.ims_frame.mz;
+        for sl in &scan_slices[fi] {
+            if sl.scan < final_im_lo || sl.scan > final_im_hi {
+                continue;
+            }
+            let l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
+            let r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
+            total += r.saturating_sub(l);
         }
     }
 
-    pub fn clusters_from_im_and_rt_groups(
-        &self,
-        rt_frames: &RtFrames,
-        im_peaks: &[ImPeak1D],
-        rt_groups: &[Vec<RtPeak1D>],
-        build_opts: &BuildSpecOpts,
-        eval_opts: &Eval1DOpts,
-        require_rt_overlap: bool,
-        num_threads: usize,
-    ) -> Vec<ClusterResult1D> {
-        let specs = make_specs_from_im_and_rt_groups_threads(
-            im_peaks, rt_groups, rt_frames, build_opts, require_rt_overlap, num_threads
-        );
-        self.evaluate_specs_1d_threads(rt_frames, &specs, eval_opts, num_threads)
+    // 2) Last-chance widen: if empty, expand by ±1 bin
+    if total == 0 {
+        let lo_idx = bin_lo.saturating_sub(1);
+        let hi_edge_idx_wide =
+            ((bin_hi + 2).min(n_bins)).min(scale.edges.len().saturating_sub(1));
+
+        let try_lo = scale.edges[lo_idx];
+        let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx_wide]);
+
+        let mut total2 = 0usize;
+        for (fi, fr) in slice.frames.iter().enumerate() {
+            let mz = &fr.ims_frame.mz;
+            for sl in &scan_slices[fi] {
+                if sl.scan < final_im_lo || sl.scan > final_im_hi {
+                    continue;
+                }
+                let l = lower_bound_in(mz, sl.start, sl.end, try_lo);
+                let r = upper_bound_in(mz, sl.start, sl.end, try_hi);
+                total2 += r.saturating_sub(l);
+            }
+        }
+
+        if total2 > 0 {
+            total = total2;
+            axis_lo = try_lo;
+            axis_hi = try_hi;
+        }
     }
 
-    pub fn clusters_for_group(
-        &self,
-        window_group: u32,
-        ppm_per_bin: f32,
-        im_peaks: &[ImPeak1D],
-        rt_params: RtExpandParams,
-        build_opts: &BuildSpecOpts,
-        eval_opts: &Eval1DOpts,
-        require_rt_overlap: bool,
-        num_threads: usize,
-    ) -> Vec<ClusterResult1D> {
-        // Guard: all IM peaks must belong to this DIA group
-        debug_assert!(
-            im_peaks.iter().all(|p| p.window_group == Some(window_group)),
-            "clusters_for_group: some IM peaks have wrong or missing window_group"
-        );
-
-        let rt = self.make_rt_frames_for_group(window_group, ppm_per_bin);
-
-        let rt_groups = expand_many_im_peaks_along_rt(
-            im_peaks, &rt.frames, rt.ctx(), rt.scale.as_ref(), rt_params
-        );
-
-        // Force MS level 2 for DIA fragments
-        let build_opts_ms2 = build_opts.with_ms_level(2);
-
-        let specs = make_specs_from_im_and_rt_groups_threads(
-            im_peaks, &rt_groups, &rt, &build_opts_ms2, require_rt_overlap, num_threads
-        );
-
-        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
+    // Still empty → bail with empty container
+    if total == 0 {
+        return RawPoints {
+            mz: Vec::new(),
+            rt: Vec::new(),
+            im: Vec::new(),
+            scan: Vec::new(),
+            intensity: Vec::new(),
+            tof: Vec::new(),
+            frame: Vec::new(),
+        };
     }
-    pub fn clusters_for_precursor(
-        &self,
-        ppm_per_bin: f32,
-        im_peaks: &[ImPeak1D],
-        rt_params: RtExpandParams,
-        build_opts: &BuildSpecOpts,
-        eval_opts: &Eval1DOpts,
-        require_rt_overlap: bool,
-        num_threads: usize,
-    ) -> Vec<ClusterResult1D> {
-        // Guard: all IM peaks must be MS1 (no window_group)
-        debug_assert!(
-            im_peaks.iter().all(|p| p.window_group.is_none()),
-            "clusters_for_precursor: IM peaks unexpectedly carry a window_group"
-        );
 
-        let rt = self.make_rt_frames_for_precursor(ppm_per_bin);
+    let stride = max_points.map(|cap| thin_stride(total, cap)).unwrap_or(1);
+    let reserve = total / stride + 8;
 
-        let rt_groups = expand_many_im_peaks_along_rt(
-            im_peaks, &rt.frames, rt.ctx(), rt.scale.as_ref(), rt_params
-        );
+    let mut pts = RawPoints {
+        mz: Vec::with_capacity(reserve),
+        rt: Vec::with_capacity(reserve),
+        im: Vec::with_capacity(reserve),
+        scan: Vec::with_capacity(reserve),
+        intensity: Vec::with_capacity(reserve),
+        tof: Vec::with_capacity(reserve),
+        frame: Vec::with_capacity(reserve),
+    };
 
-        // Force MS level 1 for precursor
-        let build_opts_ms1 = build_opts.with_ms_level(1);
+    let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
 
-        let specs = make_specs_from_im_and_rt_groups_threads(
-            im_peaks, &rt_groups, &rt, &build_opts_ms1, require_rt_overlap, num_threads
-        );
+    // 3) Extraction with thinning
+    let mut seen = 0usize;
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let mz   = &fr.ims_frame.mz;
+        let it   = &fr.ims_frame.intensity;
+        let ims  = &fr.ims_frame.mobility;
+        let tofs = &fr.tof;
 
-        self.evaluate_specs_1d_threads(&rt, &specs, eval_opts, num_threads)
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+        let rt_val = rt_axis_sec[fi];
+        let frame_id = frame_ids_local[fi];
+
+        for sl in &scan_slices[fi] {
+            let s_abs = sl.scan;
+            if s_abs < final_im_lo || s_abs > final_im_hi {
+                continue;
+            }
+
+            let mut l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
+            let mut r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
+            if r > len_all {
+                r = len_all;
+            }
+            if l >= r {
+                continue;
+            }
+
+            while l < r {
+                if stride == 1 || (seen % stride == 0) {
+                    pts.mz.push(mz[l] as f32);
+                    pts.rt.push(rt_val);
+                    pts.im.push(ims[l] as f32);
+                    pts.scan.push(s_abs as u32);
+                    pts.intensity.push(it[l] as f32);
+                    pts.frame.push(frame_id);
+                    pts.tof.push(tofs[l]);
+                }
+                seen += 1;
+                l += 1;
+            }
+        }
     }
- */
+
+    pts
+}
+
+// ----------------------------------------------------------------------
+// Helpers for axis-based extraction (no ppm, no mz_min/mz_max needed)
+// ----------------------------------------------------------------------
+
+/// Slightly "cushion" the high edge used for upper_bound search.
+///
+/// Semantics:
+/// - `hi_edge` is typically `scale.edges[bin_hi + 1]` (the upper edge of the last bin).
+/// - We nudge it outward by a tiny fraction of a *typical* bin width so values
+///   that sit exactly on the edge aren't accidentally excluded.
+/// - This is axis-generic: it works whether the axis is TOF or m/z-like.
+#[inline]
+fn cushion_hi_edge(scale: &TofScale, hi_edge: f32) -> f32 {
+    let edges = &scale.edges;
+    if edges.len() >= 2 {
+        // Use a small fraction of the first bin width as epsilon.
+        let bw = (edges[1] - edges[0]).abs().max(1e-6);
+        hi_edge + 0.01 * bw
+    } else {
+        hi_edge
+    }
+}
+
+#[inline]
+fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] < xf {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+#[inline]
+fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if mz[mid] <= xf {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+#[inline]
+fn thin_stride(total: usize, cap: usize) -> usize {
+    if cap == 0 || total <= cap {
+        1
+    } else {
+        (total + cap - 1) / cap
+    }
+}

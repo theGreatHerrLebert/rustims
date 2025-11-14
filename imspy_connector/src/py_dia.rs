@@ -6,12 +6,264 @@ use numpy::{PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
+use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D};
+use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams};
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyRawPoints {
+    pub inner: RawPoints,
+}
+
+#[pymethods]
+impl PyRawPoints {
+    #[getter]
+    fn mz(&self) -> Vec<f32> {
+        self.inner.mz.clone()
+    }
+
+    #[getter]
+    fn rt(&self) -> Vec<f32> {
+        self.inner.rt.clone()
+    }
+
+    #[getter]
+    fn im(&self) -> Vec<f32> {
+        self.inner.im.clone()
+    }
+
+    #[getter]
+    fn scan(&self) -> Vec<u32> {
+        self.inner.scan.clone()
+    }
+
+    #[getter]
+    fn intensity(&self) -> Vec<f32> {
+        self.inner.intensity.clone()
+    }
+
+    #[getter]
+    fn tof(&self) -> Vec<i32> {
+        self.inner.tof.clone()
+    }
+
+    #[getter]
+    fn frame(&self) -> Vec<u32> {
+        self.inner.frame.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RawPoints(n={})",
+            self.inner.mz.len()
+        )
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyClusterResult1D {
+    pub inner: ClusterResult1D,
+}
+
+#[pymethods]
+impl PyClusterResult1D {
+    /// We don’t want Python constructing these directly; they come from Rust.
+    #[new]
+    fn new() -> PyResult<Self> {
+        Err(exceptions::PyRuntimeError::new_err(
+            "PyClusterResult1D objects are created by the clustering APIs, not directly.",
+        ))
+    }
+
+    fn __repr__(&self) -> String {
+        let (rt_lo, rt_hi) = self.inner.rt_window;
+        let (im_lo, im_hi) = self.inner.im_window;
+        let (tof_lo, tof_hi) = self.inner.tof_window;
+        let ms = self.inner.ms_level;
+        format!(
+            "ClusterResult1D(ms_level={}, rt=[{}..{}], im=[{}..{}], tof=[{}..{}], raw_sum={:.1})",
+            ms, rt_lo, rt_hi, im_lo, im_hi, tof_lo, tof_hi, self.inner.raw_sum
+        )
+    }
+
+    // -------- windows ----------------------------------------------------
+
+    #[getter]
+    fn rt_window(&self) -> (usize, usize) {
+        self.inner.rt_window
+    }
+
+    #[getter]
+    fn im_window(&self) -> (usize, usize) {
+        self.inner.im_window
+    }
+
+    #[getter]
+    fn tof_window(&self) -> (usize, usize) {
+        self.inner.tof_window
+    }
+
+    #[getter]
+    fn mz_window(&self) -> Option<(f32, f32)> {
+        self.inner.mz_window
+    }
+
+
+    #[getter]
+    fn rt_mu(&self) -> f32 {
+        self.inner.rt_fit.mu
+    }
+
+    #[getter]
+    fn rt_sigma(&self) -> f32 {
+        self.inner.rt_fit.sigma
+    }
+
+    #[getter]
+    fn rt_height(&self) -> f32 {
+        self.inner.rt_fit.height
+    }
+
+    #[getter]
+    fn rt_area(&self) -> f32 {
+        self.inner.rt_fit.area
+    }
+
+    #[getter]
+    fn im_mu(&self) -> f32 {
+        self.inner.im_fit.mu
+    }
+
+    #[getter]
+    fn im_sigma(&self) -> f32 {
+        self.inner.im_fit.sigma
+    }
+
+    #[getter]
+    fn im_height(&self) -> f32 {
+        self.inner.im_fit.height
+    }
+
+    #[getter]
+    fn im_area(&self) -> f32 {
+        self.inner.im_fit.area
+    }
+
+    #[getter]
+    fn tof_mu(&self) -> f32 {
+        self.inner.tof_fit.mu
+    }
+
+    #[getter]
+    fn tof_sigma(&self) -> f32 {
+        self.inner.tof_fit.sigma
+    }
+
+    #[getter]
+    fn tof_height(&self) -> f32 {
+        self.inner.tof_fit.height
+    }
+
+    #[getter]
+    fn tof_area(&self) -> f32 {
+        self.inner.tof_fit.area
+    }
+
+    #[getter]
+    fn mz_mu(&self) -> Option<f32> {
+        self.inner.mz_fit.as_ref().map(|f| f.mu)
+    }
+
+    #[getter]
+    fn mz_sigma(&self) -> Option<f32> {
+        self.inner.mz_fit.as_ref().map(|f| f.sigma)
+    }
+
+    #[getter]
+    fn mz_height(&self) -> Option<f32> {
+        self.inner.mz_fit.as_ref().map(|f| f.height)
+    }
+
+    #[getter]
+    fn mz_area(&self) -> Option<f32> {
+        self.inner.mz_fit.as_ref().map(|f| f.area)
+    }
+
+    // -------- scalar meta ------------------------------------------------
+
+    #[getter]
+    fn raw_sum(&self) -> f32 {
+        self.inner.raw_sum
+    }
+
+    #[getter]
+    fn volume_proxy(&self) -> f32 {
+        self.inner.volume_proxy
+    }
+
+    #[getter]
+    fn ms_level(&self) -> u8 {
+        self.inner.ms_level
+    }
+
+    #[getter]
+    fn window_group(&self) -> Option<u32> {
+        self.inner.window_group
+    }
+
+    #[getter]
+    fn parent_im_id(&self) -> Option<i64> {
+        self.inner.parent_im_id
+    }
+
+    #[getter]
+    fn parent_rt_id(&self) -> Option<i64> {
+        self.inner.parent_rt_id
+    }
+
+    // -------- arrays / axes ----------------------------------------------
+
+    #[getter]
+    fn frame_ids_used(&self) -> Vec<u32> {
+        self.inner.frame_ids_used.clone()
+    }
+
+    #[getter]
+    fn rt_axis_sec(&self) -> Option<Vec<f32>> {
+        self.inner.rt_axis_sec.clone()
+    }
+
+    #[getter]
+    fn im_axis_scans(&self) -> Option<Vec<usize>> {
+        self.inner.im_axis_scans.clone()
+    }
+
+    #[getter]
+    fn mz_axis_da(&self) -> Option<Vec<f32>> {
+        self.inner.mz_axis_da.clone()
+    }
+
+    // -------- raw points -------------------------------------------------
+
+    #[getter]
+    fn has_raw_points(&self) -> bool {
+        self.inner.raw_points.is_some()
+    }
+
+    #[getter]
+    fn raw_points(&self) -> Option<PyRawPoints> {
+        self.inner
+            .raw_points
+            .clone()
+            .map(|rp| PyRawPoints { inner: rp })
+    }
+}
 
 #[pyclass]
 pub struct PyTofScanPlanGroup {
@@ -1228,68 +1480,6 @@ impl PyTofScanWindowGrid {
     fn tof_edges<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
         Ok(PyArray1::from_vec_bound(py, self.inner.scale.edges.clone()).unbind())
     }
-
-    /*
-    /// IM-peak picking per TOF row.
-    #[pyo3(signature = (
-        min_prom=50.0,
-        min_distance_scans=2,
-        min_width_scans=2,
-        use_mobility=false
-    ))]
-    pub fn pick_im_peaks<'py>(
-        &self,
-        _py: Python<'py>,
-        min_prom: f32,
-        min_distance_scans: usize,
-        min_width_scans: usize,
-        use_mobility: bool,
-    ) -> PyResult<Vec<Vec<Py<PyImPeak1D>>>> {
-        let rows = self.inner.rows;
-        let cols = self.inner.cols;
-
-        let data_ref: &Vec<f32> = self.inner.data.as_ref()
-            .ok_or_else(|| exceptions::PyRuntimeError::new_err("window.data not available"))?;
-        let data: &[f32] = data_ref.as_slice();
-
-        let data_raw_opt: Option<&[f32]> = self.inner.data_raw.as_ref().map(|v| v.as_slice());
-
-        let mob_fn: MobilityFn = if use_mobility { Some(|scan| scan as f32) } else { None };
-
-        let rows_rs: Vec<Vec<ImPeak1D>> = (0..rows).map(|row| {
-            let mut y_s = Vec::with_capacity(cols);
-            let mut y_r = Vec::with_capacity(cols);
-
-            // column-major (Fortran) layout: idx = s * rows + row
-            for s in 0..cols {
-                let idx = s * rows + row;
-                let val_s = data[idx];
-                y_s.push(val_s);
-
-                let val_r = data_raw_opt.map(|raw| raw[idx]).unwrap_or(val_s);
-                y_r.push(val_r);
-            }
-
-            find_im_peaks_row(
-                &y_s,
-                &y_r,
-                row, // tof_row
-                self.inner.tof_center_for_row(row),
-                self.inner.tof_bounds_for_row(row),
-                self.inner.rt_range_frames,
-                self.inner.frame_id_bounds,
-                self.inner.window_group,
-                mob_fn,
-                min_prom,
-                min_distance_scans,
-                min_width_scans,
-                &self.inner.scans, // absolute scan axis
-            )
-        }).collect();
-
-        impeaks_to_py_nested(_py, rows_rs)
-    }
-     */
 }
 
 #[pyclass]
@@ -1373,6 +1563,272 @@ impl PyTimsDatasetDIA {
 
     pub fn mz_bounds_for_group(&self, window_group: u32) -> Option<(f32, f32)> {
         self.inner.mz_bounds_for_window_group_core(window_group)
+    }
+
+    #[pyo3(signature = (
+        window_group,
+        tof_step,
+        im_peaks,
+        // RtExpandParams (already in seconds)
+        bin_pad=0,
+        smooth_sigma_sec=1.25,
+        smooth_trunc_k=3.0,
+        min_prom=50.0,
+        min_sep_sec=2.0,
+        min_width_sec=2.0,
+        fallback_if_frames_lt=5,
+        fallback_frac_width=0.5,
+        // BuildSpecOpts (TOF-based now)
+        extra_rt_pad=0,
+        extra_im_pad=0,
+        tof_bin_pad=0,
+        tof_hist_bins=64,
+        // Eval1DOpts
+        refine_tof_once=true,
+        refine_k_sigma=3.0,
+        attach_axes=true,
+        attach_points=false,
+        attach_max_points=None,
+        // matching constraint + threads
+        require_rt_overlap=true,
+        num_threads=0,
+        min_im_span=12,
+    ))]
+    pub fn clusters_for_group(
+        &self,
+        py: Python<'_>,
+        window_group: u32,
+        tof_step: i32,
+        im_peaks: Vec<Py<PyImPeak1D>>,
+        // RtExpandParams
+        bin_pad: usize,
+        smooth_sigma_sec: f32,
+        smooth_trunc_k: f32,
+        min_prom: f32,
+        min_sep_sec: f32,
+        min_width_sec: f32,
+        fallback_if_frames_lt: usize,
+        fallback_frac_width: f32,
+        // BuildSpecOpts
+        extra_rt_pad: usize,
+        extra_im_pad: usize,
+        tof_bin_pad: usize,
+        tof_hist_bins: usize,
+        // Eval1DOpts
+        refine_tof_once: bool,
+        refine_k_sigma: f32,
+        attach_axes: bool,
+        attach_points: bool,
+        attach_max_points: Option<usize>,
+        // matching + threads
+        require_rt_overlap: bool,
+        num_threads: usize,
+        min_im_span: usize,
+    ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+        // ---- convert Python IM peaks into Rust ImPeak1D ------------------
+        let im_rs: Vec<ImPeak1D> = im_peaks
+            .iter()
+            .map(|p| p.borrow(py).inner.as_ref().clone())
+            .collect();
+        debug_assert!(
+            im_rs.iter().all(|p| p.window_group == Some(window_group)),
+            "clusters_for_group: some IM peaks have wrong or missing window_group"
+        );
+
+        // ---- RT expansion params -----------------------------------------
+        let rt_params = RtExpandParams {
+            bin_pad,
+            smooth_sigma_sec,
+            smooth_trunc_k,
+            min_prom,
+            min_sep_sec,
+            min_width_sec,
+            fallback_if_frames_lt,
+            fallback_frac_width,
+        };
+
+        // ---- BuildSpecOpts: TOF-based, no ppm ----------------------------
+        let build_opts = BuildSpecOpts {
+            extra_rt_pad,
+            extra_im_pad,
+            tof_bin_pad,
+            tof_hist_bins,
+            ms_level: 2,         // DIA fragments
+            min_im_span,
+            im_k_sigma: 3.0,     // keep hard-coded for now
+        };
+
+        // ---- Eval1DOpts: TOF refine, no mz_ppm_cap here ------------------
+        let eval_opts = Eval1DOpts {
+            refine_tof_once,
+            refine_k_sigma,
+            attach_axes,
+            attach: Attach1DOptions {
+                attach_points,
+                attach_axes,
+                max_points: attach_max_points,
+            },
+        };
+
+        // ---- Run the core DIA clustering --------------------------------
+        let results = py.allow_threads(|| {
+            self.inner.clusters_for_group(
+                window_group,
+                tof_step,
+                &im_rs,
+                rt_params,
+                &build_opts,
+                &eval_opts,
+                require_rt_overlap,
+                num_threads,
+            )
+        });
+
+        /*
+        // ---- Stitching still uses mz/ppm-based logic on the *results* ----
+        // (this can stay as-is for now; it works off the derived cluster m/z)
+        let p = ClusterStitchParams {
+            allow_cross_groups: false,
+            min_overlap_frames: 1,
+            max_rt_gap_frames: 3,
+            min_im_overlap_scans: 1,
+            max_im_gap_scans: 10,
+            jaccard_rt_min: 0.05,
+            jaccard_im_min: 0.05,
+            ppm_cap: 25.0,
+            k_sigma_bounds: 1.0,
+            max_mz_gap_ppm: 15.0,
+            mz_min: None,
+            mz_max: None,
+        };
+
+        let stitched = stitch_clusters_1d_ppm(results, p);
+         */
+        results_to_py(py, results)
+    }
+
+    #[pyo3(signature = (
+        tof_step,
+        im_peaks,
+        bin_pad=0,
+        smooth_sigma_sec=1.25, smooth_trunc_k=3.0,
+        min_prom=50.0, min_sep_sec=2.0, min_width_sec=2.0,
+        fallback_if_frames_lt=5, fallback_frac_width=0.5,
+        extra_rt_pad=0, extra_im_pad=0, tof_bin_pad=0, tof_hist_bins=64,
+        refine_tof_once=true, refine_k_sigma=3.0,
+        attach_axes=true,
+        attach_points=false, attach_max_points=None,
+        require_rt_overlap=true, num_threads=0,
+        min_im_span=12,
+    ))]
+    pub fn clusters_for_precursor(
+        &self,
+        py: Python<'_>,
+        tof_step: i32,
+        im_peaks: Vec<Py<PyImPeak1D>>,
+        // RtExpandParams
+        bin_pad: usize,
+        smooth_sigma_sec: f32,
+        smooth_trunc_k: f32,
+        min_prom: f32,
+        min_sep_sec: f32,
+        min_width_sec: f32,
+        fallback_if_frames_lt: usize,
+        fallback_frac_width: f32,
+        // BuildSpecOpts
+        extra_rt_pad: usize,
+        extra_im_pad: usize,
+        tof_bin_pad: usize,
+        tof_hist_bins: usize,
+        // Eval1DOpts
+        refine_tof_once: bool,
+        refine_k_sigma: f32,
+        attach_axes: bool,
+        attach_points: bool,
+        attach_max_points: Option<usize>,
+        // matching + threads
+        require_rt_overlap: bool,
+        num_threads: usize,
+        min_im_span: usize,
+    ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+        // ---- convert Python IM peaks into Rust ImPeak1D ------------------
+        let im_rs: Vec<ImPeak1D> = im_peaks
+            .iter()
+            .map(|p| p.borrow(py).inner.as_ref().clone())
+            .collect();
+        debug_assert!(
+            im_rs.iter().all(|p| p.window_group.is_none()),
+            "clusters_for_precursor: IM peaks unexpectedly carry a window_group"
+        );
+
+        // ---- RT expansion params -----------------------------------------
+        let rt_params = RtExpandParams {
+            bin_pad,
+            smooth_sigma_sec,
+            smooth_trunc_k,
+            min_prom,
+            min_sep_sec,
+            min_width_sec,
+            fallback_if_frames_lt,
+            fallback_frac_width,
+        };
+
+        // ---- BuildSpecOpts: MS1, TOF-based -------------------------------
+        let build_opts = BuildSpecOpts {
+            extra_rt_pad,
+            extra_im_pad,
+            tof_bin_pad,
+            tof_hist_bins,
+            ms_level: 1,         // precursor
+            min_im_span,
+            im_k_sigma: 3.0,
+        };
+
+        // ---- Eval1DOpts --------------------------------------------------
+        let eval_opts = Eval1DOpts {
+            refine_tof_once,
+            refine_k_sigma,
+            attach_axes,
+            attach: Attach1DOptions {
+                attach_points,
+                attach_axes,
+                max_points: attach_max_points,
+            },
+        };
+
+        // ---- Run the core MS1 clustering --------------------------------
+        let results = py.allow_threads(|| {
+            self.inner.clusters_for_precursor(
+                tof_step,
+                &im_rs,
+                rt_params,
+                &build_opts,
+                &eval_opts,
+                require_rt_overlap,
+                num_threads,
+            )
+        });
+
+        /*
+        // ---- Stitching for MS1 clusters ---------------------------------
+        let p = ClusterStitchParams {
+            allow_cross_groups: false,
+            min_overlap_frames: 1,
+            max_rt_gap_frames: 3,
+            min_im_overlap_scans: 1,
+            max_im_gap_scans: 2,
+            jaccard_rt_min: 0.05,
+            jaccard_im_min: 0.05,
+            ppm_cap: 25.0,
+            k_sigma_bounds: 1.0,
+            max_mz_gap_ppm: 1.0, // stricter MS1 mz gap
+            mz_min: None,
+            mz_max: None,
+        };
+
+        let stitched = stitch_clusters_1d_ppm(results, p);
+         */
+        results_to_py(py, results)
     }
 }
 
@@ -1469,6 +1925,12 @@ fn smooth_rows_parallel(
         }
     }
     out
+}
+
+fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+    v.into_iter()
+        .map(|r| Py::new(py, PyClusterResult1D { inner: r }))
+        .collect()
 }
 
 #[pymodule]
