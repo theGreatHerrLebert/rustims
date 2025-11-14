@@ -4,8 +4,9 @@
 IM peak detection → stitching → clustering (TOML-configured) with logging and CLI overrides.
 
 Updated for:
-- new torch extractor (TofScanPlan/TofScanWindowGrid, pool_tof, tol_tof, no mz_bounds_pad_*),
-- new clustering API (tof_step + RT/IM/TOF params, no ppm_per_bin).
+- TimsDatasetDIA.plan_tof_scan_windows / plan_tof_scan_windows_for_group
+- new torch extractor (pool_tof, tol_tof, no mz_bounds_pad_*)
+- new clustering API (tof_step + RT/IM/TOF params, no ppm_per_bin)
 """
 from __future__ import annotations
 
@@ -18,8 +19,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
+
+from imspy.timstof.clustering.utility import stitch_im_peaks
 
 # Python 3.11+ has tomllib; otherwise optional tomli fallback
 try:
@@ -29,10 +33,10 @@ except Exception:
     import tomli as toml  # type: ignore
 
 from imspy.timstof.clustering.torch_extractor import iter_im_peaks_batches
-from imspy.timstof.clustering.utility import (
-    stitch_im_peaks,
+from imspy.timstof.dia import (
+    save_clusters_bin,
+    TimsDatasetDIA,
 )
-from imspy.timstof.dia import TimsDatasetDIA, save_clusters_bin
 
 # --------------------------- logging ------------------------------------------
 _LOGGER_NAME = "t-tracer"
@@ -129,12 +133,13 @@ def print_config_summary(cfg: dict) -> None:
         if sec in plan_cfg:
             p = plan_cfg[sec]
             lines.append(f"[plans.{sec}]")
-            lines.append(f"  ppm_per_bin          : {float(p.get('ppm_per_bin'))}")
-            lines.append(f"  mz_pad_ppm           : {float(p.get('mz_pad_ppm'))}")
-            lines.append(f"  rt_window_sec        : {float(p.get('rt_window_sec'))}")
-            lines.append(f"  rt_hop_sec           : {float(p.get('rt_hop_sec'))}")
-            lines.append(f"  im_sigma_scans       : {float(p.get('im_sigma_scans'))}")
-            lines.append(f"  mz_sigma_bins        : {float(p.get('mz_sigma_bins'))}")
+            lines.append(f"  tof_step             : {int(p.get('tof_step', 1))}")
+            lines.append(f"  rt_window_sec        : {float(p.get('rt_window_sec', 0.0))}")
+            lines.append(f"  rt_hop_sec           : {float(p.get('rt_hop_sec', 0.0))}")
+            lines.append(f"  sigma_scans          : {p.get('sigma_scans')}")
+            lines.append(f"  sigma_tof_bins       : {p.get('sigma_tof_bins')}")
+            lines.append(f"  truncate             : {float(p.get('truncate', 3.0))}")
+            lines.append(f"  num_threads          : {int(p.get('num_threads', 4))}")
         if sec in st_cfg:
             s = st_cfg[sec]
             lines.append(f"[stitch.{sec}]")
@@ -213,25 +218,45 @@ def cuda_gc() -> None:
 
 # ---------- core runners ------------------------------------------------------
 def build_plan(ds, plan_cfg: dict, precompute_views: bool, *, for_group: int | None = None):
+    """
+    Build a TofScanPlan (precursor) or TofScanPlanGroup (fragment WG) using the
+    TimsDatasetDIA.plan_tof_scan_windows* methods.
+    """
+    tof_step = int(plan_cfg["tof_step"])
+    rt_window_sec = float(plan_cfg["rt_window_sec"])
+    rt_hop_sec = float(plan_cfg["rt_hop_sec"])
+    num_threads = int(plan_cfg.get("num_threads", 4))
+
+    sigma_scans = plan_cfg.get("sigma_scans", None)
+    sigma_tof_bins = plan_cfg.get("sigma_tof_bins", None)
+    truncate = float(plan_cfg.get("truncate", 3.0))
+
+    if sigma_scans is not None:
+        sigma_scans = float(sigma_scans)
+    if sigma_tof_bins is not None:
+        sigma_tof_bins = float(sigma_tof_bins)
+
     if for_group is None:
-        return ds.plan_mz_scan_windows(
-            ppm_per_bin=float(plan_cfg["ppm_per_bin"]),
-            mz_pad_ppm=float(plan_cfg["mz_pad_ppm"]),
-            rt_window_sec=float(plan_cfg["rt_window_sec"]),
-            rt_hop_sec=float(plan_cfg["rt_hop_sec"]),
-            im_sigma_scans=float(plan_cfg["im_sigma_scans"]),
-            mz_sigma_bins=float(plan_cfg["mz_sigma_bins"]),
+        return ds.plan_tof_scan_windows(
+            tof_step=tof_step,
+            rt_window_sec=rt_window_sec,
+            rt_hop_sec=rt_hop_sec,
+            num_threads=num_threads,
+            maybe_sigma_scans=sigma_scans,
+            maybe_sigma_tof_bins=sigma_tof_bins,
+            truncate=truncate,
             precompute_views=bool(precompute_views),
         )
     else:
-        return ds.plan_mz_scan_windows_for_group(
+        return ds.plan_tof_scan_windows_for_group(
             window_group=int(for_group),
-            ppm_per_bin=float(plan_cfg["ppm_per_bin"]),
-            mz_pad_ppm=float(plan_cfg["mz_pad_ppm"]),
-            rt_window_sec=float(plan_cfg["rt_window_sec"]),
-            rt_hop_sec=float(plan_cfg["rt_hop_sec"]),
-            im_sigma_scans=float(plan_cfg["im_sigma_scans"]),
-            mz_sigma_bins=float(plan_cfg["mz_sigma_bins"]),
+            tof_step=tof_step,
+            rt_window_sec=rt_window_sec,
+            rt_hop_sec=rt_hop_sec,
+            num_threads=num_threads,
+            maybe_sigma_scans=sigma_scans,
+            maybe_sigma_tof_bins=sigma_tof_bins,
+            truncate=truncate,
             precompute_views=bool(precompute_views),
         )
 
@@ -250,7 +275,7 @@ def detect_and_stitch_for_plan(
         collected = []
 
     num_batches = (len(plan) + int(run_cfg["batch_size"]) - 1) // int(run_cfg["batch_size"])
-    log(f"[detect] plan has {len(plan)} mz-im planes -> (~{num_batches} batches)")
+    log(f"[detect] plan has {len(plan)} tof-scan planes -> (~{num_batches} batches)")
 
     for peak_batch in iter_im_peaks_batches(
         plan,
@@ -330,7 +355,7 @@ def run_precursor(ds, cfg):
     clusters = ds.clusters_for_precursor(
         stitched,
         tof_step=int(c.get("tof_step", 1)),
-        bin_pad=float(c.get("bin_pad", 0.0)),
+        bin_pad=float(c.get("bin_pad", 10.0)),
         smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
         smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
         min_prom=float(c.get("min_prom", 50.0)),
@@ -357,7 +382,7 @@ def run_precursor(ds, cfg):
     out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_file"]
     ensure_dir_for_file(out_bin)
     compress = bool(cfg["output"].get("compress_bin", True))
-    save_clusters_bin(clusters=clusters, path=str(out_bin), compress=compress)
+    save_clusters_bin(path=str(out_bin), clusters=clusters, compress=compress)
     log(f"[ok] wrote precursor clusters -> {out_bin} (compress={compress})")
 
     # ---- optional parquet ----
@@ -387,8 +412,9 @@ def run_fragments(ds, cfg):
 
     all_clusters = []
 
-    # NEW: use ds.dia_window_groups() helper provided by the Rust-backed dataset
-    wgs = sorted(ds.dia_ms_ms_info.WindowGoups.unique().tolist())
+    # Use DIA MS/MS info table to get window groups
+    info = ds.dia_ms_ms_info
+    wgs = sorted(int(w) for w in info.WindowGroup.unique())
     log(f"[fragments] {len(wgs)} window-groups")
 
     for wg in wgs:
@@ -405,7 +431,7 @@ def run_fragments(ds, cfg):
             window_group=int(wg),
             im_peaks=stitched_wg,
             tof_step=int(c.get("tof_step", 1)),
-            bin_pad=float(c.get("bin_pad", 0.0)),
+            bin_pad=float(c.get("bin_pad", 30.0)),
             smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
             smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
             min_prom=float(c.get("min_prom", 25.0)),
@@ -436,7 +462,7 @@ def run_fragments(ds, cfg):
     out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_file"]
     ensure_dir_for_file(out_bin)
     compress = bool(cfg["output"].get("compress_bin", True))
-    save_clusters_bin(clusters=all_clusters, path=str(out_bin), compress=compress)
+    save_clusters_bin(path=str(out_bin), clusters=all_clusters, compress=compress)
     log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
 
     # ---- optional parquet ----
@@ -482,7 +508,7 @@ def load_config(path: str) -> dict:
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("use_batch_stitch", False)
 
-    # detector defaults (NEW NAMES)
+    # detector defaults (TOF-based)
     cfg.setdefault("detector", {})
     d = cfg["detector"]
     d.setdefault("pool_scan", 11)
@@ -491,7 +517,7 @@ def load_config(path: str) -> dict:
     d.setdefault("tile_rows", 65_536)
     d.setdefault("tile_overlap", 64)
     d.setdefault("fit_h", 35)
-    d.setdefault("fit_w", 11)  # will be clamped internally anyway
+    d.setdefault("fit_w", 11)
     d.setdefault("refine", "adam")  # "none" | "adam" | "gn" | "gauss_newton"
     d.setdefault("refine_iters", 8)
     d.setdefault("refine_lr", 0.2)
@@ -509,7 +535,30 @@ def load_config(path: str) -> dict:
     d.setdefault("k_sigma", 3.0)
     d.setdefault("min_width", 3)
 
-    # clustering defaults (NEW API)
+    # plans defaults (TOF-based)
+    cfg.setdefault("plans", {})
+    cfg["plans"].setdefault("precursor", {})
+    cfg["plans"].setdefault("fragment", {})
+
+    pp = cfg["plans"]["precursor"]
+    pp.setdefault("tof_step", 1)
+    pp.setdefault("rt_window_sec", 6.0)
+    pp.setdefault("rt_hop_sec", 3.0)
+    pp.setdefault("sigma_scans", 9.0)
+    pp.setdefault("sigma_tof_bins", 1.0)
+    pp.setdefault("truncate", 3.0)
+    pp.setdefault("num_threads", 4)
+
+    pf = cfg["plans"]["fragment"]
+    pf.setdefault("tof_step", 1)
+    pf.setdefault("rt_window_sec", 3.0)
+    pf.setdefault("rt_hop_sec", 1.5)
+    pf.setdefault("sigma_scans", 5.0)
+    pf.setdefault("sigma_tof_bins", 1.0)
+    pf.setdefault("truncate", 3.0)
+    pf.setdefault("num_threads", 4)
+
+    # clustering defaults (new API)
     cfg.setdefault("cluster", {})
     cfg["cluster"].setdefault("precursor", {})
     cfg["cluster"].setdefault("fragment", {})
@@ -595,15 +644,13 @@ def main(argv=None):
     parser.add_argument("--no-console-log", action="store_true",
                         help="Disable console logging")
 
-    # clustering overrides
-    # precursor
+    # simple clustering overrides
     parser.add_argument("--prec-bin-pad", type=float,
                         help="Override cluster.precursor.bin_pad")
     parser.add_argument("--prec-min-prom", type=float,
                         help="Override cluster.precursor.min_prom")
     parser.add_argument("--prec-attach-max", type=int,
                         help="Override cluster.precursor.attach_max_points")
-    # fragment
     parser.add_argument("--frag-bin-pad", type=float,
                         help="Override cluster.fragment.bin_pad")
     parser.add_argument("--frag-min-prom", type=float,
@@ -641,7 +688,7 @@ def main(argv=None):
     if args.fragments is not None:
         cfg["run"]["fragments_enabled"] = bool(args.fragments)
 
-    # clustering overrides (a bit slimmer now: you can extend if you really want every knob)
+    # clustering overrides
     if args.prec_bin_pad is not None:
         cfg["cluster"]["precursor"]["bin_pad"] = float(args.prec_bin_pad)
     if args.prec_min_prom is not None:

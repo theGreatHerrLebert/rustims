@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Iterable, List, Optional, Sequence, Dict, Any
 import numpy as np
+import pandas as pd
+
+from imspy.timstof.clustering.utility import stitch_im_peaks
+
 try:
     from tqdm import tqdm as _tqdm
     TQDM = True
@@ -10,8 +14,6 @@ except Exception:
     TQDM = False
 
 from imspy.timstof.dia import (
-    stitch_im_peaks,
-    clusters_to_dataframe,
     TimsDatasetDIA,
 )
 
@@ -281,16 +283,8 @@ def build_fragment_clusters(
 
 def clusters_to_df(
     clusters,
-    include_raw_stats: bool = False,
-    as_bool_flags: bool = True,
-    column_order: Optional[list[str]] = None,
 ):
-    return clusters_to_dataframe(
-        clusters,
-        include_raw_stats=include_raw_stats,
-        as_bool_flags=as_bool_flags,
-        column_order=column_order,
-    )
+    return pd.DataFrame([c.to_dict() for c in clusters]).set_index("ms_level")
 
 # --------- small helpers used by the CLI ----------
 
