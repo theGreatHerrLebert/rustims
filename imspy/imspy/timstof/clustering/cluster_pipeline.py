@@ -2,6 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 IM peak detection → stitching → clustering (TOML-configured) with logging and CLI overrides.
+
+Updated for:
+- new torch extractor (TofScanPlan/TofScanWindowGrid, pool_tof, tol_tof, no mz_bounds_pad_*),
+- new clustering API (tof_step + RT/IM/TOF params, no ppm_per_bin).
 """
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
+import pandas as pd
 import torch
 
 # Python 3.11+ has tomllib; otherwise optional tomli fallback
@@ -25,11 +29,10 @@ except Exception:
     import tomli as toml  # type: ignore
 
 from imspy.timstof.clustering.torch_extractor import iter_im_peaks_batches
-from imspy.timstof.dia import (
-    stitch_im_peaks_flat,
-    save_clusters_bin,
-    TimsDatasetDIA,
+from imspy.timstof.clustering.utility import (
+    stitch_im_peaks,
 )
+from imspy.timstof.dia import TimsDatasetDIA, save_clusters_bin
 
 # --------------------------- logging ------------------------------------------
 _LOGGER_NAME = "t-tracer"
@@ -72,7 +75,6 @@ def setup_logging(
     # capture unhandled exceptions into log
     def _excepthook(exc_type, exc, tb):
         logger.critical("Uncaught exception", exc_info=(exc_type, exc, tb))
-        # also pass to default hook (so behavior stays familiar)
         sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = _excepthook
@@ -142,16 +144,34 @@ def print_config_summary(cfg: dict) -> None:
             lines.append(f"  im_jaccard_min       : {float(s.get('im_jaccard_min', 0.0))}")
             lines.append(f"  use_batch_stitch     : {bool(s.get('use_batch_stitch', False))}")
 
-    # Cluster (new)
+    # Detector
+    if det_cfg:
+        lines.append("[detector]")
+        lines.append(f"  pool_scan            : {int(det_cfg.get('pool_scan', 0))}")
+        lines.append(f"  pool_tof             : {int(det_cfg.get('pool_tof', 0))}")
+        lines.append(f"  min_intensity_scaled : {float(det_cfg.get('min_intensity_scaled', 0.0))}")
+        lines.append(f"  tile_rows            : {int(det_cfg.get('tile_rows', 0))}")
+        lines.append(f"  tile_overlap         : {int(det_cfg.get('tile_overlap', 0))}")
+        lines.append(f"  fit_h / fit_w        : {int(det_cfg.get('fit_h', 0))} / {int(det_cfg.get('fit_w', 0))}")
+        lines.append(f"  refine               : {det_cfg.get('refine')}")
+        lines.append(f"  scale                : {det_cfg.get('scale')}")
+        lines.append(f"  output_units         : {det_cfg.get('output_units')}")
+        lines.append(f"  do_dedup             : {bool(det_cfg.get('do_dedup', True))}")
+        lines.append(f"  tol_scan / tol_tof   : {float(det_cfg.get('tol_scan', 0.0))} / "
+                     f"{float(det_cfg.get('tol_tof', 0.0))}")
+
+    # Cluster
     if "cluster" in cfg:
         for sec in ("precursor", "fragment"):
             if sec in clus_cfg:
                 cc = clus_cfg[sec]
                 lines.append(f"[cluster.{sec}]")
-                lines.append(f"  ppm_per_bin          : {float(cc.get('ppm_per_bin'))}")
-                lines.append(f"  bin_pad              : {float(cc.get('bin_pad'))}")
-                lines.append(f"  min_prom             : {float(cc.get('min_prom'))}")
-                lines.append(f"  attach_max_points    : {int(cc.get('attach_max_points'))}")
+                lines.append(f"  tof_step             : {int(cc.get('tof_step', 1))}")
+                lines.append(f"  bin_pad              : {float(cc.get('bin_pad', 0.0))}")
+                lines.append(f"  min_prom             : {float(cc.get('min_prom', 0.0))}")
+                lines.append(f"  min_sep_sec          : {float(cc.get('min_sep_sec', 0.0))}")
+                lines.append(f"  min_width_sec        : {float(cc.get('min_width_sec', 0.0))}")
+                lines.append(f"  attach_max_points    : {int(cc.get('attach_max_points', 0))}")
 
     # Light sanity notes
     lines.append("──────────────── NOTES ─────────────────────────")
@@ -238,7 +258,7 @@ def detect_and_stitch_for_plan(
         device=str(run_cfg["device"]),
         # detector / refinement
         pool_scan=int(det_cfg["pool_scan"]),
-        pool_mz=int(det_cfg["pool_mz"]),
+        pool_tof=int(det_cfg["pool_tof"]),
         min_intensity_scaled=float(det_cfg["min_intensity_scaled"]),
         tile_rows=int(det_cfg["tile_rows"]),
         tile_overlap=int(det_cfg["tile_overlap"]),
@@ -249,29 +269,27 @@ def detect_and_stitch_for_plan(
         refine_lr=float(det_cfg["refine_lr"]),
         refine_mask_k=float(det_cfg["refine_mask_k"]),
         refine_scan=bool(det_cfg["refine_scan"]),
-        refine_mz=bool(det_cfg["refine_mz"]),
+        refine_tof=bool(det_cfg["refine_tof"]),
         refine_sigma_scan=bool(det_cfg["refine_sigma_scan"]),
-        refine_sigma_mz=bool(det_cfg["refine_sigma_mz"]),
+        refine_sigma_tof=bool(det_cfg["refine_sigma_tof"]),
         scale=str(det_cfg["scale"]),
         output_units=str(det_cfg["output_units"]),
         gn_float64=bool(det_cfg["gn_float64"]),
         do_dedup=bool(det_cfg["do_dedup"]),
         tol_scan=float(det_cfg["tol_scan"]),
-        tol_mz=float(det_cfg["tol_mz"]),
+        tol_tof=float(det_cfg["tol_tof"]),
         k_sigma=float(det_cfg["k_sigma"]),
         min_width=int(det_cfg["min_width"]),
-        mz_bounds_pad_ppm=float(det_cfg["mz_bounds_pad_ppm"]),
-        mz_bounds_pad_abs=float(det_cfg["mz_bounds_pad_abs"]),
     ):
         if use_batch_stitch:
-            stitched_batch = stitch_im_peaks_flat(
+            stitched_batch = stitch_im_peaks(
                 peak_batch,
                 max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
                 jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
                 im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
             )
-            stitched_running = stitch_im_peaks_flat(
+            stitched_running = stitch_im_peaks(
                 stitched_running + stitched_batch,
                 max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
@@ -287,7 +305,7 @@ def detect_and_stitch_for_plan(
     if use_batch_stitch:
         return stitched_running
     else:
-        return stitch_im_peaks_flat(
+        return stitch_im_peaks(
             collected,
             max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
             max_scan_delta=int(stitch_cfg["max_scan_delta"]),
@@ -297,7 +315,6 @@ def detect_and_stitch_for_plan(
 
 
 def run_precursor(ds, cfg):
-    from imspy.timstof.dia import clusters_to_dataframe
 
     log("[stage] precursor")
     precompute_views = bool(cfg["run"]["precompute_views"])
@@ -312,12 +329,28 @@ def run_precursor(ds, cfg):
 
     clusters = ds.clusters_for_precursor(
         stitched,
-        ppm_per_bin=float(c["ppm_per_bin"]),
-        bin_pad=float(c["bin_pad"]),
-        min_prom=float(c["min_prom"]),
-        attach_points=attach_raw,
+        tof_step=int(c.get("tof_step", 1)),
+        bin_pad=float(c.get("bin_pad", 0.0)),
+        smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
+        smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
+        min_prom=float(c.get("min_prom", 50.0)),
+        min_sep_sec=float(c.get("min_sep_sec", 2.0)),
+        min_width_sec=float(c.get("min_width_sec", 2.0)),
+        fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
+        fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
+        extra_rt_pad=int(c.get("extra_rt_pad", 0)),
+        extra_im_pad=int(c.get("extra_im_pad", 0)),
+        tof_bin_pad=int(c.get("tof_bin_pad", 1)),
+        tof_hist_bins=int(c.get("tof_hist_bins", 64)),
+        refine_tof_once=bool(c.get("refine_tof_once", True)),
+        refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
         attach_axes=attach_raw,
-        attach_max_points=int(c["attach_max_points"]),
+        attach_points=attach_raw,
+        attach_max_points=int(c.get("attach_max_points", 512)),
+        require_rt_overlap=bool(c.get("require_rt_overlap", True)),
+        compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
+        num_threads=int(c.get("num_threads", 0)),
+        min_im_span=int(c.get("min_im_span", 10)),
     )
 
     # ---- binary save ----
@@ -331,7 +364,7 @@ def run_precursor(ds, cfg):
     if bool(cfg["output"].get("parquet_enabled", False)):
         out_parq = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_parquet"]
         ensure_dir_for_file(out_parq)
-        df = clusters_to_dataframe(clusters)
+        df = pd.DataFrame([c.to_dict() for c in clusters])
         df.to_parquet(out_parq, index=False)
         log(f"[ok] wrote precursor parquet -> {out_parq}")
 
@@ -340,7 +373,6 @@ def run_precursor(ds, cfg):
 
 
 def run_fragments(ds, cfg):
-    from imspy.timstof.dia import clusters_to_dataframe
 
     log("[stage] fragments")
 
@@ -354,7 +386,9 @@ def run_fragments(ds, cfg):
     c = cfg["cluster"]["fragment"]
 
     all_clusters = []
-    wgs = sorted(set(ds.dia_ms_ms_info.WindowGroup))
+
+    # NEW: use ds.dia_window_groups() helper provided by the Rust-backed dataset
+    wgs = sorted(ds.dia_ms_ms_info.WindowGoups.unique().tolist())
     log(f"[fragments] {len(wgs)} window-groups")
 
     for wg in wgs:
@@ -370,12 +404,28 @@ def run_fragments(ds, cfg):
         clusters_wg = ds.clusters_for_group(
             window_group=int(wg),
             im_peaks=stitched_wg,
-            ppm_per_bin=float(c["ppm_per_bin"]),
-            bin_pad=float(c["bin_pad"]),
-            min_prom=float(c["min_prom"]),
-            attach_points=attach_raw,
+            tof_step=int(c.get("tof_step", 1)),
+            bin_pad=float(c.get("bin_pad", 0.0)),
+            smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
+            smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
+            min_prom=float(c.get("min_prom", 25.0)),
+            min_sep_sec=float(c.get("min_sep_sec", 2.0)),
+            min_width_sec=float(c.get("min_width_sec", 2.0)),
+            fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
+            fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
+            extra_rt_pad=int(c.get("extra_rt_pad", 0)),
+            extra_im_pad=int(c.get("extra_im_pad", 0)),
+            tof_bin_pad=int(c.get("tof_bin_pad", 1)),
+            tof_hist_pad=int(c.get("tof_hist_pad", 64)),
+            refine_tof_once=bool(c.get("refine_tof_once", True)),
+            refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
             attach_axes=attach_raw,
-            attach_max_points=int(c["attach_max_points"]),
+            attach_points=attach_raw,
+            attach_max_points=int(c.get("attach_max_points", 512)),
+            require_rt_overlap=bool(c.get("require_rt_overlap", True)),
+            compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
+            num_threads=int(c.get("num_threads", 0)),
+            min_im_span=int(c.get("min_im_span", 10)),
         )
         all_clusters.extend(clusters_wg)
 
@@ -393,7 +443,7 @@ def run_fragments(ds, cfg):
     if bool(cfg["output"].get("parquet_enabled", False)):
         out_parq = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_parquet"]
         ensure_dir_for_file(out_parq)
-        df = clusters_to_dataframe(all_clusters)
+        df = pd.DataFrame([c.to_dict() for c in all_clusters])
         df.to_parquet(out_parq, index=False)
         log(f"[ok] wrote fragment parquet -> {out_parq}")
 
@@ -432,22 +482,83 @@ def load_config(path: str) -> dict:
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("use_batch_stitch", False)
 
-    # clustering defaults (NEW)
+    # detector defaults (NEW NAMES)
+    cfg.setdefault("detector", {})
+    d = cfg["detector"]
+    d.setdefault("pool_scan", 11)
+    d.setdefault("pool_tof", 5)
+    d.setdefault("min_intensity_scaled", 12.0)
+    d.setdefault("tile_rows", 65_536)
+    d.setdefault("tile_overlap", 64)
+    d.setdefault("fit_h", 35)
+    d.setdefault("fit_w", 11)  # will be clamped internally anyway
+    d.setdefault("refine", "adam")  # "none" | "adam" | "gn" | "gauss_newton"
+    d.setdefault("refine_iters", 8)
+    d.setdefault("refine_lr", 0.2)
+    d.setdefault("refine_mask_k", 2.5)
+    d.setdefault("refine_scan", True)
+    d.setdefault("refine_tof", True)
+    d.setdefault("refine_sigma_scan", True)
+    d.setdefault("refine_sigma_tof", True)
+    d.setdefault("scale", "sqrt")        # "none" | "sqrt" | "cbrt" | "log1p"
+    d.setdefault("output_units", "original")
+    d.setdefault("gn_float64", False)
+    d.setdefault("do_dedup", True)
+    d.setdefault("tol_scan", 0.75)
+    d.setdefault("tol_tof", 0.25)
+    d.setdefault("k_sigma", 3.0)
+    d.setdefault("min_width", 3)
+
+    # clustering defaults (NEW API)
     cfg.setdefault("cluster", {})
     cfg["cluster"].setdefault("precursor", {})
     cfg["cluster"].setdefault("fragment", {})
 
     # precursor clustering defaults
-    cfg["cluster"]["precursor"].setdefault("ppm_per_bin", 15.0)
-    cfg["cluster"]["precursor"].setdefault("bin_pad", 30.0)
-    cfg["cluster"]["precursor"].setdefault("min_prom", 50.0)
-    cfg["cluster"]["precursor"].setdefault("attach_max_points", 5000)
+    cp = cfg["cluster"]["precursor"]
+    cp.setdefault("tof_step", 1)
+    cp.setdefault("bin_pad", 10.0)
+    cp.setdefault("smooth_sigma_sec", 1.25)
+    cp.setdefault("smooth_trunc_k", 3.0)
+    cp.setdefault("min_prom", 50.0)
+    cp.setdefault("min_sep_sec", 2.0)
+    cp.setdefault("min_width_sec", 2.0)
+    cp.setdefault("fallback_if_frames_lt", 5)
+    cp.setdefault("fallback_frac_width", 0.50)
+    cp.setdefault("extra_rt_pad", 0)
+    cp.setdefault("extra_im_pad", 0)
+    cp.setdefault("tof_bin_pad", 1)
+    cp.setdefault("tof_hist_bins", 64)
+    cp.setdefault("refine_tof_once", True)
+    cp.setdefault("refine_k_sigma", 3.0)
+    cp.setdefault("attach_max_points", 512)
+    cp.setdefault("require_rt_overlap", True)
+    cp.setdefault("compute_mz_from_tof", True)
+    cp.setdefault("num_threads", 0)
+    cp.setdefault("min_im_span", 10)
 
     # fragment clustering defaults
-    cfg["cluster"]["fragment"].setdefault("ppm_per_bin", 15.0)
-    cfg["cluster"]["fragment"].setdefault("bin_pad", 30.0)
-    cfg["cluster"]["fragment"].setdefault("min_prom", 25.0)
-    cfg["cluster"]["fragment"].setdefault("attach_max_points", 1000)
+    cf = cfg["cluster"]["fragment"]
+    cf.setdefault("tof_step", 1)
+    cf.setdefault("bin_pad", 30.0)
+    cf.setdefault("smooth_sigma_sec", 1.25)
+    cf.setdefault("smooth_trunc_k", 3.0)
+    cf.setdefault("min_prom", 25.0)
+    cf.setdefault("min_sep_sec", 2.0)
+    cf.setdefault("min_width_sec", 2.0)
+    cf.setdefault("fallback_if_frames_lt", 5)
+    cf.setdefault("fallback_frac_width", 0.50)
+    cf.setdefault("extra_rt_pad", 0)
+    cf.setdefault("extra_im_pad", 0)
+    cf.setdefault("tof_bin_pad", 1)
+    cf.setdefault("tof_hist_pad", 64)
+    cf.setdefault("refine_tof_once", True)
+    cf.setdefault("refine_k_sigma", 3.0)
+    cf.setdefault("attach_max_points", 512)
+    cf.setdefault("require_rt_overlap", True)
+    cf.setdefault("compute_mz_from_tof", True)
+    cf.setdefault("num_threads", 0)
+    cf.setdefault("min_im_span", 10)
 
     return cfg
 
@@ -486,8 +597,6 @@ def main(argv=None):
 
     # clustering overrides
     # precursor
-    parser.add_argument("--prec-ppm-per-bin", type=float,
-                        help="Override cluster.precursor.ppm_per_bin")
     parser.add_argument("--prec-bin-pad", type=float,
                         help="Override cluster.precursor.bin_pad")
     parser.add_argument("--prec-min-prom", type=float,
@@ -495,8 +604,6 @@ def main(argv=None):
     parser.add_argument("--prec-attach-max", type=int,
                         help="Override cluster.precursor.attach_max_points")
     # fragment
-    parser.add_argument("--frag-ppm-per-bin", type=float,
-                        help="Override cluster.fragment.ppm_per_bin")
     parser.add_argument("--frag-bin-pad", type=float,
                         help="Override cluster.fragment.bin_pad")
     parser.add_argument("--frag-min-prom", type=float,
@@ -534,9 +641,7 @@ def main(argv=None):
     if args.fragments is not None:
         cfg["run"]["fragments_enabled"] = bool(args.fragments)
 
-    # clustering overrides
-    if args.prec_ppm_per_bin is not None:
-        cfg["cluster"]["precursor"]["ppm_per_bin"] = float(args.prec_ppm_per_bin)
+    # clustering overrides (a bit slimmer now: you can extend if you really want every knob)
     if args.prec_bin_pad is not None:
         cfg["cluster"]["precursor"]["bin_pad"] = float(args.prec_bin_pad)
     if args.prec_min_prom is not None:
@@ -544,8 +649,6 @@ def main(argv=None):
     if args.prec_attach_max is not None:
         cfg["cluster"]["precursor"]["attach_max_points"] = int(args.prec_attach_max)
 
-    if args.frag_ppm_per_bin is not None:
-        cfg["cluster"]["fragment"]["ppm_per_bin"] = float(args.frag_ppm_per_bin)
     if args.frag_bin_pad is not None:
         cfg["cluster"]["fragment"]["bin_pad"] = float(args.frag_bin_pad)
     if args.frag_min_prom is not None:
