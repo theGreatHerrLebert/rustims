@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Dict
+from typing import Iterator
 import numpy as np
+import pandas as pd
 from imspy.simulation.annotation import RustWrapperObject
 
 import imspy_connector
@@ -695,3 +696,438 @@ class TofScanPlanGroup(RustWrapperObject):
 
     def __repr__(self) -> str:
         return f"TofScanPlanGroup(group={self.window_group}, num_windows={self.num_windows}, rows={self.rows})"
+
+
+class RawPoints:
+    """Ergonomic wrapper around ims.PyRawPoints."""
+
+    def __init__(self, py):
+        self._py = py
+
+    # ---- basic size / emptiness -----------------------------------------
+
+    @property
+    def n(self) -> int:
+        # length of the arrays; mz is fine
+        return len(self._py.mz)
+
+    @property
+    def is_empty(self) -> bool:
+        return self.n == 0
+
+    # ---- array access ---------------------------------------------------
+
+    def arrays(self):
+        """
+        Return numpy arrays (mz, rt, im, scan, intensity, tof, frame).
+
+        All arrays are copies from the underlying Rust vectors, so you can
+        mutate them freely on the Python side.
+        """
+        mz = np.asarray(self._py.mz, dtype=np.float32)
+        rt = np.asarray(self._py.rt, dtype=np.float32)
+        im = np.asarray(self._py.im, dtype=np.float32)
+        scan = np.asarray(self._py.scan, dtype=np.uint32)
+        intensity = np.asarray(self._py.intensity, dtype=np.float32)
+        tof = np.asarray(self._py.tof, dtype=np.int32)
+        frame = np.asarray(self._py.frame, dtype=np.uint32)
+        return mz, rt, im, scan, intensity, tof, frame
+
+    # ---- diagnostics (pure Python, cheap enough) ------------------------
+
+    @property
+    def unique_frames(self) -> np.ndarray:
+        _, _, _, _, _, _, frame = self.arrays()
+        return np.unique(frame.astype(np.uint32))
+
+    @property
+    def unique_scans(self) -> np.ndarray:
+        _, _, _, scan, _, _, _ = self.arrays()
+        return np.unique(scan.astype(np.uint32))
+
+    @property
+    def mz_min_max(self) -> tuple[float, float] | None:
+        mz, *_ = self.arrays()
+        if mz.size == 0:
+            return None
+        return float(mz.min()), float(mz.max())
+
+    @property
+    def rt_min_max(self) -> tuple[float, float] | None:
+        _, rt, *_ = self.arrays()
+        if rt.size == 0:
+            return None
+        return float(rt.min()), float(rt.max())
+
+    @property
+    def im_min_max(self) -> tuple[float, float] | None:
+        *_, im, _, _, _, _ = self.arrays()
+        if im.size == 0:
+            return None
+        return float(im.min()), float(im.max())
+
+    @property
+    def intensity_sum_max(self) -> tuple[float, float]:
+        *_, intensity, _, _ = self.arrays()
+        if intensity.size == 0:
+            return 0.0, 0.0
+        s = float(np.sum(intensity, dtype=np.float64))
+        m = float(np.max(intensity))
+        return s, m
+
+    # ---- conversions ----------------------------------------------------
+
+    def to_dataframe(self) -> pd.DataFrame:
+        mz, rt, im, scan, inten, tof, frame = self.arrays()
+        return pd.DataFrame(
+            {
+                "mz": mz,
+                "rt": rt,
+                "im": im,
+                "scan": scan,
+                "intensity": inten,
+                "tof": tof,
+                "frame": frame,
+            }
+        )
+
+    def to_tims_slice(self) -> "TimsSlice":
+        from imspy.timstof.slice import TimsSlice
+        mz, rt, im, scan, intensity, tof, frame = self.arrays()
+        return TimsSlice(
+            frame_id=frame.astype(np.int32),
+            scan=scan.astype(np.int32),
+            tof=tof.astype(np.int32),
+            retention_time=rt.astype(np.float64),
+            mobility=im.astype(np.float64),
+            mz=mz.astype(np.float64),
+            intensity=intensity.astype(np.float64),
+        )
+
+    def to_dict(self) -> dict:
+        """Small summary for dataframe merging / diagnostics."""
+        (i_sum, i_max) = self.intensity_sum_max
+        uf = self.unique_frames
+        us = self.unique_scans
+        mz_minmax = self.mz_min_max
+        rt_minmax = self.rt_min_max
+        im_minmax = self.im_min_max
+        return {
+            "raw_n": self.n,
+            "raw_empty": self.is_empty,
+            "raw_intensity_sum": i_sum,
+            "raw_intensity_max": i_max,
+            "raw_n_frames": int(uf.size),
+            "raw_n_scans": int(us.size),
+            "raw_mz_min": None if mz_minmax is None else mz_minmax[0],
+            "raw_mz_max": None if mz_minmax is None else mz_minmax[1],
+            "raw_rt_min": None if rt_minmax is None else rt_minmax[0],
+            "raw_rt_max": None if rt_minmax is None else rt_minmax[1],
+            "raw_im_min": None if im_minmax is None else im_minmax[0],
+            "raw_im_max": None if im_minmax is None else im_minmax[1],
+        }
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return f"RawPoints(n={self.n})"
+
+
+class ClusterResult1D:
+    """Ergonomic wrapper around ims.PyClusterResult1D (RT × IM × TOF, optional m/z fit)."""
+
+    def __init__(self, py):
+        self._py = py
+
+    # ---- windows --------------------------------------------------------
+
+    @property
+    def rt_window(self) -> tuple[int, int]:
+        return self._py.rt_window
+
+    @property
+    def im_window(self) -> tuple[int, int]:
+        return self._py.im_window
+
+    @property
+    def tof_window(self) -> tuple[int, int]:
+        return self._py.tof_window
+
+    @property
+    def mz_window(self) -> tuple[float, float] | None:
+        # Optional: may be None if no m/z fit/window attached
+        return self._py.mz_window
+
+    # ---- fit summaries (scalars from Rust) ------------------------------
+
+    # RT
+    @property
+    def rt_mu(self) -> float:
+        return float(self._py.rt_mu)
+
+    @property
+    def rt_sigma(self) -> float:
+        return float(self._py.rt_sigma)
+
+    @property
+    def rt_height(self) -> float:
+        return float(self._py.rt_height)
+
+    @property
+    def rt_area(self) -> float:
+        return float(self._py.rt_area)
+
+    # IM
+    @property
+    def im_mu(self) -> float:
+        return float(self._py.im_mu)
+
+    @property
+    def im_sigma(self) -> float:
+        return float(self._py.im_sigma)
+
+    @property
+    def im_height(self) -> float:
+        return float(self._py.im_height)
+
+    @property
+    def im_area(self) -> float:
+        return float(self._py.im_area)
+
+    # TOF (primary third axis)
+    @property
+    def tof_mu(self) -> float:
+        return float(self._py.tof_mu)
+
+    @property
+    def tof_sigma(self) -> float:
+        return float(self._py.tof_sigma)
+
+    @property
+    def tof_height(self) -> float:
+        return float(self._py.tof_height)
+
+    @property
+    def tof_area(self) -> float:
+        return float(self._py.tof_area)
+
+    # Optional m/z-domain fit (if provided elsewhere)
+    @property
+    def mz_mu(self) -> float | None:
+        mu = self._py.mz_mu
+        return None if mu is None else float(mu)
+
+    @property
+    def mz_sigma(self) -> float | None:
+        s = self._py.mz_sigma
+        return None if s is None else float(s)
+
+    @property
+    def mz_height(self) -> float | None:
+        h = self._py.mz_height
+        return None if h is None else float(h)
+
+    @property
+    def mz_area(self) -> float | None:
+        a = self._py.mz_area
+        return None if a is None else float(a)
+
+    # ---- stats / provenance ---------------------------------------------
+
+    @property
+    def raw_sum(self) -> float:
+        return float(self._py.raw_sum)
+
+    @property
+    def volume_proxy(self) -> float:
+        return float(self._py.volume_proxy)
+
+    @property
+    def ms_level(self) -> int:
+        return int(self._py.ms_level)
+
+    @property
+    def window_group(self):
+        return self._py.window_group
+
+    @property
+    def parent_im_id(self):
+        return self._py.parent_im_id
+
+    @property
+    def parent_rt_id(self):
+        return self._py.parent_rt_id
+
+    # ---- axes (may be None) --------------------------------------------
+
+    def frame_ids_used(self) -> np.ndarray:
+        return np.asarray(self._py.frame_ids_used(), dtype=np.uint32)
+
+    def rt_axis_sec(self) -> np.ndarray | None:
+        arr = self._py.rt_axis_sec()
+        return None if arr is None else np.asarray(arr, dtype=np.float32)
+
+    def im_axis_scans(self) -> np.ndarray | None:
+        arr = self._py.im_axis_scans()
+        return None if arr is None else np.asarray(arr, dtype=np.int64)
+
+    def mz_axis_da(self) -> np.ndarray | None:
+        arr = self._py.mz_axis_da()
+        return None if arr is None else np.asarray(arr, dtype=np.float32)
+
+    # ---- raw points (optional attachment) -------------------------------
+
+    def raw_points(self) -> RawPoints | None:
+        if not self._py.has_raw_points:
+            return None
+        rp = self._py.raw_points()
+        return None if rp is None else RawPoints(rp)
+
+    def get_py_ptr(self):
+        """Return the underlying PyClusterResult1D (for low-level tinkering)."""
+        return self._py
+
+    # ---- diagnostics flags ----------------------------------------------
+
+    @property
+    def has_rt_axis(self) -> bool:
+        return self.rt_axis_sec() is not None
+
+    @property
+    def has_im_axis(self) -> bool:
+        return self.im_axis_scans() is not None
+
+    @property
+    def has_mz_axis(self) -> bool:
+        return self.mz_axis_da() is not None
+
+    @property
+    def frame_count(self) -> int:
+        fids = self.frame_ids_used()
+        return int(fids.size)
+
+    @property
+    def raw_points_attached(self) -> bool:
+        rp = self.raw_points()
+        return (rp is not None) and (rp.n > 0)
+
+    @property
+    def raw_points_n(self) -> int:
+        rp = self.raw_points()
+        return 0 if rp is None else int(rp.n)
+
+    @property
+    def empty_rt(self) -> bool:
+        # Same semantics: no area or no samples → "empty"
+        return (self.rt_area == 0.0)
+
+    @property
+    def empty_im(self) -> bool:
+        return (self.im_area == 0.0)
+
+    @property
+    def empty_tof(self) -> bool:
+        return (self.tof_area == 0.0)
+
+    @property
+    def empty_mz(self) -> bool:
+        # If there is no m/z fit at all, treat as empty in that dimension.
+        area = self.mz_area
+        return (area is None) or (area == 0.0)
+
+    @property
+    def any_empty_dim(self) -> bool:
+        # Consider the actual 3D grid (RT, IM, TOF); m/z is auxiliary.
+        return self.empty_rt or self.empty_im or self.empty_tof
+
+    @property
+    def raw_empty(self) -> bool:
+        return not self.raw_points_attached
+
+    # ---- summaries ------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """Flatten cluster stats + optional raw diagnostics into a dict."""
+        d: dict[str, object] = {
+            "ms_level": self.ms_level,
+            "window_group": self.window_group,
+            "parent_im_id": self.parent_im_id,
+            "parent_rt_id": self.parent_rt_id,
+            "rt_lo": self.rt_window[0],
+            "rt_hi": self.rt_window[1],
+            "im_lo": self.im_window[0],
+            "im_hi": self.im_window[1],
+            "tof_lo": self.tof_window[0],
+            "tof_hi": self.tof_window[1],
+            "mz_lo": None if self.mz_window is None else self.mz_window[0],
+            "mz_hi": None if self.mz_window is None else self.mz_window[1],
+            "raw_sum": float(self.raw_sum),
+            "volume_proxy": float(self.volume_proxy),
+            "frame_count": self.frame_count,
+            "has_rt_axis": self.has_rt_axis,
+            "has_im_axis": self.has_im_axis,
+            "has_mz_axis": self.has_mz_axis,
+            "raw_points_attached": self.raw_points_attached,
+            "raw_points_n": self.raw_points_n,
+            "raw_empty": self.raw_empty,
+            "empty_rt": self.empty_rt,
+            "empty_im": self.empty_im,
+            "empty_tof": self.empty_tof,
+            "empty_mz": self.empty_mz,
+            "any_empty_dim": self.any_empty_dim,
+            # RT fit
+            "rt_mu": self.rt_mu,
+            "rt_sigma": self.rt_sigma,
+            "rt_height": self.rt_height,
+            "rt_area": self.rt_area,
+            # IM fit
+            "im_mu": self.im_mu,
+            "im_sigma": self.im_sigma,
+            "im_height": self.im_height,
+            "im_area": self.im_area,
+            # TOF fit
+            "tof_mu": self.tof_mu,
+            "tof_sigma": self.tof_sigma,
+            "tof_height": self.tof_height,
+            "tof_area": self.tof_area,
+            # m/z fit (optional)
+            "mz_mu": self.mz_mu,
+            "mz_sigma": self.mz_sigma,
+            "mz_height": self.mz_height,
+            "mz_area": self.mz_area,
+        }
+
+        rp = self.raw_points()
+        if rp is not None:
+            d.update(rp.to_dict())
+        else:
+            d.update(
+                {
+                    "raw_n": 0,
+                    "raw_empty": True,
+                    "raw_intensity_sum": 0.0,
+                    "raw_intensity_max": 0.0,
+                    "raw_n_frames": 0,
+                    "raw_n_scans": 0,
+                    "raw_mz_min": None,
+                    "raw_mz_max": None,
+                    "raw_rt_min": None,
+                    "raw_rt_max": None,
+                    "raw_im_min": None,
+                    "raw_im_max": None,
+                }
+            )
+        return d
+
+    def to_dataframe_row(self) -> pd.DataFrame:
+        return pd.DataFrame([self.to_dict()])
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return (
+            "ClusterResult1D("
+            f"ms_level={self.ms_level}, window_group={self.window_group}, "
+            f"raw_points_n={self.raw_points_n}, "
+            f"rt_window={self.rt_window}, im_window={self.im_window}, "
+            f"tof_window={self.tof_window}, mz_window={self.mz_window}, "
+            f"rt_mu={self.rt_mu:.3f}, im_mu={self.im_mu:.3f}, tof_mu={self.tof_mu:.3f}, "
+            f"raw_sum={self.raw_sum:.1f}, volume_proxy={self.volume_proxy:.1e}, "
+            f"parent_im_id={self.parent_im_id}, parent_rt_id={self.parent_rt_id})"
+        )
