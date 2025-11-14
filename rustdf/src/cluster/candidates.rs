@@ -1,366 +1,547 @@
-// rustdf/src/cluster/candidates.rs
-
-/*
+use std::cmp::Ordering;
+use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
-/// Jaccard overlap in **absolute seconds** for two closed intervals.
-#[inline]
-fn jaccard_time(a_lo: f64, a_hi: f64, b_lo: f64, b_hi: f64) -> f32 {
-    if !a_lo.is_finite() || !a_hi.is_finite() || !b_lo.is_finite() || !b_hi.is_finite() {
-        return 0.0;
-    }
-    if a_hi < b_lo || b_hi < a_lo { return 0.0; }
-    let inter = (a_hi.min(b_hi) - a_lo.max(b_lo)).max(0.0);
-    let union = (a_hi.max(b_hi) - a_lo.min(b_lo)).max(0.0);
-    if union <= 0.0 { 0.0 } else { (inter / union) as f32 }
-}
+use crate::cluster::feature::SimpleFeature;
+use crate::cluster::pseudo::{cluster_mz_mu, PrecursorKey, PseudoFragment, PseudoSpecOpts, PseudoSpectrum};
+use crate::cluster::scoring::{jaccard_time, CandidateOpts, PrecursorSearchIndex};
+use crate::data::dia::TimsDatasetDIA;
 
-#[inline]
-fn overlap_f32(a: (f32, f32), b: (f32, f32)) -> bool {
-    let (a0, a1) = a; let (b0, b1) = b;
-    a0.is_finite() && a1.is_finite() && b0.is_finite() && b1.is_finite() && a1 >= b0 && b1 >= a0
-}
-
-#[inline]
-fn overlap_u32(a: (u32, u32), b: (u32, u32)) -> bool {
-    a.1 >= b.0 && b.1 >= a.0
-}
-
-/// Coarse RT bucketing over absolute time in seconds (closed intervals).
-#[derive(Clone, Debug)]
-pub struct RtBuckets {
-    lo: f64,
-    inv_bw: f64,
-    buckets: Vec<Vec<usize>>,
-}
-impl RtBuckets {
-    pub fn build(
-        global_lo: f64,
-        global_hi: f64,
-        bucket_width: f64,
-        ms1_time_bounds: &[(f64, f64)],
-        ms1_keep: Option<&[bool]>,
-    ) -> Self {
-        let bw = bucket_width.max(0.5);
-        let lo = global_lo.floor();
-        let hi = global_hi.ceil().max(lo + bw);
-        let n = (((hi - lo) / bw).ceil() as usize).max(1);
-        let inv_bw = 1.0 / bw;
-        let mut buckets = vec![Vec::<usize>::new(); n];
-
-        let clamp = |x: f64| -> usize {
-            if x <= lo { 0 } else {
-                (((x - lo) * inv_bw).floor() as isize).clamp(0, (n as isize) - 1) as usize
+/// Build a mapping from MS1 cluster index → Option<feature_id>.
+///
+/// Assumes that each MS1 cluster belongs to at most one SimpleFeature
+/// (which should be true for your greedy builder).
+fn build_cluster_to_feature_map(
+    n_ms1: usize,
+    features: &[SimpleFeature],
+) -> Vec<Option<usize>> {
+    let mut map = vec![None; n_ms1];
+    for (f_idx, feat) in features.iter().enumerate() {
+        for &ci in &feat.member_cluster_indices {
+            if ci < n_ms1 {
+                map[ci] = Some(f_idx);
             }
+        }
+    }
+    map
+}
+
+/// Helper: derive precursor apex (RT, IM) from either a feature or an orphan MS1 cluster.
+///
+/// Strategy:
+/// - Feature: weighted average of member cluster apex positions (weights = raw_sum).
+/// - Orphan: just use that single cluster’s rt_fit.mu / im_fit.mu.
+fn precursor_apex_from_feature_or_cluster(
+    key: PrecursorKey,
+    ms1: &[ClusterResult1D],
+    features: &[SimpleFeature],
+) -> (f32, f32) {
+    match key {
+        PrecursorKey::OrphanCluster(i) => {
+            let c = &ms1[i];
+            (c.rt_fit.mu, c.im_fit.mu)
+        }
+        PrecursorKey::Feature(fid) => {
+            let feat = &features[fid];
+            let mut rt_w = 0.0_f64;
+            let mut im_w = 0.0_f64;
+            let mut wsum = 0.0_f64;
+
+            for &ci in &feat.member_cluster_indices {
+                if ci >= ms1.len() {
+                    continue;
+                }
+                let c = &ms1[ci];
+                let w = c.raw_sum.max(1.0) as f64;
+                if c.rt_fit.mu.is_finite() {
+                    rt_w += (c.rt_fit.mu as f64) * w;
+                }
+                if c.im_fit.mu.is_finite() {
+                    im_w += (c.im_fit.mu as f64) * w;
+                }
+                wsum += w;
+            }
+
+            if wsum > 0.0 {
+                ( (rt_w / wsum) as f32, (im_w / wsum) as f32 )
+            } else {
+                // Fallback: just use bounds midpoints
+                let (rt_lo, rt_hi) = feat.rt_bounds;
+                let (im_lo, im_hi) = feat.im_bounds;
+                (
+                    0.5 * ((rt_lo + rt_hi) as f32),
+                    0.5 * ((im_lo + im_hi) as f32),
+                )
+            }
+        }
+    }
+}
+
+/// Main builder: turn candidate MS1–MS2 pairs into pseudo-DDA spectra.
+///
+/// `pairs` are (ms2_index, ms1_index) in the same index space as `ms1` / `ms2`.
+pub fn build_pseudo_spectra_from_pairs(
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    features: &[SimpleFeature],
+    pairs: &[(usize, usize)],     // (ms2_idx, ms1_idx)
+    opts: &PseudoSpecOpts,
+) -> Vec<PseudoSpectrum> {
+    if ms1.is_empty() || ms2.is_empty() || pairs.is_empty() {
+        return Vec::new();
+    }
+
+    // 1) Map MS1 cluster index -> feature_id (if any)
+    let cluster_to_feature = build_cluster_to_feature_map(ms1.len(), features);
+
+    // 2) Group all MS2 indices by precursor key (feature or orphan MS1 cluster)
+    use std::collections::HashMap;
+    let mut grouped: HashMap<PrecursorKey, Vec<usize>> = HashMap::new();
+
+    for &(ms2_idx, ms1_idx) in pairs {
+        if ms1_idx >= ms1.len() || ms2_idx >= ms2.len() {
+            continue;
+        }
+        let key = match cluster_to_feature[ms1_idx] {
+            Some(fid) => PrecursorKey::Feature(fid),
+            None      => PrecursorKey::OrphanCluster(ms1_idx),
         };
-
-        for (i, &(t0, t1)) in ms1_time_bounds.iter().enumerate() {
-            if let Some(keep) = ms1_keep {
-                if !keep[i] { continue; }
-            }
-            if !(t0.is_finite() && t1.is_finite()) || t1 <= t0 { continue; }
-            let b0 = clamp(t0);
-            let b1 = clamp(t1);
-            for b in b0..=b1 { buckets[b].push(i); }
-        }
-        Self { lo, inv_bw, buckets }
+        grouped.entry(key).or_default().push(ms2_idx);
     }
 
-    #[inline]
-    fn range(&self, t0: f64, t1: f64) -> (usize, usize) {
-        let n = self.buckets.len();
-        let clamp = |x: f64| -> usize {
-            if x <= self.lo { 0 } else {
-                (((x - self.lo) * self.inv_bw).floor() as isize).clamp(0, (n as isize) - 1) as usize
-            }
-        };
-        let a = clamp(t0.min(t1));
-        let b = clamp(t0.max(t1));
-        (a.min(b), a.max(b))
+    if grouped.is_empty() {
+        return Vec::new();
     }
 
-    /// Append MS1 indices that touch [t0, t1] (not deduped).
-    #[inline]
-    pub fn gather(&self, t0: f64, t1: f64, out: &mut Vec<usize>) {
-        let (b0, b1) = self.range(t0, t1);
-        for b in b0..=b1 { out.extend_from_slice(&self.buckets[b]); }
-    }
-}
+    // 3) Build pseudo spectra in parallel over precursors
+    let top_n = opts.top_n_fragments;
 
-/// Options for the simple candidate enumeration.
-/// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
-// --- add to CandidateOpts ---
-#[derive(Clone, Debug)]
-pub struct CandidateOpts {
-    /// Require at least this Jaccard in RT (set 0.0 for “any overlap”).
-    pub min_rt_jaccard: f32,
-    /// Guard pad on MS2 time bounds (applied symmetrically), in seconds.
-    pub ms2_rt_guard_sec: f64,
-    /// RT bucket width (seconds).
-    pub rt_bucket_width: f64,
-    /// Pre-filters to drop weird clusters.
-    pub max_ms1_rt_span_sec: Option<f64>,
-    pub max_ms2_rt_span_sec: Option<f64>,
-    pub min_raw_sum: f32,
+    let mut spectra: Vec<PseudoSpectrum> = grouped
+        .into_par_iter()
+        .map(|(key, mut frag_indices)| {
+            // Dedup fragment cluster indices per precursor
+            frag_indices.sort_unstable();
+            frag_indices.dedup();
 
-    // ---- NEW tight guards ----
-    /// Maximum allowed |rt_apex_MS1 - rt_apex_MS2| in seconds (None disables).
-    pub max_rt_apex_delta_sec: Option<f32>,
-    /// Maximum allowed |im_apex_MS1 - im_apex_MS2| in global scans (None disables).
-    pub max_scan_apex_delta: Option<usize>,
-    /// Require at least this many scan-overlap between MS1 and MS2 IM windows.
-    pub min_im_overlap_scans: usize,
-}
-
-impl Default for CandidateOpts {
-    fn default() -> Self {
-        Self {
-            min_rt_jaccard: 0.0,
-            ms2_rt_guard_sec: 0.0,
-            rt_bucket_width: 1.0,
-            max_ms1_rt_span_sec: Some(60.0),
-            max_ms2_rt_span_sec: Some(60.0),
-            min_raw_sum: 1.0,
-
-            // sensible, but conservative defaults
-            max_rt_apex_delta_sec: Some(2.0),   // tighten to taste
-            max_scan_apex_delta:   Some(6),     // ~ few IM scans
-            min_im_overlap_scans:  1,           // at least touch
-        }
-    }
-}
-
-/// A built search index over MS1 with per-group eligibility masks.
-#[derive(Clone, Debug)]
-pub struct PrecursorSearchIndex {
-    ms1_time_bounds: Vec<(f64, f64)>,
-    ms1_keep: Vec<bool>,
-    rt_buckets: RtBuckets,
-    /// group -> mask[i] (true if MS1[i] is eligible for that group by (mz ∩ isolation) AND (scan ∩ ranges))
-    ms1_group_ok: HashMap<u32, Vec<bool>>,
-    /// frame_id -> time (seconds)
-    frame_time: Arc<HashMap<u32, f64>>,
-}
-
-impl PrecursorSearchIndex {
-    /// Build once per dataset / MS1 set.
-    pub fn build(ds: &TimsDatasetDIA, ms1: &[ClusterResult1D], opts: &CandidateOpts) -> Self {
-        let frame_time = Arc::new(ds.dia_index.frame_time.clone());
-
-        // 1) Absolute MS1 time bounds
-        let ms1_time_bounds: Vec<(f64, f64)> = ms1.par_iter().map(|c| {
-            let mut t_lo = f64::INFINITY;
-            let mut t_hi = f64::NEG_INFINITY;
-            for &fid in &c.frame_ids_used {
-                if let Some(&t) = frame_time.get(&fid) {
-                    if t < t_lo { t_lo = t; }
-                    if t > t_hi { t_hi = t; }
+            // ---- Precursor summary ----
+            let (prec_mz, charge, prec_cluster_indices, prec_cluster_ids) = match key {
+                PrecursorKey::OrphanCluster(ci) => {
+                    let c = &ms1[ci];
+                    let mz = cluster_mz_mu(c).unwrap_or(0.0);
+                    let z  = 0u8; // unknown; you can change to 1 if you prefer
+                    let ids = vec![c.cluster_id];
+                    let idxs = vec![ci];
+                    (mz, z, idxs, ids)
                 }
-            }
-            (t_lo, t_hi)
-        }).collect();
-
-        // 2) Keep mask for MS1
-        let ms1_keep: Vec<bool> = ms1.par_iter().enumerate().map(|(i, c)| {
-            if c.ms_level != 1 { return false; }
-            if c.raw_sum < opts.min_raw_sum { return false; }
-            let (t0, t1) = ms1_time_bounds[i];
-            if !(t0.is_finite() && t1.is_finite()) || t1 <= t0 { return false; }
-            if let Some(max_rt) = opts.max_ms1_rt_span_sec { if (t1 - t0) > max_rt { return false; } }
-            true
-        }).collect();
-
-        // 3) RT buckets across MS1
-        let (mut rt_min, mut rt_max) = (f64::INFINITY, f64::NEG_INFINITY);
-        for &(a, b) in &ms1_time_bounds {
-            if a.is_finite() { rt_min = rt_min.min(a); }
-            if b.is_finite() { rt_max = rt_max.max(b); }
-        }
-        if !rt_min.is_finite() || !rt_max.is_finite() || rt_max <= rt_min {
-            rt_min = 0.0; rt_max = 1.0;
-        }
-        let rt_buckets = RtBuckets::build(rt_min, rt_max, opts.rt_bucket_width, &ms1_time_bounds, Some(&ms1_keep));
-
-        // 4) Per-group eligibility masks (mz ∩ isolation AND scans ∩ program), independent of RT.
-        let ms1_group_ok: HashMap<u32, Vec<bool>> = ds.dia_index
-            .group_to_isolation
-            .par_iter()
-            .map(|(&g, mz_rows)| {
-                let scans = ds.dia_index.group_to_scan_ranges.get(&g).cloned().unwrap_or_default();
-                let mz_rows_f32: Vec<(f32,f32)> = mz_rows.iter().map(|&(a,b)| (a as f32, b as f32)).collect();
-                let scan_rows_u32: Vec<(u32,u32)> = scans.iter().copied().collect();
-
-                if mz_rows_f32.is_empty() || scan_rows_u32.is_empty() {
-                    return (g, vec![false; ms1.len()]);
+                PrecursorKey::Feature(fid) => {
+                    let feat = &features[fid];
+                    let mz = feat.mz_mono;      // monoisotopic m/z from feature builder
+                    let z  = feat.charge;
+                    let idxs = feat.member_cluster_indices.clone();
+                    let ids  = feat.member_cluster_ids.clone();
+                    (mz, z, idxs, ids)
                 }
+            };
 
-                let mask: Vec<bool> = ms1.par_iter().map(|c| {
-                    if c.ms_level != 1 { return false; }
-                    let mz_ok = mz_rows_f32.iter().any(|&w| overlap_f32(c.mz_window, w));
-                    if !mz_ok { return false; }
-                    let im_u32 = (c.im_window.0 as u32, c.im_window.1 as u32);
-                    scan_rows_u32.iter().any(|&s| overlap_u32(im_u32, s))
-                }).collect();
+            // Apex RT/IM
+            let (rt_apex, im_apex) =
+                precursor_apex_from_feature_or_cluster(key, ms1, features);
 
-                (g, mask)
-            })
-            .collect();
-
-        Self { ms1_time_bounds, ms1_keep, rt_buckets, ms1_group_ok, frame_time }
-    }
-
-    pub fn enumerate_pairs(
-        &self,
-        ms1: &[ClusterResult1D],
-        ms2: &[ClusterResult1D],
-        opts: &CandidateOpts,
-    ) -> Vec<(usize, usize)> {
-        // Precompute MS2 absolute time bounds
-        let ms2_time_bounds: Vec<(f64, f64)> = ms2.par_iter().map(|c| {
-            let mut t_lo = f64::INFINITY;
-            let mut t_hi = f64::NEG_INFINITY;
-            for &fid in &c.frame_ids_used {
-                if let Some(&t) = self.frame_time.get(&fid) {
-                    if t < t_lo { t_lo = t; }
-                    if t > t_hi { t_hi = t; }
-                }
-            }
-            (t_lo, t_hi)
-        }).collect();
-        // Share across threads safely
-        let ms2_time_bounds = Arc::new(ms2_time_bounds);
-
-        // Keep MS2s
-        let ms2_keep: Vec<bool> = ms2.par_iter().enumerate().map(|(i, c)| {
-            if c.ms_level != 2 { return false; }
-            if c.window_group.is_none() { return false; }
-            if c.raw_sum < opts.min_raw_sum { return false; }
-            let (mut t0, mut t1) = ms2_time_bounds[i];
-            if t0.is_finite() { t0 -= opts.ms2_rt_guard_sec; }
-            if t1.is_finite() { t1 += opts.ms2_rt_guard_sec; }
-            if !(t0.is_finite() && t1.is_finite() && t1 > t0) { return false; }
-            if let Some(max_rt) = opts.max_ms2_rt_span_sec {
-                if (t1 - t0) > max_rt { return false; }
-            }
-            true
-        }).collect();
-
-        // Group MS2 by window_group
-        let mut by_group: HashMap<u32, Vec<usize>> = HashMap::new();
-        for (j, c2) in ms2.iter().enumerate() {
-            if !ms2_keep[j] { continue; }
-            if let Some(g) = c2.window_group {
-                by_group.entry(g).or_default().push(j);
-            }
-        }
-
-        // Share index across groups/threads
-        let idx_arc = Arc::new(self.clone());
-
-        let mut out = by_group
-            .into_par_iter()
-            .flat_map(|(g, js)| {
-                // Resolve the eligibility mask once per group, materialize it so we
-                // don't return a reference to a temporary.
-                let mask_vec: Vec<bool> = idx_arc
-                    .ms1_group_ok
-                    .get(&g)
-                    .cloned()
-                    .unwrap_or_else(|| vec![false; ms1.len()]);
-                let mask_arc = Arc::new(mask_vec);
-
-                // Clone shared state for the per-MS2 loop
-                let idx = idx_arc.clone();
-                let tb = ms2_time_bounds.clone();
-
-                js.into_par_iter().flat_map(move |j| {
-                    let (mut t2_lo, mut t2_hi) = tb[j];
-                    if t2_lo.is_finite() { t2_lo -= opts.ms2_rt_guard_sec; }
-                    if t2_hi.is_finite() { t2_hi += opts.ms2_rt_guard_sec; }
-
-                    // Time-prefilter MS1 via buckets
-                    let mut hits = Vec::<usize>::new();
-                    idx.rt_buckets.gather(t2_lo, t2_hi, &mut hits);
-                    hits.sort_unstable();
-                    hits.dedup();
-
-                    // Use the materialized mask
-                    let mask = mask_arc.clone();
-
-                    let mut local = Vec::<(usize, usize)>::with_capacity(16);
-                    for i in hits {
-                        if !idx.ms1_keep[i] { continue; }
-                        if !mask[i] { continue; } // eligible by group (mz & program scans)
-
-                        let (t1_lo, t1_hi) = idx.ms1_time_bounds[i];
-                        if !(t1_lo.is_finite() && t1_hi.is_finite()) { continue; }
-
-                        // Any RT overlap; optionally enforce Jaccard threshold
-                        if t1_hi < t2_lo || t2_hi < t1_lo { continue; }
-                        if opts.min_rt_jaccard > 0.0 {
-                            let jacc = jaccard_time(t1_lo, t1_hi, t2_lo, t2_hi);
-                            if jacc < opts.min_rt_jaccard { continue; }
-                        }
-
-                        // ---- NEW: IM window overlap in global scan axis ----
-                        let im1 = ms1[i].im_window;
-                        let im2 = ms2[j].im_window;
-                        let im_overlap = {
-                            let lo = im1.0.max(im2.0);
-                            let hi = im1.1.min(im2.1);
-                            hi.saturating_sub(lo).saturating_add(1)
-                        };
-                        if im_overlap < opts.min_im_overlap_scans { continue; }
-
-                        // ---- NEW: IM apex delta in scans ----
-                        if let Some(max_d) = opts.max_scan_apex_delta {
-                            // Fit μ is in scan units for IM (you stamp attach_axes=true in clustering)
-                            let s1 = ms1[i].im_fit.mu;
-                            let s2 = ms2[j].im_fit.mu;
-                            if s1.is_finite() && s2.is_finite() {
-                                let d = (s1 - s2).abs() as f32;
-                                if d > (max_d as f32) { continue; }
-                            } else {
-                                // if either apex missing/degenerate, be strict and drop
-                                continue;
-                            }
-                        }
-
-                        // ---- NEW: RT apex delta in seconds ----
-                        if let Some(max_dt) = opts.max_rt_apex_delta_sec {
-                            let r1 = ms1[i].rt_fit.mu; // seconds when attach_axes=true
-                            let r2 = ms2[j].rt_fit.mu;
-                            if r1.is_finite() && r2.is_finite() {
-                                if (r1 - r2).abs() > max_dt { continue; }
-                            } else {
-                                continue;
-                            }
-                        }
-
-                        local.push((j, i));
-                    }
-
-                    // Return as a parallel iterator to Rayon
-                    local.into_par_iter()
+            // ---- Fragment list ----
+            let mut frags: Vec<PseudoFragment> = frag_indices
+                .into_iter()
+                .filter_map(|j| {
+                    let c2 = &ms2[j];
+                    let mz = match cluster_mz_mu(c2) {
+                        Some(m) if m.is_finite() && m > 0.0 => m,
+                        _ => return None,
+                    };
+                    let intensity = c2.raw_sum.max(0.0);
+                    Some(PseudoFragment {
+                        mz,
+                        intensity,
+                        ms2_cluster_index: j,
+                        ms2_cluster_id: c2.cluster_id,
+                    })
                 })
+                .collect();
+
+            // Sort by fragment intensity (desc) and cap at top N if requested
+            frags.sort_unstable_by(|a, b| {
+                b.intensity
+                    .partial_cmp(&a.intensity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if top_n > 0 && frags.len() > top_n {
+                frags.truncate(top_n);
+            }
+
+            PseudoSpectrum {
+                precursor_mz: prec_mz,
+                precursor_charge: charge,
+                rt_apex,
+                im_apex,
+                feature_id: match key {
+                    PrecursorKey::Feature(fid) => Some(fid),
+                    PrecursorKey::OrphanCluster(_) => None,
+                },
+                precursor_cluster_indices: prec_cluster_indices,
+                precursor_cluster_ids: prec_cluster_ids,
+                fragments: frags,
+            }
+        })
+        .collect();
+
+    // (optional) sort spectra by RT apex, then m/z
+    spectra.sort_unstable_by(|a, b| {
+        a.rt_apex
+            .partial_cmp(&b.rt_apex)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                a.precursor_mz
+                    .partial_cmp(&b.precursor_mz)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
-            .collect::<Vec<(usize, usize)>>();
+    });
 
-        // --- HARD DE-DUP step ---
-        out.sort_unstable();
-        out.dedup();
-
-        out
-    }
+    spectra
 }
 
-/// Convenience: build, enumerate, done.
-pub fn enumerate_ms2_ms1_pairs_simple(
+#[derive(Clone, Debug)]
+pub struct AssignmentResult {
+    /// All enumerated pairs (ms2_idx, ms1_idx) after your hard guards.
+    pub pairs: Vec<(usize, usize)>,
+    /// For each MS2 j, the chosen MS1 index (or None if no candidate).
+    pub ms2_best_ms1: Vec<Option<usize>>,
+    /// For each MS1 i, the list of MS2 indices assigned to it.
+    pub ms1_to_ms2: Vec<Vec<usize>>,
+}
+
+/// Full result of the DIA → pseudo-DDA pipeline.
+#[derive(Clone, Debug)]
+pub struct PseudoBuildResult {
+    /// Assignment information (pairs, best MS1 per MS2, inverted map).
+    pub assignment: AssignmentResult,
+    /// Final pseudo-MS/MS spectra, one per assigned precursor.
+    pub pseudo_spectra: Vec<PseudoSpectrum>,
+}
+
+/// End-to-end:
+///   DIA index + MS1 clusters + MS2 clusters (+ optional features)
+///   → candidates → scoring/assignment → pseudo-MS/MS spectra.
+pub fn build_pseudo_spectra_end_to_end(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],
     ms2: &[ClusterResult1D],
-    opts: &CandidateOpts,
-) -> Vec<(usize, usize)> {
-    let idx = PrecursorSearchIndex::build(ds, ms1, opts);
-    idx.enumerate_pairs(ms1, ms2, opts)
+    features: Option<&[SimpleFeature]>,
+    cand_opts: &CandidateOpts,
+    score_opts: &ScoreOpts,
+    pseudo_opts: &PseudoSpecOpts,
+) -> PseudoBuildResult {
+    // 1) Enumerate all program-legal candidates with hard guards.
+    let idx = PrecursorSearchIndex::build(ds, ms1, cand_opts);
+    let pairs = idx.enumerate_pairs(ms1, ms2, cand_opts);  // Vec<(ms2_idx, ms1_idx)>
+
+    // 2) Score & choose best MS1 per MS2.
+    let ms2_best_ms1 = best_ms1_for_each_ms2(
+        ms1,
+        ms2,
+        &pairs,
+        score_opts,
+    );
+    let ms1_to_ms2 = ms1_to_ms2_map(
+        ms1.len(),
+        &ms2_best_ms1,
+    );
+
+    let assignment = AssignmentResult {
+        pairs,
+        ms2_best_ms1,
+        ms1_to_ms2: ms1_to_ms2.clone(),
+    };
+
+    // 3) Turn the winner map into "winning pairs".
+    let mut winning_pairs: Vec<(usize, usize)> = Vec::new();
+    for (ms1_idx, js) in ms1_to_ms2.iter().enumerate() {
+        for &ms2_idx in js {
+            winning_pairs.push((ms2_idx, ms1_idx));
+        }
+    }
+
+    // 4) Build pseudo spectra from those winning links.
+    let pseudo_spectra = build_pseudo_spectra_from_pairs(
+        ms1,
+        ms2,
+        features.unwrap(),
+        &winning_pairs,
+        pseudo_opts,
+    );
+
+    PseudoBuildResult {
+        assignment,
+        pseudo_spectra,
+    }
 }
- */
+
+/// Single scalar score in [0, ∞), larger is better.
+/// Robust to missing fits (uses `shape_neutral` if shape is unavailable).
+#[inline]
+fn score_from_features(f: &PairFeatures, opts: &ScoreOpts) -> f32 {
+    let shape_term = if f.shape_ok { f.s_shape } else { opts.shape_neutral };
+
+    let rt_close = exp_decay(f.rt_apex_delta_s, opts.rt_apex_scale_s);
+    let im_close = exp_decay(f.im_apex_delta_scans, opts.im_apex_scale_scans);
+
+    let im_ratio = (f.im_overlap_scans as f32) / (f.im_union_scans as f32);
+
+    let ms1_int = safe_log1p(f.ms1_raw_sum);
+
+    opts.w_jacc_rt * f.jacc_rt
+        + opts.w_shape * shape_term
+        + opts.w_rt_apex * rt_close
+        + opts.w_im_apex * im_close
+        + opts.w_im_overlap * im_ratio
+        + opts.w_ms1_intensity * ms1_int
+}
+
+/// Score all pairs (ms2_idx, ms1_idx).
+pub fn score_pairs(
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    pairs: &[(usize, usize)],
+    opts: &ScoreOpts,
+) -> Vec<(usize, usize, PairFeatures, f32)> {
+    pairs.par_iter().map(|&(j, i)| {
+        let f = build_features(&ms1[i], &ms2[j], opts);
+        let s = score_from_features(&f, opts);
+        (j, i, f, s)
+    }).collect()
+}
+
+/// For each MS2, choose the best MS1 index (by score, then deterministic tie-breaks).
+/// Returns a Vec<Option<usize>> indexed by ms2_idx.
+pub fn best_ms1_for_each_ms2(
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    pairs: &[(usize, usize)],
+    opts: &ScoreOpts,
+) -> Vec<Option<usize>> {
+    let scored = score_pairs(ms1, ms2, pairs, opts);
+
+    // group by ms2_idx
+    let mut by_ms2: Vec<Vec<(usize, PairFeatures, f32)>> = vec![Vec::new(); ms2.len()];
+    for (j, i, f, s) in scored {
+        by_ms2[j].push((i, f, s));
+    }
+
+    by_ms2
+        .into_par_iter()
+        .map(|mut vec_i| {
+            if vec_i.is_empty() { return None; }
+            vec_i.sort_unstable_by(|a, b| {
+                // primary: score desc
+                match b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal) {
+                    Ordering::Equal => {
+                        // tie-breaks (deterministic):
+                        // 1) higher jaccard
+                        let ja = a.1.jacc_rt;
+                        let jb = b.1.jacc_rt;
+                        if (ja - jb).abs() > 1e-6 {
+                            return jb.partial_cmp(&ja).unwrap_or(Ordering::Equal);
+                        }
+                        // 2) if both have shape, higher s_shape
+                        let sa = if a.1.shape_ok { a.1.s_shape } else { 0.0 };
+                        let sb = if b.1.shape_ok { b.1.s_shape } else { 0.0 };
+                        if (sa - sb).abs() > 1e-6 {
+                            return sb.partial_cmp(&sa).unwrap_or(Ordering::Equal);
+                        }
+                        // 3) smaller RT apex delta
+                        let dra = a.1.rt_apex_delta_s;
+                        let drb = b.1.rt_apex_delta_s;
+                        if (dra - drb).abs() > 1e-6 {
+                            return dra.partial_cmp(&drb).unwrap_or(Ordering::Equal);
+                        }
+                        // 4) smaller IM apex delta
+                        let dia = a.1.im_apex_delta_scans;
+                        let dib = b.1.im_apex_delta_scans;
+                        if (dia - dib).abs() > 1e-6 {
+                            return dia.partial_cmp(&dib).unwrap_or(Ordering::Equal);
+                        }
+                        // 5) larger IM overlap
+                        let oa = a.1.im_overlap_scans;
+                        let ob = b.1.im_overlap_scans;
+                        if oa != ob {
+                            return ob.cmp(&oa);
+                        }
+                        // 6) higher MS1 intensity
+                        let ia = a.1.ms1_raw_sum;
+                        let ib = b.1.ms1_raw_sum;
+                        ib.partial_cmp(&ia).unwrap_or(Ordering::Equal)
+                    }
+                    ord => ord,
+                }
+            });
+            Some(vec_i[0].0)
+        })
+        .collect()
+}
+
+/// Build an MS1 → Vec<MS2> map from a winner list (ms2→best ms1).
+/// Returns a Vec<Vec<usize>> with length ms1.len(), where each entry lists MS2 indices.
+pub fn ms1_to_ms2_map(
+    ms1_len: usize,
+    ms2_to_best_ms1: &[Option<usize>],
+) -> Vec<Vec<usize>> {
+    let mut out = vec![Vec::<usize>::new(); ms1_len];
+    for (ms2_idx, maybe_ms1) in ms2_to_best_ms1.iter().enumerate() {
+        if let Some(i) = maybe_ms1 {
+            if *i < ms1_len {
+                out[*i].push(ms2_idx);
+            }
+        }
+    }
+    out
+}
+
+/// Compact feature bundle per pair for traceability.
+#[derive(Clone, Copy, Debug)]
+pub struct PairFeatures {
+    pub jacc_rt: f32,            // Jaccard in RT (0..1)
+    pub rt_apex_delta_s: f32,    // |μ_rt(MS1)-μ_rt(MS2)| in seconds
+    pub im_apex_delta_scans: f32,// |μ_im(MS1)-μ_im(MS2)| in scans
+    pub im_overlap_scans: u32,   // intersection size of IM windows in scans
+    pub im_union_scans: u32,     // union size of IM windows in scans
+    pub ms1_raw_sum: f32,        // intensity proxy for MS1
+    pub shape_ok: bool,          // both σ present & finite
+    pub z_rt: f32,               // pooled-σ z for RT apex delta
+    pub z_im: f32,               // pooled-σ z for IM apex delta
+    pub s_shape: f32,            // exp(-0.5 (w_rt z_rt^2 + w_im z_im^2)) in [0,1]
+}
+
+/// Scoring knobs. Defaults are conservative and width-aware but won’t punish
+/// pairs that lack good fits (we use `shape_neutral` when shape data is missing).
+#[derive(Clone, Debug)]
+pub struct ScoreOpts {
+    /// Weight for RT Jaccard.
+    pub w_jacc_rt: f32,
+    /// Weight for shape similarity S_shape.
+    pub w_shape: f32,
+    /// Weight for RT apex proximity term (smaller delta = better).
+    pub w_rt_apex: f32,
+    /// Weight for IM apex proximity term (smaller delta = better).
+    pub w_im_apex: f32,
+    /// Weight for IM overlap ratio.
+    pub w_im_overlap: f32,
+    /// Weight for MS1 raw_sum (log-compressed).
+    pub w_ms1_intensity: f32,
+
+    /// Scales to normalize apex deltas into ~0..1 decays (exp(-delta/scale)).
+    pub rt_apex_scale_s: f32,
+    pub im_apex_scale_scans: f32,
+
+    /// If shape is unavailable, use this neutral value instead of 0.
+    pub shape_neutral: f32,
+
+    /// Floors for σ to avoid division by ~0.
+    pub min_sigma_rt: f32,
+    pub min_sigma_im: f32,
+
+    /// Shape component internal weights (multiply z^2 inside exp).
+    pub w_shape_rt_inner: f32,
+    pub w_shape_im_inner: f32,
+}
+
+impl Default for ScoreOpts {
+    fn default() -> Self {
+        Self {
+            w_jacc_rt: 1.0,
+            w_shape: 1.0,
+            w_rt_apex: 0.75,
+            w_im_apex: 0.75,
+            w_im_overlap: 0.5,
+            w_ms1_intensity: 0.25,
+            rt_apex_scale_s: 0.75,       // ~sub-second deltas favored
+            im_apex_scale_scans: 3.0,    // a few scans favored
+            shape_neutral: 0.6,          // don’t punish missing shape harshly
+            min_sigma_rt: 0.05,
+            min_sigma_im: 0.5,
+            w_shape_rt_inner: 1.0,
+            w_shape_im_inner: 1.0,
+        }
+    }
+}
+
+#[inline]
+fn build_features(ms1: &ClusterResult1D, ms2: &ClusterResult1D, opts: &ScoreOpts) -> PairFeatures {
+    // RT Jaccard over absolute time bounds derived from frame_ids_used + rt_fit.mu as fallback
+    let (rt1_lo, rt1_hi) = (ms1.rt_fit.mu as f64 - (ms1.rt_fit.sigma as f64)*3.0,
+                            ms1.rt_fit.mu as f64 + (ms1.rt_fit.sigma as f64)*3.0);
+    let (rt2_lo, rt2_hi) = (ms2.rt_fit.mu as f64 - (ms2.rt_fit.sigma as f64)*3.0,
+                            ms2.rt_fit.mu as f64 + (ms2.rt_fit.sigma as f64)*3.0);
+    let jacc_rt = jaccard_time(rt1_lo, rt1_hi, rt2_lo, rt2_hi).clamp(0.0, 1.0);
+
+    // Apex deltas
+    let rt_apex_delta_s = (ms1.rt_fit.mu - ms2.rt_fit.mu).abs();
+    let im_apex_delta_scans = (ms1.im_fit.mu - ms2.im_fit.mu).abs();
+
+    // IM overlap ratio
+    let (im_inter, im_union) = im_overlap_and_union(ms1.im_window, ms2.im_window);
+
+    // Shape similarity using pooled σ in each dimension (only if both finite)
+    let s1_rt = ms1.rt_fit.sigma.max(opts.min_sigma_rt);
+    let s2_rt = ms2.rt_fit.sigma.max(opts.min_sigma_rt);
+    let s1_im = ms1.im_fit.sigma.max(opts.min_sigma_im);
+    let s2_im = ms2.im_fit.sigma.max(opts.min_sigma_im);
+
+    let (mut shape_ok, mut z_rt, mut z_im, mut s_shape) = (false, 0.0, 0.0, 0.0);
+    if let (Some(sig_rt), Some(sig_im)) = (pooled_sigma(s1_rt, s2_rt), pooled_sigma(s1_im, s2_im)) {
+        if sig_rt.is_finite() && sig_rt > 0.0 && sig_im.is_finite() && sig_im > 0.0 {
+            z_rt = rt_apex_delta_s / sig_rt;
+            z_im = im_apex_delta_scans / sig_im;
+            let q = -0.5_f32 * (opts.w_shape_rt_inner * z_rt * z_rt + opts.w_shape_im_inner * z_im * z_im);
+            s_shape = q.exp();         // ∈ (0,1]
+            shape_ok = s_shape.is_finite();
+        }
+    }
+
+    PairFeatures {
+        jacc_rt,
+        rt_apex_delta_s,
+        im_apex_delta_scans,
+        im_overlap_scans: im_inter,
+        im_union_scans: im_union,
+        ms1_raw_sum: ms1.raw_sum,
+        shape_ok,
+        z_rt,
+        z_im,
+        s_shape,
+    }
+}
+
+#[inline]
+fn im_overlap_and_union(a: (usize, usize), b: (usize, usize)) -> (u32, u32) {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    let inter = if hi >= lo { (hi - lo + 1) as u32 } else { 0 };
+    let a_len = if a.1 >= a.0 { (a.1 - a.0 + 1) as u32 } else { 0 };
+    let b_len = if b.1 >= b.0 { (b.1 - b.0 + 1) as u32 } else { 0 };
+    let union = a_len + b_len - inter;
+    (inter, union.max(1))
+}
+
+#[inline]
+fn pooled_sigma(s1: f32, s2: f32) -> Option<f32> {
+    let v = s1 * s1 + s2 * s2;
+    if v.is_finite() && v > 0.0 { Some(v.sqrt()) } else { None }
+}
+
+#[inline]
+fn exp_decay(delta: f32, scale: f32) -> f32 {
+    // Monotone in [0,∞): 1 at 0, then decays smoothly
+    if !delta.is_finite() || !scale.is_finite() || scale <= 0.0 { return 0.0; }
+    (-delta / scale).exp()
+}
+
+#[inline]
+fn safe_log1p(x: f32) -> f32 {
+    if x.is_finite() && x >= 0.0 { (1.0 + x as f64).ln() as f32 } else { 0.0 }
+}
