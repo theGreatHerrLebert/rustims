@@ -622,7 +622,7 @@ impl TimsDatasetDIA {
                     //    - uses the already-computed TOF window in `spec.tof_win`
                     //    - does *not* depend on raw_points being attached
                     //    - keeps the logic local and cheap
-                    decorate_with_mz_for_cluster(self, rt_frames, spec, scale, &mut res);
+                    decorate_with_mz_for_cluster(self, rt_frames, &mut res);(self, rt_frames, spec, scale, &mut res);
 
                     // 3) optional raw point attachment (using shared context)
                     if let Some(ref ctx) = attach_ctx {

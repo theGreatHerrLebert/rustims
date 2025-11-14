@@ -133,96 +133,108 @@ pub struct ClusterResult1D {
 pub fn decorate_with_mz_for_cluster<D: IndexConverter>(
     ds: &D,
     rt_frames: &RtFrames,
-    spec: &ClusterSpec1D,
-    scale: &TofScale,
     res: &mut ClusterResult1D,
 ) {
-    // ----------------------------------------------------
-    // 1) Choose a representative frame (mid-RT) for calib
-    // ----------------------------------------------------
     let n_frames = rt_frames.frame_ids.len();
     if n_frames == 0 {
         return;
     }
 
-    // Normalize RT bounds
-    let mut rt_lo = spec.rt_lo.min(spec.rt_hi);
-    let mut rt_hi = spec.rt_lo.max(spec.rt_hi);
+    let scale = &*rt_frames.scale;
 
-    // Clamp to available frames
+    // ----------------------------------------------------
+    // 1) Pick a representative frame (mid of final rt_window)
+    // ----------------------------------------------------
+    let (mut rt_lo, mut rt_hi) = res.rt_window;
+    if rt_lo > rt_hi {
+        std::mem::swap(&mut rt_lo, &mut rt_hi);
+    }
     if rt_lo >= n_frames {
         return;
     }
     rt_hi = rt_hi.min(n_frames.saturating_sub(1));
     if rt_lo > rt_hi {
-        std::mem::swap(&mut rt_lo, &mut rt_hi);
-    }
-
-    let frame_slice = &rt_frames.frame_ids[rt_lo..=rt_hi];
-    if frame_slice.is_empty() {
         return;
     }
-    let mid_idx = frame_slice.len() / 2;
-    let frame_id = frame_slice[mid_idx];
+
+    let mid_local = (rt_lo + rt_hi) / 2;
+    let frame_id = rt_frames.frame_ids[mid_local];
 
     // ----------------------------------------------------
-    // 2) Map TOF-bin window → axis range and m/z axis
+    // 2) Final TOF-bin window (CSR bins) → TOF indices
     // ----------------------------------------------------
-    let (bin_lo, bin_hi) = bin_range_for_win(scale, spec.tof_win);
+    let (mut bin_lo, mut bin_hi) = res.tof_window;
+    if bin_lo > bin_hi {
+        std::mem::swap(&mut bin_lo, &mut bin_hi);
+    }
+
+    let n_bins = scale.num_bins();
+    if n_bins == 0 {
+        return;
+    }
+    bin_lo = bin_lo.min(n_bins.saturating_sub(1));
+    bin_hi = bin_hi.min(n_bins.saturating_sub(1));
     if bin_lo > bin_hi {
         return;
     }
 
-    let n_bins = scale.num_bins();
-    if n_bins == 0 || bin_lo >= n_bins {
-        return;
-    }
-    let bin_hi = bin_hi.min(n_bins.saturating_sub(1));
-
-    // Build a "raw" axis in whatever domain TofScale.center uses.
-    // Historically this is m/z, but if your TofScale is TOF-like, you
-    // should adapt this section to call ds.tof_to_mz instead.
-    let axis_vals: Vec<f32> = (bin_lo..=bin_hi)
-        .map(|b| scale.center(b))
-        .collect();
-
-    if axis_vals.is_empty() {
-        return;
-    }
-
-    // m/z window from axis endpoints
-    let mz_lo = *axis_vals.first().unwrap();
-    let mz_hi = *axis_vals.last().unwrap();
-    if !mz_lo.is_finite() || !mz_hi.is_finite() || mz_hi <= mz_lo {
-        return;
-    }
+    let tof_lo_idx = scale.center(bin_lo).floor().max(0.0) as u32;
+    let tof_hi_idx = scale.center(bin_hi).ceil().max(0.0) as u32;
 
     // ----------------------------------------------------
-    // 3) Optionally refine via calibration (TOF → m/z)
+    // 3) TOF → m/z for window endpoints
     // ----------------------------------------------------
-    // If TofScale.center() is already in m/z, this is enough.
-    // If it is TOF-like and you want "true" m/z, uncomment/adapt:
-    // Example: interpret axis_vals as TOF indices and convert
-    let tof_vals_u32: Vec<u32> = axis_vals
-        .iter()
-        .map(|v| v.round().max(0.0) as u32)
-        .collect();
-
-    let mz_vals_f64 = ds.tof_to_mz(frame_id, &tof_vals_u32);
-    if mz_vals_f64.len() == tof_vals_u32.len() && !mz_vals_f64.is_empty() {
-        let mz_axis_da: Vec<f32> = mz_vals_f64.iter().map(|&x| x as f32).collect();
-        let mz_lo = *mz_axis_da.first().unwrap();
-        let mz_hi = *mz_axis_da.last().unwrap();
-        if mz_hi > mz_lo && mz_lo.is_finite() && mz_hi.is_finite() {
-            res.mz_window = Some((mz_lo, mz_hi));
-            res.mz_axis_da = Some(mz_axis_da);
-        }
+    let tof_pair: Vec<u32> = vec![tof_lo_idx, tof_hi_idx];
+    let mz_pair = ds.tof_to_mz(frame_id, &tof_pair);
+    if mz_pair.len() != 2 {
         return;
     }
 
-    // Fallback: assume axis_vals are already m/z
+    let mut mz_lo = mz_pair[0] as f32;
+    let mut mz_hi = mz_pair[1] as f32;
+    if !mz_lo.is_finite() || !mz_hi.is_finite() {
+        return;
+    }
+    if mz_lo > mz_hi {
+        std::mem::swap(&mut mz_lo, &mut mz_hi);
+    }
+
     res.mz_window = Some((mz_lo, mz_hi));
-    res.mz_axis_da = Some(axis_vals);
+
+    // ----------------------------------------------------
+    // 4) Build an m/z axis (one point per TOF bin)
+    // ----------------------------------------------------
+    let tof_centers: Vec<u32> = (bin_lo..=bin_hi)
+        .map(|b| scale.center(b).round().max(0.0) as u32)
+        .collect();
+
+    let mz_axis_f64 = ds.tof_to_mz(frame_id, &tof_centers);
+    if mz_axis_f64.len() == tof_centers.len() && !mz_axis_f64.is_empty() {
+        let mz_axis_da: Vec<f32> = mz_axis_f64.iter().map(|&x| x as f32).collect();
+        res.mz_axis_da = Some(mz_axis_da.clone());
+
+        // ------------------------------------------------
+        // 5) Derive an m/z-domain Fit1D from the TOF fit
+        // ------------------------------------------------
+        if res.tof_fit.mu.is_finite() && res.tof_fit.sigma.is_finite() && res.tof_fit.sigma > 0.0 {
+            let tof_mu = res.tof_fit.mu.max(0.0).round() as u32;
+            let tof_minus = (res.tof_fit.mu - res.tof_fit.sigma).max(0.0).round() as u32;
+            let tof_plus = (res.tof_fit.mu + res.tof_fit.sigma).max(0.0).round() as u32;
+
+            let tof_triplet: Vec<u32> = vec![tof_mu, tof_minus, tof_plus];
+            let mz_triplet = ds.tof_to_mz(frame_id, &tof_triplet);
+            if mz_triplet.len() == 3 {
+                let mu_mz = mz_triplet[0] as f32;
+                let sigma_mz = ((mz_triplet[2] - mz_triplet[1]).abs() as f32 * 0.5).max(1e-6);
+
+                let mut mz_fit = res.tof_fit.clone();
+                mz_fit.mu = mu_mz;
+                mz_fit.sigma = sigma_mz;
+
+                res.mz_fit = Some(mz_fit);
+            }
+        }
+    }
 }
 // ==========================================================
 // Core CSR helpers (RT / IM / TOF axis)
