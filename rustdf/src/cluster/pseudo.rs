@@ -5,11 +5,9 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use rayon::prelude::*;
-use crate::cluster::candidates::{best_ms1_for_each_ms2, ms1_to_ms2_map, AssignmentResult, PseudoBuildResult, ScoreOpts};
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
-use crate::cluster::scoring::{CandidateOpts, PrecursorSearchIndex};
-use crate::data::dia::TimsDatasetDIA;
+
 // ---------------------------------------------------------------------------
 // Basic helpers
 // ---------------------------------------------------------------------------
