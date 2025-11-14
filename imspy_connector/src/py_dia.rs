@@ -114,6 +114,38 @@ impl PyClusterResult1D {
         self.inner.mz_window
     }
 
+    // -------- fits (return PyFit1D) --------------------------------------
+
+    #[getter]
+    fn rt_fit(&self) -> PyFit1D {
+        PyFit1D {
+            inner: self.inner.rt_fit.clone(),
+        }
+    }
+
+    #[getter]
+    fn im_fit(&self) -> PyFit1D {
+        PyFit1D {
+            inner: self.inner.im_fit.clone(),
+        }
+    }
+
+    #[getter]
+    fn tof_fit(&self) -> PyFit1D {
+        PyFit1D {
+            inner: self.inner.tof_fit.clone(),
+        }
+    }
+
+    #[getter]
+    fn mz_fit(&self) -> Option<PyFit1D> {
+        self.inner
+            .mz_fit
+            .clone()
+            .map(|f| PyFit1D { inner: f })
+    }
+
+    // And keep the scalar shortcuts if you like:
 
     #[getter]
     fn rt_mu(&self) -> f32 {
@@ -1215,22 +1247,55 @@ impl PyTofScanPlan {
 }
 
 #[pyclass]
-#[derive(Clone, Debug)]
-pub struct PyFit1D { pub inner: Fit1D }
+#[derive(Clone)]
+pub struct PyFit1D {
+    pub inner: Fit1D,
+}
 
 #[pymethods]
 impl PyFit1D {
-    #[getter] fn mu(&self) -> f32 { self.inner.mu }
-    #[getter] fn sigma(&self) -> f32 { self.inner.sigma }
-    #[getter] fn height(&self) -> f32 { self.inner.height }
-    #[getter] fn baseline(&self) -> f32 { self.inner.baseline }
-    #[getter] fn area(&self) -> f32 { self.inner.area }
-    #[getter] fn r2(&self) -> f32 { self.inner.r2 }
-    #[getter] fn n(&self) -> usize { self.inner.n }
+    #[new]
+    fn new() -> PyResult<Self> {
+        Err(exceptions::PyRuntimeError::new_err(
+            "PyFit1D objects are created internally, not directly from Python.",
+        ))
+    }
 
-    pub fn __repr__(&self) -> String {
-        format!("Fit1D(mu={:.6}, sigma={:.6}, area={:.3}, r2={:.4}, n={})",
-                self.inner.mu, self.inner.sigma, self.inner.area, self.inner.r2, self.inner.n)
+    fn __repr__(&self) -> String {
+        format!(
+            "Fit1D(mu={:.4}, sigma={:.4}, height={:.4}, area={:.4}, n={:?})",
+            self.inner.mu,
+            self.inner.sigma,
+            self.inner.height,
+            self.inner.area,
+            self.inner.n,
+        )
+    }
+
+    #[getter]
+    fn mu(&self) -> f32 {
+        self.inner.mu
+    }
+
+    #[getter]
+    fn sigma(&self) -> f32 {
+        self.inner.sigma
+    }
+
+    #[getter]
+    fn height(&self) -> f32 {
+        self.inner.height
+    }
+
+    #[getter]
+    fn area(&self) -> f32 {
+        self.inner.area
+    }
+
+    /// Optional sample count; may be None.
+    #[getter]
+    fn n(&self) -> Option<usize> {
+        Some(self.inner.n)
     }
 }
 
