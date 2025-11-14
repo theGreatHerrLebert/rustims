@@ -177,24 +177,28 @@ pub struct SimpleFeature {
     pub member_cluster_indices: Vec<usize>,
 
     /// Stable cluster IDs copied from `ClusterResult1D::cluster_id`.
-    /// NOTE: assumes `cluster_id: i64`; switch to `u64` here if your struct uses that.
     pub member_cluster_ids: Vec<u64>,
 
     pub raw_sum: f32,
+
+    /// Cosine similarity vs. Averagine envelope (if LUT was provided; 0 otherwise).
+    pub cos_averagine: f32,
 }
 
 #[derive(Clone, Debug)]
 pub struct SimpleFeatureParams {
     pub z_min: u8,
     pub z_max: u8,
-    pub iso_ppm_tol: f32,   // e.g. 10.0
-    pub iso_abs_da: f32,    // e.g. 0.003
-    pub min_members: usize, // at least this many isotopes
-    pub max_members: usize, // cap chain length
-    pub min_raw_sum: f32,   // minimal cluster raw_sum
-    pub min_mz: f32,        // minimal m/z to consider
+    pub iso_ppm_tol: f32,        // e.g. 10.0
+    pub iso_abs_da: f32,         // e.g. 0.003
+    pub min_members: usize,      // at least this many isotopes
+    pub max_members: usize,      // cap chain length
+    pub min_raw_sum: f32,        // minimal cluster raw_sum
+    pub min_mz: f32,             // minimal m/z to consider
     pub min_rt_overlap_frac: f32, // e.g. 0.3
     pub min_im_overlap_frac: f32, // e.g. 0.3
+    /// If > 0 and LUT is provided, chains with cosine < min_cosine are dropped.
+    pub min_cosine: f32,
 }
 
 impl Default for SimpleFeatureParams {
@@ -210,6 +214,7 @@ impl Default for SimpleFeatureParams {
             min_mz: 100.0,
             min_rt_overlap_frac: 0.3,
             min_im_overlap_frac: 0.3,
+            min_cosine: 0.0,
         }
     }
 }
@@ -277,14 +282,48 @@ fn iso_tolerance_da(mz: f32, p: &SimpleFeatureParams) -> f32 {
     ppm_term.max(p.iso_abs_da)
 }
 
+/// Cosine between raw isotope vector (from chain) and LUT envelope.
+fn cosine_iso_lut(
+    neutral_mass: f32,
+    z: u8,
+    iso_raw: &[f32],
+    lut: &AveragineLut,
+) -> f32 {
+    if iso_raw.is_empty() {
+        return 0.0;
+    }
+
+    let env = lut.lookup(neutral_mass, z); // already L2-normalized, zero-padded to 8
+    let mut v = [0.0f32; 8];
+
+    let keep = iso_raw.len().min(8);
+    let mut norm2 = 0.0f32;
+    for i in 0..keep {
+        let x = iso_raw[i].max(0.0); // just in case
+        v[i] = x;
+        norm2 += x * x;
+    }
+
+    if norm2 <= 0.0 {
+        return 0.0;
+    }
+    let inv_norm = norm2.sqrt().recip();
+
+    let mut dot = 0.0f32;
+    for i in 0..8 {
+        let x = v[i] * inv_norm;
+        dot += x * env[i];
+    }
+    dot
+}
+
 #[derive(Clone, Debug)]
 struct GoodCluster {
     /// index in the original `clusters` slice
     orig_idx: usize,
 
     /// stable ID from `ClusterResult1D`
-    /// NOTE: i64 here; change if you used u64.
-    cluster_id: u64,
+    pub cluster_id: u64,
 
     mz_mu: f32,
     _rt_mu: f32,
@@ -299,6 +338,7 @@ struct GoodCluster {
 pub fn build_simple_features_from_clusters(
     clusters: &[ClusterResult1D],
     params: &SimpleFeatureParams,
+    lut: Option<&AveragineLut>,
 ) -> Vec<SimpleFeature> {
     if clusters.is_empty() {
         return Vec::new();
@@ -321,7 +361,7 @@ pub fn build_simple_features_from_clusters(
             }
             Some(GoodCluster {
                 orig_idx: i,
-                cluster_id: c.cluster_id, // <-- new: propagate stable ID
+                cluster_id: c.cluster_id,
                 mz_mu,
                 _rt_mu: c.rt_fit.mu,
                 rt_win: c.rt_window,
@@ -452,6 +492,33 @@ pub fn build_simple_features_from_clusters(
             continue;
         }
 
+        // --- 3b) Averagine cosine gating (before assignment) -----------------
+
+        let mut cos_averagine = 0.0f32;
+        if let Some(lut_ref) = lut {
+            // Build iso_raw = [raw_sum_0, raw_sum_1, ...] in m/z order (chain is monotonic)
+            let mut mz_mono_tmp = f32::INFINITY;
+            let mut iso_raw: Vec<f32> = Vec::with_capacity(best_chain.len());
+
+            for &idx in &best_chain {
+                let g = &good[idx];
+                mz_mono_tmp = mz_mono_tmp.min(g.mz_mu);
+                iso_raw.push(g.raw_sum.max(0.0));
+            }
+
+            if !mz_mono_tmp.is_finite() || mz_mono_tmp <= params.min_mz {
+                continue;
+            }
+
+            let neutral_tmp = (mz_mono_tmp - 1.007_276_5_f32).max(0.0) * (best_z as f32);
+            cos_averagine = cosine_iso_lut(neutral_tmp, best_z, &iso_raw, lut_ref);
+
+            if params.min_cosine > 0.0 && cos_averagine < params.min_cosine {
+                // Reject this chain; do NOT mark anything as assigned.
+                continue;
+            }
+        }
+
         // 4) create feature and mark members as assigned
         for &idx in &best_chain {
             assigned[idx] = true;
@@ -497,6 +564,7 @@ pub fn build_simple_features_from_clusters(
 
         let neutral_mass = (mz_mono - 1.007_276_5_f32).max(0.0) * (best_z as f32);
 
+        // If we had no LUT, cos_averagine is 0.0; otherwise it’s already set.
         let feat_id = features.len();
         features.push(SimpleFeature {
             feature_id: feat_id,
@@ -510,6 +578,7 @@ pub fn build_simple_features_from_clusters(
             member_cluster_indices,
             member_cluster_ids,
             raw_sum: raw_sum_total,
+            cos_averagine,
         });
     }
 

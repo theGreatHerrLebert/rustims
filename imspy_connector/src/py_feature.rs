@@ -15,7 +15,7 @@ use rustdf::cluster::feature::{
 use crate::py_dia::PyClusterResult1D;
 
 // ---------------------------------------------------------------
-// PyAveragineLut – optional, but nice to have for debugging
+// PyAveragineLut – optional, but now used for cosine gating too
 // ---------------------------------------------------------------
 
 #[pyclass]
@@ -115,7 +115,8 @@ pub struct PySimpleFeatureParams {
 impl PySimpleFeatureParams {
     /// Create SimpleFeatureParams.
     ///
-    /// All arguments have defaults matching Rust::Default.
+    /// All arguments have defaults matching Rust::Default,
+    /// except min_cosine which defaults to 0.7 here (Python side).
     #[new]
     #[pyo3(signature = (
         z_min=1,
@@ -127,7 +128,8 @@ impl PySimpleFeatureParams {
         min_raw_sum=0.0,
         min_mz=100.0,
         min_rt_overlap_frac=0.3,
-        min_im_overlap_frac=0.3
+        min_im_overlap_frac=0.3,
+        min_cosine=0.7,
     ))]
     pub fn new(
         z_min: u8,
@@ -140,6 +142,7 @@ impl PySimpleFeatureParams {
         min_mz: f32,
         min_rt_overlap_frac: f32,
         min_im_overlap_frac: f32,
+        min_cosine: f32,
     ) -> Self {
         PySimpleFeatureParams {
             inner: SimpleFeatureParams {
@@ -153,6 +156,7 @@ impl PySimpleFeatureParams {
                 min_mz,
                 min_rt_overlap_frac,
                 min_im_overlap_frac,
+                min_cosine,
             },
         }
     }
@@ -166,7 +170,9 @@ impl PySimpleFeatureParams {
 
     fn __repr__(&self) -> String {
         format!(
-            "SimpleFeatureParams(z=[{}..{}], iso_ppm_tol={}, iso_abs_da={}, min_members={}, max_members={}, min_raw_sum={}, min_mz={}, min_rt_overlap_frac={}, min_im_overlap_frac={})",
+            "SimpleFeatureParams(z=[{}..{}], iso_ppm_tol={}, iso_abs_da={}, \
+             min_members={}, max_members={}, min_raw_sum={}, min_mz={}, \
+             min_rt_overlap_frac={}, min_im_overlap_frac={}, min_cosine={})",
             self.inner.z_min,
             self.inner.z_max,
             self.inner.iso_ppm_tol,
@@ -177,6 +183,7 @@ impl PySimpleFeatureParams {
             self.inner.min_mz,
             self.inner.min_rt_overlap_frac,
             self.inner.min_im_overlap_frac,
+            self.inner.min_cosine,
         )
     }
 }
@@ -233,9 +240,16 @@ impl PySimpleFeature {
         self.inner.n_members
     }
 
+    /// Stable cluster IDs copied from ClusterResult1D::cluster_id (u64).
     #[getter]
     pub fn member_cluster_ids(&self) -> Vec<u64> {
         self.inner.member_cluster_ids.clone()
+    }
+
+    /// Indices into the *input slice* of clusters.
+    #[getter]
+    pub fn member_cluster_indices(&self) -> Vec<usize> {
+        self.inner.member_cluster_indices.clone()
     }
 
     #[getter]
@@ -243,14 +257,21 @@ impl PySimpleFeature {
         self.inner.raw_sum
     }
 
+    /// Cosine similarity vs Averagine envelope (0.0 if no LUT used).
+    #[getter]
+    pub fn cos_averagine(&self) -> f32 {
+        self.inner.cos_averagine
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "SimpleFeature(id={}, z={}, mz_mono={:.4}, n_members={}, raw_sum={:.1})",
+            "SimpleFeature(id={}, z={}, mz_mono={:.4}, n_members={}, raw_sum={:.1}, cos_averagine={:.3})",
             self.inner.feature_id,
             self.inner.charge,
             self.inner.mz_mono,
             self.inner.n_members,
-            self.inner.raw_sum
+            self.inner.raw_sum,
+            self.inner.cos_averagine,
         )
     }
 }
@@ -260,11 +281,12 @@ impl PySimpleFeature {
 // ---------------------------------------------------------------
 
 #[pyfunction]
-#[pyo3(signature = (clusters, params))]
+#[pyo3(signature = (clusters, params, lut=None))]
 pub fn build_simple_features_from_clusters_py(
     py: Python<'_>,
     clusters: Vec<Py<PyClusterResult1D>>,
     params: &PySimpleFeatureParams,
+    lut: Option<Py<PyAveragineLut>>,
 ) -> PyResult<Vec<PySimpleFeature>> {
     // Pull Rust clusters out of Py wrappers
     let rust_clusters: Vec<ClusterResult1D> = clusters
@@ -275,7 +297,18 @@ pub fn build_simple_features_from_clusters_py(
         })
         .collect();
 
-    let feats = build_simple_features_from_clusters(&rust_clusters, &params.inner);
+    // Call Rust builder with or without LUT, making sure the borrow
+    // on PyAveragineLut lives for the duration of the call.
+    let feats: Vec<SimpleFeature> = if let Some(py_lut) = lut {
+        let lut_borrow = py_lut.borrow(py);
+        build_simple_features_from_clusters(
+            &rust_clusters,
+            &params.inner,
+            Some(&lut_borrow.inner),
+        )
+    } else {
+        build_simple_features_from_clusters(&rust_clusters, &params.inner, None)
+    };
 
     let py_feats: Vec<PySimpleFeature> = feats
         .into_iter()
@@ -296,8 +329,6 @@ pub fn py_feature(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySimpleFeature>()?;
 
     m.add_function(wrap_pyfunction!(build_simple_features_from_clusters_py, m)?)?;
-
-    // if you ever add more advanced builders again, you can register them here too
 
     // Silence unused variable warning for `py` if you don't use it directly
     let _ = py;

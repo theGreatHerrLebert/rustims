@@ -7,12 +7,13 @@ import imspy_connector
 
 imsf = imspy_connector.py_feature  # Rust PyO3 module
 
+
 class AveragineLut:
     """
     Thin Python wrapper around PyAveragineLut.
 
-    Currently not used by `build_simple_features_from_clusters`, but we keep it
-    for future scoring / diagnostics (e.g. cosine vs averagine).
+    Can be passed into `build_simple_features_from_clusters(...)` to enable
+    cosine gating vs averagine and to record cos_averagine per feature.
     """
 
     def __init__(
@@ -91,6 +92,7 @@ class SimpleFeatureParams:
         min_mz: minimal m/z to consider
         min_rt_overlap_frac: minimal fractional RT overlap between neighboring isotopes
         min_im_overlap_frac: minimal fractional IM overlap between neighboring isotopes
+        min_cosine: minimal cosine vs. averagine envelope (only applied if LUT is given)
     """
 
     def __init__(
@@ -105,6 +107,7 @@ class SimpleFeatureParams:
         min_mz: float = 100.0,
         min_rt_overlap_frac: float = 0.3,
         min_im_overlap_frac: float = 0.3,
+        min_cosine: float = 0.7,
     ) -> None:
         self.__py_ptr = imsf.PySimpleFeatureParams(
             int(z_min),
@@ -117,12 +120,13 @@ class SimpleFeatureParams:
             float(min_mz),
             float(min_rt_overlap_frac),
             float(min_im_overlap_frac),
+            float(min_cosine),
         )
 
     @classmethod
     def default(cls) -> "SimpleFeatureParams":
         """
-        Convenience: Rust-side Default.
+        Convenience: Rust-side Default (min_cosine = 0.0).
         """
         return cls.from_py_ptr(imsf.PySimpleFeatureParams.default())
 
@@ -148,11 +152,14 @@ class SimpleFeature:
     """
     Thin wrapper around the Rust `SimpleFeature`.
 
-    We deliberately expose only the things you actually care about for downstream:
+    Exposes the things you actually care about for downstream:
     - feature_id, charge, mz_mono, neutral_mass
     - rt_bounds, im_bounds
-    - mz_center, n_members, member_cluster_ids
+    - mz_center, n_members
+    - member_cluster_indices  (indices into input slice)
+    - member_cluster_ids      (stable u64 IDs from ClusterResult1D)
     - raw_sum
+    - cos_averagine           (0.0 if no LUT was used)
     """
 
     def __init__(self, py_ptr: Any) -> None:
@@ -198,18 +205,28 @@ class SimpleFeature:
         return int(self.__py_ptr.n_members)
 
     @property
+    def member_cluster_indices(self) -> list[int]:
+        # indices into the *local* clusters slice used as input
+        return list(self.__py_ptr.member_cluster_indices)
+
+    @property
     def member_cluster_ids(self) -> list[int]:
+        # stable IDs from ClusterResult1D::cluster_id (u64 → Python int)
         return list(self.__py_ptr.member_cluster_ids)
 
     @property
     def raw_sum(self) -> float:
         return float(self.__py_ptr.raw_sum)
 
+    @property
+    def cos_averagine(self) -> float:
+        return float(self.__py_ptr.cos_averagine)
+
     def __repr__(self) -> str:
         return (
             f"SimpleFeature(id={self.feature_id}, z={self.charge}, "
             f"mz_mono={self.mz_mono:.4f}, members={self.n_members}, "
-            f"raw_sum={self.raw_sum:.1f})"
+            f"raw_sum={self.raw_sum:.1f}, cos_averagine={self.cos_averagine:.3f})"
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -225,9 +242,16 @@ class SimpleFeature:
             "im_bounds": self.im_bounds,
             "mz_center": self.mz_center,
             "n_members": self.n_members,
+            "member_cluster_indices": self.member_cluster_indices,
             "member_cluster_ids": self.member_cluster_ids,
             "raw_sum": self.raw_sum,
-            "first_member_cluster_id": self.member_cluster_ids[0] if self.n_members > 0 else None,
+            "cos_averagine": self.cos_averagine,
+            "first_member_cluster_index": (
+                self.member_cluster_indices[0] if self.n_members > 0 else None
+            ),
+            "first_member_cluster_id": (
+                self.member_cluster_ids[0] if self.n_members > 0 else None
+            ),
         }
 
 
@@ -250,6 +274,7 @@ def _to_py_cluster_ptr(x: Any) -> Any:
 def build_simple_features_from_clusters(
     clusters: Sequence[Any],
     params: SimpleFeatureParams | None = None,
+    lut: AveragineLut | None = None,
 ) -> list[SimpleFeature]:
     """
     Build simple isotopic features from a list of MS1 clusters.
@@ -262,7 +287,13 @@ def build_simple_features_from_clusters(
         - the raw `PyClusterResult1D` PyO3 object from `imspy_connector`.
 
     params:
-        SimpleFeatureParams instance. If None, Rust defaults are used.
+        SimpleFeatureParams instance. If None, Rust defaults are used
+        (note: Rust Default has min_cosine=0.0).
+
+    lut:
+        Optional AveragineLut. If provided, chains are scored against
+        averagine and gated by `params.min_cosine`. The cosine value is
+        stored as `SimpleFeature.cos_averagine`.
 
     Returns
     -------
@@ -274,9 +305,17 @@ def build_simple_features_from_clusters(
 
     raw_clusters = [_to_py_cluster_ptr(c) for c in clusters]
 
-    py_feats = imsf.build_simple_features_from_clusters_py(
-        raw_clusters,
-        params.get_py_ptr(),
-    )
+    if lut is None:
+        py_feats = imsf.build_simple_features_from_clusters_py(
+            raw_clusters,
+            params.get_py_ptr(),
+            None,
+        )
+    else:
+        py_feats = imsf.build_simple_features_from_clusters_py(
+            raw_clusters,
+            params.get_py_ptr(),
+            lut.get_py_ptr(),
+        )
 
     return [SimpleFeature.from_py_ptr(f) for f in py_feats]
