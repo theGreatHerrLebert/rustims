@@ -20,6 +20,7 @@ pub mod py_utility;
 pub mod py_sumformula;
 pub mod py_ml_utility;
 pub mod py_feature;
+mod py_pseudo;
 
 #[pymodule]
 fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {

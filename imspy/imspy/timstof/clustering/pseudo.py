@@ -1,0 +1,75 @@
+from __future__ import annotations
+from typing import Any, Sequence
+
+import imspy_connector
+
+ims_pseudo = imspy_connector.py_pseudo
+
+
+class PseudoFragment:
+    def __init__(self, py_ptr: Any) -> None:
+        self._p = py_ptr
+
+    @property
+    def mz(self) -> float:
+        return float(self._p.mz)
+
+    @property
+    def intensity(self) -> float:
+        return float(self._p.intensity)
+
+    @property
+    def ms2_cluster_id(self) -> int:
+        return int(self._p.ms2_cluster_id)
+
+
+class PseudoSpectrum:
+    def __init__(self, py_ptr: Any) -> None:
+        self._p = py_ptr
+
+    @property
+    def precursor_mz(self) -> float:
+        return float(self._p.precursor_mz)
+
+    @property
+    def precursor_charge(self) -> int:
+        return int(self._p.precursor_charge)
+
+    @property
+    def rt_apex(self) -> float:
+        return float(self._p.rt_apex)
+
+    @property
+    def im_apex(self) -> float:
+        return float(self._p.im_apex)
+
+    @property
+    def feature_id(self) -> int | None:
+        fid = self._p.feature_id
+        return int(fid) if fid is not None else None
+
+    @property
+    def precursor_cluster_ids(self) -> list[int]:
+        return list(self._p.precursor_cluster_ids)
+
+    @property
+    def fragments(self) -> list[PseudoFragment]:
+        return [PseudoFragment(f) for f in self._p.fragments]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "precursor_mz": self.precursor_mz,
+            "precursor_charge": self.precursor_charge,
+            "rt_apex": self.rt_apex,
+            "im_apex": self.im_apex,
+            "feature_id": self.feature_id,
+            "precursor_cluster_ids": self.precursor_cluster_ids,
+            "fragments": [
+                {
+                    "mz": f.mz,
+                    "intensity": f.intensity,
+                    "ms2_cluster_id": f.ms2_cluster_id,
+                }
+                for f in self.fragments
+            ],
+        }

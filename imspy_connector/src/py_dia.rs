@@ -7,6 +7,7 @@ use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
+use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams};
@@ -1866,26 +1867,61 @@ impl PyTimsDatasetDIA {
             )
         });
 
-        /*
-        // ---- Stitching for MS1 clusters ---------------------------------
-        let p = ClusterStitchParams {
-            allow_cross_groups: false,
-            min_overlap_frames: 1,
-            max_rt_gap_frames: 3,
-            min_im_overlap_scans: 1,
-            max_im_gap_scans: 2,
-            jaccard_rt_min: 0.05,
-            jaccard_im_min: 0.05,
-            ppm_cap: 25.0,
-            k_sigma_bounds: 1.0,
-            max_mz_gap_ppm: 1.0, // stricter MS1 mz gap
-            mz_min: None,
-            mz_max: None,
+        results_to_py(py, results)
+    }
+
+    /// Build pseudo-DDA spectra from MS1/MS2 clusters and optional features.
+    ///
+    /// - ms1_clusters / ms2_clusters: list of PyClusterResult1D
+    /// - features: optional list of PySimpleFeature (isotopic envelopes)
+    /// - top_n_fragments: cap per pseudo spectrum (0 = no cap)
+    #[pyo3(signature = (ms1_clusters, ms2_clusters, features=None, top_n_fragments=500))]
+    pub fn build_pseudo_spectra_from_clusters(
+        &self,
+        py: Python<'_>,
+        ms1_clusters: Vec<Py<PyClusterResult1D>>,
+        ms2_clusters: Vec<Py<PyClusterResult1D>>,
+        features: Option<Vec<Py<PySimpleFeature>>>,
+        top_n_fragments: usize,
+    ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        // Unwrap clusters
+        let rust_ms1: Vec<ClusterResult1D> = ms1_clusters
+            .into_iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        let rust_ms2: Vec<ClusterResult1D> = ms2_clusters
+            .into_iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        // Unwrap features (optional)
+        let rust_feats: Option<Vec<SimpleFeature>> = features.map(|vec_f| {
+            vec_f.into_iter().map(|pf| pf.borrow(py).inner.clone()).collect()
+        });
+
+        // Pseudo spectrum options
+        let pseudo_opts = PseudoSpecOpts {
+            top_n_fragments,
+            ..PseudoSpecOpts::default()
         };
 
-        let stitched = stitch_clusters_1d_ppm(results, p);
-         */
-        results_to_py(py, results)
+        // Call the handle method
+        let res = self.inner.build_pseudo_spectra_from_clusters(
+            &rust_ms1,
+            &rust_ms2,
+            rust_feats.as_deref(),
+            &pseudo_opts,
+        );
+
+        // Convert to PyPseudoSpectrum
+        let py_specs: Vec<PyPseudoSpectrum> = res
+            .pseudo_spectra
+            .into_iter()
+            .map(|s| PyPseudoSpectrum { inner: s })
+            .collect();
+
+        Ok(py_specs)
     }
 }
 
@@ -1991,6 +2027,9 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
 }
 
 use rustdf::cluster::io as cio;
+use rustdf::cluster::pseudo::PseudoSpecOpts;
+use crate::py_feature::PySimpleFeature;
+use crate::py_pseudo::PyPseudoSpectrum;
 
 #[pyfunction]
 #[pyo3(signature = (path, clusters, compress=true, strip_points=false, strip_axes=false))]

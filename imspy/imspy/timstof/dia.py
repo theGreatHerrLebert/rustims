@@ -1,6 +1,6 @@
 import sqlite3
 import warnings
-from typing import List
+from typing import List, Sequence, Any
 
 from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
@@ -303,6 +303,31 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             precompute_views,
         )
         return TofScanPlanGroup.from_py_ptr(py_plan)
+
+    def build_pseudo_spectra(
+            self,
+            ms1_clusters: Sequence[Any],
+            ms2_clusters: Sequence[Any],
+            features: Sequence["SimpleFeature"] | None = None,
+            top_n_fragments: int = 500,
+    ) -> list["PseudoSpectrum"]:
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+
+        ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
+        ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
+
+        feats_ptrs = None
+        if features is not None:
+            feats_ptrs = [f.get_py_ptr() for f in features]
+
+        py_specs = self.__dataset.build_pseudo_spectra_from_clusters(
+            ms1_ptrs,
+            ms2_ptrs,
+            feats_ptrs,
+            int(top_n_fragments),
+        )
+
+        return [PseudoSpectrum(s) for s in py_specs]
 
 import os
 import tempfile

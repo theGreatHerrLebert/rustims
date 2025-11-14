@@ -16,8 +16,11 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
 use rayon::ThreadPoolBuilder;
+use crate::cluster::candidates::{build_pseudo_spectra_end_to_end, PseudoBuildResult, ScoreOpts};
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
-
+use crate::cluster::feature::SimpleFeature;
+use crate::cluster::pseudo::{PseudoSpecOpts};
+use crate::cluster::scoring::CandidateOpts;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -728,6 +731,30 @@ impl TimsDatasetDIA {
             eval_opts,
             require_rt_overlap,
             num_threads,
+        )
+    }
+
+    /// High-level DIA → pseudo-DDA builder tied to the dataset.
+    ///
+    /// Uses CandidateOpts::default() and ScoreOpts::default().
+    pub fn build_pseudo_spectra_from_clusters(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        features: Option<&[SimpleFeature]>,
+        pseudo_opts: &PseudoSpecOpts,
+    ) -> PseudoBuildResult {
+        let cand_opts = CandidateOpts::default();
+        let score_opts = ScoreOpts::default();
+
+        build_pseudo_spectra_end_to_end(
+            self,
+            ms1,
+            ms2,
+            features,
+            &cand_opts,
+            &score_opts,
+            pseudo_opts,
         )
     }
 }
