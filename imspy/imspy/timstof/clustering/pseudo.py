@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Sequence
+from typing import Any
 
 import imspy_connector
 
@@ -73,3 +73,10 @@ class PseudoSpectrum:
                 for f in self.fragments
             ],
         }
+
+    def __repr__(self):
+        return (
+            f"PseudoSpectrum(precursor_mz={self.precursor_mz:.4f}, "
+            f"charge={self.precursor_charge}, rt_apex={self.rt_apex:.2f}, "
+            f"im_apex={self.im_apex:.2f}, n_fragments={len(self.fragments)})"
+        )
