@@ -225,6 +225,53 @@ pub struct PseudoBuildResult {
     pub pseudo_spectra: Vec<PseudoSpectrum>,
 }
 
+/// Very simple DIA → pseudo-DDA builder.
+///
+/// Links *all* MS1–MS2 pairs that
+///   - are program-legal (same window group, isolation & scans),
+///   - have any RT overlap,
+///   - have any IM overlap (≥ 1 scan),
+/// and then groups them into pseudo-spectra without any competition.
+/// An MS2 cluster may contribute to multiple precursors.
+pub fn build_pseudo_spectra_all_pairs(
+    ds: &TimsDatasetDIA,
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    features: Option<&[SimpleFeature]>,
+    pseudo_opts: &PseudoSpecOpts,
+) -> Vec<PseudoSpectrum> {
+    // --- Very loose candidate settings: essentially
+    //     "same group + any RT overlap + any IM overlap".
+    let cand_opts = CandidateOpts {
+        min_rt_jaccard: 0.0,        // don’t enforce Jaccard, just any overlap
+        ms2_rt_guard_sec: 0.0,      // no extra padding
+        rt_bucket_width: 1.0,       // coarse bucketing is fine
+        max_ms1_rt_span_sec: None,  // don’t drop wide weirdos for now
+        max_ms2_rt_span_sec: None,
+        min_raw_sum: 1.0,           // can drop to 0.0 if you want truly everything
+
+        max_rt_apex_delta_sec: None,    // disable apex-delta guard
+        max_scan_apex_delta:   None,    // disable IM apex guard
+        min_im_overlap_scans:  1,       // require ≥1 scan intersection
+    };
+
+    // 1) Enumerate *all* program-legal pairs
+    let idx = PrecursorSearchIndex::build(ds, ms1, &cand_opts);
+    let pairs = idx.enumerate_pairs(ms1, ms2, &cand_opts); // Vec<(ms2_idx, ms1_idx)>
+
+    // 2) Build pseudo-spectra directly from those pairs, no scoring/assignment.
+    let empty_feats: &[SimpleFeature] = &[];
+    let feat_slice = features.unwrap_or(empty_feats);
+
+    build_pseudo_spectra_from_pairs(
+        ms1,
+        ms2,
+        feat_slice,
+        &pairs,
+        pseudo_opts,
+    )
+}
+
 /// End-to-end:
 ///   DIA index + MS1 clusters + MS2 clusters (+ optional features)
 ///   → candidates → scoring/assignment → pseudo-MS/MS spectra.

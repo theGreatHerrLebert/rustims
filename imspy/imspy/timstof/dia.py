@@ -329,11 +329,43 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
         return [PseudoSpectrum(s) for s in py_specs]
 
+    def build_pseudo_spectra_all_pairs(
+            self,
+            ms1_clusters: Sequence[Any],
+            ms2_clusters: Sequence[Any],
+            features: Sequence["SimpleFeature"] | None = None,
+            top_n_fragments: int = 500,
+    ) -> list["PseudoSpectrum"]:
+        """
+        Naive DIA → pseudo-DDA:
+
+        - Links ALL program-legal MS1–MS2 pairs (same window group,
+          RT + IM overlap) without competition.
+        - An MS2 cluster can contribute to multiple pseudo-spectra.
+        """
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+
+        # unwrap Python wrappers to PyO3 objects
+        ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
+        ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
+
+        feats_ptrs = None
+        if features is not None:
+            feats_ptrs = [f.get_py_ptr() for f in features]
+
+        py_specs = self.__dataset.build_pseudo_spectra_all_pairs_from_clusters(
+            ms1_ptrs,
+            ms2_ptrs,
+            feats_ptrs,
+            int(top_n_fragments),
+        )
+
+        return [PseudoSpectrum(s) for s in py_specs]
+
 import os
 import tempfile
-import warnings
 from pathlib import Path
-from typing import List, Sequence, Union, Tuple
+from typing import List, Sequence, Union
 # --- helpers ---------------------------------------------------------------
 
 import warnings

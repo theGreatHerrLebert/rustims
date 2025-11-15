@@ -16,10 +16,10 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
 use rayon::ThreadPoolBuilder;
-use crate::cluster::candidates::{build_pseudo_spectra_end_to_end, PseudoBuildResult, ScoreOpts};
+use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, PseudoBuildResult, ScoreOpts};
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
 use crate::cluster::feature::SimpleFeature;
-use crate::cluster::pseudo::{PseudoSpecOpts};
+use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum};
 use crate::cluster::scoring::CandidateOpts;
 
 #[derive(Clone, Debug)]
@@ -754,6 +754,25 @@ impl TimsDatasetDIA {
             features,
             &cand_opts,
             &score_opts,
+            pseudo_opts,
+        )
+    }
+
+    /// Naive DIA → pseudo-DDA builder:
+    /// link *all* program-legal MS1–MS2 pairs (same group, RT/IM overlap),
+    /// without any competition.
+    pub fn build_pseudo_spectra_all_pairs_from_clusters(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        features: Option<&[SimpleFeature]>,
+        pseudo_opts: &PseudoSpecOpts,
+    ) -> Vec<PseudoSpectrum> {
+        build_pseudo_spectra_all_pairs(
+            self,
+            ms1,
+            ms2,
+            features,
             pseudo_opts,
         )
     }

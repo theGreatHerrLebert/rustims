@@ -1923,6 +1923,51 @@ impl PyTimsDatasetDIA {
 
         Ok(py_specs)
     }
+
+    /// Naive builder: link all program-legal MS1–MS2 pairs (same window group,
+    /// RT + IM overlap), without competition. MS2 clusters can appear in
+    /// multiple pseudo-spectra.
+    #[pyo3(signature = (ms1_clusters, ms2_clusters, features=None, top_n_fragments=500))]
+    pub fn build_pseudo_spectra_all_pairs_from_clusters(
+        &self,
+        py: Python<'_>,
+        ms1_clusters: Vec<Py<PyClusterResult1D>>,
+        ms2_clusters: Vec<Py<PyClusterResult1D>>,
+        features: Option<Vec<Py<PySimpleFeature>>>,
+        top_n_fragments: usize,
+    ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        let rust_ms1: Vec<ClusterResult1D> = ms1_clusters
+            .into_iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+        let rust_ms2: Vec<ClusterResult1D> = ms2_clusters
+            .into_iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        let rust_feats: Option<Vec<SimpleFeature>> = features.map(|vec_f| {
+            vec_f.into_iter().map(|pf| pf.borrow(py).inner.clone()).collect()
+        });
+
+        let pseudo_opts = PseudoSpecOpts {
+            top_n_fragments,
+            ..PseudoSpecOpts::default()
+        };
+
+        let spectra = self.inner.build_pseudo_spectra_all_pairs_from_clusters(
+            &rust_ms1,
+            &rust_ms2,
+            rust_feats.as_deref(),
+            &pseudo_opts,
+        );
+
+        let py_specs: Vec<PyPseudoSpectrum> = spectra
+            .into_iter()
+            .map(|s| PyPseudoSpectrum { inner: s })
+            .collect();
+
+        Ok(py_specs)
+    }
 }
 
 #[pyfunction]
