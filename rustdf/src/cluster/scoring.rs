@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
-use crate::data::dia::TimsDatasetDIA;
+use crate::cluster::pseudo::cluster_mz_mu;
+use crate::data::dia::{ProgramSlice, TimsDatasetDIA};
 
 /// Jaccard overlap in **absolute seconds** for two closed intervals.
 #[inline]
@@ -131,122 +132,164 @@ impl Default for CandidateOpts {
     }
 }
 
-/// A built search index over MS1 with per-group eligibility masks.
 #[derive(Clone, Debug)]
 pub struct PrecursorSearchIndex {
     ms1_time_bounds: Vec<(f64, f64)>,
     ms1_keep: Vec<bool>,
     rt_buckets: RtBuckets,
-    /// group -> mask[i] (true if MS1[i] is eligible for that group by (mz ∩ isolation) AND (scan ∩ ranges))
+    /// group -> mask[i] (MS1 eligibility by mz ∩ isolation AND scans ∩ program)
     ms1_group_ok: HashMap<u32, Vec<bool>>,
     /// frame_id -> time (seconds)
     frame_time: Arc<HashMap<u32, f64>>,
+    /// NEW: per-group DIA tiles (scan band + mz window).
+    group_slices: HashMap<u32, Vec<ProgramSlice>>,
 }
 
 impl PrecursorSearchIndex {
-    /// Build once per dataset / MS1 set.
     pub fn build(ds: &TimsDatasetDIA, ms1: &[ClusterResult1D], opts: &CandidateOpts) -> Self {
         let frame_time = Arc::new(ds.dia_index.frame_time.clone());
 
-        // 1) Absolute MS1 time bounds
-        let ms1_time_bounds: Vec<(f64, f64)> = ms1.par_iter().map(|c| {
-            let mut t_lo = f64::INFINITY;
-            let mut t_hi = f64::NEG_INFINITY;
-            for &fid in &c.frame_ids_used {
-                if let Some(&t) = frame_time.get(&fid) {
-                    if t < t_lo { t_lo = t; }
-                    if t > t_hi { t_hi = t; }
+        // 1) Absolute MS1 time bounds (unchanged)
+        let ms1_time_bounds: Vec<(f64, f64)> = ms1
+            .par_iter()
+            .map(|c| {
+                let mut t_lo = f64::INFINITY;
+                let mut t_hi = f64::NEG_INFINITY;
+                for &fid in &c.frame_ids_used {
+                    if let Some(&t) = frame_time.get(&fid) {
+                        if t < t_lo { t_lo = t; }
+                        if t > t_hi { t_hi = t; }
+                    }
                 }
-            }
-            (t_lo, t_hi)
-        }).collect();
+                (t_lo, t_hi)
+            })
+            .collect();
 
-        // 2) Keep mask for MS1
-        let ms1_keep: Vec<bool> = ms1.par_iter().enumerate().map(|(i, c)| {
-            if c.ms_level != 1 { return false; }
-            if c.raw_sum < opts.min_raw_sum { return false; }
-            let (t0, t1) = ms1_time_bounds[i];
-            if !(t0.is_finite() && t1.is_finite()) || t1 <= t0 { return false; }
-            if let Some(max_rt) = opts.max_ms1_rt_span_sec { if (t1 - t0) > max_rt { return false; } }
-            true
-        }).collect();
+        // 2) Keep mask for MS1 (unchanged)
+        let ms1_keep: Vec<bool> = ms1
+            .par_iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if c.ms_level != 1 { return false; }
+                if c.raw_sum < opts.min_raw_sum { return false; }
+                let (t0, t1) = ms1_time_bounds[i];
+                if !(t0.is_finite() && t1.is_finite()) || t1 <= t0 { return false; }
+                if let Some(max_rt) = opts.max_ms1_rt_span_sec {
+                    if (t1 - t0) > max_rt { return false; }
+                }
+                true
+            })
+            .collect();
 
-        // 3) RT buckets across MS1
+        // 3) RT buckets (unchanged)
         let (mut rt_min, mut rt_max) = (f64::INFINITY, f64::NEG_INFINITY);
         for &(a, b) in &ms1_time_bounds {
             if a.is_finite() { rt_min = rt_min.min(a); }
             if b.is_finite() { rt_max = rt_max.max(b); }
         }
         if !rt_min.is_finite() || !rt_max.is_finite() || rt_max <= rt_min {
-            rt_min = 0.0; rt_max = 1.0;
+            rt_min = 0.0;
+            rt_max = 1.0;
         }
-        let rt_buckets = RtBuckets::build(rt_min, rt_max, opts.rt_bucket_width, &ms1_time_bounds, Some(&ms1_keep));
+        let rt_buckets =
+            RtBuckets::build(rt_min, rt_max, opts.rt_bucket_width, &ms1_time_bounds, Some(&ms1_keep));
 
-        // 4) Per-group eligibility masks (mz ∩ isolation AND scans ∩ program), independent of RT.
-        let ms1_group_ok: HashMap<u32, Vec<bool>> = ds.dia_index
+        // 4) Per-group eligibility masks (unchanged logic, still union-based)
+        let ms1_group_ok: HashMap<u32, Vec<bool>> = ds
+            .dia_index
             .group_to_isolation
             .par_iter()
             .map(|(&g, mz_rows)| {
-                let scans = ds.dia_index.group_to_scan_ranges.get(&g).cloned().unwrap_or_default();
-                let mz_rows_f32: Vec<(f32,f32)> = mz_rows.iter().map(|&(a,b)| (a as f32, b as f32)).collect();
-                let scan_rows_u32: Vec<(u32,u32)> = scans.iter().copied().collect();
+                let scans = ds
+                    .dia_index
+                    .group_to_scan_ranges
+                    .get(&g)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let mz_rows_f32: Vec<(f32, f32)> =
+                    mz_rows.iter().map(|&(a, b)| (a as f32, b as f32)).collect();
+                let scan_rows_u32: Vec<(u32, u32)> = scans.iter().copied().collect();
 
                 if mz_rows_f32.is_empty() || scan_rows_u32.is_empty() {
                     return (g, vec![false; ms1.len()]);
                 }
 
-                let mask: Vec<bool> = ms1.par_iter().map(|c| {
-                    if c.ms_level != 1 { return false; }
-                    let mz_ok = mz_rows_f32.iter().any(|&w| overlap_f32(c.mz_window.unwrap(), w));
-                    if !mz_ok { return false; }
-                    let im_u32 = (c.im_window.0 as u32, c.im_window.1 as u32);
-                    scan_rows_u32.iter().any(|&s| overlap_u32(im_u32, s))
-                }).collect();
+                let mask: Vec<bool> = ms1
+                    .par_iter()
+                    .map(|c| {
+                        if c.ms_level != 1 { return false; }
+                        let mzw = if let Some(w) = c.mz_window { w } else { return false; };
+                        let mz_ok = mz_rows_f32.iter().any(|&w| overlap_f32(mzw, w));
+                        if !mz_ok { return false; }
+                        let im_u32 = (c.im_window.0 as u32, c.im_window.1 as u32);
+                        scan_rows_u32.iter().any(|&s| overlap_u32(im_u32, s))
+                    })
+                    .collect();
 
                 (g, mask)
             })
             .collect();
 
-        Self { ms1_time_bounds, ms1_keep, rt_buckets, ms1_group_ok, frame_time }
-    }
+        // 5) NEW: per-group program slices (tiles)
+        let mut group_slices: HashMap<u32, Vec<ProgramSlice>> = HashMap::new();
+        for &g in ds.dia_index.group_to_frames.keys() {
+            let slices = ds.dia_index.program_slices_for_group(g);
+            group_slices.insert(g, slices);
+        }
 
+        Self {
+            ms1_time_bounds,
+            ms1_keep,
+            rt_buckets,
+            ms1_group_ok,
+            frame_time,
+            group_slices,
+        }
+    }
     pub fn enumerate_pairs(
         &self,
         ms1: &[ClusterResult1D],
         ms2: &[ClusterResult1D],
         opts: &CandidateOpts,
     ) -> Vec<(usize, usize)> {
-        // Precompute MS2 absolute time bounds
-        let ms2_time_bounds: Vec<(f64, f64)> = ms2.par_iter().map(|c| {
-            let mut t_lo = f64::INFINITY;
-            let mut t_hi = f64::NEG_INFINITY;
-            for &fid in &c.frame_ids_used {
-                if let Some(&t) = self.frame_time.get(&fid) {
-                    if t < t_lo { t_lo = t; }
-                    if t > t_hi { t_hi = t; }
+        // 1) Precompute MS2 absolute time bounds
+        let ms2_time_bounds: Vec<(f64, f64)> = ms2
+            .par_iter()
+            .map(|c| {
+                let mut t_lo = f64::INFINITY;
+                let mut t_hi = f64::NEG_INFINITY;
+                for &fid in &c.frame_ids_used {
+                    if let Some(&t) = self.frame_time.get(&fid) {
+                        if t < t_lo { t_lo = t; }
+                        if t > t_hi { t_hi = t; }
+                    }
                 }
-            }
-            (t_lo, t_hi)
-        }).collect();
-        // Share across threads safely
+                (t_lo, t_hi)
+            })
+            .collect();
         let ms2_time_bounds = Arc::new(ms2_time_bounds);
 
-        // Keep MS2s
-        let ms2_keep: Vec<bool> = ms2.par_iter().enumerate().map(|(i, c)| {
-            if c.ms_level != 2 { return false; }
-            if c.window_group.is_none() { return false; }
-            if c.raw_sum < opts.min_raw_sum { return false; }
-            let (mut t0, mut t1) = ms2_time_bounds[i];
-            if t0.is_finite() { t0 -= opts.ms2_rt_guard_sec; }
-            if t1.is_finite() { t1 += opts.ms2_rt_guard_sec; }
-            if !(t0.is_finite() && t1.is_finite() && t1 > t0) { return false; }
-            if let Some(max_rt) = opts.max_ms2_rt_span_sec {
-                if (t1 - t0) > max_rt { return false; }
-            }
-            true
-        }).collect();
+        // 2) Keep MS2s
+        let ms2_keep: Vec<bool> = ms2
+            .par_iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if c.ms_level != 2 { return false; }
+                if c.window_group.is_none() { return false; }
+                if c.raw_sum < opts.min_raw_sum { return false; }
+                let (mut t0, mut t1) = ms2_time_bounds[i];
+                if t0.is_finite() { t0 -= opts.ms2_rt_guard_sec; }
+                if t1.is_finite() { t1 += opts.ms2_rt_guard_sec; }
+                if !(t0.is_finite() && t1.is_finite() && t1 > t0) { return false; }
+                if let Some(max_rt) = opts.max_ms2_rt_span_sec {
+                    if (t1 - t0) > max_rt { return false; }
+                }
+                true
+            })
+            .collect();
 
-        // Group MS2 by window_group
+        // 3) Group MS2 by window_group
         let mut by_group: HashMap<u32, Vec<usize>> = HashMap::new();
         for (j, c2) in ms2.iter().enumerate() {
             if !ms2_keep[j] { continue; }
@@ -255,57 +298,66 @@ impl PrecursorSearchIndex {
             }
         }
 
-        // Share index across groups/threads
+        // 4) Share index / bounds across groups
         let idx_arc = Arc::new(self.clone());
+        let ms2_tb = ms2_time_bounds.clone();
 
         let mut out = by_group
             .into_par_iter()
             .flat_map(|(g, js)| {
-                // Resolve the eligibility mask once per group, materialize it so we
-                // don't return a reference to a temporary.
-                let mask_vec: Vec<bool> = idx_arc
+                let idx = idx_arc.clone();
+                let tb = ms2_tb.clone();
+
+                // per-group MS1 eligibility mask
+                let mask_vec: Vec<bool> = idx
                     .ms1_group_ok
                     .get(&g)
                     .cloned()
                     .unwrap_or_else(|| vec![false; ms1.len()]);
                 let mask_arc = Arc::new(mask_vec);
 
-                // Clone shared state for the per-MS2 loop
-                let idx = idx_arc.clone();
-                let tb = ms2_time_bounds.clone();
+                // NEW: per-group tiles
+                let slices_vec: Vec<ProgramSlice> = idx
+                    .group_slices
+                    .get(&g)
+                    .cloned()
+                    .unwrap_or_default();
+                let slices_arc = Arc::new(slices_vec);
 
                 js.into_par_iter().flat_map(move |j| {
                     let (mut t2_lo, mut t2_hi) = tb[j];
                     if t2_lo.is_finite() { t2_lo -= opts.ms2_rt_guard_sec; }
                     if t2_hi.is_finite() { t2_hi += opts.ms2_rt_guard_sec; }
 
-                    // Time-prefilter MS1 via buckets
+                    // RT-prefilter MS1 via buckets
                     let mut hits = Vec::<usize>::new();
                     idx.rt_buckets.gather(t2_lo, t2_hi, &mut hits);
                     hits.sort_unstable();
                     hits.dedup();
 
-                    // Use the materialized mask
                     let mask = mask_arc.clone();
+                    let slices = slices_arc.clone();
 
                     let mut local = Vec::<(usize, usize)>::with_capacity(16);
                     for i in hits {
                         if !idx.ms1_keep[i] { continue; }
-                        if !mask[i] { continue; } // eligible by group (mz & program scans)
+                        if !mask[i] { continue; }
 
                         let (t1_lo, t1_hi) = idx.ms1_time_bounds[i];
                         if !(t1_lo.is_finite() && t1_hi.is_finite()) { continue; }
 
-                        // Any RT overlap; optionally enforce Jaccard threshold
+                        // RT overlap + optional Jaccard
                         if t1_hi < t2_lo || t2_hi < t1_lo { continue; }
                         if opts.min_rt_jaccard > 0.0 {
                             let jacc = jaccard_time(t1_lo, t1_hi, t2_lo, t2_hi);
                             if jacc < opts.min_rt_jaccard { continue; }
                         }
 
-                        // ---- NEW: IM window overlap in global scan axis ----
+                        // IM windows
                         let im1 = ms1[i].im_window;
                         let im2 = ms2[j].im_window;
+
+                        // Simple IM overlap guard
                         let im_overlap = {
                             let lo = im1.0.max(im2.0);
                             let hi = im1.1.min(im2.1);
@@ -313,23 +365,19 @@ impl PrecursorSearchIndex {
                         };
                         if im_overlap < opts.min_im_overlap_scans { continue; }
 
-                        // ---- NEW: IM apex delta in scans ----
+                        // Optional apex delta guards
                         if let Some(max_d) = opts.max_scan_apex_delta {
-                            // Fit μ is in scan units for IM (you stamp attach_axes=true in clustering)
                             let s1 = ms1[i].im_fit.mu;
                             let s2 = ms2[j].im_fit.mu;
                             if s1.is_finite() && s2.is_finite() {
                                 let d = (s1 - s2).abs() as f32;
                                 if d > (max_d as f32) { continue; }
                             } else {
-                                // if either apex missing/degenerate, be strict and drop
                                 continue;
                             }
                         }
-
-                        // ---- NEW: RT apex delta in seconds ----
                         if let Some(max_dt) = opts.max_rt_apex_delta_sec {
-                            let r1 = ms1[i].rt_fit.mu; // seconds when attach_axes=true
+                            let r1 = ms1[i].rt_fit.mu;
                             let r2 = ms2[j].rt_fit.mu;
                             if r1.is_finite() && r2.is_finite() {
                                 if (r1 - r2).abs() > max_dt { continue; }
@@ -338,24 +386,50 @@ impl PrecursorSearchIndex {
                             }
                         }
 
+                        // --- TILE-LEVEL CHECK ---
+                        let prec_mz = match cluster_mz_mu(&ms1[i]) {
+                            Some(m) if m.is_finite() && m > 0.0 => m,
+                            _ => continue,
+                        };
+
+                        let tile_ok = slices.iter().any(|s| {
+                            let tile_scans = (s.scan_lo as usize, s.scan_hi as usize);
+
+                            let prec_overlaps = ranges_overlap(im1, tile_scans);
+                            let frag_overlaps = ranges_overlap(im2, tile_scans);
+
+                            if !prec_overlaps || !frag_overlaps {
+                                return false;
+                            }
+
+                            prec_mz >= s.mz_lo as f32 && prec_mz <= s.mz_hi as f32
+                        });
+
+                        if !tile_ok {
+                            continue;
+                        }
+
                         local.push((j, i));
                     }
 
-                    // Return as a parallel iterator to Rayon
                     local.into_par_iter()
                 })
             })
             .collect::<Vec<(usize, usize)>>();
 
-        // --- HARD DE-DUP step ---
         out.sort_unstable();
         out.dedup();
-
         out
     }
 }
 
-/// Convenience: build, enumerate, done.
+#[inline]
+fn ranges_overlap(a: (usize, usize), b: (usize, usize)) -> bool {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    hi >= lo
+}
+
 pub fn enumerate_ms2_ms1_pairs_simple(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],

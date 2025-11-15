@@ -159,6 +159,27 @@ impl DiaIndex {
         }
     }
 
+    pub fn program_slices_for_group(&self, g: u32) -> Vec<ProgramSlice> {
+        let mz_rows = self.group_to_isolation
+            .get(&g)
+            .cloned()
+            .unwrap_or_default();
+        let scan_rows = self.group_to_scan_ranges
+            .get(&g)
+            .cloned()
+            .unwrap_or_default();
+
+        let n = mz_rows.len().min(scan_rows.len());
+        (0..n)
+            .map(|i| ProgramSlice {
+                mz_lo: mz_rows[i].0,
+                mz_hi: mz_rows[i].1,
+                scan_lo: scan_rows[i].0,
+                scan_hi: scan_rows[i].1,
+            })
+            .collect()
+    }
+
     /// Convenience: materialize a program description for a group.
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
         let mz_windows = self.group_to_isolation
