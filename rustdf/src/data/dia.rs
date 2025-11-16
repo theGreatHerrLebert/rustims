@@ -23,12 +23,18 @@ use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum};
 use crate::cluster::scoring::CandidateOpts;
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct ProgramSlice {
     pub mz_lo: f64,
     pub mz_hi: f64,
     pub scan_lo: u32,
     pub scan_hi: u32,
+}
+
+#[inline]
+fn ranges_overlap_u32(a: (u32, u32), b: (u32, u32)) -> bool {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    hi >= lo
 }
 
 #[derive(Debug, Clone)]
@@ -159,25 +165,102 @@ impl DiaIndex {
         }
     }
 
+    /// Materialize tile-level program description for a window group.
+    ///
+    /// Each "tile" (rectangle in scan × m/z) is represented as a ProgramSlice.
+    /// We assume that `group_to_isolation[g]` and `group_to_scan_ranges[g]`
+    /// are aligned row-wise (as built in `DiaIndex::new`).
     pub fn program_slices_for_group(&self, g: u32) -> Vec<ProgramSlice> {
-        let mz_rows = self.group_to_isolation
+        let mz_rows = self
+            .group_to_isolation
             .get(&g)
             .cloned()
             .unwrap_or_default();
-        let scan_rows = self.group_to_scan_ranges
+
+        let scan_rows = self
+            .group_to_scan_ranges
             .get(&g)
             .cloned()
             .unwrap_or_default();
 
         let n = mz_rows.len().min(scan_rows.len());
-        (0..n)
-            .map(|i| ProgramSlice {
-                mz_lo: mz_rows[i].0,
-                mz_hi: mz_rows[i].1,
-                scan_lo: scan_rows[i].0,
-                scan_hi: scan_rows[i].1,
-            })
-            .collect()
+        let mut out = Vec::with_capacity(n);
+
+        for k in 0..n {
+            let (mz_lo, mz_hi) = mz_rows[k];
+            let (scan_lo, scan_hi) = scan_rows[k];
+            out.push(ProgramSlice {
+                mz_lo,
+                mz_hi,
+                scan_lo,
+                scan_hi,
+            });
+        }
+
+        out
+    }
+
+    /// Tiles in group `g` that could have selected this precursor.
+    ///
+    /// Conditions:
+    ///   1) Precursor IM window overlaps tile scan band.
+    ///   2) Precursor m/z lies inside tile's isolation m/z window.
+    pub fn tiles_for_precursor_in_group(
+        &self,
+        g: u32,
+        prec_mz: f32,
+        im_window: (usize, usize),
+    ) -> Vec<usize> {
+        let slices = self.program_slices_for_group(g);
+        let mut hits = Vec::new();
+
+        for (idx, s) in slices.iter().enumerate() {
+            let tile_scans = (s.scan_lo, s.scan_hi);
+
+            // IM overlap precursor ↔ tile
+            if !ranges_overlap_u32(
+                (im_window.0 as u32, im_window.1 as u32),
+                tile_scans,
+            ) {
+                continue;
+            }
+
+            // Precursor m/z inside isolation window
+            if prec_mz < s.mz_lo as f32 || prec_mz > s.mz_hi as f32 {
+                continue;
+            }
+
+            hits.push(idx);
+        }
+
+        hits
+    }
+
+    /// Tiles in group `g` that an MS2 fragment cluster could belong to.
+    ///
+    /// IMPORTANT:
+    ///   Fragment m/z is *not* constrained by isolation window (selection
+    ///   happened before fragmentation). We only check the IM/scan range.
+    pub fn tiles_for_fragment_in_group(
+        &self,
+        g: u32,
+        im_window: (usize, usize),
+    ) -> Vec<usize> {
+        let slices = self.program_slices_for_group(g);
+        let mut hits = Vec::new();
+
+        for (idx, s) in slices.iter().enumerate() {
+            let tile_scans = (s.scan_lo, s.scan_hi);
+
+            if ranges_overlap_u32(
+                (im_window.0 as u32, im_window.1 as u32),
+                tile_scans,
+            ) {
+                hits.push(idx);
+            }
+        }
+
+        hits
     }
 
     /// Convenience: materialize a program description for a group.
