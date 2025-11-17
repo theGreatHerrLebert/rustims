@@ -1117,7 +1117,9 @@ class ClusterResult1D:
             f"parent_rt_id={self.parent_rt_id})"
         )
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
+
+Index = Union[int, slice, np.ndarray]
 
 class TofRtGrid(RustWrapperObject):
     """
@@ -1205,3 +1207,40 @@ class TofRtGrid(RustWrapperObject):
         if wg is None:
             return f"TofRtGrid(MS1, shape=({self.rows}, {self.cols}))"
         return f"TofRtGrid(group={wg}, shape=({self.rows}, {self.cols}))"
+
+    def __getitem__(
+            self,
+            key: Union[Index, tuple[Index, Index]],
+    ) -> np.ndarray:
+        """
+        Fast numpy-style slicing on the dense matrix:
+
+        Examples
+        --------
+        grid[5000:5005, 2500:2510]   # TOF rows 5000–5004, RT cols 2500–2509
+        grid[:, 100:200]             # all TOF, RT window
+        grid[1000, :]                # one TOF row (XIC over RT)
+        """
+        return self.data[key]
+
+    # --- XIC helper if you want a 1D trace directly ---
+
+    def xic_by_index(self, tof_slice: Index, rt_slice: Index) -> np.ndarray:
+        """
+        Sum over TOF within `tof_slice` → 1D XIC vs RT in the given RT window.
+        """
+        block = self.data[tof_slice, rt_slice]
+        # axis=0: sum over TOF rows → RT axis
+        return block.sum(axis=0)
+
+    def row_slice_for_tof_window(self, tof_lo: float, tof_hi: float) -> slice:
+        centers = self.tof_centers
+        lo = int(np.searchsorted(centers, tof_lo, side="left"))
+        hi = int(np.searchsorted(centers, tof_hi, side="right"))
+        return slice(lo, hi)
+
+    def col_slice_for_rt_window(self, rt_lo: float, rt_hi: float) -> slice:
+        t = self.rt_times
+        lo = int(np.searchsorted(t, rt_lo, side="left"))
+        hi = int(np.searchsorted(t, rt_hi, side="right"))
+        return slice(lo, hi)
