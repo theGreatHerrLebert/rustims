@@ -1116,3 +1116,92 @@ class ClusterResult1D:
             f"parent_im_id={self.parent_im_id}, "
             f"parent_rt_id={self.parent_rt_id})"
         )
+
+from typing import Optional, Tuple
+
+class TofRtGrid(RustWrapperObject):
+    """
+    Python wrapper around ims.PyTofRtGrid: dense TOF × RT matrix.
+
+    - rows: TOF bins
+    - cols: RT frames
+    """
+
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            "Use TofRtGrid.from_py_ptr(...) or TimsDatasetDIA.tof_rt_grid_* methods."
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyTofRtGrid) -> "TofRtGrid":
+        inst = cls.__new__(cls)
+        inst.__py_ptr = p
+        return inst
+
+    def get_py_ptr(self) -> ims.PyTofRtGrid:
+        return self.__py_ptr
+
+    # --- basic meta ---
+
+    @property
+    def rows(self) -> int:
+        return self.__py_ptr.rows
+
+    @property
+    def cols(self) -> int:
+        return self.__py_ptr.cols
+
+    @property
+    def rt_range_frames(self) -> Tuple[int, int]:
+        return self.__py_ptr.rt_range_frames
+
+    @property
+    def rt_range_sec(self) -> Tuple[float, float]:
+        return self.__py_ptr.rt_range_sec
+
+    @property
+    def frame_id_bounds(self) -> Tuple[int, int]:
+        return self.__py_ptr.frame_id_bounds
+
+    @property
+    def window_group(self) -> Optional[int]:
+        return self.__py_ptr.window_group
+
+    # --- dense data / axes ---
+
+    @property
+    def data(self) -> np.ndarray:
+        """
+        Dense TOF × RT matrix (shape = (rows, cols), dtype=float32).
+        """
+        return np.asarray(self.__py_ptr.data())
+
+    @property
+    def rt_times(self) -> np.ndarray:
+        """
+        RT axis (seconds), length = cols.
+        """
+        return np.asarray(self.__py_ptr.rt_times())
+
+    @property
+    def frame_ids(self) -> np.ndarray:
+        """
+        Frame IDs for each RT column, length = cols.
+        """
+        return np.asarray(self.__py_ptr.frame_ids())
+
+    @property
+    def tof_centers(self) -> np.ndarray:
+        """
+        TOF center for each TOF row, length = rows.
+        Convert to m/z using ds.tof_to_mz on the Python side if needed.
+        """
+        return np.asarray(self.__py_ptr.tof_centers())
+
+    # --- small conveniences ---
+
+    def __repr__(self) -> str:
+        wg = self.window_group
+        if wg is None:
+            return f"TofRtGrid(MS1, shape=({self.rows}, {self.cols}))"
+        return f"TofRtGrid(group={wg}, shape=({self.rows}, {self.cols}))"

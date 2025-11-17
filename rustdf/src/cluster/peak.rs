@@ -671,3 +671,100 @@ fn t_at_index_frac(t: &[f32], x: f32) -> f32 {
     let frac = x - j0 as f32;
     (1.0 - frac) * t[j0] + frac * t[j1]
 }
+
+#[derive(Clone, Debug)]
+pub struct TofRtGrid {
+    /// [lo, hi] in local RT frame indices (0..cols-1)
+    pub rt_range_frames: (usize, usize),
+    /// [lo, hi] in seconds, from rt_times
+    pub rt_range_sec: (f32, f32),
+    /// [lo, hi] in absolute frame_ids
+    pub frame_id_bounds: (u32, u32),
+
+    /// Optional DIA window group; None for precursor grid
+    pub window_group: Option<u32>,
+
+    /// TOF axis definition (shared with RtFrames)
+    pub scale: Arc<TofScale>,
+
+    /// RT axis (seconds), len = cols
+    pub rt_times: Vec<f32>,
+    /// Absolute frame IDs, len = cols
+    pub frame_ids: Vec<u32>,
+
+    /// rows = number of TOF bins; cols = number of frames
+    pub rows: usize,
+    pub cols: usize,
+
+    /// Dense matrix, row-major: data[row * cols + col],
+    /// where row = TOF bin index, col = RT frame index.
+    pub data: Vec<f32>,
+}
+
+/// Build a dense TOF×RT grid (full matrix, summed over *all* scans).
+///
+/// - rows = rt_frames.scale.num_bins() (TOF bins)
+/// - cols = rt_frames.frames.len()     (RT frames)
+/// - data[row * cols + col] = sum intensity in that (bin, frame) over all scans.
+pub fn build_tof_rt_grid_full(rt_frames: &RtFrames, window_group: Option<u32>) -> TofRtGrid {
+    assert!(rt_frames.is_consistent(), "RtFrames inconsistent");
+
+    let cols = rt_frames.frames.len();
+    let rows = rt_frames.scale.num_bins();
+
+    let mut data = vec![0.0f32; rows.saturating_mul(cols.max(1))];
+
+    for (col, fbv) in rt_frames.frames.iter().enumerate() {
+        let ub = &fbv.unique_bins;
+        if ub.is_empty() {
+            continue;
+        }
+
+        for b_idx in 0..ub.len() {
+            let bin = ub[b_idx];
+            if bin >= rows {
+                continue; // defensive, should not happen if scales match
+            }
+
+            let lo = fbv.offsets[b_idx];
+            let hi = fbv.offsets[b_idx + 1];
+
+            let mut sum = 0.0f32;
+            for k in lo..hi {
+                sum += fbv.intensity[k];
+            }
+
+            let idx = bin * cols + col; // row-major
+            data[idx] += sum;
+        }
+    }
+
+    let rt_range_frames = if cols > 0 { (0, cols - 1) } else { (0, 0) };
+    let rt_range_sec = if cols > 0 {
+        (rt_frames.rt_times[0], *rt_frames.rt_times.last().unwrap())
+    } else {
+        (0.0, 0.0)
+    };
+
+    let frame_id_bounds = if rt_frames.frame_ids.is_empty() {
+        (0, 0)
+    } else {
+        (
+            *rt_frames.frame_ids.first().unwrap(),
+            *rt_frames.frame_ids.last().unwrap(),
+        )
+    };
+
+    TofRtGrid {
+        rt_range_frames,
+        rt_range_sec,
+        frame_id_bounds,
+        window_group,
+        scale: rt_frames.scale.clone(),
+        rt_times: rt_frames.rt_times.clone(),
+        frame_ids: rt_frames.frame_ids.clone(),
+        rows,
+        cols,
+        data,
+    }
+}

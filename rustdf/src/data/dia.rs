@@ -10,7 +10,7 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use rayon::iter::IntoParallelRefIterator;
-use crate::cluster::peak::{build_frame_bin_view, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames};
+use crate::cluster::peak::{build_frame_bin_view, build_tof_rt_grid_full, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames, TofRtGrid};
 use crate::cluster::utility::{TofScale};
 use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
@@ -880,6 +880,21 @@ impl TimsDatasetDIA {
             pseudo_opts,
         )
     }
+
+    /// Dense TOF×RT grid for all PRECURSOR (MS1) frames.
+    /// `tof_step` controls TOF bin granularity (1 = full resolution).
+    pub fn tof_rt_grid_precursor(&self, tof_step: i32) -> TofRtGrid {
+        let rt = self.make_rt_frames_for_precursor(tof_step);
+        build_tof_rt_grid_full(&rt, None)
+    }
+
+    /// Dense TOF×RT grid for FRAGMENT frames in a DIA window group.
+    /// `tof_step` controls TOF bin granularity (1 = full resolution).
+    pub fn tof_rt_grid_for_group(&self, window_group: u32, tof_step: i32) -> TofRtGrid {
+        let rt = self.make_rt_frames_for_group(window_group, tof_step);
+        build_tof_rt_grid_full(&rt, Some(window_group))
+    }
+
 }
 
 impl TimsData for TimsDatasetDIA {

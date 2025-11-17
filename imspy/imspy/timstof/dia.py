@@ -362,6 +362,44 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
         return [PseudoSpectrum(s) for s in py_specs]
 
+    def tof_rt_grid_precursor(self, tof_step: int = 1) -> "TofRtGrid":
+        from imspy.timstof.clustering.data import TofRtGrid
+        """
+        Build a dense TOF × RT grid over all PRECURSOR (MS1) frames.
+
+        Parameters
+        ----------
+        tof_step : int, default 1
+            TOF binning step; 1 = max TOF resolution, larger values downsample.
+
+        Returns
+        -------
+        TofRtGrid
+            Grid over all MS1 frames (window_group = None).
+        """
+        grid = self.__dataset.tof_rt_grid_precursor(int(tof_step))
+        return TofRtGrid.from_py_ptr(grid)
+
+    def tof_rt_grid_for_group(self, window_group: int, tof_step: int = 1) -> "TofRtGrid":
+        from imspy.timstof.clustering.data import TofRtGrid
+        """
+        Build a dense TOF × RT grid over FRAGMENT (MS2) frames for a DIA window group.
+
+        Parameters
+        ----------
+        window_group : int
+            DIA window_group ID.
+        tof_step : int, default 1
+            TOF binning step; 1 = max TOF resolution, larger values downsample.
+
+        Returns
+        -------
+        TofRtGrid
+            Grid over all MS2 frames in the given group.
+        """
+        grid = self.__dataset.tof_rt_grid_for_group(int(window_group), int(tof_step))
+        return TofRtGrid.from_py_ptr(grid)
+
 import os
 import tempfile
 from pathlib import Path

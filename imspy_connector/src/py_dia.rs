@@ -2,7 +2,7 @@ use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
-use numpy::{PyArray1, PyArray2};
+use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
@@ -10,7 +10,7 @@ use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, 
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams};
+use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
@@ -1968,6 +1968,26 @@ impl PyTimsDatasetDIA {
 
         Ok(py_specs)
     }
+
+    /// Build a dense TOF×RT grid over all PRECURSOR (MS1) frames.
+    ///
+    /// `tof_step` > 0, where 1 = full TOF resolution, >1 = downsampled.
+    #[pyo3(signature = (tof_step = 1))]
+    pub fn tof_rt_grid_precursor(&self, tof_step: i32) -> PyTofRtGrid {
+        let ds: &TimsDatasetDIA = &self.inner;
+        let grid = ds.tof_rt_grid_precursor(tof_step);
+        PyTofRtGrid { inner: grid }
+    }
+
+    /// Build a dense TOF×RT grid over FRAGMENT (MS2) frames for a DIA window group.
+    ///
+    /// `tof_step` > 0, where 1 = full TOF resolution, >1 = downsampled.
+    #[pyo3(signature = (window_group, tof_step = 1))]
+    pub fn tof_rt_grid_for_group(&self, window_group: u32, tof_step: i32) -> PyTofRtGrid {
+        let ds: &TimsDatasetDIA = &self.inner;
+        let grid = ds.tof_rt_grid_for_group(window_group, tof_step);
+        PyTofRtGrid { inner: grid }
+    }
 }
 
 #[pyfunction]
@@ -2105,6 +2125,70 @@ pub fn load_clusters_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyCluste
         .collect()
 }
 
+#[pyclass]
+pub struct PyTofRtGrid {
+    pub inner: TofRtGrid,
+}
+
+#[pymethods]
+impl PyTofRtGrid {
+    #[getter]
+    pub fn rows(&self) -> usize {
+        self.inner.rows
+    }
+
+    #[getter]
+    pub fn cols(&self) -> usize {
+        self.inner.cols
+    }
+
+    #[getter]
+    pub fn rt_range_frames(&self) -> (usize, usize) {
+        self.inner.rt_range_frames
+    }
+
+    #[getter]
+    pub fn rt_range_sec(&self) -> (f32, f32) {
+        self.inner.rt_range_sec
+    }
+
+    #[getter]
+    pub fn frame_id_bounds(&self) -> (u32, u32) {
+        self.inner.frame_id_bounds
+    }
+
+    #[getter]
+    pub fn window_group(&self) -> Option<u32> {
+        self.inner.window_group
+    }
+
+    /// Dense TOF×RT matrix as NumPy array (rows = TOF bins, cols = RT frames).
+    pub fn data<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<f32, Ix2>> {
+        let a = Array2::from_shape_vec(
+            (self.inner.rows, self.inner.cols),
+            self.inner.data.clone(),
+        )
+            .expect("TofRtGrid: shape mismatch");
+        PyArray2::from_array_bound(py, &a)
+    }
+
+    /// RT axis (seconds), length = cols.
+    pub fn rt_times<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<f32, Ix1>> {
+        PyArray1::from_iter_bound(py, self.inner.rt_times.clone().into_iter())
+    }
+
+    /// Frame IDs for each RT column, length = cols.
+    pub fn frame_ids<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<u32, Ix1>> {
+        PyArray1::from_iter_bound(py, self.inner.frame_ids.clone().into_iter())
+    }
+
+    /// TOF centers for each row; convert to m/z on Python side if desired.
+    pub fn tof_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<f32, Ix1>> {
+        let v = (0..self.inner.rows).map(|r| self.inner.scale.center(r));
+        PyArray1::from_iter_bound(py, v)
+    }
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -2114,6 +2198,8 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyImPeak1D>()?;
     m.add_class::<PyRtPeak1D>()?;
     m.add_class::<PyFit1D>()?;
+    m.add_class::<PyClusterResult1D>()?;
+    m.add_class::<PyTofRtGrid>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
