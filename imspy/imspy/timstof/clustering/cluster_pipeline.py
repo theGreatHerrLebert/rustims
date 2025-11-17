@@ -143,7 +143,7 @@ def print_config_summary(cfg: dict) -> None:
         if sec in st_cfg:
             s = st_cfg[sec]
             lines.append(f"[stitch.{sec}]")
-            lines.append(f"  max_mz_row_delta     : {int(s.get('max_mz_row_delta', 0))}")
+            lines.append(f"  max_tof_row_delta     : {int(s.get('max_tof_row_delta', 0))}")
             lines.append(f"  max_scan_delta       : {int(s.get('max_scan_delta', 0))}")
             lines.append(f"  jaccard_min          : {float(s.get('jaccard_min', 0.0))}")
             lines.append(f"  im_jaccard_min       : {float(s.get('im_jaccard_min', 0.0))}")
@@ -309,14 +309,14 @@ def detect_and_stitch_for_plan(
         if use_batch_stitch:
             stitched_batch = stitch_im_peaks(
                 peak_batch,
-                max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
+                max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
                 jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
                 im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
             )
             stitched_running = stitch_im_peaks(
                 stitched_running + stitched_batch,
-                max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
+                max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
                 jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
                 im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
@@ -332,7 +332,7 @@ def detect_and_stitch_for_plan(
     else:
         return stitch_im_peaks(
             collected,
-            max_mz_row_delta=int(stitch_cfg["max_mz_row_delta"]),
+            max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
             max_scan_delta=int(stitch_cfg["max_scan_delta"]),
             jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
             im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
@@ -502,7 +502,7 @@ def load_config(path: str) -> dict:
     cfg["stitch"].setdefault("precursor", {})
     cfg["stitch"].setdefault("fragment", {})
     for s in ("precursor", "fragment"):
-        cfg["stitch"][s].setdefault("max_mz_row_delta", 0)
+        cfg["stitch"][s].setdefault("max_tof_row_delta", 0)
         cfg["stitch"][s].setdefault("max_scan_delta", 5)
         cfg["stitch"][s].setdefault("jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)

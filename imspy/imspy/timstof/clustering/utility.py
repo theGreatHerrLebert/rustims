@@ -45,7 +45,7 @@ def stitch_im_peaks(
         min_overlap_frames=min_overlap_frames,
         max_scan_delta=max_scan_delta,
         jaccard_min=jaccard_min,
-        max_mz_row_delta=max_mz_row_delta,
+        max_tof_row_delta=max_mz_row_delta,
         allow_cross_groups=allow_cross_groups,
         min_im_overlap_scans=min_im_overlap_scans,
         im_jaccard_min=im_jaccard_min,

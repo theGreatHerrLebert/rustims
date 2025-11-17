@@ -1996,7 +1996,7 @@ impl PyTimsDatasetDIA {
     min_overlap_frames=1,
     max_scan_delta=1,
     jaccard_min=0.0,
-    max_mz_row_delta=0,
+    max_tof_row_delta=0,
     allow_cross_groups=false,
     // IM-specific:
     min_im_overlap_scans=1,
@@ -2009,7 +2009,7 @@ pub fn stitch_im_peaks_flat_unordered(
     min_overlap_frames: usize,
     max_scan_delta: usize,
     jaccard_min: f32,
-    max_mz_row_delta: usize,
+    max_tof_row_delta: usize,
     allow_cross_groups: bool,
     min_im_overlap_scans: usize,
     im_jaccard_min: f32,
@@ -2019,12 +2019,11 @@ pub fn stitch_im_peaks_flat_unordered(
         min_overlap_frames,
         max_scan_delta: max_scan_delta.max(1),
         jaccard_min,
-        max_mz_row_delta,
+        max_tof_row_delta,
         allow_cross_groups,
         min_im_overlap_scans,
         im_jaccard_min,
         require_mutual_apex_inside,
-        mz_ppm_cap_merge: 50.0, // unchanged, but now effectively unused for pure TOF IM-peaks
     };
 
     if flat.is_empty() {

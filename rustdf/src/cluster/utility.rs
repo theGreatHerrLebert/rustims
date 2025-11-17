@@ -960,13 +960,13 @@ fn compatible_fast(a: &ImPeak1D, b: &ImPeak1D, params: &StitchParams) -> bool {
     }
 
     // 2) TOF row proximity (we now use max_mz_row_delta in tof_row space)
-    if params.max_mz_row_delta > 0 {
+    if params.max_tof_row_delta > 0 {
         let d = if a.tof_row > b.tof_row {
             a.tof_row - b.tof_row
         } else {
             b.tof_row - a.tof_row
         };
-        if d > params.max_mz_row_delta {
+        if d > params.max_tof_row_delta {
             return false;
         }
     }
@@ -1179,12 +1179,11 @@ pub struct StitchParams {
     pub min_overlap_frames: usize,
     pub max_scan_delta: usize,
     pub jaccard_min: f32,
-    pub max_mz_row_delta: usize,  // now acts on tof_row
+    pub max_tof_row_delta: usize,  // now acts on tof_row
     pub allow_cross_groups: bool,
     pub min_im_overlap_scans: usize,
     pub im_jaccard_min: f32,
     pub require_mutual_apex_inside: bool,
-    pub mz_ppm_cap_merge: f32,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
@@ -1228,7 +1227,7 @@ pub fn stitch_im_peaks_flat_unordered_impl(
         let key = KeyFlat {
             wg_norm: norm_wg(r.window_group, params.allow_cross_groups),
             scan_bin: r.scan / params.max_scan_delta.max(1),
-            tof_bucket: tof_bucket(r.tof_row, params.max_mz_row_delta),
+            tof_bucket: tof_bucket(r.tof_row, params.max_tof_row_delta),
             // NOTE: we keep the field name max_mz_row_delta in StitchParams
             // for API compatibility, but it now applies to tof_row.
         };
