@@ -1,14 +1,66 @@
 import gc
-from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
-import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 
 # ---------------------------
 # Small utilities
 # ---------------------------
+import torch
+import torch.nn.functional as F
+
+
+def _gaussian_kernel1d(sigma: float, truncate: float = 3.0, device=None, dtype=None):
+    """Create a 1D Gaussian kernel normalized to sum=1."""
+    if sigma <= 0:
+        return None
+    radius = int(truncate * sigma + 0.5)
+    if radius < 1:
+        return None
+    x = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
+    k = torch.exp(-0.5 * (x / sigma) ** 2)
+    k /= k.sum()
+    return k  # [2R+1]
+
+
+def _gaussian_blur_2d(
+    X: torch.Tensor,
+    sigma_scan: float | None = None,   # along scan axis (dim 0 after transpose)
+    sigma_tof: float | None = None,    # along tof axis (dim 1 after transpose)
+    truncate: float = 3.0,
+):
+    """
+    Separable Gaussian blur on X of shape (H_scan, W_tof).
+    Uses reflect padding, same shape output. If sigma_* <= 0 or None, that axis is skipped.
+    """
+    if X.ndim != 2:
+        raise ValueError(f"_gaussian_blur_2d expects (H,W), got {X.shape}")
+
+    dev, dt = X.device, X.dtype
+    Y = X
+
+    # blur along scan axis (rows)
+    if sigma_scan is not None and sigma_scan > 0:
+        k = _gaussian_kernel1d(sigma_scan, truncate=truncate, device=dev, dtype=dt)
+        if k is not None:
+            k2d = k.view(1, 1, -1, 1)  # [out_c, in_c, kH, 1]
+            pad = (0, 0, k.shape[0] // 2, k.shape[0] // 2)
+            Y4 = Y[None, None]                     # [1,1,H,W]
+            Y4 = F.pad(Y4, pad, mode="reflect")
+            Y  = F.conv2d(Y4, k2d)[0, 0]          # back to [H,W]
+
+    # blur along tof axis (cols)
+    if sigma_tof is not None and sigma_tof > 0:
+        k = _gaussian_kernel1d(sigma_tof, truncate=truncate, device=dev, dtype=dt)
+        if k is not None:
+            k2d = k.view(1, 1, 1, -1)  # [out_c, in_c, 1, kW]
+            pad = (k.shape[0] // 2, k.shape[0] // 2, 0, 0)
+            Y4 = Y[None, None]
+            Y4 = F.pad(Y4, pad, mode="reflect")
+            Y  = F.conv2d(Y4, k2d)[0, 0]
+
+    return Y
+
 
 def _ensure_odd(x: int) -> int:
     return int(x) if (x % 2 == 1) else (int(x) + 1)
@@ -322,6 +374,9 @@ def iter_detect_peaks_from_blurred(
     scale: str = "none",                # "none" | "sqrt" | "log1p"
     output_units: str = "scaled",       # "scaled" | "original"
     gn_float64: bool = False,           # leave False; sqrt scaling keeps fp32 stable
+    blur_sigma_scan: float | None = None,
+    blur_sigma_tof: float | None = None,
+    blur_truncate: float = 3.0,
 ):
     """
     Stream peak stats on a 2D image derived from TOF×scan.
@@ -342,15 +397,24 @@ def iter_detect_peaks_from_blurred(
     assert B_blurred.ndim == 2
 
     # Original orientation: (tof_row, scan_idx) -> internal: (scan, tof_row)
-    B_np_int = B_blurred.T
+    B_np_int = B_blurred.T  # (scan, tof)
 
-    H, W = B_np_int.shape   # H: scan, W: tof_row
+    H, W = B_np_int.shape
     fit_h = _ensure_odd(max(fit_h, 2 * pool_scan + 5))
     fit_w = _ensure_odd(max(fit_w, 2 * pool_tof   + 5))
     hr, wr = fit_h // 2, fit_w // 2
 
-    # Torch tensors
+    # Torch tensors (UNSCALED initially)
     B_int = torch.from_numpy(B_np_int).to(device=device, dtype=torch.float32)
+
+    # Optional Gaussian blur in scan/tof *before* scaling for detection
+    if (blur_sigma_scan and blur_sigma_scan > 0) or (blur_sigma_tof and blur_sigma_tof > 0):
+        B_int = _gaussian_blur_2d(
+            B_int,
+            sigma_scan=blur_sigma_scan or 0.0,
+            sigma_tof=blur_sigma_tof or 0.0,
+            truncate=blur_truncate,
+        )
 
     # Keep a reference to the unscaled intensities if we need original outputs
     need_orig = (output_units == "original")
@@ -597,6 +661,9 @@ def _detect_im_peaks_for_wgs(
     scale="sqrt", output_units="original", gn_float64=False,
     do_dedup=True, tol_scan=0.75, tol_tof=0.25,
     k_sigma=3.0, min_width=3,
+    blur_sigma_scan: float | None = None,
+    blur_sigma_tof: float | None = None,
+    blur_truncate: float = 3.0,
 ):
     from imspy.timstof.clustering.data import ImPeak1D
 
@@ -617,6 +684,9 @@ def _detect_im_peaks_for_wgs(
             refine_scan=refine_scan, refine_tof=refine_tof,
             refine_sigma_scan=refine_sigma_scan, refine_sigma_tof=refine_sigma_tof,
             scale=scale, output_units=output_units, gn_float64=gn_float64,
+            blur_sigma_scan=blur_sigma_scan,
+            blur_sigma_tof=blur_sigma_tof,
+            blur_truncate=blur_truncate,
         )
 
         peaks = _collect_stream(peaks_iter)
