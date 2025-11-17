@@ -160,7 +160,7 @@ def stitch_peaks(peaks: list, stitch: StitchParams):
         min_overlap_frames=stitch.min_overlap_frames,
         max_scan_delta=stitch.max_scan_delta,
         jaccard_min=stitch.jaccard_min,
-        max_mz_row_delta=stitch.max_mz_row_delta,
+        max_tof_row_delta=stitch.max_mz_row_delta,
     )
 
 # ---------------------------- Pipelines ----------------------------
