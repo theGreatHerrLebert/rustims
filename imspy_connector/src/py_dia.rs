@@ -6,6 +6,7 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
+use rustdf::cluster::candidates::{AssignmentResult, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
@@ -1870,20 +1871,76 @@ impl PyTimsDatasetDIA {
         results_to_py(py, results)
     }
 
-    /// Build pseudo-DDA spectra from MS1/MS2 clusters and optional features.
-    ///
-    /// - ms1_clusters / ms2_clusters: list of PyClusterResult1D
-    /// - features: optional list of PySimpleFeature (isotopic envelopes)
-    /// - top_n_fragments: cap per pseudo spectrum (0 = no cap)
-    #[pyo3(signature = (ms1_clusters, ms2_clusters, features=None, top_n_fragments=500))]
+    #[pyo3(signature = (
+        ms1_clusters,
+        ms2_clusters,
+        features=None,
+
+        // ---- CandidateOpts (with defaults matching `CandidateOpts::default()`) ----
+        min_rt_jaccard = 0.0,
+        ms2_rt_guard_sec = 0.0,
+        rt_bucket_width = 1.0,
+        max_ms1_rt_span_sec = Some(60.0),
+        max_ms2_rt_span_sec = Some(60.0),
+        min_raw_sum = 1.0,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+
+        // ---- ScoreOpts (defaults from `ScoreOpts::default()`) ----
+        w_jacc_rt = 1.0,
+        w_shape = 1.0,
+        w_rt_apex = 0.75,
+        w_im_apex = 0.75,
+        w_im_overlap = 0.5,
+        w_ms1_intensity = 0.25,
+        rt_apex_scale_s = 0.75,
+        im_apex_scale_scans = 3.0,
+        shape_neutral = 0.6,
+        min_sigma_rt = 0.05,
+        min_sigma_im = 0.5,
+        w_shape_rt_inner = 1.0,
+        w_shape_im_inner = 1.0,
+
+        // ---- PseudoSpecOpts ----
+        top_n_fragments = 500,
+    ))]
     pub fn build_pseudo_spectra_from_clusters(
         &self,
         py: Python<'_>,
         ms1_clusters: Vec<Py<PyClusterResult1D>>,
         ms2_clusters: Vec<Py<PyClusterResult1D>>,
         features: Option<Vec<Py<PySimpleFeature>>>,
+
+        // CandidateOpts
+        min_rt_jaccard: f32,
+        ms2_rt_guard_sec: f64,
+        rt_bucket_width: f64,
+        max_ms1_rt_span_sec: Option<f64>,
+        max_ms2_rt_span_sec: Option<f64>,
+        min_raw_sum: f32,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+
+        // ScoreOpts
+        w_jacc_rt: f32,
+        w_shape: f32,
+        w_rt_apex: f32,
+        w_im_apex: f32,
+        w_im_overlap: f32,
+        w_ms1_intensity: f32,
+        rt_apex_scale_s: f32,
+        im_apex_scale_scans: f32,
+        shape_neutral: f32,
+        min_sigma_rt: f32,
+        min_sigma_im: f32,
+        w_shape_rt_inner: f32,
+        w_shape_im_inner: f32,
+
+        // PseudoSpecOpts
         top_n_fragments: usize,
-    ) -> PyResult<Vec<PyPseudoSpectrum>> {
+    ) -> PyResult<PyPseudoBuildResult> {
         // Unwrap clusters
         let rust_ms1: Vec<ClusterResult1D> = ms1_clusters
             .into_iter()
@@ -1897,76 +1954,59 @@ impl PyTimsDatasetDIA {
 
         // Unwrap features (optional)
         let rust_feats: Option<Vec<SimpleFeature>> = features.map(|vec_f| {
-            vec_f.into_iter().map(|pf| pf.borrow(py).inner.clone()).collect()
+            vec_f
+                .into_iter()
+                .map(|pf| pf.borrow(py).inner.clone())
+                .collect()
         });
 
-        // Pseudo spectrum options
+        // Build CandidateOpts from primitives
+        let cand_opts = CandidateOpts {
+            min_rt_jaccard,
+            ms2_rt_guard_sec,
+            rt_bucket_width,
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
+            min_raw_sum,
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+        };
+
+        // Build ScoreOpts from primitives
+        let score_opts = ScoreOpts {
+            w_jacc_rt,
+            w_shape,
+            w_rt_apex,
+            w_im_apex,
+            w_im_overlap,
+            w_ms1_intensity,
+            rt_apex_scale_s,
+            im_apex_scale_scans,
+            shape_neutral,
+            min_sigma_rt,
+            min_sigma_im,
+            w_shape_rt_inner,
+            w_shape_im_inner,
+        };
+
+        // PseudoSpecOpts (top_n_fragments is the one knob we expose now)
         let pseudo_opts = PseudoSpecOpts {
             top_n_fragments,
             ..PseudoSpecOpts::default()
         };
 
-        // Call the handle method
+        // Call the dataset method
         let res = self.inner.build_pseudo_spectra_from_clusters(
             &rust_ms1,
             &rust_ms2,
             rust_feats.as_deref(),
+            &cand_opts,
+            &score_opts,
             &pseudo_opts,
         );
 
-        // Convert to PyPseudoSpectrum
-        let py_specs: Vec<PyPseudoSpectrum> = res
-            .pseudo_spectra
-            .into_iter()
-            .map(|s| PyPseudoSpectrum { inner: s })
-            .collect();
-
-        Ok(py_specs)
-    }
-
-    /// Naive builder: link all program-legal MS1–MS2 pairs (same window group,
-    /// RT + IM overlap), without competition. MS2 clusters can appear in
-    /// multiple pseudo-spectra.
-    #[pyo3(signature = (ms1_clusters, ms2_clusters, features=None, top_n_fragments=500))]
-    pub fn build_pseudo_spectra_all_pairs_from_clusters(
-        &self,
-        py: Python<'_>,
-        ms1_clusters: Vec<Py<PyClusterResult1D>>,
-        ms2_clusters: Vec<Py<PyClusterResult1D>>,
-        features: Option<Vec<Py<PySimpleFeature>>>,
-        top_n_fragments: usize,
-    ) -> PyResult<Vec<PyPseudoSpectrum>> {
-        let rust_ms1: Vec<ClusterResult1D> = ms1_clusters
-            .into_iter()
-            .map(|c| c.borrow(py).inner.clone())
-            .collect();
-        let rust_ms2: Vec<ClusterResult1D> = ms2_clusters
-            .into_iter()
-            .map(|c| c.borrow(py).inner.clone())
-            .collect();
-
-        let rust_feats: Option<Vec<SimpleFeature>> = features.map(|vec_f| {
-            vec_f.into_iter().map(|pf| pf.borrow(py).inner.clone()).collect()
-        });
-
-        let pseudo_opts = PseudoSpecOpts {
-            top_n_fragments,
-            ..PseudoSpecOpts::default()
-        };
-
-        let spectra = self.inner.build_pseudo_spectra_all_pairs_from_clusters(
-            &rust_ms1,
-            &rust_ms2,
-            rust_feats.as_deref(),
-            &pseudo_opts,
-        );
-
-        let py_specs: Vec<PyPseudoSpectrum> = spectra
-            .into_iter()
-            .map(|s| PyPseudoSpectrum { inner: s })
-            .collect();
-
-        Ok(py_specs)
+        Ok(PyPseudoBuildResult { inner: res })
     }
 
     /// Build a dense TOF×RT grid over all PRECURSOR (MS1) frames.
@@ -2092,6 +2132,7 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
 
 use rustdf::cluster::io as cio;
 use rustdf::cluster::pseudo::PseudoSpecOpts;
+use rustdf::cluster::scoring::CandidateOpts;
 use crate::py_feature::PySimpleFeature;
 use crate::py_pseudo::PyPseudoSpectrum;
 
@@ -2185,6 +2226,75 @@ impl PyTofRtGrid {
     pub fn tof_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<f32, Ix1>> {
         let v = (0..self.inner.rows).map(|r| self.inner.scale.center(r));
         PyArray1::from_iter_bound(py, v)
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyAssignmentResult {
+    pub inner: AssignmentResult,
+}
+
+#[pymethods]
+impl PyAssignmentResult {
+    #[getter]
+    pub fn pairs(&self) -> Vec<(usize, usize)> {
+        self.inner.pairs.clone()
+    }
+
+    #[getter]
+    pub fn ms2_best_ms1(&self) -> Vec<Option<usize>> {
+        self.inner.ms2_best_ms1.clone()
+    }
+
+    #[getter]
+    pub fn ms1_to_ms2(&self) -> Vec<Vec<usize>> {
+        self.inner.ms1_to_ms2.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "AssignmentResult(pairs={}, ms2_best_ms1={}, ms1_to_ms2={})",
+            self.inner.pairs.len(),
+            self.inner.ms2_best_ms1.len(),
+            self.inner.ms1_to_ms2.len(),
+        )
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct PyPseudoBuildResult {
+    pub inner: PseudoBuildResult,
+}
+
+#[pymethods]
+impl PyPseudoBuildResult {
+    /// Accessor: assignment info (pairs, ms2→best ms1, ms1→ms2 lists).
+    #[getter]
+    pub fn assignment(&self) -> PyAssignmentResult {
+        PyAssignmentResult {
+            inner: self.inner.assignment.clone(),
+        }
+    }
+
+    /// Accessor: pseudo-MS/MS spectra as PyPseudoSpectrum list.
+    #[getter]
+    pub fn pseudo_spectra(&self) -> Vec<PyPseudoSpectrum> {
+        self.inner
+            .pseudo_spectra
+            .iter()
+            .cloned()
+            .map(|s| PyPseudoSpectrum { inner: s })
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PseudoBuildResult(num_spectra={}, num_pairs={})",
+            self.inner.pseudo_spectra.len(),
+            self.inner.assignment.pairs.len(),
+        )
     }
 }
 

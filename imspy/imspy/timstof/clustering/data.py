@@ -1244,3 +1244,79 @@ class TofRtGrid(RustWrapperObject):
         lo = int(np.searchsorted(t, rt_lo, side="left"))
         hi = int(np.searchsorted(t, rt_hi, side="right"))
         return slice(lo, hi)
+
+class AssignmentResult:
+    """
+    Thin Python wrapper around ims.PyAssignmentResult.
+
+    Exposes:
+      - pairs: list[(ms2_idx, ms1_idx)]
+      - ms2_best_ms1: list[Optional[int]]
+      - ms1_to_ms2: list[list[int]]
+    """
+
+    def __init__(self, inner: "ims.PyAssignmentResult") -> None:
+        self._inner = inner
+
+    @property
+    def pairs(self) -> list[tuple[int, int]]:
+        # Already a list of tuples on the Rust side, just copy
+        return list(self._inner.pairs)
+
+    @property
+    def ms2_best_ms1(self) -> list[int | None]:
+        return list(self._inner.ms2_best_ms1)
+
+    @property
+    def ms1_to_ms2(self) -> list[list[int]]:
+        # Vec<Vec<usize>> from Rust is seen as list[list[int]]
+        return [list(v) for v in self._inner.ms1_to_ms2]
+
+    def __len__(self) -> int:
+        return len(self._inner.pairs)
+
+    def __repr__(self) -> str:
+        return (
+            f"AssignmentResult("
+            f"num_pairs={len(self._inner.pairs)}, "
+            f"num_ms2={len(self._inner.ms2_best_ms1)}, "
+            f"num_ms1={len(self._inner.ms1_to_ms2)})"
+        )
+
+
+class PseudoBuildResult:
+    """
+    High-level Python wrapper around ims.PyPseudoBuildResult.
+
+    Attributes:
+      - pseudo_spectra: list[PseudoSpectrum]
+      - assignment: AssignmentResult
+    """
+
+    def __init__(self, inner: "ims.PyPseudoBuildResult") -> None:
+        self._inner = inner
+
+    @property
+    def pseudo_spectra(self) -> list["PseudoSpectrum"]:
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+        # Wrap each PyPseudoSpectrum in your existing PseudoSpectrum wrapper
+        return [PseudoSpectrum(s) for s in self._inner.pseudo_spectra]
+
+    @property
+    def assignment(self) -> AssignmentResult:
+        return AssignmentResult(self._inner.assignment)
+
+    def __len__(self) -> int:
+        return len(self._inner.pseudo_spectra)
+
+    def __iter__(self) -> Iterator["PseudoSpectrum"]:
+        # Iterate over spectra, so you can do: for s in result: ...
+        for s in self.pseudo_spectra:
+            yield s
+
+    def __repr__(self) -> str:
+        return (
+            f"PseudoBuildResult("
+            f"num_spectra={len(self._inner.pseudo_spectra)}, "
+            f"num_pairs={len(self._inner.assignment.pairs)})"
+        )

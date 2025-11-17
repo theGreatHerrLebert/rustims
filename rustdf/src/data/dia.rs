@@ -838,33 +838,31 @@ impl TimsDatasetDIA {
         )
     }
 
-    /// High-level DIA → pseudo-DDA builder tied to the dataset.
+    /// End-to-end DIA → pseudo-DDA builder tied to the dataset.
     ///
-    /// Uses CandidateOpts::default() and ScoreOpts::default().
+    /// This is a thin wrapper around `build_pseudo_spectra_end_to_end`
+    /// with user-specified candidate & scoring options.
     pub fn build_pseudo_spectra_from_clusters(
         &self,
         ms1: &[ClusterResult1D],
         ms2: &[ClusterResult1D],
         features: Option<&[SimpleFeature]>,
+        cand_opts: &CandidateOpts,
+        score_opts: &ScoreOpts,
         pseudo_opts: &PseudoSpecOpts,
     ) -> PseudoBuildResult {
-        let cand_opts = CandidateOpts::default();
-        let score_opts = ScoreOpts::default();
-
         build_pseudo_spectra_end_to_end(
             self,
             ms1,
             ms2,
             features,
-            &cand_opts,
-            &score_opts,
+            cand_opts,
+            score_opts,
             pseudo_opts,
         )
     }
 
-    /// Naive DIA → pseudo-DDA builder:
-    /// link *all* program-legal MS1–MS2 pairs (same group, RT/IM overlap),
-    /// without any competition.
+    /// Naive "all pairs" builder stays as-is, still returning Vec<PseudoSpectrum>.
     pub fn build_pseudo_spectra_all_pairs_from_clusters(
         &self,
         ms1: &[ClusterResult1D],
@@ -872,13 +870,7 @@ impl TimsDatasetDIA {
         features: Option<&[SimpleFeature]>,
         pseudo_opts: &PseudoSpecOpts,
     ) -> Vec<PseudoSpectrum> {
-        build_pseudo_spectra_all_pairs(
-            self,
-            ms1,
-            ms2,
-            features,
-            pseudo_opts,
-        )
+        build_pseudo_spectra_all_pairs(self, ms1, ms2, features, pseudo_opts)
     }
 
     /// Dense TOF×RT grid for all PRECURSOR (MS1) frames.

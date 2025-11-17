@@ -309,10 +309,41 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             ms1_clusters: Sequence[Any],
             ms2_clusters: Sequence[Any],
             features: Sequence["SimpleFeature"] | None = None,
+            *,
             top_n_fragments: int = 500,
-    ) -> list["PseudoSpectrum"]:
-        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+            # CandidateOpts
+            min_rt_jaccard: float = 0.0,
+            ms2_rt_guard_sec: float = 0.0,
+            rt_bucket_width: float = 1.0,
+            max_ms1_rt_span_sec: float | None = 60.0,
+            max_ms2_rt_span_sec: float | None = 60.0,
+            min_raw_sum: float = 1.0,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            # ScoreOpts
+            w_jacc_rt: float = 1.0,
+            w_shape: float = 1.0,
+            w_rt_apex: float = 0.75,
+            w_im_apex: float = 0.75,
+            w_im_overlap: float = 0.5,
+            w_ms1_intensity: float = 0.25,
+            rt_apex_scale_s: float = 0.75,
+            im_apex_scale_scans: float = 3.0,
+            shape_neutral: float = 0.6,
+            min_sigma_rt: float = 0.05,
+            min_sigma_im: float = 0.5,
+            w_shape_rt_inner: float = 1.0,
+            w_shape_im_inner: float = 1.0,
+    ) -> "PseudoBuildResult":
+        from imspy.timstof.clustering.data import PseudoBuildResult
+        """
+        High-level DIA → pseudo-DDA builder.
 
+        Returns a PseudoBuildResult:
+          - .pseudo_spectra → list[PseudoSpectrum]
+          - .assignment     → AssignmentResult
+        """
         ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
         ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
 
@@ -320,47 +351,37 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         if features is not None:
             feats_ptrs = [f.get_py_ptr() for f in features]
 
-        py_specs = self.__dataset.build_pseudo_spectra_from_clusters(
+        inner_res = self.__dataset.build_pseudo_spectra_from_clusters(
             ms1_ptrs,
             ms2_ptrs,
             feats_ptrs,
+            float(min_rt_jaccard),
+            float(ms2_rt_guard_sec),
+            float(rt_bucket_width),
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
+            float(min_raw_sum),
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            int(min_im_overlap_scans),
+            float(w_jacc_rt),
+            float(w_shape),
+            float(w_rt_apex),
+            float(w_im_apex),
+            float(w_im_overlap),
+            float(w_ms1_intensity),
+            float(rt_apex_scale_s),
+            float(im_apex_scale_scans),
+            float(shape_neutral),
+            float(min_sigma_rt),
+            float(min_sigma_im),
+            float(w_shape_rt_inner),
+            float(w_shape_im_inner),
             int(top_n_fragments),
         )
 
-        return [PseudoSpectrum(s) for s in py_specs]
-
-    def build_pseudo_spectra_all_pairs(
-            self,
-            ms1_clusters: Sequence[Any],
-            ms2_clusters: Sequence[Any],
-            features: Sequence["SimpleFeature"] | None = None,
-            top_n_fragments: int = 500,
-    ) -> list["PseudoSpectrum"]:
-        """
-        Naive DIA → pseudo-DDA:
-
-        - Links ALL program-legal MS1–MS2 pairs (same window group,
-          RT + IM overlap) without competition.
-        - An MS2 cluster can contribute to multiple pseudo-spectra.
-        """
-        from imspy.timstof.clustering.pseudo import PseudoSpectrum
-
-        # unwrap Python wrappers to PyO3 objects
-        ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
-        ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
-
-        feats_ptrs = None
-        if features is not None:
-            feats_ptrs = [f.get_py_ptr() for f in features]
-
-        py_specs = self.__dataset.build_pseudo_spectra_all_pairs_from_clusters(
-            ms1_ptrs,
-            ms2_ptrs,
-            feats_ptrs,
-            int(top_n_fragments),
-        )
-
-        return [PseudoSpectrum(s) for s in py_specs]
+        # Wrap the PyPseudoBuildResult into the Python-level PseudoBuildResult
+        return PseudoBuildResult(inner_res)
 
     def tof_rt_grid_precursor(self, tof_step: int = 1) -> "TofRtGrid":
         from imspy.timstof.clustering.data import TofRtGrid
