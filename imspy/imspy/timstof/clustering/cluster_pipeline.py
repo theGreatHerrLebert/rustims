@@ -7,6 +7,7 @@ Updated for:
 - TimsDatasetDIA.plan_tof_scan_windows / plan_tof_scan_windows_for_group
 - new torch extractor (pool_tof, tol_tof, Gaussian blur, topk_per_tile, patch batching)
 - new clustering API (tof_step + RT/IM/TOF params, no ppm_per_bin)
+- optional per-window-group fragment output
 """
 from __future__ import annotations
 
@@ -98,7 +99,7 @@ def print_config_summary(cfg: dict) -> None:
     plan_cfg = cfg.get("plans", {})
     clus_cfg = cfg.get("cluster", {})
 
-    lines = []
+    lines: list[str] = []
     lines.append("──────────────── CONFIG SUMMARY ────────────────")
     # Dataset
     lines.append("[dataset]")
@@ -127,6 +128,12 @@ def print_config_summary(cfg: dict) -> None:
         if "fragment_parquet" in out_cfg:
             lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
     lines.append(f"  compress_bin         : {bool(out_cfg.get('compress_bin', True))}")
+    # NEW: fragment-per-WG options
+    lines.append(f"  fragment_split_by_wg : {bool(out_cfg.get('fragment_split_by_wg', False))}")
+    if "fragment_file_pattern" in out_cfg and out_cfg.get("fragment_file_pattern") is not None:
+        lines.append(f"  fragment_file_pattern: {out_cfg.get('fragment_file_pattern')}")
+    if "fragment_parquet_pattern" in out_cfg and out_cfg.get("fragment_parquet_pattern") is not None:
+        lines.append(f"  fragment_parquet_pattern: {out_cfg.get('fragment_parquet_pattern')}")
 
     # Plans + Stitch
     for sec in ("precursor", "fragment"):
@@ -145,12 +152,12 @@ def print_config_summary(cfg: dict) -> None:
             lines.append(f"[stitch.{sec}]")
             lines.append(f"  max_tof_row_delta    : {int(s.get('max_tof_row_delta', 0))}")
             lines.append(f"  max_scan_delta       : {int(s.get('max_scan_delta', 0))}")
-            lines.append(f"  min_overlap_frames   : {int(s.get('min_overlap_frames', 1))}")  # NEW
-            lines.append(f"  min_im_overlap_scans : {int(s.get('min_im_overlap_scans', 1))}")  # NEW
+            lines.append(f"  min_overlap_frames   : {int(s.get('min_overlap_frames', 1))}")
+            lines.append(f"  min_im_overlap_scans : {int(s.get('min_im_overlap_scans', 1))}")
             lines.append(f"  jaccard_min          : {float(s.get('jaccard_min', 0.0))}")
             lines.append(f"  im_jaccard_min       : {float(s.get('im_jaccard_min', 0.0))}")
-            lines.append(f"  allow_cross_groups   : {bool(s.get('allow_cross_groups', False))}")  # NEW
-            lines.append(f"  require_mutual_apex  : {bool(s.get('require_mutual_apex_inside', True))}")  # NEW
+            lines.append(f"  allow_cross_groups   : {bool(s.get('allow_cross_groups', False))}")
+            lines.append(f"  require_mutual_apex  : {bool(s.get('require_mutual_apex_inside', True))}")
             lines.append(f"  use_batch_stitch     : {bool(s.get('use_batch_stitch', False))}")
 
     # Detector
@@ -163,26 +170,33 @@ def print_config_summary(cfg: dict) -> None:
         lines.append(f"  tile_overlap         : {int(det_cfg.get('tile_overlap', 0))}")
         lines.append(f"  fit_h / fit_w        : {int(det_cfg.get('fit_h', 0))} / {int(det_cfg.get('fit_w', 0))}")
         lines.append(f"  refine               : {det_cfg.get('refine')}")
-        lines.append(f"  refine_iters         : {int(det_cfg.get('refine_iters', 0))}")          # NEW
-        lines.append(f"  refine_lr            : {float(det_cfg.get('refine_lr', 0.0))}")        # NEW
-        lines.append(f"  refine_mask_k        : {float(det_cfg.get('refine_mask_k', 0.0))}")    # NEW
-        lines.append(f"  refine_scan/tof      : {bool(det_cfg.get('refine_scan', True))} / "
-                     f"{bool(det_cfg.get('refine_tof', True))}")                                 # NEW
-        lines.append(f"  refine_sigma_scan/tof: {bool(det_cfg.get('refine_sigma_scan', True))} / "
-                     f"{bool(det_cfg.get('refine_sigma_tof', True))}")                           # NEW
+        lines.append(f"  refine_iters         : {int(det_cfg.get('refine_iters', 0))}")
+        lines.append(f"  refine_lr            : {float(det_cfg.get('refine_lr', 0.0))}")
+        lines.append(f"  refine_mask_k        : {float(det_cfg.get('refine_mask_k', 0.0))}")
+        lines.append(
+            "  refine_scan/tof      : "
+            f"{bool(det_cfg.get('refine_scan', True))} / {bool(det_cfg.get('refine_tof', True))}"
+        )
+        lines.append(
+            "  refine_sigma_scan/tof: "
+            f"{bool(det_cfg.get('refine_sigma_scan', True))} / "
+            f"{bool(det_cfg.get('refine_sigma_tof', True))}"
+        )
         lines.append(f"  scale                : {det_cfg.get('scale')}")
         lines.append(f"  output_units         : {det_cfg.get('output_units')}")
         lines.append(f"  gn_float64           : {bool(det_cfg.get('gn_float64', False))}")
         lines.append(f"  do_dedup             : {bool(det_cfg.get('do_dedup', True))}")
-        lines.append(f"  tol_scan / tol_tof   : {float(det_cfg.get('tol_scan', 0.0))} / "
-                     f"{float(det_cfg.get('tol_tof', 0.0))}")
+        lines.append(
+            f"  tol_scan / tol_tof   : {float(det_cfg.get('tol_scan', 0.0))} / "
+            f"{float(det_cfg.get('tol_tof', 0.0))}"
+        )
         lines.append(f"  k_sigma              : {float(det_cfg.get('k_sigma', 0.0))}")
         lines.append(f"  min_width            : {int(det_cfg.get('min_width', 0))}")
-        lines.append(f"  topk_per_tile        : {det_cfg.get('topk_per_tile')}")                 # NEW
-        lines.append(f"  patch_batch_target_mb: {int(det_cfg.get('patch_batch_target_mb', 0))}") # NEW
-        lines.append(f"  blur_sigma_scan      : {float(det_cfg.get('blur_sigma_scan', 0.0))}")   # NEW
-        lines.append(f"  blur_sigma_tof       : {float(det_cfg.get('blur_sigma_tof', 0.0))}")    # NEW
-        lines.append(f"  blur_truncate        : {float(det_cfg.get('blur_truncate', 3.0))}")     # NEW
+        lines.append(f"  topk_per_tile        : {det_cfg.get('topk_per_tile')}")
+        lines.append(f"  patch_batch_target_mb: {int(det_cfg.get('patch_batch_target_mb', 0))}")
+        lines.append(f"  blur_sigma_scan      : {float(det_cfg.get('blur_sigma_scan', 0.0))}")
+        lines.append(f"  blur_sigma_tof       : {float(det_cfg.get('blur_sigma_tof', 0.0))}")
+        lines.append(f"  blur_truncate        : {float(det_cfg.get('blur_truncate', 3.0))}")
 
     # Cluster
     if "cluster" in cfg:
@@ -306,15 +320,15 @@ def detect_and_stitch_for_plan(
     """Return stitched peaks list for a plan with optional batch-stitch RAM saver."""
     use_batch_stitch = bool(stitch_cfg.get("use_batch_stitch", False))
     if use_batch_stitch:
-        stitched_running = []
+        stitched_running: list = []
     else:
-        collected = []
+        collected: list = []
 
     num_batches = (len(plan) + int(run_cfg["batch_size"]) - 1) // int(run_cfg["batch_size"])
     log(f"[detect] plan has {len(plan)} tof-scan planes -> (~{num_batches} batches)")
 
     # Handle topk_per_tile semantics: 0 or negative => None
-    topk_per_tile_cfg = det_cfg.get("topk_per_tile", None)  # NEW
+    topk_per_tile_cfg = det_cfg.get("topk_per_tile", None)
     if topk_per_tile_cfg is not None:
         topk_per_tile = int(topk_per_tile_cfg)
         if topk_per_tile <= 0:
@@ -322,11 +336,11 @@ def detect_and_stitch_for_plan(
     else:
         topk_per_tile = None
 
-    patch_batch_target_mb = int(det_cfg.get("patch_batch_target_mb", 128))  # NEW
+    patch_batch_target_mb = int(det_cfg.get("patch_batch_target_mb", 128))
 
-    blur_sigma_scan = float(det_cfg.get("blur_sigma_scan", 0.0))  # NEW
-    blur_sigma_tof = float(det_cfg.get("blur_sigma_tof", 0.0))    # NEW
-    blur_truncate = float(det_cfg.get("blur_truncate", 3.0))      # NEW
+    blur_sigma_scan = float(det_cfg.get("blur_sigma_scan", 0.0))
+    blur_sigma_tof = float(det_cfg.get("blur_sigma_tof", 0.0))
+    blur_truncate = float(det_cfg.get("blur_truncate", 3.0))
 
     for peak_batch in iter_im_peaks_batches(
         plan,
@@ -366,16 +380,16 @@ def detect_and_stitch_for_plan(
         if use_batch_stitch:
             stitched_batch = stitch_im_peaks(
                 peak_batch,
-                min_overlap_frames=int(stitch_cfg.get("min_overlap_frames", 1)),       # NEW
+                min_overlap_frames=int(stitch_cfg.get("min_overlap_frames", 1)),
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
                 jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
                 max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
-                allow_cross_groups=bool(stitch_cfg.get("allow_cross_groups", False)),  # NEW
-                min_im_overlap_scans=int(stitch_cfg.get("min_im_overlap_scans", 1)),   # NEW
+                allow_cross_groups=bool(stitch_cfg.get("allow_cross_groups", False)),
+                min_im_overlap_scans=int(stitch_cfg.get("min_im_overlap_scans", 1)),
                 im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
                 require_mutual_apex_inside=bool(
                     stitch_cfg.get("require_mutual_apex_inside", True)
-                ),  # NEW
+                ),
             )
             stitched_running = stitch_im_peaks(
                 stitched_running + stitched_batch,
@@ -485,12 +499,96 @@ def run_fragments(ds, cfg):
     stitch_cfg = cfg["stitch"]["fragment"]
     c = cfg["cluster"]["fragment"]
 
-    all_clusters = []
+    out_cfg = cfg["output"]
+    base_dir = Path(out_cfg["dir"])
+    compress = bool(out_cfg.get("compress_bin", True))
+    parquet_enabled = bool(out_cfg.get("parquet_enabled", False))
+
+    fragment_split_by_wg = bool(out_cfg.get("fragment_split_by_wg", False))
+    frag_file = out_cfg.get("fragment_file", "fragment_clusters.binz")
+    frag_parq = out_cfg.get("fragment_parquet", "fragment_clusters.parquet")
+
+    frag_file_pattern = out_cfg.get("fragment_file_pattern")
+    frag_parq_pattern = out_cfg.get("fragment_parquet_pattern")
 
     # Use DIA MS/MS info table to get window groups
     info = ds.dia_ms_ms_info
     wgs = sorted(int(w) for w in info.WindowGroup.unique())
     log(f"[fragments] {len(wgs)} window-groups")
+
+    if fragment_split_by_wg:
+        # ---- per-WG writing mode ------------------------------------------
+        for wg in wgs:
+            log(f"[fragment] WG={wg}")
+            plan = build_plan(ds, plan_cfg, precompute_views, for_group=wg)
+
+            stitched_wg = detect_and_stitch_for_plan(
+                plan, cfg["run"], cfg["detector"], stitch_cfg
+            )
+
+            attach_raw = bool(cfg["run"].get("attach_raw_data", False))
+
+            clusters_wg = ds.clusters_for_group(
+                window_group=int(wg),
+                im_peaks=stitched_wg,
+                tof_step=int(c.get("tof_step", 1)),
+                bin_pad=float(c.get("bin_pad", 30.0)),
+                smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
+                smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
+                min_prom=float(c.get("min_prom", 25.0)),
+                min_sep_sec=float(c.get("min_sep_sec", 2.0)),
+                min_width_sec=float(c.get("min_width_sec", 2.0)),
+                fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
+                fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
+                extra_rt_pad=int(c.get("extra_rt_pad", 0)),
+                extra_im_pad=int(c.get("extra_im_pad", 0)),
+                tof_bin_pad=int(c.get("tof_bin_pad", 1)),
+                tof_hist_pad=int(c.get("tof_hist_pad", 64)),
+                refine_tof_once=bool(c.get("refine_tof_once", True)),
+                refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
+                attach_axes=attach_raw,
+                attach_points=attach_raw,
+                attach_max_points=int(c.get("attach_max_points", 512)),
+                require_rt_overlap=bool(c.get("require_rt_overlap", True)),
+                compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
+                num_threads=int(c.get("num_threads", 0)),
+                min_im_span=int(c.get("min_im_span", 10)),
+            )
+
+            # ---- per-WG binary save ----
+            if frag_file_pattern:
+                frag_fname = frag_file_pattern.format(wg=wg)
+            else:
+                p = Path(frag_file)
+                frag_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
+
+            out_bin = base_dir / frag_fname
+            ensure_dir_for_file(out_bin)
+            save_clusters_bin(path=str(out_bin), clusters=clusters_wg, compress=compress)
+            log(f"[ok] wrote fragment clusters WG={wg} -> {out_bin} (compress={compress})")
+
+            # ---- per-WG parquet ----
+            if parquet_enabled:
+                if frag_parq_pattern:
+                    parq_fname = frag_parq_pattern.format(wg=wg)
+                else:
+                    p = Path(frag_parq)
+                    parq_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
+
+                out_parq = base_dir / parq_fname
+                ensure_dir_for_file(out_parq)
+                df = pd.DataFrame([c.to_dict() for c in clusters_wg])
+                df.to_parquet(out_parq, index=False)
+                log(f"[ok] wrote fragment parquet WG={wg} -> {out_parq}")
+
+            del stitched_wg, clusters_wg
+            cuda_gc()
+
+        log("[fragments] per-WG writing completed")
+        return
+
+    # ---- original all-in-one mode ------------------------------------------
+    all_clusters = []
 
     for wg in wgs:
         log(f"[fragment] WG={wg}")
@@ -533,16 +631,15 @@ def run_fragments(ds, cfg):
         del stitched_wg, clusters_wg
         cuda_gc()
 
-    # ---- binary save ----
-    out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_file"]
+    # ---- binary save (all) ----
+    out_bin = base_dir / frag_file
     ensure_dir_for_file(out_bin)
-    compress = bool(cfg["output"].get("compress_bin", True))
     save_clusters_bin(path=str(out_bin), clusters=all_clusters, compress=compress)
     log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
 
-    # ---- optional parquet ----
-    if bool(cfg["output"].get("parquet_enabled", False)):
-        out_parq = Path(cfg["output"]["dir"]) / cfg["output"]["fragment_parquet"]
+    # ---- optional parquet (all) ----
+    if parquet_enabled:
+        out_parq = base_dir / frag_parq
         ensure_dir_for_file(out_parq)
         df = pd.DataFrame([c.to_dict() for c in all_clusters])
         df.to_parquet(out_parq, index=False)
@@ -564,6 +661,11 @@ def load_config(path: str) -> dict:
 
     # output
     cfg["output"].setdefault("compress_bin", True)
+    # NEW: fragment-per-WG defaults
+    out = cfg["output"]
+    out.setdefault("fragment_split_by_wg", False)
+    out.setdefault("fragment_file_pattern", None)
+    out.setdefault("fragment_parquet_pattern", None)
 
     # run defaults
     cfg["run"].setdefault("stage", "both")
@@ -579,12 +681,12 @@ def load_config(path: str) -> dict:
     for s in ("precursor", "fragment"):
         cfg["stitch"][s].setdefault("max_tof_row_delta", 0)
         cfg["stitch"][s].setdefault("max_scan_delta", 5)
-        cfg["stitch"][s].setdefault("min_overlap_frames", 1)            # NEW
-        cfg["stitch"][s].setdefault("min_im_overlap_scans", 1)          # NEW
+        cfg["stitch"][s].setdefault("min_overlap_frames", 1)
+        cfg["stitch"][s].setdefault("min_im_overlap_scans", 1)
         cfg["stitch"][s].setdefault("jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)
-        cfg["stitch"][s].setdefault("allow_cross_groups", False)        # NEW
-        cfg["stitch"][s].setdefault("require_mutual_apex_inside", True) # NEW
+        cfg["stitch"][s].setdefault("allow_cross_groups", False)
+        cfg["stitch"][s].setdefault("require_mutual_apex_inside", True)
         cfg["stitch"][s].setdefault("use_batch_stitch", False)
 
     # detector defaults (TOF-based)
@@ -613,11 +715,11 @@ def load_config(path: str) -> dict:
     d.setdefault("tol_tof", 0.25)
     d.setdefault("k_sigma", 3.0)
     d.setdefault("min_width", 3)
-    d.setdefault("topk_per_tile", None)          # NEW; if set <=0, treated as None
-    d.setdefault("patch_batch_target_mb", 128)   # NEW
-    d.setdefault("blur_sigma_scan", 0.0)         # NEW
-    d.setdefault("blur_sigma_tof", 0.0)          # NEW
-    d.setdefault("blur_truncate", 3.0)           # NEW
+    d.setdefault("topk_per_tile", None)          # if set <=0, treated as None
+    d.setdefault("patch_batch_target_mb", 128)
+    d.setdefault("blur_sigma_scan", 0.0)
+    d.setdefault("blur_sigma_tof", 0.0)
+    d.setdefault("blur_truncate", 3.0)
 
     # plans defaults (TOF-based)
     cfg.setdefault("plans", {})
