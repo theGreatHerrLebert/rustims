@@ -757,6 +757,9 @@ def iter_im_peaks_batches(
     min_width=3,
     topk_per_tile: int | None = None,
     patch_batch_target_mb: int = 128,
+    blur_sigma_scan: float | None = None,
+    blur_sigma_tof: float | None = None,
+    blur_truncate: float = 3.0,
 ):
     """
     Yields one list[ImPeak1D] per plan batch (e.g., 64 WGs).
@@ -786,6 +789,9 @@ def iter_im_peaks_batches(
             k_sigma=k_sigma, min_width=min_width,
             topk_per_tile=topk_per_tile,
             patch_batch_target_mb=patch_batch_target_mb,
+            blur_sigma_scan=blur_sigma_scan,
+            blur_sigma_tof=blur_sigma_tof,
+            blur_truncate=blur_truncate,
         )
 
         yield batch_objs
