@@ -5,7 +5,7 @@ IM peak detection → stitching → clustering (TOML-configured) with logging an
 
 Updated for:
 - TimsDatasetDIA.plan_tof_scan_windows / plan_tof_scan_windows_for_group
-- new torch extractor (pool_tof, tol_tof, no mz_bounds_pad_*)
+- new torch extractor (pool_tof, tol_tof, Gaussian blur, topk_per_tile, patch batching)
 - new clustering API (tof_step + RT/IM/TOF params, no ppm_per_bin)
 """
 from __future__ import annotations
@@ -143,10 +143,14 @@ def print_config_summary(cfg: dict) -> None:
         if sec in st_cfg:
             s = st_cfg[sec]
             lines.append(f"[stitch.{sec}]")
-            lines.append(f"  max_tof_row_delta     : {int(s.get('max_tof_row_delta', 0))}")
+            lines.append(f"  max_tof_row_delta    : {int(s.get('max_tof_row_delta', 0))}")
             lines.append(f"  max_scan_delta       : {int(s.get('max_scan_delta', 0))}")
+            lines.append(f"  min_overlap_frames   : {int(s.get('min_overlap_frames', 1))}")  # NEW
+            lines.append(f"  min_im_overlap_scans : {int(s.get('min_im_overlap_scans', 1))}")  # NEW
             lines.append(f"  jaccard_min          : {float(s.get('jaccard_min', 0.0))}")
             lines.append(f"  im_jaccard_min       : {float(s.get('im_jaccard_min', 0.0))}")
+            lines.append(f"  allow_cross_groups   : {bool(s.get('allow_cross_groups', False))}")  # NEW
+            lines.append(f"  require_mutual_apex  : {bool(s.get('require_mutual_apex_inside', True))}")  # NEW
             lines.append(f"  use_batch_stitch     : {bool(s.get('use_batch_stitch', False))}")
 
     # Detector
@@ -159,11 +163,26 @@ def print_config_summary(cfg: dict) -> None:
         lines.append(f"  tile_overlap         : {int(det_cfg.get('tile_overlap', 0))}")
         lines.append(f"  fit_h / fit_w        : {int(det_cfg.get('fit_h', 0))} / {int(det_cfg.get('fit_w', 0))}")
         lines.append(f"  refine               : {det_cfg.get('refine')}")
+        lines.append(f"  refine_iters         : {int(det_cfg.get('refine_iters', 0))}")          # NEW
+        lines.append(f"  refine_lr            : {float(det_cfg.get('refine_lr', 0.0))}")        # NEW
+        lines.append(f"  refine_mask_k        : {float(det_cfg.get('refine_mask_k', 0.0))}")    # NEW
+        lines.append(f"  refine_scan/tof      : {bool(det_cfg.get('refine_scan', True))} / "
+                     f"{bool(det_cfg.get('refine_tof', True))}")                                 # NEW
+        lines.append(f"  refine_sigma_scan/tof: {bool(det_cfg.get('refine_sigma_scan', True))} / "
+                     f"{bool(det_cfg.get('refine_sigma_tof', True))}")                           # NEW
         lines.append(f"  scale                : {det_cfg.get('scale')}")
         lines.append(f"  output_units         : {det_cfg.get('output_units')}")
+        lines.append(f"  gn_float64           : {bool(det_cfg.get('gn_float64', False))}")
         lines.append(f"  do_dedup             : {bool(det_cfg.get('do_dedup', True))}")
         lines.append(f"  tol_scan / tol_tof   : {float(det_cfg.get('tol_scan', 0.0))} / "
                      f"{float(det_cfg.get('tol_tof', 0.0))}")
+        lines.append(f"  k_sigma              : {float(det_cfg.get('k_sigma', 0.0))}")
+        lines.append(f"  min_width            : {int(det_cfg.get('min_width', 0))}")
+        lines.append(f"  topk_per_tile        : {det_cfg.get('topk_per_tile')}")                 # NEW
+        lines.append(f"  patch_batch_target_mb: {int(det_cfg.get('patch_batch_target_mb', 0))}") # NEW
+        lines.append(f"  blur_sigma_scan      : {float(det_cfg.get('blur_sigma_scan', 0.0))}")   # NEW
+        lines.append(f"  blur_sigma_tof       : {float(det_cfg.get('blur_sigma_tof', 0.0))}")    # NEW
+        lines.append(f"  blur_truncate        : {float(det_cfg.get('blur_truncate', 3.0))}")     # NEW
 
     # Cluster
     if "cluster" in cfg:
@@ -173,10 +192,27 @@ def print_config_summary(cfg: dict) -> None:
                 lines.append(f"[cluster.{sec}]")
                 lines.append(f"  tof_step             : {int(cc.get('tof_step', 1))}")
                 lines.append(f"  bin_pad              : {float(cc.get('bin_pad', 0.0))}")
+                lines.append(f"  smooth_sigma_sec     : {float(cc.get('smooth_sigma_sec', 0.0))}")
+                lines.append(f"  smooth_trunc_k       : {float(cc.get('smooth_trunc_k', 0.0))}")
                 lines.append(f"  min_prom             : {float(cc.get('min_prom', 0.0))}")
                 lines.append(f"  min_sep_sec          : {float(cc.get('min_sep_sec', 0.0))}")
                 lines.append(f"  min_width_sec        : {float(cc.get('min_width_sec', 0.0))}")
+                lines.append(f"  fallback_if_frames_lt: {int(cc.get('fallback_if_frames_lt', 0))}")
+                lines.append(f"  fallback_frac_width  : {float(cc.get('fallback_frac_width', 0.0))}")
+                lines.append(f"  extra_rt_pad         : {int(cc.get('extra_rt_pad', 0))}")
+                lines.append(f"  extra_im_pad         : {int(cc.get('extra_im_pad', 0))}")
+                lines.append(f"  tof_bin_pad          : {int(cc.get('tof_bin_pad', 0))}")
+                if sec == "precursor":
+                    lines.append(f"  tof_hist_bins        : {int(cc.get('tof_hist_bins', 0))}")
+                else:
+                    lines.append(f"  tof_hist_pad         : {int(cc.get('tof_hist_pad', 0))}")
+                lines.append(f"  refine_tof_once      : {bool(cc.get('refine_tof_once', True))}")
+                lines.append(f"  refine_k_sigma       : {float(cc.get('refine_k_sigma', 0.0))}")
                 lines.append(f"  attach_max_points    : {int(cc.get('attach_max_points', 0))}")
+                lines.append(f"  require_rt_overlap   : {bool(cc.get('require_rt_overlap', True))}")
+                lines.append(f"  compute_mz_from_tof  : {bool(cc.get('compute_mz_from_tof', True))}")
+                lines.append(f"  num_threads          : {int(cc.get('num_threads', 0))}")
+                lines.append(f"  min_im_span          : {int(cc.get('min_im_span', 0))}")
 
     # Light sanity notes
     lines.append("──────────────── NOTES ─────────────────────────")
@@ -277,6 +313,21 @@ def detect_and_stitch_for_plan(
     num_batches = (len(plan) + int(run_cfg["batch_size"]) - 1) // int(run_cfg["batch_size"])
     log(f"[detect] plan has {len(plan)} tof-scan planes -> (~{num_batches} batches)")
 
+    # Handle topk_per_tile semantics: 0 or negative => None
+    topk_per_tile_cfg = det_cfg.get("topk_per_tile", None)  # NEW
+    if topk_per_tile_cfg is not None:
+        topk_per_tile = int(topk_per_tile_cfg)
+        if topk_per_tile <= 0:
+            topk_per_tile = None
+    else:
+        topk_per_tile = None
+
+    patch_batch_target_mb = int(det_cfg.get("patch_batch_target_mb", 128))  # NEW
+
+    blur_sigma_scan = float(det_cfg.get("blur_sigma_scan", 0.0))  # NEW
+    blur_sigma_tof = float(det_cfg.get("blur_sigma_tof", 0.0))    # NEW
+    blur_truncate = float(det_cfg.get("blur_truncate", 3.0))      # NEW
+
     for peak_batch in iter_im_peaks_batches(
         plan,
         batch_size=int(run_cfg["batch_size"]),
@@ -305,21 +356,39 @@ def detect_and_stitch_for_plan(
         tol_tof=float(det_cfg["tol_tof"]),
         k_sigma=float(det_cfg["k_sigma"]),
         min_width=int(det_cfg["min_width"]),
+        # NEW: performance + blur knobs
+        topk_per_tile=topk_per_tile,
+        patch_batch_target_mb=patch_batch_target_mb,
+        blur_sigma_scan=blur_sigma_scan,
+        blur_sigma_tof=blur_sigma_tof,
+        blur_truncate=blur_truncate,
     ):
         if use_batch_stitch:
             stitched_batch = stitch_im_peaks(
                 peak_batch,
-                max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
+                min_overlap_frames=int(stitch_cfg.get("min_overlap_frames", 1)),       # NEW
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
                 jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
+                max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
+                allow_cross_groups=bool(stitch_cfg.get("allow_cross_groups", False)),  # NEW
+                min_im_overlap_scans=int(stitch_cfg.get("min_im_overlap_scans", 1)),   # NEW
                 im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
+                require_mutual_apex_inside=bool(
+                    stitch_cfg.get("require_mutual_apex_inside", True)
+                ),  # NEW
             )
             stitched_running = stitch_im_peaks(
                 stitched_running + stitched_batch,
-                max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
+                min_overlap_frames=int(stitch_cfg.get("min_overlap_frames", 1)),
                 max_scan_delta=int(stitch_cfg["max_scan_delta"]),
                 jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
+                max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
+                allow_cross_groups=bool(stitch_cfg.get("allow_cross_groups", False)),
+                min_im_overlap_scans=int(stitch_cfg.get("min_im_overlap_scans", 1)),
                 im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
+                require_mutual_apex_inside=bool(
+                    stitch_cfg.get("require_mutual_apex_inside", True)
+                ),
             )
             del peak_batch, stitched_batch
         else:
@@ -332,10 +401,16 @@ def detect_and_stitch_for_plan(
     else:
         return stitch_im_peaks(
             collected,
-            max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
+            min_overlap_frames=int(stitch_cfg.get("min_overlap_frames", 1)),
             max_scan_delta=int(stitch_cfg["max_scan_delta"]),
             jaccard_min=float(stitch_cfg.get("jaccard_min", 0.0)),
+            max_tof_row_delta=int(stitch_cfg["max_tof_row_delta"]),
+            allow_cross_groups=bool(stitch_cfg.get("allow_cross_groups", False)),
+            min_im_overlap_scans=int(stitch_cfg.get("min_im_overlap_scans", 1)),
             im_jaccard_min=float(stitch_cfg.get("im_jaccard_min", 0.0)),
+            require_mutual_apex_inside=bool(
+                stitch_cfg.get("require_mutual_apex_inside", True)
+            ),
         )
 
 
@@ -504,8 +579,12 @@ def load_config(path: str) -> dict:
     for s in ("precursor", "fragment"):
         cfg["stitch"][s].setdefault("max_tof_row_delta", 0)
         cfg["stitch"][s].setdefault("max_scan_delta", 5)
+        cfg["stitch"][s].setdefault("min_overlap_frames", 1)            # NEW
+        cfg["stitch"][s].setdefault("min_im_overlap_scans", 1)          # NEW
         cfg["stitch"][s].setdefault("jaccard_min", 0.0)
         cfg["stitch"][s].setdefault("im_jaccard_min", 0.0)
+        cfg["stitch"][s].setdefault("allow_cross_groups", False)        # NEW
+        cfg["stitch"][s].setdefault("require_mutual_apex_inside", True) # NEW
         cfg["stitch"][s].setdefault("use_batch_stitch", False)
 
     # detector defaults (TOF-based)
@@ -534,6 +613,11 @@ def load_config(path: str) -> dict:
     d.setdefault("tol_tof", 0.25)
     d.setdefault("k_sigma", 3.0)
     d.setdefault("min_width", 3)
+    d.setdefault("topk_per_tile", None)          # NEW; if set <=0, treated as None
+    d.setdefault("patch_batch_target_mb", 128)   # NEW
+    d.setdefault("blur_sigma_scan", 0.0)         # NEW
+    d.setdefault("blur_sigma_tof", 0.0)          # NEW
+    d.setdefault("blur_truncate", 3.0)           # NEW
 
     # plans defaults (TOF-based)
     cfg.setdefault("plans", {})
