@@ -50,23 +50,16 @@ pub struct PseudoFragment {
 /// One pseudo-DDA spectrum: precursor + set of fragment peaks.
 #[derive(Clone, Debug)]
 pub struct PseudoSpectrum {
-    /// Precursor m/z (feature mono if available, otherwise MS1 cluster center).
     pub precursor_mz: f32,
-    /// Precursor charge (0 = unknown for orphan clusters).
     pub precursor_charge: u8,
-    /// RT apex in seconds.
     pub rt_apex: f32,
-    /// IM apex in global scan units.
     pub im_apex: f32,
 
-    /// If this precursor came from a SimpleFeature, which one; otherwise None.
-    pub feature_id: Option<usize>,
+    pub window_group: u32,  // <-- NEW: MS2 window group
 
-    /// MS1 clusters that define this precursor (feature members or single orphan MS1).
+    pub feature_id: Option<usize>,
     pub precursor_cluster_indices: Vec<usize>,
     pub precursor_cluster_ids: Vec<u64>,
-
-    /// Fragment peaks (after filtering / top-N selection).
     pub fragments: Vec<PseudoFragment>,
 }
 
@@ -88,8 +81,14 @@ impl Default for PseudoSpecOpts {
 /// Precursor identity: either an isotopic SimpleFeature or a single orphan MS1 cluster.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum PrecursorKey {
-    Feature(usize),
-    OrphanCluster(usize),
+    Feature {
+        feature_id: usize,
+        window_group: u32,
+    },
+    OrphanCluster {
+        cluster_idx: usize,
+        window_group: u32,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -115,18 +114,22 @@ fn build_cluster_to_feature_map(n_ms1: usize, features: &[SimpleFeature]) -> Vec
 ///
 /// Feature: weighted average of member cluster apex positions (weights = raw_sum).
 /// Orphan: use the single cluster’s rt_fit.mu / im_fit.mu.
+/// Derive a precursor apex (RT, IM) from either a feature or an orphan MS1 cluster.
+///
+/// Feature: weighted average of member cluster apex positions (weights = raw_sum).
+/// Orphan: use the single cluster’s rt_fit.mu / im_fit.mu.
 fn precursor_apex_from_feature_or_cluster(
     key: PrecursorKey,
     ms1: &[ClusterResult1D],
     features: &[SimpleFeature],
 ) -> (f32, f32) {
     match key {
-        PrecursorKey::OrphanCluster(i) => {
-            let c = &ms1[i];
+        PrecursorKey::OrphanCluster { cluster_idx, .. } => {
+            let c = &ms1[cluster_idx];
             (c.rt_fit.mu, c.im_fit.mu)
         }
-        PrecursorKey::Feature(fid) => {
-            let feat = &features[fid];
+        PrecursorKey::Feature { feature_id, .. } => {
+            let feat = &features[feature_id];
             let mut rt_w = 0.0_f64;
             let mut im_w = 0.0_f64;
             let mut wsum = 0.0_f64;
@@ -183,26 +186,38 @@ pub fn build_pseudo_spectra_from_pairs(
     ms1: &[ClusterResult1D],
     ms2: &[ClusterResult1D],
     features: &[SimpleFeature],
-    pairs: &[(usize, usize)], // (ms2_idx, ms1_idx)
+    pairs: &[(usize, usize)],
     opts: &PseudoSpecOpts,
 ) -> Vec<PseudoSpectrum> {
     if ms1.is_empty() || ms2.is_empty() || pairs.is_empty() {
         return Vec::new();
     }
 
-    // 1) Map MS1 cluster index -> feature_id (if any).
     let cluster_to_feature = build_cluster_to_feature_map(ms1.len(), features);
 
-    // 2) Group all MS2 indices by precursor key (feature or orphan MS1 cluster).
     let mut grouped: HashMap<PrecursorKey, Vec<usize>> = HashMap::new();
+
     for &(ms2_idx, ms1_idx) in pairs {
         if ms1_idx >= ms1.len() || ms2_idx >= ms2.len() {
             continue;
         }
+
+        // If an MS2 has no window_group, we should never have seen it as a candidate.
+        let g = ms2[ms2_idx]
+            .window_group
+            .unwrap_or(0); // if 0 ever appears, that’s a bug upstream
+
         let key = match cluster_to_feature[ms1_idx] {
-            Some(fid) => PrecursorKey::Feature(fid),
-            None => PrecursorKey::OrphanCluster(ms1_idx),
+            Some(fid) => PrecursorKey::Feature {
+                feature_id: fid,
+                window_group: g,
+            },
+            None => PrecursorKey::OrphanCluster {
+                cluster_idx: ms1_idx,
+                window_group: g,
+            },
         };
+
         grouped.entry(key).or_default().push(ms2_idx);
     }
 
@@ -212,39 +227,34 @@ pub fn build_pseudo_spectra_from_pairs(
 
     let top_n = opts.top_n_fragments;
 
-    // 3) Build pseudo spectra in parallel over precursors.
     let mut spectra: Vec<PseudoSpectrum> = grouped
         .into_par_iter()
         .map(|(key, mut frag_indices)| {
-            // Dedup MS2 cluster indices per precursor.
             frag_indices.sort_unstable();
             frag_indices.dedup();
 
-            // ---- Precursor summary ----
-            let (prec_mz, charge, prec_cluster_indices, prec_cluster_ids) = match key {
-                PrecursorKey::OrphanCluster(ci) => {
-                    let c = &ms1[ci];
+            let (prec_mz, charge, prec_cluster_indices, prec_cluster_ids, wg) = match key {
+                PrecursorKey::OrphanCluster { cluster_idx, window_group } => {
+                    let c = &ms1[cluster_idx];
                     let mz = cluster_mz_mu(c).unwrap_or(0.0);
-                    let z = 0u8; // unknown; you can flip to 1 if you want “assume +1”
-                    let idxs = vec![ci];
-                    let ids = vec![c.cluster_id];
-                    (mz, z, idxs, ids)
+                    let z  = 0u8;
+                    let idxs = vec![cluster_idx];
+                    let ids  = vec![c.cluster_id];
+                    (mz, z, idxs, ids, window_group)
                 }
-                PrecursorKey::Feature(fid) => {
-                    let feat = &features[fid];
-                    let mz = feat.mz_mono;
-                    let z = feat.charge;
+                PrecursorKey::Feature { feature_id, window_group } => {
+                    let feat = &features[feature_id];
+                    let mz   = feat.mz_mono;
+                    let z    = feat.charge;
                     let idxs = feat.member_cluster_indices.clone();
-                    let ids = feat.member_cluster_ids.clone();
-                    (mz, z, idxs, ids)
+                    let ids  = feat.member_cluster_ids.clone();
+                    (mz, z, idxs, ids, window_group)
                 }
             };
 
-            // RT / IM apex of precursor.
             let (rt_apex, im_apex) =
                 precursor_apex_from_feature_or_cluster(key, ms1, features);
 
-            // ---- Fragment list ----
             let mut frags: Vec<PseudoFragment> = frag_indices
                 .into_iter()
                 .filter_map(|j| {
@@ -263,7 +273,6 @@ pub fn build_pseudo_spectra_from_pairs(
                 })
                 .collect();
 
-            // Sort by fragment intensity (desc) and cap at top N if requested.
             frags.sort_unstable_by(|a, b| {
                 b.intensity
                     .partial_cmp(&a.intensity)
@@ -278,9 +287,10 @@ pub fn build_pseudo_spectra_from_pairs(
                 precursor_charge: charge,
                 rt_apex,
                 im_apex,
+                window_group: wg,
                 feature_id: match key {
-                    PrecursorKey::Feature(fid) => Some(fid),
-                    PrecursorKey::OrphanCluster(_) => None,
+                    PrecursorKey::Feature { feature_id, .. } => Some(feature_id),
+                    PrecursorKey::OrphanCluster { .. } => None,
                 },
                 precursor_cluster_indices: prec_cluster_indices,
                 precursor_cluster_ids: prec_cluster_ids,
@@ -289,7 +299,6 @@ pub fn build_pseudo_spectra_from_pairs(
         })
         .collect();
 
-    // Optional but nice: sort spectra by RT apex, then m/z.
     spectra.sort_unstable_by(|a, b| {
         a.rt_apex
             .partial_cmp(&b.rt_apex)

@@ -1,10 +1,25 @@
 use std::cmp::Ordering;
 use rayon::prelude::*;
+
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
-use crate::cluster::pseudo::{cluster_mz_mu, PrecursorKey, PseudoFragment, PseudoSpecOpts, PseudoSpectrum};
-use crate::cluster::scoring::{jaccard_time, CandidateOpts, PrecursorSearchIndex};
+use crate::cluster::pseudo::{
+    cluster_mz_mu,
+    PrecursorKey,
+    PseudoFragment,
+    PseudoSpecOpts,
+    PseudoSpectrum,
+};
+use crate::cluster::scoring::{
+    jaccard_time,
+    CandidateOpts,
+    PrecursorSearchIndex,
+};
 use crate::data::dia::TimsDatasetDIA;
+
+// ---------------------------------------------------------------------------
+// Helper: MS1 → feature map
+// ---------------------------------------------------------------------------
 
 /// Build a mapping from MS1 cluster index → Option<feature_id>.
 ///
@@ -25,23 +40,26 @@ fn build_cluster_to_feature_map(
     map
 }
 
-/// Helper: derive precursor apex (RT, IM) from either a feature or an orphan MS1 cluster.
+// ---------------------------------------------------------------------------
+// Helper: precursor apex from feature / orphan
+// ---------------------------------------------------------------------------
+
+/// Derive a precursor apex (RT, IM) from either a feature or an orphan MS1 cluster.
 ///
-/// Strategy:
-/// - Feature: weighted average of member cluster apex positions (weights = raw_sum).
-/// - Orphan: just use that single cluster’s rt_fit.mu / im_fit.mu.
+/// Feature: weighted average of member cluster apex positions (weights = raw_sum).
+/// Orphan: use the single cluster’s rt_fit.mu / im_fit.mu.
 fn precursor_apex_from_feature_or_cluster(
     key: PrecursorKey,
     ms1: &[ClusterResult1D],
     features: &[SimpleFeature],
 ) -> (f32, f32) {
     match key {
-        PrecursorKey::OrphanCluster(i) => {
-            let c = &ms1[i];
+        PrecursorKey::OrphanCluster { cluster_idx, .. } => {
+            let c = &ms1[cluster_idx];
             (c.rt_fit.mu, c.im_fit.mu)
         }
-        PrecursorKey::Feature(fid) => {
-            let feat = &features[fid];
+        PrecursorKey::Feature { feature_id, .. } => {
+            let feat = &features[feature_id];
             let mut rt_w = 0.0_f64;
             let mut im_w = 0.0_f64;
             let mut wsum = 0.0_f64;
@@ -52,6 +70,7 @@ fn precursor_apex_from_feature_or_cluster(
                 }
                 let c = &ms1[ci];
                 let w = c.raw_sum.max(1.0) as f64;
+
                 if c.rt_fit.mu.is_finite() {
                     rt_w += (c.rt_fit.mu as f64) * w;
                 }
@@ -62,7 +81,7 @@ fn precursor_apex_from_feature_or_cluster(
             }
 
             if wsum > 0.0 {
-                ( (rt_w / wsum) as f32, (im_w / wsum) as f32 )
+                ((rt_w / wsum) as f32, (im_w / wsum) as f32)
             } else {
                 // Fallback: just use bounds midpoints
                 let (rt_lo, rt_hi) = feat.rt_bounds;
@@ -76,9 +95,16 @@ fn precursor_apex_from_feature_or_cluster(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Core: build pseudo spectra from pairs
+// ---------------------------------------------------------------------------
+
 /// Main builder: turn candidate MS1–MS2 pairs into pseudo-DDA spectra.
 ///
 /// `pairs` are (ms2_index, ms1_index) in the same index space as `ms1` / `ms2`.
+/// The **window_group** is taken from the MS2 cluster, and becomes part of
+/// the `PrecursorKey`, so you never mix fragments from multiple groups for
+/// the same feature in one pseudo spectrum.
 pub fn build_pseudo_spectra_from_pairs(
     ms1: &[ClusterResult1D],
     ms2: &[ClusterResult1D],
@@ -93,7 +119,7 @@ pub fn build_pseudo_spectra_from_pairs(
     // 1) Map MS1 cluster index -> feature_id (if any)
     let cluster_to_feature = build_cluster_to_feature_map(ms1.len(), features);
 
-    // 2) Group all MS2 indices by precursor key (feature or orphan MS1 cluster)
+    // 2) Group all MS2 indices by precursor key (feature/orphan + window_group)
     use std::collections::HashMap;
     let mut grouped: HashMap<PrecursorKey, Vec<usize>> = HashMap::new();
 
@@ -101,9 +127,22 @@ pub fn build_pseudo_spectra_from_pairs(
         if ms1_idx >= ms1.len() || ms2_idx >= ms2.len() {
             continue;
         }
+
+        let c2 = &ms2[ms2_idx];
+        let g = match c2.window_group {
+            Some(g) => g,
+            None => continue, // should not happen if candidates were built sensibly
+        };
+
         let key = match cluster_to_feature[ms1_idx] {
-            Some(fid) => PrecursorKey::Feature(fid),
-            None      => PrecursorKey::OrphanCluster(ms1_idx),
+            Some(fid) => PrecursorKey::Feature {
+                feature_id: fid,
+                window_group: g,
+            },
+            None => PrecursorKey::OrphanCluster {
+                cluster_idx: ms1_idx,
+                window_group: g,
+            },
         };
         grouped.entry(key).or_default().push(ms2_idx);
     }
@@ -124,16 +163,16 @@ pub fn build_pseudo_spectra_from_pairs(
 
             // ---- Precursor summary ----
             let (prec_mz, charge, prec_cluster_indices, prec_cluster_ids) = match key {
-                PrecursorKey::OrphanCluster(ci) => {
-                    let c = &ms1[ci];
+                PrecursorKey::OrphanCluster { cluster_idx, .. } => {
+                    let c = &ms1[cluster_idx];
                     let mz = cluster_mz_mu(c).unwrap_or(0.0);
                     let z  = 0u8; // unknown; you can change to 1 if you prefer
                     let ids = vec![c.cluster_id];
-                    let idxs = vec![ci];
+                    let idxs = vec![cluster_idx];
                     (mz, z, idxs, ids)
                 }
-                PrecursorKey::Feature(fid) => {
-                    let feat = &features[fid];
+                PrecursorKey::Feature { feature_id, .. } => {
+                    let feat = &features[feature_id];
                     let mz = feat.mz_mono;      // monoisotopic m/z from feature builder
                     let z  = feat.charge;
                     let idxs = feat.member_cluster_indices.clone();
@@ -180,9 +219,13 @@ pub fn build_pseudo_spectra_from_pairs(
                 precursor_charge: charge,
                 rt_apex,
                 im_apex,
+                window_group: match key {
+                    PrecursorKey::Feature { window_group, .. } => window_group,
+                    PrecursorKey::OrphanCluster { window_group, .. } => window_group,
+                },
                 feature_id: match key {
-                    PrecursorKey::Feature(fid) => Some(fid),
-                    PrecursorKey::OrphanCluster(_) => None,
+                    PrecursorKey::Feature { feature_id, .. } => Some(feature_id),
+                    PrecursorKey::OrphanCluster { .. } => None,
                 },
                 precursor_cluster_indices: prec_cluster_indices,
                 precursor_cluster_ids: prec_cluster_ids,
@@ -195,16 +238,20 @@ pub fn build_pseudo_spectra_from_pairs(
     spectra.sort_unstable_by(|a, b| {
         a.rt_apex
             .partial_cmp(&b.rt_apex)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .unwrap_or(Ordering::Equal)
             .then_with(|| {
                 a.precursor_mz
                     .partial_cmp(&b.precursor_mz)
-                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .unwrap_or(Ordering::Equal)
             })
     });
 
     spectra
 }
+
+// ---------------------------------------------------------------------------
+// Assignment + end-to-end builder (unchanged API, but now uses group-aware keys)
+// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
 pub struct AssignmentResult {
@@ -233,6 +280,9 @@ pub struct PseudoBuildResult {
 ///   - have any IM overlap (≥ 1 scan),
 /// and then groups them into pseudo-spectra without any competition.
 /// An MS2 cluster may contribute to multiple precursors.
+///
+/// NOTE: physical program legality (incl. tile checks & apex-inside-tile)
+/// is enforced in `PrecursorSearchIndex::enumerate_pairs` (scoring module).
 pub fn build_pseudo_spectra_all_pairs(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],
@@ -240,8 +290,6 @@ pub fn build_pseudo_spectra_all_pairs(
     features: Option<&[SimpleFeature]>,
     pseudo_opts: &PseudoSpecOpts,
 ) -> Vec<PseudoSpectrum> {
-    // --- Very loose candidate settings: essentially
-    //     "same group + any RT overlap + any IM overlap".
     let cand_opts = CandidateOpts {
         min_rt_jaccard: 0.0,        // don’t enforce Jaccard, just any overlap
         ms2_rt_guard_sec: 0.0,      // no extra padding
@@ -314,11 +362,13 @@ pub fn build_pseudo_spectra_end_to_end(
         }
     }
 
-    // 4) Build pseudo spectra from those winning links.
+    let empty_feats: &[SimpleFeature] = &[];
+    let feat_slice = features.unwrap_or(empty_feats);
+
     let pseudo_spectra = build_pseudo_spectra_from_pairs(
         ms1,
         ms2,
-        features.unwrap(),
+        feat_slice,
         &winning_pairs,
         pseudo_opts,
     );
@@ -328,6 +378,10 @@ pub fn build_pseudo_spectra_end_to_end(
         pseudo_spectra,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Scoring (unchanged; left here for completeness)
+// ---------------------------------------------------------------------------
 
 /// Single scalar score in [0, ∞), larger is better.
 /// Robust to missing fits (uses `shape_neutral` if shape is unavailable).
@@ -520,10 +574,14 @@ impl Default for ScoreOpts {
 #[inline]
 fn build_features(ms1: &ClusterResult1D, ms2: &ClusterResult1D, opts: &ScoreOpts) -> PairFeatures {
     // RT Jaccard over absolute time bounds derived from frame_ids_used + rt_fit.mu as fallback
-    let (rt1_lo, rt1_hi) = (ms1.rt_fit.mu as f64 - (ms1.rt_fit.sigma as f64)*3.0,
-                            ms1.rt_fit.mu as f64 + (ms1.rt_fit.sigma as f64)*3.0);
-    let (rt2_lo, rt2_hi) = (ms2.rt_fit.mu as f64 - (ms2.rt_fit.sigma as f64)*3.0,
-                            ms2.rt_fit.mu as f64 + (ms2.rt_fit.sigma as f64)*3.0);
+    let (rt1_lo, rt1_hi) = (
+        ms1.rt_fit.mu as f64 - (ms1.rt_fit.sigma as f64) * 3.0,
+        ms1.rt_fit.mu as f64 + (ms1.rt_fit.sigma as f64) * 3.0,
+    );
+    let (rt2_lo, rt2_hi) = (
+        ms2.rt_fit.mu as f64 - (ms2.rt_fit.sigma as f64) * 3.0,
+        ms2.rt_fit.mu as f64 + (ms2.rt_fit.sigma as f64) * 3.0,
+    );
     let jacc_rt = jaccard_time(rt1_lo, rt1_hi, rt2_lo, rt2_hi).clamp(0.0, 1.0);
 
     // Apex deltas
@@ -544,7 +602,8 @@ fn build_features(ms1: &ClusterResult1D, ms2: &ClusterResult1D, opts: &ScoreOpts
         if sig_rt.is_finite() && sig_rt > 0.0 && sig_im.is_finite() && sig_im > 0.0 {
             z_rt = rt_apex_delta_s / sig_rt;
             z_im = im_apex_delta_scans / sig_im;
-            let q = -0.5_f32 * (opts.w_shape_rt_inner * z_rt * z_rt + opts.w_shape_im_inner * z_im * z_im);
+            let q = -0.5_f32 * (opts.w_shape_rt_inner * z_rt * z_rt
+                + opts.w_shape_im_inner * z_im * z_im);
             s_shape = q.exp();         // ∈ (0,1]
             shape_ok = s_shape.is_finite();
         }

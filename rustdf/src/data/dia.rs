@@ -205,28 +205,34 @@ impl DiaIndex {
     /// Conditions:
     ///   1) Precursor IM window overlaps tile scan band.
     ///   2) Precursor m/z lies inside tile's isolation m/z window.
+    /// Tiles in group `g` that could have selected this precursor.
+    ///
+    /// Conditions:
+    ///   1) Precursor **apex** IM scan lies inside tile scan band.
+    ///   2) Precursor m/z lies inside tile's isolation m/z window.
     pub fn tiles_for_precursor_in_group(
         &self,
         g: u32,
         prec_mz: f32,
-        im_window: (usize, usize),
+        im_apex: f32,
     ) -> Vec<usize> {
         let slices = self.program_slices_for_group(g);
         let mut hits = Vec::new();
 
-        for (idx, s) in slices.iter().enumerate() {
-            let tile_scans = (s.scan_lo, s.scan_hi);
+        if !prec_mz.is_finite() || !im_apex.is_finite() {
+            return hits;
+        }
 
-            // IM overlap precursor ↔ tile
-            if !ranges_overlap_u32(
-                (im_window.0 as u32, im_window.1 as u32),
-                tile_scans,
-            ) {
+        for (idx, s) in slices.iter().enumerate() {
+            // Precursor m/z inside isolation window
+            if prec_mz < s.mz_lo as f32 || prec_mz > s.mz_hi as f32 {
                 continue;
             }
 
-            // Precursor m/z inside isolation window
-            if prec_mz < s.mz_lo as f32 || prec_mz > s.mz_hi as f32 {
+            // Apex inside scan band (no margin for now, same semantics as your debug plot)
+            let scan_lo = s.scan_lo as f32;
+            let scan_hi = s.scan_hi as f32;
+            if im_apex < scan_lo || im_apex > scan_hi {
                 continue;
             }
 

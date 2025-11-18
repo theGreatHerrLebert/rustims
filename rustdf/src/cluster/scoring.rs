@@ -482,19 +482,25 @@ impl PrecursorSearchIndex {
                             _ => continue,
                         };
 
-                        // Tiles where this precursor could have been selected in g
+                        // We now require the **IM apex** of the precursor to lie inside some tile
+                        // in this window group, not just any overlap of the IM window.
+                        let prec_im_apex = ms1[i].im_fit.mu;
+                        if !prec_im_apex.is_finite() {
+                            continue;
+                        }
+
+                        // Tiles where this precursor could have been selected in g (apex-based)
                         let prec_tiles = dia_index.tiles_for_precursor_in_group(
                             g,
                             prec_mz,
-                            im1,
+                            prec_im_apex,
                         );
                         if prec_tiles.is_empty() {
                             continue;
                         }
 
-                        // Tiles where this fragment cluster could appear in g
-                        let frag_tiles =
-                            dia_index.tiles_for_fragment_in_group(g, im2);
+                        // Tiles where this fragment cluster could appear in g (still window-based)
+                        let frag_tiles = dia_index.tiles_for_fragment_in_group(g, im2);
                         if frag_tiles.is_empty() {
                             continue;
                         }
@@ -511,7 +517,6 @@ impl PrecursorSearchIndex {
                             continue;
                         }
 
-                        // Physically plausible pairing
                         local.push((j, i));
                     }
 
