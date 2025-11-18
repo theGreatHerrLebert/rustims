@@ -128,7 +128,7 @@ def print_config_summary(cfg: dict) -> None:
         if "fragment_parquet" in out_cfg:
             lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
     lines.append(f"  compress_bin         : {bool(out_cfg.get('compress_bin', True))}")
-    # NEW: fragment-per-WG options
+    # fragment-per-WG options
     lines.append(f"  fragment_split_by_wg : {bool(out_cfg.get('fragment_split_by_wg', False))}")
     if "fragment_file_pattern" in out_cfg and out_cfg.get("fragment_file_pattern") is not None:
         lines.append(f"  fragment_file_pattern: {out_cfg.get('fragment_file_pattern')}")
@@ -467,8 +467,12 @@ def run_precursor(ds, cfg):
         min_im_span=int(c.get("min_im_span", 10)),
     )
 
+    # ---- precursor output dirs: <root>/precursor/ ----
+    out_root = Path(cfg["output"]["dir"])
+    prec_dir = out_root / "precursor"
+
     # ---- binary save ----
-    out_bin = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_file"]
+    out_bin = prec_dir / cfg["output"]["precursor_file"]
     ensure_dir_for_file(out_bin)
     compress = bool(cfg["output"].get("compress_bin", True))
     save_clusters_bin(path=str(out_bin), clusters=clusters, compress=compress)
@@ -476,7 +480,7 @@ def run_precursor(ds, cfg):
 
     # ---- optional parquet ----
     if bool(cfg["output"].get("parquet_enabled", False)):
-        out_parq = Path(cfg["output"]["dir"]) / cfg["output"]["precursor_parquet"]
+        out_parq = prec_dir / cfg["output"]["precursor_parquet"]
         ensure_dir_for_file(out_parq)
         df = pd.DataFrame([c.to_dict() for c in clusters])
         df.to_parquet(out_parq, index=False)
@@ -510,6 +514,11 @@ def run_fragments(ds, cfg):
 
     frag_file_pattern = out_cfg.get("fragment_file_pattern")
     frag_parq_pattern = out_cfg.get("fragment_parquet_pattern")
+
+    # fixed structure under <root>/fragment/…
+    frag_root = base_dir / "fragment"
+    frag_bin_dir = frag_root / "bin"       # per-WG .binz
+    frag_parq_dir = frag_root / "parquet"  # per-WG .parquet
 
     # Use DIA MS/MS info table to get window groups
     info = ds.dia_ms_ms_info
@@ -562,7 +571,7 @@ def run_fragments(ds, cfg):
                 p = Path(frag_file)
                 frag_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
 
-            out_bin = base_dir / frag_fname
+            out_bin = frag_bin_dir / frag_fname
             ensure_dir_for_file(out_bin)
             save_clusters_bin(path=str(out_bin), clusters=clusters_wg, compress=compress)
             log(f"[ok] wrote fragment clusters WG={wg} -> {out_bin} (compress={compress})")
@@ -575,7 +584,7 @@ def run_fragments(ds, cfg):
                     p = Path(frag_parq)
                     parq_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
 
-                out_parq = base_dir / parq_fname
+                out_parq = frag_parq_dir / parq_fname
                 ensure_dir_for_file(out_parq)
                 df = pd.DataFrame([c.to_dict() for c in clusters_wg])
                 df.to_parquet(out_parq, index=False)
@@ -588,7 +597,7 @@ def run_fragments(ds, cfg):
         return
 
     # ---- original all-in-one mode ------------------------------------------
-    all_clusters = []
+    all_clusters: list = []
 
     for wg in wgs:
         log(f"[fragment] WG={wg}")
@@ -632,14 +641,14 @@ def run_fragments(ds, cfg):
         cuda_gc()
 
     # ---- binary save (all) ----
-    out_bin = base_dir / frag_file
+    out_bin = frag_root / frag_file
     ensure_dir_for_file(out_bin)
     save_clusters_bin(path=str(out_bin), clusters=all_clusters, compress=compress)
     log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
 
     # ---- optional parquet (all) ----
     if parquet_enabled:
-        out_parq = base_dir / frag_parq
+        out_parq = frag_root / frag_parq
         ensure_dir_for_file(out_parq)
         df = pd.DataFrame([c.to_dict() for c in all_clusters])
         df.to_parquet(out_parq, index=False)
@@ -661,7 +670,7 @@ def load_config(path: str) -> dict:
 
     # output
     cfg["output"].setdefault("compress_bin", True)
-    # NEW: fragment-per-WG defaults
+    # fragment-per-WG defaults
     out = cfg["output"]
     out.setdefault("fragment_split_by_wg", False)
     out.setdefault("fragment_file_pattern", None)
