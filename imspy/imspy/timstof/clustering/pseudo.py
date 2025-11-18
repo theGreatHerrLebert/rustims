@@ -56,6 +56,11 @@ class PseudoSpectrum:
     def fragments(self) -> list[PseudoFragment]:
         return [PseudoFragment(f) for f in self._p.fragments]
 
+    @property
+    def window_group_id(self) -> int | None:
+        wgid = self._p.window_group_id
+        return int(wgid) if wgid is not None else None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "precursor_mz": self.precursor_mz,
@@ -63,6 +68,7 @@ class PseudoSpectrum:
             "rt_apex": self.rt_apex,
             "im_apex": self.im_apex,
             "feature_id": self.feature_id,
+            "window_group_id": self.window_group_id,
             "precursor_cluster_ids": self.precursor_cluster_ids,
             "fragments": [
                 {
@@ -78,5 +84,6 @@ class PseudoSpectrum:
         return (
             f"PseudoSpectrum(precursor_mz={self.precursor_mz:.4f}, "
             f"charge={self.precursor_charge}, rt_apex={self.rt_apex:.2f}, "
-            f"im_apex={self.im_apex:.2f}, n_fragments={len(self.fragments)})"
+            f"im_apex={self.im_apex:.2f}, n_fragments={len(self.fragments)}, "
+            f"feature_id={self.feature_id}, window_group_id={self.window_group_id})"
         )

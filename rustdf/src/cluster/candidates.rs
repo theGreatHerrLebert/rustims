@@ -272,17 +272,16 @@ pub struct PseudoBuildResult {
     pub pseudo_spectra: Vec<PseudoSpectrum>,
 }
 
-/// Very simple DIA → pseudo-DDA builder.
+/// NON-COMPETITIVE builder: mainly for debugging.
 ///
 /// Links *all* MS1–MS2 pairs that
 ///   - are program-legal (same window group, isolation & scans),
-///   - have any RT overlap,
-///   - have any IM overlap (≥ 1 scan),
+///   - satisfy candidate guards (RT/IM overlap etc.),
 /// and then groups them into pseudo-spectra without any competition.
-/// An MS2 cluster may contribute to multiple precursors.
 ///
-/// NOTE: physical program legality (incl. tile checks & apex-inside-tile)
-/// is enforced in `PrecursorSearchIndex::enumerate_pairs` (scoring module).
+/// CONSEQUENCE:
+///   - An MS2 cluster may contribute to **multiple** precursors.
+///   - Use `build_pseudo_spectra_end_to_end` for a competitive, 1:1 assignment.
 pub fn build_pseudo_spectra_all_pairs(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],
@@ -291,23 +290,21 @@ pub fn build_pseudo_spectra_all_pairs(
     pseudo_opts: &PseudoSpecOpts,
 ) -> Vec<PseudoSpectrum> {
     let cand_opts = CandidateOpts {
-        min_rt_jaccard: 0.0,        // don’t enforce Jaccard, just any overlap
-        ms2_rt_guard_sec: 0.0,      // no extra padding
-        rt_bucket_width: 1.0,       // coarse bucketing is fine
-        max_ms1_rt_span_sec: None,  // don’t drop wide weirdos for now
+        min_rt_jaccard: 0.0,
+        ms2_rt_guard_sec: 0.0,
+        rt_bucket_width: 1.0,
+        max_ms1_rt_span_sec: None,
         max_ms2_rt_span_sec: None,
-        min_raw_sum: 1.0,           // can drop to 0.0 if you want truly everything
+        min_raw_sum: 1.0,
 
-        max_rt_apex_delta_sec: None,    // disable apex-delta guard
-        max_scan_apex_delta:   None,    // disable IM apex guard
-        min_im_overlap_scans:  1,       // require ≥1 scan intersection
+        max_rt_apex_delta_sec: None,
+        max_scan_apex_delta:   None,
+        min_im_overlap_scans:  1,
     };
 
-    // 1) Enumerate *all* program-legal pairs
     let idx = PrecursorSearchIndex::build(ds, ms1, &cand_opts);
-    let pairs = idx.enumerate_pairs(ms1, ms2, &cand_opts); // Vec<(ms2_idx, ms1_idx)>
+    let pairs = idx.enumerate_pairs(ms1, ms2, &cand_opts);
 
-    // 2) Build pseudo-spectra directly from those pairs, no scoring/assignment.
     let empty_feats: &[SimpleFeature] = &[];
     let feat_slice = features.unwrap_or(empty_feats);
 
@@ -320,9 +317,14 @@ pub fn build_pseudo_spectra_all_pairs(
     )
 }
 
-/// End-to-end:
+/// End-to-end, **competitive** builder:
 ///   DIA index + MS1 clusters + MS2 clusters (+ optional features)
 ///   → candidates → scoring/assignment → pseudo-MS/MS spectra.
+///
+/// Properties:
+///   - Each MS2 cluster participates in **at most one** precursor.
+///   - Physical program legality (group, tiles, apex-in-tile) is enforced
+///     inside `PrecursorSearchIndex::enumerate_pairs(...)`.
 pub fn build_pseudo_spectra_end_to_end(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],
@@ -336,7 +338,19 @@ pub fn build_pseudo_spectra_end_to_end(
     let idx = PrecursorSearchIndex::build(ds, ms1, cand_opts);
     let pairs = idx.enumerate_pairs(ms1, ms2, cand_opts);  // Vec<(ms2_idx, ms1_idx)>
 
-    // 2) Score & choose best MS1 per MS2.
+    // trivial fast-path
+    if pairs.is_empty() {
+        return PseudoBuildResult {
+            assignment: AssignmentResult {
+                pairs,
+                ms2_best_ms1: vec![None; ms2.len()],
+                ms1_to_ms2: vec![Vec::new(); ms1.len()],
+            },
+            pseudo_spectra: Vec::new(),
+        };
+    }
+
+    // 2) Score & choose best MS1 per MS2 (this is the **competition** step).
     let ms2_best_ms1 = best_ms1_for_each_ms2(
         ms1,
         ms2,
@@ -350,11 +364,11 @@ pub fn build_pseudo_spectra_end_to_end(
 
     let assignment = AssignmentResult {
         pairs,
-        ms2_best_ms1,
+        ms2_best_ms1: ms2_best_ms1.clone(),
         ms1_to_ms2: ms1_to_ms2.clone(),
     };
 
-    // 3) Turn the winner map into "winning pairs".
+    // 3) Turn the winner map into "winning pairs" (one MS2 → 0 or 1 MS1).
     let mut winning_pairs: Vec<(usize, usize)> = Vec::new();
     for (ms1_idx, js) in ms1_to_ms2.iter().enumerate() {
         for &ms2_idx in js {
@@ -362,6 +376,21 @@ pub fn build_pseudo_spectra_end_to_end(
         }
     }
 
+    // Optional sanity check in debug builds: each MS2 appears at most once.
+    debug_assert!({
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for (ms2_idx, _) in &winning_pairs {
+            if !seen.insert(ms2_idx) {
+                // duplicate MS2 assignment = bug in best_ms1_for_each_ms2
+                panic!("Duplicated ms2");
+            }
+        }
+        true
+    });
+
+    // 4) Build pseudo spectra from those winning links; grouping by
+    //    (precursor, window_group) happens in build_pseudo_spectra_from_pairs.
     let empty_feats: &[SimpleFeature] = &[];
     let feat_slice = features.unwrap_or(empty_feats);
 

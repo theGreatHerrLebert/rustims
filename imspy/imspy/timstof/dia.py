@@ -382,6 +382,46 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         # Wrap the PyPseudoBuildResult into the Python-level PseudoBuildResult
         return PseudoBuildResult(inner_res)
 
+    def build_pseudo_spectra_all_pairs(
+            self,
+            ms1_clusters: Sequence[Any],
+            ms2_clusters: Sequence[Any],
+            features: Sequence["SimpleFeature"] | None = None,
+            *,
+            top_n_fragments: int = 500,
+    ):
+        """
+        NON-competitive DIA → pseudo-DDA builder (debugging / visualization).
+
+        - Uses a very loose candidate definition:
+            * same window group
+            * any RT overlap
+            * any IM overlap (≥ 1 scan)
+          plus the program-legal tile checks in Rust.
+        - MS2 clusters may be linked to multiple precursors.
+
+        Returns:
+          list[PseudoSpectrum]
+        """
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+
+        ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
+        ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
+
+        feats_ptrs = None
+        if features is not None:
+            feats_ptrs = [f.get_py_ptr() for f in features]
+
+        inner_list = self.__dataset.build_pseudo_spectra_all_pairs_from_clusters(
+            ms1_ptrs,
+            ms2_ptrs,
+            feats_ptrs,
+            int(top_n_fragments),
+        )
+
+        # Wrap each PyPseudoSpectrum into Python-level PseudoSpectrum
+        return [PseudoSpectrum(ps) for ps in inner_list]
+
     def tof_rt_grid_precursor(self, tof_step: int = 1) -> "TofRtGrid":
         from imspy.timstof.clustering.data import TofRtGrid
         """

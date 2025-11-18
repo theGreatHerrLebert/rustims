@@ -62,6 +62,12 @@ impl PyPseudoSpectrum {
     }
 
     #[getter]
+    pub fn window_group_id(&self) -> u32 {
+        self.inner.window_group
+    }
+
+
+    #[getter]
     pub fn precursor_cluster_ids(&self) -> Vec<u64> {
         self.inner.precursor_cluster_ids.clone()
     }
