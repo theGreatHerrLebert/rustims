@@ -199,6 +199,13 @@ pub struct SimpleFeatureParams {
     pub min_im_overlap_frac: f32, // e.g. 0.3
     /// If > 0 and LUT is provided, chains with cosine < min_cosine are dropped.
     pub min_cosine: f32,
+
+    /// Weight for spacing penalty (0.0 = disabled, higher = penalize bad spacing more).
+    ///
+    /// Penalty is computed as average |Δmz_observed - Δmz_theory(z)| in *units of tolerance*
+    /// (i.e. divided by `iso_tolerance_da(mid_mz)`), then multiplied by this weight and
+    /// subtracted from the raw_sum-based chain score.
+    pub w_spacing_penalty: f32,
 }
 
 impl Default for SimpleFeatureParams {
@@ -215,6 +222,7 @@ impl Default for SimpleFeatureParams {
             min_rt_overlap_frac: 0.3,
             min_im_overlap_frac: 0.3,
             min_cosine: 0.0,
+            w_spacing_penalty: 0.0,
         }
     }
 }
@@ -401,22 +409,20 @@ pub fn build_simple_features_from_clusters(
             continue;
         }
 
-        let _seed = &good[seed_idx];
-
         let mut best_chain: Vec<usize> = Vec::new();
         let mut best_z: u8 = 0;
-        let mut best_score: f32 = 0.0;
+        let mut best_score: f32 = f32::NEG_INFINITY;
 
         for z in params.z_min..=params.z_max {
-            let mut chain: Vec<usize> = Vec::new();
-            chain.push(seed_idx);
-
-            let mut cur_idx = seed_idx;
             let delta = 1.003_355_f32 / (z as f32);
 
-            // greedy extend up to max_members
-            while chain.len() < params.max_members {
-                let cur = &good[cur_idx];
+            // ---- UPWARD extension -------------------------------------------------
+            let mut chain_up: Vec<usize> = Vec::new();
+            chain_up.push(seed_idx);
+
+            let mut cur_up = seed_idx;
+            while chain_up.len() < params.max_members {
+                let cur = &good[cur_up];
                 let target_m = cur.mz_mu + delta;
                 let tol = iso_tolerance_da(target_m, params);
 
@@ -438,7 +444,7 @@ pub fn build_simple_features_from_clusters(
                 let mut best_candidate: Option<(usize, f32)> = None; // (idx, score)
 
                 for k in left..right {
-                    if assigned[k] || chain.contains(&k) {
+                    if assigned[k] || chain_up.contains(&k) {
                         continue;
                     }
                     let cand = &good[k];
@@ -467,19 +473,119 @@ pub fn build_simple_features_from_clusters(
                 }
 
                 if let Some((best_k, _)) = best_candidate {
-                    chain.push(best_k);
-                    cur_idx = best_k;
+                    chain_up.push(best_k);
+                    cur_up = best_k;
                 } else {
                     break;
                 }
             }
 
+            // ---- DOWNWARD extension -----------------------------------------------
+            let mut chain_down: Vec<usize> = Vec::new();
+            let mut cur_down = seed_idx;
+
+            while (chain_down.len() + chain_up.len()) < params.max_members {
+                let cur = &good[cur_down];
+                let target_m = cur.mz_mu - delta;
+                if target_m <= 0.0 {
+                    break;
+                }
+                let tol = iso_tolerance_da(target_m, params);
+                let lo = target_m - tol;
+                let hi = target_m + tol;
+
+                let left = mzs
+                    .binary_search_by(|x| x.partial_cmp(&lo).unwrap_or(Ordering::Equal))
+                    .unwrap_or_else(|i| i);
+                let mut right = match mzs.binary_search_by(|x| x.partial_cmp(&hi).unwrap_or(Ordering::Equal)) {
+                    Ok(i) => i + 1,
+                    Err(i) => i,
+                };
+                if right > mzs.len() {
+                    right = mzs.len();
+                }
+
+                let mut best_candidate: Option<(usize, f32)> = None; // (idx, score)
+
+                for k in left..right {
+                    if assigned[k] || chain_up.contains(&k) || chain_down.contains(&k) {
+                        continue;
+                    }
+                    let cand = &good[k];
+
+                    let rt_ov = frac_overlap(cur.rt_win, cand.rt_win);
+                    if rt_ov < params.min_rt_overlap_frac {
+                        continue;
+                    }
+                    let im_ov = frac_overlap(cur.im_win, cand.im_win);
+                    if im_ov < params.min_im_overlap_frac {
+                        continue;
+                    }
+
+                    let score = cand.raw_sum * (0.5 * (rt_ov + im_ov));
+
+                    match best_candidate {
+                        None => best_candidate = Some((k, score)),
+                        Some((_, best_s)) => {
+                            if score > best_s {
+                                best_candidate = Some((k, score));
+                            }
+                        }
+                    }
+                }
+
+                if let Some((best_k, _)) = best_candidate {
+                    chain_down.push(best_k);
+                    cur_down = best_k;
+                } else {
+                    break;
+                }
+            }
+
+            chain_down.reverse(); // so that m/z increases
+            let mut chain: Vec<usize> = chain_down;
+            chain.extend(chain_up.into_iter());
+
             if chain.len() < params.min_members {
                 continue;
             }
 
-            // chain score: sum of raw_sum
-            let score: f32 = chain.iter().map(|&i| good[i].raw_sum).sum();
+            // --- spacing penalty (optional) ---------------------------------------
+            let mut spacing_penalty = 0.0f32;
+            if params.w_spacing_penalty > 0.0 && chain.len() >= 2 {
+                let mut spacing_err_sum = 0.0f32;
+                let mut spacing_links = 0usize;
+
+                for win in chain.windows(2) {
+                    let i = win[0];
+                    let j = win[1];
+                    let gi = &good[i];
+                    let gj = &good[j];
+
+                    let observed = gj.mz_mu - gi.mz_mu;
+                    let ideal = delta;
+                    let mid_mz = 0.5 * (gi.mz_mu + gj.mz_mu);
+                    let tol_da = iso_tolerance_da(mid_mz, params);
+
+                    if tol_da > 0.0 {
+                        let err_units = (observed - ideal).abs() / tol_da; // in “tolerances”
+                        spacing_err_sum += err_units;
+                        spacing_links += 1;
+                    }
+                }
+
+                if spacing_links > 0 {
+                    spacing_penalty = spacing_err_sum / (spacing_links as f32);
+                }
+            }
+
+            // chain score: sum of raw_sum minus spacing penalty
+            let score_raw: f32 = chain.iter().map(|&i| good[i].raw_sum).sum();
+            let score = if params.w_spacing_penalty > 0.0 {
+                score_raw - params.w_spacing_penalty * spacing_penalty
+            } else {
+                score_raw
+            };
 
             if score > best_score {
                 best_score = score;
@@ -492,8 +598,7 @@ pub fn build_simple_features_from_clusters(
             continue;
         }
 
-        // --- 3b) Averagine cosine gating (before assignment) -----------------
-
+        // --- Averagine cosine gating (before assignment) -----------------
         let mut cos_averagine = 0.0f32;
         if let Some(lut_ref) = lut {
             // Build iso_raw = [raw_sum_0, raw_sum_1, ...] in m/z order (chain is monotonic)
@@ -524,7 +629,7 @@ pub fn build_simple_features_from_clusters(
             assigned[idx] = true;
         }
 
-        // derive mz_mono as the smallest m/z in the chain
+        // derive mz_mono as the smallest m/z in the chain (now can be < seed for high z)
         let mut mz_mono = f32::INFINITY;
         let mut mz_weighted = 0.0_f64;
         let mut wsum = 0.0_f64;

@@ -93,6 +93,7 @@ class SimpleFeatureParams:
         min_rt_overlap_frac: minimal fractional RT overlap between neighboring isotopes
         min_im_overlap_frac: minimal fractional IM overlap between neighboring isotopes
         min_cosine: minimal cosine vs. averagine envelope (only applied if LUT is given)
+        w_spacing_penalty: weight for spacing penalty in the scoring function
     """
 
     def __init__(
@@ -108,6 +109,7 @@ class SimpleFeatureParams:
         min_rt_overlap_frac: float = 0.3,
         min_im_overlap_frac: float = 0.3,
         min_cosine: float = 0.7,
+        w_spacing_penalty: float = 1.0,
     ) -> None:
         self.__py_ptr = imsf.PySimpleFeatureParams(
             int(z_min),
@@ -121,6 +123,7 @@ class SimpleFeatureParams:
             float(min_rt_overlap_frac),
             float(min_im_overlap_frac),
             float(min_cosine),
+            float(w_spacing_penalty),
         )
 
     @classmethod

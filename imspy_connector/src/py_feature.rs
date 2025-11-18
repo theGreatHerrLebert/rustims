@@ -130,6 +130,7 @@ impl PySimpleFeatureParams {
         min_rt_overlap_frac=0.3,
         min_im_overlap_frac=0.3,
         min_cosine=0.7,
+        w_spacing_penalty=1.0,
     ))]
     pub fn new(
         z_min: u8,
@@ -143,6 +144,7 @@ impl PySimpleFeatureParams {
         min_rt_overlap_frac: f32,
         min_im_overlap_frac: f32,
         min_cosine: f32,
+        w_spacing_penalty: f32,
     ) -> Self {
         PySimpleFeatureParams {
             inner: SimpleFeatureParams {
@@ -157,6 +159,7 @@ impl PySimpleFeatureParams {
                 min_rt_overlap_frac,
                 min_im_overlap_frac,
                 min_cosine,
+                w_spacing_penalty,
             },
         }
     }
@@ -172,7 +175,8 @@ impl PySimpleFeatureParams {
         format!(
             "SimpleFeatureParams(z=[{}..{}], iso_ppm_tol={}, iso_abs_da={}, \
              min_members={}, max_members={}, min_raw_sum={}, min_mz={}, \
-             min_rt_overlap_frac={}, min_im_overlap_frac={}, min_cosine={})",
+             min_rt_overlap_frac={}, min_im_overlap_frac={}, min_cosine={},
+             w_spacing_penalty={})",
             self.inner.z_min,
             self.inner.z_max,
             self.inner.iso_ppm_tol,
@@ -184,6 +188,7 @@ impl PySimpleFeatureParams {
             self.inner.min_rt_overlap_frac,
             self.inner.min_im_overlap_frac,
             self.inner.min_cosine,
+            self.inner.w_spacing_penalty,
         )
     }
 }

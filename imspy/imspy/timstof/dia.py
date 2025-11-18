@@ -1,5 +1,4 @@
 import sqlite3
-import warnings
 from typing import List, Sequence, Any
 
 from imspy.simulation.annotation import RustWrapperObject
