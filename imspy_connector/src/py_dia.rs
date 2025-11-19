@@ -6,7 +6,7 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{AssignmentResult, PseudoBuildResult, ScoreOpts};
+use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
@@ -1947,7 +1947,7 @@ impl PyTimsDatasetDIA {
         // ---- PseudoSpecOpts ----
         top_n_fragments = 500,
     ))]
-    pub fn build_pseudo_spectra_from_clusters(
+    pub fn build_pseudo_spectra_from_clusters_geom(
         &self,
         py: Python<'_>,
         ms1_clusters: Vec<Py<PyClusterResult1D>>,
@@ -2039,12 +2039,134 @@ impl PyTimsDatasetDIA {
         };
 
         // Call the dataset method
-        let res = self.inner.build_pseudo_spectra_from_clusters(
+        let res = self.inner.build_pseudo_spectra_from_clusters_geom(
             &rust_ms1,
             &rust_ms2,
             rust_feats.as_deref(),
             &cand_opts,
             &score_opts,
+            &pseudo_opts,
+        );
+
+        Ok(PyPseudoBuildResult { inner: res })
+    }
+
+    #[pyo3(signature = (
+        ms1_clusters,
+        ms2_clusters,
+        features=None,
+
+        // ---- CandidateOpts (with defaults matching `CandidateOpts::default()`) ----
+        min_rt_jaccard = 0.0,
+        ms2_rt_guard_sec = 0.0,
+        rt_bucket_width = 1.0,
+        max_ms1_rt_span_sec = Some(60.0),
+        max_ms2_rt_span_sec = Some(60.0),
+        min_raw_sum = 1.0,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+
+        // ---- XicScoreOpts (defaults from `XicScoreOpts::default()`) ----
+        w_rt = 0.45,
+        w_im = 0.45,
+        w_intensity = 0.10,
+        intensity_tau = 1.5,
+        min_total_score = 0.0,
+        use_rt = true,
+        use_im = true,
+        use_intensity = true,
+
+        // ---- PseudoSpecOpts ----
+        top_n_fragments = 500,
+    ))]
+    pub fn build_pseudo_spectra_from_clusters_xic(
+        &self,
+        py: Python<'_>,
+        ms1_clusters: Vec<Py<PyClusterResult1D>>,
+        ms2_clusters: Vec<Py<PyClusterResult1D>>,
+        features: Option<Vec<Py<PySimpleFeature>>>,
+
+        // CandidateOpts
+        min_rt_jaccard: f32,
+        ms2_rt_guard_sec: f64,
+        rt_bucket_width: f64,
+        max_ms1_rt_span_sec: Option<f64>,
+        max_ms2_rt_span_sec: Option<f64>,
+        min_raw_sum: f32,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+
+        // XicScoreOpts
+        w_rt: f32,
+        w_im: f32,
+        w_intensity: f32,
+        intensity_tau: f32,
+        min_total_score: f32,
+        use_rt: bool,
+        use_im: bool,
+        use_intensity: bool,
+
+        // PseudoSpecOpts
+        top_n_fragments: usize,
+    ) -> PyResult<PyPseudoBuildResult> {
+        // Unwrap clusters
+        let rust_ms1: Vec<ClusterResult1D> = ms1_clusters
+            .into_iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        let rust_ms2: Vec<ClusterResult1D> = ms2_clusters
+            .into_iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        // Unwrap features (optional)
+        let rust_feats: Option<Vec<SimpleFeature>> = features.map(|vec_f| {
+            vec_f
+                .into_iter()
+                .map(|pf| pf.borrow(py).inner.clone())
+                .collect()
+        });
+
+        // CandidateOpts from primitives
+        let cand_opts = CandidateOpts {
+            min_rt_jaccard,
+            ms2_rt_guard_sec,
+            rt_bucket_width,
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
+            min_raw_sum,
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+        };
+
+        // XicScoreOpts from primitives
+        let xic_opts = XicScoreOpts {
+            w_rt,
+            w_im,
+            w_intensity,
+            intensity_tau,
+            min_total_score,
+            use_rt,
+            use_im,
+            use_intensity,
+        };
+
+        // PseudoSpecOpts (top_n_fragments is the one knob we expose now)
+        let pseudo_opts = PseudoSpecOpts {
+            top_n_fragments,
+            ..PseudoSpecOpts::default()
+        };
+
+        let res = self.inner.build_pseudo_spectra_from_clusters_xic(
+            &rust_ms1,
+            &rust_ms2,
+            rust_feats.as_deref(),
+            &cand_opts,
+            &xic_opts,
             &pseudo_opts,
         );
 
@@ -2235,7 +2357,7 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
 
 use rustdf::cluster::io as cio;
 use rustdf::cluster::pseudo::PseudoSpecOpts;
-use rustdf::cluster::scoring::CandidateOpts;
+use rustdf::cluster::scoring::XicScoreOpts;
 use crate::py_feature::PySimpleFeature;
 use crate::py_pseudo::PyPseudoSpectrum;
 

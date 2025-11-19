@@ -1,11 +1,216 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-
+use crate::cluster::candidates::{CandidateOpts, PairFeatures, ScoreOpts};
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::pseudo::cluster_mz_mu;
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
+
+#[derive(Clone, Debug)]
+pub struct XicScoreOpts {
+    /// Weight for RT-XIC correlation term.
+    pub w_rt: f32,
+    /// Weight for IM-XIC correlation term.
+    pub w_im: f32,
+    /// Weight for intensity-ratio consistency term.
+    pub w_intensity: f32,
+
+    /// Pseudo-temperature for the log-intensity ratio penalty.
+    /// Larger = more tolerant to MS1/MS2 intensity mismatch.
+    pub intensity_tau: f32,
+
+    /// Minimum final score in [0,1] to accept a pair.
+    pub min_total_score: f32,
+
+    /// Whether to use RT/IM/intensity terms at all.
+    pub use_rt: bool,
+    pub use_im: bool,
+    pub use_intensity: bool,
+}
+
+impl Default for XicScoreOpts {
+    fn default() -> Self {
+        Self {
+            // shape dominates, intensity is a weak prior
+            w_rt: 0.45,
+            w_im: 0.45,
+            w_intensity: 0.10,
+            intensity_tau: 1.5,
+            min_total_score: 0.0, // no cutoff by default
+
+            use_rt: true,
+            use_im: true,
+            use_intensity: true,
+        }
+    }
+}
+
+#[inline]
+fn zscore(v: &[f32]) -> Option<Vec<f32>> {
+    let n = v.len();
+    if n < 3 {
+        return None;
+    }
+    let mut sum = 0.0f64;
+    let mut sum2 = 0.0f64;
+    for &x in v {
+        let xf = x as f64;
+        sum += xf;
+        sum2 += xf * xf;
+    }
+    let n_f = n as f64;
+    let mean = sum / n_f;
+    let var = (sum2 / n_f) - mean * mean;
+    if !var.is_finite() || var <= 0.0 {
+        return None;
+    }
+    let std = var.sqrt();
+    let mut out = Vec::with_capacity(n);
+    for &x in v {
+        out.push(((x as f64 - mean) / std) as f32);
+    }
+    Some(out)
+}
+
+/// Pearson correlation on two traces, cropped to the common length and z-scored.
+fn pearson_corr_z(a: &[f32], b: &[f32]) -> Option<f32> {
+    let n = a.len().min(b.len());
+    if n < 3 {
+        return None;
+    }
+    let az = zscore(&a[..n])?;
+    let bz = zscore(&b[..n])?;
+
+    let mut num = 0.0f64;
+    for i in 0..n {
+        num += az[i] as f64 * bz[i] as f64;
+    }
+    let den = (n as f64).max(1.0);
+    let r = (num / den)
+        .max(-1.0)
+        .min(1.0);
+    Some(r as f32)
+}
+
+pub fn xic_match_score(
+    ms1: &ClusterResult1D,
+    ms2: &ClusterResult1D,
+    opts: &XicScoreOpts,
+) -> Option<f32> {
+    let mut score = 0.0f32;
+    let mut w_sum = 0.0f32;
+
+    // ---- RT XIC: Pearson, mapped from [-1,1] to [0,1] ----
+    if opts.use_rt {
+        if let (Some(ref rt1), Some(ref rt2)) = (&ms1.rt_trace, &ms2.rt_trace) {
+            if let Some(r) = pearson_corr_z(rt1, rt2) {
+                if r.is_finite() {
+                    let s = 0.5 * (r + 1.0); // [-1,1] -> [0,1]
+                    score += opts.w_rt * s;
+                    w_sum += opts.w_rt;
+                }
+            }
+        }
+    }
+
+    // ---- IM XIC: Pearson, same mapping ----
+    if opts.use_im {
+        if let (Some(ref im1), Some(ref im2)) = (&ms1.im_trace, &ms2.im_trace) {
+            if let Some(r) = pearson_corr_z(im1, im2) {
+                if r.is_finite() {
+                    let s = 0.5 * (r + 1.0);
+                    score += opts.w_im * s;
+                    w_sum += opts.w_im;
+                }
+            }
+        }
+    }
+
+    // ---- Intensity ratio: weak, symmetric penalty on log ratio ----
+    if opts.use_intensity && opts.w_intensity > 0.0 && opts.intensity_tau > 0.0 {
+        // Use RT trace integrals as a proxy; fall back to raw_sum if needed.
+        let i1 = if let Some(ref rt1) = ms1.rt_trace {
+            rt1.iter().fold(0.0f32, |acc, x| acc + x.max(0.0))
+        } else {
+            ms1.raw_sum.max(0.0)
+        };
+
+        let i2 = if let Some(ref rt2) = ms2.rt_trace {
+            rt2.iter().fold(0.0f32, |acc, x| acc + x.max(0.0))
+        } else {
+            ms2.raw_sum.max(0.0)
+        };
+
+        if i1 > 0.0 && i2 > 0.0 {
+            let ratio = (i2 / i1).max(1e-6);
+            let d = ratio.ln().abs(); // |log(I2/I1)|
+            let s = (-d / opts.intensity_tau).exp(); // in (0,1]
+            if s.is_finite() {
+                score += opts.w_intensity * s;
+                w_sum += opts.w_intensity;
+            }
+        }
+    }
+
+    if w_sum <= 0.0 {
+        return None;
+    }
+
+    let final_score = score / w_sum;
+    if !final_score.is_finite() {
+        None
+    } else {
+        Some(final_score.max(0.0).min(1.0))
+    }
+}
+
+/// For each MS2 cluster, keep the best MS1 by XIC score, and apply a cutoff.
+/// Returns (ms2_idx, ms1_idx, score) triples.
+pub fn assign_ms2_to_best_ms1_by_xic(
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    pairs: &[(usize, usize)],
+    opts: &XicScoreOpts,
+) -> Vec<(usize, usize, f32)> {
+    let mut best: HashMap<usize, (usize, f32)> = HashMap::new();
+
+    for &(ms2_idx, ms1_idx) in pairs {
+        if ms1_idx >= ms1.len() || ms2_idx >= ms2.len() {
+            continue;
+        }
+
+        let s = match xic_match_score(&ms1[ms1_idx], &ms2[ms2_idx], opts) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        if s < opts.min_total_score {
+            continue;
+        }
+
+        best.entry(ms2_idx)
+            .and_modify(|entry| {
+                if s > entry.1 {
+                    *entry = (ms1_idx, s);
+                }
+            })
+            .or_insert((ms1_idx, s));
+    }
+
+    let mut out: Vec<(usize, usize, f32)> = best
+        .into_iter()
+        .map(|(ms2_idx, (ms1_idx, s))| (ms2_idx, ms1_idx, s))
+        .collect();
+
+    out.sort_unstable_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.cmp(&b.1))
+    });
+
+    out
+}
 
 /// Jaccard overlap in **absolute seconds** for two closed intervals.
 #[inline]
@@ -112,48 +317,6 @@ impl RtBuckets {
         let (b0, b1) = self.range(t0, t1);
         for b in b0..=b1 {
             out.extend_from_slice(&self.buckets[b]);
-        }
-    }
-}
-
-/// Options for the simple candidate enumeration.
-/// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
-#[derive(Clone, Debug)]
-pub struct CandidateOpts {
-    /// Require at least this Jaccard in RT (set 0.0 for “any overlap”).
-    pub min_rt_jaccard: f32,
-    /// Guard pad on MS2 time bounds (applied symmetrically), in seconds.
-    pub ms2_rt_guard_sec: f64,
-    /// RT bucket width (seconds).
-    pub rt_bucket_width: f64,
-    /// Pre-filters to drop weird clusters.
-    pub max_ms1_rt_span_sec: Option<f64>,
-    pub max_ms2_rt_span_sec: Option<f64>,
-    pub min_raw_sum: f32,
-
-    // ---- NEW tight guards ----
-    /// Maximum allowed |rt_apex_MS1 - rt_apex_MS2| in seconds (None disables).
-    pub max_rt_apex_delta_sec: Option<f32>,
-    /// Maximum allowed |im_apex_MS1 - im_apex_MS2| in global scans (None disables).
-    pub max_scan_apex_delta: Option<usize>,
-    /// Require at least this many scan-overlap between MS1 and MS2 IM windows.
-    pub min_im_overlap_scans: usize,
-}
-
-impl Default for CandidateOpts {
-    fn default() -> Self {
-        Self {
-            min_rt_jaccard: 0.0,
-            ms2_rt_guard_sec: 0.0,
-            rt_bucket_width: 1.0,
-            max_ms1_rt_span_sec: Some(60.0),
-            max_ms2_rt_span_sec: Some(60.0),
-            min_raw_sum: 1.0,
-
-            // sensible, but conservative defaults
-            max_rt_apex_delta_sec: Some(2.0), // tighten to taste
-            max_scan_apex_delta: Some(6),     // ~ few IM scans
-            min_im_overlap_scans: 1,          // at least touch
         }
     }
 }
@@ -540,4 +703,128 @@ pub fn enumerate_ms2_ms1_pairs_simple(
 ) -> Vec<(usize, usize)> {
     let idx = PrecursorSearchIndex::build(ds, ms1, opts);
     idx.enumerate_pairs(ms1, ms2, opts)
+}
+
+// ---------------------------------------------------------------------------
+// Scoring (unchanged; left here for completeness)
+// ---------------------------------------------------------------------------
+
+/// Single scalar score in [0, ∞), larger is better.
+/// Robust to missing fits (uses `shape_neutral` if shape is unavailable).
+#[inline]
+fn score_from_features(f: &PairFeatures, opts: &ScoreOpts) -> f32 {
+    let shape_term = if f.shape_ok { f.s_shape } else { opts.shape_neutral };
+
+    let rt_close = crate::cluster::candidates::exp_decay(f.rt_apex_delta_s, opts.rt_apex_scale_s);
+    let im_close = crate::cluster::candidates::exp_decay(f.im_apex_delta_scans, opts.im_apex_scale_scans);
+
+    let im_ratio = (f.im_overlap_scans as f32) / (f.im_union_scans as f32);
+
+    let ms1_int = crate::cluster::candidates::safe_log1p(f.ms1_raw_sum);
+
+    opts.w_jacc_rt * f.jacc_rt
+        + opts.w_shape * shape_term
+        + opts.w_rt_apex * rt_close
+        + opts.w_im_apex * im_close
+        + opts.w_im_overlap * im_ratio
+        + opts.w_ms1_intensity * ms1_int
+}
+
+/// Score all pairs (ms2_idx, ms1_idx).
+pub fn score_pairs(
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    pairs: &[(usize, usize)],
+    opts: &ScoreOpts,
+) -> Vec<(usize, usize, PairFeatures, f32)> {
+    pairs.par_iter().map(|&(j, i)| {
+        let f = crate::cluster::candidates::build_features(&ms1[i], &ms2[j], opts);
+        let s = score_from_features(&f, opts);
+        (j, i, f, s)
+    }).collect()
+}
+
+/// For each MS2, choose the best MS1 index (by score, then deterministic tie-breaks).
+/// Returns a Vec<Option<usize>> indexed by ms2_idx.
+pub fn best_ms1_for_each_ms2(
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    pairs: &[(usize, usize)],
+    opts: &ScoreOpts,
+) -> Vec<Option<usize>> {
+    let scored = score_pairs(ms1, ms2, pairs, opts);
+
+    // group by ms2_idx
+    let mut by_ms2: Vec<Vec<(usize, PairFeatures, f32)>> = vec![Vec::new(); ms2.len()];
+    for (j, i, f, s) in scored {
+        by_ms2[j].push((i, f, s));
+    }
+
+    by_ms2
+        .into_par_iter()
+        .map(|mut vec_i| {
+            if vec_i.is_empty() { return None; }
+            vec_i.sort_unstable_by(|a, b| {
+                // primary: score desc
+                match b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal) {
+                    Ordering::Equal => {
+                        // tie-breaks (deterministic):
+                        // 1) higher jaccard
+                        let ja = a.1.jacc_rt;
+                        let jb = b.1.jacc_rt;
+                        if (ja - jb).abs() > 1e-6 {
+                            return jb.partial_cmp(&ja).unwrap_or(Ordering::Equal);
+                        }
+                        // 2) if both have shape, higher s_shape
+                        let sa = if a.1.shape_ok { a.1.s_shape } else { 0.0 };
+                        let sb = if b.1.shape_ok { b.1.s_shape } else { 0.0 };
+                        if (sa - sb).abs() > 1e-6 {
+                            return sb.partial_cmp(&sa).unwrap_or(Ordering::Equal);
+                        }
+                        // 3) smaller RT apex delta
+                        let dra = a.1.rt_apex_delta_s;
+                        let drb = b.1.rt_apex_delta_s;
+                        if (dra - drb).abs() > 1e-6 {
+                            return dra.partial_cmp(&drb).unwrap_or(Ordering::Equal);
+                        }
+                        // 4) smaller IM apex delta
+                        let dia = a.1.im_apex_delta_scans;
+                        let dib = b.1.im_apex_delta_scans;
+                        if (dia - dib).abs() > 1e-6 {
+                            return dia.partial_cmp(&dib).unwrap_or(Ordering::Equal);
+                        }
+                        // 5) larger IM overlap
+                        let oa = a.1.im_overlap_scans;
+                        let ob = b.1.im_overlap_scans;
+                        if oa != ob {
+                            return ob.cmp(&oa);
+                        }
+                        // 6) higher MS1 intensity
+                        let ia = a.1.ms1_raw_sum;
+                        let ib = b.1.ms1_raw_sum;
+                        ib.partial_cmp(&ia).unwrap_or(Ordering::Equal)
+                    }
+                    ord => ord,
+                }
+            });
+            Some(vec_i[0].0)
+        })
+        .collect()
+}
+
+/// Build an MS1 → Vec<MS2> map from a winner list (ms2→best ms1).
+/// Returns a Vec<Vec<usize>> with length ms1.len(), where each entry lists MS2 indices.
+pub fn ms1_to_ms2_map(
+    ms1_len: usize,
+    ms2_to_best_ms1: &[Option<usize>],
+) -> Vec<Vec<usize>> {
+    let mut out = vec![Vec::<usize>::new(); ms1_len];
+    for (ms2_idx, maybe_ms1) in ms2_to_best_ms1.iter().enumerate() {
+        if let Some(i) = maybe_ms1 {
+            if *i < ms1_len {
+                out[*i].push(ms2_idx);
+            }
+        }
+    }
+    out
 }

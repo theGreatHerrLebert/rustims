@@ -323,7 +323,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         )
         return TofScanPlanGroup.from_py_ptr(py_plan)
 
-    def build_pseudo_spectra(
+    def build_pseudo_spectra_geom(
             self,
             ms1_clusters: Sequence[Any],
             ms2_clusters: Sequence[Any],
@@ -370,7 +370,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         if features is not None:
             feats_ptrs = [f.get_py_ptr() for f in features]
 
-        inner_res = self.__dataset.build_pseudo_spectra_from_clusters(
+        inner_res = self.__dataset.build_pseudo_spectra_from_clusters_geom(
             ms1_ptrs,
             ms2_ptrs,
             feats_ptrs,
@@ -400,6 +400,76 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         )
 
         # Wrap the PyPseudoBuildResult into the Python-level PseudoBuildResult
+        return PseudoBuildResult(inner_res)
+
+    def build_pseudo_spectra_xic(
+            self,
+            ms1_clusters: Sequence[Any],
+            ms2_clusters: Sequence[Any],
+            features: Sequence["SimpleFeature"] | None = None,
+            *,
+            top_n_fragments: int = 500,
+            # CandidateOpts
+            min_rt_jaccard: float = 0.0,
+            ms2_rt_guard_sec: float = 0.0,
+            rt_bucket_width: float = 1.0,
+            max_ms1_rt_span_sec: float | None = 60.0,
+            max_ms2_rt_span_sec: float | None = 60.0,
+            min_raw_sum: float = 1.0,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            # XicScoreOpts
+            w_rt: float = 0.45,
+            w_im: float = 0.45,
+            w_intensity: float = 0.10,
+            intensity_tau: float = 1.5,
+            min_total_score: float = 0.0,
+            use_rt: bool = True,
+            use_im: bool = True,
+            use_intensity: bool = True,
+    ) -> "PseudoBuildResult":
+        """
+        High-level DIA → pseudo-DDA builder (XIC-based scoring).
+
+        Returns a PseudoBuildResult:
+          - .pseudo_spectra → list[PseudoSpectrum]
+          - .assignment     → AssignmentResult
+        """
+
+        from imspy.timstof.clustering.data import PseudoBuildResult
+
+        ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
+        ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
+
+        feats_ptrs = None
+        if features is not None:
+            feats_ptrs = [f.get_py_ptr() for f in features]
+
+        inner_res = self.__dataset.build_pseudo_spectra_from_clusters_xic(
+            ms1_ptrs,
+            ms2_ptrs,
+            feats_ptrs,
+            float(min_rt_jaccard),
+            float(ms2_rt_guard_sec),
+            float(rt_bucket_width),
+            max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec,
+            float(min_raw_sum),
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            int(min_im_overlap_scans),
+            float(w_rt),
+            float(w_im),
+            float(w_intensity),
+            float(intensity_tau),
+            float(min_total_score),
+            bool(use_rt),
+            bool(use_im),
+            bool(use_intensity),
+            int(top_n_fragments),
+        )
+
         return PseudoBuildResult(inner_res)
 
     def build_pseudo_spectra_all_pairs(

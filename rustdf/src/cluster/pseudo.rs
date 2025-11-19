@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use rayon::prelude::*;
+use crate::cluster::candidates::CandidateOpts;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
-
+use crate::cluster::scoring::{assign_ms2_to_best_ms1_by_xic, enumerate_ms2_ms1_pairs_simple, XicScoreOpts};
+use crate::data::dia::TimsDatasetDIA;
 // ---------------------------------------------------------------------------
 // Basic helpers
 // ---------------------------------------------------------------------------
@@ -311,4 +313,51 @@ pub fn build_pseudo_spectra_from_pairs(
     });
 
     spectra
+}
+
+/// High-level entrypoint:
+/// 1) enumerate geometric/tile-based candidates
+/// 2) refine by XIC score (best precursor per fragment + cutoff)
+/// 3) build pseudo-spectra from the surviving pairs
+pub fn build_pseudo_spectra_with_xic(
+    ds: &TimsDatasetDIA,
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    features: &[SimpleFeature],
+    cand_opts: &CandidateOpts,
+    xic_opts: &XicScoreOpts,
+    pseudo_opts: &PseudoSpecOpts,
+) -> (Vec<PseudoSpectrum>, Vec<(usize, usize, f32)>) {
+    // 1) geometric / program-based candidates
+    let pairs_geom: Vec<(usize, usize)> =
+        enumerate_ms2_ms1_pairs_simple(ds, ms1, ms2, cand_opts);
+
+    if pairs_geom.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    // 2) XIC scoring + best-precursor-per-fragment + cutoff
+    let pairs_scored: Vec<(usize, usize, f32)> =
+        assign_ms2_to_best_ms1_by_xic(ms1, ms2, &pairs_geom, xic_opts);
+
+    if pairs_scored.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    // Drop scores for the pseudo-spectra builder (it just wants indices)
+    let final_pairs: Vec<(usize, usize)> = pairs_scored
+        .iter()
+        .map(|(ms2_idx, ms1_idx, _s)| (*ms2_idx, *ms1_idx))
+        .collect();
+
+    // 3) existing glue
+    let spectra = build_pseudo_spectra_from_pairs(
+        ms1,
+        ms2,
+        features,
+        &final_pairs,
+        pseudo_opts,
+    );
+
+    (spectra, pairs_scored)
 }

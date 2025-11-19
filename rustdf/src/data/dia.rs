@@ -16,11 +16,12 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
 use rayon::ThreadPoolBuilder;
-use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, PseudoBuildResult, ScoreOpts};
+use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, build_pseudo_spectra_end_to_end_xic, PseudoBuildResult, ScoreOpts};
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum};
-use crate::cluster::scoring::CandidateOpts;
+use crate::cluster::candidates::CandidateOpts;
+use crate::cluster::scoring::XicScoreOpts;
 
 #[derive(Clone, Debug)]
 pub struct ProgramSlice {
@@ -844,11 +845,10 @@ impl TimsDatasetDIA {
         )
     }
 
-    /// End-to-end DIA → pseudo-DDA builder tied to the dataset.
+    /// End-to-end DIA → pseudo-DDA builder (geometric scoring).
     ///
-    /// This is a thin wrapper around `build_pseudo_spectra_end_to_end`
-    /// with user-specified candidate & scoring options.
-    pub fn build_pseudo_spectra_from_clusters(
+    /// Thin wrapper around `build_pseudo_spectra_end_to_end`.
+    pub fn build_pseudo_spectra_from_clusters_geom(
         &self,
         ms1: &[ClusterResult1D],
         ms2: &[ClusterResult1D],
@@ -864,6 +864,29 @@ impl TimsDatasetDIA {
             features,
             cand_opts,
             score_opts,
+            pseudo_opts,
+        )
+    }
+
+    /// End-to-end DIA → pseudo-DDA builder (XIC-based scoring).
+    ///
+    /// Thin wrapper around `build_pseudo_spectra_end_to_end_xic`.
+    pub fn build_pseudo_spectra_from_clusters_xic(
+        &self,
+        ms1: &[ClusterResult1D],
+        ms2: &[ClusterResult1D],
+        features: Option<&[SimpleFeature]>,
+        cand_opts: &CandidateOpts,
+        xic_opts: &XicScoreOpts,
+        pseudo_opts: &PseudoSpecOpts,
+    ) -> PseudoBuildResult {
+        build_pseudo_spectra_end_to_end_xic(
+            self,
+            ms1,
+            ms2,
+            features,
+            cand_opts,
+            xic_opts,
             pseudo_opts,
         )
     }
