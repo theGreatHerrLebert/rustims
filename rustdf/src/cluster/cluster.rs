@@ -102,6 +102,11 @@ pub struct Eval1DOpts {
     /// Raw point attachment options.
     pub attach: Attach1DOptions,
     pub compute_mz_from_tof: bool,
+
+    /// Padding to add around the final windows (in units).
+    pub pad_rt_frames: usize,
+    pub pad_im_scans: usize,
+    pub pad_tof_bins: usize,
 }
 
 impl Default for Eval1DOpts {
@@ -114,6 +119,9 @@ impl Default for Eval1DOpts {
             attach_im_trace: false,
             attach: Attach1DOptions::default(),
             compute_mz_from_tof: false,
+            pad_rt_frames: 0,
+            pad_im_scans: 0,
+            pad_tof_bins: 0,
         }
     }
 }
@@ -668,39 +676,80 @@ pub fn bin_range_for_win(_scale: &TofScale, tof_win: (i32, i32)) -> (usize, usiz
 // Main evaluator (grid-based, CSR/TofScale)
 // ==========================================================
 
-pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1DOpts) -> ClusterResult1D {
+pub fn evaluate_spec_1d(
+    rt_frames: &RtFrames,
+    spec: &ClusterSpec1D,
+    opts: &Eval1DOpts,
+) -> ClusterResult1D {
     debug_assert!(rt_frames.is_consistent());
     let scale = &*rt_frames.scale;
 
-    let (bin_lo0, bin_hi0) = bin_range_for_win(scale, spec.tof_win);
+    let n_frames = rt_frames.frames.len();
+    let n_bins   = scale.num_bins();
+
+    // -------------------------------
+    // 0) Effective RT / IM / TOF windows with padding
+    // -------------------------------
+
+    // Start from spec RT window and clamp + pad in frame space
+    let mut rt_lo_eff = spec.rt_lo.min(n_frames.saturating_sub(1));
+    let mut rt_hi_eff = spec.rt_hi.min(n_frames.saturating_sub(1));
+    if rt_lo_eff > rt_hi_eff {
+        std::mem::swap(&mut rt_lo_eff, &mut rt_hi_eff);
+    }
+    if opts.pad_rt_frames > 0 && n_frames > 0 {
+        let pad = opts.pad_rt_frames;
+        rt_lo_eff = rt_lo_eff.saturating_sub(pad);
+        rt_hi_eff = (rt_hi_eff + pad).min(n_frames.saturating_sub(1));
+    }
+
+    // IM window – can pad without clamping to a global max (no bound known here).
+    let mut im_lo_eff = spec.im_lo;
+    let mut im_hi_eff = spec.im_hi;
+    if im_lo_eff > im_hi_eff {
+        std::mem::swap(&mut im_lo_eff, &mut im_hi_eff);
+    }
+    if opts.pad_im_scans > 0 {
+        let pad = opts.pad_im_scans;
+        im_lo_eff = im_lo_eff.saturating_sub(pad);
+        im_hi_eff = im_hi_eff.saturating_add(pad);
+    }
+
+    // TOF: start from spec.tof_win → CSR bin range, then pad and clamp to axis.
+    let (mut bin_lo0, mut bin_hi0) = bin_range_for_win(scale, spec.tof_win);
+    if opts.pad_tof_bins > 0 && n_bins > 0 {
+        let pad = opts.pad_tof_bins.min(n_bins.saturating_sub(1));
+        bin_lo0 = bin_lo0.saturating_sub(pad);
+        bin_hi0 = (bin_hi0 + pad).min(n_bins.saturating_sub(1));
+    }
 
     // --- 1) first pass accumulation ---------------------------------------
     let rt_marg1 = build_rt_marginal(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        rt_lo_eff,
+        rt_hi_eff,
         bin_lo0,
         bin_hi0,
-        spec.im_lo,
-        spec.im_hi,
+        im_lo_eff,
+        im_hi_eff,
     );
     let im_marg1 = build_im_marginal(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        rt_lo_eff,
+        rt_hi_eff,
         bin_lo0,
         bin_hi0,
-        spec.im_lo,
-        spec.im_hi,
+        im_lo_eff,
+        im_hi_eff,
     );
     let (axis_hist1, axis_centers1) = build_tof_hist(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        rt_lo_eff,
+        rt_hi_eff,
         bin_lo0,
         bin_hi0,
-        spec.im_lo,
-        spec.im_hi,
+        im_lo_eff,
+        im_hi_eff,
         scale,
     );
 
@@ -714,8 +763,8 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
     if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || ax_sum1 <= 0.0 {
         return ClusterResult1D {
             cluster_id,
-            rt_window: (spec.rt_lo, spec.rt_hi),
-            im_window: (spec.im_lo, spec.im_hi),
+            rt_window: (rt_lo_eff, rt_hi_eff),
+            im_window: (im_lo_eff, im_hi_eff),
             tof_window: (bin_lo0, bin_hi0),
 
             mz_window: None,
@@ -726,23 +775,22 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
 
             raw_sum: 0.0,
             volume_proxy: 0.0,
-            frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
+            frame_ids_used: rt_frames.frame_ids[rt_lo_eff..=rt_hi_eff].to_vec(),
             window_group: spec.window_group,
             parent_im_id: spec.parent_im_id,
             parent_rt_id: spec.parent_rt_id,
             ms_level: spec.ms_level,
             rt_axis_sec: opts
                 .attach_axes
-                .then_some(rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec()),
+                .then_some(rt_frames.rt_times[rt_lo_eff..=rt_hi_eff].to_vec()),
             im_axis_scans: opts
                 .attach_axes
-                .then_some((spec.im_lo..=spec.im_hi).collect()),
+                .then_some((im_lo_eff..=im_hi_eff).collect()),
             mz_axis_da: None,
             raw_points: None,
-
             rt_trace: opts
                 .attach_rt_trace
-                .then_some(thin_f32_vec(&rt_marg1, None)),     // or Some(rt_marg1.clone())
+                .then_some(thin_f32_vec(&rt_marg1, None)),
             im_trace: opts
                 .attach_im_trace
                 .then_some(thin_f32_vec(&im_marg1, None)),
@@ -769,30 +817,30 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
     // --- 3) re-accumulate in refined window -------------------------------
     let rt_marg = build_rt_marginal(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        rt_lo_eff,
+        rt_hi_eff,
         bin_lo,
         bin_hi,
-        spec.im_lo,
-        spec.im_hi,
+        im_lo_eff,
+        im_hi_eff,
     );
     let im_marg = build_im_marginal(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        rt_lo_eff,
+        rt_hi_eff,
         bin_lo,
         bin_hi,
-        spec.im_lo,
-        spec.im_hi,
+        im_lo_eff,
+        im_hi_eff,
     );
     let (axis_hist, _axis_centers_final) = build_tof_hist(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        rt_lo_eff,
+        rt_hi_eff,
         bin_lo,
         bin_hi,
-        spec.im_lo,
-        spec.im_hi,
+        im_lo_eff,
+        im_hi_eff,
         scale,
     );
 
@@ -809,7 +857,7 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
 
     // capture traces (possibly thinned)
     let rt_trace_opt = if opts.attach_rt_trace {
-        Some(thin_f32_vec(use_rt_marg, None))  // or Some(use_rt_marg.to_vec())
+        Some(thin_f32_vec(use_rt_marg, None))
     } else {
         None
     };
@@ -820,8 +868,8 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
     };
 
     // --- 4) final fits: RT/IM moments, axis argmax + FWHM σ ---------------
-    let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
-    let im_axis: Vec<usize> = (spec.im_lo..=spec.im_hi).collect();
+    let rt_times: Vec<f32> = rt_frames.rt_times[rt_lo_eff..=rt_hi_eff].to_vec();
+    let im_axis: Vec<usize> = (im_lo_eff..=im_hi_eff).collect();
     let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
 
     let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
@@ -858,7 +906,6 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
         min_sigma
     };
 
-    // derive window from μ ± k·σ and clamp to axis span
     let raw_lo = mu_raw - k_bounds * sigma_clamped;
     let raw_hi = mu_raw + k_bounds * sigma_clamped;
 
@@ -880,29 +927,26 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
 
     // sanitize + IM fallbacks
     let rt_mu_bounds =
-        if spec.rt_lo < rt_frames.rt_times.len() && spec.rt_hi < rt_frames.rt_times.len() {
-            Some((
-                rt_frames.rt_times[spec.rt_lo],
-                rt_frames.rt_times[spec.rt_hi],
-            ))
+        if rt_lo_eff < rt_frames.rt_times.len() && rt_hi_eff < rt_frames.rt_times.len() {
+            Some((rt_frames.rt_times[rt_lo_eff], rt_frames.rt_times[rt_hi_eff]))
         } else {
             None
         };
     let axis_mu_bounds = Some((axis_min, axis_max));
-    let im_mu_bounds = Some((spec.im_lo as f32, spec.im_hi as f32));
+    let im_mu_bounds = Some((im_lo_eff as f32, im_hi_eff as f32));
 
     sanitize_fit(&mut tof_fit, axis_mu_bounds, 1e-6, true);
     sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
     sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
 
     if im_fit.mu == 0.0 {
-        let lo = spec.im_lo as f32;
-        let hi = spec.im_hi as f32;
+        let lo = im_lo_eff as f32;
+        let hi = im_hi_eff as f32;
         im_fit.mu = if hi > lo { 0.5 * (lo + hi) } else { lo.max(1.0) };
     }
     if !im_fit.sigma.is_finite() || im_fit.sigma <= 0.0 {
         let k = opts.refine_k_sigma.max(1.0);
-        let width = (spec.im_hi.saturating_sub(spec.im_lo) as f32) + 1.0;
+        let width = (im_hi_eff.saturating_sub(im_lo_eff) as f32) + 1.0;
         let from_window = ((width - 1.0) / (2.0 * k)).max(0.0);
         let prior = spec.im_prior_sigma.unwrap_or(0.0).max(0.0);
         let mut s = prior.max(from_window).max(1e-3);
@@ -919,8 +963,8 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
 
     ClusterResult1D {
         cluster_id,
-        rt_window: (spec.rt_lo, spec.rt_hi),
-        im_window: (spec.im_lo, spec.im_hi),
+        rt_window: (rt_lo_eff, rt_hi_eff),
+        im_window: (im_lo_eff, im_hi_eff),
         tof_window: (use_bin_lo, use_bin_hi),
 
         mz_window: None,   // not set here
@@ -931,7 +975,7 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
 
         raw_sum,
         volume_proxy,
-        frame_ids_used: rt_frames.frame_ids[spec.rt_lo..=spec.rt_hi].to_vec(),
+        frame_ids_used: rt_frames.frame_ids[rt_lo_eff..=rt_hi_eff].to_vec(),
         window_group: spec.window_group,
         parent_im_id: spec.parent_im_id,
         parent_rt_id: spec.parent_rt_id,

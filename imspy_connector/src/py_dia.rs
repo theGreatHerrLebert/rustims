@@ -1676,6 +1676,9 @@ impl PyTimsDatasetDIA {
         // matching constraint + threads
         require_rt_overlap=true,
         compute_mz_from_tof=true,
+        pad_rt_frames=0,
+        pad_im_scans=0,
+        pad_tof_bins=0,
         num_threads=0,
         min_im_span=12,
     ))]
@@ -1710,6 +1713,9 @@ impl PyTimsDatasetDIA {
         // matching + threads
         require_rt_overlap: bool,
         compute_mz_from_tof: bool,
+        pad_rt_frames: usize,
+        pad_im_scans: usize,
+        pad_tof_bins: usize,
         num_threads: usize,
         min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
@@ -1759,6 +1765,9 @@ impl PyTimsDatasetDIA {
             compute_mz_from_tof,
             attach_im_trace,
             attach_rt_trace,
+            pad_rt_frames,
+            pad_im_scans,
+            pad_tof_bins,
         };
 
         // ---- Run the core DIA clustering --------------------------------
@@ -1795,6 +1804,9 @@ impl PyTimsDatasetDIA {
         attach_rt_trace=false,
         require_rt_overlap=true,
         compute_mz_from_tof=true,
+        pad_rt_frames=0,
+        pad_im_scans=0,
+        pad_tof_bins=0,
         num_threads=0,
         min_im_span=12,
     ))]
@@ -1828,6 +1840,9 @@ impl PyTimsDatasetDIA {
         // matching + threads
         require_rt_overlap: bool,
         compute_mz_from_tof: bool,
+        pad_rt_frames: usize,
+        pad_im_scans: usize,
+        pad_tof_bins: usize,
         num_threads: usize,
         min_im_span: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
@@ -1877,6 +1892,9 @@ impl PyTimsDatasetDIA {
             compute_mz_from_tof,
             attach_im_trace,
             attach_rt_trace,
+            pad_rt_frames,
+            pad_im_scans,
+            pad_tof_bins,
         };
 
         // ---- Run the core MS1 clustering --------------------------------
