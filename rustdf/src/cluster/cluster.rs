@@ -769,30 +769,30 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
     // --- 3) re-accumulate in refined window -------------------------------
     let rt_marg = build_rt_marginal(
         &rt_frames.frames,
-        spec.rt_lo - 1,
-        spec.rt_hi + 2,
+        spec.rt_lo,
+        spec.rt_hi,
         bin_lo,
         bin_hi,
-        spec.im_lo - 7,
-        spec.im_hi + 7,
+        spec.im_lo,
+        spec.im_hi,
     );
     let im_marg = build_im_marginal(
         &rt_frames.frames,
-        spec.rt_lo - 1,
-        spec.rt_hi + 2,
+        spec.rt_lo,
+        spec.rt_hi,
         bin_lo,
         bin_hi,
-        spec.im_lo - 7,
-        spec.im_hi + 7,
+        spec.im_lo,
+        spec.im_hi,
     );
     let (axis_hist, _axis_centers_final) = build_tof_hist(
         &rt_frames.frames,
-        spec.rt_lo - 1,
-        spec.rt_hi + 2,
+        spec.rt_lo,
+        spec.rt_hi,
         bin_lo,
         bin_hi,
-        spec.im_lo - 7,
-        spec.im_hi + 7,
+        spec.im_lo,
+        spec.im_hi,
         scale,
     );
 
