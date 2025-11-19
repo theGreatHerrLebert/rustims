@@ -465,6 +465,11 @@ def run_precursor(ds, cfg):
         compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
         num_threads=int(c.get("num_threads", 0)),
         min_im_span=int(c.get("min_im_span", 10)),
+        attach_im_xic=True,
+        attach_rt_xic=True,
+        pad_tof_bins=0,
+        pad_im_scans=0,
+        pad_rt_frames=5,
     )
 
     # ---- precursor output dirs: <root>/precursor/ ----
@@ -562,6 +567,11 @@ def run_fragments(ds, cfg):
                 compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
                 num_threads=int(c.get("num_threads", 0)),
                 min_im_span=int(c.get("min_im_span", 10)),
+                attach_im_xic=True,
+                attach_rt_xic=True,
+                pad_tof_bins=0,
+                pad_im_scans=0,
+                pad_rt_frames=5,
             )
 
             # ---- per-WG binary save ----
