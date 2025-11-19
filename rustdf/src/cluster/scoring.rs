@@ -166,49 +166,66 @@ pub fn xic_match_score(
     }
 }
 
-/// For each MS2 cluster, keep the best MS1 by XIC score, and apply a cutoff.
-/// Returns (ms2_idx, ms1_idx, score) triples.
 pub fn assign_ms2_to_best_ms1_by_xic(
     ms1: &[ClusterResult1D],
     ms2: &[ClusterResult1D],
     pairs: &[(usize, usize)],
     opts: &XicScoreOpts,
 ) -> Vec<(usize, usize, f32)> {
-    let mut best: HashMap<usize, (usize, f32)> = HashMap::new();
+    if ms1.is_empty() || ms2.is_empty() || pairs.is_empty() {
+        return Vec::new();
+    }
+
+    // Precompute RT-integrated intensities (or raw_sum fallback) once per cluster.
+    let ms1_int = precompute_intensities(ms1);
+    let ms2_int = precompute_intensities(ms2);
+
+    // Dense best-hit buffer: one slot per MS2, no hashing.
+    let mut best: Vec<Option<(usize, f32)>> = vec![None; ms2.len()];
 
     for &(ms2_idx, ms1_idx) in pairs {
         if ms1_idx >= ms1.len() || ms2_idx >= ms2.len() {
             continue;
         }
 
-        let s = match xic_match_score(&ms1[ms1_idx], &ms2[ms2_idx], opts) {
+        // Use the precomputed-intensity version of the scorer.
+        let s = match xic_match_score_precomputed(
+            ms1_idx,
+            ms2_idx,
+            ms1,
+            ms2,
+            &ms1_int,
+            &ms2_int,
+            opts,
+        ) {
             Some(v) => v,
             None => continue,
         };
 
+        // You can drop this if you already enforce the cutoff in xic_match_score_precomputed.
         if s < opts.min_total_score {
             continue;
         }
 
-        best.entry(ms2_idx)
-            .and_modify(|entry| {
-                if s > entry.1 {
-                    *entry = (ms1_idx, s);
-                }
-            })
-            .or_insert((ms1_idx, s));
+        match &mut best[ms2_idx] {
+            Some((_best_i, best_s)) if s <= *best_s => {
+                // keep existing winner
+            }
+            slot => {
+                // new best (or first) hit for this MS2
+                *slot = Some((ms1_idx, s));
+            }
+        }
     }
 
-    let mut out: Vec<(usize, usize, f32)> = best
-        .into_iter()
-        .map(|(ms2_idx, (ms1_idx, s))| (ms2_idx, ms1_idx, s))
-        .collect();
-
-    out.sort_unstable_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then(a.1.cmp(&b.1))
-    });
-
+    // Build result already sorted by ms2_idx.
+    let mut out = Vec::new();
+    out.reserve(pairs.len().min(ms2.len()));
+    for (ms2_idx, maybe) in best.into_iter().enumerate() {
+        if let Some((ms1_idx, s)) = maybe {
+            out.push((ms2_idx, ms1_idx, s));
+        }
+    }
     out
 }
 
@@ -827,4 +844,85 @@ pub fn ms1_to_ms2_map(
         }
     }
     out
+}
+
+fn precompute_intensities(clusters: &[ClusterResult1D]) -> Vec<f32> {
+    clusters
+        .par_iter()
+        .map(|c| {
+            if let Some(ref rt) = c.rt_trace {
+                rt.iter().fold(0.0f32, |acc, x| acc + x.max(0.0))
+            } else {
+                c.raw_sum.max(0.0)
+            }
+        })
+        .collect()
+}
+
+pub fn xic_match_score_precomputed(
+    ms1_idx: usize,
+    ms2_idx: usize,
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    ms1_int: &[f32],
+    ms2_int: &[f32],
+    opts: &XicScoreOpts,
+) -> Option<f32> {
+    let mut score = 0.0f32;
+    let mut w_sum = 0.0f32;
+
+    let c1 = &ms1[ms1_idx];
+    let c2 = &ms2[ms2_idx];
+
+    // RT XIC
+    if opts.use_rt {
+        if let (Some(ref rt1), Some(ref rt2)) = (&c1.rt_trace, &c2.rt_trace) {
+            if let Some(r) = pearson_corr_z(rt1, rt2) {
+                if r.is_finite() {
+                    let s = 0.5 * (r + 1.0);
+                    score += opts.w_rt * s;
+                    w_sum += opts.w_rt;
+                }
+            }
+        }
+    }
+
+    // IM XIC
+    if opts.use_im {
+        if let (Some(ref im1), Some(ref im2)) = (&c1.im_trace, &c2.im_trace) {
+            if let Some(r) = pearson_corr_z(im1, im2) {
+                if r.is_finite() {
+                    let s = 0.5 * (r + 1.0);
+                    score += opts.w_im * s;
+                    w_sum += opts.w_im;
+                }
+            }
+        }
+    }
+
+    // Intensity ratio using precomputed integrals
+    if opts.use_intensity && opts.w_intensity > 0.0 && opts.intensity_tau > 0.0 {
+        let i1 = ms1_int[ms1_idx];
+        let i2 = ms2_int[ms2_idx];
+
+        if i1 > 0.0 && i2 > 0.0 {
+            let ratio = (i2 / i1).max(1e-6);
+            let d = ratio.ln().abs();
+            let s = (-d / opts.intensity_tau).exp();
+            if s.is_finite() {
+                score += opts.w_intensity * s;
+                w_sum += opts.w_intensity;
+            }
+        }
+    }
+
+    if w_sum <= 0.0 {
+        return None;
+    }
+    let final_score = score / w_sum;
+    if !final_score.is_finite() {
+        None
+    } else {
+        Some(final_score.clamp(0.0, 1.0))
+    }
 }
