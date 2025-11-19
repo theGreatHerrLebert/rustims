@@ -300,6 +300,18 @@ impl PyClusterResult1D {
             .clone()
             .map(|rp| PyRawPoints { inner: rp })
     }
+
+    // Optional RT XIC, aligned with rt_window and rt_axis_sec (if present).
+    #[getter]
+    fn rt_xic(&self) -> Option<Vec<f32>> {
+        self.inner.rt_trace.clone()
+    }
+
+    /// Optional IM trace, aligned with im_window and im_axis_scans (if present).
+    #[getter]
+    fn im_xic(&self) -> Option<Vec<f32>> {
+        self.inner.im_trace.clone()
+    }
 }
 
 #[pyclass]
@@ -1659,6 +1671,8 @@ impl PyTimsDatasetDIA {
         attach_axes=true,
         attach_points=false,
         attach_max_points=None,
+        attach_im_trace=false,
+        attach_rt_trace=false,
         // matching constraint + threads
         require_rt_overlap=true,
         compute_mz_from_tof=true,
@@ -1691,6 +1705,8 @@ impl PyTimsDatasetDIA {
         attach_axes: bool,
         attach_points: bool,
         attach_max_points: Option<usize>,
+        attach_im_trace: bool,
+        attach_rt_trace: bool,
         // matching + threads
         require_rt_overlap: bool,
         compute_mz_from_tof: bool,
@@ -1741,6 +1757,8 @@ impl PyTimsDatasetDIA {
                 max_points: attach_max_points,
             },
             compute_mz_from_tof,
+            attach_im_trace,
+            attach_rt_trace,
         };
 
         // ---- Run the core DIA clustering --------------------------------
@@ -1773,6 +1791,8 @@ impl PyTimsDatasetDIA {
         attach_axes=true,
         attach_points=false,
         attach_max_points=None,
+        attach_im_trace=false,
+        attach_rt_trace=false,
         require_rt_overlap=true,
         compute_mz_from_tof=true,
         num_threads=0,
@@ -1803,6 +1823,8 @@ impl PyTimsDatasetDIA {
         attach_axes: bool,
         attach_points: bool,
         attach_max_points: Option<usize>,
+        attach_im_trace: bool,
+        attach_rt_trace: bool,
         // matching + threads
         require_rt_overlap: bool,
         compute_mz_from_tof: bool,
@@ -1853,6 +1875,8 @@ impl PyTimsDatasetDIA {
                 max_points: attach_max_points,
             },
             compute_mz_from_tof,
+            attach_im_trace,
+            attach_rt_trace,
         };
 
         // ---- Run the core MS1 clustering --------------------------------

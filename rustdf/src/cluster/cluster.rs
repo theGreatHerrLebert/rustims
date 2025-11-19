@@ -78,6 +78,16 @@ pub struct Attach1DOptions {
     pub max_points: Option<usize>, // thinning cap
 }
 
+impl  Attach1DOptions {
+    pub fn default() -> Self {
+        Self {
+            attach_points: false,
+            attach_axes: false,
+            max_points: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Eval1DOpts {
     /// Whether to do a 2nd-pass refine of the TOF/axis window around the argmax.
@@ -86,9 +96,26 @@ pub struct Eval1DOpts {
     pub refine_k_sigma: f32,
     /// Whether to attach RT / IM / axis centers into the result.
     pub attach_axes: bool,
+    /// Whether to attach RT and/or IM traces (XICs).
+    pub attach_rt_trace: bool,
+    pub attach_im_trace: bool,
     /// Raw point attachment options.
     pub attach: Attach1DOptions,
     pub compute_mz_from_tof: bool,
+}
+
+impl Default for Eval1DOpts {
+    fn default() -> Self {
+        Self {
+            refine_tof_once: true,
+            refine_k_sigma: 3.0,
+            attach_axes: false,
+            attach_rt_trace: false,
+            attach_im_trace: false,
+            attach: Attach1DOptions::default(),
+            compute_mz_from_tof: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +185,14 @@ pub struct ClusterResult1D {
 
     /// Optional attachment of raw points (only set if requested elsewhere).
     pub raw_points: Option<RawPoints>,
+
+    /// Optional RT XIC (intensities along rt_window).
+    #[serde(default)]
+    pub rt_trace: Option<Vec<f32>>,
+
+    /// Optional IM trace (intensities along im_window).
+    #[serde(default)]
+    pub im_trace: Option<Vec<f32>>,
 }
 
 pub fn decorate_with_mz_for_cluster<D: IndexConverter>(
@@ -704,6 +739,13 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
                 .then_some((spec.im_lo..=spec.im_hi).collect()),
             mz_axis_da: None,
             raw_points: None,
+
+            rt_trace: opts
+                .attach_rt_trace
+                .then_some(thin_f32_vec(&rt_marg1, None)),     // or Some(rt_marg1.clone())
+            im_trace: opts
+                .attach_im_trace
+                .then_some(thin_f32_vec(&im_marg1, None)),
         };
     }
 
@@ -727,30 +769,30 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
     // --- 3) re-accumulate in refined window -------------------------------
     let rt_marg = build_rt_marginal(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        spec.rt_lo - 1,
+        spec.rt_hi + 2,
         bin_lo,
         bin_hi,
-        spec.im_lo,
-        spec.im_hi,
+        spec.im_lo - 7,
+        spec.im_hi + 7,
     );
     let im_marg = build_im_marginal(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        spec.rt_lo - 1,
+        spec.rt_hi + 2,
         bin_lo,
         bin_hi,
-        spec.im_lo,
-        spec.im_hi,
+        spec.im_lo - 7,
+        spec.im_hi + 7,
     );
     let (axis_hist, _axis_centers_final) = build_tof_hist(
         &rt_frames.frames,
-        spec.rt_lo,
-        spec.rt_hi,
+        spec.rt_lo - 1,
+        spec.rt_hi + 2,
         bin_lo,
         bin_hi,
-        spec.im_lo,
-        spec.im_hi,
+        spec.im_lo - 7,
+        spec.im_hi + 7,
         scale,
     );
 
@@ -764,6 +806,18 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
         } else {
             (bin_lo, bin_hi, &rt_marg, &im_marg, &axis_hist, &axis_centers2)
         };
+
+    // capture traces (possibly thinned)
+    let rt_trace_opt = if opts.attach_rt_trace {
+        Some(thin_f32_vec(use_rt_marg, None))  // or Some(use_rt_marg.to_vec())
+    } else {
+        None
+    };
+    let im_trace_opt = if opts.attach_im_trace {
+        Some(thin_f32_vec(use_im_marg, None))
+    } else {
+        None
+    };
 
     // --- 4) final fits: RT/IM moments, axis argmax + FWHM σ ---------------
     let rt_times: Vec<f32> = rt_frames.rt_times[spec.rt_lo..=spec.rt_hi].to_vec();
@@ -886,6 +940,8 @@ pub fn evaluate_spec_1d(rt_frames: &RtFrames, spec: &ClusterSpec1D, opts: &Eval1
         im_axis_scans: opts.attach_axes.then_some(im_axis),
         mz_axis_da: None,  // not set here
         raw_points: None,
+        rt_trace: rt_trace_opt,
+        im_trace: im_trace_opt,
     }
 }
 
@@ -1338,4 +1394,20 @@ pub fn attach_raw_points_for_spec_1d_in_ctx(
     }
 
     pts
+}
+
+#[inline]
+fn thin_f32_vec(v: &[f32], cap: Option<usize>) -> Vec<f32> {
+    let n = v.len();
+    let stride = cap.map(|c| thin_stride(n, c)).unwrap_or(1);
+    if stride <= 1 {
+        return v.to_vec();
+    }
+    let mut out = Vec::with_capacity((n + stride - 1) / stride);
+    let mut i = 0usize;
+    while i < n {
+        out.push(v[i]);
+        i += stride;
+    }
+    out
 }

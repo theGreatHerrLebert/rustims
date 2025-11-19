@@ -946,6 +946,16 @@ class ClusterResult1D:
     def parent_rt_id(self):
         return self._py.parent_rt_id
 
+    @property
+    def rt_xic(self) -> Optional[np.ndarray]:
+        arr = self._py.rt_xic  # property, may be None
+        return None if arr is None else np.asarray(arr, dtype=np.float32)
+
+    @property
+    def im_xic(self) -> Optional[np.ndarray]:
+        arr = self._py.im_xic  # property, may be None
+        return None if arr is None else np.asarray(arr, dtype=np.float32)
+
     # --- axes (may be None) ----------------------------------------------
     def frame_ids_used(self) -> np.ndarray:
         # NOTE: now a property, *not* a method
