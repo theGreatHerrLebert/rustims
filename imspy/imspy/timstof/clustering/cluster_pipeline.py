@@ -458,7 +458,7 @@ def run_precursor(ds, cfg):
         tof_hist_bins=int(c.get("tof_hist_bins", 64)),
         refine_tof_once=bool(c.get("refine_tof_once", True)),
         refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
-        attach_axes=attach_raw,
+        attach_axes=True,
         attach_points=attach_raw,
         attach_max_points=int(c.get("attach_max_points", 512)),
         require_rt_overlap=bool(c.get("require_rt_overlap", True)),
