@@ -111,6 +111,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             # pairing + threads
             require_rt_overlap: bool = True,
             compute_mz_from_tof: bool = True,
+            pad_rt_frames: int = 0,
+            pad_im_scans: int = 0,
+            pad_tof_bins: int = 0,
             num_threads: int = 0,
             min_im_span: int = 10,
     ):
@@ -161,6 +164,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_rt_xic),
             bool(require_rt_overlap),
             bool(compute_mz_from_tof),
+            int(pad_rt_frames),
+            int(pad_im_scans),
+            int(pad_tof_bins),
             int(num_threads),
             int(min_im_span),
         )
@@ -196,6 +202,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             # pairing + threads
             require_rt_overlap: bool = True,
             compute_mz_from_tof: bool = True,
+            pad_rt_frames: int = 0,
+            pad_im_scans: int = 0,
+            pad_tof_bins: int = 0,
             num_threads: int = 0,
             min_im_span: int = 10,
     ):
@@ -243,6 +252,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             bool(attach_rt_xic),
             bool(require_rt_overlap),
             bool(compute_mz_from_tof),
+            int(pad_rt_frames),
+            int(pad_im_scans),
+            int(pad_tof_bins),
             int(num_threads),
             int(min_im_span),
         )
