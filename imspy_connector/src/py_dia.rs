@@ -1671,8 +1671,8 @@ impl PyTimsDatasetDIA {
         attach_axes=true,
         attach_points=false,
         attach_max_points=None,
-        attach_im_trace=false,
-        attach_rt_trace=false,
+            attach_im_trace=false,
+            attach_rt_trace=false,
         // matching constraint + threads
         require_rt_overlap=true,
         compute_mz_from_tof=true,
