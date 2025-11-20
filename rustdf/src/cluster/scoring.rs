@@ -574,6 +574,10 @@ impl PrecursorSearchIndex {
                 let tb = ms2_tb.clone();
                 let dia_index = idx.dia_index.clone();
 
+                // NEW: program slices for this group, shared across MS2 in this group
+                let slices_vec = dia_index.program_slices_for_group(g);
+                let slices = Arc::new(slices_vec);
+
                 js.into_par_iter().flat_map(move |j| {
                     let (mut t2_lo, mut t2_hi) = tb[j];
                     if t2_lo.is_finite() {
@@ -590,6 +594,7 @@ impl PrecursorSearchIndex {
                     hits.dedup();
 
                     let mask = mask_arc.clone();
+                    let slices = slices.clone();
 
                     let mut local = Vec::<(usize, usize)>::with_capacity(16);
                     for i in hits {
@@ -656,14 +661,13 @@ impl PrecursorSearchIndex {
                             }
                         }
 
-                        // ---- NEW: tile-level physical check ----
+                        // ---- Tile-level physical check ----
                         let prec_mz = match cluster_mz_mu(&ms1[i]) {
                             Some(m) if m.is_finite() && m > 0.0 => m,
                             _ => continue,
                         };
 
-                        // We now require the **IM apex** of the precursor to lie inside some tile
-                        // in this window group, not just any overlap of the IM window.
+                        // Require the precursor IM apex to lie inside some tile
                         let prec_im_apex = ms1[i].im_fit.mu;
                         if !prec_im_apex.is_finite() {
                             continue;
@@ -679,24 +683,59 @@ impl PrecursorSearchIndex {
                             continue;
                         }
 
-                        // Tiles where this fragment cluster could appear in g (still window-based)
+                        // Tiles where this fragment cluster could appear in g (window-based)
                         let frag_tiles = dia_index.tiles_for_fragment_in_group(g, im2);
                         if frag_tiles.is_empty() {
                             continue;
                         }
 
-                        // At least one shared tile index
+                        // At least one shared tile index (physical co-occurrence)
                         let mut ok = false;
-                        'outer: for t in &prec_tiles {
+                        for t in &prec_tiles {
                             if frag_tiles.contains(t) {
                                 ok = true;
-                                break 'outer;
+                                break;
                             }
                         }
                         if !ok {
                             continue;
                         }
 
+                        // NEW: reject fragments whose own selection lies in the same isolation tile
+                        // as the precursor (to avoid unfragmented precursor intensity in MS2).
+                        if opts.reject_frag_inside_precursor_tile {
+                            if let Some(frag_mz) = cluster_mz_mu(&ms2[j]) {
+                                if frag_mz.is_finite() && frag_mz > 0.0 {
+                                    let mut reject = false;
+
+                                    // only tiles in intersection prec_tiles ∩ frag_tiles
+                                    for &tile_idx in &prec_tiles {
+                                        if !frag_tiles.contains(&tile_idx) {
+                                            continue;
+                                        }
+                                        if tile_idx >= slices.len() {
+                                            continue;
+                                        }
+                                        let s = &slices[tile_idx]; // ProgramSlice { mz_lo, mz_hi, scan_lo, scan_hi }
+
+                                        if (frag_mz as f64) >= s.mz_lo
+                                            && (frag_mz as f64) <= s.mz_hi
+                                        {
+                                            // fragment looks like it's still inside the
+                                            // precursor's isolation tile -> drop this pair
+                                            reject = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if reject {
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Survives all guards
                         local.push((j, i));
                     }
 

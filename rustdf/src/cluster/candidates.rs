@@ -71,6 +71,8 @@ pub fn best_ms1_for_each_ms2_any(
 
 /// Options for the simple candidate enumeration.
 /// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
+/// Options for the simple candidate enumeration.
+/// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
 #[derive(Clone, Debug)]
 pub struct CandidateOpts {
     /// Require at least this Jaccard in RT (set 0.0 for “any overlap”).
@@ -84,13 +86,19 @@ pub struct CandidateOpts {
     pub max_ms2_rt_span_sec: Option<f64>,
     pub min_raw_sum: f32,
 
-    // ---- NEW tight guards ----
+    // ---- tight guards ----
     /// Maximum allowed |rt_apex_MS1 - rt_apex_MS2| in seconds (None disables).
     pub max_rt_apex_delta_sec: Option<f32>,
     /// Maximum allowed |im_apex_MS1 - im_apex_MS2| in global scans (None disables).
     pub max_scan_apex_delta: Option<usize>,
     /// Require at least this many scan-overlap between MS1 and MS2 IM windows.
     pub min_im_overlap_scans: usize,
+
+    /// If true, drop pairs where the fragment cluster's **own** selection
+    /// (mz, scan) lies inside the same DIA program slice that could select
+    /// the precursor. This suppresses residual, unfragmented precursor
+    /// intensity being treated as a fragment.
+    pub reject_frag_inside_precursor_tile: bool,
 }
 
 impl Default for CandidateOpts {
@@ -103,10 +111,11 @@ impl Default for CandidateOpts {
             max_ms2_rt_span_sec: Some(60.0),
             min_raw_sum: 1.0,
 
-            // sensible, but conservative defaults
-            max_rt_apex_delta_sec: Some(2.0), // tighten to taste
-            max_scan_apex_delta: Some(6),     // ~ few IM scans
-            min_im_overlap_scans: 1,          // at least touch
+            max_rt_apex_delta_sec: Some(2.0),
+            max_scan_apex_delta: Some(6),
+            min_im_overlap_scans: 1,
+
+            reject_frag_inside_precursor_tile: false,
         }
     }
 }
@@ -328,6 +337,7 @@ pub fn build_pseudo_spectra_all_pairs(
         max_rt_apex_delta_sec: None,
         max_scan_apex_delta:   None,
         min_im_overlap_scans:  1,
+        reject_frag_inside_precursor_tile: true,
     };
 
     // 1) Enumerate all program-legal candidates with hard guards.
