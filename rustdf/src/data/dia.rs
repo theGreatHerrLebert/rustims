@@ -19,7 +19,7 @@ use rayon::ThreadPoolBuilder;
 use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, build_pseudo_spectra_end_to_end_xic, PseudoBuildResult, ScoreOpts};
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
 use crate::cluster::feature::SimpleFeature;
-use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum};
+use crate::cluster::pseudo::{PseudoSpecOpts};
 use crate::cluster::candidates::CandidateOpts;
 use crate::cluster::scoring::XicScoreOpts;
 
@@ -898,7 +898,7 @@ impl TimsDatasetDIA {
         ms2: &[ClusterResult1D],
         features: Option<&[SimpleFeature]>,
         pseudo_opts: &PseudoSpecOpts,
-    ) -> Vec<PseudoSpectrum> {
+    ) -> PseudoBuildResult {
         build_pseudo_spectra_all_pairs(self, ms1, ms2, features, pseudo_opts)
     }
 

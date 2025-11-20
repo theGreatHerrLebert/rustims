@@ -268,13 +268,23 @@ pub(crate) fn safe_log1p(x: f32) -> f32 {
 // End-to-end pseudo-spectra builders
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// End-to-end pseudo-spectra builders
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Debug)]
 pub struct AssignmentResult {
     /// All enumerated pairs (ms2_idx, ms1_idx) after your hard guards.
     pub pairs: Vec<(usize, usize)>,
     /// For each MS2 j, the chosen MS1 index (or None if no candidate).
+    ///
+    /// NOTE: in non-competitive "all pairs" mode, this is intentionally
+    /// left as `None` for all entries, because there is no unique best.
     pub ms2_best_ms1: Vec<Option<usize>>,
     /// For each MS1 i, the list of MS2 indices assigned to it.
+    ///
+    /// In "all pairs" mode this is simply the inverted candidate list, so
+    /// each MS2 may appear in multiple MS1 buckets.
     pub ms1_to_ms2: Vec<Vec<usize>>,
 }
 
@@ -287,23 +297,26 @@ pub struct PseudoBuildResult {
     pub pseudo_spectra: Vec<PseudoSpectrum>,
 }
 
-/// NON-COMPETITIVE builder: mainly for debugging.
+/// NON-COMPETITIVE builder: mainly for debugging / exploration.
 ///
 /// Links *all* MS1–MS2 pairs that
 ///   - are program-legal (same window group, isolation & scans),
 ///   - satisfy candidate guards (RT/IM overlap etc.),
 /// and then groups them into pseudo-spectra without any competition.
 ///
-/// CONSEQUENCE:
+/// CONSEQUENCES:
 ///   - An MS2 cluster may contribute to **multiple** precursors.
-///   - Use `build_pseudo_spectra_end_to_end` for a competitive, 1:1 assignment.
+///   - `assignment.ms2_best_ms1` is left as `None` for all MS2 indices.
+///   - `assignment.ms1_to_ms2[i]` contains **all** MS2 indices linked to MS1 i.
+///   - Use `build_pseudo_spectra_end_to_end{,_xic}` for competitive, 1:1 assignment.
 pub fn build_pseudo_spectra_all_pairs(
     ds: &TimsDatasetDIA,
     ms1: &[ClusterResult1D],
     ms2: &[ClusterResult1D],
     features: Option<&[SimpleFeature]>,
     pseudo_opts: &PseudoSpecOpts,
-) -> Vec<PseudoSpectrum> {
+) -> PseudoBuildResult {
+    // Hard-coded "wide" candidate guards: any reasonable RT/IM overlap is allowed.
     let cand_opts = CandidateOpts {
         min_rt_jaccard: 0.0,
         ms2_rt_guard_sec: 0.0,
@@ -317,19 +330,57 @@ pub fn build_pseudo_spectra_all_pairs(
         min_im_overlap_scans:  1,
     };
 
+    // 1) Enumerate all program-legal candidates with hard guards.
     let idx = PrecursorSearchIndex::build(ds, ms1, &cand_opts);
-    let pairs = idx.enumerate_pairs(ms1, ms2, &cand_opts);
+    let pairs = idx.enumerate_pairs(ms1, ms2, &cand_opts); // Vec<(ms2_idx, ms1_idx)>
 
+    // trivial fast-path: nothing links to anything
+    if pairs.is_empty() {
+        return PseudoBuildResult {
+            assignment: AssignmentResult {
+                pairs,
+                ms2_best_ms1: vec![None; ms2.len()],
+                ms1_to_ms2: vec![Vec::new(); ms1.len()],
+            },
+            pseudo_spectra: Vec::new(),
+        };
+    }
+
+    // 2) Build pseudo spectra from *all* pairs (no competition).
     let empty_feats: &[SimpleFeature] = &[];
     let feat_slice = features.unwrap_or(empty_feats);
 
-    build_pseudo_spectra_from_pairs(
+    let pseudo_spectra = build_pseudo_spectra_from_pairs(
         ms1,
         ms2,
         feat_slice,
         &pairs,
         pseudo_opts,
-    )
+    );
+
+    // 3) Build a non-competitive assignment view.
+    //
+    // - ms2_best_ms1: no unique best in all-pairs mode → all None.
+    // - ms1_to_ms2: for each MS1 i, list all MS2 indices linked to it.
+    let mut ms1_to_ms2: Vec<Vec<usize>> = vec![Vec::new(); ms1.len()];
+    for (ms2_idx, ms1_idx) in &pairs {
+        if *ms1_idx < ms1_to_ms2.len() {
+            ms1_to_ms2[*ms1_idx].push(*ms2_idx);
+        }
+    }
+
+    let ms2_best_ms1 = vec![None; ms2.len()];
+
+    let assignment = AssignmentResult {
+        pairs,
+        ms2_best_ms1,
+        ms1_to_ms2,
+    };
+
+    PseudoBuildResult {
+        assignment,
+        pseudo_spectra,
+    }
 }
 
 /// End-to-end, **geometric** competitive builder:

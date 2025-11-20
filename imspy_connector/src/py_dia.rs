@@ -2197,7 +2197,7 @@ impl PyTimsDatasetDIA {
         ms2_clusters: Vec<Py<PyClusterResult1D>>,
         features: Option<Vec<Py<PySimpleFeature>>>,
         top_n_fragments: usize,
-    ) -> PyResult<Vec<Py<PyPseudoSpectrum>>> {
+    ) -> PyResult<PyPseudoBuildResult> {
         // Unwrap MS1 / MS2
         let rust_ms1: Vec<ClusterResult1D> = ms1_clusters
             .into_iter()
@@ -2223,21 +2223,14 @@ impl PyTimsDatasetDIA {
         };
 
         // Call dataset-level all-pairs builder
-        let spectra = self.inner.build_pseudo_spectra_all_pairs_from_clusters(
+        let result = self.inner.build_pseudo_spectra_all_pairs_from_clusters(
             &rust_ms1,
             &rust_ms2,
             rust_feats.as_deref(),
             &pseudo_opts,
         );
 
-        // Wrap into PyPseudoSpectrum
-        let mut out: Vec<Py<PyPseudoSpectrum>> = Vec::with_capacity(spectra.len());
-        for s in spectra {
-            let py_obj = Py::new(py, PyPseudoSpectrum { inner: s })?;
-            out.push(py_obj);
-        }
-
-        Ok(out)
+        Ok(PyPseudoBuildResult { inner: result })
     }
 
     /// Build a dense TOF×RT grid over all PRECURSOR (MS1) frames.
