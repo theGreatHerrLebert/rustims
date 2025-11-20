@@ -1681,6 +1681,7 @@ impl PyTimsDatasetDIA {
         pad_tof_bins=0,
         num_threads=0,
         min_im_span=12,
+        rt_pad_frames=5,
     ))]
     pub fn clusters_for_group(
         &self,
@@ -1718,6 +1719,7 @@ impl PyTimsDatasetDIA {
         pad_tof_bins: usize,
         num_threads: usize,
         min_im_span: usize,
+        rt_pad_frames: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
         // ---- convert Python IM peaks into Rust ImPeak1D ------------------
         let im_rs: Vec<ImPeak1D> = im_peaks
@@ -1739,6 +1741,7 @@ impl PyTimsDatasetDIA {
             min_width_sec,
             fallback_if_frames_lt,
             fallback_frac_width,
+            rt_pad_frames,
         };
 
         // ---- BuildSpecOpts: TOF-based, no ppm ----------------------------
@@ -1809,6 +1812,7 @@ impl PyTimsDatasetDIA {
         pad_tof_bins=0,
         num_threads=0,
         min_im_span=12,
+        rt_pad_frames=5,
     ))]
     pub fn clusters_for_precursor(
         &self,
@@ -1845,6 +1849,7 @@ impl PyTimsDatasetDIA {
         pad_tof_bins: usize,
         num_threads: usize,
         min_im_span: usize,
+        rt_pad_frames: usize,
     ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
         // ---- convert Python IM peaks into Rust ImPeak1D ------------------
         let im_rs: Vec<ImPeak1D> = im_peaks
@@ -1866,6 +1871,7 @@ impl PyTimsDatasetDIA {
             min_width_sec,
             fallback_if_frames_lt,
             fallback_frac_width,
+            rt_pad_frames,
         };
 
         // ---- BuildSpecOpts: MS1, TOF-based -------------------------------

@@ -571,7 +571,7 @@ def run_fragments(ds, cfg):
                 attach_rt_xic=True,
                 pad_tof_bins=0,
                 pad_im_scans=0,
-                pad_rt_frames=1,
+                pad_rt_frames=0,
             )
 
             # ---- per-WG binary save ----

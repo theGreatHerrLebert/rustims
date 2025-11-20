@@ -116,6 +116,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             pad_tof_bins: int = 0,
             num_threads: int = 0,
             min_im_span: int = 10,
+            rt_pad_frames: int = 5,
     ):
         from imspy.timstof.clustering.data import ClusterResult1D
         """
@@ -169,6 +170,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(pad_tof_bins),
             int(num_threads),
             int(min_im_span),
+            int(rt_pad_frames),
         )
         return [ClusterResult1D(r) for r in py_results]
 
@@ -207,6 +209,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             pad_tof_bins: int = 0,
             num_threads: int = 0,
             min_im_span: int = 10,
+            rt_pad_frames: int = 5,
     ):
         from imspy.timstof.clustering.data import ClusterResult1D
         """
@@ -257,6 +260,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(pad_tof_bins),
             int(num_threads),
             int(min_im_span),
+            int(rt_pad_frames),
         )
         return [ClusterResult1D(r) for r in py_results]
 

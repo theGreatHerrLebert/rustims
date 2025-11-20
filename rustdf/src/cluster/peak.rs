@@ -1,7 +1,14 @@
-use std::sync::Arc;
 use rayon::prelude::*;
+use std::sync::Arc;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{fallback_rt_peak_from_trace, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, TofScale};
+use crate::cluster::utility::{
+    fallback_rt_peak_from_trace,
+    quad_subsample,
+    rt_peak_id,
+    smooth_vector_gaussian,
+    trapezoid_area_fractional,
+    TofScale,
+};
 
 // Stable 64-bit id for peaks
 pub type PeakId = i64;
@@ -307,18 +314,21 @@ pub struct RtExpandParams {
     pub min_width_sec: f32,
     pub fallback_if_frames_lt: usize,
     pub fallback_frac_width: f32,
+    /// NEW: symmetric padding in *frame indices* around the IM peak’s frame_id_bounds
+    /// when building the RT trace, to avoid cutting off partially overlapping peaks.
+    pub rt_pad_frames: usize,
 }
 
 #[inline]
 pub fn rt_trace_for_im_peak_by_bounds(
     frames: &[FrameBinView],
     rt_scale: &TofScale,            // RtFrames.scale
-    tof_bounds: (i32, i32),         // im_peak.mz_bounds
-    extra_bins_pad: usize,         // 0–2
+    tof_bounds: (i32, i32),         // im_peak.tof_bounds
+    extra_bins_pad: usize,          // 0–2
     scan_lo: usize,
     scan_hi: usize,
 ) -> Vec<f32> {
-    // Map physical m/z bounds into the RT CSR scale, then pad by bins.
+    // Map physical TOF bounds into the RT CSR scale, then pad by bins.
     let (mut bin_l, mut bin_r) = rt_scale.index_range_for_tof_window(tof_bounds.0, tof_bounds.1);
     bin_l = bin_l.saturating_sub(extra_bins_pad);
     bin_r = bin_r.saturating_add(extra_bins_pad);
@@ -330,7 +340,6 @@ pub fn rt_trace_for_im_peak_by_bounds(
     v
 }
 
-
 pub fn expand_im_peak_along_rt(
     im_peak: &ImPeak1D,
     frames_sorted: &[FrameBinView],
@@ -338,20 +347,32 @@ pub fn expand_im_peak_along_rt(
     tof_scale: &TofScale,
     p: RtExpandParams,
 ) -> Vec<RtPeak1D> {
-    // 1) Map absolute frame IDs → local RT index range, unchanged:
+    // 1) Map absolute frame IDs → local RT index range.
     let (fid_lo_abs, fid_hi_abs) = im_peak.frame_id_bounds;
 
-    let allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
+    let mut allow_lo = match rt_ctx.frame_ids_sorted.binary_search(&fid_lo_abs) {
         Ok(i) => i,
         Err(_) => return Vec::new(),
     };
-    let allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
+    let mut allow_hi = match rt_ctx.frame_ids_sorted.binary_search(&fid_hi_abs) {
         Ok(i) => i,
         Err(_) => return Vec::new(),
     };
-    let (allow_lo, allow_hi) = (allow_lo.min(allow_hi), allow_lo.max(allow_hi));
+    if allow_lo > allow_hi {
+        std::mem::swap(&mut allow_lo, &mut allow_hi);
+    }
 
-    if allow_lo >= frames_sorted.len() || allow_hi >= frames_sorted.len() {
+    let n_frames = frames_sorted.len();
+    if n_frames == 0 {
+        return Vec::new();
+    }
+
+    // NEW: symmetric padding in frame space to avoid cutting off RT tails
+    let pad = p.rt_pad_frames.min(n_frames.saturating_sub(1));
+    allow_lo = allow_lo.saturating_sub(pad);
+    allow_hi = (allow_hi + pad).min(n_frames.saturating_sub(1));
+
+    if allow_lo >= n_frames || allow_hi >= n_frames {
         return Vec::new();
     }
 
@@ -419,7 +440,9 @@ pub fn expand_im_peak_along_rt(
     let mut trace_smooth = trace_raw.to_vec();
     smooth_vector_gaussian(&mut trace_smooth[..], sigma_frames, p.smooth_trunc_k);
 
-    // 6) Peak finding (unchanged)
+    // (optional: a heavier smooth for baseline only could be added here)
+
+    // 6) Peak finding (updated)
     let base = find_rt_peaks(
         &trace_smooth,
         trace_raw,
@@ -466,7 +489,7 @@ pub fn expand_im_peak_along_rt(
     }
 
     // 7) Normal multi-peak mapping
-    let n_frames = frames_sorted.len();
+    let n_frames_total = frames_sorted.len();
 
     base.into_iter()
         .map(|r0| {
@@ -478,7 +501,7 @@ pub fn expand_im_peak_along_rt(
             let global_left = allow_lo + local_left;
             let global_right = allow_hi
                 .min(allow_lo + local_right)
-                .min(n_frames - 1);
+                .min(n_frames_total - 1);
 
             let lo_fid = rt_ctx.frame_ids_sorted[global_left];
             let hi_fid = rt_ctx.frame_ids_sorted[global_right];
@@ -553,6 +576,52 @@ pub fn expand_many_im_peaks_along_rt_flat(
         .collect()
 }
 
+// =================== RT peak detection helpers ===================
+
+fn robust_noise_level(y: &[f32]) -> f32 {
+    if y.len() < 3 { return 0.0; }
+    let mut diffs = Vec::with_capacity(y.len().saturating_sub(1));
+    for w in y.windows(2) {
+        diffs.push((w[1] - w[0]).abs());
+    }
+    diffs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    diffs[diffs.len() / 2]
+}
+
+fn nms_by_time(mut peaks: Vec<RtLocalPeak>, min_sep_sec: f32) -> Vec<RtLocalPeak> {
+    if peaks.is_empty() { return peaks; }
+
+    // sort by apex height descending
+    peaks.sort_by(|a, b| {
+        b.apex_smoothed
+            .partial_cmp(&a.apex_smoothed)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut selected: Vec<RtLocalPeak> = Vec::new();
+    'outer: for p in peaks {
+        let t_p = p.rt_sec.unwrap_or(0.0);
+        for q in &selected {
+            let t_q = q.rt_sec.unwrap_or(0.0);
+            if (t_p - t_q).abs() < min_sep_sec {
+                // too close to a stronger peak
+                continue 'outer;
+            }
+        }
+        selected.push(p);
+    }
+
+    // re-sort by RT for nicer downstream behaviour
+    selected.sort_by(|a, b| {
+        a.rt_sec
+            .unwrap_or(0.0)
+            .partial_cmp(&b.rt_sec.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    selected
+}
+
 pub fn find_rt_peaks(
     y_smoothed: &[f32],
     y_raw: &[f32],
@@ -566,6 +635,14 @@ pub fn find_rt_peaks(
 
     let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
     if row_max < min_prom { return Vec::new(); }
+
+    // noise-adaptive prominence threshold
+    let noise = robust_noise_level(y_smoothed);
+    let min_prom_eff = if noise > 0.0 {
+        min_prom.max(3.0 * noise)
+    } else {
+        min_prom
+    };
 
     // 1) candidates
     let mut cands = Vec::new();
@@ -586,7 +663,7 @@ pub fn find_rt_peaks(
 
         let baseline = left_min.max(right_min);
         let prom = apex - baseline;
-        if prom < min_prom { continue; }
+        if prom < min_prom_eff { continue; }
 
         // 3) half-prom fractional crossings
         let half = baseline + 0.5 * prom;
@@ -616,16 +693,7 @@ pub fn find_rt_peaks(
             quad_subsample(y_smoothed[i - 1], y_smoothed[i], y_smoothed[i + 1]).clamp(-0.5, 0.5)
         } else { 0.0 };
 
-        // 5) time-based NMS (seconds)
-        if let Some(last) = peaks.last() {
-            let dt = (rt_times[i] - last.rt_sec.unwrap_or(rt_times[last.rt_idx])).abs();
-            if dt < min_sep_sec {
-                if apex <= last.apex_smoothed { continue; }
-                let _ = peaks.pop();
-            }
-        }
-
-        // 6) area under raw
+        // 5) area under raw
         let area = trapezoid_area_fractional(y_raw, left_x.max(0.0), right_x.min((n - 1) as f32));
 
         // apex time (subsampled)
@@ -647,9 +715,38 @@ pub fn find_rt_peaks(
             width_sec: Some(width_sec),
         });
     }
+
+    if peaks.is_empty() {
+        return peaks;
+    }
+
+    // total area for relative filters
+    let total_area = trapezoid_area_fractional(y_raw, 0.0, (n - 1) as f32);
+
+    // time-based NMS across all peaks
+    let mut peaks = nms_by_time(peaks, min_sep_sec);
+    if peaks.is_empty() {
+        return Vec::new();
+    }
+
+    // area-based pruning of tiny shoulders
+    let max_area = peaks
+        .iter()
+        .map(|p| p.area_raw)
+        .fold(0.0f32, f32::max)
+        .max(1e-6);
+
+    let min_area_frac_trace = 0.02; // 2% of total trace area
+    let min_area_frac_best  = 0.05; // 5% of best peak area
+
+    peaks.retain(|p| {
+        let frac_trace = p.area_raw / total_area.max(1e-6);
+        let frac_best  = p.area_raw / max_area;
+        frac_trace >= min_area_frac_trace && frac_best >= min_area_frac_best
+    });
+
     peaks
 }
-
 
 // robust-ish effective dt for converting σ_sec → σ_frames
 #[inline]
