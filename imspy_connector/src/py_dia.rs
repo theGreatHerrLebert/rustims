@@ -2019,6 +2019,7 @@ impl PyTimsDatasetDIA {
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
             min_im_overlap_scans,
+            reject_frag_inside_precursor_tile: true,
         };
 
         // Build ScoreOpts from primitives
@@ -2147,6 +2148,7 @@ impl PyTimsDatasetDIA {
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
             min_im_overlap_scans,
+            reject_frag_inside_precursor_tile: true,
         };
 
         // XicScoreOpts from primitives
