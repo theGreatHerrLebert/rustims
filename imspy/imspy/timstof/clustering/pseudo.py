@@ -39,9 +39,15 @@ class PseudoSpectrum:
         Example:
             ps = PseudoSpectrum.from_clusters(prec, frags)
         """
-        import imspy_connector  # to access py_pseudo.PyPseudoSpectrum
 
-        py_ps = imspy_connector.py_pseudo.PyPseudoSpectrum(precursor, fragments)
+        precursor_ptr = precursor.get_py_ptr()
+        fragment_ptrs = [f.get_py_ptr() for f in fragments]
+
+        py_ps = imspy_connector.py_pseudo.PyPseudoSpectrum(
+            precursor=precursor_ptr,
+            fragments=fragment_ptrs
+        )
+
         return cls(py_ps)
 
     # --------------------------------------------------------------
