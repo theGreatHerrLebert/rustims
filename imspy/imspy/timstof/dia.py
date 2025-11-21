@@ -651,7 +651,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         Parameters mirror the Rust CandidateOpts MS2-side fields.
         """
         py_ms2 = [c.get_py_ptr() for c in ms2_clusters]
-        py_idx = self._py.build_fragment_index(
+        py_idx = self.get_py_ptr().build_fragment_index(
             py_ms2,
             min_raw_sum=min_raw_sum,
             ms2_rt_guard_sec=ms2_rt_guard_sec,
