@@ -619,11 +619,11 @@ impl Default for FragmentQueryOpts {
 pub struct FragmentIndex {
     dia_index: Arc<DiaIndex>,
 
-    /// Per-MS2 metadata (global index over all groups)
-    ms2_rt_apex: Vec<f32>,
     ms2_im_mu: Vec<f32>,
     ms2_im_windows: Vec<(usize, usize)>,
     ms2_keep: Vec<bool>,
+    /// Stable cluster IDs, same indexing as ms2_* vectors.
+    ms2_cluster_ids: Vec<u64>,
 
     /// group -> RT-sorted MS2
     by_group: HashMap<u32, FragmentGroupIndex>,
@@ -698,10 +698,10 @@ impl FragmentIndex {
 
         let ms2_im_windows: Vec<(usize, usize)> =
             ms2.iter().map(|c| c.im_window).collect();
-        let ms2_rt_apex: Vec<f32> =
-            ms2.iter().map(|c| c.rt_fit.mu).collect();
         let ms2_im_mu: Vec<f32> =
             ms2.iter().map(|c| c.im_fit.mu).collect();
+        let ms2_cluster_ids: Vec<u64> =
+            ms2.iter().map(|c| c.cluster_id).collect();
 
         // 3) Group MS2 per WG and sort by RT apex
         let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
@@ -731,10 +731,10 @@ impl FragmentIndex {
 
         FragmentIndex {
             dia_index,
-            ms2_rt_apex,
             ms2_im_mu,
             ms2_im_windows,
             ms2_keep,
+            ms2_cluster_ids,
             by_group,
         }
     }
@@ -747,14 +747,13 @@ impl FragmentIndex {
     ///   - IM apex delta
     ///   - optional tile compatibility
     ///
-    /// It deliberately does **not** do any scoring – you can run your
-    /// geometric/XIC scoring on the returned indices.
+    /// Returns **cluster_ids** of matching MS2 clusters.
     pub fn query_precursor(
         &self,
         prec: &ClusterResult1D,
         groups: Option<&[u32]>,
         opts: &FragmentQueryOpts,
-    ) -> Vec<usize> {
+    ) -> Vec<u64> {
         let mut out = Vec::new();
 
         // precursor apex + m/z sanity
@@ -779,7 +778,6 @@ impl FragmentIndex {
             return Vec::new();
         }
 
-        // Precompute tiles for precursor in each group only if needed
         for g in groups {
             let fg = match self.by_group.get(&g) {
                 Some(fg) => fg,
@@ -855,7 +853,8 @@ impl FragmentIndex {
                     }
                 }
 
-                out.push(j);
+                // push **cluster_id**, not array index
+                out.push(self.ms2_cluster_ids[j]);
             }
         }
 

@@ -2637,7 +2637,7 @@ impl PyFragmentIndex {
         max_scan_apex_delta: Option<usize>,
         min_im_overlap_scans: usize,
         require_tile_compat: bool,
-    ) -> PyResult<Vec<usize>> {
+    ) -> PyResult<Vec<u64>> {
         let opts = FragmentQueryOpts {
             max_rt_apex_delta_sec,
             max_scan_apex_delta,

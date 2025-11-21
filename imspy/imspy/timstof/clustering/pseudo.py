@@ -1,7 +1,9 @@
 from __future__ import annotations
 from typing import Any
+import numpy as np
 
 import imspy_connector
+from torch.fx.experimental.unification.unification_tools import getter
 
 ims_pseudo = imspy_connector.py_pseudo
 
@@ -79,6 +81,14 @@ class PseudoSpectrum:
                 for f in self.fragments
             ],
         }
+
+    @property
+    def fragment_mz_array(self) -> np.ndarray:
+        return np.array([f.mz for f in self.fragments], dtype=np.float32)
+
+    @property
+    def fragment_intensity_array(self) -> np.ndarray:
+        return np.array([f.intensity for f in self.fragments], dtype=np.float32)
 
     def __repr__(self):
         return (
