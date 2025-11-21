@@ -2254,6 +2254,11 @@ impl PyTimsDatasetDIA {
         let grid = ds.tof_rt_grid_for_group(window_group, tof_step);
         PyTofRtGrid { inner: grid }
     }
+
+    #[pyo3(signature = (prec_mz, im_apex))]
+    pub fn window_groups_for_precursor(&self, prec_mz: f32, im_apex: f32) -> Vec<u32> {
+        self.inner.window_groups_for_precursor(prec_mz, im_apex)
+    }
 }
 
 #[pyfunction]

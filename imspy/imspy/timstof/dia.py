@@ -515,6 +515,24 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
 
         return PseudoBuildResult(result)
 
+    def window_groups_for_precursor(self, prec_mz: float, im_apex: float) -> List[int]:
+        """
+        Get DIA window groups that may contain the given precursor m/z and IM apex.
+
+        Parameters
+        ----------
+        prec_mz : float
+            Precursor m/z.
+        im_apex : float
+            IM apex (1/k0).
+
+        Returns
+        -------
+        List[int]
+            List of window group IDs that may contain the precursor.
+        """
+        return self.__dataset.window_groups_for_precursor(float(prec_mz), float(im_apex))
+
     def tof_rt_grid_precursor(self, tof_step: int = 1) -> "TofRtGrid":
         from imspy.timstof.clustering.data import TofRtGrid
         """

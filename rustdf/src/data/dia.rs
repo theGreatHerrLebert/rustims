@@ -294,6 +294,24 @@ impl DiaIndex {
         Ms2GroupProgram { mz_windows, scan_ranges, mz_union, scan_unions }
     }
 
+    pub fn groups_for_precursor(
+        &self,
+        prec_mz: f32,
+        im_apex: f32,
+    ) -> Vec<u32> {
+        if !prec_mz.is_finite() || !im_apex.is_finite() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (&g, _) in &self.group_to_isolation {
+            let tiles = self.tiles_for_precursor_in_group(g, prec_mz, im_apex);
+            if !tiles.is_empty() {
+                out.push(g);
+            }
+        }
+        out
+    }
+
     #[inline]
     pub fn mz_bounds_for_window_group_core(&self, g: u32) -> Option<(f32, f32)> {
         self.group_to_mz_union.get(&g).map(|&(a,b)| (a as f32, b as f32))
@@ -481,6 +499,10 @@ impl TimsDatasetDIA {
         gs.sort_unstable();
         gs.dedup();
         gs
+    }
+
+    pub fn window_groups_for_precursor(&self, prec_mz: f32, im_apex: f32) -> Vec<u32> {
+        self.dia_index.groups_for_precursor(prec_mz, im_apex)
     }
 
     /// Map frame_id -> (time, ms_ms_type) for quick lookups.
