@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+use std::sync::Arc;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
-use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs};
+use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu};
 use crate::cluster::scoring::{
     assign_ms2_to_best_ms1_by_xic,
     jaccard_time,
@@ -8,7 +10,7 @@ use crate::cluster::scoring::{
     PrecursorSearchIndex,
     XicScoreOpts,
 };
-use crate::data::dia::TimsDatasetDIA;
+use crate::data::dia::{DiaIndex, TimsDatasetDIA};
 
 // ---------------------------------------------------------------------------
 // Assignment mode abstraction (geom vs XIC)
@@ -573,4 +575,323 @@ pub fn build_pseudo_spectra_end_to_end_xic(
         assignment,
         pseudo_spectra,
     }
+}
+
+use rayon::prelude::*;
+
+// ---------------------------------------------------------------------------
+// FragmentIndex: RT-sorted MS2 per window group
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub struct FragmentGroupIndex {
+    /// MS2 indices belonging to this WG, sorted by rt_apex.
+    pub ms2_indices: Vec<usize>,
+    /// rt_fit.mu for those indices, same order as `ms2_indices`.
+    pub rt_apex: Vec<f32>,
+}
+
+/// Axis-aligned query knobs for fragment candidates.
+#[derive(Clone, Debug)]
+pub struct FragmentQueryOpts {
+    /// Maximum allowed |rt_apex(prec) - rt_apex(ms2)| in seconds (None = no RT slice).
+    pub max_rt_apex_delta_sec: Option<f32>,
+    /// Maximum allowed |im_apex(prec) - im_apex(ms2)| in global scans.
+    pub max_scan_apex_delta: Option<usize>,
+    /// Minimum IM overlap in scans between precursor and fragment.
+    pub min_im_overlap_scans: usize,
+    /// Require at least one shared DIA tile (ProgramSlice) between precursor and fragment.
+    pub require_tile_compat: bool,
+}
+
+impl Default for FragmentQueryOpts {
+    fn default() -> Self {
+        Self {
+            max_rt_apex_delta_sec: Some(2.0),
+            max_scan_apex_delta: Some(6),
+            min_im_overlap_scans: 1,
+            require_tile_compat: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FragmentIndex {
+    dia_index: Arc<DiaIndex>,
+
+    /// Per-MS2 metadata (global index over all groups)
+    ms2_rt_apex: Vec<f32>,
+    ms2_im_mu: Vec<f32>,
+    ms2_im_windows: Vec<(usize, usize)>,
+    ms2_keep: Vec<bool>,
+
+    /// group -> RT-sorted MS2
+    by_group: HashMap<u32, FragmentGroupIndex>,
+}
+
+impl FragmentIndex {
+    /// Build RT-sorted fragment index per window group.
+    ///
+    /// Only uses the MS2-relevant fields of CandidateOpts:
+    ///   - min_raw_sum
+    ///   - ms2_rt_guard_sec
+    ///   - max_ms2_rt_span_sec
+    pub fn build(
+        dia_index: Arc<DiaIndex>,
+        ms2: &[ClusterResult1D],
+        opts: &CandidateOpts,
+    ) -> Self {
+        let frame_time = &dia_index.frame_time;
+
+        // 1) Absolute MS2 time bounds (seconds)
+        let ms2_time_bounds: Vec<(f64, f64)> = ms2
+            .par_iter()
+            .map(|c| {
+                let mut t_lo = f64::INFINITY;
+                let mut t_hi = f64::NEG_INFINITY;
+                for &fid in &c.frame_ids_used {
+                    if let Some(&t) = frame_time.get(&fid) {
+                        if t < t_lo { t_lo = t; }
+                        if t > t_hi { t_hi = t; }
+                    }
+                }
+                (t_lo, t_hi)
+            })
+            .collect();
+
+        // 2) Keep mask for MS2
+        let ms2_keep: Vec<bool> = ms2
+            .par_iter()
+            .enumerate()
+            .map(|(i, c)| {
+                if c.ms_level != 2 {
+                    return false;
+                }
+                if c.window_group.is_none() {
+                    return false;
+                }
+                if c.raw_sum < opts.min_raw_sum {
+                    return false;
+                }
+
+                let (mut t0, mut t1) = ms2_time_bounds[i];
+                if t0.is_finite() {
+                    t0 -= opts.ms2_rt_guard_sec;
+                }
+                if t1.is_finite() {
+                    t1 += opts.ms2_rt_guard_sec;
+                }
+
+                if !(t0.is_finite() && t1.is_finite() && t1 > t0) {
+                    return false;
+                }
+
+                if let Some(max_rt) = opts.max_ms2_rt_span_sec {
+                    if (t1 - t0) > max_rt {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect();
+
+        let ms2_im_windows: Vec<(usize, usize)> =
+            ms2.iter().map(|c| c.im_window).collect();
+        let ms2_rt_apex: Vec<f32> =
+            ms2.iter().map(|c| c.rt_fit.mu).collect();
+        let ms2_im_mu: Vec<f32> =
+            ms2.iter().map(|c| c.im_fit.mu).collect();
+
+        // 3) Group MS2 per WG and sort by RT apex
+        let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
+
+        for (j, c2) in ms2.iter().enumerate() {
+            if !ms2_keep[j] {
+                continue;
+            }
+            let g = match c2.window_group {
+                Some(g) => g,
+                None => continue,
+            };
+            let rt = c2.rt_fit.mu;
+            if !rt.is_finite() {
+                continue;
+            }
+            by_group_raw.entry(g).or_default().push((rt, j));
+        }
+
+        let mut by_group: HashMap<u32, FragmentGroupIndex> = HashMap::new();
+        for (g, mut v) in by_group_raw {
+            v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let (rt_apex, ms2_indices): (Vec<f32>, Vec<usize>) =
+                v.into_iter().map(|(rt, j)| (rt, j)).unzip();
+            by_group.insert(g, FragmentGroupIndex { ms2_indices, rt_apex });
+        }
+
+        FragmentIndex {
+            dia_index,
+            ms2_rt_apex,
+            ms2_im_mu,
+            ms2_im_windows,
+            ms2_keep,
+            by_group,
+        }
+    }
+
+    /// Query all fragment candidates for a given precursor and a set of WGs.
+    ///
+    /// This *only* enforces axis-aligned physical plausibility:
+    ///   - RT apex delta
+    ///   - IM window overlap
+    ///   - IM apex delta
+    ///   - optional tile compatibility
+    ///
+    /// It deliberately does **not** do any scoring – you can run your
+    /// geometric/XIC scoring on the returned indices.
+    pub fn query_precursor(
+        &self,
+        prec: &ClusterResult1D,
+        groups: &[u32],
+        opts: &FragmentQueryOpts,
+    ) -> Vec<usize> {
+        let mut out = Vec::new();
+
+        // precursor apex + m/z sanity
+        let prec_mz = match cluster_mz_mu(prec) {
+            Some(m) if m.is_finite() && m > 0.0 => m,
+            _ => return out,
+        };
+        let prec_rt = prec.rt_fit.mu;
+        let prec_im = prec.im_fit.mu;
+        if !prec_rt.is_finite() || !prec_im.is_finite() {
+            return out;
+        }
+
+        let prec_im_win = prec.im_window;
+
+        // Precompute tiles for precursor in each group only if needed
+        for &g in groups {
+            let fg = match self.by_group.get(&g) {
+                Some(fg) => fg,
+                None => continue,
+            };
+
+            // RT slice via binary search
+            let (lo_idx, hi_idx) = if let Some(dt) = opts.max_rt_apex_delta_sec {
+                if dt > 0.0 {
+                    let lo_t = prec_rt - dt;
+                    let hi_t = prec_rt + dt;
+                    (
+                        lower_bound(&fg.rt_apex, lo_t),
+                        upper_bound(&fg.rt_apex, hi_t),
+                    )
+                } else {
+                    (0, fg.ms2_indices.len())
+                }
+            } else {
+                (0, fg.ms2_indices.len())
+            };
+
+            let prec_tiles = if opts.require_tile_compat {
+                self.dia_index.tiles_for_precursor_in_group(
+                    g,
+                    prec_mz,
+                    prec_im,
+                )
+            } else {
+                Vec::new()
+            };
+
+            'ms2_loop: for k in lo_idx..hi_idx {
+                let j = fg.ms2_indices[k];
+                if !self.ms2_keep[j] {
+                    continue;
+                }
+
+                // IM window overlap
+                let im2 = self.ms2_im_windows[j];
+                let im_overlap = {
+                    let lo = prec_im_win.0.max(im2.0);
+                    let hi = prec_im_win.1.min(im2.1);
+                    hi.saturating_sub(lo).saturating_add(1)
+                };
+                if im_overlap < opts.min_im_overlap_scans {
+                    continue;
+                }
+
+                // IM apex delta
+                if let Some(max_d) = opts.max_scan_apex_delta {
+                    let s2 = self.ms2_im_mu[j];
+                    if s2.is_finite() {
+                        let d = (prec_im - s2).abs() as f32;
+                        if d > max_d as f32 {
+                            continue 'ms2_loop;
+                        }
+                    } else {
+                        continue 'ms2_loop;
+                    }
+                }
+
+                // Tile compatibility
+                if opts.require_tile_compat {
+                    let frag_tiles = self
+                        .dia_index
+                        .tiles_for_fragment_in_group(g, im2);
+                    if frag_tiles.is_empty() {
+                        continue 'ms2_loop;
+                    }
+                    if !tiles_intersect(&prec_tiles, &frag_tiles) {
+                        continue 'ms2_loop;
+                    }
+                }
+
+                out.push(j);
+            }
+        }
+
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+// Simple helpers (local)
+
+fn lower_bound(xs: &[f32], x: f32) -> usize {
+    let mut lo = 0;
+    let mut hi = xs.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if xs[mid] < x {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+fn upper_bound(xs: &[f32], x: f32) -> usize {
+    let mut lo = 0;
+    let mut hi = xs.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if xs[mid] <= x {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+fn tiles_intersect(a: &[usize], b: &[usize]) -> bool {
+    // These vectors are tiny; O(a*b) is fine.
+    for &i in a {
+        if b.contains(&i) {
+            return true;
+        }
+    }
+    false
 }

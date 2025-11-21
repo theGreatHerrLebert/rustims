@@ -6,7 +6,7 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
 
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, PseudoBuildResult, ScoreOpts};
+use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
@@ -2259,6 +2259,73 @@ impl PyTimsDatasetDIA {
     pub fn window_groups_for_precursor(&self, prec_mz: f32, im_apex: f32) -> Vec<u32> {
         self.inner.window_groups_for_precursor(prec_mz, im_apex)
     }
+
+    /// Build a fragment index over MS2 clusters.
+    ///
+    /// Parameters
+    /// ----------
+    /// ms2_clusters : list[PyClusterResult1D]
+    ///     The MS2 clusters to index (typically `fragment_clusters`).
+    /// min_raw_sum : float
+    ///     Intensity cutoff for fragments.
+    /// ms2_rt_guard_sec : float
+    ///     Padding added to MS2 RT bounds before checking spans.
+    /// max_ms2_rt_span_sec : float or None
+    ///     Drop MS2 clusters whose RT span exceeds this (seconds).
+    /// rt_bucket_width : float
+    ///     Unused by FragmentIndex, but kept to be compatible with CandidateOpts API
+    ///     if you later decide to reuse it.
+    #[pyo3(signature = (
+        ms2_clusters,
+        min_raw_sum = 1.0,
+        ms2_rt_guard_sec = 0.0,
+        max_ms2_rt_span_sec = Some(60.0),
+        rt_bucket_width = 1.0,
+    ))]
+    pub fn build_fragment_index(
+        &self,
+        ms2_clusters: Vec<Py<PyClusterResult1D>>,
+        min_raw_sum: f32,
+        ms2_rt_guard_sec: f64,
+        max_ms2_rt_span_sec: Option<f64>,
+        rt_bucket_width: f64,
+        py: Python<'_>,
+    ) -> PyResult<Py<PyFragmentIndex>> {
+        if ms2_clusters.is_empty() {
+            return Err(exceptions::PyValueError::new_err(
+                "build_fragment_index: ms2_clusters is empty",
+            ));
+        }
+
+        // Convert PyClusterResult1D list → Vec<ClusterResult1D>
+        let mut rust_ms2: Vec<ClusterResult1D> = Vec::with_capacity(ms2_clusters.len());
+        for c in ms2_clusters {
+            let c_ref = c.borrow(py);
+            rust_ms2.push(c_ref.inner.clone());
+        }
+
+        // Build CandidateOpts for MS2 side only
+        let cand_opts = CandidateOpts {
+            min_rt_jaccard: 0.0,
+            ms2_rt_guard_sec,
+            rt_bucket_width,
+            max_ms1_rt_span_sec: None,
+            max_ms2_rt_span_sec,
+            min_raw_sum,
+
+            max_rt_apex_delta_sec: None,
+            max_scan_apex_delta: None,
+            min_im_overlap_scans: 1,
+            reject_frag_inside_precursor_tile: true,
+        };
+
+        let idx = self
+            .inner
+            .build_fragment_index(&rust_ms2, &cand_opts);
+
+        let py_idx = Py::new(py, PyFragmentIndex { inner: idx })?;
+        Ok(py_idx)
+    }
 }
 
 #[pyfunction]
@@ -2529,6 +2596,65 @@ impl PyPseudoBuildResult {
     }
 }
 
+#[pyclass]
+pub struct PyFragmentIndex {
+    pub(crate) inner: FragmentIndex,
+}
+
+#[pymethods]
+impl PyFragmentIndex {
+    /// Query candidates for a single precursor cluster.
+    ///
+    /// Parameters
+    /// ----------
+    /// prec : PyClusterResult1D
+    ///     The precursor cluster.
+    /// window_groups : Sequence[int]
+    ///     Window groups that this precursor might be selected in
+    ///     (e.g. from DiaIndex.groups_for_precursor(...)).
+    /// max_rt_apex_delta_sec : float or None
+    /// max_scan_apex_delta : int or None
+    /// min_im_overlap_scans : int
+    /// require_tile_compat : bool
+    ///
+    /// Returns
+    /// -------
+    /// list[int]
+    ///     MS2 cluster indices into the array used for building the index.
+    #[pyo3(signature = (
+        prec,
+        window_groups,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
+    ))]
+    pub fn query_precursor(
+        &self,
+        prec: &PyClusterResult1D,
+        window_groups: Vec<u32>,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        require_tile_compat: bool,
+    ) -> PyResult<Vec<usize>> {
+        if window_groups.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+            require_tile_compat,
+        };
+
+        let prec_rust: &ClusterResult1D = &prec.inner;
+        let hits = self.inner.query_precursor(prec_rust, &window_groups, &opts);
+        Ok(hits)
+    }
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -2540,6 +2666,9 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFit1D>()?;
     m.add_class::<PyClusterResult1D>()?;
     m.add_class::<PyTofRtGrid>()?;
+    m.add_class::<PyAssignmentResult>()?;
+    m.add_class::<PyPseudoBuildResult>()?;
+    m.add_class::<PyFragmentIndex>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;

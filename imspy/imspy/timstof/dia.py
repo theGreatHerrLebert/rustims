@@ -11,6 +11,71 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+class FragmentIndex(RustWrapperObject):
+    """
+    Python wrapper for ims.PyFragmentIndex.
+
+    Built from a TimsDatasetDIA instance:
+
+        idx = ds.build_fragment_index(
+            fragment_clusters,
+            min_raw_sum=10.0,
+        )
+
+    Then queried per-precursor:
+
+        wgs = ds.groups_for_precursor(prec_mz, prec_im)
+        cand_ms2 = idx.query_precursor(
+            precursor_cluster,
+            window_groups=wgs,
+            max_rt_apex_delta_sec=2.0,
+            max_scan_apex_delta=6,
+            min_im_overlap_scans=1,
+            require_tile_compat=True,
+        )
+    """
+
+    def __init__(self, *a, **k):
+        raise RuntimeError(
+            "Use TimsDatasetDIA.build_fragment_index(...) "
+            "or FragmentIndex.from_py_ptr(...)"
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyFragmentIndex) -> "FragmentIndex":
+        inst = cls.__new__(cls)
+        inst._py = p
+        return inst
+
+    def get_py_ptr(self) -> ims.PyFragmentIndex:
+        return self._py
+
+    def query_precursor(
+        self,
+        precursor_cluster,
+        window_groups: Sequence[int],
+        *,
+        max_rt_apex_delta_sec: float | None = 2.0,
+        max_scan_apex_delta: int | None = 6,
+        min_im_overlap_scans: int = 1,
+        require_tile_compat: bool = True,
+    ) -> list[int]:
+        """
+        Return candidate MS2 indices (into the array used to build the index)
+        for a given precursor cluster.
+        """
+        if not window_groups:
+            return []
+
+        return self._py.query_precursor(
+            precursor_cluster.get_py_ptr(),
+            list(map(int, window_groups)),
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
+        )
+
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):
@@ -570,6 +635,30 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         """
         grid = self.__dataset.tof_rt_grid_for_group(int(window_group), int(tof_step))
         return TofRtGrid.from_py_ptr(grid)
+
+    def build_fragment_index(
+            self,
+            ms2_clusters: list["ClusterResult1D"],
+            *,
+            min_raw_sum: float = 1.0,
+            ms2_rt_guard_sec: float = 0.0,
+            max_ms2_rt_span_sec: float | None = 60.0,
+            rt_bucket_width: float = 1.0,
+    ) -> FragmentIndex:
+        """
+        Build a fragment index (FragmentIndex) over the given MS2 clusters.
+
+        Parameters mirror the Rust CandidateOpts MS2-side fields.
+        """
+        py_ms2 = [c.get_py_ptr() for c in ms2_clusters]
+        py_idx = self._py.build_fragment_index(
+            py_ms2,
+            min_raw_sum=min_raw_sum,
+            ms2_rt_guard_sec=ms2_rt_guard_sec,
+            max_ms2_rt_span_sec=max_ms2_rt_span_sec,
+            rt_bucket_width=rt_bucket_width,
+        )
+        return FragmentIndex.from_py_ptr(py_idx)
 
 import os
 import tempfile
