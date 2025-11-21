@@ -3,8 +3,6 @@ from typing import Any
 import numpy as np
 
 import imspy_connector
-from torch.fx.experimental.unification.unification_tools import getter
-
 ims_pseudo = imspy_connector.py_pseudo
 
 
@@ -29,6 +27,26 @@ class PseudoSpectrum:
     def __init__(self, py_ptr: Any) -> None:
         self._p = py_ptr
 
+    # --------------------------------------------------------------
+    # NEW: constructor that calls the Rust __new__
+    # --------------------------------------------------------------
+    @classmethod
+    def from_clusters(cls, precursor, fragments):
+        """
+        Build a PseudoSpectrum from a precursor PyClusterResult1D
+        and a list of fragment PyClusterResult1D objects.
+
+        Example:
+            ps = PseudoSpectrum.from_clusters(prec, frags)
+        """
+        import imspy_connector  # to access py_pseudo.PyPseudoSpectrum
+
+        py_ps = imspy_connector.py_pseudo.PyPseudoSpectrum(precursor, fragments)
+        return cls(py_ps)
+
+    # --------------------------------------------------------------
+    # Properties (unchanged)
+    # --------------------------------------------------------------
     @property
     def precursor_mz(self) -> float:
         return float(self._p.precursor_mz)
@@ -63,6 +81,14 @@ class PseudoSpectrum:
         wgid = self._p.window_group_id
         return int(wgid) if wgid is not None else None
 
+    @property
+    def fragment_mz_array(self) -> np.ndarray:
+        return np.array([f.mz for f in self.fragments], dtype=np.float32)
+
+    @property
+    def fragment_intensity_array(self) -> np.ndarray:
+        return np.array([f.intensity for f in self.fragments], dtype=np.float32)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "precursor_mz": self.precursor_mz,
@@ -81,14 +107,6 @@ class PseudoSpectrum:
                 for f in self.fragments
             ],
         }
-
-    @property
-    def fragment_mz_array(self) -> np.ndarray:
-        return np.array([f.mz for f in self.fragments], dtype=np.float32)
-
-    @property
-    def fragment_intensity_array(self) -> np.ndarray:
-        return np.array([f.intensity for f in self.fragments], dtype=np.float32)
 
     def __repr__(self):
         return (
