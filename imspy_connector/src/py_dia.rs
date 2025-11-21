@@ -2623,7 +2623,7 @@ impl PyFragmentIndex {
     ///     MS2 cluster indices into the array used for building the index.
     #[pyo3(signature = (
         prec,
-        window_groups,
+        window_groups = None,
         max_rt_apex_delta_sec = Some(2.0),
         max_scan_apex_delta = Some(6),
         min_im_overlap_scans = 1,
@@ -2632,25 +2632,22 @@ impl PyFragmentIndex {
     pub fn query_precursor(
         &self,
         prec: &PyClusterResult1D,
-        window_groups: Vec<u32>,
+        window_groups: Option<Vec<u32>>,
         max_rt_apex_delta_sec: Option<f32>,
         max_scan_apex_delta: Option<usize>,
         min_im_overlap_scans: usize,
         require_tile_compat: bool,
     ) -> PyResult<Vec<usize>> {
-        if window_groups.is_empty() {
-            return Ok(Vec::new());
-        }
-
         let opts = FragmentQueryOpts {
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
             min_im_overlap_scans,
             require_tile_compat,
         };
+        let prec_rust = &prec.inner;
 
-        let prec_rust: &ClusterResult1D = &prec.inner;
-        let hits = self.inner.query_precursor(prec_rust, &window_groups, &opts);
+        let groups_opt = window_groups.as_ref().map(|v| v.as_slice());
+        let hits = self.inner.query_precursor(prec_rust, groups_opt, &opts);
         Ok(hits)
     }
 }

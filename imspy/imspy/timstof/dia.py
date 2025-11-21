@@ -53,23 +53,16 @@ class FragmentIndex(RustWrapperObject):
     def query_precursor(
         self,
         precursor_cluster,
-        window_groups: Optional[Sequence[int]] = None,
+        window_groups: list[int] | None = None,
         *,
         max_rt_apex_delta_sec: float | None = 2.0,
         max_scan_apex_delta: int | None = 6,
         min_im_overlap_scans: int = 1,
         require_tile_compat: bool = True,
     ) -> list[int]:
-        """
-        Return candidate MS2 indices (into the array used to build the index)
-        for a given precursor cluster.
-        """
-        if not window_groups:
-            return []
-
         return self._py.query_precursor(
             precursor_cluster.get_py_ptr(),
-            list(map(int, window_groups)),
+            window_groups,  # None => let Rust compute from DiaIndex
             max_rt_apex_delta_sec=max_rt_apex_delta_sec,
             max_scan_apex_delta=max_scan_apex_delta,
             min_im_overlap_scans=min_im_overlap_scans,

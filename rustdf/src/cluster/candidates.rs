@@ -752,7 +752,7 @@ impl FragmentIndex {
     pub fn query_precursor(
         &self,
         prec: &ClusterResult1D,
-        groups: &[u32],
+        groups: Option<&[u32]>,
         opts: &FragmentQueryOpts,
     ) -> Vec<usize> {
         let mut out = Vec::new();
@@ -770,8 +770,17 @@ impl FragmentIndex {
 
         let prec_im_win = prec.im_window;
 
+        // Decide which groups to query
+        let groups: Vec<u32> = match groups {
+            Some(gs) if !gs.is_empty() => gs.to_vec(),
+            _ => self.dia_index.groups_for_precursor(prec_mz, prec_im),
+        };
+        if groups.is_empty() {
+            return Vec::new();
+        }
+
         // Precompute tiles for precursor in each group only if needed
-        for &g in groups {
+        for g in groups {
             let fg = match self.by_group.get(&g) {
                 Some(fg) => fg,
                 None => continue,
