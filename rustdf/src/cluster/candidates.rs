@@ -768,15 +768,37 @@ impl FragmentIndex {
         }
     }
 
-    /// Query all fragment candidates for a given precursor and a set of WGs.
-    ///
-    /// This *only* enforces axis-aligned physical plausibility:
-    ///   - RT apex delta (with fallback for both sides)
-    ///   - IM window overlap
-    ///   - IM apex delta (with fallback for both sides)
-    ///   - optional tile compatibility
-    ///
-    /// Returns **cluster_ids** of matching MS2 clusters.
+    /// Helper: RT apex in seconds for a precursor.
+    /// 1) prefer rt_fit.mu if finite
+    /// 2) fallback: mean frame_time over frame_ids_used
+    fn precursor_rt_apex_sec(&self, prec: &ClusterResult1D) -> Option<f32> {
+        // 1) use fit if it looks sane
+        let mu = prec.rt_fit.mu;
+        if mu.is_finite() && mu > 0.0 {
+            return Some(mu);
+        }
+
+        // 2) fallback: derive from frame_ids_used using DiaIndex.frame_time
+        let ft = &self.dia_index.frame_time;
+        let mut sum = 0.0f64;
+        let mut n = 0usize;
+
+        for fid in &prec.frame_ids_used {
+            if let Some(&t) = ft.get(fid) {
+                if t.is_finite() {
+                    sum += t;
+                    n += 1;
+                }
+            }
+        }
+
+        if n > 0 {
+            Some((sum / n as f64) as f32)
+        } else {
+            None
+        }
+    }
+
     pub fn query_precursor(
         &self,
         prec: &ClusterResult1D,
@@ -785,19 +807,21 @@ impl FragmentIndex {
     ) -> Vec<u64> {
         let mut out = Vec::new();
 
-        // --- precursor m/z (fit -> fallback to mz_window midpoint) ---
+        // --- precursor m/z ---
         let prec_mz = if let Some(m) = cluster_mz_mu(prec) {
             if m.is_finite() && m > 0.0 {
                 m
             } else {
+                // fallback: midpoint of mz_window
                 match prec.mz_window {
                     Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => {
                         0.5 * (lo + hi)
                     }
-                    _ => return out,
+                    _ => return out, // no usable m/z
                 }
             }
         } else {
+            // no fit: fallback to midpoint of mz_window
             match prec.mz_window {
                 Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => {
                     0.5 * (lo + hi)
@@ -806,24 +830,18 @@ impl FragmentIndex {
             }
         };
 
-        // --- precursor RT apex (fit -> fallback to rt_window midpoint) ---
-        let prec_rt = if prec.rt_fit.mu.is_finite() {
-            prec.rt_fit.mu
-        } else {
-            let (lo, hi) = prec.rt_window;
-            if hi >= lo {
-                (lo as f32 + hi as f32) * 0.5
-            } else {
-                return out;
-            }
+        // --- precursor RT apex (SECONDS!) ---
+        let prec_rt = match self.precursor_rt_apex_sec(prec) {
+            Some(t) => t,
+            None => return out,
         };
 
-        // --- precursor IM apex (fit -> fallback to im_window midpoint) ---
+        // --- precursor IM apex (scan space) ---
         let prec_im = if prec.im_fit.mu.is_finite() {
             prec.im_fit.mu
         } else {
             let (lo, hi) = prec.im_window;
-            if hi >= lo {
+            if hi > lo {
                 ((lo + hi) as f32) * 0.5
             } else {
                 return out;
@@ -847,7 +865,7 @@ impl FragmentIndex {
                 None => continue,
             };
 
-            // RT slice via binary search
+            // RT slice via binary search (fg.rt_apex is already in seconds)
             let (lo_idx, hi_idx) = if let Some(dt) = opts.max_rt_apex_delta_sec {
                 if dt > 0.0 {
                     let lo_t = prec_rt - dt;
@@ -863,10 +881,12 @@ impl FragmentIndex {
                 (0, fg.ms2_indices.len())
             };
 
-            // Tiles for precursor in this group (only if needed)
             let prec_tiles = if opts.require_tile_compat {
-                self.dia_index
-                    .tiles_for_precursor_in_group(g, prec_mz, prec_im)
+                self.dia_index.tiles_for_precursor_in_group(
+                    g,
+                    prec_mz,
+                    prec_im,
+                )
             } else {
                 Vec::new()
             };
@@ -888,7 +908,7 @@ impl FragmentIndex {
                     continue;
                 }
 
-                // IM apex delta (fragment IM apex already has fallback from build)
+                // IM apex delta
                 if let Some(max_d) = opts.max_scan_apex_delta {
                     let s2 = self.ms2_im_mu[j];
                     if s2.is_finite() {
@@ -903,8 +923,9 @@ impl FragmentIndex {
 
                 // Tile compatibility
                 if opts.require_tile_compat {
-                    let frag_tiles =
-                        self.dia_index.tiles_for_fragment_in_group(g, im2);
+                    let frag_tiles = self
+                        .dia_index
+                        .tiles_for_fragment_in_group(g, im2);
                     if frag_tiles.is_empty() {
                         continue 'ms2_loop;
                     }
@@ -913,7 +934,6 @@ impl FragmentIndex {
                     }
                 }
 
-                // push **cluster_id**, not array index
                 out.push(self.ms2_cluster_ids[j]);
             }
         }
