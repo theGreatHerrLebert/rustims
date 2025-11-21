@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu};
@@ -636,8 +637,6 @@ impl FragmentIndex {
         ms2: &[ClusterResult1D],
         opts: &CandidateOpts,
     ) -> Self {
-        use rayon::prelude::*;
-
         let frame_time = &dia_index.frame_time;
 
         // 1) Absolute MS2 time bounds (seconds)
@@ -648,19 +647,15 @@ impl FragmentIndex {
                 let mut t_hi = f64::NEG_INFINITY;
                 for &fid in &c.frame_ids_used {
                     if let Some(&t) = frame_time.get(&fid) {
-                        if t < t_lo {
-                            t_lo = t;
-                        }
-                        if t > t_hi {
-                            t_hi = t;
-                        }
+                        if t < t_lo { t_lo = t; }
+                        if t > t_hi { t_hi = t; }
                     }
                 }
                 (t_lo, t_hi)
             })
             .collect();
 
-        // 2) Keep mask for MS2
+        // 2) Keep mask for MS2 – same as before
         let ms2_keep: Vec<bool> = ms2
             .par_iter()
             .enumerate()
@@ -697,18 +692,19 @@ impl FragmentIndex {
             })
             .collect();
 
-        // IM windows (always present on clusters)
-        let ms2_im_windows: Vec<(usize, usize)> = ms2.iter().map(|c| c.im_window).collect();
+        // 3) IM window + IM apex, with fallback to midpoint
+        let ms2_im_windows: Vec<(usize, usize)> =
+            ms2.iter().map(|c| c.im_window).collect();
 
-        // IM apex with fallback to window midpoint if fit is bad
         let ms2_im_mu: Vec<f32> = ms2
             .iter()
             .map(|c| {
-                if c.im_fit.mu.is_finite() {
-                    c.im_fit.mu
+                let mu = c.im_fit.mu;
+                if mu.is_finite() && mu > 0.0 {
+                    mu
                 } else {
                     let (lo, hi) = c.im_window;
-                    if hi >= lo {
+                    if hi > lo {
                         ((lo + hi) as f32) * 0.5
                     } else {
                         f32::NAN
@@ -717,9 +713,29 @@ impl FragmentIndex {
             })
             .collect();
 
-        let ms2_cluster_ids: Vec<u64> = ms2.iter().map(|c| c.cluster_id).collect();
+        let ms2_cluster_ids: Vec<u64> =
+            ms2.iter().map(|c| c.cluster_id).collect();
 
-        // 3) Group MS2 per WG and sort by RT apex (with fallback)
+        // 4) RT apex in seconds with fallback to time bounds
+        let ms2_rt_apex: Vec<f32> = ms2
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let mu = c.rt_fit.mu;
+                if mu.is_finite() && mu > 0.0 {
+                    mu
+                } else {
+                    let (t0, t1) = ms2_time_bounds[i];
+                    if t0.is_finite() && t1.is_finite() && t1 > t0 {
+                        ((t0 + t1) * 0.5) as f32
+                    } else {
+                        f32::NAN
+                    }
+                }
+            })
+            .collect();
+
+        // 5) Group MS2 per WG and sort by RT apex (seconds)
         let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
 
         for (j, c2) in ms2.iter().enumerate() {
@@ -731,18 +747,7 @@ impl FragmentIndex {
                 None => continue,
             };
 
-            // RT apex with fallback to RT window midpoint
-            let rt = if c2.rt_fit.mu.is_finite() {
-                c2.rt_fit.mu
-            } else {
-                let (lo, hi) = c2.rt_window;
-                if hi >= lo {
-                    (lo as f32 + hi as f32) * 0.5
-                } else {
-                    continue;
-                }
-            };
-
+            let rt = ms2_rt_apex[j];
             if !rt.is_finite() {
                 continue;
             }
