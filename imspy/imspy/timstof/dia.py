@@ -69,6 +69,25 @@ class FragmentIndex(RustWrapperObject):
             require_tile_compat=require_tile_compat,
         )
 
+    def query_precursors(
+            self,
+            precursor_clusters: list[Any],
+            *,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
+            num_threads: int = 4,
+    ) -> list[list[int]]:
+        return self._py.query_precursors_par(
+            [c.get_py_ptr() for c in precursor_clusters],
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
+            num_threads=num_threads,
+        )
+
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):

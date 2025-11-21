@@ -2650,6 +2650,40 @@ impl PyFragmentIndex {
         let hits = self.inner.query_precursor(prec_rust, groups_opt, &opts);
         Ok(hits)
     }
+
+    #[pyo3(signature = (
+        precs,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
+        num_threads = 0,
+    ))]
+    pub fn query_precursors_par(
+        &self,
+        precs: Vec<Py<PyClusterResult1D>>,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        require_tile_compat: bool,
+        num_threads: usize,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Vec<u64>>> {
+        let opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+            require_tile_compat,
+        };
+
+        let precs_rust: Vec<ClusterResult1D> = precs
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let all_hits = self.inner.query_precursors_par(precs_rust, &opts, num_threads);
+        Ok(all_hits)
+    }
 }
 
 #[pymodule]

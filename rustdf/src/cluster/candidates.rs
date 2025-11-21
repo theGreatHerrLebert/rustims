@@ -862,6 +862,17 @@ impl FragmentIndex {
         out.dedup();
         out
     }
+
+    pub fn query_precursors_par(&self, precursors: Vec<ClusterResult1D>, opts: &FragmentQueryOpts,
+                                num_threads: usize) -> Vec<Vec<u64>> {
+        use rayon::prelude::*;
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        pool.install(|| {
+            precursors.par_iter()
+                .map(|prec| self.query_precursor(prec, None, opts))
+                .collect()
+        })
+    }
 }
 
 // Simple helpers (local)
