@@ -577,17 +577,11 @@ pub fn build_pseudo_spectra_end_to_end_xic(
     }
 }
 
-use rayon::prelude::*;
-
-// ---------------------------------------------------------------------------
-// FragmentIndex: RT-sorted MS2 per window group
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Debug)]
 pub struct FragmentGroupIndex {
     /// MS2 indices belonging to this WG, sorted by rt_apex.
     pub ms2_indices: Vec<usize>,
-    /// rt_fit.mu for those indices, same order as `ms2_indices`.
+    /// rt_fit.mu (or RT midpoint fallback) for those indices, same order as `ms2_indices`.
     pub rt_apex: Vec<f32>,
 }
 
@@ -619,6 +613,7 @@ impl Default for FragmentQueryOpts {
 pub struct FragmentIndex {
     dia_index: Arc<DiaIndex>,
 
+    // per-MS2 metadata (global index over all groups)
     ms2_im_mu: Vec<f32>,
     ms2_im_windows: Vec<(usize, usize)>,
     ms2_keep: Vec<bool>,
@@ -641,6 +636,8 @@ impl FragmentIndex {
         ms2: &[ClusterResult1D],
         opts: &CandidateOpts,
     ) -> Self {
+        use rayon::prelude::*;
+
         let frame_time = &dia_index.frame_time;
 
         // 1) Absolute MS2 time bounds (seconds)
@@ -651,8 +648,12 @@ impl FragmentIndex {
                 let mut t_hi = f64::NEG_INFINITY;
                 for &fid in &c.frame_ids_used {
                     if let Some(&t) = frame_time.get(&fid) {
-                        if t < t_lo { t_lo = t; }
-                        if t > t_hi { t_hi = t; }
+                        if t < t_lo {
+                            t_lo = t;
+                        }
+                        if t > t_hi {
+                            t_hi = t;
+                        }
                     }
                 }
                 (t_lo, t_hi)
@@ -696,14 +697,29 @@ impl FragmentIndex {
             })
             .collect();
 
-        let ms2_im_windows: Vec<(usize, usize)> =
-            ms2.iter().map(|c| c.im_window).collect();
-        let ms2_im_mu: Vec<f32> =
-            ms2.iter().map(|c| c.im_fit.mu).collect();
-        let ms2_cluster_ids: Vec<u64> =
-            ms2.iter().map(|c| c.cluster_id).collect();
+        // IM windows (always present on clusters)
+        let ms2_im_windows: Vec<(usize, usize)> = ms2.iter().map(|c| c.im_window).collect();
 
-        // 3) Group MS2 per WG and sort by RT apex
+        // IM apex with fallback to window midpoint if fit is bad
+        let ms2_im_mu: Vec<f32> = ms2
+            .iter()
+            .map(|c| {
+                if c.im_fit.mu.is_finite() {
+                    c.im_fit.mu
+                } else {
+                    let (lo, hi) = c.im_window;
+                    if hi > lo {
+                        ((lo + hi) as f32) * 0.5
+                    } else {
+                        f32::NAN
+                    }
+                }
+            })
+            .collect();
+
+        let ms2_cluster_ids: Vec<u64> = ms2.iter().map(|c| c.cluster_id).collect();
+
+        // 3) Group MS2 per WG and sort by RT apex (with fallback)
         let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
 
         for (j, c2) in ms2.iter().enumerate() {
@@ -714,10 +730,23 @@ impl FragmentIndex {
                 Some(g) => g,
                 None => continue,
             };
-            let rt = c2.rt_fit.mu;
+
+            // RT apex with fallback to RT window midpoint
+            let rt = if c2.rt_fit.mu.is_finite() {
+                c2.rt_fit.mu
+            } else {
+                let (lo, hi) = c2.rt_window;
+                if hi > lo {
+                    (lo as f32 + hi as f32) * 0.5
+                } else {
+                    continue;
+                }
+            };
+
             if !rt.is_finite() {
                 continue;
             }
+
             by_group_raw.entry(g).or_default().push((rt, j));
         }
 
@@ -742,9 +771,9 @@ impl FragmentIndex {
     /// Query all fragment candidates for a given precursor and a set of WGs.
     ///
     /// This *only* enforces axis-aligned physical plausibility:
-    ///   - RT apex delta
+    ///   - RT apex delta (with fallback for both sides)
     ///   - IM window overlap
-    ///   - IM apex delta
+    ///   - IM apex delta (with fallback for both sides)
     ///   - optional tile compatibility
     ///
     /// Returns **cluster_ids** of matching MS2 clusters.
@@ -756,16 +785,50 @@ impl FragmentIndex {
     ) -> Vec<u64> {
         let mut out = Vec::new();
 
-        // precursor apex + m/z sanity
-        let prec_mz = match cluster_mz_mu(prec) {
-            Some(m) if m.is_finite() && m > 0.0 => m,
-            _ => return out,
+        // --- precursor m/z (fit -> fallback to mz_window midpoint) ---
+        let prec_mz = if let Some(m) = cluster_mz_mu(prec) {
+            if m.is_finite() && m > 0.0 {
+                m
+            } else {
+                match prec.mz_window {
+                    Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => {
+                        0.5 * (lo + hi)
+                    }
+                    _ => return out,
+                }
+            }
+        } else {
+            match prec.mz_window {
+                Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => {
+                    0.5 * (lo + hi)
+                }
+                _ => return out,
+            }
         };
-        let prec_rt = prec.rt_fit.mu;
-        let prec_im = prec.im_fit.mu;
-        if !prec_rt.is_finite() || !prec_im.is_finite() {
-            return out;
-        }
+
+        // --- precursor RT apex (fit -> fallback to rt_window midpoint) ---
+        let prec_rt = if prec.rt_fit.mu.is_finite() {
+            prec.rt_fit.mu
+        } else {
+            let (lo, hi) = prec.rt_window;
+            if hi > lo {
+                (lo as f32 + hi as f32) * 0.5
+            } else {
+                return out;
+            }
+        };
+
+        // --- precursor IM apex (fit -> fallback to im_window midpoint) ---
+        let prec_im = if prec.im_fit.mu.is_finite() {
+            prec.im_fit.mu
+        } else {
+            let (lo, hi) = prec.im_window;
+            if hi > lo {
+                ((lo + hi) as f32) * 0.5
+            } else {
+                return out;
+            }
+        };
 
         let prec_im_win = prec.im_window;
 
@@ -800,12 +863,10 @@ impl FragmentIndex {
                 (0, fg.ms2_indices.len())
             };
 
+            // Tiles for precursor in this group (only if needed)
             let prec_tiles = if opts.require_tile_compat {
-                self.dia_index.tiles_for_precursor_in_group(
-                    g,
-                    prec_mz,
-                    prec_im,
-                )
+                self.dia_index
+                    .tiles_for_precursor_in_group(g, prec_mz, prec_im)
             } else {
                 Vec::new()
             };
@@ -827,7 +888,7 @@ impl FragmentIndex {
                     continue;
                 }
 
-                // IM apex delta
+                // IM apex delta (fragment IM apex already has fallback from build)
                 if let Some(max_d) = opts.max_scan_apex_delta {
                     let s2 = self.ms2_im_mu[j];
                     if s2.is_finite() {
@@ -842,9 +903,8 @@ impl FragmentIndex {
 
                 // Tile compatibility
                 if opts.require_tile_compat {
-                    let frag_tiles = self
-                        .dia_index
-                        .tiles_for_fragment_in_group(g, im2);
+                    let frag_tiles =
+                        self.dia_index.tiles_for_fragment_in_group(g, im2);
                     if frag_tiles.is_empty() {
                         continue 'ms2_loop;
                     }
@@ -863,12 +923,21 @@ impl FragmentIndex {
         out
     }
 
-    pub fn query_precursors_par(&self, precursors: Vec<ClusterResult1D>, opts: &FragmentQueryOpts,
-                                num_threads: usize) -> Vec<Vec<u64>> {
+    /// Parallel batch query: for each precursor, return a Vec of MS2 cluster_ids.
+    pub fn query_precursors_par(
+        &self,
+        precursors: Vec<ClusterResult1D>,
+        opts: &FragmentQueryOpts,
+        num_threads: usize,
+    ) -> Vec<Vec<u64>> {
         use rayon::prelude::*;
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
         pool.install(|| {
-            precursors.par_iter()
+            precursors
+                .par_iter()
                 .map(|prec| self.query_precursor(prec, None, opts))
                 .collect()
         })
