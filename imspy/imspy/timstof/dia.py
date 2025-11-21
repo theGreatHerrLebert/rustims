@@ -1,5 +1,5 @@
 import sqlite3
-from typing import List, Sequence, Any
+from typing import List, Sequence, Any, Optional
 
 from imspy.simulation.annotation import RustWrapperObject
 from imspy.timstof.data import TimsDataset
@@ -53,7 +53,7 @@ class FragmentIndex(RustWrapperObject):
     def query_precursor(
         self,
         precursor_cluster,
-        window_groups: Sequence[int],
+        window_groups: Optional[Sequence[int]] = None,
         *,
         max_rt_apex_delta_sec: float | None = 2.0,
         max_scan_apex_delta: int | None = 6,
