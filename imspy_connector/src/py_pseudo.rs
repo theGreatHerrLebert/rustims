@@ -67,9 +67,12 @@ impl PyPseudoSpectrum {
             ));
         };
 
+        let mut window_group: u32 = 0;
+
         // ---- Build fragments ----
         let mut frags: Vec<PseudoFragment> = Vec::new();
         for f_py in fragments {
+            window_group = f_py.borrow(py).inner.window_group.unwrap_or(0);
             let f_ref = f_py.borrow(py);
             let c = f_ref.inner.clone();
 
@@ -81,6 +84,9 @@ impl PyPseudoSpectrum {
             }
         }
 
+        // sort by mz ascending
+        frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap());
+
         // ---- Build the Rust PseudoSpectrum ----
         let ps = PseudoSpectrum {
             precursor_mz,
@@ -88,7 +94,7 @@ impl PyPseudoSpectrum {
             rt_apex: prec.rt_fit.mu,
             im_apex: prec.im_fit.mu,
             feature_id: None,
-            window_group: prec.window_group.unwrap_or(0),
+            window_group,
             precursor_cluster_ids: vec![prec.cluster_id],
             fragments: frags,
             precursor_cluster_indices: vec![],
