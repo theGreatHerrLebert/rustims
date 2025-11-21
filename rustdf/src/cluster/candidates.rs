@@ -708,7 +708,7 @@ impl FragmentIndex {
                     c.im_fit.mu
                 } else {
                     let (lo, hi) = c.im_window;
-                    if hi > lo {
+                    if hi >= lo {
                         ((lo + hi) as f32) * 0.5
                     } else {
                         f32::NAN
@@ -736,7 +736,7 @@ impl FragmentIndex {
                 c2.rt_fit.mu
             } else {
                 let (lo, hi) = c2.rt_window;
-                if hi > lo {
+                if hi >= lo {
                     (lo as f32 + hi as f32) * 0.5
                 } else {
                     continue;
@@ -811,7 +811,7 @@ impl FragmentIndex {
             prec.rt_fit.mu
         } else {
             let (lo, hi) = prec.rt_window;
-            if hi > lo {
+            if hi >= lo {
                 (lo as f32 + hi as f32) * 0.5
             } else {
                 return out;
@@ -823,7 +823,7 @@ impl FragmentIndex {
             prec.im_fit.mu
         } else {
             let (lo, hi) = prec.im_window;
-            if hi > lo {
+            if hi >= lo {
                 ((lo + hi) as f32) * 0.5
             } else {
                 return out;
