@@ -2,6 +2,7 @@ import sqlite3
 from typing import List, Sequence, Any, Optional
 
 from imspy.simulation.annotation import RustWrapperObject
+from imspy.timstof.clustering.data import ClusterResult1D
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 
@@ -87,6 +88,37 @@ class FragmentIndex(RustWrapperObject):
             require_tile_compat=require_tile_compat,
             num_threads=num_threads,
         )
+
+    """
+    pub fn debug_extract_raw_for_clusters(
+        &self,
+        py: Python<'_>,
+        clusters: Vec<Py<PyClusterResult1D>>,
+        window_group: Option<u32>,
+        tof_step: i32,
+        max_points: Option<usize>,
+        num_threads: usize,
+    ) -> Vec<PyRawPoints> {
+    """
+    def debug_extract_raw_for_clusters(
+            self,
+            clusters: list["ClusterResult1D"],
+            window_group: Optional[int] = None,
+            tof_step: int = 1,
+            max_points: Optional[int] = None,
+            num_threads: int = 4,
+    ) -> list["RawPoints"]:
+        from imspy.timstof.clustering.data import RawPoints
+
+        raw_points = self.get_py_ptr().debug_extract_raw_for_clusters(
+            [c.get_py_ptr() for c in clusters],
+            window_group,
+            tof_step,
+            max_points,
+            num_threads,
+        )
+
+        return [RawPoints(rp) for rp in raw_points]
 
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):

@@ -1455,3 +1455,35 @@ fn thin_f32_vec(v: &[f32], cap: Option<usize>) -> Vec<f32> {
     }
     out
 }
+
+/// For a set of clusters that are all defined on the same RtFrames/grid
+/// (i.e. same slice/context), extract RawPoints per cluster.
+///
+/// This is the "does the box actually give us the right raw points?" primitive.
+pub fn extract_raw_points_for_clusters_in_ctx(
+    ctx: &RawAttachContext,
+    scale: &TofScale,
+    clusters: &[ClusterResult1D],
+    max_points: Option<usize>,
+) -> Vec<RawPoints> {
+    clusters
+        .iter()
+        .map(|c| {
+            let (rt_lo, rt_hi) = c.rt_window;
+            let (im_lo, im_hi) = c.im_window;
+            let (tof_lo, tof_hi) = c.tof_window;
+
+            attach_raw_points_for_spec_1d_in_ctx(
+                ctx,
+                scale,
+                tof_lo,
+                tof_hi,
+                im_lo,
+                im_hi,
+                rt_lo,
+                rt_hi,
+                max_points,
+            )
+        })
+        .collect()
+}

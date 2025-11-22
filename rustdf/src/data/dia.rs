@@ -949,6 +949,93 @@ impl TimsDatasetDIA {
             cand_opts,
         )
     }
+
+    /// Debug helper: for a bunch of clusters that all live on the same
+    /// DIA grid (either MS1 or one MS2 window_group), extract RawPoints
+    /// per cluster.
+    ///
+    /// - `clusters`: precursor *or* fragment clusters.
+    ///   All must have the same `ms_level`.
+    /// - `window_group`: if you pass Some(g), we treat them as MS2 clusters
+    ///   on that DIA group. If None and ms_level == 2, we try to infer g
+    ///   from the first cluster’s `window_group`.
+    /// - `tof_step`: must be the same as used during clustering.
+    /// - `max_points`: optional thinning cap per cluster.
+    /// - `num_threads`: used for `get_slice` in the raw extractor.
+    pub fn debug_extract_raw_for_clusters(
+        &self,
+        clusters: &[ClusterResult1D],
+        window_group: Option<u32>,
+        tof_step: i32,
+        max_points: Option<usize>,
+        num_threads: usize,
+    ) -> Vec<RawPoints> {
+        if clusters.is_empty() {
+            return Vec::new();
+        }
+
+        // ---- 1. Basic sanity: consistent ms_level ---------------------------
+        let ms_level = clusters[0].ms_level;
+        debug_assert!(
+            clusters.iter().all(|c| c.ms_level == ms_level),
+            "debug_extract_raw_for_clusters: mixed ms_level in cluster list"
+        );
+
+        // Optional filter by WG if caller wants to restrict.
+        let clusters: Vec<ClusterResult1D> = clusters
+            .iter()
+            .filter(|c| match window_group {
+                Some(g) => c.window_group == Some(g),
+                None => true,
+            })
+            .cloned()
+            .collect();
+
+        if clusters.is_empty() {
+            return Vec::new();
+        }
+
+        // ---- 2. Rebuild the RtFrames grid used for these clusters ----------
+        //
+        // For MS1: all clusters live on the precursor RtFrames grid.
+        // For MS2: all clusters live on the RtFrames grid of a single window group.
+        let rt_frames = if ms_level == 1 {
+            // Precursor grid; we ignore window_group here.
+            self.make_rt_frames_for_precursor(tof_step)
+        } else {
+            // Fragments: we need a valid DIA group.
+            let g = match window_group {
+                Some(g) => g,
+                None => clusters[0]
+                    .window_group
+                    .expect("MS2 cluster without window_group; pass window_group explicitly"),
+            };
+            self.make_rt_frames_for_group(g, tof_step)
+        };
+
+        // ---- 3. For each cluster, call the existing raw extractor ----------
+        clusters
+            .iter()
+            .map(|c| {
+                let (rt_lo, rt_hi) = c.rt_window;
+                let (im_lo, im_hi) = c.im_window;
+                let (tof_lo, tof_hi) = c.tof_window;
+
+                attach_raw_points_for_spec_1d_threads(
+                    self,
+                    &rt_frames,
+                    tof_lo,
+                    tof_hi,
+                    im_lo,
+                    im_hi,
+                    rt_lo,
+                    rt_hi,
+                    max_points,
+                    num_threads,
+                )
+            })
+            .collect()
+    }
 }
 
 impl TimsData for TimsDatasetDIA {

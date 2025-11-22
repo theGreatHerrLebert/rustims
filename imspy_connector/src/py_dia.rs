@@ -2260,6 +2260,42 @@ impl PyTimsDatasetDIA {
         self.inner.window_groups_for_precursor(prec_mz, im_apex)
     }
 
+    #[pyo3(signature = (
+        clusters,
+        window_group = None,
+        tof_step = 1,
+        max_points = 1024,
+        num_threads = 1,
+    ))]
+    pub fn debug_extract_raw_for_clusters(
+        &self,
+        py: Python<'_>,
+        clusters: Vec<Py<PyClusterResult1D>>,
+        window_group: Option<u32>,
+        tof_step: i32,
+        max_points: Option<usize>,
+        num_threads: usize,
+    ) -> Vec<PyRawPoints> {
+        // Unwrap clusters
+        let rust_clusters: Vec<ClusterResult1D> = clusters
+            .iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        let raws = self.inner.debug_extract_raw_for_clusters(
+            &rust_clusters,
+            window_group,
+            tof_step,
+            max_points,
+            num_threads,
+        );
+
+        // Wrap back into PyRawPoints
+        raws.into_iter()
+            .map(|rp| PyRawPoints { inner: rp })
+            .collect()
+    }
+
     /// Build a fragment index over MS2 clusters.
     ///
     /// Parameters
