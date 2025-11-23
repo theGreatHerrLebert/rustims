@@ -1032,7 +1032,6 @@ impl TimsDatasetDIA {
                     rt_hi,
                     max_points,
                     num_threads,
-                    false,
                 )
             })
             .collect()
@@ -1105,7 +1104,6 @@ pub fn attach_raw_points_for_spec_1d_threads(
     final_rt_hi: usize,
     max_points: Option<usize>,
     num_threads: usize,
-    assume_sorted_axis: bool,
 ) -> RawPoints {
     let scale = &*rt_frames.scale;
 
@@ -1121,7 +1119,7 @@ pub fn attach_raw_points_for_spec_1d_threads(
         std::mem::swap(&mut bin_lo, &mut bin_hi);
     }
 
-    // Axis window from bin edges:
+    // Axis window in *TOF-axis units*:
     //   [edges[bin_lo], cushion_hi_edge(edges[bin_hi+1])]
     let mut axis_lo = scale.edges[bin_lo];
     let hi_edge_idx = (bin_hi + 1).min(scale.edges.len().saturating_sub(1));
@@ -1133,77 +1131,47 @@ pub fn attach_raw_points_for_spec_1d_threads(
     let scan_slices: Vec<Vec<ScanSlice>> =
         slice.frames.iter().map(|fr| build_scan_slices(fr)).collect();
 
-    // 1) Count
+    // 1) Count – now using **TOF** as the search axis.
     let mut total = 0usize;
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let tofs = &fr.tof;               // raw TOF indices
+        for sl in &scan_slices[fi] {
+            if sl.scan < final_im_lo || sl.scan > final_im_hi {
+                continue;
+            }
+            let l = lower_bound_tof(tofs, sl.start, sl.end, axis_lo);
+            let r = upper_bound_tof(tofs, sl.start, sl.end, axis_hi);
+            total += r.saturating_sub(l);
+        }
+    }
 
-    if assume_sorted_axis {
-        // -------- Sorted fast-path (current behavior) -----------------------
+    // 2) Last-chance widen: if empty, expand by ±1 bin in TOF space.
+    if total == 0 {
+        let lo_idx = bin_lo.saturating_sub(1);
+        let hi_edge_idx_wide =
+            (bin_hi + 2).min(n_bins).min(scale.edges.len().saturating_sub(1));
+
+        let try_lo = scale.edges[lo_idx];
+        let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx_wide]);
+
+        let mut total2 = 0usize;
         for (fi, fr) in slice.frames.iter().enumerate() {
-            let mz = &fr.ims_frame.mz;
+            let tofs = &fr.tof;
             for sl in &scan_slices[fi] {
                 if sl.scan < final_im_lo || sl.scan > final_im_hi {
                     continue;
                 }
-                let l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
-                let r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
-                total += r.saturating_sub(l);
+                let l = lower_bound_tof(tofs, sl.start, sl.end, try_lo);
+                let r = upper_bound_tof(tofs, sl.start, sl.end, try_hi);
+                total2 += r.saturating_sub(l);
             }
         }
 
-        // 2) Last-chance widen: if empty, expand by ±1 bin
-        if total == 0 {
-            let lo_idx = bin_lo.saturating_sub(1);
-            let hi_edge_idx_wide =
-                (bin_hi + 2).min(n_bins).min(scale.edges.len().saturating_sub(1));
-
-            let try_lo = scale.edges[lo_idx];
-            let try_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx_wide]);
-
-            let mut total2 = 0usize;
-            for (fi, fr) in slice.frames.iter().enumerate() {
-                let mz = &fr.ims_frame.mz;
-                for sl in &scan_slices[fi] {
-                    if sl.scan < final_im_lo || sl.scan > final_im_hi {
-                        continue;
-                    }
-                    let l = lower_bound_in(mz, sl.start, sl.end, try_lo);
-                    let r = upper_bound_in(mz, sl.start, sl.end, try_hi);
-                    total2 += r.saturating_sub(l);
-                }
-            }
-
-            if total2 > 0 {
-                total = total2;
-                axis_lo = try_lo;
-                axis_hi = try_hi;
-            }
+        if total2 > 0 {
+            total = total2;
+            axis_lo = try_lo;
+            axis_hi = try_hi;
         }
-    } else {
-        // -------- Unsorted robust path (for sim data) -----------------------
-        //
-        // No binary search assumptions; just scan the slice linearly and
-        // check axis_lo <= mz[i] < axis_hi.
-        for (fi, fr) in slice.frames.iter().enumerate() {
-            let mz = &fr.ims_frame.mz;
-            for sl in &scan_slices[fi] {
-                let s_abs = sl.scan;
-                if s_abs < final_im_lo || s_abs > final_im_hi {
-                    continue;
-                }
-
-                let start = sl.start;
-                let end = sl.end.min(mz.len());
-                for idx in start..end {
-                    let val = mz[idx] as f32;
-                    if val >= axis_lo && val < axis_hi {
-                        total += 1;
-                    }
-                }
-            }
-        }
-        // No last-chance widen here: if we see nothing even with a linear
-        // scan, widening the bin range is unlikely to magically fix it and
-        // just makes debugging more confusing.
     }
 
     // Still empty → bail with empty container
@@ -1226,94 +1194,85 @@ pub fn attach_raw_points_for_spec_1d_threads(
 
     let rt_axis_sec = rt_frames.rt_times[final_rt_lo..=final_rt_hi].to_vec();
 
-    // 3) Extraction with thinning
+    // 3) Extraction with thinning – again use TOF range for selection
     let mut seen = 0usize;
+    for (fi, fr) in slice.frames.iter().enumerate() {
+        let mz   = &fr.ims_frame.mz;
+        let it   = &fr.ims_frame.intensity;
+        let ims  = &fr.ims_frame.mobility;
+        let tofs = &fr.tof;
 
-    if assume_sorted_axis {
-        // ---- Extraction with binary-search slices (current behavior) -------
-        for (fi, fr) in slice.frames.iter().enumerate() {
-            let mz   = &fr.ims_frame.mz;
-            let it   = &fr.ims_frame.intensity;
-            let ims  = &fr.ims_frame.mobility;
-            let tofs = &fr.tof;
+        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
+        let rt_val = rt_axis_sec[fi];
+        let frame_id = frame_ids_local[fi];
 
-            let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
-            let rt_val = rt_axis_sec[fi];
-            let frame_id = frame_ids_local[fi];
-
-            for sl in &scan_slices[fi] {
-                let s_abs = sl.scan;
-                if s_abs < final_im_lo || s_abs > final_im_hi {
-                    continue;
-                }
-
-                let mut l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
-                let mut r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
-                if r > len_all {
-                    r = len_all;
-                }
-                if l >= r {
-                    continue;
-                }
-
-                while l < r {
-                    if stride == 1 || (seen % stride == 0) {
-                        pts.mz.push(mz[l] as f32);
-                        pts.rt.push(rt_val);
-                        pts.im.push(ims[l] as f32);
-                        pts.scan.push(s_abs as u32);
-                        pts.intensity.push(it[l] as f32);
-                        pts.frame.push(frame_id);
-                        pts.tof.push(tofs[l]);
-                    }
-                    seen += 1;
-                    l += 1;
-                }
+        for sl in &scan_slices[fi] {
+            let s_abs = sl.scan;
+            if s_abs < final_im_lo || s_abs > final_im_hi {
+                continue;
             }
-        }
-    } else {
-        // ---- Extraction with linear scan per slice (unsorted safe) ---------
-        for (fi, fr) in slice.frames.iter().enumerate() {
-            let mz   = &fr.ims_frame.mz;
-            let it   = &fr.ims_frame.intensity;
-            let ims  = &fr.ims_frame.mobility;
-            let tofs = &fr.tof;
 
-            let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
-            let rt_val = rt_axis_sec[fi];
-            let frame_id = frame_ids_local[fi];
+            let mut l = lower_bound_tof(tofs, sl.start, sl.end, axis_lo);
+            let mut r = upper_bound_tof(tofs, sl.start, sl.end, axis_hi);
+            if r > len_all {
+                r = len_all;
+            }
+            if l >= r {
+                continue;
+            }
 
-            for sl in &scan_slices[fi] {
-                let s_abs = sl.scan;
-                if s_abs < final_im_lo || s_abs > final_im_hi {
-                    continue;
+            while l < r {
+                if stride == 1 || (seen % stride == 0) {
+                    // Note: we still *store* m/z, but the selection is done in TOF.
+                    pts.mz.push(mz[l] as f32);
+                    pts.rt.push(rt_val);
+                    pts.im.push(ims[l] as f32);
+                    pts.scan.push(s_abs as u32);
+                    pts.intensity.push(it[l] as f32);
+                    pts.frame.push(frame_id);
+                    pts.tof.push(tofs[l]);
                 }
-
-                let start = sl.start.min(len_all);
-                let end   = sl.end.min(len_all);
-
-                let mut idx = start;
-                while idx < end {
-                    let val = mz[idx] as f32;
-                    if val >= axis_lo && val < axis_hi {
-                        if stride == 1 || (seen % stride == 0) {
-                            pts.mz.push(val);
-                            pts.rt.push(rt_val);
-                            pts.im.push(ims[idx] as f32);
-                            pts.scan.push(s_abs as u32);
-                            pts.intensity.push(it[idx] as f32);
-                            pts.frame.push(frame_id);
-                            pts.tof.push(tofs[idx]);
-                        }
-                        seen += 1;
-                    }
-                    idx += 1;
-                }
+                seen += 1;
+                l += 1;
             }
         }
     }
 
     pts
+}
+
+/// Binary search in TOF array [start, end) for lower bound.
+#[inline]
+fn lower_bound_tof(tofs: &[i32], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if (tofs[mid] as f64) < xf {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
+/// Binary search in TOF array [start, end) for upper bound.
+#[inline]
+fn upper_bound_tof(tofs: &[i32], start: usize, end: usize, x: f32) -> usize {
+    let mut lo = start;
+    let mut hi = end;
+    let xf = x as f64;
+    while lo < hi {
+        let mid = (lo + hi) >> 1;
+        if (tofs[mid] as f64) <= xf {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
 }
 
 // ----------------------------------------------------------------------
@@ -1337,37 +1296,6 @@ fn cushion_hi_edge(scale: &TofScale, hi_edge: f32) -> f32 {
     } else {
         hi_edge
     }
-}
-#[inline]
-fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
-    let mut lo = start;
-    let mut hi = end;
-    let xf = x as f64;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        if mz[mid] < xf {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
-}
-
-#[inline]
-fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
-    let mut lo = start;
-    let mut hi = end;
-    let xf = x as f64;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        if mz[mid] <= xf {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
 }
 
 #[inline]
