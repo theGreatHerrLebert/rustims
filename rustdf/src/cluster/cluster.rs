@@ -1326,23 +1326,23 @@ pub fn attach_raw_points_for_spec_1d_in_ctx(
         return RawPoints::default();
     }
 
-    // clamp bin indices
+    // Clamp bin indices
     let mut bin_lo = final_bin_lo.min(n_bins.saturating_sub(1));
     let mut bin_hi = final_bin_hi.min(n_bins.saturating_sub(1));
     if bin_lo > bin_hi {
         std::mem::swap(&mut bin_lo, &mut bin_hi);
     }
 
-    // axis window from bin edges
+    // Axis window from bin edges in TOF-scale units
     let axis_lo = scale.edges[bin_lo];
     let hi_edge_idx = (bin_hi + 1).min(scale.edges.len().saturating_sub(1));
     let axis_hi = cushion_hi_edge(scale, scale.edges[hi_edge_idx]);
 
-    // reuse the pre-built slice and scan_slices
+    // Reuse the pre-built slice and scan_slices
     let slice = &ctx.slice;
     let scan_slices = &ctx.scan_slices;
 
-    // defensive clamp of RT window to slice length
+    // Defensive clamp of RT window to slice length
     let n_frames = slice.frames.len();
     if n_frames == 0 {
         return RawPoints::default();
@@ -1353,24 +1353,32 @@ pub fn attach_raw_points_for_spec_1d_in_ctx(
         return RawPoints::default();
     }
 
-    // 1) count
+    // 1) Count how many points fall into (RT, IM, TOF) window
     let mut total = 0usize;
     for fi in rt_lo..=rt_hi {
         let fr = &slice.frames[fi];
-        let mz = &fr.ims_frame.mz;
+        let tofs = &fr.tof;             // <-- TOF index / axis
+        let len_all = tofs.len();
+
         for sl in &scan_slices[fi] {
-            if sl.scan < final_im_lo || sl.scan > final_im_hi {
+            let s_abs = sl.scan;
+            if s_abs < final_im_lo || s_abs > final_im_hi {
                 continue;
             }
-            let l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
-            let r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
-            total += r.saturating_sub(l);
+
+            // Linear scan over this scan slice in TOF space
+            let start = sl.start.min(len_all);
+            let end   = sl.end.min(len_all);
+            for idx in start..end {
+                let tof_val = tofs[idx] as f32;
+                if tof_val >= axis_lo && tof_val < axis_hi {
+                    total += 1;
+                }
+            }
         }
     }
 
-    // If you still want a "last chance widen", you can re-introduce it here
-    // by expanding bin_lo/bin_hi ±1 and recomputing total. For now we keep it
-    // simple and just bail out when total == 0.
+    // If still empty → bail with empty container
     if total == 0 {
         return RawPoints::default();
     }
@@ -1393,17 +1401,22 @@ pub fn attach_raw_points_for_spec_1d_in_ctx(
     let rt_axis_sec = &ctx.rt_axis_sec[rt_lo..=rt_hi];
     let frame_ids_local = &ctx.frame_ids_local[rt_lo..=rt_hi];
 
-    // 2) extract with thinning
+    // 2) Extract with thinning, TOF-based membership test
     let mut seen = 0usize;
     for fi in rt_lo..=rt_hi {
-        let fr = &slice.frames[fi];
-        let mz   = &fr.ims_frame.mz;
-        let it   = &fr.ims_frame.intensity;
-        let ims  = &fr.ims_frame.mobility;
-        let tofs = &fr.tof;
+        let fr    = &slice.frames[fi];
+        let mz    = &fr.ims_frame.mz;
+        let it    = &fr.ims_frame.intensity;
+        let ims   = &fr.ims_frame.mobility;
+        let tofs  = &fr.tof;
 
-        let len_all = mz.len().min(it.len()).min(ims.len()).min(tofs.len());
-        let rt_val = rt_axis_sec[fi - rt_lo];
+        let len_all = mz
+            .len()
+            .min(it.len())
+            .min(ims.len())
+            .min(tofs.len());
+
+        let rt_val   = rt_axis_sec[fi - rt_lo];
         let frame_id = frame_ids_local[fi - rt_lo];
 
         for sl in &scan_slices[fi] {
@@ -1412,27 +1425,28 @@ pub fn attach_raw_points_for_spec_1d_in_ctx(
                 continue;
             }
 
-            let mut l = lower_bound_in(mz, sl.start, sl.end, axis_lo);
-            let mut r = upper_bound_in(mz, sl.start, sl.end, axis_hi);
-            if r > len_all {
-                r = len_all;
-            }
-            if l >= r {
+            let start = sl.start.min(len_all);
+            let end   = sl.end.min(len_all);
+            if start >= end {
                 continue;
             }
 
-            while l < r {
-                if stride == 1 || (seen % stride == 0) {
-                    pts.mz.push(mz[l] as f32);
-                    pts.rt.push(rt_val);
-                    pts.im.push(ims[l] as f32);
-                    pts.scan.push(s_abs as u32);
-                    pts.intensity.push(it[l] as f32);
-                    pts.frame.push(frame_id);
-                    pts.tof.push(tofs[l]);
+            let mut idx = start;
+            while idx < end {
+                let tof_val = tofs[idx] as f32;
+                if tof_val >= axis_lo && tof_val < axis_hi {
+                    if stride == 1 || (seen % stride == 0) {
+                        pts.mz.push(mz[idx] as f32);          // payload in m/z
+                        pts.rt.push(rt_val);
+                        pts.im.push(ims[idx] as f32);
+                        pts.scan.push(s_abs as u32);
+                        pts.intensity.push(it[idx] as f32);
+                        pts.frame.push(frame_id);
+                        pts.tof.push(tofs[idx]);             // keep raw TOF index
+                    }
+                    seen += 1;
                 }
-                seen += 1;
-                l += 1;
+                idx += 1;
             }
         }
     }
