@@ -76,14 +76,20 @@ pub struct Attach1DOptions {
     pub attach_points: bool,
     pub attach_axes: bool,
     pub max_points: Option<usize>, // thinning cap
+
+    /// If true, we assume axis values (mz/tof) are sorted ascending within each
+    /// scan slice and use binary search. If false, we fall back to linear
+    /// scanning per slice (robust for sim data).
+    pub assume_sorted_axis: bool,
 }
 
-impl  Attach1DOptions {
+impl Attach1DOptions {
     pub fn default() -> Self {
         Self {
             attach_points: false,
             attach_axes: false,
             max_points: None,
+            assume_sorted_axis: false, // keep old behavior by default
         }
     }
 }
