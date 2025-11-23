@@ -2664,6 +2664,7 @@ impl PyFragmentIndex {
         max_scan_apex_delta = Some(6),
         min_im_overlap_scans = 1,
         require_tile_compat = true,
+        reject_frag_inside_precursor_tile = true,
     ))]
     pub fn query_precursor(
         &self,
@@ -2673,12 +2674,14 @@ impl PyFragmentIndex {
         max_scan_apex_delta: Option<usize>,
         min_im_overlap_scans: usize,
         require_tile_compat: bool,
+        reject_frag_inside_precursor_tile: bool,
     ) -> PyResult<Vec<u64>> {
         let opts = FragmentQueryOpts {
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
             min_im_overlap_scans,
             require_tile_compat,
+            reject_frag_inside_precursor_tile,
         };
         let prec_rust = &prec.inner;
 
@@ -2693,6 +2696,7 @@ impl PyFragmentIndex {
         max_scan_apex_delta = Some(6),
         min_im_overlap_scans = 1,
         require_tile_compat = true,
+        reject_frag_inside_precursor_tile = true,
         num_threads = 0,
     ))]
     pub fn query_precursors_par(
@@ -2702,6 +2706,7 @@ impl PyFragmentIndex {
         max_scan_apex_delta: Option<usize>,
         min_im_overlap_scans: usize,
         require_tile_compat: bool,
+        reject_frag_inside_precursor_tile: bool,
         num_threads: usize,
         py: Python<'_>,
     ) -> PyResult<Vec<Vec<u64>>> {
@@ -2710,6 +2715,7 @@ impl PyFragmentIndex {
             max_scan_apex_delta,
             min_im_overlap_scans,
             require_tile_compat,
+            reject_frag_inside_precursor_tile,
         };
 
         let precs_rust: Vec<ClusterResult1D> = precs

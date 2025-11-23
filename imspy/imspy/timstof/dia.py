@@ -53,13 +53,14 @@ class FragmentIndex(RustWrapperObject):
 
     def query_precursor(
         self,
-        precursor_cluster,
+        precursor_cluster: "ClusterResult1D",
         window_groups: list[int] | None = None,
         *,
         max_rt_apex_delta_sec: float | None = 2.0,
         max_scan_apex_delta: int | None = 6,
         min_im_overlap_scans: int = 1,
         require_tile_compat: bool = True,
+        reject_frag_inside_precursor_tile: bool = True,
     ) -> list[int]:
         return self._py.query_precursor(
             precursor_cluster.get_py_ptr(),
@@ -68,16 +69,18 @@ class FragmentIndex(RustWrapperObject):
             max_scan_apex_delta=max_scan_apex_delta,
             min_im_overlap_scans=min_im_overlap_scans,
             require_tile_compat=require_tile_compat,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
         )
 
     def query_precursors(
             self,
-            precursor_clusters: list[Any],
+            precursor_clusters: list["ClusterResult1D"],
             *,
             max_rt_apex_delta_sec: float | None = 2.0,
             max_scan_apex_delta: int | None = 6,
             min_im_overlap_scans: int = 1,
             require_tile_compat: bool = True,
+            reject_frag_inside_precursor_tile: bool = True,
             num_threads: int = 4,
     ) -> list[list[int]]:
         return self._py.query_precursors_par(
@@ -86,6 +89,7 @@ class FragmentIndex(RustWrapperObject):
             max_scan_apex_delta=max_scan_apex_delta,
             min_im_overlap_scans=min_im_overlap_scans,
             require_tile_compat=require_tile_compat,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
             num_threads=num_threads,
         )
 

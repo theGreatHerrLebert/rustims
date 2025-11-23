@@ -597,6 +597,8 @@ pub struct FragmentQueryOpts {
     pub min_im_overlap_scans: usize,
     /// Require at least one shared DIA tile (ProgramSlice) between precursor and fragment.
     pub require_tile_compat: bool,
+    /// If true, drop fragments whose own selection (mz, scan)
+    pub reject_frag_inside_precursor_tile: bool,
 }
 
 impl Default for FragmentQueryOpts {
@@ -606,6 +608,7 @@ impl Default for FragmentQueryOpts {
             max_scan_apex_delta: Some(6),
             min_im_overlap_scans: 1,
             require_tile_compat: true,
+            reject_frag_inside_precursor_tile: false,
         }
     }
 }
@@ -886,15 +889,19 @@ impl FragmentIndex {
                 (0, fg.ms2_indices.len())
             };
 
-            let prec_tiles = if opts.require_tile_compat {
-                self.dia_index.tiles_for_precursor_in_group(
-                    g,
-                    prec_mz,
-                    prec_im,
-                )
-            } else {
-                Vec::new()
-            };
+            // We need precursor tiles if we either:
+            //  - enforce tile compatibility, or
+            //  - want to reject fragments inside the same tile.
+            let prec_tiles =
+                if opts.require_tile_compat || opts.reject_frag_inside_precursor_tile {
+                    self.dia_index.tiles_for_precursor_in_group(
+                        g,
+                        prec_mz,
+                        prec_im,
+                    )
+                } else {
+                    Vec::new()
+                };
 
             'ms2_loop: for k in lo_idx..hi_idx {
                 let j = fg.ms2_indices[k];
@@ -926,15 +933,28 @@ impl FragmentIndex {
                     }
                 }
 
-                // Tile compatibility
-                if opts.require_tile_compat {
+                // Tile compatibility + "reject inside precursor tile" guard
+                if opts.require_tile_compat || opts.reject_frag_inside_precursor_tile {
                     let frag_tiles = self
                         .dia_index
                         .tiles_for_fragment_in_group(g, im2);
+
                     if frag_tiles.is_empty() {
                         continue 'ms2_loop;
                     }
-                    if !tiles_intersect(&prec_tiles, &frag_tiles) {
+
+                    let intersects = tiles_intersect(&prec_tiles, &frag_tiles);
+
+                    // If we require tile compat: must intersect
+                    if opts.require_tile_compat && !intersects {
+                        continue 'ms2_loop;
+                    }
+
+                    // If we reject fragments inside the same tile: skip those
+                    if opts.reject_frag_inside_precursor_tile && intersects {
+                        // MS2 falls into the same mz×scan selection rectangle
+                        // that could select the precursor → treat as residual
+                        // precursor, not a real fragment.
                         continue 'ms2_loop;
                     }
                 }
