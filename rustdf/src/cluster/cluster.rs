@@ -1266,38 +1266,6 @@ fn cushion_hi_edge(scale: &TofScale, hi_edge: f32) -> f32 {
 }
 
 #[inline]
-fn lower_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
-    let mut lo = start;
-    let mut hi = end;
-    let xf = x as f64;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        if mz[mid] < xf {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
-}
-
-#[inline]
-fn upper_bound_in(mz: &[f64], start: usize, end: usize, x: f32) -> usize {
-    let mut lo = start;
-    let mut hi = end;
-    let xf = x as f64;
-    while lo < hi {
-        let mid = (lo + hi) >> 1;
-        if mz[mid] <= xf {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    lo
-}
-
-#[inline]
 fn thin_stride(total: usize, cap: usize) -> usize {
     if cap == 0 || total <= cap {
         1
