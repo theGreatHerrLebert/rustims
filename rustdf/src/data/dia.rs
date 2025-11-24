@@ -312,6 +312,20 @@ impl DiaIndex {
         out
     }
 
+    /// Return the m/z isolation bounds (lo, hi) for a given tile index in a group.
+    ///
+    /// If the tile index is out of range for this group, returns (NaN, NaN).
+    /// This is used by the fragment query to decide whether a fragment's m/z
+    /// lies **inside** the precursor-selection band of the shared tile.
+    pub fn tile_mz_bounds(&self, g: u32, tile_idx: usize) -> (f32, f32) {
+        let slices = self.program_slices_for_group(g);
+        if tile_idx >= slices.len() {
+            return (f32::NAN, f32::NAN);
+        }
+        let s = &slices[tile_idx];
+        (s.mz_lo as f32, s.mz_hi as f32)
+    }
+
     #[inline]
     pub fn mz_bounds_for_window_group_core(&self, g: u32) -> Option<(f32, f32)> {
         self.group_to_mz_union.get(&g).map(|&(a,b)| (a as f32, b as f32))
