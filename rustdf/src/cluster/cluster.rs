@@ -1173,6 +1173,12 @@ pub fn make_spec_from_pair(
 
     let tof_win = (bin_lo as i32, bin_hi as i32);
 
+    debug_assert!(
+        bin_lo <= bin_hi && bin_hi < scale.num_bins(),
+        "axis_bin_range_for_bounds produced invalid bin range: {:?} -> ({}, {}) / n_bins={}",
+        im.tof_bounds, bin_lo, bin_hi, scale.num_bins()
+    );
+
     ClusterSpec1D {
         rt_lo,
         rt_hi,
