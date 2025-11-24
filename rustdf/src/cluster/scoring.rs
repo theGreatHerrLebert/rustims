@@ -5,8 +5,31 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use crate::cluster::candidates::{CandidateOpts, PairFeatures, ScoreOpts};
 use crate::cluster::cluster::ClusterResult1D;
+use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::cluster_mz_mu;
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
+
+#[derive(Clone, Copy, Debug)]
+pub enum MatchScoreMode {
+    /// Geometric / “geom” style: uses PairFeatures + ScoreOpts
+    Geom,
+    /// XIC correlation style: uses XicScoreOpts
+    Xic,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScoredHit {
+    /// Index into the MS2 slice (typically `self.ms2` in FragmentIndex).
+    pub frag_idx: usize,
+    /// Final scalar score (geom or XIC, depending on mode).
+    pub score: f32,
+}
+
+#[derive(Clone, Copy)]
+pub enum PrecursorLike<'a> {
+    Cluster(&'a ClusterResult1D),
+    Feature(&'a SimpleFeature),
+}
 
 #[derive(Clone, Debug)]
 pub struct XicScoreOpts {
@@ -898,6 +921,30 @@ fn precompute_intensities(clusters: &[ClusterResult1D]) -> Vec<f32> {
         .collect()
 }
 
+#[inline]
+fn top_intensity_member(feat: &SimpleFeature) -> Option<&ClusterResult1D> {
+    if feat.member_clusters.is_empty() {
+        return None;
+    }
+    feat.member_clusters
+        .iter()
+        .max_by(|a, b| a.raw_sum.partial_cmp(&b.raw_sum).unwrap_or(Ordering::Equal))
+}
+
+/// Geometric score for a *single* precursor cluster vs a fragment.
+///
+/// Returns (PairFeatures, score).
+#[inline]
+pub fn geom_match_score_single_cluster(
+    ms1: &ClusterResult1D,
+    ms2: &ClusterResult1D,
+    opts: &ScoreOpts,
+) -> (PairFeatures, f32) {
+    let f = crate::cluster::candidates::build_features(ms1, ms2, opts);
+    let s = score_from_features(&f, opts);
+    (f, s)
+}
+
 pub fn xic_match_score_precomputed(
     ms1_idx: usize,
     ms2_idx: usize,
@@ -964,4 +1011,142 @@ pub fn xic_match_score_precomputed(
     } else {
         Some(final_score.clamp(0.0, 1.0))
     }
+}
+
+pub fn xic_match_score_precursor(
+    prec: PrecursorLike<'_>,
+    frag: &ClusterResult1D,
+    opts: &XicScoreOpts,
+) -> Option<f32> {
+    match prec {
+        PrecursorLike::Cluster(c) => xic_match_score(c, frag, opts),
+
+        PrecursorLike::Feature(f) => {
+            let top = top_intensity_member(f)?;
+            xic_match_score(top, frag, opts)
+        }
+    }
+}
+
+
+pub fn geom_match_score_precursor(
+    prec: PrecursorLike<'_>,
+    frag: &ClusterResult1D,
+    opts: &ScoreOpts,
+) -> Option<(PairFeatures, f32)> {
+    match prec {
+        PrecursorLike::Cluster(c) => {
+            let (f, s) = geom_match_score_single_cluster(c, frag, opts);
+            Some((f, s))
+        }
+
+        PrecursorLike::Feature(feat) => {
+            let top = top_intensity_member(feat)?;
+            let (f, s) = geom_match_score_single_cluster(top, frag, opts);
+            Some((f, s))
+        }
+    }
+}
+
+/// Score a single precursor (cluster or feature) against a set of MS2 candidates.
+///
+/// - `prec`          : the precursor-like object (ClusterResult1D or SimpleFeature)
+/// - `ms2`           : full fragment cluster array (e.g. `self.ms2`)
+/// - `candidate_ids` : indices into `ms2` that passed the physical filters
+/// - `mode`          : which scoring to use (Geom vs XIC)
+/// - `geom_opts`     : required for Geom mode
+/// - `xic_opts`      : required for XIC mode
+/// - `min_score`     : keep only hits with `score >= min_score`
+///
+/// Returns a Vec of (frag_idx, score) sorted by descending score.
+pub fn query_precursor_scored(
+    prec: PrecursorLike<'_>,
+    ms2: &[ClusterResult1D],
+    candidate_ids: &[usize],
+    mode: MatchScoreMode,
+    geom_opts: &ScoreOpts,
+    xic_opts: &XicScoreOpts,
+    min_score: f32,
+) -> Vec<ScoredHit> {
+    let mut out: Vec<ScoredHit> = Vec::with_capacity(candidate_ids.len());
+
+    for &j in candidate_ids {
+        if j >= ms2.len() {
+            continue;
+        }
+        let frag = &ms2[j];
+
+        let score_opt = match mode {
+            MatchScoreMode::Geom => {
+                // geom_match_score_precursor already handles Cluster vs Feature
+                if let Some((_feat, s)) = geom_match_score_precursor(prec, frag, geom_opts) {
+                    Some(s)
+                } else {
+                    None
+                }
+            }
+            MatchScoreMode::Xic => {
+                // xic_match_score_precursor already handles Cluster vs Feature
+                xic_match_score_precursor(prec, frag, xic_opts)
+            }
+        };
+
+        if let Some(s) = score_opt {
+            if s.is_finite() && s >= min_score {
+                out.push(ScoredHit {
+                    frag_idx: j,
+                    score: s,
+                });
+            }
+        }
+    }
+
+    // Sort by descending score (best first)
+    out.sort_unstable_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(Ordering::Equal)
+    });
+
+    out
+}
+
+/// Score many precursors in parallel.
+///
+/// - `precs`              : slice of precursor-like objects (Cluster or Feature)
+/// - `ms2`                : full MS2 slice
+/// - `candidates_per_prec`: for each precursor, the Vec<usize> of candidate MS2 indices
+///
+/// Returns a Vec of length `precs.len()`, where each entry is the
+/// scored hits for that precursor (sorted by descending score).
+pub fn query_precursors_scored_par(
+    precs: &[PrecursorLike<'_>],
+    ms2: &[ClusterResult1D],
+    candidates_per_prec: &[Vec<usize>],
+    mode: MatchScoreMode,
+    geom_opts: &ScoreOpts,
+    xic_opts: &XicScoreOpts,
+    min_score: f32,
+) -> Vec<Vec<ScoredHit>> {
+    assert_eq!(
+        precs.len(),
+        candidates_per_prec.len(),
+        "precs and candidates_per_prec must have same length"
+    );
+
+    precs
+        .par_iter()
+        .zip(candidates_per_prec.par_iter())
+        .map(|(&prec, cands)| {
+            query_precursor_scored(
+                prec,
+                ms2,
+                cands,
+                mode,
+                geom_opts,
+                xic_opts,
+                min_score,
+            )
+        })
+        .collect()
 }

@@ -4,13 +4,7 @@ use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu};
-use crate::cluster::scoring::{
-    assign_ms2_to_best_ms1_by_xic,
-    jaccard_time,
-    ms1_to_ms2_map,
-    PrecursorSearchIndex,
-    XicScoreOpts,
-};
+use crate::cluster::scoring::{assign_ms2_to_best_ms1_by_xic, jaccard_time, ms1_to_ms2_map, query_precursor_scored, query_precursors_scored_par, MatchScoreMode, PrecursorLike, PrecursorSearchIndex, ScoredHit, XicScoreOpts};
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
 
 // ---------------------------------------------------------------------------
@@ -617,6 +611,11 @@ impl Default for FragmentQueryOpts {
 pub struct FragmentIndex {
     dia_index: Arc<DiaIndex>,
 
+    /// Full MS2 cluster objects (one per fragment cluster).
+    ///
+    /// All per-MS2 metadata vectors below use the same indexing.
+    ms2: Vec<ClusterResult1D>,
+
     // per-MS2 metadata (global index over all groups)
     ms2_im_mu: Vec<f32>,
     ms2_im_windows: Vec<(usize, usize)>,
@@ -796,6 +795,7 @@ impl FragmentIndex {
         }
 
         FragmentIndex {
+            ms2: ms2.to_vec(),
             dia_index,
             ms2_im_mu,
             ms2_im_windows,
@@ -1031,6 +1031,299 @@ impl FragmentIndex {
                 .map(|prec| self.query_precursor(prec, None, opts))
                 .collect()
         })
+    }
+
+    /// Enumerate candidate MS2 indices for a given precursor.
+    ///
+    /// Returns indices into `self.ms2`.
+    pub fn enumerate_candidates_for_precursor(
+        &self,
+        prec: &ClusterResult1D,
+        window_groups: Option<&[u32]>,
+    ) -> Vec<usize> {
+        let opts = FragmentQueryOpts::default();
+        let mut out = Vec::<usize>::new();
+
+        // --- precursor m/z (for group selection + "inside selection" test) ---
+        let prec_mz = if let Some(m) = cluster_mz_mu(prec) {
+            if m.is_finite() && m > 0.0 {
+                m
+            } else {
+                match prec.mz_window {
+                    Some((lo, hi))
+                    if lo.is_finite() && hi.is_finite() && hi > lo =>
+                        {
+                            0.5 * (lo + hi)
+                        }
+                    _ => return out, // no usable m/z
+                }
+            }
+        } else {
+            match prec.mz_window {
+                Some((lo, hi))
+                if lo.is_finite() && hi.is_finite() && hi > lo =>
+                    {
+                        0.5 * (lo + hi)
+                    }
+                _ => return out,
+            }
+        };
+
+        // --- precursor RT apex (SECONDS!) ---
+        let prec_rt = match self.precursor_rt_apex_sec(prec) {
+            Some(t) => t,
+            None => return out,
+        };
+
+        // --- precursor IM apex (scan space) ---
+        let prec_im = if prec.im_fit.mu.is_finite() {
+            prec.im_fit.mu
+        } else {
+            let (lo, hi) = prec.im_window;
+            if hi > lo {
+                ((lo + hi) as f32) * 0.5
+            } else {
+                return out;
+            }
+        };
+
+        let prec_im_win = prec.im_window;
+        let prec_scan_win = (prec_im_win.0 as u32, prec_im_win.1 as u32);
+
+        // Decide which groups to query
+        let groups: Vec<u32> = match window_groups {
+            Some(gs) if !gs.is_empty() => gs.to_vec(),
+            _ => self.dia_index.groups_for_precursor(prec_mz, prec_im),
+        };
+        if groups.is_empty() {
+            return out;
+        }
+
+        let require_tile  = opts.require_tile_compat;
+        let reject_inside = opts.reject_frag_inside_precursor_tile;
+
+        for g in groups {
+            let fg = match self.by_group.get(&g) {
+                Some(fg) => fg,
+                None => continue,
+            };
+
+            // RT slice via binary search (fg.rt_apex is already in seconds)
+            let (lo_idx, hi_idx) = if let Some(dt) = opts.max_rt_apex_delta_sec {
+                if dt > 0.0 {
+                    let lo_t = prec_rt - dt;
+                    let hi_t = prec_rt + dt;
+                    (
+                        lower_bound(&fg.rt_apex, lo_t),
+                        upper_bound(&fg.rt_apex, hi_t),
+                    )
+                } else {
+                    (0, fg.ms2_indices.len())
+                }
+            } else {
+                (0, fg.ms2_indices.len())
+            };
+
+            // Program slices (tiles) for this group; we'll inspect them directly.
+            let slices = self.dia_index.program_slices_for_group(g);
+
+            'ms2_loop: for k in lo_idx..hi_idx {
+                let j = fg.ms2_indices[k];
+                if !self.ms2_keep[j] {
+                    continue;
+                }
+
+                // IM window overlap
+                let im2 = self.ms2_im_windows[j];
+                let frag_scan_win = (im2.0 as u32, im2.1 as u32);
+
+                let im_overlap = {
+                    let lo = prec_im_win.0.max(im2.0);
+                    let hi = prec_im_win.1.min(im2.1);
+                    hi.saturating_sub(lo).saturating_add(1)
+                };
+                if im_overlap < opts.min_im_overlap_scans {
+                    continue;
+                }
+
+                // IM apex delta
+                if let Some(max_d) = opts.max_scan_apex_delta {
+                    let s2 = self.ms2_im_mu[j];
+                    if s2.is_finite() {
+                        let d = (prec_im - s2).abs() as f32;
+                        if d > max_d as f32 {
+                            continue 'ms2_loop;
+                        }
+                    } else {
+                        continue 'ms2_loop;
+                    }
+                }
+
+                // --- Tile compatibility + "reject inside precursor-selection" guard ---
+                if require_tile || reject_inside {
+                    let mut tile_compatible   = false;
+                    let mut inside_prec_tile  = false;
+                    let frag_mz = self.ms2_mz_mu[j];
+
+                    for s in &slices {
+                        let tile_scans = (s.scan_lo, s.scan_hi);
+
+                        // Do both precursor and fragment overlap this tile in scan space?
+                        let prec_hits_tile = ranges_overlap_u32(prec_scan_win, tile_scans);
+                        let frag_hits_tile = ranges_overlap_u32(frag_scan_win, tile_scans);
+
+                        if !(prec_hits_tile && frag_hits_tile) {
+                            continue;
+                        }
+
+                        tile_compatible = true;
+
+                        if reject_inside && frag_mz.is_finite() {
+                            // Precursor m/z inside this tile's isolation window?
+                            let prec_in_tile =
+                                prec_mz >= s.mz_lo as f32 && prec_mz <= s.mz_hi as f32;
+                            // Fragment m/z inside the same isolation window?
+                            let frag_in_tile =
+                                frag_mz >= s.mz_lo as f32 && frag_mz <= s.mz_hi as f32;
+
+                            if prec_in_tile && frag_in_tile {
+                                inside_prec_tile = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if require_tile && !tile_compatible {
+                        continue 'ms2_loop;
+                    }
+                    if reject_inside && inside_prec_tile {
+                        continue 'ms2_loop;
+                    }
+                }
+
+                // Survived all guards: keep this fragment index.
+                out.push(j);
+            }
+        }
+
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Enumerate candidates for many precursors.
+    ///
+    /// Used by `query_precursors_scored_par`, with default FragmentQueryOpts.
+    fn enumerate_candidates_for_precursors(
+        &self,
+        precs: &[ClusterResult1D],
+    ) -> Vec<Vec<usize>> {
+        precs
+            .iter()
+            .map(|prec| self.enumerate_candidates_for_precursor(prec, None))
+            .collect()
+    }
+
+    pub fn query_precursor_scored(
+        &self,
+        prec: &ClusterResult1D,
+        window_groups: Option<&[u32]>,
+        mode: MatchScoreMode,
+        geom_opts: &ScoreOpts,
+        xic_opts: &XicScoreOpts,
+        min_score: f32,
+    ) -> Vec<ScoredHit> {
+        let candidate_ids = self.enumerate_candidates_for_precursor(prec, window_groups);
+        query_precursor_scored(
+            PrecursorLike::Cluster(prec),
+            &self.ms2,
+            &candidate_ids,
+            mode,
+            geom_opts,
+            xic_opts,
+            min_score,
+        )
+    }
+
+    pub fn query_precursors_scored_par(
+        &self,
+        precs: &[ClusterResult1D],
+        mode: MatchScoreMode,
+        geom_opts: &ScoreOpts,
+        xic_opts: &XicScoreOpts,
+        min_score: f32,
+    ) -> Vec<Vec<ScoredHit>> {
+        let all_candidates = self.enumerate_candidates_for_precursors(precs);
+
+        let prec_like: Vec<PrecursorLike<'_>> =
+            precs.iter().map(|c| PrecursorLike::Cluster(c)).collect();
+
+        query_precursors_scored_par(
+            &prec_like,
+            &self.ms2,
+            &all_candidates,
+            mode,
+            geom_opts,
+            xic_opts,
+            min_score,
+        )
+    }
+
+    /// Score a single SimpleFeature precursor against a given set of
+    /// fragment candidates (indices into `self.ms2`).
+    ///
+    /// This is the "feature" twin of `query_precursor_scored`, but it does
+    /// **not** try to enumerate candidates itself – you pass them in.
+    pub fn score_feature_against_candidates(
+        &self,
+        feat: &SimpleFeature,
+        candidate_ids: &[usize],
+        mode: MatchScoreMode,
+        geom_opts: &ScoreOpts,
+        xic_opts: &XicScoreOpts,
+        min_score: f32,
+    ) -> Vec<ScoredHit> {
+        query_precursor_scored(
+            PrecursorLike::Feature(feat),
+            &self.ms2,
+            candidate_ids,
+            mode,
+            geom_opts,
+            xic_opts,
+            min_score,
+        )
+    }
+
+    /// Parallel scoring for many SimpleFeatures.
+    ///
+    /// `features[i]` is scored against `all_candidate_ids[i]`.
+    pub fn score_features_par(
+        &self,
+        features: &[SimpleFeature],
+        all_candidate_ids: &[Vec<usize>],
+        mode: MatchScoreMode,
+        geom_opts: &ScoreOpts,
+        xic_opts: &XicScoreOpts,
+        min_score: f32,
+    ) -> Vec<Vec<ScoredHit>> {
+        assert_eq!(
+            features.len(),
+            all_candidate_ids.len(),
+            "features and all_candidate_ids must have same length"
+        );
+
+        let prec_like: Vec<PrecursorLike<'_>> =
+            features.iter().map(|f| PrecursorLike::Feature(f)).collect();
+
+        query_precursors_scored_par(
+            &prec_like,
+            &self.ms2,
+            all_candidate_ids,
+            mode,
+            geom_opts,
+            xic_opts,
+            min_score,
+        )
     }
 }
 

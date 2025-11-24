@@ -183,6 +183,11 @@ pub struct SimpleFeature {
 
     /// Cosine similarity vs. Averagine envelope (if LUT was provided; 0 otherwise).
     pub cos_averagine: f32,
+
+    /// Optional: the actual MS1 member clusters that make up this feature.
+    /// This lets us score a feature directly against an MS2 cluster without
+    /// needing the global MS1 slice.
+    pub member_clusters: Vec<ClusterResult1D>,
 }
 
 #[derive(Clone, Debug)]
@@ -684,6 +689,7 @@ pub fn build_simple_features_from_clusters(
             member_cluster_ids,
             raw_sum: raw_sum_total,
             cos_averagine,
+            member_clusters: best_chain.iter().map(|&i| clusters[good[i].orig_idx].clone()).collect(),
         });
     }
 

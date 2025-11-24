@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
 use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2};
 use numpy::ndarray::{Array2, ShapeBuilder};
-
+use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
 use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
@@ -2466,7 +2466,7 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
 
 use rustdf::cluster::io as cio;
 use rustdf::cluster::pseudo::PseudoSpecOpts;
-use rustdf::cluster::scoring::XicScoreOpts;
+use rustdf::cluster::scoring::{MatchScoreMode, ScoredHit, XicScoreOpts};
 use crate::py_feature::PySimpleFeature;
 use crate::py_pseudo::PyPseudoSpectrum;
 
@@ -2632,6 +2632,29 @@ impl PyPseudoBuildResult {
     }
 }
 
+/// Python-visible wrapper around `ScoredHit`.
+///
+/// Adjust the getters to your actual `ScoredHit` fields.
+/// I'm assuming a minimal API like:
+///   - `ms2_idx: usize`
+///   - `score: f32`
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyScoredHit {
+    pub(crate) inner: ScoredHit,
+}
+
+#[pymethods]
+impl PyScoredHit {
+    /// Index of the MS2 cluster in the fragment cluster array
+    /// (the same indices you passed when building the FragmentIndex).
+    #[getter]
+    pub fn score(&self) -> f32 { self.inner.score }
+    //
+    #[getter]
+    pub fn frag_idx(&self) -> usize { self.inner.frag_idx }
+}
+
 #[pyclass]
 pub struct PyFragmentIndex {
     pub(crate) inner: FragmentIndex,
@@ -2725,6 +2748,199 @@ impl PyFragmentIndex {
 
         let all_hits = self.inner.query_precursors_par(precs_rust, &opts, num_threads);
         Ok(all_hits)
+    }
+    // ------------------------------------------------------------------
+    // 1) Cluster-based: single precursor, scored
+    // ------------------------------------------------------------------
+    #[pyo3(signature = (
+        prec,
+        window_groups = None,
+        mode = "geom",
+        min_score = 0.0,
+    ))]
+    pub fn query_precursor_scored(
+        &self,
+        prec: &PyClusterResult1D,
+        window_groups: Option<Vec<u32>>,
+        mode: &str,
+        min_score: f32,
+    ) -> PyResult<Vec<PyScoredHit>> {
+        let prec_rust: &ClusterResult1D = &prec.inner;
+
+        let mode_rs = parse_match_score_mode(mode)?;
+
+        // internal scoring knobs (hidden from Python)
+        let geom_opts = ScoreOpts::default();
+        let xic_opts  = XicScoreOpts::default();
+
+        let groups_opt = window_groups.as_ref().map(|v| v.as_slice());
+
+        let hits: Vec<ScoredHit> = self.inner.query_precursor_scored(
+            prec_rust,
+            groups_opt,
+            mode_rs,
+            &geom_opts,
+            &xic_opts,
+            min_score,
+        );
+
+        let wrapped: Vec<PyScoredHit> = hits
+            .into_iter()
+            .map(|h| PyScoredHit { inner: h })
+            .collect();
+
+        Ok(wrapped)
+    }
+
+    // ------------------------------------------------------------------
+    // 2) Cluster-based: many precursors, scored in parallel
+    // ------------------------------------------------------------------
+    #[pyo3(signature = (
+        precs,
+        mode = "geom",
+        min_score = 0.0,
+    ))]
+    pub fn query_precursors_scored_par(
+        &self,
+        precs: Vec<Py<PyClusterResult1D>>,
+        mode: &str,
+        min_score: f32,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Vec<PyScoredHit>>> {
+        let precs_rust: Vec<ClusterResult1D> = precs
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let mode_rs = parse_match_score_mode(mode)?;
+
+        let geom_opts = ScoreOpts::default();
+        let xic_opts  = XicScoreOpts::default();
+
+        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_precursors_scored_par(
+            &precs_rust,
+            mode_rs,
+            &geom_opts,
+            &xic_opts,
+            min_score,
+        );
+
+        let wrapped: Vec<Vec<PyScoredHit>> = all_hits
+            .into_iter()
+            .map(|hits| {
+                hits.into_iter()
+                    .map(|h| PyScoredHit { inner: h })
+                    .collect()
+            })
+            .collect();
+
+        Ok(wrapped)
+    }
+
+    // ------------------------------------------------------------------
+    // 3) Feature-based: single feature, scored vs specific candidate MS2
+    // ------------------------------------------------------------------
+    #[pyo3(signature = (
+        feat,
+        candidate_indices,
+        mode = "geom",
+        min_score = 0.0,
+    ))]
+    pub fn score_feature_against_candidates(
+        &self,
+        feat: &PySimpleFeature,
+        candidate_indices: Vec<usize>,
+        mode: &str,
+        min_score: f32,
+    ) -> PyResult<Vec<PyScoredHit>> {
+        let feat_rust: &SimpleFeature = &feat.inner;
+        let mode_rs = parse_match_score_mode(mode)?;
+
+        let geom_opts = ScoreOpts::default();
+        let xic_opts  = XicScoreOpts::default();
+
+        let hits: Vec<ScoredHit> = self.inner.score_feature_against_candidates(
+            feat_rust,
+            &candidate_indices,
+            mode_rs,
+            &geom_opts,
+            &xic_opts,
+            min_score,
+        );
+
+        let wrapped: Vec<PyScoredHit> = hits
+            .into_iter()
+            .map(|h| PyScoredHit { inner: h })
+            .collect();
+
+        Ok(wrapped)
+    }
+
+    // ------------------------------------------------------------------
+    // 4) Feature-based: many features, scored in parallel
+    // ------------------------------------------------------------------
+    #[pyo3(signature = (
+        feats,
+        all_candidate_indices,
+        mode = "geom",
+        min_score = 0.0,
+    ))]
+    pub fn score_features_par(
+        &self,
+        feats: Vec<Py<PySimpleFeature>>,
+        all_candidate_indices: Vec<Vec<usize>>,
+        mode: &str,
+        min_score: f32,
+        py: Python<'_>,
+    ) -> PyResult<Vec<Vec<PyScoredHit>>> {
+        if feats.len() != all_candidate_indices.len() {
+            return Err(PyValueError::new_err(
+                "feats and all_candidate_indices must have same length",
+            ));
+        }
+
+        let feats_rust: Vec<SimpleFeature> = feats
+            .into_iter()
+            .map(|f| f.borrow(py).inner.clone())
+            .collect();
+
+        let mode_rs = parse_match_score_mode(mode)?;
+
+        let geom_opts = ScoreOpts::default();
+        let xic_opts  = XicScoreOpts::default();
+
+        let all_hits: Vec<Vec<ScoredHit>> = self.inner.score_features_par(
+            &feats_rust,
+            &all_candidate_indices,
+            mode_rs,
+            &geom_opts,
+            &xic_opts,
+            min_score,
+        );
+
+        let wrapped: Vec<Vec<PyScoredHit>> = all_hits
+            .into_iter()
+            .map(|hits| {
+                hits.into_iter()
+                    .map(|h| PyScoredHit { inner: h })
+                    .collect()
+            })
+            .collect();
+
+        Ok(wrapped)
+    }
+}
+
+fn parse_match_score_mode(mode: &str) -> PyResult<MatchScoreMode> {
+    let m = mode.to_ascii_lowercase();
+    match m.as_str() {
+        "geom" | "geometric" => Ok(MatchScoreMode::Geom),
+        "xic" | "extracted_chromatogram"   => Ok(MatchScoreMode::Xic),
+        // adjust the variant names above to your real enum
+        other => Err(PyValueError::new_err(format!(
+            "Unknown match score mode '{other}'. \
+             Expected one of: 'geom', 'xic'."
+        ))),
     }
 }
 
