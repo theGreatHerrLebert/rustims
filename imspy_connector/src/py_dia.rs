@@ -2632,27 +2632,74 @@ impl PyPseudoBuildResult {
     }
 }
 
-/// Python-visible wrapper around `ScoredHit`.
-///
-/// Adjust the getters to your actual `ScoredHit` fields.
-/// I'm assuming a minimal API like:
-///   - `ms2_idx: usize`
-///   - `score: f32`
 #[pyclass]
-#[derive(Clone, Debug)]
 pub struct PyScoredHit {
-    pub(crate) inner: ScoredHit,
+    pub inner: ScoredHit,
 }
 
 #[pymethods]
 impl PyScoredHit {
-    /// Index of the MS2 cluster in the fragment cluster array
-    /// (the same indices you passed when building the FragmentIndex).
     #[getter]
-    pub fn score(&self) -> f32 { self.inner.score }
-    //
+    fn frag_idx(&self) -> usize {
+        self.inner.frag_idx
+    }
+
     #[getter]
-    pub fn frag_idx(&self) -> usize { self.inner.frag_idx }
+    fn score(&self) -> f32 {
+        self.inner.score
+    }
+
+    // Geom fields: return None when geom is not present (e.g. XIC mode)
+
+    #[getter]
+    fn jacc_rt(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.jacc_rt)
+    }
+
+    #[getter]
+    fn rt_apex_delta_s(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.rt_apex_delta_s)
+    }
+
+    #[getter]
+    fn im_apex_delta_scans(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.im_apex_delta_scans)
+    }
+
+    #[getter]
+    fn im_overlap_scans(&self) -> Option<u32> {
+        self.inner.geom.as_ref().map(|g| g.im_overlap_scans)
+    }
+
+    #[getter]
+    fn im_union_scans(&self) -> Option<u32> {
+        self.inner.geom.as_ref().map(|g| g.im_union_scans)
+    }
+
+    #[getter]
+    fn ms1_raw_sum(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.ms1_raw_sum)
+    }
+
+    #[getter]
+    fn shape_ok(&self) -> Option<bool> {
+        self.inner.geom.as_ref().map(|g| g.shape_ok)
+    }
+
+    #[getter]
+    fn z_rt(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.z_rt)
+    }
+
+    #[getter]
+    fn z_im(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.z_im)
+    }
+
+    #[getter]
+    fn s_shape(&self) -> Option<f32> {
+        self.inner.geom.as_ref().map(|g| g.s_shape)
+    }
 }
 
 #[pyclass]
@@ -2837,87 +2884,65 @@ impl PyFragmentIndex {
         Ok(wrapped)
     }
 
-    // ------------------------------------------------------------------
-    // 3) Feature-based: single feature, scored vs specific candidate MS2
-    // ------------------------------------------------------------------
-    #[pyo3(signature = (
-        feat,
-        candidate_indices,
-        mode = "geom",
-        min_score = 0.0,
-    ))]
-    pub fn score_feature_against_candidates(
+    #[pyo3(signature = (feat, mode = "geom", min_score = 0.0))]
+    pub fn score_feature(
         &self,
-        feat: &PySimpleFeature,
-        candidate_indices: Vec<usize>,
+        feat: Py<PySimpleFeature>,
         mode: &str,
         min_score: f32,
+        py: Python<'_>,
     ) -> PyResult<Vec<PyScoredHit>> {
-        let feat_rust: &SimpleFeature = &feat.inner;
+        let feat_rust: SimpleFeature = feat.borrow(py).inner.clone();
         let mode_rs = parse_match_score_mode(mode)?;
-
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
-        let hits: Vec<ScoredHit> = self.inner.score_feature_against_candidates(
-            feat_rust,
-            &candidate_indices,
+        let hits = self.inner.query_feature_scored(
+            &feat_rust,
             mode_rs,
             &geom_opts,
             &xic_opts,
             min_score,
         );
 
-        let wrapped: Vec<PyScoredHit> = hits
-            .into_iter()
-            .map(|h| PyScoredHit { inner: h })
-            .collect();
-
-        Ok(wrapped)
+        Ok(hits.into_iter().map(|h| PyScoredHit { inner: h }).collect())
     }
 
-    // ------------------------------------------------------------------
-    // 4) Feature-based: many features, scored in parallel
-    // ------------------------------------------------------------------
-    #[pyo3(signature = (
-        feats,
-        all_candidate_indices,
-        mode = "geom",
-        min_score = 0.0,
-    ))]
+    /// Score many SimpleFeatures in parallel.
+    ///
+    /// mode: "geom" | "xic"
+    /// min_score: keep only hits with score >= min_score
+    #[pyo3(signature = (feats, mode = "geom", min_score = 0.0))]
     pub fn score_features_par(
         &self,
         feats: Vec<Py<PySimpleFeature>>,
-        all_candidate_indices: Vec<Vec<usize>>,
         mode: &str,
         min_score: f32,
         py: Python<'_>,
     ) -> PyResult<Vec<Vec<PyScoredHit>>> {
-        if feats.len() != all_candidate_indices.len() {
-            return Err(PyValueError::new_err(
-                "feats and all_candidate_indices must have same length",
-            ));
-        }
-
+        // 1) Borrow the inner Rust SimpleFeature objects
         let feats_rust: Vec<SimpleFeature> = feats
             .into_iter()
             .map(|f| f.borrow(py).inner.clone())
             .collect();
 
-        let mode_rs = parse_match_score_mode(mode)?;
+        // 2) Parse the scoring mode from a string ("geom" / "xic")
+        let mode_rs = parse_match_score_mode(mode)?; // your existing helper
 
+        // 3) Use default scoring knobs for now
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
-        let all_hits: Vec<Vec<ScoredHit>> = self.inner.score_features_par(
+        // 4) Let the Rust index enumerate candidates & score in parallel
+        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_features_scored_par(
             &feats_rust,
-            &all_candidate_indices,
             mode_rs,
             &geom_opts,
             &xic_opts,
             min_score,
         );
 
+        // 5) Wrap ScoredHit -> PyScoredHit for Python
         let wrapped: Vec<Vec<PyScoredHit>> = all_hits
             .into_iter()
             .map(|hits| {

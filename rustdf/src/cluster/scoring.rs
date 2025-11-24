@@ -23,6 +23,8 @@ pub struct ScoredHit {
     pub frag_idx: usize,
     /// Final scalar score (geom or XIC, depending on mode).
     pub score: f32,
+    /// Geometric feature bundle, if Geom mode was used; None in XIC mode.
+    pub geom: Option<PairFeatures>,
 }
 
 #[derive(Clone, Copy)]
@@ -1076,32 +1078,32 @@ pub fn query_precursor_scored(
         }
         let frag = &ms2[j];
 
-        let score_opt = match mode {
+        match mode {
             MatchScoreMode::Geom => {
-                // geom_match_score_precursor already handles Cluster vs Feature
-                if let Some((_feat, s)) = geom_match_score_precursor(prec, frag, geom_opts) {
-                    Some(s)
-                } else {
-                    None
+                if let Some((f, s)) = geom_match_score_precursor(prec, frag, geom_opts) {
+                    if s.is_finite() && s >= min_score {
+                        out.push(ScoredHit {
+                            frag_idx: j,
+                            score: s,
+                            geom: Some(f),
+                        });
+                    }
                 }
             }
             MatchScoreMode::Xic => {
-                // xic_match_score_precursor already handles Cluster vs Feature
-                xic_match_score_precursor(prec, frag, xic_opts)
-            }
-        };
-
-        if let Some(s) = score_opt {
-            if s.is_finite() && s >= min_score {
-                out.push(ScoredHit {
-                    frag_idx: j,
-                    score: s,
-                });
+                if let Some(s) = xic_match_score_precursor(prec, frag, xic_opts) {
+                    if s.is_finite() && s >= min_score {
+                        out.push(ScoredHit {
+                            frag_idx: j,
+                            score: s,
+                            geom: None,
+                        });
+                    }
+                }
             }
         }
     }
 
-    // Sort by descending score (best first)
     out.sort_unstable_by(|a, b| {
         b.score
             .partial_cmp(&a.score)

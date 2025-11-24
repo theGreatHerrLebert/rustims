@@ -1224,6 +1224,25 @@ impl FragmentIndex {
             .collect()
     }
 
+    /// Enumerate candidate MS2 indices for a given SimpleFeature.
+    ///
+    /// Uses the representative member cluster (highest raw_sum) of the feature
+    /// and reuses the standard precursor enumeration logic.
+    ///
+    /// Returns indices into `self.ms2`.
+    pub fn enumerate_candidates_for_feature(
+        &self,
+        feat: &SimpleFeature,
+    ) -> Vec<usize> {
+        let prec_cluster = match feature_representative_cluster(feat) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        // NOTE: we always let the index decide which window groups to query.
+        self.enumerate_candidates_for_precursor(prec_cluster, None)
+    }
+
     pub fn query_precursor_scored(
         &self,
         prec: &ClusterResult1D,
@@ -1269,24 +1288,38 @@ impl FragmentIndex {
         )
     }
 
-    /// Score a single SimpleFeature precursor against a given set of
-    /// fragment candidates (indices into `self.ms2`).
+    /// Enumerate candidates for many SimpleFeatures.
     ///
-    /// This is the "feature" twin of `query_precursor_scored`, but it does
-    /// **not** try to enumerate candidates itself – you pass them in.
-    pub fn score_feature_against_candidates(
+    /// Used by `query_features_scored_par`, with FragmentIndex-derived groups.
+    fn enumerate_candidates_for_features(
+        &self,
+        feats: &[SimpleFeature],
+    ) -> Vec<Vec<usize>> {
+        feats
+            .iter()
+            .map(|feat| self.enumerate_candidates_for_feature(feat))
+            .collect()
+    }
+
+    /// Score a single SimpleFeature precursor against all physically plausible
+    /// fragment candidates, as determined internally by the FragmentIndex.
+    ///
+    /// This is the feature twin of `query_precursor_scored`, but it does *not*
+    /// require the caller to pass window groups or candidate indices.
+    pub fn query_feature_scored(
         &self,
         feat: &SimpleFeature,
-        candidate_ids: &[usize],
         mode: MatchScoreMode,
         geom_opts: &ScoreOpts,
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
+        let candidate_ids = self.enumerate_candidates_for_feature(feat);
+
         query_precursor_scored(
             PrecursorLike::Feature(feat),
             &self.ms2,
-            candidate_ids,
+            &candidate_ids,
             mode,
             geom_opts,
             xic_opts,
@@ -1296,29 +1329,25 @@ impl FragmentIndex {
 
     /// Parallel scoring for many SimpleFeatures.
     ///
-    /// `features[i]` is scored against `all_candidate_ids[i]`.
-    pub fn score_features_par(
+    /// - Candidate enumeration is done *inside* the index.
+    /// - `feats[i]` is scored against the MS2 candidates inferred for feat i.
+    pub fn query_features_scored_par(
         &self,
-        features: &[SimpleFeature],
-        all_candidate_ids: &[Vec<usize>],
+        feats: &[SimpleFeature],
         mode: MatchScoreMode,
         geom_opts: &ScoreOpts,
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<Vec<ScoredHit>> {
-        assert_eq!(
-            features.len(),
-            all_candidate_ids.len(),
-            "features and all_candidate_ids must have same length"
-        );
+        let all_candidates = self.enumerate_candidates_for_features(feats);
 
         let prec_like: Vec<PrecursorLike<'_>> =
-            features.iter().map(|f| PrecursorLike::Feature(f)).collect();
+            feats.iter().map(|f| PrecursorLike::Feature(f)).collect();
 
         query_precursors_scored_par(
             &prec_like,
             &self.ms2,
-            all_candidate_ids,
+            &all_candidates,
             mode,
             geom_opts,
             xic_opts,
@@ -1362,4 +1391,14 @@ fn upper_bound(xs: &[f32], x: f32) -> usize {
         }
     }
     lo
+}
+
+fn feature_representative_cluster<'a>(feat: &'a SimpleFeature) -> Option<&'a ClusterResult1D> {
+    if feat.member_clusters.is_empty() {
+        return None;
+    }
+
+    feat.member_clusters
+        .iter()
+        .max_by(|a, b| a.raw_sum.partial_cmp(&b.raw_sum).unwrap_or(std::cmp::Ordering::Equal))
 }
