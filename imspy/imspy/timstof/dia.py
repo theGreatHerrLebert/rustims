@@ -12,6 +12,46 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+class ScoreHit(RustWrapperObject):
+    """
+    Thin Python wrapper around ims.PyScoreHit.
+
+    Exposes read-only properties like:
+      - ms2_index: index of the fragment cluster (into the fragment cluster array)
+      - score: overall match score
+
+    Extend with more properties if PyScoreHit exposes them (e.g. rt_score, xic_score, mode, ...).
+    """
+
+    def __init__(self, *a, **k):
+        raise RuntimeError(
+            "Use ScoreHit.from_py_ptr(...) instead of constructing directly."
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyScoreHit) -> "ScoreHit":
+        inst = cls.__new__(cls)
+        inst._py = p
+        return inst
+
+    def get_py_ptr(self) -> ims.PyScoreHit:
+        return self._py
+
+    # --- properties, mapped 1:1 to PyScoreHit getters ----
+
+    @property
+    def ms2_index(self) -> int:
+        """Index into the fragment-cluster array used to build the FragmentIndex."""
+        return self._py.frag_idx
+
+    @property
+    def score(self) -> float:
+        """Overall match score (higher is better)."""
+        return self._py.score
+
+    def __repr__(self) -> str:
+        return f"ScoreHit(ms2_index={self.ms2_index}, score={self.score:.3f})"
+
 class FragmentIndex(RustWrapperObject):
     """
     Python wrapper for ims.PyFragmentIndex.
@@ -92,6 +132,75 @@ class FragmentIndex(RustWrapperObject):
             reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
             num_threads=num_threads,
         )
+
+    def query_precursor_scored(
+            self,
+            precursor_cluster: "ClusterResult1D",
+            window_groups: list[int] | None = None,
+            *,
+            mode: str = "geom",  # or "xic"/"both", depending on your enum
+            min_score: float = 0.0,
+    ) -> list[ScoreHit]:
+        hits_py = self._py.query_precursor_scored(
+            precursor_cluster.get_py_ptr(),
+            window_groups,
+            mode=mode,
+            min_score=min_score,
+        )
+        # hits_py is list[ims.PyScoreHit] -> wrap
+        return [ScoreHit.from_py_ptr(h) for h in hits_py]
+
+    def query_precursors_scored(
+            self,
+            precursor_clusters: list["ClusterResult1D"],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+    ) -> list[list[ScoreHit]]:
+        hits_nested = self._py.query_precursors_scored_par(
+            [c.get_py_ptr() for c in precursor_clusters],
+            mode=mode,
+            min_score=min_score,
+        )
+        # hits_nested is list[list[ims.PyScoreHit]]
+        return [
+            [ScoreHit.from_py_ptr(h) for h in hits_row]
+            for hits_row in hits_nested
+        ]
+    def score_feature_against_candidates(
+            self,
+            feature: "SimpleFeature",
+            candidate_indices: list[int],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+    ) -> list[ScoreHit]:
+        hits_py = self._py.score_feature_against_candidates(
+            feature.get_py_ptr(),
+            candidate_indices,
+            mode=mode,
+            min_score=min_score,
+        )
+        return [ScoreHit.from_py_ptr(h) for h in hits_py]
+
+    def score_features(
+            self,
+            features: list["SimpleFeature"],
+            all_candidate_indices: list[list[int]],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+    ) -> list[list[ScoreHit]]:
+        hits_nested = self._py.score_features_par(
+            [f.get_py_ptr() for f in features],
+            all_candidate_indices,
+            mode=mode,
+            min_score=min_score,
+        )
+        return [
+            [ScoreHit.from_py_ptr(h) for h in hits_row]
+            for hits_row in hits_nested
+        ]
 
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
