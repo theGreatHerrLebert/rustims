@@ -1082,13 +1082,23 @@ fn axis_bin_range_for_bounds(scale: &TofScale, bounds: (i32, i32)) -> (usize, us
     if lo > hi {
         std::mem::swap(&mut lo, &mut hi);
     }
-    let n_bins = scale.edges.len().saturating_sub(1);
+
+    let n_bins = scale.num_bins();
     if n_bins == 0 {
         return (0, 0);
     }
-    let lo_u = lo.max(0) as usize;
-    let hi_u = hi.max(0) as usize;
-    (lo_u.min(n_bins - 1), hi_u.min(n_bins - 1))
+
+    // Use the same logic as for traces: map axis window to a bin range
+    let (mut bin_lo, mut bin_hi) = scale.index_range_for_tof_window(lo, hi);
+
+    // Clamp (defensive)
+    bin_lo = bin_lo.min(n_bins.saturating_sub(1));
+    bin_hi = bin_hi.min(n_bins.saturating_sub(1));
+    if bin_lo > bin_hi {
+        std::mem::swap(&mut bin_lo, &mut bin_hi);
+    }
+
+    (bin_lo, bin_hi)
 }
 
 pub fn make_spec_from_pair(
