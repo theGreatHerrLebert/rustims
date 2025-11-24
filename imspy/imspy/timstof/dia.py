@@ -12,7 +12,7 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
-class ScoreHit(RustWrapperObject):
+class ScoredHit(RustWrapperObject):
     """
     Thin Python wrapper around ims.PyScoreHit.
 
@@ -29,7 +29,7 @@ class ScoreHit(RustWrapperObject):
         )
 
     @classmethod
-    def from_py_ptr(cls, p: ims.PyScoredHit) -> "ScoreHit":
+    def from_py_ptr(cls, p: ims.PyScoredHit) -> "ScoredHit":
         inst = cls.__new__(cls)
         inst._py = p
         return inst
@@ -140,7 +140,7 @@ class FragmentIndex(RustWrapperObject):
             *,
             mode: str = "geom",  # or "xic"/"both", depending on your enum
             min_score: float = 0.0,
-    ) -> list[ScoreHit]:
+    ) -> list[ScoredHit]:
         hits_py = self._py.query_precursor_scored(
             precursor_cluster.get_py_ptr(),
             window_groups,
@@ -148,7 +148,7 @@ class FragmentIndex(RustWrapperObject):
             min_score=min_score,
         )
         # hits_py is list[ims.PyScoreHit] -> wrap
-        return [ScoreHit.from_py_ptr(h) for h in hits_py]
+        return [ScoredHit.from_py_ptr(h) for h in hits_py]
 
     def query_precursors_scored(
             self,
@@ -156,7 +156,7 @@ class FragmentIndex(RustWrapperObject):
             *,
             mode: str = "geom",
             min_score: float = 0.0,
-    ) -> list[list[ScoreHit]]:
+    ) -> list[list[ScoredHit]]:
         hits_nested = self._py.query_precursors_scored_par(
             [c.get_py_ptr() for c in precursor_clusters],
             mode=mode,
@@ -164,7 +164,7 @@ class FragmentIndex(RustWrapperObject):
         )
         # hits_nested is list[list[ims.PyScoreHit]]
         return [
-            [ScoreHit.from_py_ptr(h) for h in hits_row]
+            [ScoredHit.from_py_ptr(h) for h in hits_row]
             for hits_row in hits_nested
         ]
     def score_feature_against_candidates(
@@ -174,14 +174,14 @@ class FragmentIndex(RustWrapperObject):
             *,
             mode: str = "geom",
             min_score: float = 0.0,
-    ) -> list[ScoreHit]:
+    ) -> list[ScoredHit]:
         hits_py = self._py.score_feature_against_candidates(
             feature.get_py_ptr(),
             candidate_indices,
             mode=mode,
             min_score=min_score,
         )
-        return [ScoreHit.from_py_ptr(h) for h in hits_py]
+        return [ScoredHit.from_py_ptr(h) for h in hits_py]
 
     def score_features(
             self,
@@ -190,7 +190,7 @@ class FragmentIndex(RustWrapperObject):
             *,
             mode: str = "geom",
             min_score: float = 0.0,
-    ) -> list[list[ScoreHit]]:
+    ) -> list[list[ScoredHit]]:
         hits_nested = self._py.score_features_par(
             [f.get_py_ptr() for f in features],
             all_candidate_indices,
@@ -198,7 +198,7 @@ class FragmentIndex(RustWrapperObject):
             min_score=min_score,
         )
         return [
-            [ScoreHit.from_py_ptr(h) for h in hits_row]
+            [ScoredHit.from_py_ptr(h) for h in hits_row]
             for hits_row in hits_nested
         ]
 
