@@ -29,12 +29,12 @@ class ScoreHit(RustWrapperObject):
         )
 
     @classmethod
-    def from_py_ptr(cls, p: ims.PyScoreHit) -> "ScoreHit":
+    def from_py_ptr(cls, p: ims.PyScoredHit) -> "ScoreHit":
         inst = cls.__new__(cls)
         inst._py = p
         return inst
 
-    def get_py_ptr(self) -> ims.PyScoreHit:
+    def get_py_ptr(self) -> ims.PyScoredHit:
         return self._py
 
     # --- properties, mapped 1:1 to PyScoreHit getters ----
