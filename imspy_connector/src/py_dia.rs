@@ -111,7 +111,7 @@ impl PyClusterResult1D {
 
     #[getter]
     fn tof_window(&self) -> (usize, usize) {
-        self.inner.tof_window
+        self.inner.tof_index_window
     }
 
     #[getter]

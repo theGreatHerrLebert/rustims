@@ -166,6 +166,7 @@ pub struct ClusterResult1D {
     pub rt_window: (usize, usize),
     pub im_window: (usize, usize),
     pub tof_window: (usize, usize),
+    pub tof_index_window: (i32, i32),
 
     /// Optional m/z window (not set by this module).
     pub mz_window: Option<(f32, f32)>,
@@ -759,6 +760,20 @@ pub fn evaluate_spec_1d(
 
     let cluster_id = compute_cluster_id_from_spec(spec);
 
+    // ---- derive TOF index window from final bin window -----------------
+    let n_bins = scale.num_bins();
+    let mut bin_lo_idx = bin_lo0.min(n_bins.saturating_sub(1));
+    let mut bin_hi_idx = bin_hi0.min(n_bins.saturating_sub(1));
+    if bin_lo_idx > bin_hi_idx {
+        std::mem::swap(&mut bin_lo_idx, &mut bin_hi_idx);
+    }
+
+    // centers are in the same axis units as `fr.tof` (instrument TOF index)
+    let tof_idx_lo = scale.center(bin_lo_idx).floor().max(0.0) as i32;
+    let tof_idx_hi = scale.center(bin_hi_idx).ceil().max(0.0) as i32;
+
+    let tof_index_window = (tof_idx_lo, tof_idx_hi);
+
     // Early exit: no signal in any axis
     if rt_sum1 <= 0.0 || im_sum1 <= 0.0 || ax_sum1 <= 0.0 {
         return ClusterResult1D {
@@ -766,6 +781,7 @@ pub fn evaluate_spec_1d(
             rt_window: (rt_lo_eff, rt_hi_eff),
             im_window: (im_lo_eff, im_hi_eff),
             tof_window: (bin_lo0, bin_hi0),
+            tof_index_window,
 
             mz_window: None,
             rt_fit: Fit1D::default(),
@@ -961,11 +977,26 @@ pub fn evaluate_spec_1d(
         * (im_fit.area.max(0.0))
         * (tof_fit.area.max(0.0));
 
+    // ---- derive TOF index window from final bin window -----------------
+    let n_bins = scale.num_bins();
+    let mut bin_lo_idx = use_bin_lo.min(n_bins.saturating_sub(1));
+    let mut bin_hi_idx = use_bin_hi.min(n_bins.saturating_sub(1));
+    if bin_lo_idx > bin_hi_idx {
+        std::mem::swap(&mut bin_lo_idx, &mut bin_hi_idx);
+    }
+
+    // centers are in the same axis units as `fr.tof` (instrument TOF index)
+    let tof_idx_lo = scale.center(bin_lo_idx).floor().max(0.0) as i32;
+    let tof_idx_hi = scale.center(bin_hi_idx).ceil().max(0.0) as i32;
+
+    let tof_index_window = (tof_idx_lo, tof_idx_hi);
+
     ClusterResult1D {
         cluster_id,
         rt_window: (rt_lo_eff, rt_hi_eff),
         im_window: (im_lo_eff, im_hi_eff),
         tof_window: (use_bin_lo, use_bin_hi),
+        tof_index_window,
 
         mz_window: None,   // not set here
         rt_fit,
