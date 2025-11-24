@@ -49,8 +49,69 @@ class ScoredHit(RustWrapperObject):
         """Overall match score (higher is better)."""
         return self._py.score
 
+    # Geometric features (None in XIC mode)
+
+    @property
+    def jacc_rt(self) -> float | None:
+        return self._py.jacc_rt
+
+    @property
+    def rt_apex_delta_s(self) -> float | None:
+        return self._py.rt_apex_delta_s
+
+    @property
+    def im_apex_delta_scans(self) -> float | None:
+        return self._py.im_apex_delta_scans
+
+    @property
+    def im_overlap_scans(self) -> int | None:
+        return self._py.im_overlap_scans
+
+    @property
+    def im_union_scans(self) -> int | None:
+        return self._py.im_union_scans
+
+    @property
+    def ms1_raw_sum(self) -> float | None:
+        return self._py.ms1_raw_sum
+
+    @property
+    def shape_ok(self) -> bool | None:
+        return self._py.shape_ok
+
+    @property
+    def z_rt(self) -> float | None:
+        return self._py.z_rt
+
+    @property
+    def z_im(self) -> float | None:
+        return self._py.z_im
+
+    @property
+    def s_shape(self) -> float | None:
+        return self._py.s_shape
+
     def __repr__(self) -> str:
         return f"ScoreHit(ms2_index={self.ms2_index}, score={self.score:.3f})"
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Convert the ScoredHit to a dictionary representation.
+        """
+        return {
+            "ms2_index": self.ms2_index,
+            "score": self.score,
+            "jacc_rt": self.jacc_rt,
+            "rt_apex_delta_s": self.rt_apex_delta_s,
+            "im_apex_delta_scans": self.im_apex_delta_scans,
+            "im_overlap_scans": self.im_overlap_scans,
+            "im_union_scans": self.im_union_scans,
+            "ms1_raw_sum": self.ms1_raw_sum,
+            "shape_ok": self.shape_ok,
+            "z_rt": self.z_rt,
+            "z_im": self.z_im,
+            "s_shape": self.s_shape,
+        }
 
 class FragmentIndex(RustWrapperObject):
     """
@@ -167,17 +228,20 @@ class FragmentIndex(RustWrapperObject):
             [ScoredHit.from_py_ptr(h) for h in hits_row]
             for hits_row in hits_nested
         ]
-    def score_feature_against_candidates(
+
+    def score_feature(
             self,
             feature: "SimpleFeature",
-            candidate_indices: list[int],
             *,
             mode: str = "geom",
             min_score: float = 0.0,
-    ) -> list[ScoredHit]:
-        hits_py = self._py.score_feature_against_candidates(
+    ) -> list["ScoredHit"]:
+        """
+        Score a single SimpleFeature against all physically plausible MS2 clusters.
+        Candidate enumeration happens inside the Rust FragmentIndex.
+        """
+        hits_py = self._py.score_feature(
             feature.get_py_ptr(),
-            candidate_indices,
             mode=mode,
             min_score=min_score,
         )
@@ -186,14 +250,16 @@ class FragmentIndex(RustWrapperObject):
     def score_features(
             self,
             features: list["SimpleFeature"],
-            all_candidate_indices: list[list[int]],
             *,
             mode: str = "geom",
             min_score: float = 0.0,
-    ) -> list[list[ScoredHit]]:
+    ) -> list[list["ScoredHit"]]:
+        """
+        Score many SimpleFeatures in parallel. Each feature gets its own
+        candidate set via the Rust index.
+        """
         hits_nested = self._py.score_features_par(
             [f.get_py_ptr() for f in features],
-            all_candidate_indices,
             mode=mode,
             min_score=min_score,
         )
