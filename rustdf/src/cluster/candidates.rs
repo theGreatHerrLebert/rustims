@@ -845,7 +845,7 @@ impl FragmentIndex {
     ) -> Vec<u64> {
         let mut out = Vec::new();
 
-        // --- precursor m/z (for group selection only) ---
+        // --- precursor m/z (for group selection + "inside selection" test) ---
         let prec_mz = if let Some(m) = cluster_mz_mu(prec) {
             if m.is_finite() && m > 0.0 {
                 m
@@ -885,6 +885,7 @@ impl FragmentIndex {
         };
 
         let prec_im_win = prec.im_window;
+        let prec_scan_win = (prec_im_win.0 as u32, prec_im_win.1 as u32);
 
         // Decide which groups to query
         let groups: Vec<u32> = match groups {
@@ -920,19 +921,8 @@ impl FragmentIndex {
                 (0, fg.ms2_indices.len())
             };
 
-            // We need precursor tiles if we either:
-            //  - enforce tile compatibility, or
-            //  - want to reject fragments inside the same selection tiles.
-            let prec_tiles: Vec<usize> =
-                if require_tile || reject_inside {
-                    self.dia_index.tiles_for_precursor_in_group(
-                        g,
-                        prec_mz,
-                        prec_im,
-                    )
-                } else {
-                    Vec::new()
-                };
+            // Program slices (tiles) for this group; we'll inspect them directly.
+            let slices = self.dia_index.program_slices_for_group(g);
 
             'ms2_loop: for k in lo_idx..hi_idx {
                 let j = fg.ms2_indices[k];
@@ -942,6 +932,8 @@ impl FragmentIndex {
 
                 // IM window overlap
                 let im2 = self.ms2_im_windows[j];
+                let frag_scan_win = (im2.0 as u32, im2.1 as u32);
+
                 let im_overlap = {
                     let lo = prec_im_win.0.max(im2.0);
                     let hi = prec_im_win.1.min(im2.1);
@@ -964,52 +956,54 @@ impl FragmentIndex {
                     }
                 }
 
-                // Tile compatibility + "reject fragments inside precursor-selection tile" guard
+                // --- Tile compatibility + "reject inside precursor-selection" guard ---
                 if require_tile || reject_inside {
-                    let frag_tiles = self
-                        .dia_index
-                        .tiles_for_fragment_in_group(g, im2);
+                    let mut tile_compatible   = false;
+                    let mut inside_prec_tile  = false;
+                    let frag_mz = self.ms2_mz_mu[j];
 
-                    if frag_tiles.is_empty() {
-                        continue 'ms2_loop;
-                    }
+                    for s in &slices {
+                        let tile_scans = (s.scan_lo, s.scan_hi);
 
-                    // Find *which* tile they share, not just "do they intersect".
-                    let shared_tile = first_shared_tile(&prec_tiles, &frag_tiles);
+                        // Do both precursor and fragment overlap this tile in scan space?
+                        let prec_hits_tile = ranges_overlap_u32(prec_scan_win, tile_scans);
+                        let frag_hits_tile = ranges_overlap_u32(frag_scan_win, tile_scans);
 
-                    // 1) If we require tile compatibility: must share at least one tile
-                    if require_tile && shared_tile.is_none() {
-                        continue 'ms2_loop;
-                    }
+                        if !(prec_hits_tile && frag_hits_tile) {
+                            continue;
+                        }
 
-                    // 2) If we reject "inside-precursor" fragments:
-                    //    use the shared tile's m/z band as the "selection rectangle".
-                    if reject_inside {
-                        if let Some(tile_id) = shared_tile {
-                            // TODO: adjust this helper to your actual DiaIndex API:
-                            // it should return the m/z isolation range of this ProgramSlice.
-                            let (tile_mz_lo, tile_mz_hi) =
-                                self.dia_index.tile_mz_bounds(g, tile_id);
+                        tile_compatible = true;
 
-                            if tile_mz_lo.is_finite()
-                                && tile_mz_hi.is_finite()
-                                && tile_mz_hi > tile_mz_lo
-                            {
-                                let frag_mz = self.ms2_mz_mu[j];
-                                if frag_mz.is_finite()
-                                    && frag_mz >= tile_mz_lo
-                                    && frag_mz <= tile_mz_hi
-                                {
-                                    // Fragment sits in the same tile *and*
-                                    // inside that tile's m/z selection band:
-                                    // treat as residual precursor and skip.
-                                    continue 'ms2_loop;
-                                }
+                        if reject_inside && frag_mz.is_finite() {
+                            // Precursor m/z inside this tile's isolation window?
+                            let prec_in_tile =
+                                prec_mz >= s.mz_lo as f32 && prec_mz <= s.mz_hi as f32;
+                            // Fragment m/z inside the same isolation window?
+                            let frag_in_tile =
+                                frag_mz >= s.mz_lo as f32 && frag_mz <= s.mz_hi as f32;
+
+                            if prec_in_tile && frag_in_tile {
+                                inside_prec_tile = true;
+                                // No need to inspect more tiles for this fragment;
+                                // we already know it's "inside precursor selection".
+                                break;
                             }
                         }
                     }
+
+                    // 1) If we require tile compatibility: must have *some* shared scan tile
+                    if require_tile && !tile_compatible {
+                        continue 'ms2_loop;
+                    }
+
+                    // 2) If we reject fragments inside precursor tile: drop them.
+                    if reject_inside && inside_prec_tile {
+                        continue 'ms2_loop;
+                    }
                 }
 
+                // Survived all guards: keep this fragment for the precursor.
                 out.push(self.ms2_cluster_ids[j]);
             }
         }
@@ -1056,6 +1050,13 @@ fn lower_bound(xs: &[f32], x: f32) -> usize {
     lo
 }
 
+#[inline]
+fn ranges_overlap_u32(a: (u32, u32), b: (u32, u32)) -> bool {
+    let lo = a.0.max(b.0);
+    let hi = a.1.min(b.1);
+    hi >= lo
+}
+
 fn upper_bound(xs: &[f32], x: f32) -> usize {
     let mut lo = 0;
     let mut hi = xs.len();
@@ -1068,13 +1069,4 @@ fn upper_bound(xs: &[f32], x: f32) -> usize {
         }
     }
     lo
-}
-
-fn first_shared_tile(a: &[usize], b: &[usize]) -> Option<usize> {
-    for &i in a {
-        if b.contains(&i) {
-            return Some(i);
-        }
-    }
-    None
 }
