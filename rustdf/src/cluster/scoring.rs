@@ -18,13 +18,30 @@ pub enum MatchScoreMode {
 }
 
 #[derive(Clone, Debug)]
+pub struct XicDetails {
+    /// RT XIC similarity in [0,1], if used.
+    pub s_rt: Option<f32>,
+    /// IM XIC similarity in [0,1], if used.
+    pub s_im: Option<f32>,
+    /// Intensity-ratio consistency term in (0,1], if used.
+    pub s_intensity: Option<f32>,
+
+    /// Raw RT Pearson correlation in [-1,1], if available.
+    pub r_rt: Option<f32>,
+    /// Raw IM Pearson correlation in [-1,1], if available.
+    pub r_im: Option<f32>,
+}
+
+#[derive(Clone, Debug)]
 pub struct ScoredHit {
     /// Index into the MS2 slice (typically `self.ms2` in FragmentIndex).
     pub frag_idx: usize,
     /// Final scalar score (geom or XIC, depending on mode).
     pub score: f32,
-    /// Geometric feature bundle, if Geom mode was used; None in XIC mode.
+    /// Geometric feature bundle (only set in `Geom` mode).
     pub geom: Option<PairFeatures>,
+    /// XIC scoring details (only set in `Xic` mode).
+    pub xic: Option<XicDetails>,
 }
 
 #[derive(Clone, Copy)]
@@ -123,9 +140,15 @@ pub fn xic_match_score(
     ms1: &ClusterResult1D,
     ms2: &ClusterResult1D,
     opts: &XicScoreOpts,
-) -> Option<f32> {
-    let mut score = 0.0f32;
-    let mut w_sum = 0.0f32;
+) -> Option<(XicDetails, f32)> {
+    let mut score   = 0.0f32;
+    let mut w_sum   = 0.0f32;
+
+    let mut s_rt: Option<f32>         = None;
+    let mut s_im: Option<f32>         = None;
+    let mut s_intensity: Option<f32>  = None;
+    let mut r_rt: Option<f32>         = None;
+    let mut r_im: Option<f32>         = None;
 
     // ---- RT XIC: Pearson, mapped from [-1,1] to [0,1] ----
     if opts.use_rt {
@@ -133,6 +156,8 @@ pub fn xic_match_score(
             if let Some(r) = pearson_corr_z(rt1, rt2) {
                 if r.is_finite() {
                     let s = 0.5 * (r + 1.0); // [-1,1] -> [0,1]
+                    r_rt  = Some(r);
+                    s_rt  = Some(s);
                     score += opts.w_rt * s;
                     w_sum += opts.w_rt;
                 }
@@ -146,6 +171,8 @@ pub fn xic_match_score(
             if let Some(r) = pearson_corr_z(im1, im2) {
                 if r.is_finite() {
                     let s = 0.5 * (r + 1.0);
+                    r_im  = Some(r);
+                    s_im  = Some(s);
                     score += opts.w_im * s;
                     w_sum += opts.w_im;
                 }
@@ -170,11 +197,12 @@ pub fn xic_match_score(
 
         if i1 > 0.0 && i2 > 0.0 {
             let ratio = (i2 / i1).max(1e-6);
-            let d = ratio.ln().abs(); // |log(I2/I1)|
-            let s = (-d / opts.intensity_tau).exp(); // in (0,1]
+            let d     = ratio.ln().abs(); // |log(I2/I1)|
+            let s     = (-d / opts.intensity_tau).exp(); // in (0,1]
             if s.is_finite() {
-                score += opts.w_intensity * s;
-                w_sum += opts.w_intensity;
+                s_intensity = Some(s);
+                score      += opts.w_intensity * s;
+                w_sum      += opts.w_intensity;
             }
         }
     }
@@ -187,7 +215,14 @@ pub fn xic_match_score(
     if !final_score.is_finite() {
         None
     } else {
-        Some(final_score.max(0.0).min(1.0))
+        let details = XicDetails {
+            s_rt,
+            s_im,
+            s_intensity,
+            r_rt,
+            r_im,
+        };
+        Some((details, final_score.clamp(0.0, 1.0)))
     }
 }
 
@@ -1019,7 +1054,7 @@ pub fn xic_match_score_precursor(
     prec: PrecursorLike<'_>,
     frag: &ClusterResult1D,
     opts: &XicScoreOpts,
-) -> Option<f32> {
+) -> Option<(XicDetails, f32)> {
     match prec {
         PrecursorLike::Cluster(c) => xic_match_score(c, frag, opts),
 
@@ -1080,23 +1115,25 @@ pub fn query_precursor_scored(
 
         match mode {
             MatchScoreMode::Geom => {
-                if let Some((f, s)) = geom_match_score_precursor(prec, frag, geom_opts) {
+                if let Some((f_geom, s)) = geom_match_score_precursor(prec, frag, geom_opts) {
                     if s.is_finite() && s >= min_score {
                         out.push(ScoredHit {
                             frag_idx: j,
-                            score: s,
-                            geom: Some(f),
+                            score:   s,
+                            geom:    Some(f_geom),
+                            xic:     None,
                         });
                     }
                 }
             }
             MatchScoreMode::Xic => {
-                if let Some(s) = xic_match_score_precursor(prec, frag, xic_opts) {
+                if let Some((xic_det, s)) = xic_match_score_precursor(prec, frag, xic_opts) {
                     if s.is_finite() && s >= min_score {
                         out.push(ScoredHit {
                             frag_idx: j,
-                            score: s,
-                            geom: None,
+                            score:   s,
+                            geom:    None,
+                            xic:     Some(xic_det),
                         });
                     }
                 }

@@ -2700,6 +2700,31 @@ impl PyScoredHit {
     fn s_shape(&self) -> Option<f32> {
         self.inner.geom.as_ref().map(|g| g.s_shape)
     }
+
+    #[getter]
+    fn xic_s_rt(&self) -> Option<f32> {
+        self.inner.xic.as_ref().and_then(|x| x.s_rt)
+    }
+
+    #[getter]
+    fn xic_s_im(&self) -> Option<f32> {
+        self.inner.xic.as_ref().and_then(|x| x.s_im)
+    }
+
+    #[getter]
+    fn xic_s_intensity(&self) -> Option<f32> {
+        self.inner.xic.as_ref().and_then(|x| x.s_intensity)
+    }
+
+    #[getter]
+    fn xic_r_rt(&self) -> Option<f32> {
+        self.inner.xic.as_ref().and_then(|x| x.r_rt)
+    }
+
+    #[getter]
+    fn xic_r_im(&self) -> Option<f32> {
+        self.inner.xic.as_ref().and_then(|x| x.r_im)
+    }
 }
 
 #[pyclass]

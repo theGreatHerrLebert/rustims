@@ -91,13 +91,35 @@ class ScoredHit(RustWrapperObject):
     def s_shape(self) -> float | None:
         return self._py.s_shape
 
+    @property
+    def xic_s_rt(self) -> float | None:
+        """RT XIC similarity in [0,1], or None if not used."""
+        return self._py.xic_s_rt
+
+    @property
+    def xic_s_im(self) -> float | None:
+        """IM XIC similarity in [0,1], or None if not used."""
+        return self._py.xic_s_im
+
+    @property
+    def xic_s_intensity(self) -> float | None:
+        """Intensity-ratio term in (0,1], or None if not used."""
+        return self._py.xic_s_intensity
+
+    @property
+    def xic_r_rt(self) -> float | None:
+        """Raw RT Pearson correlation in [-1,1], or None."""
+        return self._py.xic_r_rt
+
+    @property
+    def xic_r_im(self) -> float | None:
+        """Raw IM Pearson correlation in [-1,1], or None."""
+        return self._py.xic_r_im
+
     def __repr__(self) -> str:
-        return f"ScoreHit(ms2_index={self.ms2_index}, score={self.score:.3f})"
+        return f"ScoreHit(ms2_index={self.ms2_index}, score={self.score:.4f})"
 
     def to_dict(self) -> dict[str, Any]:
-        """
-        Convert the ScoredHit to a dictionary representation.
-        """
         return {
             "ms2_index": self.ms2_index,
             "score": self.score,
@@ -111,6 +133,11 @@ class ScoredHit(RustWrapperObject):
             "z_rt": self.z_rt,
             "z_im": self.z_im,
             "s_shape": self.s_shape,
+            "xic_s_rt": self.xic_s_rt,
+            "xic_s_im": self.xic_s_im,
+            "xic_s_intensity": self.xic_s_intensity,
+            "xic_r_rt": self.xic_r_rt,
+            "xic_r_im": self.xic_r_im,
         }
 
 class FragmentIndex(RustWrapperObject):
