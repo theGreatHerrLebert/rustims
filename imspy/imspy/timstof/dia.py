@@ -14,13 +14,13 @@ ims = imspy_connector.py_dia
 
 class ScoredHit(RustWrapperObject):
     """
-    Thin Python wrapper around ims.PyScoreHit.
+    Thin Python wrapper around ims.PyScoredHit.
 
     Exposes read-only properties like:
       - ms2_index: index of the fragment cluster (into the fragment cluster array)
       - score: overall match score
 
-    Extend with more properties if PyScoreHit exposes them (e.g. rt_score, xic_score, mode, ...).
+    Extend with more properties if PyScoredHit exposes them (e.g. rt_score, xic_score, mode, ...).
     """
 
     def __init__(self, *a, **k):
@@ -37,7 +37,7 @@ class ScoredHit(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyScoredHit:
         return self._py
 
-    # --- properties, mapped 1:1 to PyScoreHit getters ----
+    # --- properties, mapped 1:1 to PyScoredHit getters ----
 
     @property
     def ms2_index(self) -> int:
@@ -91,6 +91,8 @@ class ScoredHit(RustWrapperObject):
     def s_shape(self) -> float | None:
         return self._py.s_shape
 
+    # XIC details (None in Geom mode)
+
     @property
     def xic_s_rt(self) -> float | None:
         """RT XIC similarity in [0,1], or None if not used."""
@@ -140,6 +142,7 @@ class ScoredHit(RustWrapperObject):
             "xic_r_im": self.xic_r_im,
         }
 
+
 class FragmentIndex(RustWrapperObject):
     """
     Python wrapper for ims.PyFragmentIndex.
@@ -179,6 +182,10 @@ class FragmentIndex(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyFragmentIndex:
         return self._py
 
+    # ------------------------------------------------------------------
+    # Unscored candidate queries
+    # ------------------------------------------------------------------
+
     def query_precursor(
         self,
         precursor_cluster: "ClusterResult1D",
@@ -201,15 +208,15 @@ class FragmentIndex(RustWrapperObject):
         )
 
     def query_precursors(
-            self,
-            precursor_clusters: list["ClusterResult1D"],
-            *,
-            max_rt_apex_delta_sec: float | None = 2.0,
-            max_scan_apex_delta: int | None = 6,
-            min_im_overlap_scans: int = 1,
-            require_tile_compat: bool = True,
-            reject_frag_inside_precursor_tile: bool = True,
-            num_threads: int = 4,
+        self,
+        precursor_clusters: list["ClusterResult1D"],
+        *,
+        max_rt_apex_delta_sec: float | None = 2.0,
+        max_scan_apex_delta: int | None = 6,
+        min_im_overlap_scans: int = 1,
+        require_tile_compat: bool = True,
+        reject_frag_inside_precursor_tile: bool = True,
+        num_threads: int = 4,
     ) -> list[list[int]]:
         return self._py.query_precursors_par(
             [c.get_py_ptr() for c in precursor_clusters],
@@ -221,47 +228,64 @@ class FragmentIndex(RustWrapperObject):
             num_threads=num_threads,
         )
 
+    # ------------------------------------------------------------------
+    # Scored queries – now with tile-reject knob
+    # ------------------------------------------------------------------
+
     def query_precursor_scored(
-            self,
-            precursor_cluster: "ClusterResult1D",
-            window_groups: list[int] | None = None,
-            *,
-            mode: str = "geom",  # or "xic"/"both", depending on your enum
-            min_score: float = 0.0,
+        self,
+        precursor_cluster: "ClusterResult1D",
+        window_groups: list[int] | None = None,
+        *,
+        mode: str = "geom",  # or "xic"
+        min_score: float = 0.0,
+        reject_frag_inside_precursor_tile: bool = True,
     ) -> list[ScoredHit]:
+        """
+        Score all physically plausible MS2 clusters for a single precursor.
+        """
         hits_py = self._py.query_precursor_scored(
             precursor_cluster.get_py_ptr(),
             window_groups,
             mode=mode,
             min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
         )
-        # hits_py is list[ims.PyScoreHit] -> wrap
+        # hits_py is list[ims.PyScoredHit] -> wrap
         return [ScoredHit.from_py_ptr(h) for h in hits_py]
 
     def query_precursors_scored(
-            self,
-            precursor_clusters: list["ClusterResult1D"],
-            *,
-            mode: str = "geom",
-            min_score: float = 0.0,
+        self,
+        precursor_clusters: list["ClusterResult1D"],
+        *,
+        mode: str = "geom",
+        min_score: float = 0.0,
+        reject_frag_inside_precursor_tile: bool = True,
     ) -> list[list[ScoredHit]]:
+        """
+        Score many precursors in parallel. Each precursor gets its own
+        candidate set & scoring, with an option to reject “inside-tile”
+        fragments.
+        """
         hits_nested = self._py.query_precursors_scored_par(
             [c.get_py_ptr() for c in precursor_clusters],
             mode=mode,
             min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
         )
-        # hits_nested is list[list[ims.PyScoreHit]]
+        # hits_nested is list[list[ims.PyScoredHit]]
         return [
             [ScoredHit.from_py_ptr(h) for h in hits_row]
             for hits_row in hits_nested
         ]
 
     def score_feature(
-            self,
-            feature: "SimpleFeature",
-            *,
-            mode: str = "geom",
-            min_score: float = 0.0,
+        self,
+        feature: "SimpleFeature",
+        *,
+        mode: str = "geom",
+        min_score: float = 0.0,
+        reject_frag_inside_precursor_tile: bool = True,
     ) -> list["ScoredHit"]:
         """
         Score a single SimpleFeature against all physically plausible MS2 clusters.
@@ -271,15 +295,17 @@ class FragmentIndex(RustWrapperObject):
             feature.get_py_ptr(),
             mode=mode,
             min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
         )
         return [ScoredHit.from_py_ptr(h) for h in hits_py]
 
     def score_features(
-            self,
-            features: list["SimpleFeature"],
-            *,
-            mode: str = "geom",
-            min_score: float = 0.0,
+        self,
+        features: list["SimpleFeature"],
+        *,
+        mode: str = "geom",
+        min_score: float = 0.0,
+        reject_frag_inside_precursor_tile: bool = True,
     ) -> list[list["ScoredHit"]]:
         """
         Score many SimpleFeatures in parallel. Each feature gets its own
@@ -289,6 +315,7 @@ class FragmentIndex(RustWrapperObject):
             [f.get_py_ptr() for f in features],
             mode=mode,
             min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
         )
         return [
             [ScoredHit.from_py_ptr(h) for h in hits_row]

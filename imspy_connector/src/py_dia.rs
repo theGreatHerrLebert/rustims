@@ -2734,24 +2734,10 @@ pub struct PyFragmentIndex {
 
 #[pymethods]
 impl PyFragmentIndex {
-    /// Query candidates for a single precursor cluster.
-    ///
-    /// Parameters
-    /// ----------
-    /// prec : PyClusterResult1D
-    ///     The precursor cluster.
-    /// window_groups : Sequence[int]
-    ///     Window groups that this precursor might be selected in
-    ///     (e.g. from DiaIndex.groups_for_precursor(...)).
-    /// max_rt_apex_delta_sec : float or None
-    /// max_scan_apex_delta : int or None
-    /// min_im_overlap_scans : int
-    /// require_tile_compat : bool
-    ///
-    /// Returns
-    /// -------
-    /// list[int]
-    ///     MS2 cluster indices into the array used for building the index.
+    // ------------------------------------------------------------------
+    // Existing unscored methods – already wired correctly
+    // ------------------------------------------------------------------
+
     #[pyo3(signature = (
         prec,
         window_groups = None,
@@ -2821,6 +2807,7 @@ impl PyFragmentIndex {
         let all_hits = self.inner.query_precursors_par(precs_rust, &opts, num_threads);
         Ok(all_hits)
     }
+
     // ------------------------------------------------------------------
     // 1) Cluster-based: single precursor, scored
     // ------------------------------------------------------------------
@@ -2829,6 +2816,7 @@ impl PyFragmentIndex {
         window_groups = None,
         mode = "geom",
         min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
     ))]
     pub fn query_precursor_scored(
         &self,
@@ -2836,6 +2824,7 @@ impl PyFragmentIndex {
         window_groups: Option<Vec<u32>>,
         mode: &str,
         min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
     ) -> PyResult<Vec<PyScoredHit>> {
         let prec_rust: &ClusterResult1D = &prec.inner;
 
@@ -2845,11 +2834,21 @@ impl PyFragmentIndex {
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
+        // fragment query options (RT/IM knobs fixed, tile reject is user-controlled)
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec: Some(2.0),
+            max_scan_apex_delta: Some(6),
+            min_im_overlap_scans: 1,
+            require_tile_compat: true,
+            reject_frag_inside_precursor_tile,
+        };
+
         let groups_opt = window_groups.as_ref().map(|v| v.as_slice());
 
         let hits: Vec<ScoredHit> = self.inner.query_precursor_scored(
             prec_rust,
             groups_opt,
+            &frag_opts,   // <-- NEW ARG, position #3
             mode_rs,
             &geom_opts,
             &xic_opts,
@@ -2871,12 +2870,14 @@ impl PyFragmentIndex {
         precs,
         mode = "geom",
         min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
     ))]
     pub fn query_precursors_scored_par(
         &self,
         precs: Vec<Py<PyClusterResult1D>>,
         mode: &str,
         min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
         py: Python<'_>,
     ) -> PyResult<Vec<Vec<PyScoredHit>>> {
         let precs_rust: Vec<ClusterResult1D> = precs
@@ -2889,8 +2890,17 @@ impl PyFragmentIndex {
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec: Some(2.0),
+            max_scan_apex_delta: Some(6),
+            min_im_overlap_scans: 1,
+            require_tile_compat: true,
+            reject_frag_inside_precursor_tile,
+        };
+
         let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_precursors_scored_par(
             &precs_rust,
+            &frag_opts,   // <-- NEW ARG, position #2
             mode_rs,
             &geom_opts,
             &xic_opts,
@@ -2909,12 +2919,16 @@ impl PyFragmentIndex {
         Ok(wrapped)
     }
 
-    #[pyo3(signature = (feat, mode = "geom", min_score = 0.0))]
+    // ------------------------------------------------------------------
+    // 3) Feature-based: single feature, scored
+    // ------------------------------------------------------------------
+    #[pyo3(signature = (feat, mode = "geom", min_score = 0.0, reject_frag_inside_precursor_tile = true))]
     pub fn score_feature(
         &self,
         feat: Py<PySimpleFeature>,
         mode: &str,
         min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
         py: Python<'_>,
     ) -> PyResult<Vec<PyScoredHit>> {
         let feat_rust: SimpleFeature = feat.borrow(py).inner.clone();
@@ -2922,8 +2936,17 @@ impl PyFragmentIndex {
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec: Some(2.0),
+            max_scan_apex_delta: Some(6),
+            min_im_overlap_scans: 1,
+            require_tile_compat: true,
+            reject_frag_inside_precursor_tile,
+        };
+
         let hits = self.inner.query_feature_scored(
             &feat_rust,
+            &frag_opts,   // <-- NEW ARG, position #2
             mode_rs,
             &geom_opts,
             &xic_opts,
@@ -2937,12 +2960,13 @@ impl PyFragmentIndex {
     ///
     /// mode: "geom" | "xic"
     /// min_score: keep only hits with score >= min_score
-    #[pyo3(signature = (feats, mode = "geom", min_score = 0.0))]
+    #[pyo3(signature = (feats, mode = "geom", min_score = 0.0, reject_frag_inside_precursor_tile = true))]
     pub fn score_features_par(
         &self,
         feats: Vec<Py<PySimpleFeature>>,
         mode: &str,
         min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
         py: Python<'_>,
     ) -> PyResult<Vec<Vec<PyScoredHit>>> {
         // 1) Borrow the inner Rust SimpleFeature objects
@@ -2958,9 +2982,18 @@ impl PyFragmentIndex {
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec: Some(2.0),
+            max_scan_apex_delta: Some(6),
+            min_im_overlap_scans: 1,
+            require_tile_compat: true,
+            reject_frag_inside_precursor_tile,
+        };
+
         // 4) Let the Rust index enumerate candidates & score in parallel
         let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_features_scored_par(
             &feats_rust,
+            &frag_opts,   // <-- NEW ARG, position #2
             mode_rs,
             &geom_opts,
             &xic_opts,
@@ -2981,12 +3014,12 @@ impl PyFragmentIndex {
     }
 }
 
+// unchanged
 fn parse_match_score_mode(mode: &str) -> PyResult<MatchScoreMode> {
     let m = mode.to_ascii_lowercase();
     match m.as_str() {
         "geom" | "geometric" => Ok(MatchScoreMode::Geom),
         "xic" | "extracted_chromatogram"   => Ok(MatchScoreMode::Xic),
-        // adjust the variant names above to your real enum
         other => Err(PyValueError::new_err(format!(
             "Unknown match score mode '{other}'. \
              Expected one of: 'geom', 'xic'."

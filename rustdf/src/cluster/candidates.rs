@@ -1040,8 +1040,8 @@ impl FragmentIndex {
         &self,
         prec: &ClusterResult1D,
         window_groups: Option<&[u32]>,
+        opts: &FragmentQueryOpts,
     ) -> Vec<usize> {
-        let opts = FragmentQueryOpts::default();
         let mut out = Vec::<usize>::new();
 
         // --- precursor m/z (for group selection + "inside selection" test) ---
@@ -1217,10 +1217,11 @@ impl FragmentIndex {
     fn enumerate_candidates_for_precursors(
         &self,
         precs: &[ClusterResult1D],
+        opts: &FragmentQueryOpts,
     ) -> Vec<Vec<usize>> {
         precs
             .iter()
-            .map(|prec| self.enumerate_candidates_for_precursor(prec, None))
+            .map(|prec| self.enumerate_candidates_for_precursor(prec, None, opts))
             .collect()
     }
 
@@ -1233,6 +1234,7 @@ impl FragmentIndex {
     pub fn enumerate_candidates_for_feature(
         &self,
         feat: &SimpleFeature,
+        opts: &FragmentQueryOpts,
     ) -> Vec<usize> {
         let prec_cluster = match feature_representative_cluster(feat) {
             Some(c) => c,
@@ -1240,19 +1242,20 @@ impl FragmentIndex {
         };
 
         // NOTE: we always let the index decide which window groups to query.
-        self.enumerate_candidates_for_precursor(prec_cluster, None)
+        self.enumerate_candidates_for_precursor(prec_cluster, None, opts)
     }
 
     pub fn query_precursor_scored(
         &self,
         prec: &ClusterResult1D,
         window_groups: Option<&[u32]>,
+        opts: &FragmentQueryOpts,
         mode: MatchScoreMode,
         geom_opts: &ScoreOpts,
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
-        let candidate_ids = self.enumerate_candidates_for_precursor(prec, window_groups);
+        let candidate_ids = self.enumerate_candidates_for_precursor(prec, window_groups, opts);
         query_precursor_scored(
             PrecursorLike::Cluster(prec),
             &self.ms2,
@@ -1267,12 +1270,13 @@ impl FragmentIndex {
     pub fn query_precursors_scored_par(
         &self,
         precs: &[ClusterResult1D],
+        opts: &FragmentQueryOpts,
         mode: MatchScoreMode,
         geom_opts: &ScoreOpts,
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<Vec<ScoredHit>> {
-        let all_candidates = self.enumerate_candidates_for_precursors(precs);
+        let all_candidates = self.enumerate_candidates_for_precursors(precs, opts);
 
         let prec_like: Vec<PrecursorLike<'_>> =
             precs.iter().map(|c| PrecursorLike::Cluster(c)).collect();
@@ -1294,10 +1298,11 @@ impl FragmentIndex {
     fn enumerate_candidates_for_features(
         &self,
         feats: &[SimpleFeature],
+        opts: &FragmentQueryOpts,
     ) -> Vec<Vec<usize>> {
         feats
             .iter()
-            .map(|feat| self.enumerate_candidates_for_feature(feat))
+            .map(|feat| self.enumerate_candidates_for_feature(feat, opts))
             .collect()
     }
 
@@ -1309,12 +1314,13 @@ impl FragmentIndex {
     pub fn query_feature_scored(
         &self,
         feat: &SimpleFeature,
+        opts: &FragmentQueryOpts,
         mode: MatchScoreMode,
         geom_opts: &ScoreOpts,
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
-        let candidate_ids = self.enumerate_candidates_for_feature(feat);
+        let candidate_ids = self.enumerate_candidates_for_feature(feat, opts);
 
         query_precursor_scored(
             PrecursorLike::Feature(feat),
@@ -1334,12 +1340,13 @@ impl FragmentIndex {
     pub fn query_features_scored_par(
         &self,
         feats: &[SimpleFeature],
+        opts: &FragmentQueryOpts,
         mode: MatchScoreMode,
         geom_opts: &ScoreOpts,
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<Vec<ScoredHit>> {
-        let all_candidates = self.enumerate_candidates_for_features(feats);
+        let all_candidates = self.enumerate_candidates_for_features(feats, opts);
 
         let prec_like: Vec<PrecursorLike<'_>> =
             feats.iter().map(|f| PrecursorLike::Feature(f)).collect();
