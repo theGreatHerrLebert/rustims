@@ -259,7 +259,8 @@ class SimpleFeature:
             ),
         }
 
-    def get_precursors(self) -> list["ClusterResult1D"]:
+    @property
+    def precursors(self) -> list["ClusterResult1D"]:
         """
         Get the list of member ClusterResult1D objects.
 
@@ -270,10 +271,11 @@ class SimpleFeature:
         """
         return [
             ClusterResult1D.from_py_ptr(c)
-            for c in self.__py_ptr.get_precursors()
+            for c in self.__py_ptr.get_precursors
         ]
 
-    def get_most_intense_precursor(self) -> "ClusterResult1D":
+    @property
+    def most_intense_precursor(self) -> "ClusterResult1D":
         """
         Get the most intense member ClusterResult1D object.
 
@@ -283,7 +285,7 @@ class SimpleFeature:
             The most intense member cluster as a ClusterResult1D wrapper.
         """
         return ClusterResult1D.from_py_ptr(
-            self.__py_ptr.get_most_intense_precursor()
+            self.__py_ptr.get_most_intense_precursor
         )
 
 # -----------------------------------------------------------------------------
