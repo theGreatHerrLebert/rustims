@@ -7,7 +7,7 @@ import imspy_connector
 
 from imspy.timstof.clustering.data import ClusterResult1D
 
-imsf = imspy_connector.py_feature  # Rust PyO3 module
+ims = imspy_connector.py_feature  # Rust PyO3 module
 
 
 class AveragineLut:
@@ -32,7 +32,7 @@ class AveragineLut:
         if num_threads is None:
             num_threads = 4
 
-        self.__py_ptr = imsf.PyAveragineLut(
+        self.__py_ptr = ims.PyAveragineLut(
             float(mass_min),
             float(mass_max),
             float(step),
@@ -113,7 +113,7 @@ class SimpleFeatureParams:
         min_cosine: float = 0.7,
         w_spacing_penalty: float = 1.0,
     ) -> None:
-        self.__py_ptr = imsf.PySimpleFeatureParams(
+        self.__py_ptr = ims.PySimpleFeatureParams(
             int(z_min),
             int(z_max),
             float(iso_ppm_tol),
@@ -133,7 +133,7 @@ class SimpleFeatureParams:
         """
         Convenience: Rust-side Default (min_cosine = 0.0).
         """
-        return cls.from_py_ptr(imsf.PySimpleFeatureParams.default())
+        return cls.from_py_ptr(ims.PySimpleFeatureParams.default())
 
     @classmethod
     def from_py_ptr(cls, py_ptr: Any) -> "SimpleFeatureParams":
@@ -227,6 +227,35 @@ class SimpleFeature:
     def cos_averagine(self) -> float:
         return float(self.__py_ptr.cos_averagine)
 
+    @property
+    def precursors(self) -> list["ClusterResult1D"]:
+        """
+        Get the list of member ClusterResult1D objects.
+
+        Returns
+        -------
+        list[ClusterResult1D]
+            List of member clusters as ClusterResult1D wrappers.
+        """
+        return [
+            ClusterResult1D.from_py_ptr(c)
+            for c in self.__py_ptr.get_precursors
+        ]
+
+    @property
+    def most_intense_precursor(self) -> "ClusterResult1D":
+        """
+        Get the most intense member ClusterResult1D object.
+
+        Returns
+        -------
+        ClusterResult1D
+            The most intense member cluster as a ClusterResult1D wrapper.
+        """
+        return ClusterResult1D.from_py_ptr(
+            self.__py_ptr.get_most_intense_precursor
+        )
+
     def __repr__(self) -> str:
         return (
             f"SimpleFeature(id={self.feature_id}, z={self.charge}, "
@@ -258,35 +287,6 @@ class SimpleFeature:
                 self.member_cluster_ids[0] if self.n_members > 0 else None
             ),
         }
-
-    @property
-    def precursors(self) -> list["ClusterResult1D"]:
-        """
-        Get the list of member ClusterResult1D objects.
-
-        Returns
-        -------
-        list[ClusterResult1D]
-            List of member clusters as ClusterResult1D wrappers.
-        """
-        return [
-            ClusterResult1D.from_py_ptr(c)
-            for c in self.__py_ptr.get_precursors
-        ]
-
-    @property
-    def most_intense_precursor(self) -> "ClusterResult1D":
-        """
-        Get the most intense member ClusterResult1D object.
-
-        Returns
-        -------
-        ClusterResult1D
-            The most intense member cluster as a ClusterResult1D wrapper.
-        """
-        return ClusterResult1D.from_py_ptr(
-            self.__py_ptr.get_most_intense_precursor
-        )
 
 # -----------------------------------------------------------------------------
 # Top-level convenience API
@@ -339,13 +339,13 @@ def build_simple_features_from_clusters(
     raw_clusters = [_to_py_cluster_ptr(c) for c in clusters]
 
     if lut is None:
-        py_feats = imsf.build_simple_features_from_clusters_py(
+        py_feats = ims.build_simple_features_from_clusters_py(
             raw_clusters,
             params.get_py_ptr(),
             None,
         )
     else:
-        py_feats = imsf.build_simple_features_from_clusters_py(
+        py_feats = ims.build_simple_features_from_clusters_py(
             raw_clusters,
             params.get_py_ptr(),
             lut.get_py_ptr(),

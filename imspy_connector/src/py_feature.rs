@@ -274,7 +274,7 @@ impl PySimpleFeature {
             .member_clusters
             .iter()
             .map(|c| {
-                    PyClusterResult1D { inner: c.clone() }
+                PyClusterResult1D { inner: c.clone() }
             })
             .collect()
     }
