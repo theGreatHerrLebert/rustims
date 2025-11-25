@@ -27,32 +27,34 @@ class PseudoSpectrum:
     def __init__(self, py_ptr: Any) -> None:
         self._p = py_ptr
 
-    # --------------------------------------------------------------
-    # NEW: constructor that calls the Rust __new__
-    # --------------------------------------------------------------
     @classmethod
     def from_clusters(cls, precursor, fragments):
-        """
-        Build a PseudoSpectrum from a precursor PyClusterResult1D
-        and a list of fragment PyClusterResult1D objects.
-
-        Example:
-            ps = PseudoSpectrum.from_clusters(prec, frags)
-        """
-
         precursor_ptr = precursor.get_py_ptr()
         fragment_ptrs = [f.get_py_ptr() for f in fragments]
 
-        py_ps = imspy_connector.py_pseudo.PyPseudoSpectrum(
+        py_ps = ims_pseudo.PyPseudoSpectrum(
             precursor=precursor_ptr,
-            fragments=fragment_ptrs
+            feature=None,
+            fragments=fragment_ptrs,
         )
-
         return cls(py_ps)
 
-    # --------------------------------------------------------------
-    # Properties (unchanged)
-    # --------------------------------------------------------------
+    @classmethod
+    def from_feature(cls, feature: "SimpleFeature", fragments):
+        """
+        Build a PseudoSpectrum from a SimpleFeature and a list of
+        fragment ClusterResult1D wrappers.
+        """
+        feature_ptr = feature.get_py_ptr()
+        fragment_ptrs = [f.get_py_ptr() for f in fragments]
+
+        py_ps = ims_pseudo.PyPseudoSpectrum(
+            precursor=None,
+            feature=feature_ptr,
+            fragments=fragment_ptrs,
+        )
+        return cls(py_ps)
+
     @property
     def precursor_mz(self) -> float:
         return float(self._p.precursor_mz)
