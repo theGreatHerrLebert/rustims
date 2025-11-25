@@ -269,7 +269,7 @@ impl PySimpleFeature {
     }
 
     #[getter]
-    pub fn get_precursors(&self) -> Vec<PyClusterResult1D> {
+    pub fn precursors(&self) -> Vec<PyClusterResult1D> {
         self.inner
             .member_clusters
             .iter()
@@ -280,7 +280,7 @@ impl PySimpleFeature {
     }
 
     #[getter]
-    pub fn get_most_intense_precursor(&self) -> PyClusterResult1D {
+    pub fn most_intense_precursor(&self) -> PyClusterResult1D {
         let most_intense = self.inner.member_clusters.iter().max_by(|a, b| a.raw_sum.partial_cmp(&b.raw_sum).unwrap()).unwrap();
         PyClusterResult1D { inner: most_intense.clone() }
     }
