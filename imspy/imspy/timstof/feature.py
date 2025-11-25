@@ -239,7 +239,7 @@ class SimpleFeature:
         """
         return [
             ClusterResult1D.from_py_ptr(c)
-            for c in self.get_py_ptr().get_precursors
+            for c in self.get_py_ptr().precursors
         ]
 
     @property
@@ -253,7 +253,7 @@ class SimpleFeature:
             The most intense member cluster as a ClusterResult1D wrapper.
         """
         return ClusterResult1D.from_py_ptr(
-            self.get_py_ptr().get_most_intense_precursor
+            self.get_py_ptr().most_intense_precursor
         )
 
     def __repr__(self) -> str:
