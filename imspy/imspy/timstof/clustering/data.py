@@ -982,6 +982,10 @@ class ClusterResult1D:
     def get_py_ptr(self):
         return self._py
 
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyClusterResult1D) -> "ClusterResult1D":
+        return cls(p)
+
     # ---- diagnostics flags -----------------------------------------------
     @property
     def has_rt_axis(self) -> bool:

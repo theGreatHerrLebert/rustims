@@ -5,6 +5,8 @@ from typing import Optional, Sequence, Any
 
 import imspy_connector
 
+from imspy.timstof.clustering.data import ClusterResult1D
+
 imsf = imspy_connector.py_feature  # Rust PyO3 module
 
 
@@ -257,6 +259,32 @@ class SimpleFeature:
             ),
         }
 
+    def get_precursors(self) -> list["ClusterResult1D"]:
+        """
+        Get the list of member ClusterResult1D objects.
+
+        Returns
+        -------
+        list[ClusterResult1D]
+            List of member clusters as ClusterResult1D wrappers.
+        """
+        return [
+            ClusterResult1D.from_py_ptr(c)
+            for c in self.__py_ptr.get_precursors()
+        ]
+
+    def get_most_intense_precursor(self) -> "ClusterResult1D":
+        """
+        Get the most intense member ClusterResult1D object.
+
+        Returns
+        -------
+        ClusterResult1D
+            The most intense member cluster as a ClusterResult1D wrapper.
+        """
+        return ClusterResult1D.from_py_ptr(
+            self.__py_ptr.get_most_intense_precursor()
+        )
 
 # -----------------------------------------------------------------------------
 # Top-level convenience API

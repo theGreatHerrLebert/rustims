@@ -268,6 +268,23 @@ impl PySimpleFeature {
         self.inner.cos_averagine
     }
 
+    #[getter]
+    pub fn get_precursors(&self,) -> Vec<PyClusterResult1D> {
+        self.inner
+            .member_clusters
+            .iter()
+            .map(|c| {
+                    PyClusterResult1D { inner: c.clone() }
+            })
+            .collect()
+    }
+
+    #[getter]
+    pub fn get_most_intense_precursor(&self,) -> PyClusterResult1D {
+        let most_intense = self.inner.member_clusters.iter().max_by(|a, b| a.raw_sum.partial_cmp(&b.raw_sum).unwrap()).unwrap();
+        PyClusterResult1D { inner: most_intense.clone() }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "SimpleFeature(id={}, z={}, mz_mono={:.4}, n_members={}, raw_sum={:.1}, cos_averagine={:.3})",
