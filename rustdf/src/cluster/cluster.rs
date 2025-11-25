@@ -562,83 +562,6 @@ fn argmax_idx(v: &[f32]) -> usize {
     i_max
 }
 
-/// Sub-bin parabolic apex around the argmax bin.
-#[inline]
-fn parabolic_refine(centers: &[f32], hist: &[f32], i: usize) -> f32 {
-    if i == 0 || i + 1 >= hist.len() {
-        return centers[i];
-    }
-    let y0 = hist[i - 1];
-    let y1 = hist[i];
-    let y2 = hist[i + 1];
-    let x0 = centers[i - 1];
-    let x1 = centers[i];
-    let x2 = centers[i + 1];
-    let denom = y0 - 2.0 * y1 + y2;
-    if denom.abs() <= 1e-12 {
-        return centers[i];
-    }
-    let dx = 0.5 * (y0 - y2) / denom * ((x2 - x0) * 0.5);
-    let x = x1 + dx;
-    let half_bin = ((x2 - x0) * 0.5).abs();
-    x.clamp(x1 - half_bin, x1 + half_bin)
-}
-
-/// σ from FWHM (linear interpolation across half-height crossings).
-/// Returns (sigma, x_left_50, x_right_50).
-fn fwhm_sigma_from_hist(centers: &[f32], hist: &[f32], i_max: usize) -> Option<(f32, f32, f32)> {
-    let peak = *hist.get(i_max)?;
-    if !peak.is_finite() || peak <= 0.0 {
-        return None;
-    }
-    let half = 0.5 * peak;
-
-    // left crossing
-    let mut left = i_max;
-    while left > 0 && hist[left] >= half {
-        left -= 1;
-    }
-    if left == i_max {
-        return None;
-    }
-    let (xl0, yl0) = (centers[left], hist[left]);
-    let (xl1, yl1) = (centers[left + 1], hist[left + 1]);
-    if (yl1 - yl0).abs() <= 1e-12 {
-        return None;
-    }
-    let x_left = xl0 + (half - yl0) * (xl1 - xl0) / (yl1 - yl0);
-
-    // right crossing
-    let mut right = i_max;
-    while right + 1 < hist.len() && hist[right] >= half {
-        right += 1;
-    }
-    if right == i_max {
-        return None;
-    }
-    let (xr0, yr0) = (centers[right - 1], hist[right - 1]);
-    let (xr1, yr1) = (centers[right], hist[right]);
-    if (yr1 - yr0).abs() <= 1e-12 {
-        return None;
-    }
-    let x_right = xr0 + (half - yr0) * (xr1 - xr0) / (yr1 - yr0);
-
-    let fwhm = (x_right - x_left).abs();
-    if !fwhm.is_finite() || fwhm <= 0.0 {
-        return None;
-    }
-
-    // σ = FWHM / (2*sqrt(2 ln 2))
-    let two_sqrt_two_ln2 = 2.0 * 2.0_f32.ln().sqrt();
-    let sigma = fwhm / two_sqrt_two_ln2;
-
-    if sigma.is_finite() && sigma > 0.0 {
-        Some((sigma, x_left.min(x_right), x_left.max(x_right)))
-    } else {
-        None
-    }
-}
-
 // ==========================================================
 // Helpers for RT overlap and spec building
 // ==========================================================
@@ -884,73 +807,37 @@ pub fn evaluate_spec_1d(
     };
 
     // --- 4) final fits: RT/IM moments, axis argmax + FWHM σ ---------------
+    // --- 4) final fits: RT/IM/TOF via moments -----------------------------
     let rt_times: Vec<f32> = rt_frames.rt_times[rt_lo_eff..=rt_hi_eff].to_vec();
     let im_axis: Vec<usize> = (im_lo_eff..=im_hi_eff).collect();
     let im_axis_f32: Vec<f32> = im_axis.iter().map(|&s| s as f32).collect();
 
+    // RT / IM moments as before
     let mut rt_fit = fit1d_moment(use_rt_marg, Some(&rt_times));
     let mut im_fit = fit1d_moment(use_im_marg, Some(&im_axis_f32));
 
-    // third axis (TOF-backed / generic)
-    let i_max = argmax_idx(use_axis_hist);
-    let mu_raw = parabolic_refine(use_axis_centers, use_axis_hist, i_max);
+    // TOF / third axis: moment-based fit instead of FWHM/Parabola
+    let axis_centers_f32: Vec<f32> = use_axis_centers.iter().copied().collect();
+    let mut tof_fit = fit1d_moment(use_axis_hist, Some(&axis_centers_f32));
 
-    let (sigma_est, _fit_lo_50, _fit_hi_50) =
-        match fwhm_sigma_from_hist(use_axis_centers, use_axis_hist, i_max) {
-            Some((s, xl, xr)) => (s, xl, xr),
-            None => {
-                // fallback σ from local bin width
-                let bw = if i_max + 1 < use_axis_centers.len() {
-                    (use_axis_centers[i_max + 1] - use_axis_centers[i_max]).abs()
-                } else if i_max > 0 {
-                    (use_axis_centers[i_max] - use_axis_centers[i_max - 1]).abs()
-                } else {
-                    0.0
-                };
-                let s = (bw / 2.355).max(1e-6);
-                let fwhm = 2.355 * s;
-                (s, mu_raw - 0.5 * fwhm, mu_raw + 0.5 * fwhm)
-            }
-        };
-
-    // shape-driven bounds: keep ±k·σ around μ
-    let k_bounds = 1.0_f32;
-    let min_sigma = 1e-6;
-    let sigma_clamped = if sigma_est.is_finite() && sigma_est > 0.0 {
-        sigma_est.max(min_sigma)
-    } else {
-        min_sigma
-    };
-
-    let raw_lo = mu_raw - k_bounds * sigma_clamped;
-    let raw_hi = mu_raw + k_bounds * sigma_clamped;
-
-    let axis_min = *use_axis_centers.first().unwrap_or(&mu_raw);
-    let axis_max = *use_axis_centers.last().unwrap_or(&mu_raw);
-
-    let _fit_lo = raw_lo.max(axis_min);
-    let _fit_hi = raw_hi.min(axis_max);
-
-    let mut tof_fit = Fit1D {
-        mu: mu_raw,
-        sigma: sigma_clamped,
-        height: use_axis_hist[i_max],
-        baseline: 0.0,
-        area: use_axis_hist.iter().copied().sum(),
-        r2: 1.0,
-        n: use_axis_hist.len(),
-    };
-
-    // sanitize + IM fallbacks
+    // bounds for μ clamping
     let rt_mu_bounds =
         if rt_lo_eff < rt_frames.rt_times.len() && rt_hi_eff < rt_frames.rt_times.len() {
             Some((rt_frames.rt_times[rt_lo_eff], rt_frames.rt_times[rt_hi_eff]))
         } else {
             None
         };
+
+    let axis_min = *use_axis_centers
+        .first()
+        .unwrap_or(&tof_fit.mu);
+    let axis_max = *use_axis_centers
+        .last()
+        .unwrap_or(&tof_fit.mu);
     let axis_mu_bounds = Some((axis_min, axis_max));
     let im_mu_bounds = Some((im_lo_eff as f32, im_hi_eff as f32));
 
+    // sanitize + IM fallbacks (same as before)
     sanitize_fit(&mut tof_fit, axis_mu_bounds, 1e-6, true);
     sanitize_fit(&mut rt_fit, rt_mu_bounds, 1e-6, true);
     sanitize_fit(&mut im_fit, im_mu_bounds, 1e-3, true);
@@ -972,7 +859,7 @@ pub fn evaluate_spec_1d(
         im_fit.sigma = s;
     }
 
-    let raw_sum = use_rt_marg.iter().copied().sum();
+    let raw_sum: f32 = use_rt_marg.iter().copied().sum();
     let volume_proxy = (rt_fit.area.max(0.0))
         * (im_fit.area.max(0.0))
         * (tof_fit.area.max(0.0));
