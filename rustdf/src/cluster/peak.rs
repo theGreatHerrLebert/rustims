@@ -578,14 +578,30 @@ pub fn expand_many_im_peaks_along_rt_flat(
 
 // =================== RT peak detection helpers ===================
 
+use std::cmp::Ordering;
+
 fn robust_noise_level(y: &[f32]) -> f32 {
-    if y.len() < 3 { return 0.0; }
-    let mut diffs = Vec::with_capacity(y.len().saturating_sub(1));
+    let n = y.len();
+    if n < 3 {
+        return 0.0;
+    }
+
+    // |Δy| between neighbouring points
+    let mut diffs = Vec::with_capacity(n.saturating_sub(1));
     for w in y.windows(2) {
         diffs.push((w[1] - w[0]).abs());
     }
-    diffs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    diffs[diffs.len() / 2]
+    if diffs.is_empty() {
+        return 0.0;
+    }
+
+    // median of diffs via selection, not full sort
+    let mid = diffs.len() / 2;
+    diffs.select_nth_unstable_by(mid, |a, b| {
+        a.partial_cmp(b).unwrap_or(Ordering::Equal)
+    });
+
+    diffs[mid]
 }
 
 fn nms_by_time(mut peaks: Vec<RtLocalPeak>, min_sep_sec: f32) -> Vec<RtLocalPeak> {
@@ -645,13 +661,13 @@ pub fn find_rt_peaks(
     };
 
     // 1) candidates
-    let mut cands = Vec::new();
+    let mut cands = Vec::with_capacity(n / 4);
     for i in 1..n-1 {
         let yi = y_smoothed[i];
         if yi > y_smoothed[i-1] && yi >= y_smoothed[i+1] { cands.push(i); }
     }
 
-    let mut peaks: Vec<RtLocalPeak> = Vec::new();
+    let mut peaks: Vec<RtLocalPeak> = Vec::with_capacity(n / 4);
     for &i in &cands {
         let apex = y_smoothed[i];
 
@@ -720,8 +736,11 @@ pub fn find_rt_peaks(
         return peaks;
     }
 
-    // total area for relative filters
-    let total_area = trapezoid_area_fractional(y_raw, 0.0, (n - 1) as f32);
+    // total area for relative filters (no need for fractional helper)
+    let mut total_area = 0.0f32;
+    for j in 0..(n - 1) {
+        total_area += 0.5 * (y_raw[j] + y_raw[j + 1]);
+    }
 
     // time-based NMS across all peaks
     let mut peaks = nms_by_time(peaks, min_sep_sec);
