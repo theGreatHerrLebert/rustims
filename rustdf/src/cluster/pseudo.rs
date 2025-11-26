@@ -47,6 +47,7 @@ pub struct PseudoFragment {
     pub ms2_cluster_index: usize,
     /// Stable cluster ID copied from `ClusterResult1D::cluster_id`.
     pub ms2_cluster_id: u64,
+    pub window_group: u32,
 }
 
 /// One pseudo-DDA spectrum: precursor + set of fragment peaks.
@@ -57,7 +58,7 @@ pub struct PseudoSpectrum {
     pub rt_apex: f32,
     pub im_apex: f32,
 
-    pub window_group: u32,  // <-- NEW: MS2 window group
+    pub window_group: u32,
 
     pub feature_id: Option<usize>,
     pub precursor_cluster_indices: Vec<usize>,
@@ -271,6 +272,7 @@ pub fn build_pseudo_spectra_from_pairs(
                         intensity,
                         ms2_cluster_index: j,
                         ms2_cluster_id: c2.cluster_id,
+                        window_group: c2.window_group.unwrap_or(0),
                     })
                 })
                 .collect();

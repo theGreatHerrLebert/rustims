@@ -22,6 +22,10 @@ class PseudoFragment:
     def ms2_cluster_id(self) -> int:
         return int(self._p.ms2_cluster_id)
 
+    @property
+    def window_group(self):
+        return int(self._p.window_group)
+
 
 class PseudoSpectrum:
     def __init__(self, py_ptr: Any) -> None:

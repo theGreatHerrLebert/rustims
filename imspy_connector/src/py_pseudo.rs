@@ -11,6 +11,7 @@ pub struct PyPseudoFragment {
     mz: f32,
     intensity: f32,
     ms2_cluster_id: u64,
+    window_group: u32,
 }
 
 #[pymethods]
@@ -23,6 +24,11 @@ impl PyPseudoFragment {
 
     #[getter]
     pub fn ms2_cluster_id(&self) -> u64 { self.ms2_cluster_id }
+
+    #[getter]
+    pub fn window_group(&self) -> u32 {
+        self.window_group
+    }
 
     fn __repr__(&self) -> String {
         format!(
@@ -224,6 +230,7 @@ impl PyPseudoSpectrum {
                 mz: f.mz,
                 intensity: f.intensity,
                 ms2_cluster_id: f.ms2_cluster_id,
+                window_group: f.window_group,
             })
             .collect()
     }
@@ -285,6 +292,7 @@ pub fn fragment_from_cluster(c: &ClusterResult1D) -> Option<PseudoFragment> {
         intensity,
         ms2_cluster_index: 0,
         ms2_cluster_id: c.cluster_id,
+        window_group: c.window_group.unwrap_or(0),
     })
 }
 
