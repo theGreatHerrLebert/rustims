@@ -1468,17 +1468,18 @@ fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawP
         (Some(x), None) => Some(x.clone()),
         (None, Some(y)) => Some(y.clone()),
         (Some(x), Some(y)) => {
-            // 1) Concatenate
-            let mut tmp = RawPoints::default();
-
+            // 1) Concatenate into a temporary buffer
             let total = x.mz.len() + y.mz.len();
-            tmp.mz.reserve(total);
-            tmp.rt.reserve(total);
-            tmp.im.reserve(total);
-            tmp.scan.reserve(total);
-            tmp.intensity.reserve(total);
-            tmp.tof.reserve(total);
-            tmp.frame.reserve(total);
+
+            let mut tmp = RawPoints {
+                mz: Vec::with_capacity(total),
+                rt: Vec::with_capacity(total),
+                im: Vec::with_capacity(total),
+                scan: Vec::with_capacity(total),
+                intensity: Vec::with_capacity(total),
+                tof: Vec::with_capacity(total),
+                frame: Vec::with_capacity(total),
+            };
 
             tmp.mz.extend_from_slice(&x.mz);
             tmp.mz.extend_from_slice(&y.mz);
@@ -1503,15 +1504,13 @@ fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawP
             debug_assert_eq!(tmp.tof.len(), total);
             debug_assert_eq!(tmp.frame.len(), total);
 
-            // 2) Build permutation for stable ordering:
-            //    sort by (frame, scan, mz, original_index)
+            // 2) Sort by (frame, scan, tof, mz_bits, original_index)
+            use std::cmp::Ordering;
+
             let n = total;
             let mut idx: Vec<usize> = (0..n).collect();
 
-            use std::cmp::Ordering;
-
             idx.sort_unstable_by(|&i, &j| {
-                // frame, scan – cheap integer compares
                 let fi = tmp.frame[i];
                 let fj = tmp.frame[j];
                 match fi.cmp(&fj) {
@@ -1528,7 +1527,15 @@ fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawP
                     Ordering::Equal => {}
                 }
 
-                // mz: use to_bits for a total order (avoids NaN partial_cmp weirdness)
+                let ti = tmp.tof[i];
+                let tj = tmp.tof[j];
+                match ti.cmp(&tj) {
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Greater => return Ordering::Greater,
+                    Ordering::Equal => {}
+                }
+
+                // mz: use to_bits for a total order; avoids NaN weirdness
                 let mi = tmp.mz[i].to_bits();
                 let mj = tmp.mz[j].to_bits();
                 match mi.cmp(&mj) {
@@ -1541,7 +1548,8 @@ fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawP
                 i.cmp(&j)
             });
 
-            // 3) Apply permutation to all fields
+            // 3) Apply permutation with deduplication:
+            //    only keep a point if its (frame, scan, tof, mz_bits) key is new.
             let mut out = RawPoints {
                 mz: Vec::with_capacity(n),
                 rt: Vec::with_capacity(n),
@@ -1552,14 +1560,29 @@ fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawP
                 frame: Vec::with_capacity(n),
             };
 
-            for i in idx {
-                out.mz.push(tmp.mz[i]);
-                out.rt.push(tmp.rt[i]);
-                out.im.push(tmp.im[i]);
-                out.scan.push(tmp.scan[i]);
-                out.intensity.push(tmp.intensity[i]);
-                out.tof.push(tmp.tof[i]);
-                out.frame.push(tmp.frame[i]);
+            let mut last_key: Option<(u32, u32, i32, u32)> = None;
+
+            for k in idx {
+                let key = (
+                    tmp.frame[k],
+                    tmp.scan[k],
+                    tmp.tof[k],
+                    tmp.mz[k].to_bits(),
+                );
+
+                if Some(key) == last_key {
+                    // exact duplicate of previous point → skip
+                    continue;
+                }
+                last_key = Some(key);
+
+                out.mz.push(tmp.mz[k]);
+                out.rt.push(tmp.rt[k]);
+                out.im.push(tmp.im[k]);
+                out.scan.push(tmp.scan[k]);
+                out.intensity.push(tmp.intensity[k]);
+                out.tof.push(tmp.tof[k]);
+                out.frame.push(tmp.frame[k]);
             }
 
             Some(out)
