@@ -65,16 +65,18 @@ impl PyPseudoSpectrum {
         }
 
         // ---- Build fragments (shared for both modes) --------------------
-        let mut window_group: u32 = 0;
+        let mut window_groups: Vec<u32> = vec![];
         let mut frags: Vec<PseudoFragment> = Vec::new();
 
         for f_py in fragments {
             let f_ref = f_py.borrow(py);
             let c = f_ref.inner.clone();
 
-            // take first non-zero window_group we see
-            if window_group == 0 {
-                window_group = c.window_group.unwrap_or(0);
+            // if window group is not yet in the list, add it
+            if let Some(wg) = c.window_group {
+                if !window_groups.contains(&wg) {
+                    window_groups.push(wg);
+                }
             }
 
             // only accept MS2 clusters as fragments
@@ -126,7 +128,7 @@ impl PyPseudoSpectrum {
                 rt_apex: prec.rt_fit.mu,
                 im_apex: prec.im_fit.mu,
                 feature_id: None,
-                window_group,
+                window_groups,
                 precursor_cluster_ids: vec![prec.cluster_id],
                 fragments: frags,
                 precursor_cluster_indices: vec![],
@@ -156,10 +158,7 @@ impl PyPseudoSpectrum {
             {
                 rt_apex = top.rt_fit.mu;
                 im_apex = top.im_fit.mu;
-                if window_group == 0 {
-                    // if not set from fragments, fall back to precursor tile
-                    window_group = top.window_group.unwrap_or(0);
-                }
+
                 precursor_cluster_ids.push(top.cluster_id);
             } else {
                 // Worst case: feature has no backing clusters (should not happen)
@@ -176,7 +175,18 @@ impl PyPseudoSpectrum {
                 rt_apex,
                 im_apex,
                 feature_id,
-                window_group,
+                // get window groups from member clusters and de-duplicate them
+                window_groups: {
+                    let mut wgs: Vec<u32> = Vec::new();
+                    for c in &feat.member_clusters {
+                        if let Some(wg) = c.window_group {
+                            if !wgs.contains(&wg) {
+                                wgs.push(wg);
+                            }
+                        }
+                    }
+                    wgs
+                },
                 precursor_cluster_ids,
                 fragments: frags,
                 // this is actually meaningful for features
@@ -213,8 +223,8 @@ impl PyPseudoSpectrum {
     }
 
     #[getter]
-    pub fn window_group_id(&self) -> u32 {
-        self.inner.window_group
+    pub fn window_groups(&self) -> Vec<u32> {
+        self.inner.window_groups.clone()
     }
 
     #[getter]

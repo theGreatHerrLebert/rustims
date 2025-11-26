@@ -58,7 +58,7 @@ pub struct PseudoSpectrum {
     pub rt_apex: f32,
     pub im_apex: f32,
 
-    pub window_group: u32,
+    pub window_groups: Vec<u32>,
 
     pub feature_id: Option<usize>,
     pub precursor_cluster_indices: Vec<usize>,
@@ -236,7 +236,7 @@ pub fn build_pseudo_spectra_from_pairs(
             frag_indices.sort_unstable();
             frag_indices.dedup();
 
-            let (prec_mz, charge, prec_cluster_indices, prec_cluster_ids, wg) = match key {
+            let (prec_mz, charge, prec_cluster_indices, prec_cluster_ids, _wg) = match key {
                 PrecursorKey::OrphanCluster { cluster_idx, window_group } => {
                     let c = &ms1[cluster_idx];
                     let mz = cluster_mz_mu(c).unwrap_or(0.0);
@@ -291,7 +291,13 @@ pub fn build_pseudo_spectra_from_pairs(
                 precursor_charge: charge,
                 rt_apex,
                 im_apex,
-                window_group: wg,
+                // get unique window groups from fragments
+                window_groups: {
+                    let mut wgs: Vec<u32> = frags.iter().map(|f| f.window_group).collect();
+                    wgs.sort_unstable();
+                    wgs.dedup();
+                    wgs
+                },
                 feature_id: match key {
                     PrecursorKey::Feature { feature_id, .. } => Some(feature_id),
                     PrecursorKey::OrphanCluster { .. } => None,

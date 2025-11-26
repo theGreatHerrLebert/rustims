@@ -89,9 +89,11 @@ class PseudoSpectrum:
         return [PseudoFragment(f) for f in self._p.fragments]
 
     @property
-    def window_group_id(self) -> int | None:
-        wgid = self._p.window_group_id
-        return int(wgid) if wgid is not None else None
+    def window_groups(self) -> list[int] | None:
+        wgid = self._p.window_groups
+        if wgid is None:
+            return None
+        return list(wgid)
 
     @property
     def fragment_mz_array(self) -> np.ndarray:
