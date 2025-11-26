@@ -204,6 +204,17 @@ pub struct ClusterResult1D {
     pub im_trace: Option<Vec<f32>>,
 }
 
+impl ClusterResult1D {
+    pub fn merged_with(
+        &self,
+        other: &Self,
+        new_id: u64,
+        policy: &ClusterMergePolicy,
+    ) -> Self {
+        merge_clusters(self, other, new_id, policy)
+    }
+}
+
 pub fn decorate_with_mz_for_cluster<D: IndexConverter>(
     ds: &D,
     rt_frames: &RtFrames,
@@ -1402,4 +1413,488 @@ pub fn extract_raw_points_for_clusters_in_ctx(
             )
         })
         .collect()
+}
+
+#[derive(Clone, Debug)]
+pub struct ClusterMergePolicy {
+    pub require_same_ms_level: bool,
+    pub require_same_window_group: bool,
+    pub require_same_parents: bool,
+
+    /// If true, we keep axis/traces only if they’re bit-identical.
+    /// Otherwise, we drop them (set to None) in the merged result.
+    pub keep_axes_if_identical: bool,
+    pub keep_traces_if_identical: bool,
+}
+
+impl Default for ClusterMergePolicy {
+    fn default() -> Self {
+        Self {
+            require_same_ms_level: true,
+            require_same_window_group: true,
+            require_same_parents: true,
+            keep_axes_if_identical: true,
+            keep_traces_if_identical: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ClusterMergeDistancePolicy {
+    /// Max allowed difference in RT centers (same units as rt_fit.mu, usually frames).
+    pub max_rt_center_delta: f32,
+    /// Max allowed difference in IM centers (same units as im_fit.mu, usually scans).
+    pub max_im_center_delta: f32,
+    /// Max allowed difference in TOF centers (same units as tof_fit.mu, usually bins).
+    pub max_tof_center_delta: f32,
+    /// Optional m/z tolerance in Da for mz_fit (0.0 => ignore).
+    pub max_mz_center_delta_da: f32,
+}
+
+impl Default for ClusterMergeDistancePolicy {
+    fn default() -> Self {
+        Self {
+            max_rt_center_delta: 0.0,
+            max_im_center_delta: 0.0,
+            max_tof_center_delta: 0.0,
+            max_mz_center_delta_da: 0.0,
+        }
+    }
+}
+
+fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawPoints> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(x), None) => Some(x.clone()),
+        (None, Some(y)) => Some(y.clone()),
+        (Some(x), Some(y)) => {
+            // 1) Concatenate
+            let mut tmp = RawPoints::default();
+
+            let total = x.mz.len() + y.mz.len();
+            tmp.mz.reserve(total);
+            tmp.rt.reserve(total);
+            tmp.im.reserve(total);
+            tmp.scan.reserve(total);
+            tmp.intensity.reserve(total);
+            tmp.tof.reserve(total);
+            tmp.frame.reserve(total);
+
+            tmp.mz.extend_from_slice(&x.mz);
+            tmp.mz.extend_from_slice(&y.mz);
+            tmp.rt.extend_from_slice(&x.rt);
+            tmp.rt.extend_from_slice(&y.rt);
+            tmp.im.extend_from_slice(&x.im);
+            tmp.im.extend_from_slice(&y.im);
+            tmp.scan.extend_from_slice(&x.scan);
+            tmp.scan.extend_from_slice(&y.scan);
+            tmp.intensity.extend_from_slice(&x.intensity);
+            tmp.intensity.extend_from_slice(&y.intensity);
+            tmp.tof.extend_from_slice(&x.tof);
+            tmp.tof.extend_from_slice(&y.tof);
+            tmp.frame.extend_from_slice(&x.frame);
+            tmp.frame.extend_from_slice(&y.frame);
+
+            debug_assert_eq!(tmp.mz.len(), total);
+            debug_assert_eq!(tmp.rt.len(), total);
+            debug_assert_eq!(tmp.im.len(), total);
+            debug_assert_eq!(tmp.scan.len(), total);
+            debug_assert_eq!(tmp.intensity.len(), total);
+            debug_assert_eq!(tmp.tof.len(), total);
+            debug_assert_eq!(tmp.frame.len(), total);
+
+            // 2) Build permutation for stable ordering:
+            //    sort by (frame, scan, mz, original_index)
+            let n = total;
+            let mut idx: Vec<usize> = (0..n).collect();
+
+            use std::cmp::Ordering;
+
+            idx.sort_unstable_by(|&i, &j| {
+                // frame, scan – cheap integer compares
+                let fi = tmp.frame[i];
+                let fj = tmp.frame[j];
+                match fi.cmp(&fj) {
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Greater => return Ordering::Greater,
+                    Ordering::Equal => {}
+                }
+
+                let si = tmp.scan[i];
+                let sj = tmp.scan[j];
+                match si.cmp(&sj) {
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Greater => return Ordering::Greater,
+                    Ordering::Equal => {}
+                }
+
+                // mz: use to_bits for a total order (avoids NaN partial_cmp weirdness)
+                let mi = tmp.mz[i].to_bits();
+                let mj = tmp.mz[j].to_bits();
+                match mi.cmp(&mj) {
+                    Ordering::Less => return Ordering::Less,
+                    Ordering::Greater => return Ordering::Greater,
+                    Ordering::Equal => {}
+                }
+
+                // final tie-breaker: original index → deterministic
+                i.cmp(&j)
+            });
+
+            // 3) Apply permutation to all fields
+            let mut out = RawPoints {
+                mz: Vec::with_capacity(n),
+                rt: Vec::with_capacity(n),
+                im: Vec::with_capacity(n),
+                scan: Vec::with_capacity(n),
+                intensity: Vec::with_capacity(n),
+                tof: Vec::with_capacity(n),
+                frame: Vec::with_capacity(n),
+            };
+
+            for i in idx {
+                out.mz.push(tmp.mz[i]);
+                out.rt.push(tmp.rt[i]);
+                out.im.push(tmp.im[i]);
+                out.scan.push(tmp.scan[i]);
+                out.intensity.push(tmp.intensity[i]);
+                out.tof.push(tmp.tof[i]);
+                out.frame.push(tmp.frame[i]);
+            }
+
+            Some(out)
+        }
+    }
+}
+
+fn merge_fit1d(a: &Fit1D, b: &Fit1D) -> Fit1D {
+    // If one is basically empty, return the other
+    if a.area <= 0.0 {
+        return b.clone();
+    }
+    if b.area <= 0.0 {
+        return a.clone();
+    }
+
+    let a_area = a.area;
+    let b_area = b.area;
+    let total = a_area + b_area;
+
+    let mu = (a.mu * a_area + b.mu * b_area) / total;
+
+    let s1 = a.sigma * a.sigma + a.mu * a.mu;
+    let s2 = b.sigma * b.sigma + b.mu * b.mu;
+    let second_moment = (a_area * s1 + b_area * s2) / total;
+    let var = (second_moment - mu * mu).max(0.0);
+    let sigma = var.sqrt();
+
+    // height: keep max of the two (good enough approximation)
+    let height = a.height.max(b.height);
+
+    let mut out = a.clone();
+    out.mu = mu;
+    out.sigma = sigma;
+    out.area = total;
+    out.height = height;
+    out
+}
+
+fn merge_opt_fit1d(a: &Option<Fit1D>, b: &Option<Fit1D>) -> Option<Fit1D> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(x), None) => Some(x.clone()),
+        (None, Some(y)) => Some(y.clone()),
+        (Some(x), Some(y)) => Some(merge_fit1d(x, y)),
+    }
+}
+
+fn merge_axis_vec<T: Clone + PartialEq>(
+    a: &Option<Vec<T>>,
+    b: &Option<Vec<T>>,
+    keep_if_identical: bool,
+) -> Option<Vec<T>> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(x), None) => Some(x.clone()),
+        (None, Some(y)) => Some(y.clone()),
+        (Some(x), Some(y)) => {
+            if keep_if_identical && x == y {
+                Some(x.clone())
+            } else if keep_if_identical {
+                // non-equal -> drop
+                None
+            } else {
+                // if you later want a different behavior (e.g. prefer larger),
+                // implement it here. For now: drop.
+                None
+            }
+        }
+    }
+}
+
+fn merge_trace_vec(
+    a: &Option<Vec<f32>>,
+    b: &Option<Vec<f32>>,
+    keep_if_identical: bool,
+) -> Option<Vec<f32>> {
+    match (a, b) {
+        (None, None) => None,
+        (Some(x), None) => Some(x.clone()),
+        (None, Some(y)) => Some(y.clone()),
+        (Some(x), Some(y)) => {
+            if keep_if_identical && x == y {
+                Some(x.clone())
+            } else if keep_if_identical {
+                None
+            } else {
+                None
+            }
+        }
+    }
+}
+
+pub fn clusters_can_merge(
+    a: &ClusterResult1D,
+    b: &ClusterResult1D,
+    policy: &ClusterMergePolicy,
+) -> bool {
+    if policy.require_same_ms_level && a.ms_level != b.ms_level {
+        return false;
+    }
+    if policy.require_same_window_group && a.window_group != b.window_group {
+        return false;
+    }
+    if policy.require_same_parents {
+        if a.parent_im_id != b.parent_im_id || a.parent_rt_id != b.parent_rt_id {
+            return false;
+        }
+    }
+
+    // Optional extra sanity: require overlapping RT/IM/TOF windows.
+    // This prevents merging completely disjoint objects by accident.
+    let rt_overlaps = a.rt_window.1 >= b.rt_window.0 && b.rt_window.1 >= a.rt_window.0;
+    let im_overlaps = a.im_window.1 >= b.im_window.0 && b.im_window.1 >= a.im_window.0;
+    let tof_overlaps = a.tof_window.1 >= b.tof_window.0 && b.tof_window.1 >= a.tof_window.0;
+
+    rt_overlaps && im_overlaps && tof_overlaps
+}
+
+pub fn merge_clusters(
+    a: &ClusterResult1D,
+    b: &ClusterResult1D,
+    new_id: u64,
+    policy: &ClusterMergePolicy,
+) -> ClusterResult1D {
+    debug_assert!(
+        clusters_can_merge(a, b, policy),
+        "merge_clusters called on incompatible clusters"
+    );
+
+    let rt_window = (
+        a.rt_window.0.min(b.rt_window.0),
+        a.rt_window.1.max(b.rt_window.1),
+    );
+    let im_window = (
+        a.im_window.0.min(b.im_window.0),
+        a.im_window.1.max(b.im_window.1),
+    );
+    let tof_window = (
+        a.tof_window.0.min(b.tof_window.0),
+        a.tof_window.1.max(b.tof_window.1),
+    );
+    let tof_index_window = (
+        a.tof_index_window.0.min(b.tof_index_window.0),
+        a.tof_index_window.1.max(b.tof_index_window.1),
+    );
+
+    let rt_fit = merge_fit1d(&a.rt_fit, &b.rt_fit);
+    let im_fit = merge_fit1d(&a.im_fit, &b.im_fit);
+    let tof_fit = merge_fit1d(&a.tof_fit, &b.tof_fit);
+    let mz_fit = merge_opt_fit1d(&a.mz_fit, &b.mz_fit);
+
+    let raw_sum = a.raw_sum + b.raw_sum;
+    let volume_proxy = a.volume_proxy + b.volume_proxy;
+
+    // frame_ids_used: sorted union
+    let mut frame_ids_used = a.frame_ids_used.clone();
+    frame_ids_used.extend_from_slice(&b.frame_ids_used);
+    frame_ids_used.sort_unstable();
+    frame_ids_used.dedup();
+
+    let window_group = a.window_group.or(b.window_group);
+    let parent_im_id = a.parent_im_id.or(b.parent_im_id);
+    let parent_rt_id = a.parent_rt_id.or(b.parent_rt_id);
+    let ms_level = a.ms_level; // same as b, if compatible
+
+    let rt_axis_sec =
+        merge_axis_vec(&a.rt_axis_sec, &b.rt_axis_sec, policy.keep_axes_if_identical);
+    let im_axis_scans =
+        merge_axis_vec(&a.im_axis_scans, &b.im_axis_scans, policy.keep_axes_if_identical);
+    let mz_axis_da =
+        merge_axis_vec(&a.mz_axis_da, &b.mz_axis_da, policy.keep_axes_if_identical);
+
+    let raw_points = merge_raw_points(&a.raw_points, &b.raw_points);
+
+    let rt_trace = merge_trace_vec(&a.rt_trace, &b.rt_trace, policy.keep_traces_if_identical);
+    let im_trace = merge_trace_vec(&a.im_trace, &b.im_trace, policy.keep_traces_if_identical);
+
+    ClusterResult1D {
+        cluster_id: new_id,
+        rt_window,
+        im_window,
+        tof_window,
+        tof_index_window,
+        mz_window: a.mz_window.or(b.mz_window),
+
+        rt_fit,
+        im_fit,
+        tof_fit,
+        mz_fit,
+
+        raw_sum,
+        volume_proxy,
+
+        frame_ids_used,
+        window_group,
+        parent_im_id,
+        parent_rt_id,
+        ms_level,
+
+        rt_axis_sec,
+        im_axis_scans,
+        mz_axis_da,
+
+        raw_points,
+        rt_trace,
+        im_trace,
+    }
+}
+
+pub fn merge_cluster_group(
+    clusters: &[ClusterResult1D],
+    new_id: u64,
+    policy: &ClusterMergePolicy,
+) -> Option<ClusterResult1D> {
+    let mut it = clusters.iter();
+    let first = it.next()?.clone();
+    Some(it.fold(first, |acc, c| merge_clusters(&acc, c, new_id, policy)))
+}
+
+// --- distance-based compatibility --------------------------------------------
+
+fn clusters_can_merge_with_distance(
+    a: &ClusterResult1D,
+    b: &ClusterResult1D,
+    dist: &ClusterMergeDistancePolicy,
+) -> bool {
+    // 1) Cheap invariants: same MS level + same window group
+    if a.ms_level != b.ms_level {
+        return false;
+    }
+    if a.window_group != b.window_group {
+        return false;
+    }
+
+    // 2) Require overlapping windows as sanity check
+    let rt_overlaps = a.rt_window.1 >= b.rt_window.0 && b.rt_window.1 >= a.rt_window.0;
+    let im_overlaps = a.im_window.1 >= b.im_window.0 && b.im_window.1 >= a.im_window.0;
+    let tof_overlaps = a.tof_window.1 >= b.tof_window.0 && b.tof_window.1 >= a.tof_window.0;
+    if !(rt_overlaps && im_overlaps && tof_overlaps) {
+        return false;
+    }
+
+    // 3) Center-distance constraints (all interpreted in index units)
+    let drt = (a.rt_fit.mu - b.rt_fit.mu).abs();
+    if dist.max_rt_center_delta > 0.0 && drt > dist.max_rt_center_delta {
+        return false;
+    }
+
+    let dim = (a.im_fit.mu - b.im_fit.mu).abs();
+    if dist.max_im_center_delta > 0.0 && dim > dist.max_im_center_delta {
+        return false;
+    }
+
+    let dtof = (a.tof_fit.mu - b.tof_fit.mu).abs();
+    if dist.max_tof_center_delta > 0.0 && dtof > dist.max_tof_center_delta {
+        return false;
+    }
+
+    // Optional m/z center tolerance if both have mz_fit and a non-zero threshold
+    if dist.max_mz_center_delta_da > 0.0 {
+        if let (Some(mza), Some(mzb)) = (&a.mz_fit, &b.mz_fit) {
+            let dmz = (mza.mu - mzb.mu).abs();
+            if dmz > dist.max_mz_center_delta_da {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Merge clusters that are close in RT/IM/TOF (and optionally m/z).
+///
+/// - Uses `clusters_can_merge_with_distance` to decide compatibility.
+/// - Merges *chains* of mutually compatible clusters (A-B-C all close) into one.
+/// - Keeps the cluster_id of the first cluster in each chain.
+pub fn merge_clusters_by_distance(
+    mut clusters: Vec<ClusterResult1D>,
+    dist: &ClusterMergeDistancePolicy,
+) -> Vec<ClusterResult1D> {
+    if clusters.len() <= 1 {
+        return clusters;
+    }
+
+    // Order them so that "neighbors" in sort order are the ones we want to compare.
+    clusters.sort_unstable_by(|a, b| {
+        a.ms_level
+            .cmp(&b.ms_level)
+            .then_with(|| a.window_group.cmp(&b.window_group))
+            .then_with(|| a.tof_fit.mu.partial_cmp(&b.tof_fit.mu).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.rt_fit.mu.partial_cmp(&b.rt_fit.mu).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.im_fit.mu.partial_cmp(&b.im_fit.mu).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.cluster_id.cmp(&b.cluster_id))
+    });
+
+    // Internal merge policy: we already enforced ms_level/window_group
+    // and we definitely *don't* want to require same parents here.
+    let merge_policy = ClusterMergePolicy {
+        require_same_ms_level: false,
+        require_same_window_group: false,
+        require_same_parents: false,
+        keep_axes_if_identical: true,
+        keep_traces_if_identical: true,
+    };
+
+    let mut out: Vec<ClusterResult1D> = Vec::new();
+    let mut group: Vec<ClusterResult1D> = Vec::new();
+
+    for c in clusters.into_iter() {
+        if let Some(last) = group.last() {
+            if clusters_can_merge_with_distance(last, &c, dist) {
+                // same chain → keep extending
+                group.push(c);
+            } else {
+                // finish previous chain
+                let new_id = group[0].cluster_id; // keep id of first
+                if let Some(merged) = merge_cluster_group(&group, new_id, &merge_policy) {
+                    out.push(merged);
+                }
+                group.clear();
+                group.push(c);
+            }
+        } else {
+            group.push(c);
+        }
+    }
+
+    // flush final chain
+    if !group.is_empty() {
+        let new_id = group[0].cluster_id;
+        if let Some(merged) = merge_cluster_group(&group, new_id, &merge_policy) {
+            out.push(merged);
+        }
+    }
+
+    out
 }

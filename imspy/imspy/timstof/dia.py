@@ -391,6 +391,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         """
         return self.__dataset.read_compressed_data_full()
 
+
     def clusters_for_group(
             self,
             window_group: int,
@@ -428,6 +429,11 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             num_threads: int = 0,
             min_im_span: int = 10,
             rt_pad_frames: int = 5,
+            # NEW: distance-based merge of duplicates (within same WG)
+            merge_duplicates: bool = True,
+            max_rt_center_delta: float = 0.1,
+            max_im_center_delta: float = 5.0,
+            max_tof_center_delta: float = 2.0,
     ):
         from imspy.timstof.clustering.data import ClusterResult1D
         """
@@ -442,7 +448,11 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         tof_step : int, default 1
             TOF binning factor for the CSR grid.
             1 = full TOF resolution, 2 = every 2nd TOF index, etc.
-        Time-related parameters are in seconds.
+        merge_duplicates : bool, default False
+            If True, merge clusters that are very close in RT/IM/TOF centers
+            within the same window_group according to the *_center_delta.
+        max_*_center_delta : float
+            Center-difference thresholds in index units (frames/scans/bins).
         """
         if tof_step <= 0:
             raise ValueError(f"tof_step must be > 0, got {tof_step}")
@@ -482,6 +492,10 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(num_threads),
             int(min_im_span),
             int(rt_pad_frames),
+            bool(merge_duplicates),
+            float(max_rt_center_delta),
+            float(max_im_center_delta),
+            float(max_tof_center_delta),
         )
         return [ClusterResult1D(r) for r in py_results]
 
@@ -521,6 +535,11 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             num_threads: int = 0,
             min_im_span: int = 10,
             rt_pad_frames: int = 5,
+            # NEW: distance-based merge of duplicates (within same WG)
+            merge_duplicates: bool = True,
+            max_rt_center_delta: float = 0.1,
+            max_im_center_delta: float = 5.0,
+            max_tof_center_delta: float = 2.0,
     ):
         from imspy.timstof.clustering.data import ClusterResult1D
         """
@@ -572,6 +591,10 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(num_threads),
             int(min_im_span),
             int(rt_pad_frames),
+            bool(merge_duplicates),
+            float(max_rt_center_delta),
+            float(max_im_center_delta),
+            float(max_tof_center_delta),
         )
         return [ClusterResult1D(r) for r in py_results]
 

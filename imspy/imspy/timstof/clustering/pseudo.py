@@ -26,6 +26,12 @@ class PseudoFragment:
     def window_group(self):
         return int(self._p.window_group)
 
+    def __repr__(self):
+        return (
+            f"PseudoFragment(mz={self.mz:.4f}, intensity={self.intensity:.1f}, "
+            f"ms2_cluster_id={self.ms2_cluster_id})"
+        )
+
 
 class PseudoSpectrum:
     def __init__(self, py_ptr: Any) -> None:

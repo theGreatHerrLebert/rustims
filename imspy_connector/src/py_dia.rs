@@ -7,7 +7,7 @@ use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
 use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
-use rustdf::cluster::cluster::{Attach1DOptions, BuildSpecOpts, ClusterResult1D, Eval1DOpts, RawPoints};
+use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
@@ -1646,8 +1646,7 @@ impl PyTimsDatasetDIA {
     pub fn mz_bounds_for_group(&self, window_group: u32) -> Option<(f32, f32)> {
         self.inner.mz_bounds_for_window_group_core(window_group)
     }
-
-    #[pyo3(signature = (
+        #[pyo3(signature = (
         window_group,
         tof_step,
         im_peaks,
@@ -1671,8 +1670,8 @@ impl PyTimsDatasetDIA {
         attach_axes=true,
         attach_points=false,
         attach_max_points=None,
-            attach_im_trace=false,
-            attach_rt_trace=false,
+        attach_im_trace=false,
+        attach_rt_trace=false,
         // matching constraint + threads
         require_rt_overlap=true,
         compute_mz_from_tof=true,
@@ -1682,115 +1681,136 @@ impl PyTimsDatasetDIA {
         num_threads=0,
         min_im_span=12,
         rt_pad_frames=5,
+        // NEW: distance-based merge of duplicates
+        merge_duplicates=false,
+        max_rt_center_delta=0.0,
+        max_im_center_delta=0.0,
+        max_tof_center_delta=0.0,
     ))]
-    pub fn clusters_for_group(
-        &self,
-        py: Python<'_>,
-        window_group: u32,
-        tof_step: i32,
-        im_peaks: Vec<Py<PyImPeak1D>>,
-        // RtExpandParams
-        bin_pad: usize,
-        smooth_sigma_sec: f32,
-        smooth_trunc_k: f32,
-        min_prom: f32,
-        min_sep_sec: f32,
-        min_width_sec: f32,
-        fallback_if_frames_lt: usize,
-        fallback_frac_width: f32,
-        // BuildSpecOpts
-        extra_rt_pad: usize,
-        extra_im_pad: usize,
-        tof_bin_pad: usize,
-        tof_hist_bins: usize,
-        // Eval1DOpts
-        refine_tof_once: bool,
-        refine_k_sigma: f32,
-        attach_axes: bool,
-        attach_points: bool,
-        attach_max_points: Option<usize>,
-        attach_im_trace: bool,
-        attach_rt_trace: bool,
-        // matching + threads
-        require_rt_overlap: bool,
-        compute_mz_from_tof: bool,
-        pad_rt_frames: usize,
-        pad_im_scans: usize,
-        pad_tof_bins: usize,
-        num_threads: usize,
-        min_im_span: usize,
-        rt_pad_frames: usize,
-    ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
-        // ---- convert Python IM peaks into Rust ImPeak1D ------------------
-        let im_rs: Vec<ImPeak1D> = im_peaks
-            .iter()
-            .map(|p| p.borrow(py).inner.as_ref().clone())
-            .collect();
-        debug_assert!(
-            im_rs.iter().all(|p| p.window_group == Some(window_group)),
-            "clusters_for_group: some IM peaks have wrong or missing window_group"
-        );
+        pub fn clusters_for_group(
+            &self,
+            py: Python<'_>,
+            window_group: u32,
+            tof_step: i32,
+            im_peaks: Vec<Py<PyImPeak1D>>,
+            // RtExpandParams
+            bin_pad: usize,
+            smooth_sigma_sec: f32,
+            smooth_trunc_k: f32,
+            min_prom: f32,
+            min_sep_sec: f32,
+            min_width_sec: f32,
+            fallback_if_frames_lt: usize,
+            fallback_frac_width: f32,
+            // BuildSpecOpts
+            extra_rt_pad: usize,
+            extra_im_pad: usize,
+            tof_bin_pad: usize,
+            tof_hist_bins: usize,
+            // Eval1DOpts
+            refine_tof_once: bool,
+            refine_k_sigma: f32,
+            attach_axes: bool,
+            attach_points: bool,
+            attach_max_points: Option<usize>,
+            attach_im_trace: bool,
+            attach_rt_trace: bool,
+            // matching + threads
+            require_rt_overlap: bool,
+            compute_mz_from_tof: bool,
+            pad_rt_frames: usize,
+            pad_im_scans: usize,
+            pad_tof_bins: usize,
+            num_threads: usize,
+            min_im_span: usize,
+            rt_pad_frames: usize,
+            // distance-based merge
+            merge_duplicates: bool,
+            max_rt_center_delta: f32,
+            max_im_center_delta: f32,
+            max_tof_center_delta: f32,
+        ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+            // ---- convert Python IM peaks into Rust ImPeak1D ------------------
+            let im_rs: Vec<ImPeak1D> = im_peaks
+                .iter()
+                .map(|p| p.borrow(py).inner.as_ref().clone())
+                .collect();
+            debug_assert!(
+                im_rs.iter().all(|p| p.window_group == Some(window_group)),
+                "clusters_for_group: some IM peaks have wrong or missing window_group"
+            );
 
-        // ---- RT expansion params -----------------------------------------
-        let rt_params = RtExpandParams {
-            bin_pad,
-            smooth_sigma_sec,
-            smooth_trunc_k,
-            min_prom,
-            min_sep_sec,
-            min_width_sec,
-            fallback_if_frames_lt,
-            fallback_frac_width,
-            rt_pad_frames,
-        };
+            // ---- RT expansion params -----------------------------------------
+            let rt_params = RtExpandParams {
+                bin_pad,
+                smooth_sigma_sec,
+                smooth_trunc_k,
+                min_prom,
+                min_sep_sec,
+                min_width_sec,
+                fallback_if_frames_lt,
+                fallback_frac_width,
+                rt_pad_frames,
+            };
 
-        // ---- BuildSpecOpts: TOF-based, no ppm ----------------------------
-        let build_opts = BuildSpecOpts {
-            extra_rt_pad,
-            extra_im_pad,
-            tof_bin_pad,
-            tof_hist_bins,
-            ms_level: 2,         // DIA fragments
-            min_im_span,
-            im_k_sigma: 3.0,     // keep hard-coded for now
-        };
+            // ---- BuildSpecOpts: TOF-based, no ppm ----------------------------
+            let build_opts = BuildSpecOpts {
+                extra_rt_pad,
+                extra_im_pad,
+                tof_bin_pad,
+                tof_hist_bins,
+                ms_level: 2,         // DIA fragments
+                min_im_span,
+                im_k_sigma: 3.0,     // keep hard-coded for now
+            };
 
-        // ---- Eval1DOpts: TOF refine, no mz_ppm_cap here ------------------
-        let eval_opts = Eval1DOpts {
-            refine_tof_once,
-            refine_k_sigma,
-            attach_axes,
-            attach: Attach1DOptions {
-                attach_points,
+            // ---- Eval1DOpts: TOF refine, no mz_ppm_cap here ------------------
+            let eval_opts = Eval1DOpts {
+                refine_tof_once,
+                refine_k_sigma,
                 attach_axes,
-                max_points: attach_max_points,
-            },
-            compute_mz_from_tof,
-            attach_im_trace,
-            attach_rt_trace,
-            pad_rt_frames,
-            pad_im_scans,
-            pad_tof_bins,
-        };
+                attach: Attach1DOptions {
+                    attach_points,
+                    attach_axes,
+                    max_points: attach_max_points,
+                },
+                compute_mz_from_tof,
+                attach_im_trace,
+                attach_rt_trace,
+                pad_rt_frames,
+                pad_im_scans,
+                pad_tof_bins,
+            };
 
-        // ---- Run the core DIA clustering --------------------------------
-        let results = py.allow_threads(|| {
-            self.inner.clusters_for_group(
-                window_group,
-                tof_step,
-                &im_rs,
-                rt_params,
-                &build_opts,
-                &eval_opts,
-                require_rt_overlap,
-                num_threads,
-            )
-        });
+            // ---- Run the core DIA clustering --------------------------------
+            let mut results = py.allow_threads(|| {
+                self.inner.clusters_for_group(
+                    window_group,
+                    tof_step,
+                    &im_rs,
+                    rt_params,
+                    &build_opts,
+                    &eval_opts,
+                    require_rt_overlap,
+                    num_threads,
+                )
+            });
 
-        results_to_py(py, results)
-    }
+            // ---- Optional distance-based de-duplication ----------------------
+            if merge_duplicates {
+                let dist = ClusterMergeDistancePolicy {
+                    max_rt_center_delta,
+                    max_im_center_delta,
+                    max_tof_center_delta,
+                    max_mz_center_delta_da: 0.0, // can be exposed later if useful
+                };
+                results = merge_clusters_by_distance(results, &dist);
+            }
 
-    #[pyo3(signature = (
+            results_to_py(py, results)
+        }
+
+        #[pyo3(signature = (
         tof_step,
         im_peaks,
         bin_pad=0,
@@ -1813,111 +1833,132 @@ impl PyTimsDatasetDIA {
         num_threads=0,
         min_im_span=12,
         rt_pad_frames=5,
+        // NEW: distance-based merge of duplicates
+        merge_duplicates=false,
+        max_rt_center_delta=0.0,
+        max_im_center_delta=0.0,
+        max_tof_center_delta=0.0,
     ))]
-    pub fn clusters_for_precursor(
-        &self,
-        py: Python<'_>,
-        tof_step: i32,
-        im_peaks: Vec<Py<PyImPeak1D>>,
-        // RtExpandParams
-        bin_pad: usize,
-        smooth_sigma_sec: f32,
-        smooth_trunc_k: f32,
-        min_prom: f32,
-        min_sep_sec: f32,
-        min_width_sec: f32,
-        fallback_if_frames_lt: usize,
-        fallback_frac_width: f32,
-        // BuildSpecOpts
-        extra_rt_pad: usize,
-        extra_im_pad: usize,
-        tof_bin_pad: usize,
-        tof_hist_bins: usize,
-        // Eval1DOpts
-        refine_tof_once: bool,
-        refine_k_sigma: f32,
-        attach_axes: bool,
-        attach_points: bool,
-        attach_max_points: Option<usize>,
-        attach_im_trace: bool,
-        attach_rt_trace: bool,
-        // matching + threads
-        require_rt_overlap: bool,
-        compute_mz_from_tof: bool,
-        pad_rt_frames: usize,
-        pad_im_scans: usize,
-        pad_tof_bins: usize,
-        num_threads: usize,
-        min_im_span: usize,
-        rt_pad_frames: usize,
-    ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
-        // ---- convert Python IM peaks into Rust ImPeak1D ------------------
-        let im_rs: Vec<ImPeak1D> = im_peaks
-            .iter()
-            .map(|p| p.borrow(py).inner.as_ref().clone())
-            .collect();
-        debug_assert!(
-            im_rs.iter().all(|p| p.window_group.is_none()),
-            "clusters_for_precursor: IM peaks unexpectedly carry a window_group"
-        );
+        pub fn clusters_for_precursor(
+            &self,
+            py: Python<'_>,
+            tof_step: i32,
+            im_peaks: Vec<Py<PyImPeak1D>>,
+            // RtExpandParams
+            bin_pad: usize,
+            smooth_sigma_sec: f32,
+            smooth_trunc_k: f32,
+            min_prom: f32,
+            min_sep_sec: f32,
+            min_width_sec: f32,
+            fallback_if_frames_lt: usize,
+            fallback_frac_width: f32,
+            // BuildSpecOpts
+            extra_rt_pad: usize,
+            extra_im_pad: usize,
+            tof_bin_pad: usize,
+            tof_hist_bins: usize,
+            // Eval1DOpts
+            refine_tof_once: bool,
+            refine_k_sigma: f32,
+            attach_axes: bool,
+            attach_points: bool,
+            attach_max_points: Option<usize>,
+            attach_im_trace: bool,
+            attach_rt_trace: bool,
+            // matching + threads
+            require_rt_overlap: bool,
+            compute_mz_from_tof: bool,
+            pad_rt_frames: usize,
+            pad_im_scans: usize,
+            pad_tof_bins: usize,
+            num_threads: usize,
+            min_im_span: usize,
+            rt_pad_frames: usize,
+            // distance-based merge
+            merge_duplicates: bool,
+            max_rt_center_delta: f32,
+            max_im_center_delta: f32,
+            max_tof_center_delta: f32,
+        ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+            // ---- convert Python IM peaks into Rust ImPeak1D ------------------
+            let im_rs: Vec<ImPeak1D> = im_peaks
+                .iter()
+                .map(|p| p.borrow(py).inner.as_ref().clone())
+                .collect();
+            debug_assert!(
+                im_rs.iter().all(|p| p.window_group.is_none()),
+                "clusters_for_precursor: IM peaks unexpectedly carry a window_group"
+            );
 
-        // ---- RT expansion params -----------------------------------------
-        let rt_params = RtExpandParams {
-            bin_pad,
-            smooth_sigma_sec,
-            smooth_trunc_k,
-            min_prom,
-            min_sep_sec,
-            min_width_sec,
-            fallback_if_frames_lt,
-            fallback_frac_width,
-            rt_pad_frames,
-        };
+            // ---- RT expansion params -----------------------------------------
+            let rt_params = RtExpandParams {
+                bin_pad,
+                smooth_sigma_sec,
+                smooth_trunc_k,
+                min_prom,
+                min_sep_sec,
+                min_width_sec,
+                fallback_if_frames_lt,
+                fallback_frac_width,
+                rt_pad_frames,
+            };
 
-        // ---- BuildSpecOpts: MS1, TOF-based -------------------------------
-        let build_opts = BuildSpecOpts {
-            extra_rt_pad,
-            extra_im_pad,
-            tof_bin_pad,
-            tof_hist_bins,
-            ms_level: 1,         // precursor
-            min_im_span,
-            im_k_sigma: 3.0,
-        };
+            // ---- BuildSpecOpts: MS1, TOF-based -------------------------------
+            let build_opts = BuildSpecOpts {
+                extra_rt_pad,
+                extra_im_pad,
+                tof_bin_pad,
+                tof_hist_bins,
+                ms_level: 1,         // precursor
+                min_im_span,
+                im_k_sigma: 3.0,
+            };
 
-        // ---- Eval1DOpts --------------------------------------------------
-        let eval_opts = Eval1DOpts {
-            refine_tof_once,
-            refine_k_sigma,
-            attach_axes,
-            attach: Attach1DOptions {
-                attach_points,
+            // ---- Eval1DOpts --------------------------------------------------
+            let eval_opts = Eval1DOpts {
+                refine_tof_once,
+                refine_k_sigma,
                 attach_axes,
-                max_points: attach_max_points,
-            },
-            compute_mz_from_tof,
-            attach_im_trace,
-            attach_rt_trace,
-            pad_rt_frames,
-            pad_im_scans,
-            pad_tof_bins,
-        };
+                attach: Attach1DOptions {
+                    attach_points,
+                    attach_axes,
+                    max_points: attach_max_points,
+                },
+                compute_mz_from_tof,
+                attach_im_trace,
+                attach_rt_trace,
+                pad_rt_frames,
+                pad_im_scans,
+                pad_tof_bins,
+            };
 
-        // ---- Run the core MS1 clustering --------------------------------
-        let results = py.allow_threads(|| {
-            self.inner.clusters_for_precursor(
-                tof_step,
-                &im_rs,
-                rt_params,
-                &build_opts,
-                &eval_opts,
-                require_rt_overlap,
-                num_threads,
-            )
-        });
+            // ---- Run the core MS1 clustering --------------------------------
+            let mut results = py.allow_threads(|| {
+                self.inner.clusters_for_precursor(
+                    tof_step,
+                    &im_rs,
+                    rt_params,
+                    &build_opts,
+                    &eval_opts,
+                    require_rt_overlap,
+                    num_threads,
+                )
+            });
 
-        results_to_py(py, results)
-    }
+            // ---- Optional distance-based de-duplication ----------------------
+            if merge_duplicates {
+                let dist = ClusterMergeDistancePolicy {
+                    max_rt_center_delta,
+                    max_im_center_delta,
+                    max_tof_center_delta,
+                    max_mz_center_delta_da: 0.0, // can be exposed later if useful
+                };
+                results = merge_clusters_by_distance(results, &dist);
+            }
+
+            results_to_py(py, results)
+        }
 
     #[pyo3(signature = (
         ms1_clusters,
