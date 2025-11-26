@@ -1462,6 +1462,14 @@ impl Default for ClusterMergeDistancePolicy {
     }
 }
 
+/// Helper: sum intensities of a RawPoints object (used after dedup).
+fn sum_intensity(raw: &RawPoints) -> f32 {
+    raw.intensity
+        .iter()
+        .copied()
+        .fold(0.0_f32, |acc, x| acc + x)
+}
+
 fn merge_raw_points(a: &Option<RawPoints>, b: &Option<RawPoints>) -> Option<RawPoints> {
     match (a, b) {
         (None, None) => None,
@@ -1647,8 +1655,7 @@ fn merge_axis_vec<T: Clone + PartialEq>(
                 // non-equal -> drop
                 None
             } else {
-                // if you later want a different behavior (e.g. prefer larger),
-                // implement it here. For now: drop.
+                // Hook for future behavior (prefer longer, etc.). For now: drop.
                 None
             }
         }
@@ -1694,7 +1701,6 @@ pub fn clusters_can_merge(
     }
 
     // Optional extra sanity: require overlapping RT/IM/TOF windows.
-    // This prevents merging completely disjoint objects by accident.
     let rt_overlaps = a.rt_window.1 >= b.rt_window.0 && b.rt_window.1 >= a.rt_window.0;
     let im_overlaps = a.im_window.1 >= b.im_window.0 && b.im_window.1 >= a.im_window.0;
     let tof_overlaps = a.tof_window.1 >= b.tof_window.0 && b.tof_window.1 >= a.tof_window.0;
@@ -1735,8 +1741,39 @@ pub fn merge_clusters(
     let tof_fit = merge_fit1d(&a.tof_fit, &b.tof_fit);
     let mz_fit = merge_opt_fit1d(&a.mz_fit, &b.mz_fit);
 
-    let raw_sum = a.raw_sum + b.raw_sum;
-    let volume_proxy = a.volume_proxy + b.volume_proxy;
+    // merged + deduped raw points (if any)
+    let raw_points = merge_raw_points(&a.raw_points, &b.raw_points);
+
+    // ---- intensity / volume logic --------------------------------------
+    //
+    // Case 1: at least one side has raw_points
+    //   -> trust raw_points and recompute from them (handles partial overlap correctly).
+    //
+    // Case 2: neither side has raw_points
+    //   -> we cannot dedup; use stats from the more intense cluster.
+    let (raw_sum, volume_proxy) = if a.raw_points.is_some() || b.raw_points.is_some() {
+        if let Some(ref rp) = raw_points {
+            let s = sum_intensity(rp);
+            // If volume_proxy is something else, you can adjust this later;
+            // for now, tie it to the same recomputed intensity.
+            (s, s)
+        } else {
+            // Should not really happen, but keep a safe fallback:
+            // pick the more intense original cluster.
+            if a.raw_sum >= b.raw_sum {
+                (a.raw_sum, a.volume_proxy)
+            } else {
+                (b.raw_sum, b.volume_proxy)
+            }
+        }
+    } else {
+        // No raw points on either side: pick the more intense cluster’s stats.
+        if a.raw_sum >= b.raw_sum {
+            (a.raw_sum, a.volume_proxy)
+        } else {
+            (b.raw_sum, b.volume_proxy)
+        }
+    };
 
     // frame_ids_used: sorted union
     let mut frame_ids_used = a.frame_ids_used.clone();
@@ -1747,7 +1784,7 @@ pub fn merge_clusters(
     let window_group = a.window_group.or(b.window_group);
     let parent_im_id = a.parent_im_id.or(b.parent_im_id);
     let parent_rt_id = a.parent_rt_id.or(b.parent_rt_id);
-    let ms_level = a.ms_level; // same as b, if compatible
+    let ms_level = a.ms_level; // same as b if clusters_can_merge was true
 
     let rt_axis_sec =
         merge_axis_vec(&a.rt_axis_sec, &b.rt_axis_sec, policy.keep_axes_if_identical);
@@ -1755,8 +1792,6 @@ pub fn merge_clusters(
         merge_axis_vec(&a.im_axis_scans, &b.im_axis_scans, policy.keep_axes_if_identical);
     let mz_axis_da =
         merge_axis_vec(&a.mz_axis_da, &b.mz_axis_da, policy.keep_axes_if_identical);
-
-    let raw_points = merge_raw_points(&a.raw_points, &b.raw_points);
 
     let rt_trace = merge_trace_vec(&a.rt_trace, &b.rt_trace, policy.keep_traces_if_identical);
     let im_trace = merge_trace_vec(&a.im_trace, &b.im_trace, policy.keep_traces_if_identical);
@@ -1868,19 +1903,34 @@ pub fn merge_clusters_by_distance(
         return clusters;
     }
 
-    // Order them so that "neighbors" in sort order are the ones we want to compare.
+    // Order them so that "neighbors" in sort order are likely merge candidates.
     clusters.sort_unstable_by(|a, b| {
         a.ms_level
             .cmp(&b.ms_level)
             .then_with(|| a.window_group.cmp(&b.window_group))
-            .then_with(|| a.tof_fit.mu.partial_cmp(&b.tof_fit.mu).unwrap_or(std::cmp::Ordering::Equal))
-            .then_with(|| a.rt_fit.mu.partial_cmp(&b.rt_fit.mu).unwrap_or(std::cmp::Ordering::Equal))
-            .then_with(|| a.im_fit.mu.partial_cmp(&b.im_fit.mu).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                a.tof_fit
+                    .mu
+                    .partial_cmp(&b.tof_fit.mu)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                a.rt_fit
+                    .mu
+                    .partial_cmp(&b.rt_fit.mu)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                a.im_fit
+                    .mu
+                    .partial_cmp(&b.im_fit.mu)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.cluster_id.cmp(&b.cluster_id))
     });
 
-    // Internal merge policy: we already enforced ms_level/window_group
-    // and we definitely *don't* want to require same parents here.
+    // Internal merge policy: distance-based function already enforces ms_level/window_group,
+    // and we explicitly do NOT want to require same parents here.
     let merge_policy = ClusterMergePolicy {
         require_same_ms_level: false,
         require_same_window_group: false,
