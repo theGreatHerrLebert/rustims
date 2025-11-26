@@ -110,7 +110,7 @@ class PseudoSpectrum:
             "rt_apex": self.rt_apex,
             "im_apex": self.im_apex,
             "feature_id": self.feature_id,
-            "window_group_id": self.window_group_id,
+            "window_groups": self.window_groups,
             "precursor_cluster_ids": self.precursor_cluster_ids,
             "fragments": [
                 {
@@ -127,5 +127,5 @@ class PseudoSpectrum:
             f"PseudoSpectrum(precursor_mz={self.precursor_mz:.4f}, "
             f"charge={self.precursor_charge}, rt_apex={self.rt_apex:.2f}, "
             f"im_apex={self.im_apex:.2f}, n_fragments={len(self.fragments)}, "
-            f"feature_id={self.feature_id}, window_group_id={self.window_group_id})"
+            f"feature_id={self.feature_id}, window_groups={self.window_groups})"
         )
