@@ -233,89 +233,103 @@ class FragmentIndex(RustWrapperObject):
     # ------------------------------------------------------------------
 
     def query_precursor_scored(
-        self,
-        precursor_cluster: "ClusterResult1D",
-        window_groups: list[int] | None = None,
-        *,
-        mode: str = "geom",  # or "xic"
-        min_score: float = 0.0,
-        reject_frag_inside_precursor_tile: bool = True,
+            self,
+            precursor_cluster: "ClusterResult1D",
+            window_groups: list[int] | None = None,
+            *,
+            mode: str = "geom",  # or "xic"
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
     ) -> list[ScoredHit]:
-        """
-        Score all physically plausible MS2 clusters for a single precursor.
-        """
         hits_py = self._py.query_precursor_scored(
             precursor_cluster.get_py_ptr(),
             window_groups,
             mode=mode,
             min_score=min_score,
             reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
         )
-        # hits_py is list[ims.PyScoredHit] -> wrap
         return [ScoredHit.from_py_ptr(h) for h in hits_py]
 
     def query_precursors_scored(
-        self,
-        precursor_clusters: list["ClusterResult1D"],
-        *,
-        mode: str = "geom",
-        min_score: float = 0.0,
-        reject_frag_inside_precursor_tile: bool = True,
+            self,
+            precursor_clusters: list["ClusterResult1D"],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
     ) -> list[list[ScoredHit]]:
-        """
-        Score many precursors in parallel. Each precursor gets its own
-        candidate set & scoring, with an option to reject “inside-tile”
-        fragments.
-        """
         hits_nested = self._py.query_precursors_scored_par(
             [c.get_py_ptr() for c in precursor_clusters],
             mode=mode,
             min_score=min_score,
             reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
         )
-        # hits_nested is list[list[ims.PyScoredHit]]
         return [
             [ScoredHit.from_py_ptr(h) for h in hits_row]
             for hits_row in hits_nested
         ]
 
     def score_feature(
-        self,
-        feature: "SimpleFeature",
-        *,
-        mode: str = "geom",
-        min_score: float = 0.0,
-        reject_frag_inside_precursor_tile: bool = True,
+            self,
+            feature: "SimpleFeature",
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
     ) -> list["ScoredHit"]:
-        """
-        Score a single SimpleFeature against all physically plausible MS2 clusters.
-        Candidate enumeration happens inside the Rust FragmentIndex.
-        """
         hits_py = self._py.score_feature(
             feature.get_py_ptr(),
             mode=mode,
             min_score=min_score,
             reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
         )
         return [ScoredHit.from_py_ptr(h) for h in hits_py]
 
     def score_features(
-        self,
-        features: list["SimpleFeature"],
-        *,
-        mode: str = "geom",
-        min_score: float = 0.0,
-        reject_frag_inside_precursor_tile: bool = True,
+            self,
+            features: list["SimpleFeature"],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
     ) -> list[list["ScoredHit"]]:
-        """
-        Score many SimpleFeatures in parallel. Each feature gets its own
-        candidate set via the Rust index.
-        """
         hits_nested = self._py.score_features_par(
             [f.get_py_ptr() for f in features],
             mode=mode,
             min_score=min_score,
             reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
         )
         return [
             [ScoredHit.from_py_ptr(h) for h in hits_row]
