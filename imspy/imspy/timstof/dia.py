@@ -430,7 +430,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             min_im_span: int = 10,
             rt_pad_frames: int = 5,
             # NEW: distance-based merge of duplicates (within same WG)
-            merge_duplicates: bool = True,
+            merge_duplicates: bool = False,
             max_rt_center_delta: float = 0.1,
             max_im_center_delta: float = 5.0,
             max_tof_center_delta: float = 2.0,
@@ -536,7 +536,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             min_im_span: int = 10,
             rt_pad_frames: int = 5,
             # NEW: distance-based merge of duplicates (within same WG)
-            merge_duplicates: bool = True,
+            merge_duplicates: bool = False,
             max_rt_center_delta: float = 0.1,
             max_im_center_delta: float = 5.0,
             max_tof_center_delta: float = 2.0,
