@@ -110,6 +110,38 @@ class PseudoSpectrum:
     def fragment_intensity_array(self) -> np.ndarray:
         return np.array([f.intensity for f in self.fragments], dtype=np.float32)
 
+    def merged_peaks(
+            self,
+            max_ppm: float,
+            allow_cross_window_group: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Return merged fragment peaks as (mz, intensity) arrays.
+
+        Parameters
+        ----------
+        max_ppm : float
+            m/z tolerance in ppm for merging. If <= 0, no merging is done and
+            you just get the (sorted) raw fragment peaks back.
+        allow_cross_window_group : bool, default False
+            If False, only fragments from the same window_group are merged
+            together. If True, fragments from different window_groups may be
+            merged if they are within `max_ppm`.
+
+        Returns
+        -------
+        mz : np.ndarray, shape (N,), dtype=float32
+        intensity : np.ndarray, shape (N,), dtype=float32
+        """
+        mz, intensity = self._p.merged_peaks(
+            float(max_ppm),
+            bool(allow_cross_window_group),
+        )
+        return (
+            np.asarray(mz, dtype=np.float32),
+            np.asarray(intensity, dtype=np.float32),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "precursor_mz": self.precursor_mz,

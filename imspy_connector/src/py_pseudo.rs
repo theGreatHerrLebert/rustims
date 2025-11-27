@@ -64,7 +64,7 @@ impl PyPseudoSpectrum {
             ));
         }
 
-        // ---- Build fragments + window_groups (shared for both modes) --------
+        // ---- Build fragments + window_groups (shared for both modes) ----
         let mut window_groups: Vec<u32> = Vec::new();
         let mut frags: Vec<PseudoFragment> = Vec::new();
 
@@ -89,10 +89,12 @@ impl PyPseudoSpectrum {
             }
         }
 
-        // sort WGs for determinism (optional but nice)
+        // sort WGs for determinism
         window_groups.sort_unstable();
-        // sort fragments by m/z ascending
-        frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+        // sort fragments by m/z ascending (good to keep invariant here)
+        frags.sort_by(|a, b| {
+            a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal)
+        });
 
         if frags.is_empty() {
             return Err(PyValueError::new_err(
@@ -100,7 +102,7 @@ impl PyPseudoSpectrum {
             ));
         }
 
-        // ---- Mode 1: from precursor cluster --------------------------------
+        // ---- Mode 1: from precursor cluster ------------------------------
         let inner = if let Some(p) = precursor {
             let prec_ref = p.borrow(py);
             let prec = prec_ref.inner.clone();
@@ -134,7 +136,7 @@ impl PyPseudoSpectrum {
                 precursor_cluster_indices: vec![],
             }
         } else {
-            // ---- Mode 2: from SimpleFeature --------------------------------
+            // ---- Mode 2: from SimpleFeature ------------------------------
             let feat = feature.unwrap().borrow(py).inner.clone();
 
             // Use feature’s own mono m/z and charge
@@ -186,6 +188,7 @@ impl PyPseudoSpectrum {
         Ok(PyPseudoSpectrum { inner })
     }
 
+    // --- simple getters ---------------------------------------------------
     #[getter]
     pub fn precursor_mz(&self) -> f32 {
         self.inner.precursor_mz
@@ -233,22 +236,41 @@ impl PyPseudoSpectrum {
             })
             .collect()
     }
-    /// Vector of fragment m/z values
+
+    /// Vector of fragment m/z values (unmerged)
     #[getter]
     pub fn fragment_mz_array(&self) -> Vec<f32> {
         self.inner.fragments.iter().map(|f| f.mz).collect()
     }
 
-    /// Vector of fragment intensities
+    /// Vector of fragment intensities (unmerged)
     #[getter]
     pub fn fragment_intensity_array(&self) -> Vec<f32> {
         self.inner.fragments.iter().map(|f| f.intensity).collect()
     }
 
-    /// Number of fragments
+    /// Number of fragments (unmerged)
     #[getter]
     pub fn n_fragments(&self) -> usize {
         self.inner.fragments.len()
+    }
+
+    /// Return merged (mz, intensity) arrays.
+    ///
+    /// - `max_ppm <= 0` => no merging, just sorted copy.
+    /// - If `allow_cross_window_group` is false, only merge fragments
+    ///   that come from the *same* window_group.
+    #[pyo3(signature = (max_ppm, allow_cross_window_group=false))]
+    pub fn merged_peaks(
+        &self,
+        max_ppm: f32,
+        allow_cross_window_group: bool,
+    ) -> (Vec<f32>, Vec<f32>) {
+        merge_fragments_by_mz(
+            &self.inner.fragments,
+            max_ppm,
+            allow_cross_window_group,
+        )
     }
 
     fn __repr__(&self) -> String {
@@ -293,6 +315,97 @@ pub fn fragment_from_cluster(c: &ClusterResult1D) -> Option<PseudoFragment> {
         ms2_cluster_id: c.cluster_id,
         window_group: c.window_group.unwrap_or(0),
     })
+}
+
+/// Merge PseudoFragment peaks by m/z with a ppm tolerance.
+///
+/// If `allow_cross_window_group` is false, only fragments from the same
+/// window_group are merged together.
+fn merge_fragments_by_mz(
+    frags: &[PseudoFragment],
+    max_ppm: f32,
+    allow_cross_window_group: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    use std::cmp::Ordering;
+
+    if frags.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    // If no merging requested, just return the raw arrays (still sorted).
+    if max_ppm <= 0.0 {
+        let mut idx: Vec<usize> = (0..frags.len()).collect();
+        idx.sort_unstable_by(|&i, &j| {
+            frags[i]
+                .mz
+                .partial_cmp(&frags[j].mz)
+                .unwrap_or(Ordering::Equal)
+        });
+
+        let mut mz_out = Vec::with_capacity(frags.len());
+        let mut int_out = Vec::with_capacity(frags.len());
+        for k in idx {
+            mz_out.push(frags[k].mz);
+            int_out.push(frags[k].intensity);
+        }
+        return (mz_out, int_out);
+    }
+
+    // Sort by m/z to make grouping in m/z space trivial.
+    let mut idx: Vec<usize> = (0..frags.len()).collect();
+    idx.sort_unstable_by(|&i, &j| {
+        frags[i]
+            .mz
+            .partial_cmp(&frags[j].mz)
+            .unwrap_or(Ordering::Equal)
+    });
+
+    let mut mz_out: Vec<f32> = Vec::new();
+    let mut int_out: Vec<f32> = Vec::new();
+
+    // Initialize first group from the first valid fragment
+    let first = &frags[idx[0]];
+    let mut current_mz = first.mz;
+    let mut current_int = first.intensity;
+    let mut weighted_mz_sum = first.mz * first.intensity;
+    let mut current_wg = first.window_group;
+
+    for &k in &idx[1..] {
+        let f = &frags[k];
+        if !f.mz.is_finite() || f.intensity <= 0.0 {
+            continue;
+        }
+
+        let same_wg = allow_cross_window_group || f.window_group == current_wg;
+
+        // Guard against division by zero
+        let denom = current_mz.abs().max(1.0e-6);
+        let ppm_diff = ((f.mz - current_mz).abs() / denom) * 1.0e6;
+
+        if same_wg && ppm_diff <= max_ppm {
+            // Merge into current group
+            weighted_mz_sum += f.mz * f.intensity;
+            current_int += f.intensity;
+            current_mz = weighted_mz_sum / current_int;
+            // current_wg unchanged (if cross-merge, we ignore wg anyway)
+        } else {
+            // Flush previous group
+            mz_out.push(current_mz);
+            int_out.push(current_int);
+
+            // Start new group
+            current_mz = f.mz;
+            current_int = f.intensity;
+            weighted_mz_sum = f.mz * f.intensity;
+            current_wg = f.window_group;
+        }
+    }
+
+    // Flush final group
+    mz_out.push(current_mz);
+    int_out.push(current_int);
+
+    (mz_out, int_out)
 }
 
 /// Module init for this submodule.
