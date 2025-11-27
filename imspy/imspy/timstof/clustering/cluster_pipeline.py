@@ -8,6 +8,7 @@ Updated for:
 - new torch extractor (pool_tof, tol_tof, Gaussian blur, topk_per_tile, patch batching)
 - new clustering API (tof_step + RT/IM/TOF params, no ppm_per_bin)
 - optional per-window-group fragment output
+- IM-aware seeding (NMS) + optional broad-IM splitting
 """
 from __future__ import annotations
 
@@ -197,6 +198,15 @@ def print_config_summary(cfg: dict) -> None:
         lines.append(f"  blur_sigma_scan      : {float(det_cfg.get('blur_sigma_scan', 0.0))}")
         lines.append(f"  blur_sigma_tof       : {float(det_cfg.get('blur_sigma_tof', 0.0))}")
         lines.append(f"  blur_truncate        : {float(det_cfg.get('blur_truncate', 3.0))}")
+        # NEW: NMS + splitting
+        lines.append(
+            "  nms_kernel_scan/tof  : "
+            f"{int(det_cfg.get('nms_kernel_scan', 0))} / {int(det_cfg.get('nms_kernel_tof', 0))}"
+        )
+        lines.append(f"  split_broad_im       : {bool(det_cfg.get('split_broad_im', False))}")
+        lines.append(f"  split_sigma_scan_min : {float(det_cfg.get('split_sigma_scan_min', 0.0))}")
+        lines.append(f"  split_min_prom_frac  : {float(det_cfg.get('split_min_prom_frac', 0.0))}")
+        lines.append(f"  split_min_dist_scans : {int(det_cfg.get('split_min_distance_scans', 0))}")
 
     # Cluster
     if "cluster" in cfg:
@@ -342,6 +352,14 @@ def detect_and_stitch_for_plan(
     blur_sigma_tof = float(det_cfg.get("blur_sigma_tof", 0.0))
     blur_truncate = float(det_cfg.get("blur_truncate", 3.0))
 
+    # NEW: NMS + split settings
+    nms_kernel_scan = int(det_cfg.get("nms_kernel_scan", 3))
+    nms_kernel_tof = int(det_cfg.get("nms_kernel_tof", 3))
+    split_broad_im = bool(det_cfg.get("split_broad_im", False))
+    split_sigma_scan_min = float(det_cfg.get("split_sigma_scan_min", 12.0))
+    split_min_prom_frac = float(det_cfg.get("split_min_prom_frac", 0.25))
+    split_min_distance_scans = int(det_cfg.get("split_min_distance_scans", 3))
+
     for peak_batch in iter_im_peaks_batches(
         plan,
         batch_size=int(run_cfg["batch_size"]),
@@ -370,12 +388,19 @@ def detect_and_stitch_for_plan(
         tol_tof=float(det_cfg["tol_tof"]),
         k_sigma=float(det_cfg["k_sigma"]),
         min_width=int(det_cfg["min_width"]),
-        # NEW: performance + blur knobs
+        # performance + blur knobs
         topk_per_tile=topk_per_tile,
         patch_batch_target_mb=patch_batch_target_mb,
         blur_sigma_scan=blur_sigma_scan,
         blur_sigma_tof=blur_sigma_tof,
         blur_truncate=blur_truncate,
+        # NEW: IM-aware seeding + splitting
+        nms_kernel_scan=nms_kernel_scan,
+        nms_kernel_tof=nms_kernel_tof,
+        split_broad_im=split_broad_im,
+        split_sigma_scan_min=split_sigma_scan_min,
+        split_min_prom_frac=split_min_prom_frac,
+        split_min_distance_scans=split_min_distance_scans,
     ):
         if use_batch_stitch:
             stitched_batch = stitch_im_peaks(
@@ -739,6 +764,13 @@ def load_config(path: str) -> dict:
     d.setdefault("blur_sigma_scan", 0.0)
     d.setdefault("blur_sigma_tof", 0.0)
     d.setdefault("blur_truncate", 3.0)
+    # NEW: NMS + splitting defaults
+    d.setdefault("nms_kernel_scan", 3)
+    d.setdefault("nms_kernel_tof", 3)
+    d.setdefault("split_broad_im", False)
+    d.setdefault("split_sigma_scan_min", 12.0)
+    d.setdefault("split_min_prom_frac", 0.25)
+    d.setdefault("split_min_distance_scans", 3)
 
     # plans defaults (TOF-based)
     cfg.setdefault("plans", {})
