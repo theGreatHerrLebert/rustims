@@ -29,7 +29,8 @@ class PseudoFragment:
     def __repr__(self):
         return (
             f"PseudoFragment(mz={self.mz:.4f}, intensity={self.intensity:.1f}, "
-            f"ms2_cluster_id={self.ms2_cluster_id})"
+            f"ms2_cluster_id={self.ms2_cluster_id}, "
+            f"window_group={self.window_group})"
         )
 
 
