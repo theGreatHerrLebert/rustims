@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use pyo3::prelude::*;
 use rustdf::cluster::cluster::ClusterResult1D;
 use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpectrum};
@@ -55,6 +54,7 @@ impl PyPseudoSpectrum {
         feature:   Option<Py<PySimpleFeature>>,
     ) -> PyResult<Self> {
         use pyo3::exceptions::PyValueError;
+        use std::cmp::Ordering;
 
         let have_prec = precursor.is_some();
         let have_feat = feature.is_some();
@@ -64,24 +64,24 @@ impl PyPseudoSpectrum {
             ));
         }
 
-        // ---- Build fragments (shared for both modes) --------------------
-        let mut window_groups: Vec<u32> = vec![];
+        // ---- Build fragments + window_groups (shared for both modes) --------
+        let mut window_groups: Vec<u32> = Vec::new();
         let mut frags: Vec<PseudoFragment> = Vec::new();
 
         for f_py in fragments {
             let f_ref = f_py.borrow(py);
             let c = f_ref.inner.clone();
 
-            // if window group is not yet in the list, add it
+            // only accept MS2 clusters as fragments
+            if c.ms_level != 2 {
+                continue;
+            }
+
+            // track window_group only for actual fragment clusters
             if let Some(wg) = c.window_group {
                 if !window_groups.contains(&wg) {
                     window_groups.push(wg);
                 }
-            }
-
-            // only accept MS2 clusters as fragments
-            if c.ms_level != 2 {
-                continue;
             }
 
             if let Some(pf) = fragment_from_cluster(&c) {
@@ -89,10 +89,10 @@ impl PyPseudoSpectrum {
             }
         }
 
-        // sort by m/z ascending
-        frags.sort_by(|a, b| {
-            a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal)
-        });
+        // sort WGs for determinism (optional but nice)
+        window_groups.sort_unstable();
+        // sort fragments by m/z ascending
+        frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
 
         if frags.is_empty() {
             return Err(PyValueError::new_err(
@@ -100,7 +100,7 @@ impl PyPseudoSpectrum {
             ));
         }
 
-        // ---- Mode 1: from precursor cluster -----------------------------
+        // ---- Mode 1: from precursor cluster --------------------------------
         let inner = if let Some(p) = precursor {
             let prec_ref = p.borrow(py);
             let prec = prec_ref.inner.clone();
@@ -158,7 +158,6 @@ impl PyPseudoSpectrum {
             {
                 rt_apex = top.rt_fit.mu;
                 im_apex = top.im_fit.mu;
-
                 precursor_cluster_ids.push(top.cluster_id);
             } else {
                 // Worst case: feature has no backing clusters (should not happen)
@@ -175,21 +174,11 @@ impl PyPseudoSpectrum {
                 rt_apex,
                 im_apex,
                 feature_id,
-                // get window groups from member clusters and de-duplicate them
-                window_groups: {
-                    let mut wgs: Vec<u32> = Vec::new();
-                    for c in &feat.member_clusters {
-                        if let Some(wg) = c.window_group {
-                            if !wgs.contains(&wg) {
-                                wgs.push(wg);
-                            }
-                        }
-                    }
-                    wgs
-                },
+                // IMPORTANT: use the same window_groups derived from the **fragments**
+                window_groups,
                 precursor_cluster_ids,
                 fragments: frags,
-                // this is actually meaningful for features
+                // This is meaningful for features
                 precursor_cluster_indices: feat.member_cluster_indices.clone(),
             }
         };
