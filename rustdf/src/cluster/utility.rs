@@ -1002,17 +1002,21 @@ fn compatible_fast(a: &ImPeak1D, b: &ImPeak1D, params: &StitchParams) -> bool {
     }
 
     // 5) Mutual apex inside overlap band (in absolute scan coords)
+    // 5) Mutual apex inside overlap band (in absolute scan coords)
     if params.require_mutual_apex_inside {
-        let left_abs_overlap = a.left_abs.max(b.left_abs);
+        let left_abs_overlap  = a.left_abs.max(b.left_abs);
         let right_abs_overlap = a.right_abs.min(b.right_abs);
         if left_abs_overlap > right_abs_overlap {
             return false;
         }
+
         let lo_f = left_abs_overlap as f32;
         let hi_f = right_abs_overlap as f32;
 
-        let a_apex = a.subscan; // subscan is absolute scan coordinate
-        let b_apex = b.subscan;
+        // Use absolute scan center as apex; subscan is *fractional* around the local index,
+        // not a global coordinate.
+        let a_apex = a.scan_abs as f32;
+        let b_apex = b.scan_abs as f32;
 
         if !(a_apex >= lo_f && a_apex <= hi_f && b_apex >= lo_f && b_apex <= hi_f) {
             return false;
