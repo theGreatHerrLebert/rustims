@@ -412,9 +412,6 @@ def iter_detect_peaks_from_blurred(
     blur_sigma_scan: float | None = None,
     blur_sigma_tof: float | None = None,
     blur_truncate: float = 3.0,
-    # NEW: separate seeding NMS kernel (in scans × tof)
-    nms_kernel_scan: int = 3,
-    nms_kernel_tof: int = 3,
 ):
     """
     Stream peak stats on a 2D image derived from TOF×scan.
@@ -463,12 +460,15 @@ def iter_detect_peaks_from_blurred(
     # Apply scaling for detection
     B_int, inv_scale = _apply_scale_tensor(B_int, scale)
 
-    # Spatial scales for fit window and soft weights (still using pool_scan/tof)
+    # pooling across scan (rows) x TOF (cols) on the **scaled** image
     kH, kW = pool_scan, pool_tof
+    padH, padW = kH // 2, kW // 2
 
     # ----------------------------------------------------------------
     # Precompute spatial tensors used in _fit_moments / patch logic
     # ----------------------------------------------------------------
+    # NOTE: we intentionally keep these in a "base" dtype/device and
+    #       cast (.to) inside the helpers to match the patch dtype.
     ii_base = torch.arange(fit_h, dtype=torch.float32).view(1, fit_h, 1)
     jj_base = torch.arange(fit_w, dtype=torch.float32).view(1, 1, fit_w)
 
@@ -546,16 +546,6 @@ def iter_detect_peaks_from_blurred(
     target_bytes = max(16, int(patch_batch_target_mb)) * (1024 ** 2)
     patch_batch = max(512, min(1_000_000, target_bytes // max(1, bytes_per_patch)))
 
-    # NEW: sanitize NMS kernels
-    nms_kernel_scan = max(1, int(nms_kernel_scan))
-    nms_kernel_tof = max(1, int(nms_kernel_tof))
-    if nms_kernel_scan % 2 == 0:
-        nms_kernel_scan += 1
-    if nms_kernel_tof % 2 == 0:
-        nms_kernel_tof += 1
-    nms_pad_scan = nms_kernel_scan // 2
-    nms_pad_tof = nms_kernel_tof // 2
-
     i = 0
     while i < H:
         lo = max(0, i - tile_overlap)
@@ -563,18 +553,13 @@ def iter_detect_peaks_from_blurred(
         tile_scaled = B_int[lo:hi]  # scaled internal (scan, tof)
 
         thr = torch.tensor(float(min_intensity), dtype=tile_scaled.dtype, device=tile_scaled.device)
-
-        # ----------------------------------------------------------------
-        # NEW: local-max NMS for seeding (small kernel, IM-aware)
-        # ----------------------------------------------------------------
-        local_max = F.max_pool2d(
+        pooled = F.max_pool2d(
             tile_scaled[None, None],
-            kernel_size=(nms_kernel_scan, nms_kernel_tof),
+            kernel_size=(kH, kW),
             stride=1,
-            padding=(nms_pad_scan, nms_pad_tof),
+            padding=(padH, padW),
         )[0, 0]
-
-        mask = (tile_scaled >= thr) & (tile_scaled == local_max)
+        mask = (tile_scaled >= thr) & (tile_scaled == pooled)
         idxs = mask.nonzero(as_tuple=False)  # [N, 2] in (scan_row, tof_col) INTERNAL
 
         tile_orig = B_int_unscaled[lo:hi] if need_orig else None
@@ -688,6 +673,7 @@ def iter_detect_peaks_from_blurred(
                     del patches_o
 
         i += tile_rows
+        # no empty_cache here; reuse allocator
         gc.collect()
 
 
@@ -768,152 +754,6 @@ def _dedup_peaks(peaks, tol_scan=0.75, tol_tof=0.25):
     return {k: v[keep] for k, v in peaks.items()}
 
 
-# --- OPTIONAL: split very broad IM peaks by 1D IM trace -----------------------
-
-def _split_broad_im_peaks(
-    peaks: dict[str, np.ndarray],
-    B: np.ndarray,
-    *,
-    sigma_scan_min: float = 12.0,
-    min_prom_frac: float = 0.25,
-    min_distance_scans: int = 3,
-):
-    """
-    Heuristic: for peaks with very large sigma_scan, look at the IM trace
-    (scan dimension) at their TOF index and split into multiple peaks if the
-    trace has multiple local maxima.
-
-    B is the original TOF×scan window grid (wg.data) in ORIGINAL orientation.
-    """
-    if peaks["mu_scan"].size == 0:
-        return peaks
-
-    H_tof, W_scan = B.shape  # (tof_row, scan_idx)
-
-    mu_scan = peaks["mu_scan"]
-    mu_tof = peaks["mu_tof"]
-    sigma_scan = peaks["sigma_scan"]
-
-    # broad candidates: suspiciously wide in IM
-    broad_mask = sigma_scan > sigma_scan_min
-    if not np.any(broad_mask):
-        return peaks
-
-    broad_indices = np.where(broad_mask)[0]
-
-    keys = list(peaks.keys())
-    new_vals: dict[str, list[np.ndarray]] = {k: [] for k in keys}
-
-    # Keep all non-broad peaks as-is
-    keep_mask = ~broad_mask
-    for k in keys:
-        if np.any(keep_mask):
-            new_vals[k].append(peaks[k][keep_mask])
-
-    for idx in broad_indices:
-        scan0 = int(round(float(mu_scan[idx])))
-        tof0 = int(round(float(mu_tof[idx])))
-
-        # guard against out-of-bounds
-        if not (0 <= tof0 < H_tof):
-            # just keep the original if we can't inspect it
-            for k in keys:
-                new_vals[k].append(peaks[k][idx:idx+1])
-            continue
-
-        im_trace = B[tof0, :]  # shape: (W_scan,)
-
-        if im_trace.size < 3:
-            for k in keys:
-                new_vals[k].append(peaks[k][idx:idx+1])
-            continue
-
-        # Restrict to a local window around scan0, based on sigma
-        half_window = int(max(15, 4 * float(sigma_scan[idx])))
-        left = max(0, scan0 - half_window)
-        right = min(W_scan, scan0 + half_window + 1)
-
-        local = im_trace[left:right]
-        if local.size < 3:
-            for k in keys:
-                new_vals[k].append(peaks[k][idx:idx+1])
-            continue
-
-        local_max_val = float(local.max())
-        if local_max_val <= 0:
-            for k in keys:
-                new_vals[k].append(peaks[k][idx:idx+1])
-            continue
-
-        thr = min_prom_frac * local_max_val
-
-        # crude 1D local-max detection
-        cand_pos = []
-        cand_int = []
-        for j in range(1, local.size - 1):
-            v = local[j]
-            if v < thr:
-                continue
-            if v >= local[j - 1] and v >= local[j + 1]:
-                gpos = left + j
-                cand_pos.append(gpos)
-                cand_int.append(v)
-
-        if len(cand_pos) <= 1:
-            # nothing to split, keep original
-            for k in keys:
-                new_vals[k].append(peaks[k][idx:idx+1])
-            continue
-
-        # NMS in 1D along scan: keep well-separated maxima
-        cand_pos = np.array(cand_pos, dtype=np.int64)
-        cand_int = np.array(cand_int, dtype=np.float32)
-        order = np.argsort(-cand_int)  # descending by intensity
-
-        kept_children = []
-        for oid in order:
-            pos = int(cand_pos[oid])
-            if all(abs(pos - pc) >= min_distance_scans for pc in kept_children):
-                kept_children.append(pos)
-
-        if len(kept_children) <= 1:
-            # Still only one => effectively no split
-            for k in keys:
-                new_vals[k].append(peaks[k][idx:idx+1])
-            continue
-
-        # Split amplitude/area roughly across children; keep mu_tof and sigma_tof
-        n_children = len(kept_children)
-        amp_parent = float(peaks["amplitude"][idx])
-        area_parent = float(peaks["area"][idx])
-        amp_child = amp_parent / n_children if n_children > 0 else amp_parent
-        area_child = area_parent / n_children if n_children > 0 else area_parent
-
-        for child_scan in kept_children:
-            # we keep sigma_scan as-is for now; it's mainly used as a scale
-            for k in keys:
-                if k == "mu_scan":
-                    val = np.asarray([float(child_scan)], dtype=peaks[k].dtype)
-                elif k == "mu_tof":
-                    val = peaks[k][idx:idx+1]
-                elif k == "amplitude":
-                    val = np.asarray([amp_child], dtype=peaks[k].dtype)
-                elif k == "area":
-                    val = np.asarray([area_child], dtype=peaks[k].dtype)
-                else:
-                    val = peaks[k][idx:idx+1]
-                new_vals[k].append(val)
-
-    # Concatenate all pieces
-    out = {}
-    for k in keys:
-        if new_vals[k]:
-            out[k] = np.concatenate(new_vals[k], axis=0)
-        else:
-            out[k] = peaks[k]
-    return out
-
-
 # --- per-WG detection -> list[ImPeak1D] --------------------------------------
 
 def _detect_im_peaks_for_wgs(
@@ -949,13 +789,6 @@ def _detect_im_peaks_for_wgs(
     blur_truncate: float = 3.0,
     topk_per_tile: int | None = None,
     patch_batch_target_mb: int = 128,
-    # NEW: seeding NMS kernel and broad-IM split heuristics
-    nms_kernel_scan: int = 3,
-    nms_kernel_tof: int = 3,
-    split_broad_im: bool = False,
-    split_sigma_scan_min: float = 12.0,
-    split_min_prom_frac: float = 0.25,
-    split_min_distance_scans: int = 3,
 ):
     from imspy.timstof.clustering.data import ImPeak1D
 
@@ -963,7 +796,7 @@ def _detect_im_peaks_for_wgs(
 
     for wg in tqdm(wgs, desc="Detecting peaks (BATCH)", leave=False, ncols=80):
         # wg is a TofScanWindowGrid wrapper; .data moves the Rust buffer
-        B = wg.data  # numpy array (tof_row, scan_idx)
+        B = wg.data
 
         peaks_iter = iter_detect_peaks_from_blurred(
             B_blurred=B,
@@ -991,23 +824,11 @@ def _detect_im_peaks_for_wgs(
             blur_truncate=blur_truncate,
             topk_per_tile=topk_per_tile,
             patch_batch_target_mb=patch_batch_target_mb,
-            nms_kernel_scan=nms_kernel_scan,
-            nms_kernel_tof=nms_kernel_tof,
         )
 
         peaks = _collect_stream(peaks_iter)
         if do_dedup:
             peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
-
-        if split_broad_im:
-            # B is original orientation TOF×scan; we pass it directly
-            peaks = _split_broad_im_peaks(
-                peaks,
-                B,
-                sigma_scan_min=split_sigma_scan_min,
-                min_prom_frac=split_min_prom_frac,
-                min_distance_scans=split_min_distance_scans,
-            )
 
         objs = ImPeak1D.batch_from_detected(
             peaks,
@@ -1070,13 +891,6 @@ def iter_im_peaks_batches(
     blur_sigma_scan: float | None = None,
     blur_sigma_tof: float | None = None,
     blur_truncate: float = 3.0,
-    # NEW: seeding NMS kernel and broad-IM splitting
-    nms_kernel_scan: int = 3,
-    nms_kernel_tof: int = 3,
-    split_broad_im: bool = False,
-    split_sigma_scan_min: float = 12.0,
-    split_min_prom_frac: float = 0.25,
-    split_min_distance_scans: int = 3,
 ):
     """
     Yields one list[ImPeak1D] per plan batch (e.g., 64 WGs).
@@ -1123,12 +937,6 @@ def iter_im_peaks_batches(
             blur_sigma_scan=blur_sigma_scan,
             blur_sigma_tof=blur_sigma_tof,
             blur_truncate=blur_truncate,
-            nms_kernel_scan=nms_kernel_scan,
-            nms_kernel_tof=nms_kernel_tof,
-            split_broad_im=split_broad_im,
-            split_sigma_scan_min=split_sigma_scan_min,
-            split_min_prom_frac=split_min_prom_frac,
-            split_min_distance_scans=split_min_distance_scans,
         )
 
         yield batch_objs
