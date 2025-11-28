@@ -429,6 +429,33 @@ class ImPeak1D(RustWrapperObject):
     def __repr__(self) -> str:
         return repr(self.__py_ptr)
 
+    def to_dict(self) -> Dict[str, any]:
+        return {
+            "id": self.id,
+            "tof_row": self.tof_row,
+            "tof_center": self.tof_center,
+            "tof_bounds": self.tof_bounds,
+            "rt_bounds": self.rt_bounds,
+            "frame_id_bounds": self.frame_id_bounds,
+            "window_group": self.window_group,
+            "scan": self.scan,
+            "scan_sigma": self.scan_sigma,
+            "mobility": self.mobility,
+            "apex_smoothed": self.apex_smoothed,
+            "apex_raw": self.apex_raw,
+            "prominence": self.prominence,
+            "left": self.left,
+            "right": self.right,
+            "left_x": self.left_x,
+            "right_x": self.right_x,
+            "width_scans": self.width_scans,
+            "area_raw": self.area_raw,
+            "subscan": self.subscan,
+            "scan_abs": self.scan_abs,
+            "left_abs": self.left_abs,
+            "right_abs": self.right_abs,
+        }
+
 class TofScanWindowGrid(RustWrapperObject):
     """Python wrapper around ims.PyTofScanWindowGrid."""
 
