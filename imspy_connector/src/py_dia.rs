@@ -11,8 +11,8 @@ use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, Buil
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
-use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
+use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid, ImDetectParams, detect_im_peaks_from_tof_scan_window};
+use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams, MobilityFn};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
@@ -1561,6 +1561,39 @@ impl PyTofScanWindowGrid {
     #[getter]
     fn tof_edges<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
         Ok(PyArray1::from_vec_bound(py, self.inner.scale.edges.clone()).unbind())
+    }
+
+    pub fn detect_im_peaks(
+        &self,
+        py: Python<'_>,
+        min_prom: f32,
+        min_distance_scans: usize,
+        min_width_scans: usize,
+        smooth_sigma_scans: f32,
+        smooth_trunc_k: f32,
+    ) -> PyResult<Vec<Py<PyImPeak1D>>> {
+        // For now no mobility callback from Python; wire one later if desired
+        let mobility_of: MobilityFn = None;
+
+        let params = ImDetectParams {
+            min_prom,
+            min_distance_scans,
+            min_width_scans,
+            smooth_sigma_scans,
+            smooth_trunc_k,
+        };
+
+        // Heavy work without holding the GIL
+        let peaks: Vec<ImPeak1D> = py.allow_threads(|| {
+            detect_im_peaks_from_tof_scan_window(&self.inner, mobility_of, params)
+        });
+
+        // Wrap into Python objects
+        let mut out = Vec::with_capacity(peaks.len());
+        for p in peaks {
+            out.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
+        }
+        Ok(out)
     }
 }
 

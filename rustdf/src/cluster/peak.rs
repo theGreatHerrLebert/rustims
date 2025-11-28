@@ -1,14 +1,7 @@
 use rayon::prelude::*;
 use std::sync::Arc;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{
-    fallback_rt_peak_from_trace,
-    quad_subsample,
-    rt_peak_id,
-    smooth_vector_gaussian,
-    trapezoid_area_fractional,
-    TofScale,
-};
+use crate::cluster::utility::{fallback_rt_peak_from_trace, find_im_peaks_row, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MobilityFn, TofScale};
 
 // Stable 64-bit id for peaks
 pub type PeakId = i64;
@@ -883,4 +876,134 @@ pub fn build_tof_rt_grid_full(rt_frames: &RtFrames, window_group: Option<u32>) -
         cols,
         data,
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImDetectParams {
+    /// Min prominence in intensity units
+    pub min_prom: f32,
+    /// NMS distance in scan units (absolute scan index space)
+    pub min_distance_scans: usize,
+    /// Minimum peak width (in scans)
+    pub min_width_scans: usize,
+    /// Optional Gaussian smoothing in scan direction
+    pub smooth_sigma_scans: f32,
+    pub smooth_trunc_k: f32,
+}
+
+pub fn detect_im_peaks_from_tof_scan_grid(
+    grid: &TofScanGrid,
+    rt_bounds_frames: (usize, usize),
+    frame_id_bounds: (u32, u32),
+    window_group: Option<u32>,
+    mobility_of: MobilityFn,
+    p: ImDetectParams,
+) -> Vec<ImPeak1D> {
+    let rows = grid.rows;
+    let cols = grid.cols;
+    if rows == 0 || cols == 0 {
+        return Vec::new();
+    }
+
+    let scans_axis = &grid.scans;
+    debug_assert_eq!(scans_axis.len(), cols, "scans axis must match grid.cols");
+
+    let data_raw = grid
+        .data_raw
+        .as_ref()
+        .unwrap_or(&grid.data); // fall back to data if no separate raw
+
+    debug_assert_eq!(data_raw.len(), rows * cols, "TofScanGrid data size mismatch");
+
+    let mut out = Vec::new();
+
+    for tof_row in 0..rows {
+        // 1D slice for this row across scans
+        let offset = tof_row * cols;
+        let row_raw = &data_raw[offset..offset + cols];
+
+        if row_raw.iter().all(|v| *v <= 0.0) {
+            continue;
+        }
+
+        // Optional smoothing in scan-space
+        let mut row_smooth = row_raw.to_vec();
+        if p.smooth_sigma_scans > 0.0 && cols > 2 {
+            smooth_vector_gaussian(&mut row_smooth, p.smooth_sigma_scans, p.smooth_trunc_k);
+        }
+
+        // TOF metadata
+        let (tof_lo_f, tof_hi_f) = grid.tof_bounds_for_row(tof_row);
+        let tof_center_f = grid.tof_center_for_row(tof_row);
+        let tof_center = tof_center_f.round() as i32;
+        let tof_bounds = (tof_lo_f.round() as i32, tof_hi_f.round() as i32);
+
+        // IM detection with existing machinery
+        let peaks_row = find_im_peaks_row(
+            &row_smooth,
+            row_raw,
+            tof_row,
+            tof_center,
+            tof_bounds,
+            rt_bounds_frames,
+            frame_id_bounds,
+            window_group,
+            mobility_of,
+            p.min_prom,
+            p.min_distance_scans,
+            p.min_width_scans,
+            scans_axis,
+        );
+
+        out.extend(peaks_row);
+    }
+
+    out
+}
+
+pub fn detect_im_peaks_from_tof_scan_window(
+    win: &TofScanWindowGrid,
+    mobility_of: MobilityFn,
+    p: ImDetectParams,
+) -> Vec<ImPeak1D> {
+    let rows = win.rows;
+    let cols = win.cols;
+    if rows == 0 || cols == 0 {
+        return Vec::new();
+    }
+
+    // We require that the dense data is materialized
+    let data = match &win.data {
+        Some(d) => d,
+        None => {
+            // You can decide whether to panic, return empty, or lazily build here
+            // For now, be strict:
+            panic!("TofScanWindowGrid.data is None; materialize grid before IM detection");
+        }
+    };
+
+    let data_raw = win.data_raw.as_ref().unwrap_or(data);
+    if data_raw.len() != rows * cols {
+        panic!("TofScanWindowGrid data size mismatch");
+    }
+    debug_assert_eq!(win.scans.len(), cols, "scan axis length mismatch");
+
+    // Build a temporary TofScanGrid view
+    let grid = TofScanGrid {
+        scans: win.scans.clone(),
+        data: data.clone(),
+        rows,
+        cols,
+        data_raw: win.data_raw.clone(),
+        scale: (*win.scale).clone(),
+    };
+
+    detect_im_peaks_from_tof_scan_grid(
+        &grid,
+        win.rt_range_frames,
+        win.frame_id_bounds,
+        win.window_group,
+        mobility_of,
+        p,
+    )
 }

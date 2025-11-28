@@ -500,6 +500,45 @@ class TofScanWindowGrid(RustWrapperObject):
     def __repr__(self) -> str:
         return repr(self.__py_ptr)
 
+    def detect_im_peaks(
+            self,
+            *,
+            min_prom: float = 50.0,
+            min_distance_scans: int = 3,
+            min_width_scans: int = 2,
+            smooth_sigma_scans: float = 1.0,
+            smooth_trunc_k: float = 3.0,
+    ) -> List[ImPeak1D]:
+        """
+        Detect IM peaks on this TOF×scan window using the Rust detector.
+
+        Parameters
+        ----------
+        min_prom : float
+            Minimum prominence (in intensity units) required for a peak.
+        min_distance_scans : int
+            Minimum distance (in scans) between accepted peak maxima.
+        min_width_scans : int
+            Minimum full width (in scans) between half-prominence crossings.
+        smooth_sigma_scans : float
+            Gaussian σ for IM smoothing (in scan units). Set 0.0 to disable.
+        smooth_trunc_k : float
+            Kernel truncation in σ units (e.g. 3.0 → ±3σ).
+
+        Returns
+        -------
+        List[ImPeak1D]
+            Python wrapper objects around ims.PyImPeak1D.
+        """
+        py_peaks = self.__py_ptr.detect_im_peaks(
+            float(min_prom),
+            int(min_distance_scans),
+            int(min_width_scans),
+            float(smooth_sigma_scans),
+            float(smooth_trunc_k),
+        )
+        return [ImPeak1D.from_py_ptr(p) for p in py_peaks]
+
 class TofScanPlan(RustWrapperObject):
     """Python wrapper around ims.PyTofScanPlan (MS1 / precursor)."""
 
