@@ -6,3 +6,4 @@ pub mod pseudo;
 pub mod peak;
 pub mod candidates;
 pub mod scoring;
+pub mod gauss_utils;

@@ -9,9 +9,10 @@ use rayon::prelude::*;
 use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
+use rustdf::cluster::gauss_utils::{detect_im_peaks_from_tof_scan_grid_2d, ImDetectParams2D, ScaleMode};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid, ImDetectParams, detect_im_peaks_from_tof_scan_window};
+use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams, MobilityFn};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
@@ -650,62 +651,6 @@ impl PyTofScanPlanGroup {
     pub fn tof_center_for_row(&self, row: usize) -> f32 {
         self.scale.center(row)
     }
-
-    pub fn detect_im_peaks_all(
-        &self,
-        py: Python<'_>,
-        min_prom: f32,
-        min_distance_scans: usize,
-        min_width_scans: usize,
-        smooth_sigma_scans: f32,
-        smooth_trunc_k: f32,
-    ) -> PyResult<Vec<Py<PyImPeak1D>>> {
-        // For now: no mobility callback from Python
-        let mobility_of: MobilityFn = None;
-
-        let params = ImDetectParams {
-            min_prom,
-            min_distance_scans,
-            min_width_scans,
-            smooth_sigma_scans,
-            smooth_trunc_k,
-        };
-
-        let n_win = self.windows_idx.len();
-
-        // --------- 1) Heavy numeric part (possibly GIL-free) -------------
-        let all_peaks: Vec<ImPeak1D> = if self.views.is_some() {
-            // Fully GIL-free + parallel over windows if views are precomputed
-            py.allow_threads(|| {
-                (0..n_win)
-                    .into_par_iter()
-                    .flat_map(|w| {
-                        self.detect_im_peaks_for_window_from_views(w, mobility_of, params)
-                    })
-                    .collect()
-            })
-        } else {
-            // Fallback: we need dataset access inside build_window(...),
-            // which requires the GIL. Still, the per-window detection
-            // itself runs in Rust and can be parallelised *inside* the
-            // detector, but here we iterate windows sequentially.
-            let mut out = Vec::new();
-            for w in 0..n_win {
-                let grid = self.build_window(py, w)?;
-                let mut v =
-                    detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params);
-                out.append(&mut v);
-            }
-            out
-        };
-
-        // --------- 2) Wrap into PyImPeak1D under GIL ---------------------
-        let mut out_py: Vec<Py<PyImPeak1D>> = Vec::with_capacity(all_peaks.len());
-        for p in all_peaks {
-            out_py.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
-        }
-        Ok(out_py)
-    }
 }
 
 impl PyTofScanPlanGroup {
@@ -846,16 +791,6 @@ impl PyTofScanPlanGroup {
             cols,
             data_raw: if do_smooth || do_blur_tof { Some(raw) } else { None },
         }
-    }
-
-    fn detect_im_peaks_for_window_from_views(
-        &self,
-        win_idx: usize,
-        mobility_of: MobilityFn,
-        params: ImDetectParams,
-    ) -> Vec<ImPeak1D> {
-        let grid = self.build_window_from_views(win_idx);
-        detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params)
     }
 }
 
@@ -1191,62 +1126,6 @@ impl PyTofScanPlan {
         }
         Ok(out)
     }
-
-    pub fn detect_im_peaks_all(
-        &self,
-        py: Python<'_>,
-        min_prom: f32,
-        min_distance_scans: usize,
-        min_width_scans: usize,
-        smooth_sigma_scans: f32,
-        smooth_trunc_k: f32,
-    ) -> PyResult<Vec<Py<PyImPeak1D>>> {
-        // For now: no mobility callback from Python
-        let mobility_of: MobilityFn = None;
-
-        let params = ImDetectParams {
-            min_prom,
-            min_distance_scans,
-            min_width_scans,
-            smooth_sigma_scans,
-            smooth_trunc_k,
-        };
-
-        let n_win = self.windows_idx.len();
-
-        // --------- 1) Heavy numeric part (possibly GIL-free) -------------
-        let all_peaks: Vec<ImPeak1D> = if self.views.is_some() {
-            // Fully GIL-free + parallel over windows if views are precomputed
-            py.allow_threads(|| {
-                (0..n_win)
-                    .into_par_iter()
-                    .flat_map(|w| {
-                        self.detect_im_peaks_for_window_from_views(w, mobility_of, params)
-                    })
-                    .collect()
-            })
-        } else {
-            // Fallback: we need dataset access inside build_window(...),
-            // which requires the GIL. Still, the per-window detection
-            // itself runs in Rust and can be parallelised *inside* the
-            // detector, but here we iterate windows sequentially.
-            let mut out = Vec::new();
-            for w in 0..n_win {
-                let grid = self.build_window(py, w)?;
-                let mut v =
-                    detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params);
-                out.append(&mut v);
-            }
-            out
-        };
-
-        // --------- 2) Wrap into PyImPeak1D under GIL ---------------------
-        let mut out_py: Vec<Py<PyImPeak1D>> = Vec::with_capacity(all_peaks.len());
-        for p in all_peaks {
-            out_py.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
-        }
-        Ok(out_py)
-    }
 }
 
 impl PyTofScanPlan {
@@ -1382,16 +1261,6 @@ impl PyTofScanPlan {
             cols,
             data_raw: if do_smooth || do_blur_tof { Some(raw) } else { None },
         }
-    }
-
-    fn detect_im_peaks_for_window_from_views(
-        &self,
-        win_idx: usize,
-        mobility_of: MobilityFn,
-        params: ImDetectParams,
-    ) -> Vec<ImPeak1D> {
-        let grid = self.build_window_from_views(win_idx);
-        detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params)
     }
 }
 
@@ -1695,32 +1564,62 @@ impl PyTofScanWindowGrid {
         Ok(PyArray1::from_vec_bound(py, self.inner.scale.edges.clone()).unbind())
     }
 
-    pub fn detect_im_peaks(
+    #[pyo3(signature = (
+        min_intensity_scaled,
+        min_width_scans,
+        min_distance_scans,
+        smooth_sigma_scans,
+        smooth_sigma_tof,
+        smooth_trunc_k,
+        nms_kernel_scan=3,
+        nms_kernel_tof=3,
+        pool_tof_rows=1,
+        scale="sqrt"
+    ))]
+    pub fn detect_im_peaks_2d(
         &self,
         py: Python<'_>,
-        min_prom: f32,
-        min_distance_scans: usize,
+        min_intensity_scaled: f32,
         min_width_scans: usize,
+        min_distance_scans: usize,
         smooth_sigma_scans: f32,
+        smooth_sigma_tof: f32,
         smooth_trunc_k: f32,
+        nms_kernel_scan: usize,
+        nms_kernel_tof: usize,
+        pool_tof_rows: usize,
+        scale: &str,
     ) -> PyResult<Vec<Py<PyImPeak1D>>> {
-        // For now no mobility callback from Python; wire one later if desired
         let mobility_of: MobilityFn = None;
 
-        let params = ImDetectParams {
-            min_prom,
-            min_distance_scans,
-            min_width_scans,
-            smooth_sigma_scans,
-            smooth_trunc_k,
+        let scale_mode = match scale {
+            "none" | "None" => ScaleMode::None,
+            "sqrt" | "Sqrt" => ScaleMode::Sqrt,
+            "log1p" | "Log1p" => ScaleMode::Log1p,
+            other => {
+                return Err(exceptions::PyValueError::new_err(format!(
+                    "unknown scale mode {other:?}, expected 'none' | 'sqrt' | 'log1p'"
+                )));
+            }
         };
 
-        // Heavy work without holding the GIL
+        let params = ImDetectParams2D {
+            min_prom_scaled: min_intensity_scaled,
+            min_width_scans,
+            min_distance_scans,
+            smooth_sigma_tof,
+            smooth_trunc_k,
+            nms_kernel_scan,
+            nms_kernel_tof,
+            pool_tof_rows,
+            scale_mode,
+            smooth_sigma_scan: smooth_sigma_scans,
+        };
+
         let peaks: Vec<ImPeak1D> = py.allow_threads(|| {
-            detect_im_peaks_from_tof_scan_window(&self.inner, mobility_of, params)
+            detect_im_peaks_from_tof_scan_grid_2d(&self.inner, mobility_of, params)
         });
 
-        // Wrap into Python objects
         let mut out = Vec::with_capacity(peaks.len());
         for p in peaks {
             out.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);

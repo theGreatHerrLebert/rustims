@@ -500,43 +500,73 @@ class TofScanWindowGrid(RustWrapperObject):
     def __repr__(self) -> str:
         return repr(self.__py_ptr)
 
-    def detect_im_peaks(
+    def detect_im_peaks_2d(
             self,
             *,
-            min_prom: float = 50.0,
+            min_intensity_scaled: float = 1.0,
+            min_width_scans: int = 3,
             min_distance_scans: int = 3,
-            min_width_scans: int = 2,
-            smooth_sigma_scans: float = 1.0,
+            smooth_sigma_scans: float = 1.25,
+            smooth_sigma_tof: float = 0.5,
             smooth_trunc_k: float = 3.0,
+            nms_kernel_scan: int = 3,
+            nms_kernel_tof: int = 3,
+            pool_tof_rows: int = 1,
+            scale: str = "sqrt",
     ) -> List[ImPeak1D]:
         """
-        Detect IM peaks on this TOF×scan window using the Rust detector.
+        Detect IM peaks on this TOF×scan window using the Rust 2D detector.
+
+        Conceptually mirrors the torch-based pipeline:
+
+          - 2D Gaussian blur over scans×tof
+          - threshold + 2D NMS for seeding
+          - 1D IM trace extraction and local peak characterization
+          - mapping back to RT / frame / tof metadata via this window
 
         Parameters
         ----------
-        min_prom : float
-            Minimum prominence (in intensity units) required for a peak.
-        min_distance_scans : int
-            Minimum distance (in scans) between accepted peak maxima.
+        min_intensity_scaled : float
+            Seed threshold in the *scaled* domain (sqrt/log1p if chosen).
         min_width_scans : int
-            Minimum full width (in scans) between half-prominence crossings.
+            Minimum IM width in scans; very narrow spikes are dropped.
+        min_distance_scans : int
+            Minimum scan distance between neighbor peaks along IM.
         smooth_sigma_scans : float
-            Gaussian σ for IM smoothing (in scan units). Set 0.0 to disable.
+            Gaussian sigma (scans) used for smoothing along the IM axis.
+        smooth_sigma_tof : float
+            Gaussian sigma (tof bins) used in the 2D blur.
         smooth_trunc_k : float
-            Kernel truncation in σ units (e.g. 3.0 → ±3σ).
+            Truncation radius (multiples of sigma) for the Gaussian kernels.
+        nms_kernel_scan : int
+            NMS kernel height (scans). Will be made odd in Rust.
+        nms_kernel_tof : int
+            NMS kernel width (tof bins). Will be made odd in Rust.
+        pool_tof_rows : int
+            Half-width in tof rows used when building the IM trace around a seed.
+        scale : {"none", "sqrt", "log1p"}
+            Intensity scaling applied before seeding.
 
         Returns
         -------
-        List[ImPeak1D]
-            Python wrapper objects around ims.PyImPeak1D.
+        list[ImPeak1D]
+            One high-resolution IM peak object per detected IM peak.
         """
-        py_peaks = self.__py_ptr.detect_im_peaks(
-            float(min_prom),
-            int(min_distance_scans),
-            int(min_width_scans),
-            float(smooth_sigma_scans),
-            float(smooth_trunc_k),
+        # Call into the PyO3 method on ims.PyTofScanWindowGrid, which returns
+        # a list[ims.PyImPeak1D], then wrap each into the high-level wrapper.
+        py_peaks = self.__py_ptr.detect_im_peaks_2d(
+            min_intensity_scaled,
+            min_width_scans,
+            min_distance_scans,
+            smooth_sigma_scans,
+            smooth_sigma_tof,
+            smooth_trunc_k,
+            nms_kernel_scan,
+            nms_kernel_tof,
+            pool_tof_rows,
+            scale,
         )
+
         return [ImPeak1D.from_py_ptr(p) for p in py_peaks]
 
 class TofScanPlan(RustWrapperObject):
@@ -640,36 +670,6 @@ class TofScanPlan(RustWrapperObject):
     def __repr__(self) -> str:
         return f"TofScanPlan(num_windows={self.num_windows}, rows={self.rows}, scans={self.global_num_scans})"
 
-    def detect_im_peaks_all(
-            self,
-            *,
-            min_prom: float,
-            min_distance_scans: int,
-            min_width_scans: int,
-            smooth_sigma_scans: float,
-            smooth_trunc_k: float,
-    ) -> list["ImPeak1D"]:
-        """
-        Detect IM peaks for *all* RT windows in this MS1 plan.
-
-        This delegates to ims.PyTofScanPlan.detect_im_peaks_all, which runs
-        most of the heavy work in Rust (optionally GIL-free if views were
-        precomputed when creating the plan).
-
-        Returns
-        -------
-        list[ImPeak1D]
-            Flat list of all detected IM peaks across all windows.
-        """
-        peaks_py = self.__py_ptr.detect_im_peaks_all(
-            float(min_prom),
-            int(min_distance_scans),
-            int(min_width_scans),
-            float(smooth_sigma_scans),
-            float(smooth_trunc_k),
-        )
-        return [ImPeak1D.from_py_ptr(p) for p in peaks_py]
-
 class TofScanPlanGroup(RustWrapperObject):
     """Python wrapper around ims.PyTofScanPlanGroup (DIA window group)."""
 
@@ -762,35 +762,6 @@ class TofScanPlanGroup(RustWrapperObject):
     def get_batch_par(self, start: int, count: int) -> list[TofScanWindowGrid]:
         grids = self.__py_ptr.get_batch_par(start, count)
         return [TofScanWindowGrid.from_py_ptr(g) for g in grids]
-
-    def detect_im_peaks_all(
-            self,
-            *,
-            min_prom: float,
-            min_distance_scans: int,
-            min_width_scans: int,
-            smooth_sigma_scans: float,
-            smooth_trunc_k: float,
-    ) -> list["ImPeak1D"]:
-        """
-        Detect IM peaks for *all* RT windows in this DIA window group.
-
-        Delegates to ims.PyTofScanPlanGroup.detect_im_peaks_all, which runs
-        the heavy lifting in Rust (GIL-free if views were precomputed).
-
-        Returns
-        -------
-        list[ImPeak1D]
-            Flat list of all detected IM peaks across all windows.
-        """
-        peaks_py = self.__py_ptr.detect_im_peaks_all(
-            float(min_prom),
-            int(min_distance_scans),
-            int(min_width_scans),
-            float(smooth_sigma_scans),
-            float(smooth_trunc_k),
-        )
-        return [ImPeak1D.from_py_ptr(p) for p in peaks_py]
 
     def __repr__(self) -> str:
         return f"TofScanPlanGroup(group={self.window_group}, num_windows={self.num_windows}, rows={self.rows})"
