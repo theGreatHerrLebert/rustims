@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use crate::cluster::peak::{ImPeak1D, TofScanWindowGrid};
 use crate::cluster::utility::{im_peak_id, quad_subsample, smooth_vector_gaussian, trapezoid_area_fractional, MobilityFn};
 
@@ -319,17 +320,28 @@ pub fn detect_im_peaks_from_tof_scan_grid_2d(
         return Vec::new();
     }
 
-    let data_raw: &[f32] = grid.data_raw.as_ref().unwrap_or(&grid.data.as_ref().unwrap());
-    let mut img = data_raw.to_vec();
+    // ---- materialize raw & working image (same as before) -----------------
+    let data_raw_slice: &[f32] = grid
+        .data_raw
+        .as_ref()
+        .map(|v| v.as_slice())
+        .unwrap_or_else(|| {
+            grid.data
+                .as_ref()
+                .expect("TofScanWindowGrid.data is None; materialize grid before IM detection")
+                .as_slice()
+        });
+
+    let mut img = data_raw_slice.to_vec();
     debug_assert_eq!(img.len(), rows * cols);
 
-    // derive these from the window
     let rt_bounds_frames = grid.rt_range_frames;
     let frame_id_bounds = grid.frame_id_bounds;
     let window_group = grid.window_group;
-    let scans_axis = &grid.scans;
+    let scans_axis: &[usize] = &grid.scans;
+    let scale = &grid.scale;
 
-    // --- scale ---
+    // --- scale (same as before) -------------------------------------------
     match params.scale_mode {
         ScaleMode::None => {}
         ScaleMode::Sqrt => {
@@ -344,7 +356,7 @@ pub fn detect_im_peaks_from_tof_scan_grid_2d(
         }
     }
 
-    // --- 2D blur on scaled image ---
+    // --- 2D blur on scaled image (still sequential, but one big pass) -----
     gaussian_blur_dense_2d(
         &mut img,
         rows,
@@ -354,7 +366,7 @@ pub fn detect_im_peaks_from_tof_scan_grid_2d(
         params.smooth_trunc_k,
     );
 
-    // --- 2D NMS seeding (TOF × scans) ---
+    // --- 2D NMS seeding (TOF × scans) -------------------------------------
     let seeds = find_seeds_2d(
         &img,
         rows,
@@ -367,56 +379,59 @@ pub fn detect_im_peaks_from_tof_scan_grid_2d(
         return Vec::new();
     }
 
-    let mut peaks_out = Vec::new();
+    // ---- parallel over seeds ---------------------------------------------
+    let mobility_of_copy = mobility_of;
+    let pool_tof_rows = params.pool_tof_rows;
+    let min_width_scans = params.min_width_scans;
 
-    for (tof_row, seed_col) in seeds {
-        // build IM trace (scan axis) from a small TOF neighborhood of the seed
-        let y_raw = build_im_trace_from_seed(
-            data_raw,
-            rows,
-            cols,
-            tof_row,
-            params.pool_tof_rows,
-        );
-        if y_raw.iter().all(|v| *v <= 0.0) {
-            continue;
-        }
+    let peaks_out: Vec<ImPeak1D> = seeds
+        .into_par_iter()
+        .filter_map(|(tof_row, seed_col)| {
+            // build IM trace (scan axis) from a small TOF neighborhood of the seed
+            let y_raw = build_im_trace_from_seed(
+                data_raw_slice,
+                rows,
+                cols,
+                tof_row,
+                pool_tof_rows,
+            );
+            if y_raw.iter().all(|v| *v <= 0.0) {
+                return None;
+            }
 
-        let mut y_smoothed = y_raw.clone();
-        smooth_vector_gaussian(
-            &mut y_smoothed[..],
-            params.smooth_sigma_scan.max(0.75),
-            params.smooth_trunc_k,
-        );
+            let mut y_smoothed = y_raw.clone();
+            smooth_vector_gaussian(
+                &mut y_smoothed[..],
+                params.smooth_sigma_scan.max(0.75),
+                params.smooth_trunc_k,
+            );
 
-        // TOF metadata
-        let tof_center_f = grid.scale.centers[tof_row];
-        let tof_lo_f = grid.scale.edges[tof_row];
-        let tof_hi_f = grid.scale.edges[tof_row + 1];
+            // TOF metadata (pure reads from shared scale)
+            let tof_center_f = scale.centers[tof_row];
+            let tof_lo_f = scale.edges[tof_row];
+            let tof_hi_f = scale.edges[tof_row + 1];
 
-        let tof_center = tof_center_f.round() as i32;
-        let tof_bounds = (tof_lo_f.round() as i32, tof_hi_f.round() as i32);
+            let tof_center = tof_center_f.round() as i32;
+            let tof_bounds = (tof_lo_f.round() as i32, tof_hi_f.round() as i32);
 
-        if let Some(pk) = im_peak_from_seed(
-            &y_smoothed,
-            &y_raw,
-            tof_row,
-            tof_center,
-            tof_bounds,
-            rt_bounds_frames,
-            frame_id_bounds,
-            window_group,
-            mobility_of,
-            seed_col,
-            // note: here min_prom is in **raw** units; we used scaled threshold for seeding already
-            0.0,
-            params.min_width_scans,
-            scans_axis,
-        ) {
-            peaks_out.push(pk);
-        }
-    }
+            // Note: min_prom in raw units; seeding used scaled threshold already
+            im_peak_from_seed(
+                &y_smoothed,
+                &y_raw,
+                tof_row,
+                tof_center,
+                tof_bounds,
+                rt_bounds_frames,
+                frame_id_bounds,
+                window_group,
+                mobility_of_copy,
+                seed_col,
+                0.0,
+                min_width_scans,
+                scans_axis,
+            )
+        })
+        .collect();
 
-    // optional: add dedup here if you find lots of overlapping seeds
     peaks_out
 }

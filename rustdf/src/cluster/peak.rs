@@ -899,6 +899,8 @@ pub fn detect_im_peaks_from_tof_scan_grid(
     mobility_of: MobilityFn,
     p: ImDetectParams,
 ) -> Vec<ImPeak1D> {
+    use rayon::prelude::*;
+
     let rows = grid.rows;
     let cols = grid.cols;
     if rows == 0 || cols == 0 {
@@ -913,51 +915,64 @@ pub fn detect_im_peaks_from_tof_scan_grid(
         .as_ref()
         .unwrap_or(&grid.data); // fall back to data if no separate raw
 
-    debug_assert_eq!(data_raw.len(), rows * cols, "TofScanGrid data size mismatch");
+    debug_assert_eq!(
+        data_raw.len(),
+        rows * cols,
+        "TofScanGrid data size mismatch"
+    );
 
-    let mut out = Vec::new();
+    // `mobility_of` is a function pointer (or None), so it's Copy and Send/Sync.
+    let mobility_of_copy = mobility_of;
 
-    for tof_row in 0..rows {
-        // 1D slice for this row across scans
-        let offset = tof_row * cols;
-        let row_raw = &data_raw[offset..offset + cols];
+    // Parallel over rows; each row builds its own Vec<ImPeak1D>.
+    let per_row: Vec<Vec<ImPeak1D>> = (0..rows)
+        .into_par_iter()
+        .map(|tof_row| {
+            let offset = tof_row * cols;
+            let row_raw = &data_raw[offset..offset + cols];
 
-        if row_raw.iter().all(|v| *v <= 0.0) {
-            continue;
-        }
+            // quick skip: empty row
+            if row_raw.iter().all(|v| *v <= 0.0) {
+                return Vec::new();
+            }
 
-        // Optional smoothing in scan-space
-        let mut row_smooth = row_raw.to_vec();
-        if p.smooth_sigma_scans > 0.0 && cols > 2 {
-            smooth_vector_gaussian(&mut row_smooth, p.smooth_sigma_scans, p.smooth_trunc_k);
-        }
+            // Optional smoothing in scan-space (local buffer)
+            let mut row_smooth = row_raw.to_vec();
+            if p.smooth_sigma_scans > 0.0 && cols > 2 {
+                smooth_vector_gaussian(&mut row_smooth, p.smooth_sigma_scans, p.smooth_trunc_k);
+            }
 
-        // TOF metadata
-        let (tof_lo_f, tof_hi_f) = grid.tof_bounds_for_row(tof_row);
-        let tof_center_f = grid.tof_center_for_row(tof_row);
-        let tof_center = tof_center_f.round() as i32;
-        let tof_bounds = (tof_lo_f.round() as i32, tof_hi_f.round() as i32);
+            // TOF metadata
+            let (tof_lo_f, tof_hi_f) = grid.tof_bounds_for_row(tof_row);
+            let tof_center_f = grid.tof_center_for_row(tof_row);
+            let tof_center = tof_center_f.round() as i32;
+            let tof_bounds = (tof_lo_f.round() as i32, tof_hi_f.round() as i32);
 
-        // IM detection with existing machinery
-        let peaks_row = find_im_peaks_row(
-            &row_smooth,
-            row_raw,
-            tof_row,
-            tof_center,
-            tof_bounds,
-            rt_bounds_frames,
-            frame_id_bounds,
-            window_group,
-            mobility_of,
-            p.min_prom,
-            p.min_distance_scans,
-            p.min_width_scans,
-            scans_axis,
-        );
+            // IM detection with existing machinery
+            find_im_peaks_row(
+                &row_smooth,
+                row_raw,
+                tof_row,
+                tof_center,
+                tof_bounds,
+                rt_bounds_frames,
+                frame_id_bounds,
+                window_group,
+                mobility_of_copy,
+                p.min_prom,
+                p.min_distance_scans,
+                p.min_width_scans,
+                scans_axis,
+            )
+        })
+        .collect();
 
-        out.extend(peaks_row);
+    // Flatten without extra allocations beyond final Vec
+    let total_peaks: usize = per_row.iter().map(|v| v.len()).sum();
+    let mut out = Vec::with_capacity(total_peaks);
+    for mut v in per_row {
+        out.append(&mut v);
     }
-
     out
 }
 
