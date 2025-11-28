@@ -650,6 +650,62 @@ impl PyTofScanPlanGroup {
     pub fn tof_center_for_row(&self, row: usize) -> f32 {
         self.scale.center(row)
     }
+
+    pub fn detect_im_peaks_all(
+        &self,
+        py: Python<'_>,
+        min_prom: f32,
+        min_distance_scans: usize,
+        min_width_scans: usize,
+        smooth_sigma_scans: f32,
+        smooth_trunc_k: f32,
+    ) -> PyResult<Vec<Py<PyImPeak1D>>> {
+        // For now: no mobility callback from Python
+        let mobility_of: MobilityFn = None;
+
+        let params = ImDetectParams {
+            min_prom,
+            min_distance_scans,
+            min_width_scans,
+            smooth_sigma_scans,
+            smooth_trunc_k,
+        };
+
+        let n_win = self.windows_idx.len();
+
+        // --------- 1) Heavy numeric part (possibly GIL-free) -------------
+        let all_peaks: Vec<ImPeak1D> = if self.views.is_some() {
+            // Fully GIL-free + parallel over windows if views are precomputed
+            py.allow_threads(|| {
+                (0..n_win)
+                    .into_par_iter()
+                    .flat_map(|w| {
+                        self.detect_im_peaks_for_window_from_views(w, mobility_of, params)
+                    })
+                    .collect()
+            })
+        } else {
+            // Fallback: we need dataset access inside build_window(...),
+            // which requires the GIL. Still, the per-window detection
+            // itself runs in Rust and can be parallelised *inside* the
+            // detector, but here we iterate windows sequentially.
+            let mut out = Vec::new();
+            for w in 0..n_win {
+                let grid = self.build_window(py, w)?;
+                let mut v =
+                    detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params);
+                out.append(&mut v);
+            }
+            out
+        };
+
+        // --------- 2) Wrap into PyImPeak1D under GIL ---------------------
+        let mut out_py: Vec<Py<PyImPeak1D>> = Vec::with_capacity(all_peaks.len());
+        for p in all_peaks {
+            out_py.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
+        }
+        Ok(out_py)
+    }
 }
 
 impl PyTofScanPlanGroup {
@@ -790,6 +846,16 @@ impl PyTofScanPlanGroup {
             cols,
             data_raw: if do_smooth || do_blur_tof { Some(raw) } else { None },
         }
+    }
+
+    fn detect_im_peaks_for_window_from_views(
+        &self,
+        win_idx: usize,
+        mobility_of: MobilityFn,
+        params: ImDetectParams,
+    ) -> Vec<ImPeak1D> {
+        let grid = self.build_window_from_views(win_idx);
+        detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params)
     }
 }
 
@@ -1125,6 +1191,62 @@ impl PyTofScanPlan {
         }
         Ok(out)
     }
+
+    pub fn detect_im_peaks_all(
+        &self,
+        py: Python<'_>,
+        min_prom: f32,
+        min_distance_scans: usize,
+        min_width_scans: usize,
+        smooth_sigma_scans: f32,
+        smooth_trunc_k: f32,
+    ) -> PyResult<Vec<Py<PyImPeak1D>>> {
+        // For now: no mobility callback from Python
+        let mobility_of: MobilityFn = None;
+
+        let params = ImDetectParams {
+            min_prom,
+            min_distance_scans,
+            min_width_scans,
+            smooth_sigma_scans,
+            smooth_trunc_k,
+        };
+
+        let n_win = self.windows_idx.len();
+
+        // --------- 1) Heavy numeric part (possibly GIL-free) -------------
+        let all_peaks: Vec<ImPeak1D> = if self.views.is_some() {
+            // Fully GIL-free + parallel over windows if views are precomputed
+            py.allow_threads(|| {
+                (0..n_win)
+                    .into_par_iter()
+                    .flat_map(|w| {
+                        self.detect_im_peaks_for_window_from_views(w, mobility_of, params)
+                    })
+                    .collect()
+            })
+        } else {
+            // Fallback: we need dataset access inside build_window(...),
+            // which requires the GIL. Still, the per-window detection
+            // itself runs in Rust and can be parallelised *inside* the
+            // detector, but here we iterate windows sequentially.
+            let mut out = Vec::new();
+            for w in 0..n_win {
+                let grid = self.build_window(py, w)?;
+                let mut v =
+                    detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params);
+                out.append(&mut v);
+            }
+            out
+        };
+
+        // --------- 2) Wrap into PyImPeak1D under GIL ---------------------
+        let mut out_py: Vec<Py<PyImPeak1D>> = Vec::with_capacity(all_peaks.len());
+        for p in all_peaks {
+            out_py.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
+        }
+        Ok(out_py)
+    }
 }
 
 impl PyTofScanPlan {
@@ -1260,6 +1382,16 @@ impl PyTofScanPlan {
             cols,
             data_raw: if do_smooth || do_blur_tof { Some(raw) } else { None },
         }
+    }
+
+    fn detect_im_peaks_for_window_from_views(
+        &self,
+        win_idx: usize,
+        mobility_of: MobilityFn,
+        params: ImDetectParams,
+    ) -> Vec<ImPeak1D> {
+        let grid = self.build_window_from_views(win_idx);
+        detect_im_peaks_from_tof_scan_window(&grid, mobility_of, params)
     }
 }
 

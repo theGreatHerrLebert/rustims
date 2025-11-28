@@ -640,6 +640,36 @@ class TofScanPlan(RustWrapperObject):
     def __repr__(self) -> str:
         return f"TofScanPlan(num_windows={self.num_windows}, rows={self.rows}, scans={self.global_num_scans})"
 
+    def detect_im_peaks_all(
+            self,
+            *,
+            min_prom: float,
+            min_distance_scans: int,
+            min_width_scans: int,
+            smooth_sigma_scans: float,
+            smooth_trunc_k: float,
+    ) -> list["ImPeak1D"]:
+        """
+        Detect IM peaks for *all* RT windows in this MS1 plan.
+
+        This delegates to ims.PyTofScanPlan.detect_im_peaks_all, which runs
+        most of the heavy work in Rust (optionally GIL-free if views were
+        precomputed when creating the plan).
+
+        Returns
+        -------
+        list[ImPeak1D]
+            Flat list of all detected IM peaks across all windows.
+        """
+        peaks_py = self.__py_ptr.detect_im_peaks_all(
+            float(min_prom),
+            int(min_distance_scans),
+            int(min_width_scans),
+            float(smooth_sigma_scans),
+            float(smooth_trunc_k),
+        )
+        return [ImPeak1D.from_py_ptr(p) for p in peaks_py]
+
 class TofScanPlanGroup(RustWrapperObject):
     """Python wrapper around ims.PyTofScanPlanGroup (DIA window group)."""
 
@@ -732,6 +762,35 @@ class TofScanPlanGroup(RustWrapperObject):
     def get_batch_par(self, start: int, count: int) -> list[TofScanWindowGrid]:
         grids = self.__py_ptr.get_batch_par(start, count)
         return [TofScanWindowGrid.from_py_ptr(g) for g in grids]
+
+    def detect_im_peaks_all(
+            self,
+            *,
+            min_prom: float,
+            min_distance_scans: int,
+            min_width_scans: int,
+            smooth_sigma_scans: float,
+            smooth_trunc_k: float,
+    ) -> list["ImPeak1D"]:
+        """
+        Detect IM peaks for *all* RT windows in this DIA window group.
+
+        Delegates to ims.PyTofScanPlanGroup.detect_im_peaks_all, which runs
+        the heavy lifting in Rust (GIL-free if views were precomputed).
+
+        Returns
+        -------
+        list[ImPeak1D]
+            Flat list of all detected IM peaks across all windows.
+        """
+        peaks_py = self.__py_ptr.detect_im_peaks_all(
+            float(min_prom),
+            int(min_distance_scans),
+            int(min_width_scans),
+            float(smooth_sigma_scans),
+            float(smooth_trunc_k),
+        )
+        return [ImPeak1D.from_py_ptr(p) for p in peaks_py]
 
     def __repr__(self) -> str:
         return f"TofScanPlanGroup(group={self.window_group}, num_windows={self.num_windows}, rows={self.rows})"
