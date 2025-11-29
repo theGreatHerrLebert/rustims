@@ -1225,15 +1225,13 @@ pub fn stitch_im_peaks_flat_unordered_impl(
 
     let mut buckets: FxHashMap<KeyFlat, Vec<Arc<ImPeak1D>>> = FxHashMap::default();
 
-    // 1) Collect into buckets
+    // 1) Collect into buckets (unchanged)
     for arc in flat.into_iter() {
         let r = arc.as_ref();
         let key = KeyFlat {
             wg_norm: norm_wg(r.window_group, params.allow_cross_groups),
             scan_bin: r.scan / params.max_scan_delta.max(1),
             tof_bucket: tof_bucket(r.tof_row, params.max_tof_row_delta),
-            // NOTE: we keep the field name max_mz_row_delta in StitchParams
-            // for API compatibility, but it now applies to tof_row.
         };
         buckets.entry(key).or_default().push(arc);
     }
@@ -1242,7 +1240,6 @@ pub fn stitch_im_peaks_flat_unordered_impl(
     let mut stitched: Vec<ImPeak1D> = Vec::new();
 
     for (_k, mut vec_arc) in buckets.into_iter() {
-        // deterministic order within bucket
         vec_arc.sort_unstable_by(|a, b| {
             let aa = a.as_ref();
             let bb = b.as_ref();
@@ -1254,35 +1251,50 @@ pub fn stitch_im_peaks_flat_unordered_impl(
         });
 
         let mut group: Vec<Arc<ImPeak1D>> = Vec::new();
+        let mut cur_min_row: usize = usize::MAX;
+        let mut cur_max_row: usize = 0;
 
         for arc in vec_arc.into_iter() {
             let p = arc.as_ref();
+
             if let Some(last) = group.last() {
-                if compatible_fast(last.as_ref(), p, params) {
-                    // still same cluster → extend group
+                // hypothetical new span if we add p
+                let new_min = cur_min_row.min(p.tof_row);
+                let new_max = cur_max_row.max(p.tof_row);
+                let span_rows = new_max.saturating_sub(new_min);
+
+                let span_ok = params.max_tof_row_delta == 0
+                    || span_rows <= params.max_tof_row_delta;
+
+                if compatible_fast(last.as_ref(), p, params) && span_ok {
                     group.push(arc);
+                    cur_min_row = new_min;
+                    cur_max_row = new_max;
                 } else {
                     // finalize previous group
-                    let refs: Vec<&ImPeak1D> =
-                        group.iter().map(|a| a.as_ref()).collect();
+                    let refs: Vec<&ImPeak1D> = group.iter().map(|a| a.as_ref()).collect();
                     stitched.push(merge_group(&refs));
+
                     group.clear();
-                    group.push(arc);
+                    group.push(arc.clone());
+                    cur_min_row = p.tof_row;
+                    cur_max_row = p.tof_row;
                 }
             } else {
                 // first element in this bucket
+                cur_min_row = p.tof_row;
+                cur_max_row = p.tof_row;
                 group.push(arc);
             }
         }
 
-        // flush final group in this bucket
         if !group.is_empty() {
             let refs: Vec<&ImPeak1D> = group.iter().map(|a| a.as_ref()).collect();
             stitched.push(merge_group(&refs));
         }
     }
 
-    // 3) Optional cross-bucket consolidation pass (again using group merge)
+    // 3) Cross-bucket consolidation: same idea
     stitched.sort_unstable_by(|a, b| {
         a.window_group
             .cmp(&b.window_group)
@@ -1294,20 +1306,34 @@ pub fn stitch_im_peaks_flat_unordered_impl(
 
     let mut final_out: Vec<ImPeak1D> = Vec::with_capacity(stitched.len());
     let mut group: Vec<ImPeak1D> = Vec::new();
+    let mut cur_min_row: usize = usize::MAX;
+    let mut cur_max_row: usize = 0;
 
     for p in stitched.into_iter() {
         if let Some(last) = group.last() {
-            if compatible_fast(last, &p, params) {
-                // still same stitched cluster
+            let new_min = cur_min_row.min(p.tof_row);
+            let new_max = cur_max_row.max(p.tof_row);
+            let span_rows = new_max.saturating_sub(new_min);
+
+            let span_ok = params.max_tof_row_delta == 0
+                || span_rows <= params.max_tof_row_delta;
+
+            if compatible_fast(last, &p, params) && span_ok {
+                cur_min_row = new_min;
+                cur_max_row = new_max;
                 group.push(p);
             } else {
-                // finish previous chain
                 let refs: Vec<&ImPeak1D> = group.iter().collect();
                 final_out.push(merge_group(&refs));
+
                 group.clear();
+                cur_min_row = p.tof_row;
+                cur_max_row = p.tof_row;
                 group.push(p);
             }
         } else {
+            cur_min_row = p.tof_row;
+            cur_max_row = p.tof_row;
             group.push(p);
         }
     }
