@@ -2442,7 +2442,35 @@ impl PyTimsDatasetDIA {
         let mut rust_ms2: Vec<ClusterResult1D> = Vec::with_capacity(ms2_clusters.len());
         for c in ms2_clusters {
             let c_ref = c.borrow(py);
-            rust_ms2.push(c_ref.inner.clone());
+
+            // get the inner and create ClusterResult1D but without the RAW data
+            rust_ms2.push(
+                ClusterResult1D {
+                    cluster_id: c_ref.inner.cluster_id,
+                    rt_window: c_ref.inner.rt_window,
+                    im_window: c_ref.inner.im_window,
+                    tof_window: c_ref.inner.tof_window,
+                    tof_index_window: c_ref.inner.tof_index_window,
+                    mz_window: c_ref.inner.mz_window,
+                    rt_fit: c_ref.inner.rt_fit.clone(),
+                    im_fit: c_ref.inner.im_fit.clone(),
+                    tof_fit: c_ref.inner.tof_fit.clone(),
+                    mz_fit: c_ref.inner.mz_fit.clone(),
+                    raw_sum: c_ref.inner.raw_sum,
+                    volume_proxy: c_ref.inner.volume_proxy,
+                    frame_ids_used: c_ref.inner.frame_ids_used.clone(),
+                    window_group: c_ref.inner.window_group,
+                    parent_im_id: c_ref.inner.parent_im_id,
+                    parent_rt_id: c_ref.inner.parent_rt_id,
+                    ms_level: c_ref.inner.ms_level,
+                    rt_axis_sec: c_ref.inner.rt_axis_sec.clone(),
+                    im_axis_scans: c_ref.inner.im_axis_scans.clone(),
+                    mz_axis_da: c_ref.inner.mz_axis_da.clone(),
+                    raw_points: None, // drop raw points for indexing
+                    rt_trace: None, // drop traces for indexing
+                    im_trace: None, // drop traces for indexing
+                }
+            );
         }
 
         // Build CandidateOpts for MS2 side only
