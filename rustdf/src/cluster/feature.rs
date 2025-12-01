@@ -347,6 +347,7 @@ struct GoodCluster {
 }
 
 // ---------------------------- Core algorithm ------------------------------
+// ---------------------------- Core algorithm ------------------------------
 
 pub fn build_simple_features_from_clusters(
     clusters: &[ClusterResult1D],
@@ -421,12 +422,37 @@ pub fn build_simple_features_from_clusters(
         for z in params.z_min..=params.z_max {
             let delta = 1.003_355_f32 / (z as f32);
 
+            // ------------------------------------------------------------
+            // Precompute reference envelope for this (seed, z) if LUT present
+            // ------------------------------------------------------------
+            let env_opt: Option<[f32; 8]> = if let Some(lut_ref) = lut {
+                let seed_mz = good[seed_idx].mz_mu;
+                if seed_mz.is_finite() && seed_mz > params.min_mz {
+                    let neutral_seed =
+                        (seed_mz - 1.007_276_5_f32).max(0.0) * (z as f32);
+                    Some(lut_ref.lookup(neutral_seed, z))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Small slack so we don't overreact to noise
+            const DIR_EPS_ENV: f32 = 1e-3; // tiny threshold for env direction
+            const SLACK_UP: f32 = 1.05;    // require ≥ +5% when env rises
+            const SLACK_DOWN: f32 = 0.95;  // require ≤ -5% when env falls
+
             // ---- UPWARD extension -------------------------------------------------
             let mut chain_up: Vec<usize> = Vec::new();
             chain_up.push(seed_idx);
 
+            // keep observed raw sums for shape check
+            let mut iso_raw_up: Vec<f32> = Vec::new();
+            iso_raw_up.push(good[seed_idx].raw_sum.max(0.0));
+
             let mut cur_up = seed_idx;
-            while chain_up.len() < params.max_members {
+            'upward: while chain_up.len() < params.max_members {
                 let cur = &good[cur_up];
                 let target_m = cur.mz_mu + delta;
                 let tol = iso_tolerance_da(target_m, params);
@@ -478,6 +504,38 @@ pub fn build_simple_features_from_clusters(
                 }
 
                 if let Some((best_k, _)) = best_candidate {
+                    // ----------------- SHAPE CHECK vs. ENVELOPE (UPWARD) -----------------
+                    if let Some(env) = env_opt {
+                        let obs_prev = *iso_raw_up.last().unwrap_or(&0.0);
+                        let obs_new = good[best_k].raw_sum.max(0.0);
+
+                        // position of the *new* isotope in this direction
+                        let env_idx = iso_raw_up.len().min(env.len().saturating_sub(1));
+
+                        if env_idx > 0 && env_idx < env.len() {
+                            let env_prev = env[env_idx - 1];
+                            let env_cur = env[env_idx];
+
+                            // determine expected direction from envelope
+                            if env_cur > env_prev * (1.0 + DIR_EPS_ENV) {
+                                // Envelope says: this isotope should go UP
+                                if obs_new < obs_prev * SLACK_UP {
+                                    // observed does NOT go up enough -> stop extending
+                                    break 'upward;
+                                }
+                            } else if env_cur < env_prev * (1.0 - DIR_EPS_ENV) {
+                                // Envelope says: this isotope should go DOWN
+                                if obs_new > obs_prev * SLACK_DOWN {
+                                    // observed does NOT go down enough -> stop extending
+                                    break 'upward;
+                                }
+                            }
+                            // If envelope is flat-ish, we don't enforce direction.
+                        }
+
+                        iso_raw_up.push(obs_new);
+                    }
+
                     chain_up.push(best_k);
                     cur_up = best_k;
                 } else {
@@ -487,9 +545,12 @@ pub fn build_simple_features_from_clusters(
 
             // ---- DOWNWARD extension -----------------------------------------------
             let mut chain_down: Vec<usize> = Vec::new();
+            let mut iso_raw_down: Vec<f32> = Vec::new();
+            iso_raw_down.push(good[seed_idx].raw_sum.max(0.0));
+
             let mut cur_down = seed_idx;
 
-            while (chain_down.len() + chain_up.len()) < params.max_members {
+            'downward: while (chain_down.len() + chain_up.len()) < params.max_members {
                 let cur = &good[cur_down];
                 let target_m = cur.mz_mu - delta;
                 if target_m <= 0.0 {
@@ -540,6 +601,34 @@ pub fn build_simple_features_from_clusters(
                 }
 
                 if let Some((best_k, _)) = best_candidate {
+                    // ----------------- SHAPE CHECK vs. ENVELOPE (DOWNWARD) ---------------
+                    if let Some(env) = env_opt {
+                        let obs_prev = *iso_raw_down.last().unwrap_or(&0.0);
+                        let obs_new = good[best_k].raw_sum.max(0.0);
+
+                        // treat downward chain similarly: index along envelope
+                        let env_idx = iso_raw_down.len().min(env.len().saturating_sub(1));
+
+                        if env_idx > 0 && env_idx < env.len() {
+                            let env_prev = env[env_idx - 1];
+                            let env_cur = env[env_idx];
+
+                            if env_cur > env_prev * (1.0 + DIR_EPS_ENV) {
+                                // Envelope says: go UP here
+                                if obs_new < obs_prev * SLACK_UP {
+                                    break 'downward;
+                                }
+                            } else if env_cur < env_prev * (1.0 - DIR_EPS_ENV) {
+                                // Envelope says: go DOWN here
+                                if obs_new > obs_prev * SLACK_DOWN {
+                                    break 'downward;
+                                }
+                            }
+                        }
+
+                        iso_raw_down.push(obs_new);
+                    }
+
                     chain_down.push(best_k);
                     cur_down = best_k;
                 } else {
@@ -644,8 +733,10 @@ pub fn build_simple_features_from_clusters(
         let mut im_max = 0usize;
         let mut raw_sum_total = 0.0_f32;
 
-        let mut member_cluster_indices: Vec<usize> = Vec::with_capacity(best_chain.len());
-        let mut member_cluster_ids: Vec<u64> = Vec::with_capacity(best_chain.len());
+        let mut member_cluster_indices: Vec<usize> =
+            Vec::with_capacity(best_chain.len());
+        let mut member_cluster_ids: Vec<u64> =
+            Vec::with_capacity(best_chain.len());
 
         for &idx in &best_chain {
             let g = &good[idx];
@@ -689,7 +780,10 @@ pub fn build_simple_features_from_clusters(
             member_cluster_ids,
             raw_sum: raw_sum_total,
             cos_averagine,
-            member_clusters: best_chain.iter().map(|&i| clusters[good[i].orig_idx].clone()).collect(),
+            member_clusters: best_chain
+                .iter()
+                .map(|&i| clusters[good[i].orig_idx].clone())
+                .collect(),
         });
     }
 
