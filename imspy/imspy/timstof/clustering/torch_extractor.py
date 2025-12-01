@@ -830,6 +830,18 @@ def _detect_im_peaks_for_wgs(
         if do_dedup:
             peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
 
+        factor = 1.5
+        expected_fwhm_scan = 40.0
+        expected_fwhm_tof = 5.0
+
+        max_sigma_scan = expected_fwhm_scan / 2.355 * factor  # factor maybe 1.5
+        max_sigma_tof = expected_fwhm_tof / 2.355 * factor
+
+        sigma_scan = np.minimum(peaks["sigma_scan"], max_sigma_scan)
+        sigma_tof = np.minimum(peaks["sigma_tof"], max_sigma_tof)
+        peaks["sigma_scan"] = sigma_scan
+        peaks["sigma_tof"] = sigma_tof
+
         objs = ImPeak1D.batch_from_detected(
             peaks,
             window_grid=wg,        # TofScanWindowGrid wrapper
