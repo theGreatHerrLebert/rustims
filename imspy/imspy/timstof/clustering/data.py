@@ -320,6 +320,9 @@ class RtPeak1D(RustWrapperObject):
             for i in range(n)
         ]
 
+    def __repr__(self):
+        return repr(self.__py_ptr)
+
 from typing import Dict, List
 
 class ImPeak1D(RustWrapperObject):
