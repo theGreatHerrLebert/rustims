@@ -54,6 +54,7 @@ class Fit1D(RustWrapperObject):
     def __repr__(self) -> str:
         return repr(self.__py_ptr)
 
+
 class RtPeak1D(RustWrapperObject):
     """Python wrapper around ims.PyRtPeak1D."""
 
@@ -69,86 +70,257 @@ class RtPeak1D(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyRtPeak1D:
         return self.__py_ptr
 
-    # geometry
-    @property
-    def rt_idx(self) -> int:
-        return self.__py_ptr.rt_idx
+    # --- existing properties omitted for brevity ---
 
-    @property
-    def rt_sec(self) -> Optional[float]:
-        return self.__py_ptr.rt_sec
+    # ------------------------------------------------------------------
+    # NEW: construct a single RtPeak1D from detector output
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_detected(
+        cls,
+        peaks: Dict[str, np.ndarray],
+        idx: int,
+        *,
+        window_grid: "TofRtGrid",
+        plan_group=None,      # kept for API symmetry, unused here
+        k_sigma: float = 3.0,
+        min_width: int = 3,
+        id_override: int | None = None,
+    ) -> "RtPeak1D":
+        """
+        Build a single RtPeak1D from the dict-of-arrays produced by a
+        TOF×RT detector.
 
-    @property
-    def apex_smoothed(self) -> float:
-        return self.__py_ptr.apex_smoothed
+        Accepts either:
+          - peaks["tof_row"], peaks["scan_idx"]
+          - or peaks["i"], peaks["j"] for backward compatibility.
 
-    @property
-    def apex_raw(self) -> float:
-        return self.__py_ptr.apex_raw
+        Assumes:
+          - peaks["mu_rt"] (or "mu_scan"), peaks["sigma_rt"] (or "sigma_scan")
+          - peaks["mu_tof"], peaks["sigma_tof"]
+          - peaks["amplitude"], peaks["baseline"], peaks["area"]
+        """
+        g = window_grid  # TofRtGrid wrapper
+        rows = g.rows
+        cols = g.cols
+        if cols == 0 or rows == 0:
+            raise ValueError("TofRtGrid has zero size")
 
-    @property
-    def prominence(self) -> float:
-        return self.__py_ptr.prominence
+        # ---- get arrays with fallback names --------------------------------
+        def arr(name: str, alt: str | None = None) -> np.ndarray:
+            if name in peaks:
+                return peaks[name]
+            if alt and alt in peaks:
+                return peaks[alt]
+            raise KeyError(f"Required key {name!r} (or {alt!r}) missing from peaks")
 
-    @property
-    def left_x(self) -> float:
-        return self.__py_ptr.left_x
+        mu_rt = arr("mu_rt", "mu_scan")
+        sigma_rt = arr("sigma_rt", "sigma_scan")
+        mu_tof = arr("mu_tof")
+        sigma_tof = arr("sigma_tof")
+        amp = arr("amplitude")
+        base = arr("baseline")
+        area = arr("area")
 
-    @property
-    def right_x(self) -> float:
-        return self.__py_ptr.right_x
+        tof_row = arr("tof_row", "i")
+        rt_idx_raw = arr("scan_idx", "j")
 
-    @property
-    def width_frames(self) -> int:
-        return self.__py_ptr.width_frames
+        # sanity
+        n = mu_rt.shape[0]
+        if not (
+            sigma_rt.shape[0]
+            == mu_tof.shape[0]
+            == sigma_tof.shape[0]
+            == amp.shape[0]
+            == base.shape[0]
+            == area.shape[0]
+            == tof_row.shape[0]
+            == rt_idx_raw.shape[0]
+            == n
+        ):
+            raise ValueError("peaks arrays have inconsistent lengths")
 
-    @property
-    def area_raw(self) -> float:
-        return self.__py_ptr.area_raw
+        # ---- extract scalar values for this idx -----------------------------
+        mu_rt_i = float(mu_rt[idx])
+        sigma_rt_i = float(sigma_rt[idx])
+        mu_tof_i = float(mu_tof[idx])
+        sigma_tof_i = float(sigma_tof[idx])
+        amp_i = float(amp[idx])
+        base_i = float(base[idx])
+        area_i = float(area[idx])
+        tof_row_i = float(tof_row[idx])
+        rt_idx_raw_i = float(rt_idx_raw[idx])
 
-    @property
-    def subframe(self) -> float:
-        return self.__py_ptr.subframe
+        # ---------------------------------------------------------------
+        # RT geometry (indices, time, bounds)
+        # ---------------------------------------------------------------
+        # index in RT-frame space (0..cols-1); derived from mu_rt
+        rt_idx = int(round(mu_rt_i))
+        rt_idx = max(0, min(cols - 1, rt_idx))
 
-    # provenance / bounds
-    @property
-    def rt_bounds_frames(self) -> Tuple[int, int]:
-        return self.__py_ptr.rt_bounds_frames
+        # subframe = fine position around that index
+        subframe = mu_rt_i - float(rt_idx)
 
-    @property
-    def frame_id_bounds(self) -> Tuple[int, int]:
-        return self.__py_ptr.frame_id_bounds
+        # RT time in seconds from grid
+        rt_times = g.rt_times
+        if rt_times.size > 0:
+            rt_sec = float(rt_times[rt_idx])
+        else:
+            # fallback: interpolate from rt_range_sec
+            t0, t1 = g.rt_range_sec
+            if cols > 1:
+                frac = rt_idx / (cols - 1.0)
+                rt_sec = float(t0 + frac * (t1 - t0))
+            else:
+                rt_sec = float(t0)
 
-    @property
-    def window_group(self) -> Optional[int]:
-        return self.__py_ptr.window_group
+        # bounds in "frames" (RT index space)
+        sigma_frames = max(sigma_rt_i, 1e-3)
+        half_from_sigma = int(np.ceil(k_sigma * sigma_frames))
+        half_from_min = max((min_width - 1) // 2, 0)
+        half = max(half_from_sigma, half_from_min)
 
-    # TOF context
-    @property
-    def tof_row(self) -> int:
-        return self.__py_ptr.tof_row
+        rt_lo = max(0, rt_idx - half)
+        rt_hi = min(cols - 1, rt_idx + half)
+        width_frames = rt_hi - rt_lo + 1
 
-    @property
-    def tof_center(self) -> int:
-        return self.__py_ptr.tof_center
+        # map to frame IDs
+        frame_ids = g.frame_ids
+        if frame_ids.size > 0:
+            frame_lo = int(frame_ids[rt_lo])
+            frame_hi = int(frame_ids[rt_hi])
+            frame_id_bounds = (frame_lo, frame_hi)
+        else:
+            frame_id_bounds = g.frame_id_bounds
 
-    @property
-    def tof_bounds(self) -> Tuple[int, int]:
-        return self.__py_ptr.tof_bounds
+        rt_bounds_frames = (rt_lo, rt_hi)
 
-    # linkage
-    @property
-    def parent_im_id(self) -> Optional[int]:
-        return self.__py_ptr.parent_im_id
+        # left/right_x can be interpreted as RT-frame coordinates
+        left_x = float(rt_lo)
+        right_x = float(rt_hi)
 
-    @property
-    def id(self) -> int:
-        return self.__py_ptr.id
+        # ---------------------------------------------------------------
+        # TOF context
+        # ---------------------------------------------------------------
+        # primary TOF row index; clamp into valid range
+        tof_row_idx = int(round(tof_row_i))
+        tof_row_idx = max(0, min(rows - 1, tof_row_idx))
 
-    def __repr__(self) -> str:
-        return repr(self.__py_ptr)
+        # we treat mu_tof/sigma_tof in TOF-bin index units
+        sigma_tof_bins = max(sigma_tof_i, 1e-3)
+        half_tof = int(np.ceil(k_sigma * sigma_tof_bins))
 
-from typing import Dict, List, Optional, Tuple
+        tof_center_idx = int(round(mu_tof_i))
+        tof_center_idx = max(0, min(rows - 1, tof_center_idx))
+
+        tof_lo_idx = max(0, tof_center_idx - half_tof)
+        tof_hi_idx = min(rows - 1, tof_center_idx + half_tof)
+
+        tof_bounds = (int(tof_lo_idx), int(tof_hi_idx))
+
+        # for tof_center we can either:
+        #   - store the index, or
+        #   - convert to physical TOF using tof_centers
+        # Keeping it consistent with ImPeak1D: treat it as index.
+        tof_center = int(tof_center_idx)
+
+        # ---------------------------------------------------------------
+        # Peak shape / intensity proxies
+        # ---------------------------------------------------------------
+        # Here we only have "area" and amplitude/baseline from detector
+        apex_raw = amp_i + base_i
+        apex_smoothed = apex_raw
+        prominence = amp_i  # simple proxy
+
+        area_raw = area_i
+
+        # provenance
+        window_group = g.window_group
+        parent_im_id = None  # RT-first; no IM parent at this point
+
+        # ID: caller can override; otherwise use idx
+        peak_id = int(id_override if id_override is not None else idx)
+
+        # ---------------------------------------------------------------
+        # Call into PyO3 constructor with the exact signature:
+        # (rt_idx, rt_sec, apex_smoothed, apex_raw, prominence,
+        #  left_x, right_x, width_frames, area_raw, subframe,
+        #  rt_bounds_frames, frame_id_bounds, window_group,
+        #  tof_row, tof_center, tof_bounds, parent_im_id, id)
+        # ---------------------------------------------------------------
+        py_peak = ims.PyRtPeak1D(
+            rt_idx,
+            rt_sec,
+            apex_smoothed,
+            apex_raw,
+            prominence,
+            left_x,
+            right_x,
+            int(width_frames),
+            area_raw,
+            subframe,
+            rt_bounds_frames,
+            frame_id_bounds,
+            window_group,
+            int(tof_row_idx),
+            int(tof_center),
+            tof_bounds,
+            parent_im_id,
+            int(peak_id),
+        )
+
+        return cls.from_py_ptr(py_peak)
+
+    # ------------------------------------------------------------------
+    # NEW: vectorized construction from a peaks dict
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_batch_detected(
+        cls,
+        peaks: Dict[str, np.ndarray],
+        *,
+        window_grid: "TofRtGrid",
+        plan_group=None,
+        k_sigma: float = 3.0,
+        min_width: int = 3,
+    ) -> List["RtPeak1D"]:
+        """
+        Build many RtPeak1D instances from detector output.
+
+        Parameters
+        ----------
+        peaks : dict[str, np.ndarray]
+            Output of TOF×RT detector.
+        window_grid : TofRtGrid
+            The grid from which detection was done.
+        plan_group : unused, for API symmetry with IM peaks.
+        k_sigma : float
+            Controls how far to extend in RT/TOF based on sigma.
+        min_width : int
+            Minimal RT width in frames (inclusive).
+        """
+        # We just use mu_rt (or mu_scan) length as master length.
+        if "mu_rt" in peaks:
+            n = int(peaks["mu_rt"].shape[0])
+        elif "mu_scan" in peaks:
+            n = int(peaks["mu_scan"].shape[0])
+        else:
+            # no peaks; nothing to do
+            return []
+
+        return [
+            cls.from_detected(
+                peaks,
+                i,
+                window_grid=window_grid,
+                plan_group=plan_group,
+                k_sigma=k_sigma,
+                min_width=min_width,
+            )
+            for i in range(n)
+        ]
+
+from typing import Dict, List
 
 class ImPeak1D(RustWrapperObject):
     """Python wrapper around ims.PyImPeak1D."""

@@ -961,3 +961,152 @@ def iter_im_peaks_batches(
 
         del wgs, batch_objs
         gc.collect()
+
+from typing import Iterable, List
+
+import numpy as np
+from tqdm import tqdm
+
+def _detect_rt_peaks_for_grids(
+    grids: Iterable["TofRtGrid"],
+    *,
+    device: str = "cuda",
+    pool_rt: int = 15,                 # same role as pool_scan
+    pool_tof: int = 3,
+    min_intensity_scaled: float = 1.0,
+    tile_rows: int = 200_000,
+    tile_overlap: int = 64,
+    fit_h: int = 35,
+    fit_w: int = 11,
+    refine: str = "adam",
+    refine_iters: int = 8,
+    refine_lr: float = 0.2,
+    refine_mask_k: float = 2.5,
+    refine_rt: bool = True,            # like refine_scan
+    refine_tof: bool = True,
+    refine_sigma_rt: bool = True,
+    refine_sigma_tof: bool = True,
+    scale: str = "sqrt",
+    output_units: str = "original",
+    gn_float64: bool = False,
+    do_dedup: bool = True,
+    tol_rt: float = 0.75,              # same idea as tol_scan
+    tol_tof: float = 0.25,
+    k_sigma: float = 3.0,
+    min_width_frames: int = 3,
+    blur_sigma_rt: float | None = None,
+    blur_sigma_tof: float | None = None,
+    blur_truncate: float = 3.0,
+    topk_per_tile: int | None = None,
+    patch_batch_target_mb: int = 128,
+) -> List["RtPeak1D"]:
+    """
+    Detect RT 1D peaks from one or more TofRtGrid objects using the same
+    2D detector as for TOF×SCAN, interpreting the column axis as RT frames.
+    """
+    from imspy.timstof.clustering.data import RtPeak1D
+
+    all_objs: list[RtPeak1D] = []
+
+    for grid in tqdm(grids, desc="Detecting RT peaks (grids)", ncols=80, leave=False):
+        # Dense TOF×RT matrix
+        B = grid.data  # shape (tof_row, rt_frame)
+
+        peaks_iter = iter_detect_peaks_from_blurred(
+            B_blurred=B,
+            device=device,
+            pool_scan=pool_rt,              # RT axis
+            pool_tof=pool_tof,
+            min_intensity=min_intensity_scaled,
+            tile_rows=tile_rows,
+            tile_overlap=tile_overlap,
+            fit_h=fit_h,
+            fit_w=fit_w,
+            refine=refine,
+            refine_iters=refine_iters,
+            refine_lr=refine_lr,
+            refine_mask_k=refine_mask_k,
+            refine_scan=refine_rt,
+            refine_tof=refine_tof,
+            refine_sigma_scan=refine_sigma_rt,
+            refine_sigma_tof=refine_sigma_tof,
+            scale=scale,
+            output_units=output_units,
+            gn_float64=gn_float64,
+            blur_sigma_scan=blur_sigma_rt,
+            blur_sigma_tof=blur_sigma_tof,
+            blur_truncate=blur_truncate,
+            topk_per_tile=topk_per_tile,
+            patch_batch_target_mb=patch_batch_target_mb,
+        )
+
+        peaks = _collect_stream(peaks_iter)
+
+        if do_dedup:
+            # Same logic; we just interpret "scan" as RT frames.
+            peaks = _dedup_peaks(
+                peaks,
+                tol_scan=tol_rt,
+                tol_tof=tol_tof,
+            )
+
+        # Optional sigma caps – now for RT instead of IM
+        factor = 1.5
+        expected_fwhm_rt = 30.0  # tweak for your data
+        expected_fwhm_tof = 5.0
+
+        max_sigma_rt = expected_fwhm_rt / 2.355 * factor
+        max_sigma_tof = expected_fwhm_tof / 2.355 * factor
+
+        peaks["sigma_scan"] = np.minimum(peaks["sigma_scan"], max_sigma_rt)
+        peaks["sigma_tof"] = np.minimum(peaks["sigma_tof"], max_sigma_tof)
+
+        # Turn dict-of-arrays into RtPeak1D objects
+        # This assumes you implement RtPeak1D.batch_from_detected(...)
+        objs = RtPeak1D.batch_from_detected(
+            peaks,
+            window_grid=grid,
+            plan_group=None,
+            k_sigma=k_sigma,
+            min_width=min_width_frames,
+        )
+        all_objs.extend(objs)
+
+        # free grid buffers if it has a cache
+        try:
+            if hasattr(grid, "clear_cache") and callable(grid.clear_cache):
+                grid.clear_cache()
+        except Exception:
+            pass
+
+        del B, peaks, objs, peaks_iter, grid
+        gc.collect()
+
+    return all_objs
+
+def iter_rt_peaks_for_grids(
+    grids: Iterable["TofRtGrid"],
+    *,
+    batch_size: int = 32,
+    **kwargs,
+):
+    """
+    Yield lists of RtPeak1D for batches of TofRtGrid objects.
+
+    Example usage (MS1):
+        grid = ds.tof_rt_grid_precursor(tof_step=4)
+        for rt_peaks in iter_rt_peaks_for_grids([grid], device="cuda"):
+            ...
+
+    Example usage (MS2 window groups):
+        grids = [ds.tof_rt_grid_for_group(wg, tof_step=4) for wg in wg_ids]
+        for rt_peaks in iter_rt_peaks_for_grids(grids, device="cuda"):
+            ...
+    """
+    grids = list(grids)
+    n = len(grids)
+    for start in tqdm(range(0, n, batch_size), total=(n + batch_size - 1) // batch_size,
+                      desc="RT-grid batches", ncols=80):
+        chunk = grids[start:start + batch_size]
+        batch_objs = _detect_rt_peaks_for_grids(chunk, **kwargs)
+        yield batch_objs

@@ -1321,6 +1321,70 @@ pub struct PyRtPeak1D { pub inner: RtPeak1D }
 
 #[pymethods]
 impl PyRtPeak1D {
+    #[new]
+    #[pyo3(signature = (
+        rt_idx,
+        rt_sec,
+        apex_smoothed,
+        apex_raw,
+        prominence,
+        left_x,
+        right_x,
+        width_frames,
+        area_raw,
+        subframe,
+        rt_bounds_frames,
+        frame_id_bounds,
+        window_group,
+        tof_row,
+        tof_center,
+        tof_bounds,
+        parent_im_id,
+        id
+    ))]
+    pub fn new(
+        rt_idx: usize,
+        rt_sec: Option<f32>,
+        apex_smoothed: f32,
+        apex_raw: f32,
+        prominence: f32,
+        left_x: f32,
+        right_x: f32,
+        width_frames: usize,
+        area_raw: f32,
+        subframe: f32,
+        rt_bounds_frames: (usize, usize),
+        frame_id_bounds: (u32, u32),
+        window_group: Option<u32>,
+        tof_row: usize,
+        tof_center: i32,
+        tof_bounds: (i32, i32),
+        parent_im_id: Option<i64>,
+        id: i64,
+    ) -> Self {
+        let inner = RtPeak1D {
+            rt_idx,
+            rt_sec,
+            apex_smoothed,
+            apex_raw,
+            prominence,
+            left_x,
+            right_x,
+            width_frames,
+            area_raw,
+            subframe,
+            rt_bounds_frames,
+            frame_id_bounds,
+            window_group,
+            tof_row,
+            tof_center,
+            tof_bounds,
+            parent_im_id,
+            id,
+        };
+        Self { inner }
+    }
+
     // --- geometry in RT index/time
     #[getter] fn rt_idx(&self) -> usize { self.inner.rt_idx }
     #[getter] fn rt_sec(&self) -> Option<f32> { self.inner.rt_sec }
