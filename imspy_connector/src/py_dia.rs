@@ -9,11 +9,10 @@ use rayon::prelude::*;
 use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
-use rustdf::cluster::gauss_utils::{detect_im_peaks_from_tof_scan_grid_2d, ImDetectParams2D, ScaleMode};
 use rustdf::data::dia::TimsDatasetDIA;
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
-use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams, MobilityFn};
+use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
@@ -1562,69 +1561,6 @@ impl PyTofScanWindowGrid {
     #[getter]
     fn tof_edges<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
         Ok(PyArray1::from_vec_bound(py, self.inner.scale.edges.clone()).unbind())
-    }
-
-    #[pyo3(signature = (
-        min_intensity_scaled,
-        min_width_scans,
-        min_distance_scans,
-        smooth_sigma_scans,
-        smooth_sigma_tof,
-        smooth_trunc_k,
-        nms_kernel_scan=3,
-        nms_kernel_tof=3,
-        pool_tof_rows=1,
-        scale="sqrt"
-    ))]
-    pub fn detect_im_peaks_2d(
-        &self,
-        py: Python<'_>,
-        min_intensity_scaled: f32,
-        min_width_scans: usize,
-        min_distance_scans: usize,
-        smooth_sigma_scans: f32,
-        smooth_sigma_tof: f32,
-        smooth_trunc_k: f32,
-        nms_kernel_scan: usize,
-        nms_kernel_tof: usize,
-        pool_tof_rows: usize,
-        scale: &str,
-    ) -> PyResult<Vec<Py<PyImPeak1D>>> {
-        let mobility_of: MobilityFn = None;
-
-        let scale_mode = match scale {
-            "none" | "None" => ScaleMode::None,
-            "sqrt" | "Sqrt" => ScaleMode::Sqrt,
-            "log1p" | "Log1p" => ScaleMode::Log1p,
-            other => {
-                return Err(exceptions::PyValueError::new_err(format!(
-                    "unknown scale mode {other:?}, expected 'none' | 'sqrt' | 'log1p'"
-                )));
-            }
-        };
-
-        let params = ImDetectParams2D {
-            min_prom_scaled: min_intensity_scaled,
-            min_width_scans,
-            min_distance_scans,
-            smooth_sigma_tof,
-            smooth_trunc_k,
-            nms_kernel_scan,
-            nms_kernel_tof,
-            pool_tof_rows,
-            scale_mode,
-            smooth_sigma_scan: smooth_sigma_scans,
-        };
-
-        let peaks: Vec<ImPeak1D> = py.allow_threads(|| {
-            detect_im_peaks_from_tof_scan_grid_2d(&self.inner, mobility_of, params)
-        });
-
-        let mut out = Vec::with_capacity(peaks.len());
-        for p in peaks {
-            out.push(Py::new(py, PyImPeak1D { inner: Arc::new(p) })?);
-        }
-        Ok(out)
     }
 }
 
