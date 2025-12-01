@@ -1093,7 +1093,7 @@ def detect_rt_peaks_for_grid(
     peaks["sigma_tof"] = np.minimum(peaks["sigma_tof"], max_sigma_tof)
 
     # Turn dict-of-arrays into RtPeak1D objects
-    objs = RtPeak1D.batch_from_detected(
+    objs = RtPeak1D.from_batch_detected(
         peaks,
         window_grid=grid,    # TofRtGrid wrapper
         plan_group=None,
