@@ -70,6 +70,78 @@ class RtPeak1D(RustWrapperObject):
     def get_py_ptr(self) -> ims.PyRtPeak1D:
         return self.__py_ptr
 
+    @property
+    def id(self) -> int:
+        return self.__py_ptr.id
+
+    @property
+    def rt_idx(self) -> int:
+        return self.__py_ptr.rt_idx
+
+    @property
+    def rt_sec(self) -> float:
+        return self.__py_ptr.rt_sec
+
+    @property
+    def apex_smoothed(self) -> float:
+        return self.__py_ptr.apex_smoothed
+
+    @property
+    def apex_raw(self) -> float:
+        return self.__py_ptr.apex_raw
+
+    @property
+    def prominence(self) -> float:
+        return self.__py_ptr.prominence
+
+    @property
+    def left_x(self) -> float:
+        return self.__py_ptr.left_x
+
+    @property
+    def right_x(self) -> float:
+        return self.__py_ptr.right_x
+
+    @property
+    def width_frames(self) -> int:
+        return self.__py_ptr.width_frames
+
+    @property
+    def area_raw(self) -> float:
+        return self.__py_ptr.area_raw
+
+    @property
+    def subframe(self) -> float:
+        return self.__py_ptr.subframe
+
+    @property
+    def rt_bounds_frames(self) -> Tuple[int, int]:
+        return self.__py_ptr.rt_bounds_frames
+
+    @property
+    def frame_id_bounds(self) -> Tuple[int, int]:
+        return self.__py_ptr.frame_id_bounds
+
+    @property
+    def window_group(self) -> Optional[int]:
+        return self.__py_ptr.window_group
+
+    @property
+    def tof_row(self) -> int:
+        return self.__py_ptr.tof_row
+
+    @property
+    def tof_center(self) -> int:
+        return self.__py_ptr.tof_center
+
+    @property
+    def tof_bounds(self) -> Tuple[int, int]:
+        return self.__py_ptr.tof_bounds
+
+    @property
+    def parent_im_id(self) -> Optional[int]:
+        return self.__py_ptr.parent_im_id
+
     # --- existing properties omitted for brevity ---
 
     # ------------------------------------------------------------------
@@ -322,6 +394,28 @@ class RtPeak1D(RustWrapperObject):
 
     def __repr__(self):
         return repr(self.__py_ptr)
+
+    def to_dict(self) -> Dict[str, any]:
+        return {
+            "id": self.id,
+            "rt_idx": self.rt_idx,
+            "rt_sec": self.rt_sec,
+            "apex_smoothed": self.apex_smoothed,
+            "apex_raw": self.apex_raw,
+            "prominence": self.prominence,
+            "left_x": self.left_x,
+            "right_x": self.right_x,
+            "width_frames": self.width_frames,
+            "area_raw": self.area_raw,
+            "subframe": self.subframe,
+            "rt_bounds_frames": self.rt_bounds_frames,
+            "frame_id_bounds": self.frame_id_bounds,
+            "window_group": self.window_group,
+            "tof_row": self.tof_row,
+            "tof_center": self.tof_center,
+            "tof_bounds": self.tof_bounds,
+            "parent_im_id": self.parent_im_id,
+        }
 
 from typing import Dict, List
 
