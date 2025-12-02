@@ -831,8 +831,8 @@ def _detect_im_peaks_for_wgs(
             peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
 
         # IM geometry: typical FWHM in scan ≈ 40, but we don't want insane widths
-        factor = 3.0
-        expected_fwhm_scan = 55.0
+        factor = 1.5
+        expected_fwhm_scan = 35.0
         expected_fwhm_tof = 3.0
 
         max_sigma_scan = (expected_fwhm_scan / 2.355) * factor
