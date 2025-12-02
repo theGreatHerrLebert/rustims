@@ -1411,6 +1411,230 @@ impl PyRtPeak1D {
     #[getter] fn parent_im_id(&self) -> Option<i64> { self.inner.parent_im_id }
     #[getter] fn id(&self) -> i64 { self.inner.id }
 
+    #[staticmethod]
+    #[pyo3(signature = (
+        grid,
+        mu_rt,
+        sigma_rt,
+        mu_tof,
+        sigma_tof,
+        amplitude,
+        baseline,
+        area,
+        tof_row,
+        rt_idx_raw,
+        k_sigma,
+        min_width
+    ))]
+    pub fn from_batch_detected(
+        py: Python<'_>,
+        grid: &PyTofRtGrid,
+        mu_rt: &PyArray1<f32>,
+        sigma_rt: &PyArray1<f32>,
+        mu_tof: &PyArray1<f32>,
+        sigma_tof: &PyArray1<f32>,
+        amplitude: &PyArray1<f32>,
+        baseline: &PyArray1<f32>,
+        area: &PyArray1<f32>,
+        tof_row: &PyArray1<f32>,
+        rt_idx_raw: &PyArray1<f32>,
+        k_sigma: f32,
+        min_width: usize,
+    ) -> PyResult<Vec<Py<PyRtPeak1D>>> {
+        // ---- Borrow numpy arrays as slices --------------------------------
+        let mu_rt = unsafe { mu_rt.as_slice()? };
+        let sigma_rt = unsafe { sigma_rt.as_slice()? };
+        let mu_tof = unsafe { mu_tof.as_slice()? };
+        let sigma_tof = unsafe { sigma_tof.as_slice()? };
+        let amplitude = unsafe { amplitude.as_slice()? };
+        let baseline = unsafe { baseline.as_slice()? };
+        let area = unsafe { area.as_slice()? };
+        let tof_row = unsafe { tof_row.as_slice()? };
+        let rt_idx_raw = unsafe { rt_idx_raw.as_slice()? };
+
+        let n = mu_rt.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+
+        // sanity: all must match length
+        let check_len = |name: &str, len: usize| -> PyResult<()> {
+            if len != n {
+                Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "array {name} has len={len}, expected {n}"
+                )))
+            } else {
+                Ok(())
+            }
+        };
+
+        check_len("sigma_rt", sigma_rt.len())?;
+        check_len("mu_tof", mu_tof.len())?;
+        check_len("sigma_tof", sigma_tof.len())?;
+        check_len("amplitude", amplitude.len())?;
+        check_len("baseline", baseline.len())?;
+        check_len("area", area.len())?;
+        check_len("tof_row", tof_row.len())?;
+        check_len("rt_idx_raw", rt_idx_raw.len())?;
+
+        // ---- Snapshot grid info so the parallel region is GIL-free --------
+        let rows = grid.inner.rows;
+        let cols = grid.inner.cols;
+        if rows == 0 || cols == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "TofRtGrid has zero size",
+            ));
+        }
+
+        let frame_ids = grid.inner.frame_ids.clone();
+        let frame_id_bounds_default = grid.inner.frame_id_bounds;
+        let rt_times = grid.inner.rt_times.clone();
+        let rt_range_sec = grid.inner.rt_range_sec;
+        let window_group = grid.inner.window_group;
+
+        let k_sigma = k_sigma.max(0.0);
+        let min_width = min_width.max(1);
+
+        // ---- Heavy part in parallel, without GIL --------------------------
+        let peaks: Vec<RtPeak1D> = py.allow_threads(|| {
+            (0..n)
+                .into_par_iter()
+                .map(|i| {
+                    let mu_rt_i = mu_rt[i] as f32;
+                    let sigma_rt_i = sigma_rt[i].max(1e-3);
+                    let mu_tof_i = mu_tof[i] as f32;
+                    let sigma_tof_i = sigma_tof[i].max(1e-3);
+                    let amp_i = amplitude[i] as f32;
+                    let base_i = baseline[i] as f32;
+                    let area_i = area[i] as f32;
+                    let tof_row_i = tof_row[i] as f32;
+                    let _rt_idx_raw_i = rt_idx_raw[i] as f32; // unused, kept for symmetry
+
+                    // ----------------- RT geometry --------------------------
+                    let mut rt_idx = mu_rt_i.round() as isize;
+                    if rt_idx < 0 {
+                        rt_idx = 0;
+                    }
+                    if rt_idx as usize >= cols {
+                        rt_idx = (cols - 1) as isize;
+                    }
+                    let rt_idx_u = rt_idx as usize;
+
+                    let subframe = mu_rt_i - (rt_idx_u as f32);
+
+                    // rt_sec
+                    let rt_sec = if !rt_times.is_empty() {
+                        rt_times[rt_idx_u]
+                    } else {
+                        let (t0, t1) = rt_range_sec;
+                        if cols > 1 {
+                            let frac = (rt_idx_u as f32) / ((cols - 1) as f32);
+                            t0 + frac * (t1 - t0)
+                        } else {
+                            t0
+                        }
+                    };
+
+                    // bounds in frame index space
+                    let half_from_sigma = (k_sigma * sigma_rt_i).ceil() as isize;
+                    let half_from_min = ((min_width.saturating_sub(1)) / 2) as isize;
+                    let half = half_from_sigma.max(half_from_min).max(0);
+
+                    let mut rt_lo = rt_idx - half;
+                    let mut rt_hi = rt_idx + half;
+                    if rt_lo < 0 {
+                        rt_lo = 0;
+                    }
+                    if rt_hi as usize >= cols {
+                        rt_hi = (cols - 1) as isize;
+                    }
+                    let rt_lo_u = rt_lo as usize;
+                    let rt_hi_u = rt_hi as usize;
+                    let width_frames = rt_hi_u.saturating_sub(rt_lo_u).saturating_add(1);
+
+                    // frame id bounds
+                    let frame_id_bounds = if !frame_ids.is_empty() {
+                        let frame_lo = frame_ids[rt_lo_u];
+                        let frame_hi = frame_ids[rt_hi_u];
+                        (frame_lo, frame_hi)
+                    } else {
+                        frame_id_bounds_default
+                    };
+
+                    let rt_bounds_frames = (rt_lo_u, rt_hi_u);
+                    let left_x = rt_lo_u as f32;
+                    let right_x = rt_hi_u as f32;
+
+                    // ----------------- TOF geometry ------------------------
+                    let mut tof_row_idx = tof_row_i.round() as isize;
+                    if tof_row_idx < 0 {
+                        tof_row_idx = 0;
+                    }
+                    if tof_row_idx as usize >= rows {
+                        tof_row_idx = (rows - 1) as isize;
+                    }
+                    let tof_row_u = tof_row_idx as usize;
+
+                    let mut tof_center_idx = mu_tof_i.round() as isize;
+                    if tof_center_idx < 0 {
+                        tof_center_idx = 0;
+                    }
+                    if tof_center_idx as usize >= rows {
+                        tof_center_idx = (rows - 1) as isize;
+                    }
+                    let tof_center_u = tof_center_idx as usize;
+
+                    let half_tof = (k_sigma * sigma_tof_i).ceil().max(1.0) as isize;
+                    let mut tof_lo_idx = tof_center_idx - half_tof;
+                    let mut tof_hi_idx = tof_center_idx + half_tof;
+                    if tof_lo_idx < 0 {
+                        tof_lo_idx = 0;
+                    }
+                    if tof_hi_idx as usize >= rows {
+                        tof_hi_idx = (rows - 1) as isize;
+                    }
+
+                    let tof_bounds = (tof_lo_idx as i32, tof_hi_idx as i32);
+                    let tof_center = tof_center_u as i32;
+
+                    // ----------------- shape / intensity --------------------
+                    let apex_raw = amp_i + base_i;
+                    let apex_smoothed = apex_raw;
+                    let prominence = amp_i;
+                    let area_raw = area_i;
+
+                    RtPeak1D {
+                        rt_idx: rt_idx_u,
+                        rt_sec: Some(rt_sec),
+                        apex_smoothed,
+                        apex_raw,
+                        prominence,
+                        left_x,
+                        right_x,
+                        width_frames,
+                        area_raw,
+                        subframe,
+                        rt_bounds_frames,
+                        frame_id_bounds,
+                        window_group,
+                        tof_row: tof_row_u,
+                        tof_center,
+                        tof_bounds,
+                        parent_im_id: None,
+                        id: i as i64, // or customize if you want deterministic IDs
+                    }
+                })
+                .collect()
+        });
+
+        // ---- Wrap into PyRtPeak1D under the GIL ---------------------------
+        let mut out = Vec::with_capacity(peaks.len());
+        for p in peaks {
+            out.push(Py::new(py, PyRtPeak1D { inner: p })?);
+        }
+        Ok(out)
+    }
+
     pub fn __repr__(&self) -> String {
         format!(
             "RtPeak1D(rt_idx={}, rt_sec={:?}, apex={:.3}, prom={:.3}, frames={:?}, tof_row={})",

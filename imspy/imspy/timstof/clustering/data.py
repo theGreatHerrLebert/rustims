@@ -343,54 +343,66 @@ class RtPeak1D(RustWrapperObject):
 
         return cls.from_py_ptr(py_peak)
 
-    # ------------------------------------------------------------------
-    # NEW: vectorized construction from a peaks dict
-    # ------------------------------------------------------------------
     @classmethod
     def from_batch_detected(
-        cls,
-        peaks: Dict[str, np.ndarray],
-        *,
-        window_grid: "TofRtGrid",
-        plan_group=None,
-        k_sigma: float = 3.0,
-        min_width: int = 3,
-    ) -> List["RtPeak1D"]:
+            cls,
+            peaks: Dict[str, np.ndarray],
+            *,
+            window_grid: "TofRtGrid",
+            plan_group=None,
+            k_sigma: float = 3.0,
+            min_width: int = 3,
+    ) -> list["RtPeak1D"]:
         """
-        Build many RtPeak1D instances from detector output.
-
-        Parameters
-        ----------
-        peaks : dict[str, np.ndarray]
-            Output of TOF×RT detector.
-        window_grid : TofRtGrid
-            The grid from which detection was done.
-        plan_group : unused, for API symmetry with IM peaks.
-        k_sigma : float
-            Controls how far to extend in RT/TOF based on sigma.
-        min_width : int
-            Minimal RT width in frames (inclusive).
+        Build many RtPeak1D instances from detector output using a
+        fast parallel Rust implementation.
         """
-        # We just use mu_rt (or mu_scan) length as master length.
+        # choose length from mu_rt / mu_scan
         if "mu_rt" in peaks:
-            n = int(peaks["mu_rt"].shape[0])
+            mu_rt = peaks["mu_rt"]
         elif "mu_scan" in peaks:
-            n = int(peaks["mu_scan"].shape[0])
+            mu_rt = peaks["mu_scan"]
         else:
-            # no peaks; nothing to do
             return []
 
-        return [
-            cls.from_detected(
-                peaks,
-                i,
-                window_grid=window_grid,
-                plan_group=plan_group,
-                k_sigma=k_sigma,
-                min_width=min_width,
-            )
-            for i in range(n)
-        ]
+        n = int(mu_rt.shape[0])
+        if n == 0:
+            return []
+
+        def arr(name: str, alt: str | None = None) -> np.ndarray:
+            if name in peaks:
+                return peaks[name]
+            if alt and alt in peaks:
+                return peaks[alt]
+            raise KeyError(f"Required key {name!r} (or {alt!r}) missing from peaks")
+
+        mu_rt_arr = arr("mu_rt", "mu_scan")
+        sigma_rt_arr = arr("sigma_rt", "sigma_scan")
+        mu_tof_arr = arr("mu_tof")
+        sigma_tof_arr = arr("sigma_tof")
+        amp_arr = arr("amplitude")
+        base_arr = arr("baseline")
+        area_arr = arr("area")
+        tof_row_arr = arr("tof_row", "i")
+        rt_idx_raw_arr = arr("scan_idx", "j")
+
+        # Call into the Rust static method.
+        peaks_py = ims.PyRtPeak1D.from_batch_detected(
+            window_grid.get_py_ptr(),
+            np.asarray(mu_rt_arr, dtype=np.float32),
+            np.asarray(sigma_rt_arr, dtype=np.float32),
+            np.asarray(mu_tof_arr, dtype=np.float32),
+            np.asarray(sigma_tof_arr, dtype=np.float32),
+            np.asarray(amp_arr, dtype=np.float32),
+            np.asarray(base_arr, dtype=np.float32),
+            np.asarray(area_arr, dtype=np.float32),
+            np.asarray(tof_row_arr, dtype=np.float32),
+            np.asarray(rt_idx_raw_arr, dtype=np.float32),
+            float(k_sigma),
+            int(min_width),
+        )
+
+        return [cls.from_py_ptr(p) for p in peaks_py]
 
     def __repr__(self):
         return repr(self.__py_ptr)
