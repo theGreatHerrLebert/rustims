@@ -1,6 +1,6 @@
 import gc
 import math
-from typing import Iterable
+from typing import Iterable, List
 
 import numpy as np
 from tqdm import tqdm
@@ -782,7 +782,7 @@ def _detect_im_peaks_for_wgs(
     do_dedup=True,
     tol_scan=0.75,
     tol_tof=0.25,
-    k_sigma=3.0,
+    k_sigma=2.0,                 # was 3.0, narrower window cap for IM
     min_width=3,
     blur_sigma_scan: float | None = None,
     blur_sigma_tof: float | None = None,
@@ -830,11 +830,12 @@ def _detect_im_peaks_for_wgs(
         if do_dedup:
             peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
 
-        factor = 1.5
+        # IM geometry: typical FWHM in scan ≈ 40, but we don't want insane widths
+        factor = 1.2
         expected_fwhm_scan = 40.0
         expected_fwhm_tof = 5.0
 
-        max_sigma_scan = expected_fwhm_scan / 2.355 * factor  # factor maybe 1.5
+        max_sigma_scan = expected_fwhm_scan / 2.355 * factor
         max_sigma_tof = expected_fwhm_tof / 2.355 * factor
 
         sigma_scan = np.minimum(peaks["sigma_scan"], max_sigma_scan)
@@ -896,7 +897,7 @@ def iter_im_peaks_batches(
     tol_scan=0.75,
     tol_tof=0.25,
     # conversion
-    k_sigma=3.0,
+    k_sigma=2.0,              # IM: match _detect_im_peaks_for_wgs default
     min_width=3,
     topk_per_tile: int | None = None,
     patch_batch_target_mb: int = 128,
@@ -962,21 +963,21 @@ def iter_im_peaks_batches(
         del wgs, batch_objs
         gc.collect()
 
-from typing import List
 
-import numpy as np
-
+# ---------------------------
+# RT case: TOF×RT grids
+# ---------------------------
 
 def detect_rt_peaks_for_grid(
     grid: "TofRtGrid",
     *,
     device: str = "cuda",
-    pool_rt: int = 15,                 # same role as pool_scan
+    pool_rt: int = 5,                  # narrower LC peaks: ~3–5 frames
     pool_tof: int = 3,
     min_intensity_scaled: float = 1.0,
-    tile_rows: int = 200_000,
-    tile_overlap: int = 64,
-    fit_h: int = 35,
+    tile_rows: int = 50_000,           # RT grids smaller; no need for 200k+
+    tile_overlap: int = 32,
+    fit_h: int = 19,                   # ~2*pool_rt + margin, odd
     fit_w: int = 11,
     refine: str = "adam",
     refine_iters: int = 8,
@@ -990,9 +991,9 @@ def detect_rt_peaks_for_grid(
     output_units: str = "original",
     gn_float64: bool = False,
     do_dedup: bool = True,
-    tol_rt: float = 0.75,              # same idea as tol_scan
+    tol_rt: float = 0.5,               # stricter dedup in RT than IM
     tol_tof: float = 0.25,
-    k_sigma: float = 3.0,
+    k_sigma: float = 2.5,              # narrower window cap in frames
     min_width_frames: int = 3,
     blur_sigma_rt: float | None = None,
     blur_sigma_tof: float | None = None,
@@ -1004,34 +1005,7 @@ def detect_rt_peaks_for_grid(
     Detect RT 1D peaks from a single TofRtGrid using the same 2D detector
     as for TOF×SCAN, interpreting the column axis as RT frames.
 
-    Parameters
-    ----------
-    grid : TofRtGrid
-        Dense TOF×RT grid (rows = TOF bins, cols = RT frames).
-    device : str
-        Torch device, e.g. "cuda" or "cpu".
-    pool_rt, pool_tof : int
-        Max-pooling kernel sizes along RT and TOF axes in the scaled domain.
-    min_intensity_scaled : float
-        Threshold in the **scaled** domain (after sqrt/log transform).
-    tile_rows, tile_overlap : int
-        Row-wise tiling in the internal (RT-major) orientation.
-    fit_h, fit_w : int
-        Patch size for moment/refinement fitting (will be forced to odd and
-        at least ~2*pool + margin).
-    refine, refine_* :
-        Refinement backend and knobs ("none" | "adam" | "gauss_newton" | "gn").
-    scale : {"none", "sqrt", "log1p", "cbrt"}
-        Intensity scaling before detection.
-    output_units : {"scaled", "original"}
-        If "original", recompute amp/base/area in original units.
-    do_dedup, tol_rt, tol_tof :
-        Coarse-grid deduplication in (RT, TOF) space.
-    k_sigma, min_width_frames :
-        Controls RT/TOF bounds when constructing RtPeak1D.
-    blur_sigma_rt, blur_sigma_tof :
-        1D Gaussian blur sigmas along RT and TOF axes, applied *before*
-        scaling and detection (same semantics as IM path).
+    Here we assume narrow LC peaks in RT frames (~3–5 frames typical).
     """
     from imspy.timstof.clustering.data import RtPeak1D
 
@@ -1081,9 +1055,10 @@ def detect_rt_peaks_for_grid(
             tol_tof=tol_tof,
         )
 
-    # Optional sigma caps – now for RT instead of IM
-    factor = 1.5
-    expected_fwhm_rt = 30.0  # tweak for your LC
+    # Optional sigma caps – now for RT instead of IM.
+    # Typical LC FWHM ~4 frames; allow up to ~2×FWHM in window.
+    factor = 1.2
+    expected_fwhm_rt = 4.0
     expected_fwhm_tof = 5.0  # tweak if needed
 
     max_sigma_rt = expected_fwhm_rt / 2.355 * factor
