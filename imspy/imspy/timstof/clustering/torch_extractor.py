@@ -831,9 +831,9 @@ def _detect_im_peaks_for_wgs(
             peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
 
         # IM geometry: typical FWHM in scan ≈ 40, but we don't want insane widths
-        factor = 1.2
-        expected_fwhm_scan = 40.0
-        expected_fwhm_tof = 5.0
+        factor = 1.0
+        expected_fwhm_scan = 55.0
+        expected_fwhm_tof = 3.0
 
         max_sigma_scan = expected_fwhm_scan / 2.355 * factor
         max_sigma_tof = expected_fwhm_tof / 2.355 * factor
@@ -1057,11 +1057,10 @@ def detect_rt_peaks_for_grid(
 
     # Optional sigma caps – now for RT instead of IM.
     # Typical LC FWHM ~4 frames; allow up to ~2×FWHM in window.
-    factor = 1.2
-    expected_fwhm_rt = 4.0
-    expected_fwhm_tof = 5.0  # tweak if needed
-
+    factor = 1.0
+    expected_fwhm_rt = 3.0
     max_sigma_rt = expected_fwhm_rt / 2.355 * factor
+    expected_fwhm_tof = 3.0  # tweak if needed
     max_sigma_tof = expected_fwhm_tof / 2.355 * factor
 
     peaks["sigma_scan"] = np.minimum(peaks["sigma_scan"], max_sigma_rt)
