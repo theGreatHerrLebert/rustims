@@ -2,7 +2,7 @@ use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
-use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2};
+use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
@@ -1426,38 +1426,38 @@ impl PyRtPeak1D {
         k_sigma,
         min_width
     ))]
-    pub fn from_batch_detected(
-        py: Python<'_>,
+    pub fn from_batch_detected<'py>(
+        py: Python<'py>,
         grid: &PyTofRtGrid,
-        mu_rt: &PyArray1<f32>,
-        sigma_rt: &PyArray1<f32>,
-        mu_tof: &PyArray1<f32>,
-        sigma_tof: &PyArray1<f32>,
-        amplitude: &PyArray1<f32>,
-        baseline: &PyArray1<f32>,
-        area: &PyArray1<f32>,
-        tof_row: &PyArray1<f32>,
-        rt_idx_raw: &PyArray1<f32>,
+        mu_rt: PyReadonlyArray1<'py, f32>,
+        sigma_rt: PyReadonlyArray1<'py, f32>,
+        mu_tof: PyReadonlyArray1<'py, f32>,
+        sigma_tof: PyReadonlyArray1<'py, f32>,
+        amplitude: PyReadonlyArray1<'py, f32>,
+        baseline: PyReadonlyArray1<'py, f32>,
+        area: PyReadonlyArray1<'py, f32>,
+        tof_row: PyReadonlyArray1<'py, f32>,
+        rt_idx_raw: PyReadonlyArray1<'py, f32>,
         k_sigma: f32,
         min_width: usize,
     ) -> PyResult<Vec<Py<PyRtPeak1D>>> {
-        // ---- Borrow numpy arrays as slices --------------------------------
-        let mu_rt = unsafe { mu_rt.as_slice()? };
-        let sigma_rt = unsafe { sigma_rt.as_slice()? };
-        let mu_tof = unsafe { mu_tof.as_slice()? };
-        let sigma_tof = unsafe { sigma_tof.as_slice()? };
-        let amplitude = unsafe { amplitude.as_slice()? };
-        let baseline = unsafe { baseline.as_slice()? };
-        let area = unsafe { area.as_slice()? };
-        let tof_row = unsafe { tof_row.as_slice()? };
-        let rt_idx_raw = unsafe { rt_idx_raw.as_slice()? };
+        // ---- Borrow NumPy arrays as slices (no unsafe needed) ------------
+        let mu_rt       = mu_rt.as_slice()?;
+        let sigma_rt    = sigma_rt.as_slice()?;
+        let mu_tof      = mu_tof.as_slice()?;
+        let sigma_tof   = sigma_tof.as_slice()?;
+        let amplitude   = amplitude.as_slice()?;
+        let baseline    = baseline.as_slice()?;
+        let area        = area.as_slice()?;
+        let tof_row     = tof_row.as_slice()?;
+        let rt_idx_raw  = rt_idx_raw.as_slice()?;
 
         let n = mu_rt.len();
         if n == 0 {
             return Ok(Vec::new());
         }
 
-        // sanity: all must match length
+        // sanity check lengths
         let check_len = |name: &str, len: usize| -> PyResult<()> {
             if len != n {
                 Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -1477,7 +1477,7 @@ impl PyRtPeak1D {
         check_len("tof_row", tof_row.len())?;
         check_len("rt_idx_raw", rt_idx_raw.len())?;
 
-        // ---- Snapshot grid info so the parallel region is GIL-free --------
+        // ---- Snapshot grid info so parallel region is GIL-free -----------
         let rows = grid.inner.rows;
         let cols = grid.inner.cols;
         if rows == 0 || cols == 0 {
@@ -1495,22 +1495,22 @@ impl PyRtPeak1D {
         let k_sigma = k_sigma.max(0.0);
         let min_width = min_width.max(1);
 
-        // ---- Heavy part in parallel, without GIL --------------------------
+        // ---- Heavy work in parallel, GIL released ------------------------
         let peaks: Vec<RtPeak1D> = py.allow_threads(|| {
             (0..n)
                 .into_par_iter()
                 .map(|i| {
-                    let mu_rt_i = mu_rt[i] as f32;
-                    let sigma_rt_i = sigma_rt[i].max(1e-3);
-                    let mu_tof_i = mu_tof[i] as f32;
-                    let sigma_tof_i = sigma_tof[i].max(1e-3);
-                    let amp_i = amplitude[i] as f32;
-                    let base_i = baseline[i] as f32;
-                    let area_i = area[i] as f32;
-                    let tof_row_i = tof_row[i] as f32;
-                    let _rt_idx_raw_i = rt_idx_raw[i] as f32; // unused, kept for symmetry
+                    let mu_rt_i      = mu_rt[i];
+                    let sigma_rt_i   = sigma_rt[i].max(1e-3);
+                    let mu_tof_i     = mu_tof[i];
+                    let sigma_tof_i  = sigma_tof[i].max(1e-3);
+                    let amp_i        = amplitude[i];
+                    let base_i       = baseline[i];
+                    let area_i       = area[i];
+                    let tof_row_i    = tof_row[i];
+                    let _rt_idx_raw_i = rt_idx_raw[i];
 
-                    // ----------------- RT geometry --------------------------
+                    // ----------------- RT geometry ------------------------
                     let mut rt_idx = mu_rt_i.round() as isize;
                     if rt_idx < 0 {
                         rt_idx = 0;
@@ -1554,9 +1554,7 @@ impl PyRtPeak1D {
 
                     // frame id bounds
                     let frame_id_bounds = if !frame_ids.is_empty() {
-                        let frame_lo = frame_ids[rt_lo_u];
-                        let frame_hi = frame_ids[rt_hi_u];
-                        (frame_lo, frame_hi)
+                        (frame_ids[rt_lo_u], frame_ids[rt_hi_u])
                     } else {
                         frame_id_bounds_default
                     };
@@ -1565,7 +1563,7 @@ impl PyRtPeak1D {
                     let left_x = rt_lo_u as f32;
                     let right_x = rt_hi_u as f32;
 
-                    // ----------------- TOF geometry ------------------------
+                    // ----------------- TOF geometry -----------------------
                     let mut tof_row_idx = tof_row_i.round() as isize;
                     if tof_row_idx < 0 {
                         tof_row_idx = 0;
@@ -1597,7 +1595,7 @@ impl PyRtPeak1D {
                     let tof_bounds = (tof_lo_idx as i32, tof_hi_idx as i32);
                     let tof_center = tof_center_u as i32;
 
-                    // ----------------- shape / intensity --------------------
+                    // ----------------- shape / intensity -------------------
                     let apex_raw = amp_i + base_i;
                     let apex_smoothed = apex_raw;
                     let prominence = amp_i;
@@ -1621,7 +1619,7 @@ impl PyRtPeak1D {
                         tof_center,
                         tof_bounds,
                         parent_im_id: None,
-                        id: i as i64, // or customize if you want deterministic IDs
+                        id: i as i64,
                     }
                 })
                 .collect()
