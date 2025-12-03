@@ -415,7 +415,7 @@ class FragmentIndex(RustWrapperObject):
         )
         return [PseudoSpectrum(ps) for ps in py_specs]
 
-    def query_precursors_to_pseudospectra(
+    def score_precursors_to_pseudospectra(
             self,
             precursor_clusters: list["ClusterResult1D"],
             *,
