@@ -1030,61 +1030,21 @@ impl<'a> FragmentIndex<'a> {
         })
     }
 
-    /// Enumerate candidate MS2 indices for a given precursor.
+    /// Enumerate candidate MS2 indices for a thin precursor.
     ///
     /// Returns indices into `self.ms2`.
-    pub fn enumerate_candidates_for_precursor(
+    pub fn enumerate_candidates_for_precursor_thin(
         &self,
-        prec: &ClusterResult1D,
+        prec: &ThinPrecursor,
         window_groups: Option<&[u32]>,
         opts: &FragmentQueryOpts,
     ) -> Vec<usize> {
         let mut out = Vec::<usize>::new();
 
-        // --- precursor m/z (for group selection + "inside selection" test) ---
-        let prec_mz = if let Some(m) = cluster_mz_mu(prec) {
-            if m.is_finite() && m > 0.0 {
-                m
-            } else {
-                match prec.mz_window {
-                    Some((lo, hi))
-                    if lo.is_finite() && hi.is_finite() && hi > lo =>
-                        {
-                            0.5 * (lo + hi)
-                        }
-                    _ => return out, // no usable m/z
-                }
-            }
-        } else {
-            match prec.mz_window {
-                Some((lo, hi))
-                if lo.is_finite() && hi.is_finite() && hi > lo =>
-                    {
-                        0.5 * (lo + hi)
-                    }
-                _ => return out,
-            }
-        };
-
-        // --- precursor RT apex (SECONDS!) ---
-        let prec_rt = match self.precursor_rt_apex_sec(prec) {
-            Some(t) => t,
-            None => return out,
-        };
-
-        // --- precursor IM apex (scan space) ---
-        let prec_im = if prec.im_fit.mu.is_finite() {
-            prec.im_fit.mu
-        } else {
-            let (lo, hi) = prec.im_window;
-            if hi > lo {
-                ((lo + hi) as f32) * 0.5
-            } else {
-                return out;
-            }
-        };
-
-        let prec_im_win = prec.im_window;
+        let prec_mz      = prec.mz_mu;
+        let prec_rt      = prec.rt_mu;
+        let prec_im      = prec.im_mu;
+        let prec_im_win  = prec.im_window;
         let prec_scan_win = (prec_im_win.0 as u32, prec_im_win.1 as u32);
 
         // Decide which groups to query
@@ -1198,7 +1158,6 @@ impl<'a> FragmentIndex<'a> {
                     }
                 }
 
-                // Survived all guards: keep this fragment index.
                 out.push(j);
             }
         }
@@ -1208,17 +1167,23 @@ impl<'a> FragmentIndex<'a> {
         out
     }
 
-    /// Enumerate candidates for many precursors.
+    /// Enumerate candidates for many thin precursors.
     ///
-    /// Used by `query_precursors_scored_par`, with default FragmentQueryOpts.
-    fn enumerate_candidates_for_precursors(
+    /// Keeps the same length as `precs`: `None` ⇒ empty candidate list.
+    fn enumerate_candidates_for_precursors_thin(
         &self,
-        precs: &[ClusterResult1D],
+        precs: &[Option<ThinPrecursor>],
         opts: &FragmentQueryOpts,
     ) -> Vec<Vec<usize>> {
         precs
             .iter()
-            .map(|prec| self.enumerate_candidates_for_precursor(prec, None, opts))
+            .map(|maybe_prec| {
+                if let Some(ref p) = maybe_prec {
+                    self.enumerate_candidates_for_precursor_thin(p, None, opts)
+                } else {
+                    Vec::new()
+                }
+            })
             .collect()
     }
 
@@ -1237,9 +1202,12 @@ impl<'a> FragmentIndex<'a> {
             Some(c) => c,
             None => return Vec::new(),
         };
-
-        // NOTE: we always let the index decide which window groups to query.
-        self.enumerate_candidates_for_precursor(prec_cluster, None, opts)
+        let thin = match self.make_thin_precursor(prec_cluster) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+        // NOTE: groups always decided by the index.
+        self.enumerate_candidates_for_precursor_thin(&thin, None, opts)
     }
 
     pub fn query_precursor_scored(
@@ -1252,7 +1220,16 @@ impl<'a> FragmentIndex<'a> {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
-        let candidate_ids = self.enumerate_candidates_for_precursor(prec, window_groups, opts);
+        // Build thin precursor for enumeration only.
+        let thin = match self.make_thin_precursor(prec) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+
+        let candidate_ids =
+            self.enumerate_candidates_for_precursor_thin(&thin, window_groups, opts);
+
+        // Scoring still uses the full cluster as PrecursorLike::Cluster.
         query_precursor_scored(
             PrecursorLike::Cluster(prec),
             self.ms2,
@@ -1273,11 +1250,20 @@ impl<'a> FragmentIndex<'a> {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<Vec<ScoredHit>> {
-        let all_candidates = self.enumerate_candidates_for_precursors(precs, opts);
+        // 1) Build thin precursors (Option → keep alignment with `precs`).
+        let thin_precs: Vec<Option<ThinPrecursor>> = precs
+            .iter()
+            .map(|c| self.make_thin_precursor(c))
+            .collect();
 
+        // 2) Enumerate candidates using only the thin data.
+        let all_candidates = self.enumerate_candidates_for_precursors_thin(&thin_precs, opts);
+
+        // 3) Build PrecursorLike slice referencing the full clusters for scoring.
         let prec_like: Vec<PrecursorLike<'_>> =
             precs.iter().map(|c| PrecursorLike::Cluster(c)).collect();
 
+        // 4) Score in parallel (unchanged).
         query_precursors_scored_par(
             &prec_like,
             self.ms2,
@@ -1289,9 +1275,6 @@ impl<'a> FragmentIndex<'a> {
         )
     }
 
-    /// Enumerate candidates for many SimpleFeatures.
-    ///
-    /// Used by `query_features_scored_par`, with FragmentIndex-derived groups.
     fn enumerate_candidates_for_features(
         &self,
         feats: &[SimpleFeature],
@@ -1299,7 +1282,18 @@ impl<'a> FragmentIndex<'a> {
     ) -> Vec<Vec<usize>> {
         feats
             .iter()
-            .map(|feat| self.enumerate_candidates_for_feature(feat, opts))
+            .map(|feat| {
+                let prec_cluster = match feature_representative_cluster(feat) {
+                    Some(c) => c,
+                    None => return Vec::new(),
+                };
+                let thin = match self.make_thin_precursor(prec_cluster) {
+                    Some(t) => t,
+                    None => return Vec::new(),
+                };
+                // NOTE: groups always decided by the index.
+                self.enumerate_candidates_for_precursor_thin(&thin, None, opts)
+            })
             .collect()
     }
 
@@ -1358,7 +1352,77 @@ impl<'a> FragmentIndex<'a> {
             min_score,
         )
     }
+
+    /// Build a thin precursor representation used for candidate enumeration.
+    ///
+    /// This folds all the "how do we get RT apex / m/z apex / IM apex?" logic
+    /// into one place and drops everything else (raw points, axes, …).
+    pub fn make_thin_precursor(&self, prec: &ClusterResult1D) -> Option<ThinPrecursor> {
+        // --- precursor m/z (same rules as before) ---
+        let prec_mz = if let Some(m) = cluster_mz_mu(prec) {
+            if m.is_finite() && m > 0.0 {
+                m
+            } else {
+                match prec.mz_window {
+                    Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => {
+                        0.5 * (lo + hi)
+                    }
+                    _ => return None, // no usable m/z
+                }
+            }
+        } else {
+            match prec.mz_window {
+                Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => {
+                    0.5 * (lo + hi)
+                }
+                _ => return None,
+            }
+        };
+
+        // --- RT apex in seconds (uses existing helper for fallback) ---
+        let rt_mu = match self.precursor_rt_apex_sec(prec) {
+            Some(t) => t,
+            None => return None,
+        };
+
+        // --- IM apex + window (scan space) ---
+        let im_window = prec.im_window;
+        let im_mu = if prec.im_fit.mu.is_finite() {
+            prec.im_fit.mu
+        } else {
+            let (lo, hi) = im_window;
+            if hi > lo {
+                ((lo + hi) as f32) * 0.5
+            } else {
+                return None;
+            }
+        };
+
+        Some(ThinPrecursor {
+            mz_mu: prec_mz,
+            rt_mu,
+            im_mu,
+            im_window,
+        })
+    }
 }
+
+#[derive(Clone, Debug)]
+pub struct ThinPrecursor {
+    /// Precursor m/z apex (Da), already cleaned / representative.
+    pub mz_mu: f32,
+
+    /// RT apex in *seconds*.
+    pub rt_mu: f32,
+
+    /// IM apex in scan space.
+    pub im_mu: f32,
+
+    /// IM window (scan indices) used for overlap / tile tests.
+    pub im_window: (usize, usize),
+}
+
+
 
 // Simple helpers (local)
 

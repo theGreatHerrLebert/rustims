@@ -3362,7 +3362,18 @@ impl PyFragmentIndex {
     ) -> PyResult<Vec<Vec<PyScoredHit>>> {
         let precs_rust: Vec<ClusterResult1D> = precs
             .into_iter()
-            .map(|p| p.borrow(py).inner.clone())
+            // remove the raw data to avoid killing the memory
+            .map(|p| {
+                let mut c = p.borrow(py).inner.clone();
+                c.rt_axis_sec = None;
+                c.im_axis_scans = None;
+                c.mz_axis_da = None;
+                c.raw_points = None;
+                c.rt_trace = None;
+                c.im_trace = None;
+                c
+            }
+            )
             .collect();
 
         let mode_rs = parse_match_score_mode(mode)?;
