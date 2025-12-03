@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use rustdf::cluster::cluster::ClusterResult1D;
+use rustdf::cluster::candidates::fragment_from_cluster;
 use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpectrum};
 use crate::py_dia::PyClusterResult1D;
 use crate::py_feature::PySimpleFeature;
@@ -281,40 +281,6 @@ impl PyPseudoSpectrum {
             self.inner.fragments.len(),
         )
     }
-}
-
-/// Convert an MS2 ClusterResult1D into a PseudoFragment.
-/// Return None if the cluster is unusable (no m/z).
-pub fn fragment_from_cluster(c: &ClusterResult1D) -> Option<PseudoFragment> {
-    // mz: prefer fitted μ, fallback to window mid
-    let mz = if let Some(fit) = &c.mz_fit {
-        if fit.mu.is_finite() && fit.mu > 0.0 {
-            fit.mu
-        } else if let Some((lo, hi)) = c.mz_window {
-            0.5 * (lo + hi)
-        } else {
-            return None;
-        }
-    } else if let Some((lo, hi)) = c.mz_window {
-        0.5 * (lo + hi)
-    } else {
-        return None;
-    };
-
-    if !mz.is_finite() {
-        return None;
-    }
-
-    // intensity: choose raw_sum as best available proxy
-    let intensity = c.raw_sum;
-
-    Some(PseudoFragment {
-        mz,
-        intensity,
-        ms2_cluster_index: 0,
-        ms2_cluster_id: c.cluster_id,
-        window_group: c.window_group.unwrap_or(0),
-    })
 }
 
 /// Merge PseudoFragment peaks by m/z with a ppm tolerance.

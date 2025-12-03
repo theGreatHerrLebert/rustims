@@ -382,6 +382,72 @@ class FragmentIndex(RustWrapperObject):
             for hits_row in hits_nested
         ]
 
+    def score_features_to_pseudospectra(
+            self,
+            features: list["SimpleFeature"],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
+            min_fragments: int = 4,
+    ) -> list["PseudoSpectrum"]:
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+        """
+        Parallel scoring of SimpleFeatures AND construction of PseudoSpectra.
+
+        Returns one PseudoSpectrum per feature with at least `min_fragments`
+        surviving fragment hits.
+        """
+        py_specs = self._py.score_features_to_pseudospectra_par(
+            [f.get_py_ptr() for f in features],
+            mode=mode,
+            min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
+            min_fragments=min_fragments,
+        )
+        return [PseudoSpectrum(ps) for ps in py_specs]
+
+    def query_precursors_to_pseudospectra(
+            self,
+            precursor_clusters: list["ClusterResult1D"],
+            *,
+            mode: str = "geom",
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
+            min_fragments: int = 4,
+    ) -> list["PseudoSpectrum"]:
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+        """
+        Parallel scoring of precursor clusters AND construction of PseudoSpectra.
+
+        Returns one PseudoSpectrum per cluster with at least `min_fragments`
+        surviving fragment hits.
+        """
+        py_specs = self._py.query_precursors_to_pseudospectra_par(
+            [c.get_py_ptr() for c in precursor_clusters],
+            mode=mode,
+            min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
+            min_fragments=min_fragments,
+        )
+        return [PseudoSpectrum(ps) for ps in py_specs]
+
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):

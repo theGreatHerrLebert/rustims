@@ -5,7 +5,7 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
+use rustdf::cluster::candidates::{fragment_from_cluster, AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::{DiaIndex, TimsDatasetDIA};
@@ -2809,7 +2809,7 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
 }
 
 use rustdf::cluster::io as cio;
-use rustdf::cluster::pseudo::PseudoSpecOpts;
+use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpecOpts, PseudoSpectrum};
 use rustdf::cluster::scoring::{MatchScoreMode, ScoredHit, XicScoreOpts};
 use crate::py_feature::PySimpleFeature;
 use crate::py_pseudo::PyPseudoSpectrum;
@@ -3522,6 +3522,141 @@ impl PyFragmentIndex {
 
         Ok(wrapped)
     }
+
+    #[pyo3(signature = (
+        feats,
+        mode = "geom",
+        min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
+        min_fragments = 4,
+    ))]
+    pub fn score_features_to_pseudospectra_par(
+        &self,
+        feats: Vec<Py<PySimpleFeature>>,
+        mode: &str,
+        min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        require_tile_compat: bool,
+        min_fragments: usize,
+        py: Python<'_>,
+    ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        let feats_rust: Vec<SimpleFeature> = feats
+            .into_iter()
+            .map(|f| f.borrow(py).inner.clone())
+            .collect();
+
+        let mode_rs = parse_match_score_mode(mode)?;
+        let geom_opts = ScoreOpts::default();
+        let xic_opts  = XicScoreOpts::default();
+
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+            require_tile_compat,
+            reject_frag_inside_precursor_tile,
+        };
+
+        // Parallel scoring inside FragmentIndex
+        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_features_scored_par(
+            &feats_rust,
+            &frag_opts,
+            mode_rs,
+            &geom_opts,
+            &xic_opts,
+            min_score,
+        );
+
+        let ms2 = self.inner.ms2_slice();
+
+        // Build PseudoSpectra on the Rust side
+        let mut out: Vec<PyPseudoSpectrum> = Vec::new();
+        for (feat, hits) in feats_rust.iter().zip(all_hits.iter()) {
+            if hits.len() < min_fragments {
+                continue;
+            }
+            if let Some(ps) = pseudospectrum_from_feature_and_hits(feat, hits, ms2) {
+                out.push(PyPseudoSpectrum { inner: ps });
+            }
+        }
+
+        Ok(out)
+    }
+
+    /// Score many precursor clusters in parallel and build PseudoSpectra.
+    ///
+    /// Returns one PseudoSpectrum per precursor cluster with >= min_fragments hits.
+    #[pyo3(signature = (
+        precs,
+        mode = "geom",
+        min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
+        min_fragments = 4,
+    ))]
+    pub fn query_precursors_to_pseudospectra_par(
+        &self,
+        precs: Vec<Py<PyClusterResult1D>>,
+        mode: &str,
+        min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        require_tile_compat: bool,
+        min_fragments: usize,
+        py: Python<'_>,
+    ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        let precs_rust: Vec<ClusterResult1D> = precs
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        let mode_rs   = parse_match_score_mode(mode)?;
+        let geom_opts = ScoreOpts::default();
+        let xic_opts  = XicScoreOpts::default();
+
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+            require_tile_compat,
+            reject_frag_inside_precursor_tile,
+        };
+
+        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_precursors_scored_par(
+            &precs_rust,
+            &frag_opts,
+            mode_rs,
+            &geom_opts,
+            &xic_opts,
+            min_score,
+        );
+
+        let ms2 = self.inner.ms2_slice();
+
+        let mut out: Vec<PyPseudoSpectrum> = Vec::new();
+        for (prec, hits) in precs_rust.iter().zip(all_hits.iter()) {
+            if hits.len() < min_fragments {
+                continue;
+            }
+            if let Some(ps) = pseudospectrum_from_cluster_and_hits(prec, hits, ms2) {
+                out.push(PyPseudoSpectrum { inner: ps });
+            }
+        }
+
+        Ok(out)
+    }
 }
 
 // unchanged
@@ -3535,6 +3670,157 @@ fn parse_match_score_mode(mode: &str) -> PyResult<MatchScoreMode> {
              Expected one of: 'geom', 'xic'."
         ))),
     }
+}
+
+/// Build a PseudoSpectrum from a single precursor cluster and its scored hits.
+///
+/// - `prec` : precursor cluster (MS1)
+/// - `hits` : scored fragment hits (ScoredHit::frag_idx indexes into `ms2`)
+/// - `ms2`  : full MS2 cluster slice owned by FragmentIndex
+pub fn pseudospectrum_from_cluster_and_hits(
+    prec: &ClusterResult1D,
+    hits: &[ScoredHit],
+    ms2: &[ClusterResult1D],
+) -> Option<PseudoSpectrum> {
+    use std::cmp::Ordering;
+
+    let mut frags: Vec<PseudoFragment> = Vec::new();
+    let mut window_groups: Vec<u32> = Vec::new();
+
+    for h in hits {
+        let j = h.frag_idx;
+        if j >= ms2.len() {
+            continue;
+        }
+        let c2 = &ms2[j];
+
+        // Only keep MS2 clusters as fragments
+        if c2.ms_level != 2 {
+            continue;
+        }
+
+        if let Some(wg) = c2.window_group {
+            if !window_groups.contains(&wg) {
+                window_groups.push(wg);
+            }
+        }
+
+        if let Some(pf) = fragment_from_cluster(c2) {
+            frags.push(pf);
+        }
+    }
+
+    if frags.is_empty() {
+        return None;
+    }
+
+    // Deterministic ordering
+    window_groups.sort_unstable();
+    frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+
+    // Precursor m/z: prefer mz_fit, fallback to window midpoint
+    let precursor_mz = if let Some(fit) = &prec.mz_fit {
+        fit.mu
+    } else if let Some((lo, hi)) = prec.mz_window {
+        0.5 * (lo + hi)
+    } else {
+        return None;
+    };
+
+    let rt_apex = prec.rt_fit.mu;
+    let im_apex = prec.im_fit.mu;
+
+    Some(PseudoSpectrum {
+        precursor_mz,
+        precursor_charge: 0, // not known from cluster
+        rt_apex,
+        im_apex,
+        feature_id: None,
+        window_groups,
+        precursor_cluster_ids: vec![prec.cluster_id],
+        fragments: frags,
+        precursor_cluster_indices: vec![],
+    })
+}
+
+/// Build a PseudoSpectrum from a SimpleFeature and its scored hits.
+pub fn pseudospectrum_from_feature_and_hits(
+    feat: &SimpleFeature,
+    hits: &[ScoredHit],
+    ms2: &[ClusterResult1D],
+) -> Option<PseudoSpectrum> {
+    use std::cmp::Ordering;
+
+    let mut frags: Vec<PseudoFragment> = Vec::new();
+    let mut window_groups: Vec<u32> = Vec::new();
+
+    for h in hits {
+        let j = h.frag_idx;
+        if j >= ms2.len() {
+            continue;
+        }
+        let c2 = &ms2[j];
+
+        if c2.ms_level != 2 {
+            continue;
+        }
+
+        if let Some(wg) = c2.window_group {
+            if !window_groups.contains(&wg) {
+                window_groups.push(wg);
+            }
+        }
+
+        if let Some(pf) = fragment_from_cluster(c2) {
+            frags.push(pf);
+        }
+    }
+
+    if frags.is_empty() {
+        return None;
+    }
+
+    window_groups.sort_unstable();
+    frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+
+    let precursor_mz = feat.mz_mono;
+    let precursor_charge = feat.charge;
+    let feature_id = Some(feat.feature_id);
+
+    let mut _rt_apex: f32;
+    let mut _im_apex: f32;
+    let mut precursor_cluster_ids: Vec<u64> = Vec::new();
+
+    if let Some(top) = feat
+        .member_clusters
+        .iter()
+        .max_by(|a, b| {
+            a.raw_sum
+                .partial_cmp(&b.raw_sum)
+                .unwrap_or(Ordering::Equal)
+        })
+    {
+        _rt_apex = top.rt_fit.mu;
+        _im_apex = top.im_fit.mu;
+        precursor_cluster_ids.push(top.cluster_id);
+    } else {
+        let (rt_lo, rt_hi) = feat.rt_bounds;
+        let (im_lo, im_hi) = feat.im_bounds;
+        _rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
+        _im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
+    }
+
+    Some(PseudoSpectrum {
+        precursor_mz,
+        precursor_charge,
+        rt_apex: _rt_apex,
+        im_apex: _im_apex,
+        feature_id,
+        window_groups,
+        precursor_cluster_ids,
+        fragments: frags,
+        precursor_cluster_indices: feat.member_cluster_indices.clone(),
+    })
 }
 
 #[pymodule]

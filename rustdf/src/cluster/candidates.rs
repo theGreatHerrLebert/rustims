@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
-use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu};
+use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu, PseudoFragment};
 use crate::cluster::scoring::{assign_ms2_to_best_ms1_by_xic, jaccard_time, ms1_to_ms2_map, query_precursor_scored, query_precursors_scored_par, MatchScoreMode, PrecursorLike, PrecursorSearchIndex, ScoredHit, XicScoreOpts};
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
 
@@ -1405,6 +1405,10 @@ impl<'a> FragmentIndex<'a> {
             im_window,
         })
     }
+    #[inline]
+    pub fn ms2_slice(&self) -> &[ClusterResult1D] {
+        self.ms2
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1459,6 +1463,40 @@ fn upper_bound(xs: &[f32], x: f32) -> usize {
         }
     }
     lo
+}
+
+/// Convert an MS2 ClusterResult1D into a PseudoFragment.
+/// Return None if the cluster is unusable (no m/z).
+pub fn fragment_from_cluster(c: &ClusterResult1D) -> Option<PseudoFragment> {
+    // mz: prefer fitted μ, fallback to window mid
+    let mz = if let Some(fit) = &c.mz_fit {
+        if fit.mu.is_finite() && fit.mu > 0.0 {
+            fit.mu
+        } else if let Some((lo, hi)) = c.mz_window {
+            0.5 * (lo + hi)
+        } else {
+            return None;
+        }
+    } else if let Some((lo, hi)) = c.mz_window {
+        0.5 * (lo + hi)
+    } else {
+        return None;
+    };
+
+    if !mz.is_finite() {
+        return None;
+    }
+
+    // intensity: choose raw_sum as best available proxy
+    let intensity = c.raw_sum;
+
+    Some(PseudoFragment {
+        mz,
+        intensity,
+        ms2_cluster_index: 0,
+        ms2_cluster_id: c.cluster_id,
+        window_group: c.window_group.unwrap_or(0),
+    })
 }
 
 fn feature_representative_cluster<'a>(feat: &'a SimpleFeature) -> Option<&'a ClusterResult1D> {
