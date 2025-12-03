@@ -3541,6 +3541,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPseudoBuildResult>()?;
     m.add_class::<PyFragmentIndex>()?;
     m.add_class::<PyScoredHit>()?;
+    m.add_class::<PyCandidateOpts>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
