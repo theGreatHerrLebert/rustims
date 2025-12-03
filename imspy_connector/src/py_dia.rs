@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
@@ -9,7 +8,7 @@ use rayon::prelude::*;
 use rustdf::cluster::candidates::{AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
-use rustdf::data::dia::TimsDatasetDIA;
+use rustdf::data::dia::{DiaIndex, TimsDatasetDIA};
 use rustdf::data::handle::TimsData;
 use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
@@ -2628,30 +2627,12 @@ impl PyTimsDatasetDIA {
     /// Parameters
     /// ----------
     /// ms2_clusters : list[PyClusterResult1D]
-    ///     The MS2 clusters to index (typically `fragment_clusters`).
-    /// min_raw_sum : float
-    ///     Intensity cutoff for fragments.
-    /// ms2_rt_guard_sec : float
-    ///     Padding added to MS2 RT bounds before checking spans.
-    /// max_ms2_rt_span_sec : float or None
-    ///     Drop MS2 clusters whose RT span exceeds this (seconds).
-    /// rt_bucket_width : float
-    ///     Unused by FragmentIndex, but kept to be compatible with CandidateOpts API
-    ///     if you later decide to reuse it.
-    #[pyo3(signature = (
-        ms2_clusters,
-        min_raw_sum = 1.0,
-        ms2_rt_guard_sec = 0.0,
-        max_ms2_rt_span_sec = Some(60.0),
-        rt_bucket_width = 1.0,
-    ))]
+    /// cand_opts    : PyCandidateOpts
+    #[pyo3(signature = (ms2_clusters, cand_opts))]
     pub fn build_fragment_index(
         &self,
         ms2_clusters: Vec<Py<PyClusterResult1D>>,
-        min_raw_sum: f32,
-        ms2_rt_guard_sec: f64,
-        max_ms2_rt_span_sec: Option<f64>,
-        rt_bucket_width: f64,
+        cand_opts: &PyCandidateOpts,
         py: Python<'_>,
     ) -> PyResult<Py<PyFragmentIndex>> {
         if ms2_clusters.is_empty() {
@@ -2660,61 +2641,69 @@ impl PyTimsDatasetDIA {
             ));
         }
 
-        // Convert PyClusterResult1D list → Vec<ClusterResult1D>
+        // 1) Thin copy of MS2 clusters (drop axes + raw/traces)
         let mut rust_ms2: Vec<ClusterResult1D> = Vec::with_capacity(ms2_clusters.len());
         for c in ms2_clusters {
             let c_ref = c.borrow(py);
 
-            // get the inner and create ClusterResult1D but without the RAW data
-            rust_ms2.push(
-                ClusterResult1D {
-                    cluster_id: c_ref.inner.cluster_id,
-                    rt_window: c_ref.inner.rt_window,
-                    im_window: c_ref.inner.im_window,
-                    tof_window: c_ref.inner.tof_window,
-                    tof_index_window: c_ref.inner.tof_index_window,
-                    mz_window: c_ref.inner.mz_window,
-                    rt_fit: c_ref.inner.rt_fit.clone(),
-                    im_fit: c_ref.inner.im_fit.clone(),
-                    tof_fit: c_ref.inner.tof_fit.clone(),
-                    mz_fit: c_ref.inner.mz_fit.clone(),
-                    raw_sum: c_ref.inner.raw_sum,
-                    volume_proxy: c_ref.inner.volume_proxy,
-                    frame_ids_used: c_ref.inner.frame_ids_used.clone(),
-                    window_group: c_ref.inner.window_group,
-                    parent_im_id: c_ref.inner.parent_im_id,
-                    parent_rt_id: c_ref.inner.parent_rt_id,
-                    ms_level: c_ref.inner.ms_level,
-                    rt_axis_sec: c_ref.inner.rt_axis_sec.clone(),
-                    im_axis_scans: c_ref.inner.im_axis_scans.clone(),
-                    mz_axis_da: c_ref.inner.mz_axis_da.clone(),
-                    raw_points: None, // drop raw points for indexing
-                    rt_trace: None, // drop traces for indexing
-                    im_trace: None, // drop traces for indexing
-                }
-            );
+            rust_ms2.push(ClusterResult1D {
+                cluster_id:       c_ref.inner.cluster_id,
+                rt_window:        c_ref.inner.rt_window,
+                im_window:        c_ref.inner.im_window,
+                tof_window:       c_ref.inner.tof_window,
+                tof_index_window: c_ref.inner.tof_index_window,
+                mz_window:        c_ref.inner.mz_window,
+
+                rt_fit:  c_ref.inner.rt_fit.clone(),
+                im_fit:  c_ref.inner.im_fit.clone(),
+                tof_fit: c_ref.inner.tof_fit.clone(),
+                mz_fit:  c_ref.inner.mz_fit.clone(),
+
+                raw_sum:        c_ref.inner.raw_sum,
+                volume_proxy:   c_ref.inner.volume_proxy,
+                frame_ids_used: c_ref.inner.frame_ids_used.clone(),
+                window_group:   c_ref.inner.window_group,
+                parent_im_id:   c_ref.inner.parent_im_id,
+                parent_rt_id:   c_ref.inner.parent_rt_id,
+                ms_level:       c_ref.inner.ms_level,
+
+                rt_axis_sec:   None,
+                im_axis_scans: None,
+                mz_axis_da:    None,
+
+                raw_points: None,
+                rt_trace:   None,
+                im_trace:   None,
+            });
         }
 
-        // Build CandidateOpts for MS2 side only
-        let cand_opts = CandidateOpts {
-            min_rt_jaccard: 0.0,
-            ms2_rt_guard_sec,
-            rt_bucket_width,
-            max_ms1_rt_span_sec: None,
-            max_ms2_rt_span_sec,
-            min_raw_sum,
+        // 2) Own MS2 clusters; index borrows via 'static slice.
+        let ms2_storage = Arc::new(rust_ms2);
+        let ms2_slice: &[ClusterResult1D] = ms2_storage.as_slice();
 
-            max_rt_apex_delta_sec: None,
-            max_scan_apex_delta: None,
-            min_im_overlap_scans: 1,
-            reject_frag_inside_precursor_tile: true,
+        // SAFETY: ms2_storage is kept alive inside PyFragmentIndex.
+        let ms2_slice_static: &'static [ClusterResult1D] = unsafe {
+            std::mem::transmute::<&[ClusterResult1D], &'static [ClusterResult1D]>(ms2_slice)
         };
 
-        let idx = self
-            .inner
-            .build_fragment_index(&rust_ms2, &cand_opts);
+        // 3) DiaIndex (assuming self.inner.dia_index is Arc<DiaIndex>)
+        let dia_arc: Arc<DiaIndex> = Arc::new(self.inner.dia_index.clone());
 
-        let py_idx = Py::new(py, PyFragmentIndex { inner: idx })?;
+        // 4) Build the core index using the *inner* CandidateOpts
+        let inner_idx = FragmentIndex::build(
+            dia_arc,
+            ms2_slice_static,
+            &cand_opts.inner,
+        );
+
+        let py_idx = Py::new(
+            py,
+            PyFragmentIndex {
+                inner: inner_idx,
+                ms2_storage: ms2_storage,
+            },
+        )?;
+
         Ok(py_idx)
     }
 }
@@ -3082,15 +3071,142 @@ impl PyScoredHit {
     }
 }
 
+use std::sync::Arc;
 #[pyclass]
+#[derive(Clone)]
+pub struct PyCandidateOpts {
+    pub(crate) inner: CandidateOpts,
+}
+
+#[pymethods]
+impl PyCandidateOpts {
+    /// Create candidate-enumeration options.
+    ///
+    /// Parameters (Python side):
+    /// - min_rt_jaccard: float
+    /// - ms2_rt_guard_sec: float
+    /// - rt_bucket_width: float
+    /// - max_ms1_rt_span_sec: Optional[float]
+    /// - max_ms2_rt_span_sec: Optional[float]
+    /// - min_raw_sum: float
+    /// - max_rt_apex_delta_sec: Optional[float]
+    /// - max_scan_apex_delta: Optional[int]
+    /// - min_im_overlap_scans: int
+    /// - reject_frag_inside_precursor_tile: bool
+    #[new]
+    #[pyo3(signature = (
+        min_rt_jaccard = 0.0,
+        ms2_rt_guard_sec = 1.0,
+        rt_bucket_width = 0.5,
+        max_ms1_rt_span_sec = None,
+        max_ms2_rt_span_sec = None,
+        min_raw_sum = 0.0,
+        max_rt_apex_delta_sec = None,
+        max_scan_apex_delta = None,
+        min_im_overlap_scans = 1,
+        reject_frag_inside_precursor_tile = true,
+    ))]
+    pub fn new(
+        min_rt_jaccard: f32,
+        ms2_rt_guard_sec: f64,
+        rt_bucket_width: f64,
+        max_ms1_rt_span_sec: Option<f64>,
+        max_ms2_rt_span_sec: Option<f64>,
+        min_raw_sum: f32,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        reject_frag_inside_precursor_tile: bool,
+    ) -> Self {
+        PyCandidateOpts {
+            inner: CandidateOpts {
+                min_rt_jaccard,
+                ms2_rt_guard_sec,
+                rt_bucket_width,
+                max_ms1_rt_span_sec,
+                max_ms2_rt_span_sec,
+                min_raw_sum,
+                max_rt_apex_delta_sec,
+                max_scan_apex_delta,
+                min_im_overlap_scans,
+                reject_frag_inside_precursor_tile,
+            },
+        }
+    }
+
+    // You can add getters here later if you want Python-side introspection.
+}
+#[pyclass]
+#[allow(dead_code)]
 pub struct PyFragmentIndex {
-    pub(crate) inner: FragmentIndex,
+    /// Fragment index built on top of a `'static` slice into `ms2_storage`.
+    pub(crate) inner: FragmentIndex<'static>,
+
+    /// Owns the MS2 clusters so that `inner.ms2` always points to valid data.
+    ms2_storage: Arc<Vec<ClusterResult1D>>,
 }
 
 #[pymethods]
 impl PyFragmentIndex {
+    // --------------------------------------------------------------
+    // Constructor: build from dataset + MS2 clusters + CandidateOpts
+    // --------------------------------------------------------------
+    //
+    // Python signature will be something like:
+    //   PyFragmentIndex(ds, ms2_clusters, cand_opts)
+    //
+    // where:
+    //   - ds: PyTimsDatasetDIA
+    //   - ms2_clusters: list[PyClusterResult1D]
+    //   - cand_opts: PyCandidateOpts
+    #[new]
+    #[pyo3(signature = (ds, ms2_clusters, cand_opts))]
+    pub fn new(
+        ds: &PyTimsDatasetDIA,
+        ms2_clusters: Vec<Py<PyClusterResult1D>>,
+        cand_opts: &PyCandidateOpts,
+        py: Python<'_>,
+    ) -> PyResult<Self> {
+        // 1) Convert Python MS2 objects → Vec<ClusterResult1D>
+        let ms2_vec: Vec<ClusterResult1D> = ms2_clusters
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        // 2) Store MS2 clusters in an Arc so we can safely hand out a slice.
+        let ms2_storage = Arc::new(ms2_vec);
+
+        // 3) Borrow a slice from the storage.
+        let ms2_slice: &[ClusterResult1D] = ms2_storage.as_slice();
+
+        // 4) Extend the lifetime to 'static inside this wrapper.
+        //
+        // SAFETY:
+        // - `ms2_storage` is a field of `PyFragmentIndex` and lives as long as `inner`.
+        // - We never mutate `ms2_storage` after this (treat as immutable).
+        // - `FragmentIndex` only holds a shared slice `&[ClusterResult1D]`.
+        // ⇒ As long as we never let `inner` escape without `ms2_storage`,
+        //    this `'static` cast is sound.
+        let ms2_slice_static: &'static [ClusterResult1D] = unsafe {
+            std::mem::transmute::<&[ClusterResult1D], &'static [ClusterResult1D]>(ms2_slice)
+        };
+
+        // 5) Build the core FragmentIndex on the static-looking slice.
+        let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into(); // or ds.inner.dia_index.clone() if it's already Arc
+        let inner = FragmentIndex::build(
+            dia_arc,
+            ms2_slice_static,
+            &cand_opts.inner,
+        );
+
+        Ok(PyFragmentIndex {
+            inner,
+            ms2_storage,
+        })
+    }
+
     // ------------------------------------------------------------------
-    // Existing unscored methods – already wired correctly
+    // Existing unscored methods – no semantic changes
     // ------------------------------------------------------------------
 
     #[pyo3(signature = (
@@ -3154,12 +3270,13 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
+        // Still clones precursors here, but that's much smaller than cloning all MS2.
         let precs_rust: Vec<ClusterResult1D> = precs
             .into_iter()
             .map(|p| p.borrow(py).inner.clone())
             .collect();
 
-        let all_hits = self.inner.query_precursors_par(precs_rust, &opts, num_threads);
+        let all_hits = self.inner.query_precursors_par(&precs_rust, &opts, num_threads);
         Ok(all_hits)
     }
 
@@ -3167,15 +3284,15 @@ impl PyFragmentIndex {
     // 1) Cluster-based: single precursor, scored
     // ------------------------------------------------------------------
     #[pyo3(signature = (
-    prec,
-    window_groups = None,
-    mode = "geom",
-    min_score = 0.0,
-    reject_frag_inside_precursor_tile = true,
-    max_rt_apex_delta_sec = Some(2.0),
-    max_scan_apex_delta = Some(6),
-    min_im_overlap_scans = 1,
-    require_tile_compat = true,
+        prec,
+        window_groups = None,
+        mode = "geom",
+        min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
     ))]
     pub fn query_precursor_scored(
         &self,
@@ -3192,7 +3309,6 @@ impl PyFragmentIndex {
         let prec_rust: &ClusterResult1D = &prec.inner;
 
         let mode_rs = parse_match_score_mode(mode)?;
-
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
@@ -3223,14 +3339,14 @@ impl PyFragmentIndex {
     // 2) Cluster-based: many precursors, scored in parallel
     // ------------------------------------------------------------------
     #[pyo3(signature = (
-    precs,
-    mode = "geom",
-    min_score = 0.0,
-    reject_frag_inside_precursor_tile = true,
-    max_rt_apex_delta_sec = Some(2.0),
-    max_scan_apex_delta = Some(6),
-    min_im_overlap_scans = 1,
-    require_tile_compat = true,
+        precs,
+        mode = "geom",
+        min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
     ))]
     pub fn query_precursors_scored_par(
         &self,
@@ -3286,14 +3402,14 @@ impl PyFragmentIndex {
     // 3) Feature-based: single feature, scored
     // ------------------------------------------------------------------
     #[pyo3(signature = (
-    feat,
-    mode = "geom",
-    min_score = 0.0,
-    reject_frag_inside_precursor_tile = true,
-    max_rt_apex_delta_sec = Some(2.0),
-    max_scan_apex_delta = Some(6),
-    min_im_overlap_scans = 1,
-    require_tile_compat = true,
+        feat,
+        mode = "geom",
+        min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
     ))]
     pub fn score_feature(
         &self,
@@ -3337,15 +3453,15 @@ impl PyFragmentIndex {
     /// mode: "geom" | "xic"
     /// min_score: keep only hits with score >= min_score
     #[pyo3(signature = (
-    feats,
-    mode = "geom",
-    min_score = 0.0,
-    reject_frag_inside_precursor_tile = true,
-    max_rt_apex_delta_sec = Some(2.0),
-    max_scan_apex_delta = Some(6),
-    min_im_overlap_scans = 1,
-    require_tile_compat = true,
-))]
+        feats,
+        mode = "geom",
+        min_score = 0.0,
+        reject_frag_inside_precursor_tile = true,
+        max_rt_apex_delta_sec = Some(2.0),
+        max_scan_apex_delta = Some(6),
+        min_im_overlap_scans = 1,
+        require_tile_compat = true,
+    ))]
     pub fn score_features_par(
         &self,
         feats: Vec<Py<PySimpleFeature>>,

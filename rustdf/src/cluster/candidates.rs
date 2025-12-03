@@ -608,13 +608,11 @@ impl Default for FragmentQueryOpts {
 }
 
 #[derive(Clone, Debug)]
-pub struct FragmentIndex {
+pub struct FragmentIndex<'a> {
     dia_index: Arc<DiaIndex>,
 
-    /// Full MS2 cluster objects (one per fragment cluster).
-    ///
-    /// All per-MS2 metadata vectors below use the same indexing.
-    ms2: Vec<ClusterResult1D>,
+    /// Borrowed MS2 clusters – single owner elsewhere.
+    ms2: &'a [ClusterResult1D],
 
     // per-MS2 metadata (global index over all groups)
     ms2_im_mu: Vec<f32>,
@@ -630,7 +628,7 @@ pub struct FragmentIndex {
     by_group: HashMap<u32, FragmentGroupIndex>,
 }
 
-impl FragmentIndex {
+impl<'a> FragmentIndex<'a> {
     /// Build RT-sorted fragment index per window group.
     ///
     /// Only uses the MS2-relevant fields of CandidateOpts:
@@ -639,12 +637,12 @@ impl FragmentIndex {
     ///   - max_ms2_rt_span_sec
     pub fn build(
         dia_index: Arc<DiaIndex>,
-        ms2: &[ClusterResult1D],
+        ms2: &'a [ClusterResult1D],
         opts: &CandidateOpts,
     ) -> Self {
         let frame_time = &dia_index.frame_time;
 
-        // 1) Absolute MS2 time bounds (seconds)
+        // 1) Absolute MS2 time bounds (seconds) – unchanged
         let ms2_time_bounds: Vec<(f64, f64)> = ms2
             .par_iter()
             .map(|c| {
@@ -660,7 +658,7 @@ impl FragmentIndex {
             })
             .collect();
 
-        // 2) Keep mask for MS2 – same as before
+        // 2) Keep mask – unchanged
         let ms2_keep: Vec<bool> = ms2
             .par_iter()
             .enumerate()
@@ -697,7 +695,7 @@ impl FragmentIndex {
             })
             .collect();
 
-        // 3) IM window + IM apex, with fallback to midpoint
+        // 3) IM window + IM apex, with fallback to midpoint – unchanged
         let ms2_im_windows: Vec<(usize, usize)> =
             ms2.iter().map(|c| c.im_window).collect();
 
@@ -721,7 +719,7 @@ impl FragmentIndex {
         let ms2_cluster_ids: Vec<u64> =
             ms2.iter().map(|c| c.cluster_id).collect();
 
-        // 4) RT apex in seconds with fallback to time bounds
+        // 4) RT apex (seconds) with fallback – unchanged
         let ms2_rt_apex: Vec<f32> = ms2
             .iter()
             .enumerate()
@@ -740,7 +738,7 @@ impl FragmentIndex {
             })
             .collect();
 
-        // 4.5) Representative m/z per MS2 cluster: μ if available, else mz_window midpoint.
+        // 4.5) Representative m/z – unchanged
         let ms2_mz_mu: Vec<f32> = ms2
             .iter()
             .map(|c| {
@@ -766,7 +764,7 @@ impl FragmentIndex {
             })
             .collect();
 
-        // 5) Group MS2 per WG and sort by RT apex (seconds)
+        // 5) Group and sort by RT apex – unchanged
         let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
 
         for (j, c2) in ms2.iter().enumerate() {
@@ -795,8 +793,8 @@ impl FragmentIndex {
         }
 
         FragmentIndex {
-            ms2: ms2.to_vec(),
             dia_index,
+            ms2, // <-- no clone
             ms2_im_mu,
             ms2_im_windows,
             ms2_keep,
@@ -1016,11 +1014,10 @@ impl FragmentIndex {
     /// Parallel batch query: for each precursor, return a Vec of MS2 cluster_ids.
     pub fn query_precursors_par(
         &self,
-        precursors: Vec<ClusterResult1D>,
+        precursors: &[ClusterResult1D],
         opts: &FragmentQueryOpts,
         num_threads: usize,
     ) -> Vec<Vec<u64>> {
-        use rayon::prelude::*;
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -1258,7 +1255,7 @@ impl FragmentIndex {
         let candidate_ids = self.enumerate_candidates_for_precursor(prec, window_groups, opts);
         query_precursor_scored(
             PrecursorLike::Cluster(prec),
-            &self.ms2,
+            self.ms2,
             &candidate_ids,
             mode,
             geom_opts,
@@ -1283,7 +1280,7 @@ impl FragmentIndex {
 
         query_precursors_scored_par(
             &prec_like,
-            &self.ms2,
+            self.ms2,
             &all_candidates,
             mode,
             geom_opts,
@@ -1324,7 +1321,7 @@ impl FragmentIndex {
 
         query_precursor_scored(
             PrecursorLike::Feature(feat),
-            &self.ms2,
+            self.ms2,
             &candidate_ids,
             mode,
             geom_opts,
@@ -1353,7 +1350,7 @@ impl FragmentIndex {
 
         query_precursors_scored_par(
             &prec_like,
-            &self.ms2,
+            self.ms2,
             &all_candidates,
             mode,
             geom_opts,

@@ -12,6 +12,52 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+class CandidateOpts(RustWrapperObject):
+    """
+    Python wrapper for ims.PyCandidateOpts.
+
+    Encapsulates the candidate-enumeration options used when building a
+    FragmentIndex. You can reuse a CandidateOpts instance for multiple
+    indexes if you like.
+    """
+
+    def __init__(
+        self,
+        *,
+        min_rt_jaccard: float = 0.0,
+        ms2_rt_guard_sec: float = 0.0,
+        rt_bucket_width: float = 1.0,
+        max_ms1_rt_span_sec: float | None = None,
+        max_ms2_rt_span_sec: float | None = 60.0,
+        min_raw_sum: float = 1.0,
+        max_rt_apex_delta_sec: float | None = None,
+        max_scan_apex_delta: int | None = None,
+        min_im_overlap_scans: int = 1,
+        reject_frag_inside_precursor_tile: bool = True,
+    ) -> None:
+        # Directly construct the PyO3 object
+        self._py = ims.PyCandidateOpts(
+            min_rt_jaccard=min_rt_jaccard,
+            ms2_rt_guard_sec=ms2_rt_guard_sec,
+            rt_bucket_width=rt_bucket_width,
+            max_ms1_rt_span_sec=max_ms1_rt_span_sec,
+            max_ms2_rt_span_sec=max_ms2_rt_span_sec,
+            min_raw_sum=min_raw_sum,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+        )
+
+    def get_py_ptr(self) -> ims.PyCandidateOpts:
+        return self._py
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyCandidateOpts) -> "CandidateOpts":
+        inst = cls.__new__(cls)
+        inst._py = p
+        return inst
+
 class ScoredHit(RustWrapperObject):
     """
     Thin Python wrapper around ims.PyScoredHit.
@@ -920,27 +966,26 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         return TofRtGrid.from_py_ptr(grid)
 
     def build_fragment_index(
-            self,
-            ms2_clusters: list["ClusterResult1D"],
-            *,
-            min_raw_sum: float = 1.0,
-            ms2_rt_guard_sec: float = 0.0,
-            max_ms2_rt_span_sec: float | None = 60.0,
-            rt_bucket_width: float = 1.0,
+        self,
+        ms2_clusters: list["ClusterResult1D"],
+        cand_opts: CandidateOpts,
     ) -> FragmentIndex:
         """
         Build a fragment index (FragmentIndex) over the given MS2 clusters.
 
-        Parameters mirror the Rust CandidateOpts MS2-side fields.
+        Parameters
+        ----------
+        ms2_clusters : list[ClusterResult1D]
+        cand_opts    : CandidateOpts
+            Fully specifies the candidate-enumeration options.
         """
         py_ms2 = [c.get_py_ptr() for c in ms2_clusters]
+
         py_idx = self.get_py_ptr().build_fragment_index(
             py_ms2,
-            min_raw_sum=min_raw_sum,
-            ms2_rt_guard_sec=ms2_rt_guard_sec,
-            max_ms2_rt_span_sec=max_ms2_rt_span_sec,
-            rt_bucket_width=rt_bucket_width,
+            cand_opts.get_py_ptr(),
         )
+
         return FragmentIndex.from_py_ptr(py_idx)
 
     def debug_extract_raw_for_clusters(

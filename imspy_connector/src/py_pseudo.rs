@@ -145,8 +145,8 @@ impl PyPseudoSpectrum {
             let feature_id = Some(feat.feature_id);
 
             // Derive RT / IM apex + cluster IDs from the top-intensity member
-            let mut rt_apex = 0.0f32;
-            let mut im_apex = 0.0f32;
+            let mut _rt_apex = 0.0f32;
+            let mut _im_apex = 0.0f32;
             let mut precursor_cluster_ids: Vec<u64> = Vec::new();
 
             if let Some(top) = feat
@@ -158,23 +158,23 @@ impl PyPseudoSpectrum {
                         .unwrap_or(Ordering::Equal)
                 })
             {
-                rt_apex = top.rt_fit.mu;
-                im_apex = top.im_fit.mu;
+                _rt_apex = top.rt_fit.mu;
+                _im_apex = top.im_fit.mu;
                 precursor_cluster_ids.push(top.cluster_id);
             } else {
                 // Worst case: feature has no backing clusters (should not happen)
                 // fall back to rough midpoints of RT / IM bounds
                 let (rt_lo, rt_hi) = feat.rt_bounds;
                 let (im_lo, im_hi) = feat.im_bounds;
-                rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
-                im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
+                _rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
+                _im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
             }
 
             PseudoSpectrum {
                 precursor_mz,
                 precursor_charge,
-                rt_apex,
-                im_apex,
+                rt_apex: _rt_apex,
+                im_apex: _im_apex,
                 feature_id,
                 // IMPORTANT: use the same window_groups derived from the **fragments**
                 window_groups,

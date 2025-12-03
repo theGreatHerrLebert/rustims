@@ -952,11 +952,11 @@ impl TimsDatasetDIA {
         build_tof_rt_grid_full(&rt, Some(window_group))
     }
 
-    pub fn build_fragment_index(
-        &self,
-        ms2_clusters: &[ClusterResult1D],
+    pub fn build_fragment_index<'a>(
+        &'a self,
+        ms2_clusters: &'a [ClusterResult1D],
         cand_opts: &CandidateOpts,
-    ) -> FragmentIndex {
+    ) -> FragmentIndex<'a> {
         FragmentIndex::build(
             Arc::new(self.dia_index.clone()),
             ms2_clusters,
