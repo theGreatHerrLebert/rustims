@@ -311,6 +311,10 @@ impl PyClusterResult1D {
     fn im_xic(&self) -> Option<Vec<f32>> {
         self.inner.im_trace.clone()
     }
+
+    pub fn drop_raw_data(&mut self) {
+        self.inner.raw_points = None;
+    }
 }
 
 #[pyclass]

@@ -1425,6 +1425,10 @@ class ClusterResult1D:
     def to_dataframe_row(self) -> pd.DataFrame:
         return pd.DataFrame([self.to_dict()])
 
+    def drop_raw_data(self):
+        """Drop attached raw points to save memory."""
+        self._py.drop_raw_data()
+
     def __repr__(self):
         return (
             f"ClusterResult1D(ms_level={self.ms_level}, "
