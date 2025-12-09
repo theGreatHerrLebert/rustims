@@ -6,7 +6,6 @@ use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu, PseudoFragment};
 use crate::cluster::scoring::{assign_ms2_to_best_ms1_by_xic, jaccard_time, ms1_to_ms2_map, query_precursor_scored, query_precursors_scored_par, MatchScoreMode, PrecursorLike, PrecursorSearchIndex, ScoredHit, XicScoreOpts};
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
-
 // ---------------------------------------------------------------------------
 // Assignment mode abstraction (geom vs XIC)
 // ---------------------------------------------------------------------------
@@ -642,23 +641,41 @@ impl<'a> FragmentIndex<'a> {
     ) -> Self {
         let frame_time = &dia_index.frame_time;
 
-        // 1) Absolute MS2 time bounds (seconds) – unchanged
+        // 1) Absolute MS2 time bounds (seconds) with fallback for missing frame_ids_used
         let ms2_time_bounds: Vec<(f64, f64)> = ms2
             .par_iter()
             .map(|c| {
                 let mut t_lo = f64::INFINITY;
                 let mut t_hi = f64::NEG_INFINITY;
-                for &fid in &c.frame_ids_used {
-                    if let Some(&t) = frame_time.get(&fid) {
-                        if t < t_lo { t_lo = t; }
-                        if t > t_hi { t_hi = t; }
+
+                // Preferred: use explicit frame_ids_used if present
+                if !c.frame_ids_used.is_empty() {
+                    for &fid in &c.frame_ids_used {
+                        if let Some(&t) = frame_time.get(&fid) {
+                            if t < t_lo { t_lo = t; }
+                            if t > t_hi { t_hi = t; }
+                        }
                     }
                 }
+
+                // Fallback: infer from rt_window if we have no usable times yet
+                if !t_lo.is_finite() || !t_hi.is_finite() {
+                    let (rt_lo, rt_hi) = c.rt_window;
+                    if rt_hi >= rt_lo {
+                        for fid in rt_lo as u32..=rt_hi as u32 {
+                            if let Some(&t) = frame_time.get(&fid) {
+                                if t < t_lo { t_lo = t; }
+                                if t > t_hi { t_hi = t; }
+                            }
+                        }
+                    }
+                }
+
                 (t_lo, t_hi)
             })
             .collect();
 
-        // 2) Keep mask – unchanged
+        // 2) Keep mask – unchanged, but now ms2_time_bounds is actually finite
         let ms2_keep: Vec<bool> = ms2
             .par_iter()
             .enumerate()
@@ -804,9 +821,6 @@ impl<'a> FragmentIndex<'a> {
         }
     }
 
-    /// Helper: RT apex in seconds for a precursor.
-    /// 1) prefer rt_fit.mu if finite
-    /// 2) fallback: mean frame_time over frame_ids_used
     fn precursor_rt_apex_sec(&self, prec: &ClusterResult1D) -> Option<f32> {
         // 1) use fit if it looks sane
         let mu = prec.rt_fit.mu;
@@ -814,11 +828,11 @@ impl<'a> FragmentIndex<'a> {
             return Some(mu);
         }
 
-        // 2) fallback: derive from frame_ids_used using DiaIndex.frame_time
         let ft = &self.dia_index.frame_time;
+
+        // 2) fallback: derive from frame_ids_used
         let mut sum = 0.0f64;
         let mut n = 0usize;
-
         for fid in &prec.frame_ids_used {
             if let Some(&t) = ft.get(fid) {
                 if t.is_finite() {
@@ -827,12 +841,29 @@ impl<'a> FragmentIndex<'a> {
                 }
             }
         }
-
         if n > 0 {
-            Some((sum / n as f64) as f32)
-        } else {
-            None
+            return Some((sum / n as f64) as f32);
         }
+
+        // 3) final fallback: infer from rt_window range using frame IDs
+        let (rt_lo, rt_hi) = prec.rt_window;
+        if rt_hi >= rt_lo {
+            let mut sum = 0.0f64;
+            let mut n = 0usize;
+            for fid in rt_lo as u32..=rt_hi as u32 {
+                if let Some(&t) = ft.get(&fid) {
+                    if t.is_finite() {
+                        sum += t;
+                        n += 1;
+                    }
+                }
+            }
+            if n > 0 {
+                return Some((sum / n as f64) as f32);
+            }
+        }
+
+        None
     }
 
     pub fn query_precursor(
