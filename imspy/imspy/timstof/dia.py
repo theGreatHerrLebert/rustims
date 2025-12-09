@@ -1390,3 +1390,116 @@ def load_clusters_parquet(path: Union[str, Path]) -> List["ClusterResult1D"]:
 
     rust_clusters = ims.load_clusters_parquet(str(p))
     return [ClusterResult1D(c) for c in rust_clusters]
+
+def _assert_pseudo_spectra(spectra: Sequence["PseudoSpectrum"]) -> None:
+    from imspy.timstof.clustering.pseudo import PseudoSpectrum
+    if not isinstance(spectra, (list, tuple)):
+        raise TypeError(f"Expected a sequence of PseudoSpectrum, got {type(spectra)!r}")
+    for s in spectra:
+        if not isinstance(s, PseudoSpectrum):
+            raise TypeError(f"Expected PseudoSpectrum, got {type(s)!r}")
+
+
+def save_pseudo_spectra_bin(
+    path: Union[str, Path],
+    spectra: Sequence["PseudoSpectrum"],
+    compress: bool = True,
+    *,
+    overwrite: bool = True,
+    atomic: bool = True,
+) -> None:
+    """
+    Save pseudo spectra to a bincode file (.bin / .binz).
+
+    Args:
+        path:
+            Target path. If no suffix is given, one is added based on
+            `compress` (.binz if True, .bin if False). If a conflicting
+            suffix is given, it is normalized with a warning.
+
+        spectra:
+            Sequence of PseudoSpectrum objects.
+
+        compress:
+            Whether to use zstd compression (controls suffix normalization).
+
+        overwrite:
+            If False, refuse to overwrite existing files.
+
+        atomic:
+            If True, write to a temporary file in the same directory and
+            atomically replace the target.
+    """
+
+    from imspy.timstof.clustering.pseudo import PseudoSpectrum
+
+    _assert_pseudo_spectra(spectra)
+
+    # Normalize suffix and possibly infer compress from it
+    path, compress = _normalize_path_and_compress(
+        path,
+        compress,
+        allow_suffix_inference=True,
+    )
+
+    p = Path(path)
+
+    if not overwrite and p.exists():
+        raise FileExistsError(f"Refusing to overwrite existing file: {p}")
+
+    rust_spectra = [s._py for s in spectra]  # mirror the ClusterResult1D pattern
+
+    _ensure_dir(p)
+
+    if atomic:
+        tmp_dir = str(p.parent)
+        suffix = p.suffix
+        with tempfile.NamedTemporaryFile(
+            prefix=".tmp_",
+            suffix=suffix,
+            dir=tmp_dir,
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            ims.save_pseudo_spectra_bin(str(tmp_path), rust_spectra, bool(compress))
+            os.replace(str(tmp_path), str(p))
+        except Exception:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            finally:
+                raise
+    else:
+        ims.save_pseudo_spectra_bin(str(p), rust_spectra, bool(compress))
+
+
+def load_pseudo_spectra_bin(path: Union[str, Path]) -> List["PseudoSpectrum"]:
+    """
+    Load pseudo spectra from a bincode file (.bin / .binz).
+
+    Args:
+        path:
+            File to load.
+
+    Returns:
+        list[PseudoSpectrum]
+    """
+
+    from imspy.timstof.clustering.pseudo import PseudoSpectrum
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"No such file: {p}")
+
+    if p.suffix.lower() not in {_BIN_SUFFIX, _BINZ_SUFFIX}:
+        warnings.warn(
+            f"Unexpected suffix '{p.suffix}'. Expected '{_BIN_SUFFIX}' or '{_BINZ_SUFFIX}'. "
+            "Attempting to load anyway.",
+            stacklevel=2,
+        )
+
+    rust_spectra = ims.load_pseudo_spectra_bin(str(p))
+    # Wrap back into Python PseudoSpectrum objects
+    return [PseudoSpectrum(s) for s in rust_spectra]

@@ -3154,6 +3154,46 @@ pub fn load_clusters_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PyCluste
         .collect()
 }
 
+#[pyfunction]
+#[pyo3(signature = (path, spectra, compress=true))]
+pub fn save_pseudo_spectra_bin(
+    path: &str,
+    spectra: Vec<Py<PyPseudoSpectrum>>,
+    compress: bool,
+) -> PyResult<()> {
+    let mut rust_spectra = Vec::with_capacity(spectra.len());
+
+    Python::with_gil(|py| {
+        for s in spectra {
+            let inner = &s.borrow(py).inner;
+            // No heavy fields to strip, just clone the whole thing
+            rust_spectra.push(inner.clone());
+        }
+    });
+
+    cio::save_pseudo_bincode(path, &rust_spectra, compress)
+        .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (path))]
+pub fn load_pseudo_spectra_bin(
+    path: &str,
+) -> PyResult<Vec<Py<PyPseudoSpectrum>>> {
+    let spectra = cio::load_pseudo_bincode(path)
+        .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))?;
+
+    Python::with_gil(|py| {
+        let mut out = Vec::with_capacity(spectra.len());
+        for spec in spectra {
+            let obj = Py::new(py, PyPseudoSpectrum { inner: spec })
+                .map_err(|e| exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            out.push(obj);
+        }
+        Ok(out)
+    })
+}
+
 #[pyclass]
 pub struct PyTofRtGrid {
     pub inner: TofRtGrid,
@@ -4155,5 +4195,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_parquet, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_parquet, m)?)?;
+    m.add_function(wrap_pyfunction!(save_pseudo_spectra_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(load_pseudo_spectra_bin, m)?)?;
     Ok(())
 }

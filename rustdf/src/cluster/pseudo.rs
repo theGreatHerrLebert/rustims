@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use crate::cluster::candidates::CandidateOpts;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
@@ -37,7 +38,7 @@ pub fn cluster_mz_mu(c: &ClusterResult1D) -> Option<f32> {
 // ---------------------------------------------------------------------------
 
 /// One fragment peak in a pseudo-MS/MS spectrum.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PseudoFragment {
     /// Fragment m/z (cluster center).
     pub mz: f32,
@@ -51,7 +52,7 @@ pub struct PseudoFragment {
 }
 
 /// One pseudo-DDA spectrum: precursor + set of fragment peaks.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PseudoSpectrum {
     pub precursor_mz: f32,
     pub precursor_charge: u8,

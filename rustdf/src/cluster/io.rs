@@ -247,6 +247,7 @@ impl ClusterRow {
 
 use std::io;
 use polars::prelude::*;
+use crate::cluster::pseudo::PseudoSpectrum;
 
 pub fn save_parquet(path: &str, clusters: &[ClusterResult1D]) -> io::Result<()> {
     let rows: Vec<ClusterRow> = clusters.iter().map(ClusterRow::from).collect();
@@ -557,4 +558,56 @@ pub fn load_parquet(path: &str) -> io::Result<Vec<ClusterResult1D>> {
 
 fn to_io(e: PolarsError) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PseudoSpectraFile {
+    pub version: u32,
+    pub spectra: Vec<PseudoSpectrum>,
+}
+
+impl PseudoSpectraFile {
+    pub fn new(spectra: Vec<PseudoSpectrum>) -> Self {
+        Self {
+            version: 1,
+            spectra,
+        }
+    }
+}
+
+pub fn save_pseudo_bincode(
+    path: &str,
+    spectra: &[PseudoSpectrum],
+    compress: bool,
+) -> io::Result<()> {
+    let f = File::create(path)?;
+    if compress {
+        // zstd compression, level 3 is a good default
+        let mut zw = zstd::Encoder::new(f, 3)?;
+        bincode::serialize_into(&mut zw, &PseudoSpectraFile::new(spectra.to_vec()))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        zw.finish()?;
+        Ok(())
+    } else {
+        let mut bw = BufWriter::new(f);
+        bincode::serialize_into(&mut bw, &PseudoSpectraFile::new(spectra.to_vec()))
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
+}
+
+pub fn load_pseudo_bincode(path: &str) -> io::Result<Vec<PseudoSpectrum>> {
+    let f = File::open(path)?;
+
+    // Try zstd first
+    if let Ok(mut zr) = zstd::Decoder::new(&f) {
+        let pf: PseudoSpectraFile = bincode::deserialize_from(&mut zr)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        return Ok(pf.spectra);
+    }
+
+    // Fallback: plain bincode
+    let f = BufReader::new(File::open(path)?);
+    let pf: PseudoSpectraFile = bincode::deserialize_from(f)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    Ok(pf.spectra)
 }
