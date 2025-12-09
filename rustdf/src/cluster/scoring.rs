@@ -572,19 +572,33 @@ impl PrecursorSearchIndex {
             .map(|c| {
                 let mut t_lo = f64::INFINITY;
                 let mut t_hi = f64::NEG_INFINITY;
-                for &fid in &c.frame_ids_used {
-                    if let Some(&t) = self.frame_time.get(&fid) {
-                        if t < t_lo {
-                            t_lo = t;
-                        }
-                        if t > t_hi {
-                            t_hi = t;
+
+                if !c.frame_ids_used.is_empty() {
+                    for &fid in &c.frame_ids_used {
+                        if let Some(&t) = self.frame_time.get(&fid) {
+                            if t < t_lo { t_lo = t; }
+                            if t > t_hi { t_hi = t; }
                         }
                     }
                 }
+
+                // Fallback: use rt_window if no frame_ids_used
+                if !t_lo.is_finite() || !t_hi.is_finite() {
+                    let (rt_lo, rt_hi) = c.rt_window;
+                    if rt_hi >= rt_lo {
+                        for fid in rt_lo as u32..=rt_hi as u32 {
+                            if let Some(&t) = self.frame_time.get(&fid) {
+                                if t < t_lo { t_lo = t; }
+                                if t > t_hi { t_hi = t; }
+                            }
+                        }
+                    }
+                }
+
                 (t_lo, t_hi)
             })
             .collect();
+
         let ms2_time_bounds = Arc::new(ms2_time_bounds);
 
         // Keep MS2s
