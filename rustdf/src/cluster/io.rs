@@ -247,6 +247,7 @@ impl ClusterRow {
 
 use std::io;
 use polars::prelude::*;
+use rayon::prelude::*;
 use crate::cluster::pseudo::PseudoSpectrum;
 
 pub fn save_parquet(path: &str, clusters: &[ClusterResult1D]) -> io::Result<()> {
@@ -458,100 +459,206 @@ pub fn strip_heavy(mut clusters: Vec<ClusterResult1D>, keep_points: bool, keep_a
 pub fn load_parquet(path: &str) -> io::Result<Vec<ClusterResult1D>> {
     let f = File::open(path)?;
     let df = ParquetReader::new(f)
+        // .with_parallel(true)  // usually default, but you can force it
         .finish()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        .map_err(to_io)?;
 
     let n = df.height();
 
-    // Grab columns once
-    let c_cluster_id = df.column("cluster_id").map_err(to_io)?.u64().map_err(to_io)?;
-    let c_ms_level = df.column("ms_level").map_err(to_io)?.u8().map_err(to_io)?;
-    let c_window_group = df.column("window_group").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_parent_im_id = df.column("parent_im_id").map_err(to_io)?.i64().map_err(to_io)?;
-    let c_parent_rt_id = df.column("parent_rt_id").map_err(to_io)?.i64().map_err(to_io)?;
+    // --- Helper macros to keep things readable ---
 
-    let c_rt_lo = df.column("rt_lo").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_rt_hi = df.column("rt_hi").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_im_lo = df.column("im_lo").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_im_hi = df.column("im_hi").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_tof_lo = df.column("tof_lo").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_tof_hi = df.column("tof_hi").map_err(to_io)?.u32().map_err(to_io)?;
-    let c_tof_index_lo = df.column("tof_index_lo").map_err(to_io)?.i32().map_err(to_io)?;
-    let c_tof_index_hi = df.column("tof_index_hi").map_err(to_io)?.i32().map_err(to_io)?;
-    let c_mz_lo = df.column("mz_lo").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_mz_hi = df.column("mz_hi").map_err(to_io)?.f32().map_err(to_io)?;
-
-    let c_rt_mu = df.column("rt_mu").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_rt_sigma = df.column("rt_sigma").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_rt_height = df.column("rt_height").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_rt_area = df.column("rt_area").map_err(to_io)?.f32().map_err(to_io)?;
-
-    let c_im_mu = df.column("im_mu").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_im_sigma = df.column("im_sigma").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_im_height = df.column("im_height").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_im_area = df.column("im_area").map_err(to_io)?.f32().map_err(to_io)?;
-
-    let c_tof_mu = df.column("tof_mu").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_tof_sigma = df.column("tof_sigma").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_tof_height = df.column("tof_height").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_tof_area = df.column("tof_area").map_err(to_io)?.f32().map_err(to_io)?;
-
-    let c_mz_mu = df.column("mz_mu").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_mz_sigma = df.column("mz_sigma").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_mz_height = df.column("mz_height").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_mz_area = df.column("mz_area").map_err(to_io)?.f32().map_err(to_io)?;
-
-    let c_raw_sum = df.column("raw_sum").map_err(to_io)?.f32().map_err(to_io)?;
-    let c_volume_proxy = df.column("volume_proxy").map_err(to_io)?.f32().map_err(to_io)?;
-
-    let mut out = Vec::with_capacity(n);
-
-    for i in 0..n {
-        let row = ClusterRow {
-            cluster_id: c_cluster_id.get(i).unwrap_or(0),
-            ms_level: c_ms_level.get(i).unwrap_or(0),
-
-            window_group: c_window_group.get(i),
-            parent_im_id: c_parent_im_id.get(i),
-            parent_rt_id: c_parent_rt_id.get(i),
-
-            rt_lo: c_rt_lo.get(i).unwrap_or(0) as usize,
-            rt_hi: c_rt_hi.get(i).unwrap_or(0) as usize,
-            im_lo: c_im_lo.get(i).unwrap_or(0) as usize,
-            im_hi: c_im_hi.get(i).unwrap_or(0) as usize,
-            tof_lo: c_tof_lo.get(i).unwrap_or(0) as usize,
-            tof_hi: c_tof_hi.get(i).unwrap_or(0) as usize,
-            tof_index_lo: c_tof_index_lo.get(i).unwrap_or(0),
-            tof_index_hi: c_tof_index_hi.get(i).unwrap_or(0),
-            mz_lo: c_mz_lo.get(i),
-            mz_hi: c_mz_hi.get(i),
-
-            rt_mu: c_rt_mu.get(i).unwrap_or(0.0),
-            rt_sigma: c_rt_sigma.get(i).unwrap_or(0.0),
-            rt_height: c_rt_height.get(i).unwrap_or(0.0),
-            rt_area: c_rt_area.get(i).unwrap_or(0.0),
-
-            im_mu: c_im_mu.get(i).unwrap_or(0.0),
-            im_sigma: c_im_sigma.get(i).unwrap_or(0.0),
-            im_height: c_im_height.get(i).unwrap_or(0.0),
-            im_area: c_im_area.get(i).unwrap_or(0.0),
-
-            tof_mu: c_tof_mu.get(i).unwrap_or(0.0),
-            tof_sigma: c_tof_sigma.get(i).unwrap_or(0.0),
-            tof_height: c_tof_height.get(i).unwrap_or(0.0),
-            tof_area: c_tof_area.get(i).unwrap_or(0.0),
-
-            mz_mu: c_mz_mu.get(i),
-            mz_sigma: c_mz_sigma.get(i),
-            mz_height: c_mz_height.get(i),
-            mz_area: c_mz_area.get(i),
-
-            raw_sum: c_raw_sum.get(i).unwrap_or(0.0),
-            volume_proxy: c_volume_proxy.get(i).unwrap_or(0.0),
-        };
-
-        out.push(row.into_cluster_result());
+    macro_rules! col_u64 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u64()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u64>>()
+        }};
     }
+
+    macro_rules! col_u8 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u8()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u8>>()
+        }};
+    }
+
+    macro_rules! col_u32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u32>>()
+        }};
+    }
+
+    macro_rules! col_i32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .i32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<i32>>()
+        }};
+    }
+
+    macro_rules! col_i64_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .i64()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<i64>>>()
+        }};
+    }
+
+    macro_rules! col_u32_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u32()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<u32>>>()
+        }};
+    }
+
+    macro_rules! col_f32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .f32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0.0))
+                .collect::<Vec<f32>>()
+        }};
+    }
+
+    macro_rules! col_f32_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .f32()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<f32>>>()
+        }};
+    }
+
+    // --- Materialize all columns into plain Vecs once ---
+
+    let cluster_id      = col_u64!("cluster_id");
+    let ms_level        = col_u8!("ms_level");
+    let window_group    = col_u32_opt!("window_group");
+    let parent_im_id    = col_i64_opt!("parent_im_id");
+    let parent_rt_id    = col_i64_opt!("parent_rt_id");
+
+    let rt_lo           = col_u32!("rt_lo");
+    let rt_hi           = col_u32!("rt_hi");
+    let im_lo           = col_u32!("im_lo");
+    let im_hi           = col_u32!("im_hi");
+    let tof_lo          = col_u32!("tof_lo");
+    let tof_hi          = col_u32!("tof_hi");
+    let tof_index_lo    = col_i32!("tof_index_lo");
+    let tof_index_hi    = col_i32!("tof_index_hi");
+    let mz_lo           = col_f32_opt!("mz_lo");
+    let mz_hi           = col_f32_opt!("mz_hi");
+
+    let rt_mu           = col_f32!("rt_mu");
+    let rt_sigma        = col_f32!("rt_sigma");
+    let rt_height       = col_f32!("rt_height");
+    let rt_area         = col_f32!("rt_area");
+
+    let im_mu           = col_f32!("im_mu");
+    let im_sigma        = col_f32!("im_sigma");
+    let im_height       = col_f32!("im_height");
+    let im_area         = col_f32!("im_area");
+
+    let tof_mu          = col_f32!("tof_mu");
+    let tof_sigma       = col_f32!("tof_sigma");
+    let tof_height      = col_f32!("tof_height");
+    let tof_area        = col_f32!("tof_area");
+
+    let mz_mu           = col_f32_opt!("mz_mu");
+    let mz_sigma        = col_f32_opt!("mz_sigma");
+    let mz_height       = col_f32_opt!("mz_height");
+    let mz_area         = col_f32_opt!("mz_area");
+
+    let raw_sum         = col_f32!("raw_sum");
+    let volume_proxy    = col_f32!("volume_proxy");
+
+    // Sanity check (paranoid, but catches schema drift)
+    debug_assert_eq!(cluster_id.len(), n);
+
+    // --- Reconstruct ClusterResult1D rows ---
+    //
+    // This is now just cheap slice indexing. You can keep it serial,
+    // or parallelize with rayon if `ClusterResult1D: Send + Sync`.
+
+    let out: Vec<ClusterResult1D> = (0..n)
+        .into_par_iter() // ← use into_iter() if you don't want rayon
+        .map(|i| {
+            let row = ClusterRow {
+                cluster_id: cluster_id[i],
+                ms_level:   ms_level[i],
+
+                window_group: window_group[i],
+                parent_im_id: parent_im_id[i],
+                parent_rt_id: parent_rt_id[i],
+
+                rt_lo: rt_lo[i] as usize,
+                rt_hi: rt_hi[i] as usize,
+                im_lo: im_lo[i] as usize,
+                im_hi: im_hi[i] as usize,
+                tof_lo: tof_lo[i] as usize,
+                tof_hi: tof_hi[i] as usize,
+                tof_index_lo: tof_index_lo[i],
+                tof_index_hi: tof_index_hi[i],
+                mz_lo: mz_lo[i],
+                mz_hi: mz_hi[i],
+
+                rt_mu: rt_mu[i],
+                rt_sigma: rt_sigma[i],
+                rt_height: rt_height[i],
+                rt_area: rt_area[i],
+
+                im_mu: im_mu[i],
+                im_sigma: im_sigma[i],
+                im_height: im_height[i],
+                im_area: im_area[i],
+
+                tof_mu: tof_mu[i],
+                tof_sigma: tof_sigma[i],
+                tof_height: tof_height[i],
+                tof_area: tof_area[i],
+
+                mz_mu: mz_mu[i],
+                mz_sigma: mz_sigma[i],
+                mz_height: mz_height[i],
+                mz_area: mz_area[i],
+
+                raw_sum: raw_sum[i],
+                volume_proxy: volume_proxy[i],
+            };
+
+            row.into_cluster_result()
+        })
+        .collect();
 
     Ok(out)
 }
