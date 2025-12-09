@@ -866,9 +866,22 @@ def _detect_im_peaks_for_wgs(
 
             peaks = _collect_stream(peaks_iter)
 
+        n_raw = int(peaks["mu_scan"].size)
+        _detect_logger.info(
+            f"[stats] im.wg[{wg_idx}] raw_peaks={n_raw}"
+        )
+
         if do_dedup:
             with _log_timing(f"im.wg[{wg_idx}].dedup"):
                 peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
+
+        n_dedup = int(peaks["mu_scan"].size)
+        if do_dedup:
+            _detect_logger.info(
+                f"[stats] im.wg[{wg_idx}] dedup_peaks={n_dedup} "
+                f"(kept {n_dedup}/{n_raw} = "
+                f"{(n_dedup / max(1, n_raw)) * 100:.1f}%)"
+            )
 
         # IM geometry: typical FWHM in scan ≈ 40, but we don't want insane widths
         factor = 1.5
