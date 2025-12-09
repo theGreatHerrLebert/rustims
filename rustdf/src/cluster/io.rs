@@ -60,7 +60,14 @@ impl From<&ClusterResult1D> for ClusterRow {
         let (im_mu, im_sigma, im_height, im_area) = fit(&c.im_fit);
         let (tof_mu, tof_sigma, tof_height, tof_area) = fit(&c.tof_fit);
 
-        let (mz_mu, mz_sigma, mz_height, mz_area) = match &c.mz_fit {
+        // First get mz window
+        let (mz_lo, mz_hi) = match c.mz_window {
+            Some((lo, hi)) => (Some(lo), Some(hi)),
+            None => (None, None),
+        };
+
+        // Then get any fitted mz parameters
+        let (mz_mu_raw, mz_sigma, mz_height, mz_area) = match &c.mz_fit {
             Some(f) => {
                 let (mu, sigma, h, a) = fit(f);
                 (Some(mu), Some(sigma), Some(h), Some(a))
@@ -68,9 +75,11 @@ impl From<&ClusterResult1D> for ClusterRow {
             None => (None, None, None, None),
         };
 
-        let (mz_lo, mz_hi) = match c.mz_window {
-            Some((lo, hi)) => (Some(lo), Some(hi)),
-            None => (None, None),
+        // Fallback: if no fitted mz_mu but we *do* have mz_lo/mz_hi, use midpoint
+        let mz_mu = match (mz_mu_raw, mz_lo, mz_hi) {
+            (Some(mu), _, _) => Some(mu),
+            (None, Some(lo), Some(hi)) => Some(0.5 * (lo + hi)),
+            _ => None,
         };
 
         ClusterRow {
