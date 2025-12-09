@@ -107,6 +107,22 @@ def setup_logging(
 def log(msg: str, level: int = logging.INFO) -> None:
     _logger.log(level, msg)
 
+def get_detector_cfg(cfg: dict, role: str) -> dict:
+    """
+    Build an *effective* detector config for a given role ("precursor" or "fragment").
+
+    Rules:
+      - Start from [detector] as shared defaults.
+      - If [detector.<role>] exists, overlay/override those keys.
+    """
+    det_root = cfg.get("detector", {}) or {}
+    # copy base so we don't mutate cfg
+    eff = dict(det_root)
+    role_cfg = det_root.get(role)
+    if isinstance(role_cfg, dict):
+        eff.update(role_cfg)
+    return eff
+
 
 # ------------------------ config summary --------------------------------------
 def print_config_summary(cfg: dict) -> None:
@@ -170,43 +186,48 @@ def print_config_summary(cfg: dict) -> None:
             lines.append(f"  require_mutual_apex  : {bool(s.get('require_mutual_apex_inside', True))}")
             lines.append(f"  use_batch_stitch     : {bool(s.get('use_batch_stitch', False))}")
 
-    # Detector
-    if det_cfg:
-        lines.append("[detector]")
-        lines.append(f"  pool_scan            : {int(det_cfg.get('pool_scan', 0))}")
-        lines.append(f"  pool_tof             : {int(det_cfg.get('pool_tof', 0))}")
-        lines.append(f"  min_intensity_scaled : {float(det_cfg.get('min_intensity_scaled', 0.0))}")
-        lines.append(f"  tile_rows            : {int(det_cfg.get('tile_rows', 0))}")
-        lines.append(f"  tile_overlap         : {int(det_cfg.get('tile_overlap', 0))}")
-        lines.append(f"  fit_h / fit_w        : {int(det_cfg.get('fit_h', 0))} / {int(det_cfg.get('fit_w', 0))}")
-        lines.append(f"  refine               : {det_cfg.get('refine')}")
-        lines.append(f"  refine_iters         : {int(det_cfg.get('refine_iters', 0))}")
-        lines.append(f"  refine_lr            : {float(det_cfg.get('refine_lr', 0.0))}")
-        lines.append(f"  refine_mask_k        : {float(det_cfg.get('refine_mask_k', 0.0))}")
+    # Detector (effective per role)
+    for sec in ("precursor", "fragment"):
+        eff = get_detector_cfg(cfg, sec)
+
+        if not eff:
+            continue
+
+        lines.append(f"[detector.{sec}]")
+        lines.append(f"  pool_scan            : {int(eff.get('pool_scan', 0))}")
+        lines.append(f"  pool_tof             : {int(eff.get('pool_tof', 0))}")
+        lines.append(f"  min_intensity_scaled : {float(eff.get('min_intensity_scaled', 0.0))}")
+        lines.append(f"  tile_rows            : {int(eff.get('tile_rows', 0))}")
+        lines.append(f"  tile_overlap         : {int(eff.get('tile_overlap', 0))}")
+        lines.append(f"  fit_h / fit_w        : {int(eff.get('fit_h', 0))} / {int(eff.get('fit_w', 0))}")
+        lines.append(f"  refine               : {eff.get('refine')}")
+        lines.append(f"  refine_iters         : {int(eff.get('refine_iters', 0))}")
+        lines.append(f"  refine_lr            : {float(eff.get('refine_lr', 0.0))}")
+        lines.append(f"  refine_mask_k        : {float(eff.get('refine_mask_k', 0.0))}")
         lines.append(
             "  refine_scan/tof      : "
-            f"{bool(det_cfg.get('refine_scan', True))} / {bool(det_cfg.get('refine_tof', True))}"
+            f"{bool(eff.get('refine_scan', True))} / {bool(eff.get('refine_tof', True))}"
         )
         lines.append(
             "  refine_sigma_scan/tof: "
-            f"{bool(det_cfg.get('refine_sigma_scan', True))} / "
-            f"{bool(det_cfg.get('refine_sigma_tof', True))}"
+            f"{bool(eff.get('refine_sigma_scan', True))} / "
+            f"{bool(eff.get('refine_sigma_tof', True))}"
         )
-        lines.append(f"  scale                : {det_cfg.get('scale')}")
-        lines.append(f"  output_units         : {det_cfg.get('output_units')}")
-        lines.append(f"  gn_float64           : {bool(det_cfg.get('gn_float64', False))}")
-        lines.append(f"  do_dedup             : {bool(det_cfg.get('do_dedup', True))}")
+        lines.append(f"  scale                : {eff.get('scale')}")
+        lines.append(f"  output_units         : {eff.get('output_units')}")
+        lines.append(f"  gn_float64           : {bool(eff.get('gn_float64', False))}")
+        lines.append(f"  do_dedup             : {bool(eff.get('do_dedup', True))}")
         lines.append(
-            f"  tol_scan / tol_tof   : {float(det_cfg.get('tol_scan', 0.0))} / "
-            f"{float(det_cfg.get('tol_tof', 0.0))}"
+            "  tol_scan / tol_tof   : "
+            f"{float(eff.get('tol_scan', 0.0))} / {float(eff.get('tol_tof', 0.0))}"
         )
-        lines.append(f"  k_sigma              : {float(det_cfg.get('k_sigma', 0.0))}")
-        lines.append(f"  min_width            : {int(det_cfg.get('min_width', 0))}")
-        lines.append(f"  topk_per_tile        : {det_cfg.get('topk_per_tile')}")
-        lines.append(f"  patch_batch_target_mb: {int(det_cfg.get('patch_batch_target_mb', 0))}")
-        lines.append(f"  blur_sigma_scan      : {float(det_cfg.get('blur_sigma_scan', 0.0))}")
-        lines.append(f"  blur_sigma_tof       : {float(det_cfg.get('blur_sigma_tof', 0.0))}")
-        lines.append(f"  blur_truncate        : {float(det_cfg.get('blur_truncate', 3.0))}")
+        lines.append(f"  k_sigma              : {float(eff.get('k_sigma', 0.0))}")
+        lines.append(f"  min_width            : {int(eff.get('min_width', 0))}")
+        lines.append(f"  topk_per_tile        : {eff.get('topk_per_tile')}")
+        lines.append(f"  patch_batch_target_mb: {int(eff.get('patch_batch_target_mb', 0))}")
+        lines.append(f"  blur_sigma_scan      : {float(eff.get('blur_sigma_scan', 0.0))}")
+        lines.append(f"  blur_sigma_tof       : {float(eff.get('blur_sigma_tof', 0.0))}")
+        lines.append(f"  blur_truncate        : {float(eff.get('blur_truncate', 3.0))}")
 
     # Cluster
     if "cluster" in cfg:
@@ -446,8 +467,12 @@ def run_precursor(ds, cfg):
         plan = build_plan(ds, cfg["plans"]["precursor"], precompute_views, for_group=None)
 
     with log_timing("detect+stitch.precursor"):
+        det_prec = get_detector_cfg(cfg, "precursor")
         stitched = detect_and_stitch_for_plan(
-            plan, cfg["run"], cfg["detector"], cfg["stitch"]["precursor"]
+            plan,
+            cfg["run"],
+            det_prec,
+            cfg["stitch"]["precursor"],
         )
 
     attach_raw = bool(cfg["run"].get("attach_raw_data", False))
@@ -513,6 +538,8 @@ def run_fragments(ds, cfg):
         log("[skip] fragments: no [plans.fragment] or [stitch.fragment] in config")
         return
 
+    det_frag = get_detector_cfg(cfg, "fragment")
+
     precompute_views = bool(cfg["run"]["precompute_views"])
     plan_cfg = cfg["plans"]["fragment"]
     stitch_cfg = cfg["stitch"]["fragment"]
@@ -543,7 +570,10 @@ def run_fragments(ds, cfg):
 
             with log_timing(f"detect+stitch.fragment.WG{wg:03d}"):
                 stitched_wg = detect_and_stitch_for_plan(
-                    plan, cfg["run"], cfg["detector"], stitch_cfg
+                    plan,
+                    cfg["run"],
+                    det_frag,
+                    stitch_cfg,
                 )
 
             attach_raw = bool(cfg["run"].get("attach_raw_data", False))
@@ -616,7 +646,10 @@ def run_fragments(ds, cfg):
 
         with log_timing(f"detect+stitch.fragment.WG{wg:03d}"):
             stitched_wg = detect_and_stitch_for_plan(
-                plan, cfg["run"], cfg["detector"], stitch_cfg
+                plan,
+                cfg["run"],
+                det_frag,
+                stitch_cfg,
             )
 
         attach_raw = bool(cfg["run"].get("attach_raw_data", False))
@@ -741,6 +774,9 @@ def load_config(path: str) -> dict:
     d.setdefault("blur_sigma_scan", 0.0)
     d.setdefault("blur_sigma_tof", 0.0)
     d.setdefault("blur_truncate", 3.0)
+
+    cfg["detector"].setdefault("precursor", {})
+    cfg["detector"].setdefault("fragment", {})
 
     # plans defaults (TOF-based)
     cfg.setdefault("plans", {})
