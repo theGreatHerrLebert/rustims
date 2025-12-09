@@ -16,6 +16,40 @@ import torch.nn.functional as F
 LOG_MIN_SIGMA = math.log(1e-3)
 LOG_MIN_AMP = math.log(1e-6)
 
+# -------------------------------------------------------------------
+# Logging helpers
+# -------------------------------------------------------------------
+import logging
+import time
+from contextlib import contextmanager
+
+# Use a child logger of "t-tracer" so it inherits handlers from your CLI script.
+_detect_logger = logging.getLogger("t-tracer.detect")
+
+
+@contextmanager
+def _log_timing(label: str):
+    """
+    Lightweight timing helper for the detector.
+    - Syncs CUDA for meaningful timings.
+    - No overhead if INFO logging is disabled on this logger.
+    """
+    if not _detect_logger.isEnabledFor(logging.INFO):
+        # Fast path: do nothing if we're not logging timings.
+        yield
+        return
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        dt = time.perf_counter() - t0
+        _detect_logger.info(f"[timing] {label}: {dt:0.3f} s")
+
 
 # ---------------------------
 # Small utilities
@@ -794,41 +828,47 @@ def _detect_im_peaks_for_wgs(
 
     batch_objs = []
 
-    for wg in tqdm(wgs, desc="Detecting peaks (BATCH)", leave=False, ncols=80):
+    for wg_idx, wg in enumerate(
+        tqdm(wgs, desc="Detecting peaks (BATCH)", leave=False, ncols=80)
+    ):
         # wg is a TofScanWindowGrid wrapper; .data moves the Rust buffer
-        B = wg.data
+        with _log_timing(f"im.wg[{wg_idx}].load_data"):
+            B = wg.data
 
-        peaks_iter = iter_detect_peaks_from_blurred(
-            B_blurred=B,
-            device=device,
-            pool_scan=pool_scan,
-            pool_tof=pool_tof,
-            min_intensity=min_intensity_scaled,
-            tile_rows=tile_rows,
-            tile_overlap=tile_overlap,
-            fit_h=fit_h,
-            fit_w=fit_w,
-            refine=refine,
-            refine_iters=refine_iters,
-            refine_lr=refine_lr,
-            refine_mask_k=refine_mask_k,
-            refine_scan=refine_scan,
-            refine_tof=refine_tof,
-            refine_sigma_scan=refine_sigma_scan,
-            refine_sigma_tof=refine_sigma_tof,
-            scale=scale,
-            output_units=output_units,
-            gn_float64=gn_float64,
-            blur_sigma_scan=blur_sigma_scan,
-            blur_sigma_tof=blur_sigma_tof,
-            blur_truncate=blur_truncate,
-            topk_per_tile=topk_per_tile,
-            patch_batch_target_mb=patch_batch_target_mb,
-        )
+        with _log_timing(f"im.wg[{wg_idx}].detect_stream"):
+            peaks_iter = iter_detect_peaks_from_blurred(
+                B_blurred=B,
+                device=device,
+                pool_scan=pool_scan,
+                pool_tof=pool_tof,
+                min_intensity=min_intensity_scaled,
+                tile_rows=tile_rows,
+                tile_overlap=tile_overlap,
+                fit_h=fit_h,
+                fit_w=fit_w,
+                refine=refine,
+                refine_iters=refine_iters,
+                refine_lr=refine_lr,
+                refine_mask_k=refine_mask_k,
+                refine_scan=refine_scan,
+                refine_tof=refine_tof,
+                refine_sigma_scan=refine_sigma_scan,
+                refine_sigma_tof=refine_sigma_tof,
+                scale=scale,
+                output_units=output_units,
+                gn_float64=gn_float64,
+                blur_sigma_scan=blur_sigma_scan,
+                blur_sigma_tof=blur_sigma_tof,
+                blur_truncate=blur_truncate,
+                topk_per_tile=topk_per_tile,
+                patch_batch_target_mb=patch_batch_target_mb,
+            )
 
-        peaks = _collect_stream(peaks_iter)
+            peaks = _collect_stream(peaks_iter)
+
         if do_dedup:
-            peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
+            with _log_timing(f"im.wg[{wg_idx}].dedup"):
+                peaks = _dedup_peaks(peaks, tol_scan=tol_scan, tol_tof=tol_tof)
 
         # IM geometry: typical FWHM in scan ≈ 40, but we don't want insane widths
         factor = 1.5
@@ -843,14 +883,15 @@ def _detect_im_peaks_for_wgs(
         peaks["sigma_scan"] = sigma_scan
         peaks["sigma_tof"] = sigma_tof
 
-        objs = ImPeak1D.batch_from_detected(
-            peaks,
-            window_grid=wg,        # TofScanWindowGrid wrapper
-            plan_group=plan_group,  # TofScanPlanGroup wrapper
-            k_sigma=k_sigma,
-            min_width=min_width,
-        )
-        batch_objs.extend(objs)
+        with _log_timing(f"im.wg[{wg_idx}].to_ImPeak1D"):
+            objs = ImPeak1D.batch_from_detected(
+                peaks,
+                window_grid=wg,        # TofScanWindowGrid wrapper
+                plan_group=plan_group,  # TofScanPlanGroup wrapper
+                k_sigma=k_sigma,
+                min_width=min_width,
+            )
+            batch_objs.extend(objs)
 
         # free WG buffers
         try:
@@ -912,45 +953,48 @@ def iter_im_peaks_batches(
     len(), get_batch_par/get_batch, and __getitem__ defined).
     """
     num_batches = (len(plan) + batch_size - 1) // batch_size
-    for wgs in tqdm(
-        iter_plan_batches(plan, batch_size),
-        total=num_batches,
-        desc="Batches",
-        ncols=80,
-    ):
-        batch_objs = _detect_im_peaks_for_wgs(
-            wgs,
-            plan_group=plan,
-            device=device,
-            pool_scan=pool_scan,
-            pool_tof=pool_tof,
-            min_intensity_scaled=min_intensity_scaled,
-            tile_rows=tile_rows,
-            tile_overlap=tile_overlap,
-            fit_h=fit_h,
-            fit_w=fit_w,
-            refine=refine,
-            refine_iters=refine_iters,
-            refine_lr=refine_lr,
-            refine_mask_k=refine_mask_k,
-            refine_scan=refine_scan,
-            refine_tof=refine_tof,
-            refine_sigma_scan=refine_sigma_scan,
-            refine_sigma_tof=refine_sigma_tof,
-            scale=scale,
-            output_units=output_units,
-            gn_float64=gn_float64,
-            do_dedup=do_dedup,
-            tol_scan=tol_scan,
-            tol_tof=tol_tof,
-            k_sigma=k_sigma,
-            min_width=min_width,
-            topk_per_tile=topk_per_tile,
-            patch_batch_target_mb=patch_batch_target_mb,
-            blur_sigma_scan=blur_sigma_scan,
-            blur_sigma_tof=blur_sigma_tof,
-            blur_truncate=blur_truncate,
+    for batch_idx, wgs in enumerate(
+        tqdm(
+            iter_plan_batches(plan, batch_size),
+            total=num_batches,
+            desc="Batches",
+            ncols=80,
         )
+    ):
+        with _log_timing(f"im.batch[{batch_idx}].detect_all_wgs"):
+            batch_objs = _detect_im_peaks_for_wgs(
+                wgs,
+                plan_group=plan,
+                device=device,
+                pool_scan=pool_scan,
+                pool_tof=pool_tof,
+                min_intensity_scaled=min_intensity_scaled,
+                tile_rows=tile_rows,
+                tile_overlap=tile_overlap,
+                fit_h=fit_h,
+                fit_w=fit_w,
+                refine=refine,
+                refine_iters=refine_iters,
+                refine_lr=refine_lr,
+                refine_mask_k=refine_mask_k,
+                refine_scan=refine_scan,
+                refine_tof=refine_tof,
+                refine_sigma_scan=refine_sigma_scan,
+                refine_sigma_tof=refine_sigma_tof,
+                scale=scale,
+                output_units=output_units,
+                gn_float64=gn_float64,
+                do_dedup=do_dedup,
+                tol_scan=tol_scan,
+                tol_tof=tol_tof,
+                k_sigma=k_sigma,
+                min_width=min_width,
+                topk_per_tile=topk_per_tile,
+                patch_batch_target_mb=patch_batch_target_mb,
+                blur_sigma_scan=blur_sigma_scan,
+                blur_sigma_tof=blur_sigma_tof,
+                blur_truncate=blur_truncate,
+            )
 
         yield batch_objs
 
@@ -1010,50 +1054,53 @@ def detect_rt_peaks_for_grid(
     from imspy.timstof.clustering.data import RtPeak1D
 
     # Dense TOF×RT matrix (rows = TOF bins, cols = RT frames)
-    B = grid.data  # np.ndarray, shape (tof_row, rt_frame)
+    with _log_timing("rt.grid.load_data"):
+        B = grid.data  # np.ndarray, shape (tof_row, rt_frame)
 
     # Use the shared detector; blur happens inside via blur_sigma_* args.
-    peaks_iter = iter_detect_peaks_from_blurred(
-        B_blurred=B,
-        device=device,
-        pool_scan=pool_rt,              # "scan" axis is RT here
-        pool_tof=pool_tof,
-        min_intensity=min_intensity_scaled,
-        tile_rows=tile_rows,
-        tile_overlap=tile_overlap,
-        fit_h=fit_h,
-        fit_w=fit_w,
-        refine=refine,
-        refine_iters=refine_iters,
-        refine_lr=refine_lr,
-        refine_mask_k=refine_mask_k,
-        refine_scan=refine_rt,
-        refine_tof=refine_tof,
-        refine_sigma_scan=refine_sigma_rt,
-        refine_sigma_tof=refine_sigma_tof,
-        scale=scale,
-        output_units=output_units,
-        gn_float64=gn_float64,
-        blur_sigma_scan=blur_sigma_rt,
-        blur_sigma_tof=blur_sigma_tof,
-        blur_truncate=blur_truncate,
-        topk_per_tile=topk_per_tile,
-        patch_batch_target_mb=patch_batch_target_mb,
-    )
+    with _log_timing("rt.grid.detect_stream"):
+        peaks_iter = iter_detect_peaks_from_blurred(
+            B_blurred=B,
+            device=device,
+            pool_scan=pool_rt,              # "scan" axis is RT here
+            pool_tof=pool_tof,
+            min_intensity=min_intensity_scaled,
+            tile_rows=tile_rows,
+            tile_overlap=tile_overlap,
+            fit_h=fit_h,
+            fit_w=fit_w,
+            refine=refine,
+            refine_iters=refine_iters,
+            refine_lr=refine_lr,
+            refine_mask_k=refine_mask_k,
+            refine_scan=refine_rt,
+            refine_tof=refine_tof,
+            refine_sigma_scan=refine_sigma_rt,
+            refine_sigma_tof=refine_sigma_tof,
+            scale=scale,
+            output_units=output_units,
+            gn_float64=gn_float64,
+            blur_sigma_scan=blur_sigma_rt,
+            blur_sigma_tof=blur_sigma_tof,
+            blur_truncate=blur_truncate,
+            topk_per_tile=topk_per_tile,
+            patch_batch_target_mb=patch_batch_target_mb,
+        )
 
-    peaks = _collect_stream(peaks_iter)
+        peaks = _collect_stream(peaks_iter)
 
     if peaks["mu_scan"].size == 0:
         # no detections → empty list
         return []
 
     if do_dedup:
-        # Same logic as IM: "scan" is RT frames here.
-        peaks = _dedup_peaks(
-            peaks,
-            tol_scan=tol_rt,
-            tol_tof=tol_tof,
-        )
+        with _log_timing("rt.grid.dedup"):
+            # Same logic as IM: "scan" is RT frames here.
+            peaks = _dedup_peaks(
+                peaks,
+                tol_scan=tol_rt,
+                tol_tof=tol_tof,
+            )
 
     # Optional sigma caps – now for RT instead of IM.
     # Typical LC FWHM ~4 frames; allow up to ~2×FWHM in window.
@@ -1066,14 +1113,14 @@ def detect_rt_peaks_for_grid(
     peaks["sigma_scan"] = np.minimum(peaks["sigma_scan"], max_sigma_rt)
     peaks["sigma_tof"] = np.minimum(peaks["sigma_tof"], max_sigma_tof)
 
-    # Turn dict-of-arrays into RtPeak1D objects
-    objs = RtPeak1D.from_batch_detected(
-        peaks,
-        window_grid=grid,    # TofRtGrid wrapper
-        plan_group=None,
-        k_sigma=k_sigma,
-        min_width=min_width_frames,
-    )
+    with _log_timing("rt.grid.to_RtPeak1D"):
+        objs = RtPeak1D.from_batch_detected(
+            peaks,
+            window_grid=grid,    # TofRtGrid wrapper
+            plan_group=None,
+            k_sigma=k_sigma,
+            min_width=min_width_frames,
+        )
 
     # free grid buffers if it has a cache (mirrors IM code)
     try:
