@@ -43,6 +43,28 @@ from imspy.timstof.dia import (
 _LOGGER_NAME = "t-tracer"
 _logger = logging.getLogger(_LOGGER_NAME)
 
+import time
+from contextlib import contextmanager
+
+
+@contextmanager
+def log_timing(label: str):
+    """
+    Context manager to log wall-clock time for a code block.
+    Uses torch.cuda.synchronize() to get accurate timings for GPU-heavy work.
+    """
+    log(f"[timing] {label}: start")
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        dt = time.perf_counter() - t0
+        log(f"[timing] {label}: done in {dt:0.3f} s")
+
 
 def setup_logging(
     log_file: str | os.PathLike | None,
@@ -317,7 +339,6 @@ def detect_and_stitch_for_plan(
     det_cfg: dict,
     stitch_cfg: dict,
 ):
-    """Return stitched peaks list for a plan with optional batch-stitch RAM saver."""
     use_batch_stitch = bool(stitch_cfg.get("use_batch_stitch", False))
     if use_batch_stitch:
         stitched_running: list = []
@@ -432,64 +453,68 @@ def run_precursor(ds, cfg):
 
     log("[stage] precursor")
     precompute_views = bool(cfg["run"]["precompute_views"])
-    plan = build_plan(ds, cfg["plans"]["precursor"], precompute_views, for_group=None)
 
-    stitched = detect_and_stitch_for_plan(
-        plan, cfg["run"], cfg["detector"], cfg["stitch"]["precursor"]
-    )
+    with log_timing("plan.precursor"):
+        plan = build_plan(ds, cfg["plans"]["precursor"], precompute_views, for_group=None)
+
+    with log_timing("detect+stitch.precursor"):
+        stitched = detect_and_stitch_for_plan(
+            plan, cfg["run"], cfg["detector"], cfg["stitch"]["precursor"]
+        )
 
     attach_raw = bool(cfg["run"].get("attach_raw_data", False))
     c = cfg["cluster"]["precursor"]
 
-    clusters = ds.clusters_for_precursor(
-        stitched,
-        tof_step=int(c.get("tof_step", 1)),
-        bin_pad=float(c.get("bin_pad", 10.0)),
-        smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
-        smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
-        min_prom=float(c.get("min_prom", 50.0)),
-        min_sep_sec=float(c.get("min_sep_sec", 2.0)),
-        min_width_sec=float(c.get("min_width_sec", 2.0)),
-        fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
-        fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
-        extra_rt_pad=int(c.get("extra_rt_pad", 0)),
-        extra_im_pad=int(c.get("extra_im_pad", 0)),
-        tof_bin_pad=int(c.get("tof_bin_pad", 1)),
-        tof_hist_bins=int(c.get("tof_hist_bins", 64)),
-        refine_tof_once=bool(c.get("refine_tof_once", True)),
-        refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
-        attach_axes=True,
-        attach_points=attach_raw,
-        attach_max_points=int(c.get("attach_max_points", 512)),
-        require_rt_overlap=bool(c.get("require_rt_overlap", True)),
-        compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
-        num_threads=int(c.get("num_threads", 0)),
-        min_im_span=int(c.get("min_im_span", 10)),
-        attach_im_xic=True,
-        attach_rt_xic=True,
-        pad_tof_bins=0,
-        pad_im_scans=0,
-        pad_rt_frames=1,
-    )
+    with log_timing("cluster.precursor"):
+        clusters = ds.clusters_for_precursor(
+            stitched,
+            tof_step=int(c.get("tof_step", 1)),
+            bin_pad=float(c.get("bin_pad", 10.0)),
+            smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
+            smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
+            min_prom=float(c.get("min_prom", 50.0)),
+            min_sep_sec=float(c.get("min_sep_sec", 2.0)),
+            min_width_sec=float(c.get("min_width_sec", 2.0)),
+            fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
+            fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
+            extra_rt_pad=int(c.get("extra_rt_pad", 0)),
+            extra_im_pad=int(c.get("extra_im_pad", 0)),
+            tof_bin_pad=int(c.get("tof_bin_pad", 1)),
+            tof_hist_bins=int(c.get("tof_hist_bins", 64)),
+            refine_tof_once=bool(c.get("refine_tof_once", True)),
+            refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
+            attach_axes=True,
+            attach_points=attach_raw,
+            attach_max_points=int(c.get("attach_max_points", 512)),
+            require_rt_overlap=bool(c.get("require_rt_overlap", True)),
+            compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
+            num_threads=int(c.get("num_threads", 0)),
+            min_im_span=int(c.get("min_im_span", 10)),
+            attach_im_xic=True,
+            attach_rt_xic=True,
+            pad_tof_bins=0,
+            pad_im_scans=0,
+            pad_rt_frames=1,
+        )
 
     # ---- precursor output dirs: <root>/precursor/ ----
     out_root = Path(cfg["output"]["dir"])
     prec_dir = out_root / "precursor"
 
-    # ---- binary save ----
-    out_bin = prec_dir / cfg["output"]["precursor_file"]
-    ensure_dir_for_file(out_bin)
-    compress = bool(cfg["output"].get("compress_bin", True))
-    save_clusters_bin(path=str(out_bin), clusters=clusters, compress=compress)
-    log(f"[ok] wrote precursor clusters -> {out_bin} (compress={compress})")
+    with log_timing("write.precursor.bin"):
+        out_bin = prec_dir / cfg["output"]["precursor_file"]
+        ensure_dir_for_file(out_bin)
+        compress = bool(cfg["output"].get("compress_bin", True))
+        save_clusters_bin(path=str(out_bin), clusters=clusters, compress=compress)
+        log(f"[ok] wrote precursor clusters -> {out_bin} (compress={compress})")
 
-    # ---- optional parquet ----
     if bool(cfg["output"].get("parquet_enabled", False)):
-        out_parq = prec_dir / cfg["output"]["precursor_parquet"]
-        ensure_dir_for_file(out_parq)
-        df = pd.DataFrame([c.to_dict() for c in clusters])
-        df.to_parquet(out_parq, index=False)
-        log(f"[ok] wrote precursor parquet -> {out_parq}")
+        with log_timing("write.precursor.parquet"):
+            out_parq = prec_dir / cfg["output"]["precursor_parquet"]
+            ensure_dir_for_file(out_parq)
+            df = pd.DataFrame([c.to_dict() for c in clusters])
+            df.to_parquet(out_parq, index=False)
+            log(f"[ok] wrote precursor parquet -> {out_parq}")
 
     del stitched, clusters
     cuda_gc()
@@ -534,14 +559,101 @@ def run_fragments(ds, cfg):
         # ---- per-WG writing mode ------------------------------------------
         for wg in wgs:
             log(f"[fragment] WG={wg}")
+
+            with log_timing(f"plan.fragment.WG{wg:03d}"):
+                plan = build_plan(ds, plan_cfg, precompute_views, for_group=wg)
+
+            with log_timing(f"detect+stitch.fragment.WG{wg:03d}"):
+                stitched_wg = detect_and_stitch_for_plan(
+                    plan, cfg["run"], cfg["detector"], stitch_cfg
+                )
+
+            attach_raw = bool(cfg["run"].get("attach_raw_data", False))
+
+            with log_timing(f"cluster.fragment.WG{wg:03d}"):
+                clusters_wg = ds.clusters_for_group(
+                    window_group=int(wg),
+                    im_peaks=stitched_wg,
+                    tof_step=int(c.get("tof_step", 1)),
+                    bin_pad=float(c.get("bin_pad", 30.0)),
+                    smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
+                    smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
+                    min_prom=float(c.get("min_prom", 25.0)),
+                    min_sep_sec=float(c.get("min_sep_sec", 2.0)),
+                    min_width_sec=float(c.get("min_width_sec", 2.0)),
+                    fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
+                    fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
+                    extra_rt_pad=int(c.get("extra_rt_pad", 0)),
+                    extra_im_pad=int(c.get("extra_im_pad", 0)),
+                    tof_bin_pad=int(c.get("tof_bin_pad", 1)),
+                    tof_hist_pad=int(c.get("tof_hist_pad", 64)),
+                    refine_tof_once=bool(c.get("refine_tof_once", True)),
+                    refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
+                    attach_axes=True,
+                    attach_points=attach_raw,
+                    attach_max_points=int(c.get("attach_max_points", 512)),
+                    require_rt_overlap=bool(c.get("require_rt_overlap", True)),
+                    compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
+                    num_threads=int(c.get("num_threads", 0)),
+                    min_im_span=int(c.get("min_im_span", 10)),
+                    attach_im_xic=True,
+                    attach_rt_xic=True,
+                    pad_tof_bins=0,
+                    pad_im_scans=0,
+                    pad_rt_frames=0,
+                )
+
+            # ---- per-WG binary save ----
+            if frag_file_pattern:
+                frag_fname = frag_file_pattern.format(wg=wg)
+            else:
+                p = Path(frag_file)
+                frag_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
+
+            with log_timing(f"write.fragment.bin.WG{wg:03d}"):
+                out_bin = frag_bin_dir / frag_fname
+                ensure_dir_for_file(out_bin)
+                save_clusters_bin(path=str(out_bin), clusters=clusters_wg, compress=compress)
+                log(f"[ok] wrote fragment clusters WG={wg} -> {out_bin} (compress={compress})")
+
+            # ---- per-WG parquet ----
+            if parquet_enabled:
+                if frag_parq_pattern:
+                    parq_fname = frag_parq_pattern.format(wg=wg)
+                else:
+                    p = Path(frag_parq)
+                    parq_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
+
+                with log_timing(f"write.fragment.parquet.WG{wg:03d}"):
+                    out_parq = frag_parq_dir / parq_fname
+                    ensure_dir_for_file(out_parq)
+                    df = pd.DataFrame([c.to_dict() for c in clusters_wg])
+                    df.to_parquet(out_parq, index=False)
+                    log(f"[ok] wrote fragment parquet WG={wg} -> {out_parq}")
+
+            del stitched_wg, clusters_wg
+            cuda_gc()
+
+        log("[fragments] per-WG writing completed")
+        return
+
+    # ---- original all-in-one mode ------------------------------------------
+    all_clusters: list = []
+
+    for wg in wgs:
+        log(f"[fragment] WG={wg}")
+
+        with log_timing(f"plan.fragment.WG{wg:03d}"):
             plan = build_plan(ds, plan_cfg, precompute_views, for_group=wg)
 
+        with log_timing(f"detect+stitch.fragment.WG{wg:03d}"):
             stitched_wg = detect_and_stitch_for_plan(
                 plan, cfg["run"], cfg["detector"], stitch_cfg
             )
 
-            attach_raw = bool(cfg["run"].get("attach_raw_data", False))
+        attach_raw = bool(cfg["run"].get("attach_raw_data", False))
 
+        with log_timing(f"cluster.fragment.WG{wg:03d}"):
             clusters_wg = ds.clusters_for_group(
                 window_group=int(wg),
                 im_peaks=stitched_wg,
@@ -567,102 +679,28 @@ def run_fragments(ds, cfg):
                 compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
                 num_threads=int(c.get("num_threads", 0)),
                 min_im_span=int(c.get("min_im_span", 10)),
-                attach_im_xic=True,
-                attach_rt_xic=True,
-                pad_tof_bins=0,
-                pad_im_scans=0,
-                pad_rt_frames=0,
             )
 
-            # ---- per-WG binary save ----
-            if frag_file_pattern:
-                frag_fname = frag_file_pattern.format(wg=wg)
-            else:
-                p = Path(frag_file)
-                frag_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
-
-            out_bin = frag_bin_dir / frag_fname
-            ensure_dir_for_file(out_bin)
-            save_clusters_bin(path=str(out_bin), clusters=clusters_wg, compress=compress)
-            log(f"[ok] wrote fragment clusters WG={wg} -> {out_bin} (compress={compress})")
-
-            # ---- per-WG parquet ----
-            if parquet_enabled:
-                if frag_parq_pattern:
-                    parq_fname = frag_parq_pattern.format(wg=wg)
-                else:
-                    p = Path(frag_parq)
-                    parq_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
-
-                out_parq = frag_parq_dir / parq_fname
-                ensure_dir_for_file(out_parq)
-                df = pd.DataFrame([c.to_dict() for c in clusters_wg])
-                df.to_parquet(out_parq, index=False)
-                log(f"[ok] wrote fragment parquet WG={wg} -> {out_parq}")
-
-            del stitched_wg, clusters_wg
-            cuda_gc()
-
-        log("[fragments] per-WG writing completed")
-        return
-
-    # ---- original all-in-one mode ------------------------------------------
-    all_clusters: list = []
-
-    for wg in wgs:
-        log(f"[fragment] WG={wg}")
-        plan = build_plan(ds, plan_cfg, precompute_views, for_group=wg)
-
-        stitched_wg = detect_and_stitch_for_plan(
-            plan, cfg["run"], cfg["detector"], stitch_cfg
-        )
-
-        attach_raw = bool(cfg["run"].get("attach_raw_data", False))
-
-        clusters_wg = ds.clusters_for_group(
-            window_group=int(wg),
-            im_peaks=stitched_wg,
-            tof_step=int(c.get("tof_step", 1)),
-            bin_pad=float(c.get("bin_pad", 30.0)),
-            smooth_sigma_sec=float(c.get("smooth_sigma_sec", 1.25)),
-            smooth_trunc_k=float(c.get("smooth_trunc_k", 3.0)),
-            min_prom=float(c.get("min_prom", 25.0)),
-            min_sep_sec=float(c.get("min_sep_sec", 2.0)),
-            min_width_sec=float(c.get("min_width_sec", 2.0)),
-            fallback_if_frames_lt=int(c.get("fallback_if_frames_lt", 5)),
-            fallback_frac_width=float(c.get("fallback_frac_width", 0.50)),
-            extra_rt_pad=int(c.get("extra_rt_pad", 0)),
-            extra_im_pad=int(c.get("extra_im_pad", 0)),
-            tof_bin_pad=int(c.get("tof_bin_pad", 1)),
-            tof_hist_pad=int(c.get("tof_hist_pad", 64)),
-            refine_tof_once=bool(c.get("refine_tof_once", True)),
-            refine_k_sigma=float(c.get("refine_k_sigma", 3.0)),
-            attach_axes=True,
-            attach_points=attach_raw,
-            attach_max_points=int(c.get("attach_max_points", 512)),
-            require_rt_overlap=bool(c.get("require_rt_overlap", True)),
-            compute_mz_from_tof=bool(c.get("compute_mz_from_tof", True)),
-            num_threads=int(c.get("num_threads", 0)),
-            min_im_span=int(c.get("min_im_span", 10)),
-        )
         all_clusters.extend(clusters_wg)
 
         del stitched_wg, clusters_wg
         cuda_gc()
 
     # ---- binary save (all) ----
-    out_bin = frag_root / frag_file
-    ensure_dir_for_file(out_bin)
-    save_clusters_bin(path=str(out_bin), clusters=all_clusters, compress=compress)
-    log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
+    with log_timing("write.fragment.bin.all"):
+        out_bin = frag_root / frag_file
+        ensure_dir_for_file(out_bin)
+        save_clusters_bin(path=str(out_bin), clusters=all_clusters, compress=compress)
+        log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
 
     # ---- optional parquet (all) ----
     if parquet_enabled:
-        out_parq = frag_root / frag_parq
-        ensure_dir_for_file(out_parq)
-        df = pd.DataFrame([c.to_dict() for c in all_clusters])
-        df.to_parquet(out_parq, index=False)
-        log(f"[ok] wrote fragment parquet -> {out_parq}")
+        with log_timing("write.fragment.parquet.all"):
+            out_parq = frag_root / frag_parq
+            ensure_dir_for_file(out_parq)
+            df = pd.DataFrame([c.to_dict() for c in all_clusters])
+            df.to_parquet(out_parq, index=False)
+            log(f"[ok] wrote fragment parquet -> {out_parq}")
 
     del all_clusters
     cuda_gc()
@@ -935,11 +973,13 @@ def main(argv=None):
 
     # Precursor: always allowed unless stage=="fragments"
     if stage in ("precursor", "both"):
-        run_precursor(ds, cfg)
+        with log_timing("stage.precursor"):
+            run_precursor(ds, cfg)
 
     # Fragments: run if (stage says so) AND (opt-in true)
     if stage in ("fragments", "both") and fragments_enabled:
-        run_fragments(ds, cfg)
+        with log_timing("stage.fragments"):
+            run_fragments(ds, cfg)
     elif stage in ("fragments", "both") and not fragments_enabled:
         log("[skip] fragments disabled (opt-in required)")
 
