@@ -424,16 +424,31 @@ impl PrecursorSearchIndex {
             .map(|c| {
                 let mut t_lo = f64::INFINITY;
                 let mut t_hi = f64::NEG_INFINITY;
-                for &fid in &c.frame_ids_used {
-                    if let Some(&t) = frame_time.get(&fid) {
-                        if t < t_lo {
-                            t_lo = t;
-                        }
-                        if t > t_hi {
-                            t_hi = t;
+
+                // Preferred: use stored frame_ids_used if available
+                if !c.frame_ids_used.is_empty() {
+                    for &fid in &c.frame_ids_used {
+                        if let Some(&t) = frame_time.get(&fid) {
+                            if t < t_lo { t_lo = t; }
+                            if t > t_hi { t_hi = t; }
                         }
                     }
                 }
+
+                // Fallback: infer from rt_window if frame_ids_used is empty
+                if !t_lo.is_finite() || !t_hi.is_finite() {
+                    let (rt_lo, rt_hi) = c.rt_window;
+                    if rt_hi >= rt_lo {
+                        for fid in rt_lo as u32..=rt_hi as u32 {
+                            if let Some(&t) = frame_time.get(&fid) {
+                                if t < t_lo { t_lo = t; }
+                                if t > t_hi { t_hi = t; }
+                            }
+                        }
+                    }
+                }
+
+                // If still invalid, caller will filter this out via ms1_keep.
                 (t_lo, t_hi)
             })
             .collect();
