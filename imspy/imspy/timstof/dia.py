@@ -1252,3 +1252,141 @@ def load_clusters_bin(path: Union[str, Path]) -> List["ClusterResult1D"]:
     rust_clusters = ims.load_clusters_bin(str(p))
     # Wrap back into your Python class
     return [ClusterResult1D(c) for c in rust_clusters]
+
+_PARQUET_SUFFIX = ".parquet"
+
+def _normalize_parquet_path(path: Union[str, Path]) -> Path:
+    """
+    Ensure a .parquet suffix. If a different suffix is given, warn and replace it.
+    """
+    p = Path(path)
+    if p.suffix == "":
+        return p.with_suffix(_PARQUET_SUFFIX)
+    if p.suffix.lower() != _PARQUET_SUFFIX:
+        warnings.warn(
+            f"Unexpected suffix '{p.suffix}'. Using '{_PARQUET_SUFFIX}' instead.",
+            stacklevel=2,
+        )
+        return p.with_suffix(_PARQUET_SUFFIX)
+    return p
+
+def save_clusters_parquet(
+    path: Union[str, Path],
+    clusters: Sequence["ClusterResult1D"],
+    strip_points: bool = True,
+    strip_axes: bool = True,
+    *,
+    overwrite: bool = True,
+    atomic: bool = True,
+) -> None:
+    """
+    Save clusters to a Parquet file (.parquet).
+
+    Notes
+    -----
+    Parquet only stores the lightweight, tabular fields:
+      - windows, fits, intensities, IDs, ms_level, etc.
+    Heavy fields (raw_points, axes, traces) are *never* persisted, even if
+    `strip_points=False` / `strip_axes=False`; those flags only control whether
+    they are kept in memory before serialization.
+
+    Args:
+        path:
+            Target path (str or Path). Any suffix is normalized to ``.parquet``.
+        clusters:
+            Sequence of ClusterResult1D instances.
+        strip_points:
+            If True, drop `raw_points` before serializing (recommended).
+        strip_axes:
+            If True, drop `rt_axis_sec`, `im_axis_scans`, `mz_axis_da` before
+            serializing (recommended).
+        overwrite:
+            If False, raise FileExistsError if the target already exists.
+        atomic:
+            If True, write to a temporary file in the same directory and
+            atomically replace the target.
+    """
+    from imspy.timstof.clustering.data import ClusterResult1D  # for isinstance in _assert_clusters if needed
+
+    _assert_clusters(clusters)
+
+    p = _normalize_parquet_path(path)
+
+    if not overwrite and p.exists():
+        raise FileExistsError(f"Refusing to overwrite existing file: {p}")
+
+    if strip_points or strip_axes:
+        kept = []
+        if not strip_points:
+            kept.append("points")
+        if not strip_axes:
+            kept.append("axes")
+        warnings.warn(
+            "Saving clusters to Parquet without heavy fields; "
+            f"kept in-memory: {', '.join(kept) if kept else 'none'}.",
+            stacklevel=2,
+        )
+
+    # Underlying PyO3 wrapper objects
+    rust_clusters = [c._py for c in clusters]
+
+    _ensure_dir(p)
+
+    if atomic:
+        tmp_dir = str(p.parent)
+        with tempfile.NamedTemporaryFile(
+            prefix=".tmp_", suffix=_PARQUET_SUFFIX, dir=tmp_dir, delete=False
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            ims.save_clusters_parquet(
+                str(tmp_path),
+                rust_clusters,
+                bool(strip_points),
+                bool(strip_axes),
+            )
+            os.replace(str(tmp_path), str(p))
+        except Exception:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            finally:
+                raise
+    else:
+        ims.save_clusters_parquet(
+            str(p),
+            rust_clusters,
+            bool(strip_points),
+            bool(strip_axes),
+        )
+
+def load_clusters_parquet(path: Union[str, Path]) -> List["ClusterResult1D"]:
+    """
+    Load clusters from a Parquet file (.parquet).
+
+    This reconstructs lightweight ``ClusterResult1D`` objects:
+    raw_points, axes, and traces are always ``None`` / empty.
+
+    Args:
+        path:
+            File to load (str or Path). Any suffix is accepted but will emit
+            a warning if it is not ``.parquet``.
+
+    Returns:
+        list[ClusterResult1D]
+    """
+    from imspy.timstof.clustering.data import ClusterResult1D
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"No such file: {p}")
+    if p.suffix.lower() != _PARQUET_SUFFIX:
+        warnings.warn(
+            f"Unexpected suffix '{p.suffix}'. Expected '{_PARQUET_SUFFIX}'. "
+            "Attempting to load anyway.",
+            stacklevel=2,
+        )
+
+    rust_clusters = ims.load_clusters_parquet(str(p))
+    return [ClusterResult1D(c) for c in rust_clusters]

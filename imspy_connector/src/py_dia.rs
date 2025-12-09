@@ -3025,15 +3025,124 @@ pub fn save_clusters_bin(
     strip_points: bool,
     strip_axes: bool,
 ) -> PyResult<()> {
-    let mut rust_clusters: Vec<ClusterResult1D> = clusters
-        .into_iter()
-        .map(|c| Python::with_gil(|py| c.borrow(py).inner.clone()))
-        .collect();
-    if strip_points || strip_axes {
-        rust_clusters = rustdf::cluster::io::strip_heavy(rust_clusters, !strip_points, !strip_axes);
-    }
+    let mut rust_clusters = Vec::with_capacity(clusters.len());
+
+    Python::with_gil(|py| {
+        for c in clusters {
+            let inner = &c.borrow(py).inner;
+
+            if strip_points || strip_axes {
+                // manually clone only the cheap fields
+                let light = ClusterResult1D {
+                    cluster_id: inner.cluster_id,
+                    rt_window: inner.rt_window,
+                    im_window: inner.im_window,
+                    tof_window: inner.tof_window,
+                    tof_index_window: inner.tof_index_window,
+                    mz_window: inner.mz_window,
+
+                    rt_fit: inner.rt_fit.clone(),
+                    im_fit: inner.im_fit.clone(),
+                    tof_fit: inner.tof_fit.clone(),
+                    mz_fit: inner.mz_fit.clone(),
+
+                    raw_sum: inner.raw_sum,
+                    volume_proxy: inner.volume_proxy,
+
+                    frame_ids_used: inner.frame_ids_used.clone(),
+                    window_group: inner.window_group,
+                    parent_im_id: inner.parent_im_id,
+                    parent_rt_id: inner.parent_rt_id,
+                    ms_level: inner.ms_level,
+
+                    rt_axis_sec: if strip_axes { None } else { inner.rt_axis_sec.clone() },
+                    im_axis_scans: if strip_axes { None } else { inner.im_axis_scans.clone() },
+                    mz_axis_da: if strip_axes { None } else { inner.mz_axis_da.clone() },
+
+                    raw_points: if strip_points { None } else { inner.raw_points.clone() },
+
+                    rt_trace: inner.rt_trace.clone(),
+                    im_trace: inner.im_trace.clone(),
+                };
+                rust_clusters.push(light);
+            } else {
+                // keep full cluster, including heavy stuff
+                rust_clusters.push(inner.clone());
+            }
+        }
+    });
+
     cio::save_bincode(path, &rust_clusters, compress)
         .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+#[pyo3(signature = (path, clusters, strip_points=false, strip_axes=false))]
+pub fn save_clusters_parquet(
+    path: &str,
+    clusters: Vec<Py<PyClusterResult1D>>,
+    strip_points: bool,
+    strip_axes: bool,
+) -> PyResult<()> {
+    let mut rust_clusters = Vec::with_capacity(clusters.len());
+
+    Python::with_gil(|py| {
+        for c in clusters {
+            let inner = &c.borrow(py).inner;
+
+            // As with save_clusters_bin: optionally strip heavy fields
+            let light = ClusterResult1D {
+                cluster_id: inner.cluster_id,
+                rt_window: inner.rt_window,
+                im_window: inner.im_window,
+                tof_window: inner.tof_window,
+                tof_index_window: inner.tof_index_window,
+                mz_window: inner.mz_window,
+
+                rt_fit: inner.rt_fit.clone(),
+                im_fit: inner.im_fit.clone(),
+                tof_fit: inner.tof_fit.clone(),
+                mz_fit: inner.mz_fit.clone(),
+
+                raw_sum: inner.raw_sum,
+                volume_proxy: inner.volume_proxy,
+
+                frame_ids_used: inner.frame_ids_used.clone(),
+                window_group: inner.window_group,
+                parent_im_id: inner.parent_im_id,
+                parent_rt_id: inner.parent_rt_id,
+                ms_level: inner.ms_level,
+
+                rt_axis_sec: if strip_axes { None } else { inner.rt_axis_sec.clone() },
+                im_axis_scans: if strip_axes { None } else { inner.im_axis_scans.clone() },
+                mz_axis_da: if strip_axes { None } else { inner.mz_axis_da.clone() },
+
+                raw_points: if strip_points { None } else { inner.raw_points.clone() },
+
+                rt_trace: inner.rt_trace.clone(),
+                im_trace: inner.im_trace.clone(),
+            };
+
+            rust_clusters.push(light);
+        }
+    });
+
+    cio::save_parquet(path, &rust_clusters)
+        .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+pub fn load_clusters_parquet(
+    py: Python<'_>,
+    path: &str,
+) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+    let clusters = cio::load_parquet(path)
+        .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))?;
+
+    clusters
+        .into_iter()
+        .map(|c| Py::new(py, PyClusterResult1D { inner: c }))
+        .collect()
 }
 
 #[pyfunction]
@@ -4044,5 +4153,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(save_clusters_parquet, m)?)?;
+    m.add_function(wrap_pyfunction!(load_clusters_parquet, m)?)?;
     Ok(())
 }

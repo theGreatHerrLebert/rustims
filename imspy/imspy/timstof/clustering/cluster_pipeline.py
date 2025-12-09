@@ -19,9 +19,6 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-
-import numpy as np
-import pandas as pd
 import torch
 
 from imspy.timstof.clustering.utility import stitch_im_peaks
@@ -35,7 +32,7 @@ except Exception:
 
 from imspy.timstof.clustering.torch_extractor import iter_im_peaks_batches
 from imspy.timstof.dia import (
-    save_clusters_bin,
+    save_clusters_parquet,
     TimsDatasetDIA,
 )
 
@@ -138,24 +135,15 @@ def print_config_summary(cfg: dict) -> None:
     # Output
     lines.append("[output]")
     lines.append(f"  dir                  : {out_cfg.get('dir')}")
-    if "precursor_file" in out_cfg:
-        lines.append(f"  precursor_file       : {out_cfg.get('precursor_file')}")
-    if "fragment_file" in out_cfg:
-        lines.append(f"  fragment_file        : {out_cfg.get('fragment_file')}")
-    pq_enabled = bool(out_cfg.get("parquet_enabled", False))
-    lines.append(f"  parquet_enabled      : {pq_enabled}")
-    if pq_enabled:
-        if "precursor_parquet" in out_cfg:
-            lines.append(f"  precursor_parquet    : {out_cfg.get('precursor_parquet')}")
-        if "fragment_parquet" in out_cfg:
-            lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
-    lines.append(f"  compress_bin         : {bool(out_cfg.get('compress_bin', True))}")
-    # fragment-per-WG options
+    if "precursor_parquet" in out_cfg:
+        lines.append(f"  precursor_parquet    : {out_cfg.get('precursor_parquet')}")
+    if "fragment_parquet" in out_cfg:
+        lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
     lines.append(f"  fragment_split_by_wg : {bool(out_cfg.get('fragment_split_by_wg', False))}")
-    if "fragment_file_pattern" in out_cfg and out_cfg.get("fragment_file_pattern") is not None:
-        lines.append(f"  fragment_file_pattern: {out_cfg.get('fragment_file_pattern')}")
     if "fragment_parquet_pattern" in out_cfg and out_cfg.get("fragment_parquet_pattern") is not None:
-        lines.append(f"  fragment_parquet_pattern: {out_cfg.get('fragment_parquet_pattern')}")
+        lines.append(
+            f"  fragment_parquet_pattern: {out_cfg.get('fragment_parquet_pattern')}"
+        )
 
     # Plans + Stitch
     for sec in ("precursor", "fragment"):
@@ -501,20 +489,17 @@ def run_precursor(ds, cfg):
     out_root = Path(cfg["output"]["dir"])
     prec_dir = out_root / "precursor"
 
-    with log_timing("write.precursor.bin"):
-        out_bin = prec_dir / cfg["output"]["precursor_file"]
-        ensure_dir_for_file(out_bin)
-        compress = bool(cfg["output"].get("compress_bin", True))
-        save_clusters_bin(path=str(out_bin), clusters=clusters, compress=compress)
-        log(f"[ok] wrote precursor clusters -> {out_bin} (compress={compress})")
-
-    if bool(cfg["output"].get("parquet_enabled", False)):
-        with log_timing("write.precursor.parquet"):
-            out_parq = prec_dir / cfg["output"]["precursor_parquet"]
-            ensure_dir_for_file(out_parq)
-            df = pd.DataFrame([c.to_dict() for c in clusters])
-            df.to_parquet(out_parq, index=False)
-            log(f"[ok] wrote precursor parquet -> {out_parq}")
+    with log_timing("write.precursor.parquet"):
+        out_parq = prec_dir / cfg["output"]["precursor_parquet"]
+        ensure_dir_for_file(out_parq)
+        # Parquet is intentionally lightweight: always strip heavy stuff
+        save_clusters_parquet(
+            path=str(out_parq),
+            clusters=clusters,
+            strip_points=True,
+            strip_axes=True,
+        )
+        log(f"[ok] wrote precursor clusters (Parquet) -> {out_parq}")
 
     del stitched, clusters
     cuda_gc()
@@ -535,20 +520,13 @@ def run_fragments(ds, cfg):
 
     out_cfg = cfg["output"]
     base_dir = Path(out_cfg["dir"])
-    compress = bool(out_cfg.get("compress_bin", True))
-    parquet_enabled = bool(out_cfg.get("parquet_enabled", False))
 
     fragment_split_by_wg = bool(out_cfg.get("fragment_split_by_wg", False))
-    frag_file = out_cfg.get("fragment_file", "fragment_clusters.binz")
     frag_parq = out_cfg.get("fragment_parquet", "fragment_clusters.parquet")
-
-    frag_file_pattern = out_cfg.get("fragment_file_pattern")
     frag_parq_pattern = out_cfg.get("fragment_parquet_pattern")
 
     # fixed structure under <root>/fragment/…
     frag_root = base_dir / "fragment"
-    frag_bin_dir = frag_root / "bin"       # per-WG .binz
-    frag_parq_dir = frag_root / "parquet"  # per-WG .parquet
 
     # Use DIA MS/MS info table to get window groups
     info = ds.dia_ms_ms_info
@@ -603,33 +581,23 @@ def run_fragments(ds, cfg):
                     pad_rt_frames=0,
                 )
 
-            # ---- per-WG binary save ----
-            if frag_file_pattern:
-                frag_fname = frag_file_pattern.format(wg=wg)
+            # ---- per-WG Parquet ----
+            if frag_parq_pattern:
+                parq_fname = frag_parq_pattern.format(wg=wg)
             else:
-                p = Path(frag_file)
-                frag_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
+                p = Path(frag_parq)
+                parq_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
 
-            with log_timing(f"write.fragment.bin.WG{wg:03d}"):
-                out_bin = frag_bin_dir / frag_fname
-                ensure_dir_for_file(out_bin)
-                save_clusters_bin(path=str(out_bin), clusters=clusters_wg, compress=compress)
-                log(f"[ok] wrote fragment clusters WG={wg} -> {out_bin} (compress={compress})")
-
-            # ---- per-WG parquet ----
-            if parquet_enabled:
-                if frag_parq_pattern:
-                    parq_fname = frag_parq_pattern.format(wg=wg)
-                else:
-                    p = Path(frag_parq)
-                    parq_fname = f"{p.stem}_WG{wg:03d}{p.suffix}"
-
-                with log_timing(f"write.fragment.parquet.WG{wg:03d}"):
-                    out_parq = frag_parq_dir / parq_fname
-                    ensure_dir_for_file(out_parq)
-                    df = pd.DataFrame([c.to_dict() for c in clusters_wg])
-                    df.to_parquet(out_parq, index=False)
-                    log(f"[ok] wrote fragment parquet WG={wg} -> {out_parq}")
+            with log_timing(f"write.fragment.parquet.WG{wg:03d}"):
+                out_parq = frag_root / parq_fname
+                ensure_dir_for_file(out_parq)
+                save_clusters_parquet(
+                    path=str(out_parq),
+                    clusters=clusters_wg,
+                    strip_points=True,
+                    strip_axes=True,
+                )
+                log(f"[ok] wrote fragment clusters WG={wg} (Parquet) -> {out_parq}")
 
             del stitched_wg, clusters_wg
             cuda_gc()
@@ -686,21 +654,17 @@ def run_fragments(ds, cfg):
         del stitched_wg, clusters_wg
         cuda_gc()
 
-    # ---- binary save (all) ----
-    with log_timing("write.fragment.bin.all"):
-        out_bin = frag_root / frag_file
-        ensure_dir_for_file(out_bin)
-        save_clusters_bin(path=str(out_bin), clusters=all_clusters, compress=compress)
-        log(f"[ok] wrote fragment clusters -> {out_bin} (compress={compress})")
-
-    # ---- optional parquet (all) ----
-    if parquet_enabled:
-        with log_timing("write.fragment.parquet.all"):
-            out_parq = frag_root / frag_parq
-            ensure_dir_for_file(out_parq)
-            df = pd.DataFrame([c.to_dict() for c in all_clusters])
-            df.to_parquet(out_parq, index=False)
-            log(f"[ok] wrote fragment parquet -> {out_parq}")
+    # ---- Parquet save (all) ----
+    with log_timing("write.fragment.parquet.all"):
+        out_parq = frag_root / frag_parq
+        ensure_dir_for_file(out_parq)
+        save_clusters_parquet(
+            path=str(out_parq),
+            clusters=all_clusters,
+            strip_points=True,
+            strip_axes=True,
+        )
+        log(f"[ok] wrote fragment clusters (Parquet) -> {out_parq}")
 
     del all_clusters
     cuda_gc()
@@ -717,11 +681,11 @@ def load_config(path: str) -> dict:
             raise ValueError(f"Missing [{section}] in config.")
 
     # output
-    cfg["output"].setdefault("compress_bin", True)
-    # fragment-per-WG defaults
     out = cfg["output"]
+    out.setdefault("precursor_parquet", "precursor_clusters.parquet")
+    out.setdefault("fragment_parquet", "fragment_clusters.parquet")
+    # fragment-per-WG defaults
     out.setdefault("fragment_split_by_wg", False)
-    out.setdefault("fragment_file_pattern", None)
     out.setdefault("fragment_parquet_pattern", None)
 
     # run defaults
@@ -901,13 +865,6 @@ def main(argv=None):
     parser.add_argument("--frag-attach-max", type=int,
                         help="Override cluster.fragment.attach_max_points")
 
-    # output compression toggle
-    parser.add_argument("--compress-bin", dest="compress_bin", action="store_true",
-                        help="Enable compression for .binz outputs")
-    parser.add_argument("--no-compress-bin", dest="compress_bin", action="store_false",
-                        help="Disable compression for .binz outputs")
-    parser.set_defaults(compress_bin=None)
-
     args = parser.parse_args(argv)
 
     # load config first (we need output dir to auto-pick log path)
@@ -945,10 +902,6 @@ def main(argv=None):
         cfg["cluster"]["fragment"]["min_prom"] = float(args.frag_min_prom)
     if args.frag_attach_max is not None:
         cfg["cluster"]["fragment"]["attach_max_points"] = int(args.frag_attach_max)
-
-    # output compression override
-    if args.compress_bin is not None:
-        cfg["output"]["compress_bin"] = bool(args.compress_bin)
 
     # environment preamble
     log(f"[env] Python {sys.version.split()[0]}")
