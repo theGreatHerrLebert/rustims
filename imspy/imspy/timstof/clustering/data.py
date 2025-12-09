@@ -593,27 +593,70 @@ class ImPeak1D(RustWrapperObject):
     @classmethod
     def batch_from_detected(
             cls,
-            peaks: Dict[str, np.ndarray],
+            peaks: dict[str, np.ndarray],
             *,
             window_grid,
-            plan_group=None,
+            plan_group=None,  # currently unused; kept for API
             k_sigma: float = 3.0,
             min_width: int = 3,
-    ) -> List["ImPeak1D"]:
-        n = int(peaks["mu_scan"].shape[0])
-        if n == 0:
-            return []
-        return [
-            cls.from_detected(
-                peaks,
-                i,
-                window_grid=window_grid,
-                plan_group=plan_group,
-                k_sigma=k_sigma,
-                min_width=min_width,
+    ) -> list["ImPeak1D"]:
+        """
+        Vectorized path: call into ims.PyImPeak1D.batch_from_detected once
+        with all arrays and wrap returned PyImPeak1D objects.
+        """
+        mu_scan = np.asarray(peaks["mu_scan"], dtype=np.float32)
+        sigma_scan = np.asarray(peaks["sigma_scan"], dtype=np.float32)
+        amplitude = np.asarray(peaks["amplitude"], dtype=np.float32)
+        baseline = np.asarray(peaks["baseline"], dtype=np.float32)
+        area = np.asarray(peaks["area"], dtype=np.float32)
+
+        tof_row_arr = peaks.get("tof_row", peaks.get("i"))
+        scan_idx_arr = peaks.get("scan_idx", peaks.get("j"))
+        if tof_row_arr is None or scan_idx_arr is None:
+            raise KeyError(
+                "Expected tof_row/scan_idx or i/j in peaks dict, "
+                f"got keys={list(peaks.keys())}"
             )
-            for i in range(n)
-        ]
+
+        tof_row = np.asarray(tof_row_arr, dtype=np.float32)
+        scan_idx = np.asarray(scan_idx_arr, dtype=np.float32)
+
+        n = int(mu_scan.shape[0])
+        if any(a.shape[0] != n for a in (sigma_scan, amplitude, baseline, area, tof_row, scan_idx)):
+            raise ValueError("All peak arrays must have the same length")
+
+        # window_grid geometry (per-WG, not per-peak)
+        rows = int(window_grid.rows)
+        scans_global = np.asarray(window_grid.scans, dtype=np.uint32)
+        tof_centers = np.asarray(window_grid.tof_centers, dtype=np.float32)
+        tof_edges = np.asarray(window_grid.tof_edges, dtype=np.float32)
+
+        rt_bounds = tuple(window_grid.rt_range_frames)
+        frame_id_bounds = tuple(window_grid.frame_id_bounds)
+        window_group = None if window_grid.window_group is None else int(window_grid.window_group)
+
+        # one Rust call -> Vec[PyImPeak1D]
+        py_peaks = ims.PyImPeak1D.batch_from_detected(
+            mu_scan,
+            sigma_scan,
+            amplitude,
+            baseline,
+            area,
+            tof_row,
+            scan_idx,
+            rows,
+            scans_global,
+            tof_centers,
+            tof_edges,
+            rt_bounds,
+            frame_id_bounds,
+            window_group,
+            float(k_sigma),
+            int(min_width),
+        )
+
+        # wrap in Python wrapper type
+        return [cls.from_py_ptr(p) for p in py_peaks]
 
     @property
     def id(self) -> int:

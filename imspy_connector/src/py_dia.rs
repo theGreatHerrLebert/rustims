@@ -1775,6 +1775,204 @@ impl PyImPeak1D {
             p.tof_row, p.rt_bounds, p.scan_abs, p.width_scans, p.apex_smoothed, p.prominence
         )
     }
+
+    /// Vectorized construction from detector outputs (dict-of-arrays).
+    ///
+    /// All arrays must have the same length N.
+    /// Geometry from the window grid is passed in once.
+    #[staticmethod]
+    #[pyo3(signature = (
+        mu_scan,
+        sigma_scan,
+        amplitude,
+        baseline,
+        area,
+        tof_row,
+        scan_idx,
+        rows,
+        scans_global,
+        tof_centers,
+        tof_edges,
+        rt_bounds,
+        frame_id_bounds,
+        window_group,
+        k_sigma,
+        min_width,
+    ))]
+    pub fn batch_from_detected(
+        mu_scan: PyReadonlyArray1<f32>,
+        sigma_scan: PyReadonlyArray1<f32>,
+        amplitude: PyReadonlyArray1<f32>,
+        baseline: PyReadonlyArray1<f32>, // currently unused, kept for future
+        area: PyReadonlyArray1<f32>,
+        tof_row: PyReadonlyArray1<f32>,
+        scan_idx: PyReadonlyArray1<f32>,
+
+        rows: usize,
+        scans_global: PyReadonlyArray1<u32>,
+        tof_centers: PyReadonlyArray1<f32>,
+        tof_edges: PyReadonlyArray1<f32>,
+        rt_bounds: (usize, usize),
+        frame_id_bounds: (u32, u32),
+        window_group: Option<u32>,
+
+        k_sigma: f32,
+        min_width: usize,
+    ) -> PyResult<Vec<PyImPeak1D>> {
+        let mu_scan = mu_scan.as_slice()?;
+        let sigma_scan = sigma_scan.as_slice()?;
+        let amplitude = amplitude.as_slice()?;
+        let _baseline = baseline.as_slice()?; // not used yet
+        let area = area.as_slice()?;
+        let tof_row_arr = tof_row.as_slice()?;
+        let scan_idx_arr = scan_idx.as_slice()?;
+
+        let scans_global = scans_global.as_slice()?;
+        let tof_centers = tof_centers.as_slice()?;
+        let tof_edges = tof_edges.as_slice()?;
+
+        let n = mu_scan.len();
+        if sigma_scan.len() != n
+            || amplitude.len() != n
+            || area.len() != n
+            || tof_row_arr.len() != n
+            || scan_idx_arr.len() != n
+        {
+            return Err(PyValueError::new_err(
+                "All input arrays must have the same length",
+            ));
+        }
+
+        let cols = scans_global.len();
+        if tof_centers.len() < rows || tof_edges.len() < rows {
+            return Err(PyValueError::new_err(
+                "tof_centers/tof_edges shorter than rows",
+            ));
+        }
+
+        let wg_val: u32 = window_group.unwrap_or(0);
+        let fid_lo: u32 = frame_id_bounds.0;
+
+        let mut out = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let mu_scan_v = mu_scan[i];
+            let sigma_scan_v = sigma_scan[i].max(1e-3); // guard
+            let amp_v = amplitude[i];
+            let area_v = area[i];
+
+            // indices in original grid orientation
+            let tof_row_f = tof_row_arr[i];
+            let scan_idx_f = scan_idx_arr[i];
+
+            let tof_row_i = tof_row_f.round() as usize;
+            let scan_idx_i = scan_idx_f.round() as usize;
+
+            if tof_row_i >= rows {
+                return Err(PyValueError::new_err(format!(
+                    "tof_row={} outside grid rows={}",
+                    tof_row_i, rows
+                )));
+            }
+            if scan_idx_i >= cols {
+                return Err(PyValueError::new_err(format!(
+                    "scan_idx={} outside grid cols={}",
+                    scan_idx_i, cols
+                )));
+            }
+
+            // tof geometry
+            let tof_center_f = tof_centers[tof_row_i];
+            let tof_center = tof_center_f.round() as i32;
+
+            let (tof_min, tof_max) = if tof_row_i + 1 < tof_edges.len() {
+                let lo = tof_edges[tof_row_i];
+                let hi = tof_edges[tof_row_i + 1];
+                (lo.round() as i32, hi.round() as i32)
+            } else {
+                let e_last = tof_edges[tof_row_i];
+                let width = if tof_row_i > 0 {
+                    e_last - tof_edges[tof_row_i - 1]
+                } else {
+                    1.0
+                };
+                let lo = e_last - width;
+                (lo.round() as i32, e_last.round() as i32)
+            };
+
+            let tof_bounds = (tof_min, tof_max);
+
+            // absolute scan ids
+            let scan_abs_u32 = scans_global[scan_idx_i];
+            let scan_abs = scan_abs_u32 as usize;
+
+            // left/right bounds from sigma_scan
+            let half = f32::max(min_width as f32 / 2.0, k_sigma * sigma_scan_v);
+            let left = scan_idx_i.saturating_sub(half.floor() as usize);
+            let right = std::cmp::min(cols.saturating_sub(1), scan_idx_i + half.ceil() as usize);
+            let width_scans = right.saturating_sub(left).saturating_add(1);
+
+            let left_abs = scans_global[left] as usize;
+            let right_abs = scans_global[right] as usize;
+
+            // scan_sigma as Option<f32>
+            let scan_sigma = if sigma_scan_v.is_finite() {
+                Some(sigma_scan_v)
+            } else {
+                None
+            };
+
+            let mobility = None;
+            let apex_smoothed = amp_v;
+            let apex_raw = amp_v;
+            let prominence = amp_v;
+
+            let left_x = left_abs as f32;
+            let right_x = right_abs as f32;
+            let subscan = mu_scan_v;
+
+            // peak id (same bit packing as Python)
+            let peak_id: i64 = (((wg_val & 0xFF) as i64) << 56)
+                | (((fid_lo & 0xFFFF) as i64) << 40)
+                | (((tof_row_i as u32 & 0xFFFF) as i64) << 24)
+                | (((scan_abs as u32 & 0xFFFFFF) as i64));
+
+            let inner = ImPeak1D {
+                tof_row: tof_row_i,
+                tof_center,
+                tof_bounds,
+                rt_bounds,
+                frame_id_bounds,
+                window_group,
+
+                scan: scan_idx_i,
+                left,
+                right,
+
+                scan_abs,
+                left_abs,
+                right_abs,
+
+                scan_sigma,
+                mobility,
+                apex_smoothed,
+                apex_raw,
+                prominence,
+                left_x,
+                right_x,
+                width_scans,
+                area_raw: area_v,
+                subscan,
+                id: peak_id,
+            };
+
+            out.push(PyImPeak1D {
+                inner: Arc::new(inner),
+            });
+        }
+
+        Ok(out)
+    }
 }
 
 #[pyclass]
