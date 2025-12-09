@@ -26,9 +26,8 @@ from contextlib import contextmanager
 # Use a child logger of "t-tracer" so it inherits handlers from your CLI script.
 _detect_logger = logging.getLogger("t-tracer.detect")
 
-# disable logging by default; user scripts can enable as needed
-_detect_logger.addHandler(logging.NullHandler())
-
+# disable info logging by default
+_detect_logger.setLevel(logging.WARNING)
 
 @contextmanager
 def _log_timing(label: str):
