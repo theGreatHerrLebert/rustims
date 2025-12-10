@@ -4105,8 +4105,8 @@ pub fn pseudospectrum_from_feature_and_hits(
     let precursor_charge = feat.charge;
     let feature_id       = Some(feat.feature_id);
 
-    let mut rt_apex: f32;
-    let mut im_apex: f32;
+    let rt_apex: f32;
+    let im_apex: f32;
     let mut precursor_cluster_ids: Vec<u64> = Vec::new();
 
     if let Some(top) = feat
