@@ -394,6 +394,7 @@ class FragmentIndex(RustWrapperObject):
             min_im_overlap_scans: int = 1,
             require_tile_compat: bool = True,
             min_fragments: int = 4,
+            max_fragments: int = 512,
     ) -> list["PseudoSpectrum"]:
         from imspy.timstof.clustering.pseudo import PseudoSpectrum
         """
@@ -412,6 +413,7 @@ class FragmentIndex(RustWrapperObject):
             min_im_overlap_scans=min_im_overlap_scans,
             require_tile_compat=require_tile_compat,
             min_fragments=min_fragments,
+            max_fragments=max_fragments,
         )
         return [PseudoSpectrum(ps) for ps in py_specs]
 
@@ -427,6 +429,7 @@ class FragmentIndex(RustWrapperObject):
             min_im_overlap_scans: int = 1,
             require_tile_compat: bool = True,
             min_fragments: int = 4,
+            max_fragments: int = 512,
     ) -> list["PseudoSpectrum"]:
         from imspy.timstof.clustering.pseudo import PseudoSpectrum
         """
@@ -445,6 +448,7 @@ class FragmentIndex(RustWrapperObject):
             min_im_overlap_scans=min_im_overlap_scans,
             require_tile_compat=require_tile_compat,
             min_fragments=min_fragments,
+            max_fragments=max_fragments,
         )
         return [PseudoSpectrum(ps) for ps in py_specs]
 

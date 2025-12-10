@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList, PySlice};
@@ -3774,6 +3775,7 @@ impl PyFragmentIndex {
         min_im_overlap_scans = 1,
         require_tile_compat = true,
         min_fragments = 4,
+        max_fragments = 512,
     ))]
     pub fn score_features_to_pseudospectra_par(
         &self,
@@ -3786,14 +3788,16 @@ impl PyFragmentIndex {
         min_im_overlap_scans: usize,
         require_tile_compat: bool,
         min_fragments: usize,
+        max_fragments: usize,
         py: Python<'_>,
     ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        // 1) Pull Rust SimpleFeature out of Py wrappers (sequential; needs GIL)
         let feats_rust: Vec<SimpleFeature> = feats
             .into_iter()
             .map(|f| f.borrow(py).inner.clone())
             .collect();
 
-        let mode_rs = parse_match_score_mode(mode)?;
+        let mode_rs   = parse_match_score_mode(mode)?;
         let geom_opts = ScoreOpts::default();
         let xic_opts  = XicScoreOpts::default();
 
@@ -3805,7 +3809,7 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
-        // Parallel scoring inside FragmentIndex
+        // 2) Parallel scoring inside FragmentIndex
         let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_features_scored_par(
             &feats_rust,
             &frag_opts,
@@ -3817,23 +3821,41 @@ impl PyFragmentIndex {
 
         let ms2 = self.inner.ms2_slice();
 
-        // Build PseudoSpectra on the Rust side
-        let mut out: Vec<PyPseudoSpectrum> = Vec::new();
-        for (feat, hits) in feats_rust.iter().zip(all_hits.iter()) {
-            if hits.len() < min_fragments {
-                continue;
-            }
-            if let Some(ps) = pseudospectrum_from_feature_and_hits(feat, hits, ms2) {
-                out.push(PyPseudoSpectrum { inner: ps });
-            }
-        }
+        // 3) Build PseudoSpectra from (feature, hits) in parallel.
+        //    Everything here is pure Rust data, so Rayon is safe.
+        let out: Vec<PyPseudoSpectrum> = feats_rust
+            .par_iter()
+            .zip(all_hits.par_iter())
+            .filter_map(|(feat, hits)| {
+                if hits.is_empty() {
+                    return None;
+                }
+
+                // Take a local copy so we can sort / truncate
+                let mut local_hits: Vec<ScoredHit> = hits.clone();
+
+                if max_fragments > 0 && local_hits.len() > max_fragments {
+                    // sort by score descending, keep best N
+                    local_hits.sort_unstable_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(Ordering::Equal)
+                    });
+                    local_hits.truncate(max_fragments);
+                }
+
+                if local_hits.len() < min_fragments {
+                    return None;
+                }
+
+                pseudospectrum_from_feature_and_hits(feat, &local_hits, ms2)
+                    .map(|ps| PyPseudoSpectrum { inner: ps })
+            })
+            .collect();
 
         Ok(out)
     }
 
-    /// Score many precursor clusters in parallel and build PseudoSpectra.
-    ///
-    /// Returns one PseudoSpectrum per precursor cluster with >= min_fragments hits.
     #[pyo3(signature = (
         precs,
         mode = "geom",
@@ -3844,6 +3866,7 @@ impl PyFragmentIndex {
         min_im_overlap_scans = 1,
         require_tile_compat = true,
         min_fragments = 4,
+        max_fragments = 512,
     ))]
     pub fn query_precursors_to_pseudospectra_par(
         &self,
@@ -3856,8 +3879,10 @@ impl PyFragmentIndex {
         min_im_overlap_scans: usize,
         require_tile_compat: bool,
         min_fragments: usize,
+        max_fragments: usize,
         py: Python<'_>,
     ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        // 1) Pull Rust clusters out of Py wrappers (sequential; needs GIL)
         let precs_rust: Vec<ClusterResult1D> = precs
             .into_iter()
             .map(|p| p.borrow(py).inner.clone())
@@ -3875,6 +3900,7 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
+        // 2) Parallel scoring inside FragmentIndex
         let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_precursors_scored_par(
             &precs_rust,
             &frag_opts,
@@ -3886,15 +3912,34 @@ impl PyFragmentIndex {
 
         let ms2 = self.inner.ms2_slice();
 
-        let mut out: Vec<PyPseudoSpectrum> = Vec::new();
-        for (prec, hits) in precs_rust.iter().zip(all_hits.iter()) {
-            if hits.len() < min_fragments {
-                continue;
-            }
-            if let Some(ps) = pseudospectrum_from_cluster_and_hits(prec, hits, ms2) {
-                out.push(PyPseudoSpectrum { inner: ps });
-            }
-        }
+        // 3) Build PseudoSpectra in parallel
+        let out: Vec<PyPseudoSpectrum> = precs_rust
+            .par_iter()
+            .zip(all_hits.par_iter())
+            .filter_map(|(prec, hits)| {
+                if hits.is_empty() {
+                    return None;
+                }
+
+                let mut local_hits: Vec<ScoredHit> = hits.clone();
+
+                if max_fragments > 0 && local_hits.len() > max_fragments {
+                    local_hits.sort_unstable_by(|a, b| {
+                        b.score
+                            .partial_cmp(&a.score)
+                            .unwrap_or(Ordering::Equal)
+                    });
+                    local_hits.truncate(max_fragments);
+                }
+
+                if local_hits.len() < min_fragments {
+                    return None;
+                }
+
+                pseudospectrum_from_cluster_and_hits(prec, &local_hits, ms2)
+                    .map(|ps| PyPseudoSpectrum { inner: ps })
+            })
+            .collect();
 
         Ok(out)
     }
