@@ -2823,91 +2823,6 @@ impl PyTimsDatasetDIA {
             .map(|rp| PyRawPoints { inner: rp })
             .collect()
     }
-
-    /// Build a fragment index over MS2 clusters.
-    ///
-    /// Parameters
-    /// ----------
-    /// ms2_clusters : list[PyClusterResult1D]
-    /// cand_opts    : PyCandidateOpts
-    #[pyo3(signature = (ms2_clusters, cand_opts))]
-    pub fn build_fragment_index(
-        &self,
-        ms2_clusters: Vec<Py<PyClusterResult1D>>,
-        cand_opts: &PyCandidateOpts,
-        py: Python<'_>,
-    ) -> PyResult<Py<PyFragmentIndex>> {
-        if ms2_clusters.is_empty() {
-            return Err(exceptions::PyValueError::new_err(
-                "build_fragment_index: ms2_clusters is empty",
-            ));
-        }
-
-        // 1) Thin copy of MS2 clusters (drop axes + raw/traces)
-        let mut rust_ms2: Vec<ClusterResult1D> = Vec::with_capacity(ms2_clusters.len());
-        for c in ms2_clusters {
-            let c_ref = c.borrow(py);
-
-            rust_ms2.push(ClusterResult1D {
-                cluster_id:       c_ref.inner.cluster_id,
-                rt_window:        c_ref.inner.rt_window,
-                im_window:        c_ref.inner.im_window,
-                tof_window:       c_ref.inner.tof_window,
-                tof_index_window: c_ref.inner.tof_index_window,
-                mz_window:        c_ref.inner.mz_window,
-
-                rt_fit:  c_ref.inner.rt_fit.clone(),
-                im_fit:  c_ref.inner.im_fit.clone(),
-                tof_fit: c_ref.inner.tof_fit.clone(),
-                mz_fit:  c_ref.inner.mz_fit.clone(),
-
-                raw_sum:        c_ref.inner.raw_sum,
-                volume_proxy:   c_ref.inner.volume_proxy,
-                frame_ids_used: c_ref.inner.frame_ids_used.clone(),
-                window_group:   c_ref.inner.window_group,
-                parent_im_id:   c_ref.inner.parent_im_id,
-                parent_rt_id:   c_ref.inner.parent_rt_id,
-                ms_level:       c_ref.inner.ms_level,
-
-                rt_axis_sec:   None,
-                im_axis_scans: None,
-                mz_axis_da:    None,
-
-                raw_points: None,
-                rt_trace:   None,
-                im_trace:   None,
-            });
-        }
-
-        // 2) Own MS2 clusters; index borrows via 'static slice.
-        let ms2_storage = Arc::new(rust_ms2);
-        let ms2_slice: &[ClusterResult1D] = ms2_storage.as_slice();
-
-        // SAFETY: ms2_storage is kept alive inside PyFragmentIndex.
-        let ms2_slice_static: &'static [ClusterResult1D] = unsafe {
-            std::mem::transmute::<&[ClusterResult1D], &'static [ClusterResult1D]>(ms2_slice)
-        };
-
-        // 3) DiaIndex (assuming self.inner.dia_index is Arc<DiaIndex>)
-        let dia_arc: Arc<DiaIndex> = Arc::new(self.inner.dia_index.clone());
-
-        // 4) Build the core index using the *inner* CandidateOpts
-        let inner_idx = FragmentIndex::build(
-            dia_arc,
-            ms2_slice_static,
-            &cand_opts.inner,
-        );
-
-        let py_idx = Py::new(
-            py,
-            PyFragmentIndex {
-                inner: inner_idx,
-                ms2_storage: ms2_storage,
-            },
-        )?;
-
-        Ok(py_idx)
-    }
 }
 
 #[pyfunction]
@@ -3490,26 +3405,12 @@ impl PyCandidateOpts {
 #[pyclass]
 #[allow(dead_code)]
 pub struct PyFragmentIndex {
-    /// Fragment index built on top of a `'static` slice into `ms2_storage`.
-    pub(crate) inner: FragmentIndex<'static>,
-
-    /// Owns the MS2 clusters so that `inner.ms2` always points to valid data.
-    ms2_storage: Arc<Vec<ClusterResult1D>>,
+    /// Fragment index with owned MS2 storage.
+    pub(crate) inner: FragmentIndex,
 }
 
 #[pymethods]
 impl PyFragmentIndex {
-    // --------------------------------------------------------------
-    // Constructor: build from dataset + MS2 clusters + CandidateOpts
-    // --------------------------------------------------------------
-    //
-    // Python signature will be something like:
-    //   PyFragmentIndex(ds, ms2_clusters, cand_opts)
-    //
-    // where:
-    //   - ds: PyTimsDatasetDIA
-    //   - ms2_clusters: list[PyClusterResult1D]
-    //   - cand_opts: PyCandidateOpts
     #[new]
     #[pyo3(signature = (ds, ms2_clusters, cand_opts))]
     pub fn new(
@@ -3518,47 +3419,36 @@ impl PyFragmentIndex {
         cand_opts: &PyCandidateOpts,
         py: Python<'_>,
     ) -> PyResult<Self> {
-        // 1) Convert Python MS2 objects → Vec<ClusterResult1D>
+        // Convert Python MS2 objects → Vec<ClusterResult1D>
         let ms2_vec: Vec<ClusterResult1D> = ms2_clusters
             .into_iter()
             .map(|p| p.borrow(py).inner.clone())
             .collect();
 
-        // 2) Store MS2 clusters in an Arc so we can safely hand out a slice.
-        let ms2_storage = Arc::new(ms2_vec);
+        let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into();
+        let inner = FragmentIndex::from_owned(dia_arc, ms2_vec, &cand_opts.inner);
 
-        // 3) Borrow a slice from the storage.
-        let ms2_slice: &[ClusterResult1D] = ms2_storage.as_slice();
-
-        // 4) Extend the lifetime to 'static inside this wrapper.
-        //
-        // SAFETY:
-        // - `ms2_storage` is a field of `PyFragmentIndex` and lives as long as `inner`.
-        // - We never mutate `ms2_storage` after this (treat as immutable).
-        // - `FragmentIndex` only holds a shared slice `&[ClusterResult1D]`.
-        // ⇒ As long as we never let `inner` escape without `ms2_storage`,
-        //    this `'static` cast is sound.
-        let ms2_slice_static: &'static [ClusterResult1D] = unsafe {
-            std::mem::transmute::<&[ClusterResult1D], &'static [ClusterResult1D]>(ms2_slice)
-        };
-
-        // 5) Build the core FragmentIndex on the static-looking slice.
-        let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into(); // or ds.inner.dia_index.clone() if it's already Arc
-        let inner = FragmentIndex::build(
-            dia_arc,
-            ms2_slice_static,
-            &cand_opts.inner,
-        );
-
-        Ok(PyFragmentIndex {
-            inner,
-            ms2_storage,
-        })
+        Ok(PyFragmentIndex { inner })
     }
 
-    // ------------------------------------------------------------------
-    // Existing unscored methods – no semantic changes
-    // ------------------------------------------------------------------
+    /// Build a FragmentIndex directly from a directory of fragment-cluster Parquet files.
+    ///
+    /// Python signature:
+    ///   PyFragmentIndex.from_parquet_dir(ds, parquet_dir, cand_opts)
+    #[staticmethod]
+    #[pyo3(signature = (ds, parquet_dir, cand_opts))]
+    pub fn from_parquet_dir(
+        ds: &PyTimsDatasetDIA,
+        parquet_dir: String,
+        cand_opts: &PyCandidateOpts,
+    ) -> PyResult<Self> {
+        let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into();
+
+        let idx = FragmentIndex::from_parquet_dir(dia_arc, &parquet_dir, &cand_opts.inner)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))?;
+
+        Ok(PyFragmentIndex { inner: idx })
+    }
 
     #[pyo3(signature = (
         prec,

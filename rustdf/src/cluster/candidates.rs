@@ -1,8 +1,11 @@
 use std::collections::HashMap;
+use std::io;
+use std::path::Path;
 use std::sync::Arc;
 use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
+use crate::cluster::io::load_parquet;
 use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu, PseudoFragment};
 use crate::cluster::scoring::{assign_ms2_to_best_ms1_by_xic, jaccard_time, ms1_to_ms2_map, query_precursor_scored, query_precursors_scored_par, MatchScoreMode, PrecursorLike, PrecursorSearchIndex, ScoredHit, XicScoreOpts};
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
@@ -607,11 +610,12 @@ impl Default for FragmentQueryOpts {
 }
 
 #[derive(Clone, Debug)]
-pub struct FragmentIndex<'a> {
+pub struct FragmentIndex {
     dia_index: Arc<DiaIndex>,
 
-    /// Borrowed MS2 clusters – single owner elsewhere.
-    ms2: &'a [ClusterResult1D],
+    /// Owned MS2 clusters (e.g. from Parquet or Python).
+    /// Stored as Arc<[T]> so cloning the index is cheap.
+    ms2_storage: Arc<[ClusterResult1D]>,
 
     // per-MS2 metadata (global index over all groups)
     ms2_im_mu: Vec<f32>,
@@ -625,21 +629,43 @@ pub struct FragmentIndex<'a> {
 
     /// group -> RT-sorted MS2
     by_group: HashMap<u32, FragmentGroupIndex>,
+
+    /// Fast lookup: cluster_id -> index into ms2_storage.
+    id_to_idx: HashMap<u64, usize>,
 }
 
-impl<'a> FragmentIndex<'a> {
-    /// Build RT-sorted fragment index per window group.
-    ///
-    /// Only uses the MS2-relevant fields of CandidateOpts:
-    ///   - min_raw_sum
-    ///   - ms2_rt_guard_sec
-    ///   - max_ms2_rt_span_sec
-    pub fn build(
+impl FragmentIndex {
+    #[inline]
+    pub fn ms2_slice(&self) -> &[ClusterResult1D] {
+        &self.ms2_storage
+    }
+
+    #[inline]
+    pub fn get_ms2_by_index(&self, idx: usize) -> Option<&ClusterResult1D> {
+        self.ms2_storage.get(idx)
+    }
+
+    #[inline]
+    pub fn get_ms2_by_cluster_id(&self, cid: u64) -> Option<&ClusterResult1D> {
+        self.id_to_idx.get(&cid).and_then(|&i| self.ms2_storage.get(i))
+    }
+
+    /// Core builder: takes *owned* storage (Arc<[ClusterResult1D]>)
+    /// and uses your existing logic.
+    fn build_with_storage(
         dia_index: Arc<DiaIndex>,
-        ms2: &'a [ClusterResult1D],
+        ms2_storage: Arc<[ClusterResult1D]>,
         opts: &CandidateOpts,
     ) -> Self {
+        let ms2: &[ClusterResult1D] = &ms2_storage;
         let frame_time = &dia_index.frame_time;
+
+        // --- everything from your old `build` below is unchanged,
+        //     except for:
+        //       - Struct name at the end
+        //       - using ms2_storage instead of ms2 for the field
+        //       - creating id_to_idx
+        // --------------------------------------------------------
 
         // 1) Absolute MS2 time bounds (seconds) with fallback for missing frame_ids_used
         let ms2_time_bounds: Vec<(f64, f64)> = ms2
@@ -675,7 +701,7 @@ impl<'a> FragmentIndex<'a> {
             })
             .collect();
 
-        // 2) Keep mask – unchanged, but now ms2_time_bounds is actually finite
+        // 2) Keep mask – unchanged
         let ms2_keep: Vec<bool> = ms2
             .par_iter()
             .enumerate()
@@ -809,16 +835,88 @@ impl<'a> FragmentIndex<'a> {
             by_group.insert(g, FragmentGroupIndex { ms2_indices, rt_apex });
         }
 
+        // Build ID → index map
+        let id_to_idx: HashMap<u64, usize> = ms2_cluster_ids
+            .iter()
+            .enumerate()
+            .map(|(i, &cid)| (cid, i))
+            .collect();
+
         FragmentIndex {
             dia_index,
-            ms2, // <-- no clone
+            ms2_storage,
             ms2_im_mu,
             ms2_im_windows,
             ms2_keep,
             ms2_cluster_ids,
             ms2_mz_mu,
             by_group,
+            id_to_idx,
         }
+    }
+
+    pub fn from_parquet_file(
+        dia_index: Arc<DiaIndex>,
+        parquet_path: impl AsRef<Path>,
+        opts: &CandidateOpts,
+    ) -> io::Result<Self> {
+        let path_str = parquet_path
+            .as_ref()
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+
+        let clusters = load_parquet(path_str)?;
+        Ok(Self::from_owned(dia_index, clusters, opts))
+    }
+
+    /// Your requested builder: read all `.parquet` files in a directory and merge.
+    pub fn from_parquet_dir(
+        dia_index: Arc<DiaIndex>,
+        dir: impl AsRef<Path>,
+        opts: &CandidateOpts,
+    ) -> io::Result<Self> {
+        let dir = dir.as_ref();
+        let mut all: Vec<ClusterResult1D> = Vec::new();
+
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("parquet") {
+                continue;
+            }
+
+            let path_str = path
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+
+            let mut part = load_parquet(path_str)?;
+            all.append(&mut part);
+        }
+
+        Ok(Self::from_owned(dia_index, all, opts))
+    }
+
+    /// Backwards-compatible: build from a borrowed slice (one copy into Arc).
+    pub fn from_slice(
+        dia_index: Arc<DiaIndex>,
+        ms2: &[ClusterResult1D],
+        opts: &CandidateOpts,
+    ) -> Self {
+        let storage: Arc<[ClusterResult1D]> = ms2.to_vec().into();
+        Self::build_with_storage(dia_index, storage, opts)
+    }
+
+    /// Preferred: build from an owned Vec.
+    pub fn from_owned(
+        dia_index: Arc<DiaIndex>,
+        ms2: Vec<ClusterResult1D>,
+        opts: &CandidateOpts,
+    ) -> Self {
+        let storage: Arc<[ClusterResult1D]> = ms2.into();
+        Self::build_with_storage(dia_index, storage, opts)
     }
 
     fn precursor_rt_apex_sec(&self, prec: &ClusterResult1D) -> Option<f32> {
@@ -1263,7 +1361,7 @@ impl<'a> FragmentIndex<'a> {
         // Scoring still uses the full cluster as PrecursorLike::Cluster.
         query_precursor_scored(
             PrecursorLike::Cluster(prec),
-            self.ms2,
+            self.ms2_slice(),
             &candidate_ids,
             mode,
             geom_opts,
@@ -1297,7 +1395,7 @@ impl<'a> FragmentIndex<'a> {
         // 4) Score in parallel (unchanged).
         query_precursors_scored_par(
             &prec_like,
-            self.ms2,
+            self.ms2_slice(),
             &all_candidates,
             mode,
             geom_opts,
@@ -1346,7 +1444,7 @@ impl<'a> FragmentIndex<'a> {
 
         query_precursor_scored(
             PrecursorLike::Feature(feat),
-            self.ms2,
+            self.ms2_slice(),
             &candidate_ids,
             mode,
             geom_opts,
@@ -1375,7 +1473,7 @@ impl<'a> FragmentIndex<'a> {
 
         query_precursors_scored_par(
             &prec_like,
-            self.ms2,
+            self.ms2_slice(),
             &all_candidates,
             mode,
             geom_opts,
@@ -1435,10 +1533,6 @@ impl<'a> FragmentIndex<'a> {
             im_mu,
             im_window,
         })
-    }
-    #[inline]
-    pub fn ms2_slice(&self) -> &[ClusterResult1D] {
-        self.ms2
     }
 }
 

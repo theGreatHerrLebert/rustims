@@ -448,6 +448,23 @@ class FragmentIndex(RustWrapperObject):
         )
         return [PseudoSpectrum(ps) for ps in py_specs]
 
+    @classmethod
+    def from_parquet_dir(
+            cls,
+            ds: "TimsDatasetDIA",
+            parquet_dir: str,
+            cand_opts: "CandidateOpts",
+    ) -> "FragmentIndex":
+        """
+        Build a FragmentIndex directly from a directory of fragment cluster parquet files.
+        """
+        p = ims.PyFragmentIndex.from_parquet_dir(
+            ds.get_py_ptr(),
+            parquet_dir,
+            cand_opts.get_py_ptr(),  # or cand_opts.inner depending on your pattern
+        )
+        return cls.from_py_ptr(p)
+
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):
@@ -1030,29 +1047,6 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         """
         grid = self.__dataset.tof_rt_grid_for_group(int(window_group), int(tof_step))
         return TofRtGrid.from_py_ptr(grid)
-
-    def build_fragment_index(
-        self,
-        ms2_clusters: list["ClusterResult1D"],
-        cand_opts: CandidateOpts,
-    ) -> FragmentIndex:
-        """
-        Build a fragment index (FragmentIndex) over the given MS2 clusters.
-
-        Parameters
-        ----------
-        ms2_clusters : list[ClusterResult1D]
-        cand_opts    : CandidateOpts
-            Fully specifies the candidate-enumeration options.
-        """
-        py_ms2 = [c.get_py_ptr() for c in ms2_clusters]
-
-        py_idx = self.get_py_ptr().build_fragment_index(
-            py_ms2,
-            cand_opts.get_py_ptr(),
-        )
-
-        return FragmentIndex.from_py_ptr(py_idx)
 
     def debug_extract_raw_for_clusters(
             self,

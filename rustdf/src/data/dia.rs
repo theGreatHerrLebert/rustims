@@ -16,7 +16,7 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
 use rayon::ThreadPoolBuilder;
-use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, build_pseudo_spectra_end_to_end_xic, FragmentIndex, PseudoBuildResult, ScoreOpts};
+use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, build_pseudo_spectra_end_to_end_xic, PseudoBuildResult, ScoreOpts};
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::{PseudoSpecOpts};
@@ -950,18 +950,6 @@ impl TimsDatasetDIA {
     pub fn tof_rt_grid_for_group(&self, window_group: u32, tof_step: i32) -> TofRtGrid {
         let rt = self.make_rt_frames_for_group(window_group, tof_step);
         build_tof_rt_grid_full(&rt, Some(window_group))
-    }
-
-    pub fn build_fragment_index<'a>(
-        &'a self,
-        ms2_clusters: &'a [ClusterResult1D],
-        cand_opts: &CandidateOpts,
-    ) -> FragmentIndex<'a> {
-        FragmentIndex::build(
-            Arc::new(self.dia_index.clone()),
-            ms2_clusters,
-            cand_opts,
-        )
     }
 
     /// Debug helper: for a bunch of clusters that all live on the same
