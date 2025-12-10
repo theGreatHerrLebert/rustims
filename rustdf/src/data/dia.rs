@@ -66,6 +66,8 @@ pub struct DiaIndex {
     pub group_to_scan_unions: HashMap<u32, Vec<(u32, u32)>>,
     /// frame_id -> time (seconds)
     pub frame_time: HashMap<u32, f64>,
+    /// New: pre-materialized program slices per group.
+    pub group_to_slices: HashMap<u32, Arc<[ProgramSlice]>>,
 }
 
 impl DiaIndex {
@@ -155,6 +157,20 @@ impl DiaIndex {
             group_to_scan_unions.insert(*g, merged);
         }
 
+        let mut group_to_slices: HashMap<u32, Arc<[ProgramSlice]>> = HashMap::new();
+
+        for (&g, iso_rows) in &group_to_isolation {
+            let scan_rows = group_to_scan_ranges.get(&g).cloned().unwrap_or_default();
+            let n = iso_rows.len().min(scan_rows.len());
+            let mut v = Vec::with_capacity(n);
+            for k in 0..n {
+                let (mz_lo, mz_hi)     = iso_rows[k];
+                let (scan_lo, scan_hi) = scan_rows[k];
+                v.push(ProgramSlice { mz_lo, mz_hi, scan_lo, scan_hi });
+            }
+            group_to_slices.insert(g, v.into());
+        }
+
         DiaIndex {
             frame_to_group,
             group_to_frames,
@@ -163,42 +179,12 @@ impl DiaIndex {
             group_to_mz_union,
             group_to_scan_unions,
             frame_time,
+            group_to_slices,
         }
     }
 
-    /// Materialize tile-level program description for a window group.
-    ///
-    /// Each "tile" (rectangle in scan × m/z) is represented as a ProgramSlice.
-    /// We assume that `group_to_isolation[g]` and `group_to_scan_ranges[g]`
-    /// are aligned row-wise (as built in `DiaIndex::new`).
     pub fn program_slices_for_group(&self, g: u32) -> Vec<ProgramSlice> {
-        let mz_rows = self
-            .group_to_isolation
-            .get(&g)
-            .cloned()
-            .unwrap_or_default();
-
-        let scan_rows = self
-            .group_to_scan_ranges
-            .get(&g)
-            .cloned()
-            .unwrap_or_default();
-
-        let n = mz_rows.len().min(scan_rows.len());
-        let mut out = Vec::with_capacity(n);
-
-        for k in 0..n {
-            let (mz_lo, mz_hi) = mz_rows[k];
-            let (scan_lo, scan_hi) = scan_rows[k];
-            out.push(ProgramSlice {
-                mz_lo,
-                mz_hi,
-                scan_lo,
-                scan_hi,
-            });
-        }
-
-        out
+        self.slices_for_group(g).to_vec()
     }
 
     /// Tiles in group `g` that could have selected this precursor.
@@ -217,7 +203,7 @@ impl DiaIndex {
         prec_mz: f32,
         im_apex: f32,
     ) -> Vec<usize> {
-        let slices = self.program_slices_for_group(g);
+        let slices = self.slices_for_group(g);
         let mut hits = Vec::new();
 
         if !prec_mz.is_finite() || !im_apex.is_finite() {
@@ -302,8 +288,23 @@ impl DiaIndex {
         if !prec_mz.is_finite() || !im_apex.is_finite() {
             return Vec::new();
         }
+
         let mut out = Vec::new();
-        for (&g, _) in &self.group_to_isolation {
+        for (&g, &(mz_lo, mz_hi)) in &self.group_to_mz_union {
+            if prec_mz < mz_lo as f32 || prec_mz > mz_hi as f32 {
+                continue;
+            }
+
+            // optionally also check scan_unions
+            if let Some(unions) = self.group_to_scan_unions.get(&g) {
+
+                if !unions.iter().any(|&(lo, hi)| {
+                    (im_apex as u32) >= lo && (im_apex as u32) <= hi
+                }) {
+                    continue;
+                }
+            }
+
             let tiles = self.tiles_for_precursor_in_group(g, prec_mz, im_apex);
             if !tiles.is_empty() {
                 out.push(g);
@@ -318,7 +319,7 @@ impl DiaIndex {
     /// This is used by the fragment query to decide whether a fragment's m/z
     /// lies **inside** the precursor-selection band of the shared tile.
     pub fn tile_mz_bounds(&self, g: u32, tile_idx: usize) -> (f32, f32) {
-        let slices = self.program_slices_for_group(g);
+        let slices = self.slices_for_group(g);
         if tile_idx >= slices.len() {
             return (f32::NAN, f32::NAN);
         }
@@ -334,6 +335,11 @@ impl DiaIndex {
     pub fn scan_unions_for_window_group_core(&self, g: u32) -> Option<Vec<(usize, usize)>> {
         self.group_to_scan_unions.get(&g).map(|v| v.iter().map(|&(l,r)| (l as usize, r as usize)).collect())
     }
+
+    fn slices_for_group(&self, g: u32) -> &[ProgramSlice] {
+        self.group_to_slices.get(&g).map(|a| &a[..]).unwrap_or(&[])
+    }
+
 }
 
 pub struct TimsDatasetDIA {
