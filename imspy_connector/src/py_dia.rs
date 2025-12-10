@@ -3968,6 +3968,7 @@ pub fn pseudospectrum_from_cluster_and_hits(
     hits: &[ScoredHit],
     ms2: &[ClusterResult1D],
 ) -> Option<PseudoSpectrum> {
+    const MAX_FRAGMENTS_PER_SPECTRUM: usize = 1024; // or tune as you like
     use std::cmp::Ordering;
 
     let mut frags: Vec<PseudoFragment> = Vec::new();
@@ -3986,9 +3987,8 @@ pub fn pseudospectrum_from_cluster_and_hits(
         }
 
         if let Some(wg) = c2.window_group {
-            if !window_groups.contains(&wg) {
-                window_groups.push(wg);
-            }
+            // cheap dedup later via sort+dedup
+            window_groups.push(wg);
         }
 
         if let Some(pf) = fragment_from_cluster(c2) {
@@ -4000,9 +4000,22 @@ pub fn pseudospectrum_from_cluster_and_hits(
         return None;
     }
 
-    // Deterministic ordering
+    // Deduplicate window groups
     window_groups.sort_unstable();
-    frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+    window_groups.dedup();
+
+    // Optional: cap by intensity first, then sort by m/z for output
+    if MAX_FRAGMENTS_PER_SPECTRUM > 0 && frags.len() > MAX_FRAGMENTS_PER_SPECTRUM {
+        frags.sort_unstable_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(Ordering::Equal)
+        });
+        frags.truncate(MAX_FRAGMENTS_PER_SPECTRUM);
+    }
+
+    // Final deterministic ordering by m/z
+    frags.sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
 
     // Precursor m/z: prefer mz_fit, fallback to window midpoint
     let precursor_mz = if let Some(fit) = &prec.mz_fit {
@@ -4012,6 +4025,10 @@ pub fn pseudospectrum_from_cluster_and_hits(
     } else {
         return None;
     };
+
+    if !precursor_mz.is_finite() || precursor_mz <= 0.0 {
+        return None;
+    }
 
     let rt_apex = prec.rt_fit.mu;
     let im_apex = prec.im_fit.mu;
@@ -4037,6 +4054,8 @@ pub fn pseudospectrum_from_feature_and_hits(
 ) -> Option<PseudoSpectrum> {
     use std::cmp::Ordering;
 
+    const MAX_FRAGMENTS_PER_SPECTRUM: usize = 1024; // or tune as you like
+
     let mut frags: Vec<PseudoFragment> = Vec::new();
     let mut window_groups: Vec<u32> = Vec::new();
 
@@ -4052,9 +4071,8 @@ pub fn pseudospectrum_from_feature_and_hits(
         }
 
         if let Some(wg) = c2.window_group {
-            if !window_groups.contains(&wg) {
-                window_groups.push(wg);
-            }
+            // we'll dedup later via sort+dedup
+            window_groups.push(wg);
         }
 
         if let Some(pf) = fragment_from_cluster(c2) {
@@ -4066,15 +4084,29 @@ pub fn pseudospectrum_from_feature_and_hits(
         return None;
     }
 
+    // 1) dedup window groups more cheaply
     window_groups.sort_unstable();
-    frags.sort_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+    window_groups.dedup();
 
-    let precursor_mz = feat.mz_mono;
+    // 2) optional top-M by intensity
+    if MAX_FRAGMENTS_PER_SPECTRUM > 0 && frags.len() > MAX_FRAGMENTS_PER_SPECTRUM {
+        frags.sort_unstable_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(Ordering::Equal)
+        });
+        frags.truncate(MAX_FRAGMENTS_PER_SPECTRUM);
+    }
+
+    // 3) final sort by m/z (for nice spectra / output)
+    frags.sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+
+    let precursor_mz     = feat.mz_mono;
     let precursor_charge = feat.charge;
-    let feature_id = Some(feat.feature_id);
+    let feature_id       = Some(feat.feature_id);
 
-    let mut _rt_apex: f32;
-    let mut _im_apex: f32;
+    let mut rt_apex: f32;
+    let mut im_apex: f32;
     let mut precursor_cluster_ids: Vec<u64> = Vec::new();
 
     if let Some(top) = feat
@@ -4086,21 +4118,21 @@ pub fn pseudospectrum_from_feature_and_hits(
                 .unwrap_or(Ordering::Equal)
         })
     {
-        _rt_apex = top.rt_fit.mu;
-        _im_apex = top.im_fit.mu;
+        rt_apex = top.rt_fit.mu;
+        im_apex = top.im_fit.mu;
         precursor_cluster_ids.push(top.cluster_id);
     } else {
         let (rt_lo, rt_hi) = feat.rt_bounds;
         let (im_lo, im_hi) = feat.im_bounds;
-        _rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
-        _im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
+        rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
+        im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
     }
 
     Some(PseudoSpectrum {
         precursor_mz,
         precursor_charge,
-        rt_apex: _rt_apex,
-        im_apex: _im_apex,
+        rt_apex,
+        im_apex,
         feature_id,
         window_groups,
         precursor_cluster_ids,
