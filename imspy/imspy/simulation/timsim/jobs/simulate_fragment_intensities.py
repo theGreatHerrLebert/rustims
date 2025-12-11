@@ -66,7 +66,7 @@ def simulate_fragment_intensities(
     # ------------------------------------------------------------------
     # Choose intensity model
     # ------------------------------------------------------------------
-    if model_name is None:
+    if model_name is None or model_name.lower() == "prosit":
         # default: Prosit wrapper
         IntensityPredictor = Prosit2023TimsTofWrapper()
         i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(
