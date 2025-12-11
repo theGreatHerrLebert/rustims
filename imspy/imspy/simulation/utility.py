@@ -63,6 +63,10 @@ def add_uniform_noise(rt_abu: np.ndarray, noise_level: float = 1.0):
 
 @jit(nopython=True)
 def flatten_prosit_array(array):
+    # if the array is already flat, return it
+    if array.ndim == 1:
+        return array
+
     array_return = np.zeros(174)
 
     ptr = 0
