@@ -27,7 +27,7 @@ def simulate_fragment_intensities(
     num_threads: int,
     down_sample_factor: float = 0.5,
     dda: bool = False,
-    use_external_model: Optional[str] = None,
+    model_name: Optional[str] = None,
 ) -> None:
     """Simulate fragment ion intensity distributions.
 
@@ -40,7 +40,7 @@ def simulate_fragment_intensities(
         num_threads: Number of threads for frame assembly.
         down_sample_factor: Down sample factor for fragment ion intensity distributions.
         dda: Data dependent acquisition mode.
-        use_external_model: Optional external MS2 intensity model:
+        model_name: Optional external MS2 intensity model:
             - None (default): use internal Prosit2023TimsTofWrapper
             - "peptdeep": use AlphaPeptDeep MS2 predictor (mapped to Prosit-style vectors)
 
@@ -66,7 +66,7 @@ def simulate_fragment_intensities(
     # ------------------------------------------------------------------
     # Choose intensity model
     # ------------------------------------------------------------------
-    if use_external_model is None:
+    if model_name is None:
         # default: Prosit wrapper
         IntensityPredictor = Prosit2023TimsTofWrapper()
         i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(
@@ -74,7 +74,7 @@ def simulate_fragment_intensities(
             batch_size_tf_ds=batch_size,
         )
 
-    elif use_external_model.lower() == "peptdeep":
+    elif model_name.lower() == "peptdeep":
         # new: PeptDeep-based MS2 predictor
         if verbose:
             print("Using PeptDeep MS2 predictor (mapped to Prosit-style intensities) ...")
@@ -88,7 +88,7 @@ def simulate_fragment_intensities(
 
     else:
         raise NotImplementedError(
-            f"External intensity model '{use_external_model}' is not implemented."
+            f"External intensity model '{model_name}' is not implemented."
         )
 
     # ------------------------------------------------------------------

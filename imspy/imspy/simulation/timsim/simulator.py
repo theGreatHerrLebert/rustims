@@ -119,6 +119,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply_fragmentation", dest="apply_fragmentation", action="store_true",
                         help="Perform fragmentation (default: False)")
     parser.set_defaults(apply_fragmentation=False)
+    # Fragment intensity model
+    parser.add_argument(
+        "--fragment_intensity_model",
+        type=str,
+        help="Fragment intensity model: 'prosit' (default) or 'peptdeep'",
+    )
 
     # Peptide digestion arguments
     parser.add_argument("--num_sample_peptides", type=int, default=25_000,
@@ -291,6 +297,7 @@ def get_default_settings() -> dict:
         'sample_peptides': True,
         'sample_seed': 41,
         'apply_fragmentation': False,
+        'fragment_intensity_model': 'prosit',
         'num_sample_peptides': 25_000,
         'num_peptides_total': 250_000,
         'n_proteins': 20_000,
@@ -845,6 +852,7 @@ def main():
         num_threads=args.num_threads,
         down_sample_factor=args.down_sample_factor,
         dda=args.acquisition_type == 'DDA',
+        model_name=args.fragment_intensity_model,
     )
 
     # JOB 10: Assemble frames
