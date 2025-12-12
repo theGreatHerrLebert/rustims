@@ -96,6 +96,7 @@ def simulate_fragment_intensities(
         )
         # simulate_peptdeep_intensities_pandas sets i_pred['intensity'] to 174-dim np.ndarray
         intensity_already_flat = True
+        # Scale CE from % to absolute for PeptDeep
         i_pred["collision_energy"] = i_pred.collision_energy.apply(lambda ce: ce / 100.0)  # to match Prosit CE scale
 
     else:
