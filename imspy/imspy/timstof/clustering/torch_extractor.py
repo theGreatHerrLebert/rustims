@@ -765,27 +765,73 @@ def _collect_stream(peaks_iter: Iterable[dict[str, np.ndarray]]):
 
 # --- light dedup across tiles (keep max amplitude per coarse cell) ------------
 
-def _dedup_peaks(peaks, tol_scan=0.75, tol_tof=0.25):
+def _dedup_peaks(peaks, tol_scan=1.0, tol_tof=1.0):
+    """
+    Deduplicate near-identical peaks by keeping the highest-amplitude one
+    within a (tol_scan, tol_tof) rectangle in (mu_scan, mu_tof).
+
+    Uses a coarse hash grid for speed, but checks neighbor cells to avoid
+    boundary artifacts.
+    """
     if peaks["mu_scan"].size == 0:
         return peaks
-    s = peaks["mu_scan"]
-    t = peaks["mu_tof"]
-    amp = peaks["amplitude"]
 
+    s = peaks["mu_scan"].astype(np.float32, copy=False)
+    t = peaks["mu_tof"].astype(np.float32, copy=False)
+    amp = peaks["amplitude"].astype(np.float32, copy=False)
+
+    tol_scan = float(max(1e-6, tol_scan))
+    tol_tof  = float(max(1e-6, tol_tof))
+
+    # Coarse grid size = tolerance (so "close" peaks fall into same or neighbor cells)
     g_s = np.floor(s / tol_scan).astype(np.int64)
     g_t = np.floor(t / tol_tof).astype(np.int64)
-    key = (g_s << 32) ^ (g_t & 0xFFFFFFFF)
 
-    # iterate from smallest -> largest amplitude, so last one kept per cell
-    order = np.argsort(amp)
-    seen: dict[int, int] = {}
+    # Sort by amplitude DESC (keep strong peaks first)
+    order = np.argsort(amp)[::-1]
+
+    # Map: cell_key -> list of kept indices in that cell
+    grid: dict[int, list[int]] = {}
+    kept: list[int] = []
+
+    def cell_key(gs: int, gt: int) -> int:
+        return (int(gs) << 32) ^ (int(gt) & 0xFFFFFFFF)
+
     for idx in order:
-        seen[key[idx]] = idx
+        gs = int(g_s[idx])
+        gt = int(g_t[idx])
 
-    keep = np.fromiter(seen.values(), dtype=np.int64)
-    # optional: impose RT-ish ordering (by mu_scan) for nicer downstream behaviour
-    order2 = np.argsort(peaks["mu_scan"][keep])
-    keep = keep[order2]
+        # check this cell + 8 neighbors (prevents boundary misses)
+        is_dup = False
+        for dgs in (-1, 0, 1):
+            for dgt in (-1, 0, 1):
+                k = cell_key(gs + dgs, gt + dgt)
+                cand_list = grid.get(k)
+                if not cand_list:
+                    continue
+
+                # Check true tolerance in continuous coords
+                # (rectangle metric; cheap and works well here)
+                ds = np.abs(s[cand_list] - s[idx])
+                dt = np.abs(t[cand_list] - t[idx])
+                if np.any((ds <= tol_scan) & (dt <= tol_tof)):
+                    is_dup = True
+                    break
+            if is_dup:
+                break
+
+        if is_dup:
+            continue
+
+        # keep this one
+        kept.append(idx)
+        k0 = cell_key(gs, gt)
+        grid.setdefault(k0, []).append(idx)
+
+    keep = np.asarray(kept, dtype=np.int64)
+
+    # Optional: reorder by mu_scan ascending for nicer downstream behavior
+    keep = keep[np.argsort(s[keep])]
 
     return {k: v[keep] for k, v in peaks.items()}
 
@@ -816,8 +862,8 @@ def _detect_im_peaks_for_wgs(
     output_units="original",
     gn_float64=False,
     do_dedup=True,
-    tol_scan=0.75,
-    tol_tof=0.25,
+    tol_scan=1.0,
+    tol_tof=1.0,
     k_sigma=2.0,                 # was 3.0, narrower window cap for IM
     min_width=3,
     blur_sigma_scan: float | None = None,
@@ -950,8 +996,8 @@ def iter_im_peaks_batches(
     gn_float64=False,
     # dedup
     do_dedup=True,
-    tol_scan=0.75,
-    tol_tof=0.25,
+    tol_scan=1.0,
+    tol_tof=1.0,
     # conversion
     k_sigma=2.0,              # IM: match _detect_im_peaks_for_wgs default
     min_width=3,
@@ -1050,8 +1096,8 @@ def detect_rt_peaks_for_grid(
     output_units: str = "original",
     gn_float64: bool = False,
     do_dedup: bool = True,
-    tol_rt: float = 0.5,               # stricter dedup in RT than IM
-    tol_tof: float = 0.25,
+    tol_rt: float = 1.0,               # stricter dedup in RT than IM
+    tol_tof: float = 1.0,
     k_sigma: float = 2.5,              # narrower window cap in frames
     min_width_frames: int = 3,
     blur_sigma_rt: float | None = None,
