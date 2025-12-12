@@ -384,9 +384,9 @@ def check_required_args(args: argparse.Namespace, parser: argparse.ArgumentParse
 
 def banner(use_unicode=True):
     if use_unicode:
-        return "🦀💻 TIMSIM 🔬🐍 - Proteomics Simulation Engine"
+        return "🦀💻 TIMSIM 🔬🐍 - Proteomics Experiment Simulation Engine (timsTOF PASEF-like)"
     else:
-        return "TIMSIM - Proteomics Simulation Engine"
+        return "TIMSIM - Proteomics Experiment Simulation Engine (timsTOF PASEF-like)"
 
 
 # ----------------------------------------------------------------------

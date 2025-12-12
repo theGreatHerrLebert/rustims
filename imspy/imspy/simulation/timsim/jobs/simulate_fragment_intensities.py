@@ -41,8 +41,8 @@ def simulate_fragment_intensities(
         down_sample_factor: Down sample factor for fragment ion intensity distributions.
         dda: Data dependent acquisition mode.
         model_name: Optional external MS2 intensity model:
-            - None (default): use internal Prosit2023TimsTofWrapper
-            - "peptdeep": use AlphaPeptDeep MS2 predictor (mapped to Prosit-style vectors)
+            - None / "prosit": use internal Prosit2023TimsTofWrapper
+            - "peptdeep": use AlphaPeptDeep MS2 predictor (already mapped to Prosit-style 174-dim vectors)
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -51,7 +51,7 @@ def simulate_fragment_intensities(
     if verbose:
         print("Simulating fragment ion intensity distributions ...")
 
-    assert 0 <= down_sample_factor < 1, "down_sample_factor must be in the range (0, 1]"
+    assert 0 <= down_sample_factor < 1, "down_sample_factor must be in the range [0, 1)"
 
     native_path = Path(path) / name / "synthetic_data.db"
     native_handle = TimsTofSyntheticsDataHandleRust(str(native_path))
@@ -66,25 +66,37 @@ def simulate_fragment_intensities(
     # ------------------------------------------------------------------
     # Choose intensity model
     # ------------------------------------------------------------------
+    intensity_already_flat = False
+
     if model_name is None or model_name.lower() == "prosit":
-        # default: Prosit wrapper
+        # default: Prosit wrapper (returns 3D tensors -> needs flattening)
+        if verbose:
+            print("Using Prosit2023 TIMS-TOF intensity model ...")
+
         IntensityPredictor = Prosit2023TimsTofWrapper()
         i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(
             transmitted_fragment_ions,
             batch_size_tf_ds=batch_size,
         )
+        intensity_already_flat = False  # (len,2,3) tensors
 
     elif model_name.lower() == "peptdeep":
-        # new: PeptDeep-based MS2 predictor
+        # PeptDeep based predictor; peptdeep_utils already returns 174-dim vectors
         if verbose:
-            print("Using PeptDeep MS2 predictor (mapped to Prosit-style intensities) ...")
+            print("Using PeptDeep MS2 predictor (Prosit-style 174-dim vectors) ...")
+
+        assert transmitted_fragment_ions["collision_energy"].max() > 5, \
+            "PeptDeep expects absolute collision energies (e.g. 20–60)"
 
         i_pred = simulate_peptdeep_intensities_pandas(
             transmitted_fragment_ions,
-            device="gpu",          # or "cpu", maybe parameterize later
-            fill_value=0.0,
+            device="gpu",          # or "cpu" if needed
+            fill_value=-1.0,
             normalize=True,
         )
+        # simulate_peptdeep_intensities_pandas sets i_pred['intensity'] to 174-dim np.ndarray
+        intensity_already_flat = True
+        i_pred["collision_energy"] = i_pred.collision_energy.apply(lambda ce: ce / 10.0^2)  # to match Prosit CE scale
 
     else:
         raise NotImplementedError(
@@ -94,7 +106,6 @@ def simulate_fragment_intensities(
     # ------------------------------------------------------------------
     # Map to sparse representation and write out
     # ------------------------------------------------------------------
-
     if verbose:
         print("Mapping fragment ion intensity distributions to b and y ions ...")
 
@@ -110,17 +121,26 @@ def simulate_fragment_intensities(
     ):
         batch = i_pred.loc[batch_indices].reset_index(drop=True)
 
-        # Note: i_pred['intensity'] already contains 174-dim arrays (Prosit-style)
-        # for both Prosit and PeptDeep paths.
-        batch["intensity_flat"] = batch.apply(
-            lambda r: set_percentage_to_zero(
-                flatten_prosit_array(r.intensity),
-                percentage=down_sample_factor,
-            ),
-            axis=1,
-        )
+        if intensity_already_flat:
+            # PeptDeep path: intensity is already a (174,) vector
+            batch["intensity_flat"] = batch["intensity"].apply(
+                lambda v: set_percentage_to_zero(
+                    v.astype(np.float32),
+                    percentage=down_sample_factor,
+                )
+            )
+        else:
+            # Prosit path: intensity is a (L-1,2,3) tensor -> flatten first
+            batch["intensity_flat"] = batch["intensity"].apply(
+                lambda t: set_percentage_to_zero(
+                    flatten_prosit_array(t),
+                    percentage=down_sample_factor,
+                )
+            )
 
-        batch = batch[["peptide_id", "ion_id", "collision_energy", "charge", "intensity_flat"]]
+        batch = batch[
+            ["peptide_id", "ion_id", "collision_energy", "charge", "intensity_flat"]
+        ]
 
         R = batch.apply(lambda r: flat_intensity_to_sparse(r.intensity_flat), axis=1)
         R = R.apply(
@@ -132,7 +152,9 @@ def simulate_fragment_intensities(
 
         batch["indices"] = R.apply(lambda r: r[0])
         batch["values"] = R.apply(lambda r: r[1])
-        batch = batch[["peptide_id", "ion_id", "collision_energy", "charge", "indices", "values"]]
+        batch = batch[
+            ["peptide_id", "ion_id", "collision_energy", "charge", "indices", "values"]
+        ]
 
         if batch_counter == 0:
             acquisition_builder.synthetics_handle.create_table(

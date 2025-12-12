@@ -151,7 +151,7 @@ def to_prosit_arrays(
     peptdeep_ms2: pd.DataFrame,
     *,
     max_len: int = 30,
-    fill_value: float = 0.0,
+    fill_value: float = -1.0,
     normalize: bool = True,
 ) -> np.ndarray:
     """
