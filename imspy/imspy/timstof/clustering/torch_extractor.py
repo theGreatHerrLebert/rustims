@@ -764,14 +764,37 @@ def _collect_stream(peaks_iter: Iterable[dict[str, np.ndarray]]):
 
 
 # --- light dedup across tiles (keep max amplitude per coarse cell) ------------
-
-def _dedup_peaks(peaks, tol_scan=1.0, tol_tof=1.0):
+def _dedup_peaks(
+    peaks,
+    tol_scan=1.0,
+    tol_tof=1.0,
+    *,
+    k_sigma_merge: float = 0.8,
+    use_sigmas: bool = True,
+):
     """
-    Deduplicate near-identical peaks by keeping the highest-amplitude one
-    within a (tol_scan, tol_tof) rectangle in (mu_scan, mu_tof).
+    Deduplicate peaks while being less aggressive in crowded regions.
 
-    Uses a coarse hash grid for speed, but checks neighbor cells to avoid
-    boundary artifacts.
+    Strategy:
+      - Process peaks in descending amplitude (keep strong ones first).
+      - Use a coarse grid for candidate lookup (speed).
+      - Decide "duplicate?" using an elliptical distance:
+            (Δscan / (k * σ_scan))^2 + (Δtof / (k * σ_tof))^2 <= 1
+        where σ uses min(σ_kept, σ_new) per axis.
+      - If sigmas are missing or disabled, fall back to rectangle tolerances.
+
+    Parameters:
+      tol_scan, tol_tof:
+        Coarse grid size AND fallback absolute tolerances (index units).
+        Keep these around ~1–2 to merge tile-boundary duplicates.
+
+      k_sigma_merge:
+        Controls how close peaks must be *relative to width* to be merged.
+        Smaller => less merging (more likely to keep overlaps).
+        Good starting range: 0.6–1.0. Try 0.8 first.
+
+      use_sigmas:
+        If False, behaves like tolerance-rectangle NMS (but still checks neighbors).
     """
     if peaks["mu_scan"].size == 0:
         return peaks
@@ -780,17 +803,23 @@ def _dedup_peaks(peaks, tol_scan=1.0, tol_tof=1.0):
     t = peaks["mu_tof"].astype(np.float32, copy=False)
     amp = peaks["amplitude"].astype(np.float32, copy=False)
 
+    have_sig = use_sigmas and ("sigma_scan" in peaks) and ("sigma_tof" in peaks)
+    if have_sig:
+        ss = peaks["sigma_scan"].astype(np.float32, copy=False)
+        st = peaks["sigma_tof"].astype(np.float32, copy=False)
+    else:
+        ss = st = None
+
     tol_scan = float(max(1e-6, tol_scan))
     tol_tof  = float(max(1e-6, tol_tof))
+    k = float(max(1e-6, k_sigma_merge))
 
-    # Coarse grid size = tolerance (so "close" peaks fall into same or neighbor cells)
+    # coarse grid (size = tol_*), check neighbor cells to avoid boundary artifacts
     g_s = np.floor(s / tol_scan).astype(np.int64)
     g_t = np.floor(t / tol_tof).astype(np.int64)
 
-    # Sort by amplitude DESC (keep strong peaks first)
-    order = np.argsort(amp)[::-1]
+    order = np.argsort(amp)[::-1]  # amplitude DESC
 
-    # Map: cell_key -> list of kept indices in that cell
     grid: dict[int, list[int]] = {}
     kept: list[int] = []
 
@@ -801,36 +830,52 @@ def _dedup_peaks(peaks, tol_scan=1.0, tol_tof=1.0):
         gs = int(g_s[idx])
         gt = int(g_t[idx])
 
-        # check this cell + 8 neighbors (prevents boundary misses)
         is_dup = False
+
+        # look at this cell + 8 neighbors
         for dgs in (-1, 0, 1):
             for dgt in (-1, 0, 1):
-                k = cell_key(gs + dgs, gt + dgt)
-                cand_list = grid.get(k)
-                if not cand_list:
+                kcell = cell_key(gs + dgs, gt + dgt)
+                cand = grid.get(kcell)
+                if not cand:
                     continue
 
-                # Check true tolerance in continuous coords
-                # (rectangle metric; cheap and works well here)
-                ds = np.abs(s[cand_list] - s[idx])
-                dt = np.abs(t[cand_list] - t[idx])
-                if np.any((ds <= tol_scan) & (dt <= tol_tof)):
-                    is_dup = True
-                    break
+                ds = np.abs(s[cand] - s[idx])
+                dt = np.abs(t[cand] - t[idx])
+
+                if have_sig:
+                    # width-aware elliptical merge test
+                    # use min(sig_kept, sig_new) to avoid wide peaks swallowing narrow ones
+                    sig_s = np.minimum(ss[cand], ss[idx])
+                    sig_t = np.minimum(st[cand], st[idx])
+
+                    # guard against tiny/zero sigmas
+                    sig_s = np.maximum(sig_s, 1e-3)
+                    sig_t = np.maximum(sig_t, 1e-3)
+
+                    u = ds / (k * sig_s)
+                    v = dt / (k * sig_t)
+                    if np.any((u * u + v * v) <= 1.0):
+                        is_dup = True
+                        break
+                else:
+                    # fallback: absolute rectangle tolerance
+                    if np.any((ds <= tol_scan) & (dt <= tol_tof)):
+                        is_dup = True
+                        break
+
             if is_dup:
                 break
 
         if is_dup:
             continue
 
-        # keep this one
         kept.append(idx)
-        k0 = cell_key(gs, gt)
-        grid.setdefault(k0, []).append(idx)
+        grid.setdefault(cell_key(gs, gt), []).append(idx)
 
     keep = np.asarray(kept, dtype=np.int64)
 
-    # Optional: reorder by mu_scan ascending for nicer downstream behavior
+    # optional: order by scan for nicer downstream behavior
     keep = keep[np.argsort(s[keep])]
 
     return {k: v[keep] for k, v in peaks.items()}
