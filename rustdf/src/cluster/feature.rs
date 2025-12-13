@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use mscore::algorithm::isotope::generate_averagine_spectra;
 use crate::cluster::cluster::ClusterResult1D;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug)]
 pub struct AveragineLut {
@@ -162,7 +163,7 @@ pub struct FeatureBuildParams {
     pub require_lowest_is_mono: bool, // guard: seed must be local mono
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SimpleFeature {
     pub feature_id: usize,
     pub charge: u8,

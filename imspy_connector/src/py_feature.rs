@@ -10,6 +10,7 @@ use rustdf::cluster::feature::{
     SimpleFeatureParams,
     build_simple_features_from_clusters,
 };
+use rustdf::cluster::io as cio;
 
 // NOTE: adjust this import path to wherever your PyClusterResult1D lives.
 use crate::py_dia::PyClusterResult1D;
@@ -340,9 +341,33 @@ pub fn build_simple_features_from_clusters_py(
     Ok(py_feats)
 }
 
-// ---------------------------------------------------------------
-// Module init
-// ---------------------------------------------------------------
+#[pyfunction]
+pub fn save_features_bin(
+    path: &str,
+    features: Vec<Py<PySimpleFeature>>,
+) -> PyResult<()> {
+    let rust_features: Vec<SimpleFeature> = features
+        .into_iter()
+        .map(|f| {
+            Python::with_gil(|py| {
+                f.borrow(py).inner.clone()
+            })
+        })
+        .collect();
+
+    cio::save_feature_bincode(path, &rust_features, true)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+}
+
+#[pyfunction]
+pub fn load_features_bin(py: Python<'_>, path: &str) -> PyResult<Vec<Py<PySimpleFeature>>> {
+    let features = cio::load_feature_bincode(path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+    features.into_iter()
+        .map(|f| Py::new(py, PySimpleFeature { inner: f }))
+        .collect()
+}
+
 
 #[pymodule]
 pub fn py_feature(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -351,6 +376,8 @@ pub fn py_feature(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySimpleFeature>()?;
 
     m.add_function(wrap_pyfunction!(build_simple_features_from_clusters_py, m)?)?;
+    m.add_function(wrap_pyfunction!(save_features_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(load_features_bin, m)?)?;
 
     // Silence unused variable warning for `py` if you don't use it directly
     let _ = py;

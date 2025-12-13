@@ -352,3 +352,22 @@ def build_simple_features_from_clusters(
         )
 
     return [SimpleFeature.from_py_ptr(f) for f in py_feats]
+
+def save_features_bin(
+        path: str,
+        features: Sequence[SimpleFeature],
+    ) -> None:
+    """
+    Save a list of SimpleFeature objects to a bincode file.
+    """
+    rust_features = [f.get_py_ptr() for f in features]
+    ims.save_features_bin(path, rust_features)
+
+def load_features_bin(
+        path: str,
+    ) -> list[SimpleFeature]:
+    """
+    Load SimpleFeature objects from a bincode file.
+    """
+    rust_features = ims.load_features_bin(path)
+    return [SimpleFeature.from_py_ptr(f) for f in rust_features]

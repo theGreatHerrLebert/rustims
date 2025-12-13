@@ -248,6 +248,7 @@ impl ClusterRow {
 use std::io;
 use polars::prelude::*;
 use rayon::prelude::*;
+use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::PseudoSpectrum;
 
 pub fn save_parquet(path: &str, clusters: &[ClusterResult1D]) -> io::Result<()> {
@@ -717,4 +718,40 @@ pub fn load_pseudo_bincode(path: &str) -> io::Result<Vec<PseudoSpectrum>> {
     let pf: PseudoSpectraFile = bincode::deserialize_from(f)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     Ok(pf.spectra)
+}
+
+pub fn save_feature_bincode(
+    path: &str,
+    features: &Vec<SimpleFeature>,
+    compress: bool,
+) -> io::Result<()> {
+    let f = File::create(path)?;
+    if compress {
+        let mut zw = zstd::Encoder::new(f, 3)?;
+        bincode::serialize_into(&mut zw, features)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        zw.finish()?;
+        Ok(())
+    } else {
+        let mut bw = BufWriter::new(f);
+        bincode::serialize_into(&mut bw, features)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
+}
+
+pub fn load_feature_bincode(path: &str) -> io::Result<Vec<SimpleFeature>> {
+    let f = File::open(path)?;
+
+    // Try zstd first
+    if let Ok(mut zr) = zstd::Decoder::new(&f) {
+        let features: Vec<SimpleFeature> = bincode::deserialize_from(&mut zr)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        return Ok(features);
+    }
+
+    // Fallback: plain bincode
+    let f = BufReader::new(File::open(path)?);
+    let features: Vec<SimpleFeature> = bincode::deserialize_from(f)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    Ok(features)
 }
