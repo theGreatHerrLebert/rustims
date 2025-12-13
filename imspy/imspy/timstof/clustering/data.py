@@ -4,10 +4,7 @@ from typing import Iterator
 import numpy as np
 import pandas as pd
 from imspy.simulation.annotation import RustWrapperObject
-
 import imspy_connector
-
-from imspy.timstof import TimsDatasetDIA
 
 ims = imspy_connector.py_dia
 
