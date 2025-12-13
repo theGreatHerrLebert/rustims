@@ -6,6 +6,9 @@ import pandas as pd
 from imspy.simulation.annotation import RustWrapperObject
 
 import imspy_connector
+
+from imspy.timstof import TimsDatasetDIA
+
 ims = imspy_connector.py_dia
 
 class Fit1D(RustWrapperObject):
@@ -1056,7 +1059,6 @@ class RawPoints:
         self._py = py
 
     # ---- basic size / emptiness -----------------------------------------
-
     @property
     def n(self) -> int:
         # length of the arrays; mz is fine
@@ -1067,7 +1069,6 @@ class RawPoints:
         return self.n == 0
 
     # ---- array access ---------------------------------------------------
-
     def arrays(self):
         """
         Return numpy arrays (mz, rt, im, scan, intensity, tof, frame).
@@ -1471,6 +1472,15 @@ class ClusterResult1D:
     def drop_raw_data(self):
         """Drop attached raw points to save memory."""
         self._py.drop_raw_data()
+
+    def raw_data_from_handle(self, data_handle: "TimsDatasetDIA", tof_step: int =1, max_points: Optional[int]=None) -> "RawPoints":
+        """Reload raw points from a TimsDatasetDIA handle."""
+        return data_handle.debug_extract_raw_for_clusters(
+            [self],
+            window_group=self.window_group,
+            tof_step=tof_step,
+            max_points=max_points,
+        )[0]
 
     def __repr__(self):
         return (
