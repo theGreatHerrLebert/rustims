@@ -1470,13 +1470,19 @@ class ClusterResult1D:
         """Drop attached raw points to save memory."""
         self._py.drop_raw_data()
 
-    def raw_data_from_handle(self, data_handle: "TimsDatasetDIA", tof_step: int =1, max_points: Optional[int]=None) -> "RawPoints":
+    def raw_data_from_handle(self, data_handle: "TimsDatasetDIA", tof_step: int =1, max_points: Optional[int]=None,
+                             tof_pad: Optional[int] = None,
+                             rt_pad: Option[int] = None,
+                             scan_pad: Optional[int] = None) -> "RawPoints":
         """Reload raw points from a TimsDatasetDIA handle."""
         return data_handle.debug_extract_raw_for_clusters(
             [self],
             window_group=self.window_group,
             tof_step=tof_step,
             max_points=max_points,
+            tof_pad=tof_pad,
+            rt_pad=rt_pad,
+            scan_pad=scan_pad,
         )[0]
 
     def __repr__(self):

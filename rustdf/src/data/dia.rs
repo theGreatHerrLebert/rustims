@@ -976,6 +976,9 @@ impl TimsDatasetDIA {
         window_group: Option<u32>,
         tof_step: i32,
         max_points: Option<usize>,
+        tof_pad: Option<usize>,
+        rt_pad: Option<usize>,
+        scan_pad: Option<usize>,
         num_threads: usize,
     ) -> Vec<RawPoints> {
         if clusters.is_empty() {
@@ -1028,6 +1031,14 @@ impl TimsDatasetDIA {
                 let (rt_lo, rt_hi) = c.rt_window;
                 let (im_lo, im_hi) = c.im_window;
                 let (tof_lo, tof_hi) = c.tof_window;
+
+                // Optional padding
+                let tof_lo = tof_lo.saturating_sub(tof_pad.unwrap_or(0));
+                let tof_hi = tof_hi.saturating_add(tof_pad.unwrap_or(0));
+                let im_lo = im_lo.saturating_sub(scan_pad.unwrap_or(0));
+                let im_hi = im_hi.saturating_add(scan_pad.unwrap_or(0));
+                let rt_lo = rt_lo.saturating_sub(rt_pad.unwrap_or(0));
+                let rt_hi = rt_hi.saturating_add(rt_pad.unwrap_or(0));
 
                 attach_raw_points_for_spec_1d_threads(
                     self,

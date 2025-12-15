@@ -1058,6 +1058,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             window_group: Optional[int] = None,
             tof_step: int = 1,
             max_points: Optional[int] = None,
+            tof_pad: Optional[int] = None,
+            rt_pad: Option[int] = None,
+            scan_pad: Optional[int] = None,
             num_threads: int = 4,
     ) -> list["RawPoints"]:
         from imspy.timstof.clustering.data import RawPoints
@@ -1067,6 +1070,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             window_group,
             tof_step,
             max_points,
+            tof_pad,
+            rt_pad,
+            scan_pad,
             num_threads,
         )
 

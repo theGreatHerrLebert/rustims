@@ -2794,15 +2794,21 @@ impl PyTimsDatasetDIA {
         window_group = None,
         tof_step = 1,
         max_points = 1024,
+        tof_pad = None,
+        rt_pad = None,
+        scan_pad = None,
         num_threads = 1,
     ))]
-    pub fn debug_extract_raw_for_clusters(
+    pub fn s(
         &self,
         py: Python<'_>,
         clusters: Vec<Py<PyClusterResult1D>>,
         window_group: Option<u32>,
         tof_step: i32,
         max_points: Option<usize>,
+        tof_pad: Option<usize>,
+        rt_pad: Option<usize>,
+        scan_pad: Option<usize>,
         num_threads: usize,
     ) -> Vec<PyRawPoints> {
         // Unwrap clusters
@@ -2816,6 +2822,9 @@ impl PyTimsDatasetDIA {
             window_group,
             tof_step,
             max_points,
+            tof_pad,
+            rt_pad,
+            scan_pad,
             num_threads,
         );
 
