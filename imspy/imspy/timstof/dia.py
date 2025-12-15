@@ -1059,7 +1059,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             tof_step: int = 1,
             max_points: Optional[int] = None,
             tof_pad: Optional[int] = None,
-            rt_pad: Option[int] = None,
+            rt_pad: Optional[int] = None,
             scan_pad: Optional[int] = None,
             num_threads: int = 4,
     ) -> list["RawPoints"]:
