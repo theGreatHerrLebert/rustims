@@ -1472,7 +1472,7 @@ class ClusterResult1D:
 
     def raw_data_from_handle(self, data_handle: "TimsDatasetDIA", tof_step: int =1, max_points: Optional[int]=None,
                              tof_pad: Optional[int] = None,
-                             rt_pad: Option[int] = None,
+                             rt_pad: Optional[int] = None,
                              scan_pad: Optional[int] = None) -> "RawPoints":
         """Reload raw points from a TimsDatasetDIA handle."""
         return data_handle.debug_extract_raw_for_clusters(
