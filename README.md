@@ -92,6 +92,17 @@ TimSim can be run directly from the terminal. You have two convenient options:
    ```
    This approach lets you store and reuse complete simulation setups without having to specify each parameter on the command line.
 
+### Visual Comparison: Real vs Simulated dia-PASEF Data
+
+<p align="center">
+  <em>Top: Real DIA-PASEF data acquired on a Bruker timsTOF | Bottom: Synthetic data generated using <code>timsim</code></em>
+</p>
+
+<p align="center">
+  <img src="assets/output_dia_real.gif" alt="Real DIA-PASEF timsTOF data" width="1024"/>
+  <img src="assets/output_dia_sim.gif" alt="Synthetic DIA-PASEF timsTOF data" width="1024"/>
+</p>
+
 ### Graphical User Interface (GUI) Mode
 
 For an interactive, user-friendly experience, launch the TimSim GUI. The GUI allows you to:
