@@ -2799,7 +2799,7 @@ impl PyTimsDatasetDIA {
         scan_pad = None,
         num_threads = 1,
     ))]
-    pub fn s(
+    pub fn debug_extract_raw_for_clusters(
         &self,
         py: Python<'_>,
         clusters: Vec<Py<PyClusterResult1D>>,
