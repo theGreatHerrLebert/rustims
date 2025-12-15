@@ -36,7 +36,7 @@ class PseudoFragment:
 
 class PseudoSpectrum:
     def __init__(self, py_ptr: Any) -> None:
-        self._p = py_ptr
+        self._py = py_ptr
 
     @classmethod
     def from_clusters(cls, precursor, fragments):
@@ -68,36 +68,36 @@ class PseudoSpectrum:
 
     @property
     def precursor_mz(self) -> float:
-        return float(self._p.precursor_mz)
+        return float(self._py.precursor_mz)
 
     @property
     def precursor_charge(self) -> int:
-        return int(self._p.precursor_charge)
+        return int(self._py.precursor_charge)
 
     @property
     def rt_apex(self) -> float:
-        return float(self._p.rt_apex)
+        return float(self._py.rt_apex)
 
     @property
     def im_apex(self) -> float:
-        return float(self._p.im_apex)
+        return float(self._py.im_apex)
 
     @property
     def feature_id(self) -> int | None:
-        fid = self._p.feature_id
+        fid = self._py.feature_id
         return int(fid) if fid is not None else None
 
     @property
     def precursor_cluster_ids(self) -> list[int]:
-        return list(self._p.precursor_cluster_ids)
+        return list(self._py.precursor_cluster_ids)
 
     @property
     def fragments(self) -> list[PseudoFragment]:
-        return [PseudoFragment(f) for f in self._p.fragments]
+        return [PseudoFragment(f) for f in self._py.fragments]
 
     @property
     def window_groups(self) -> list[int] | None:
-        wgid = self._p.window_groups
+        wgid = self._py.window_groups
         if wgid is None:
             return None
         return list(wgid)
@@ -133,7 +133,7 @@ class PseudoSpectrum:
         mz : np.ndarray, shape (N,), dtype=float32
         intensity : np.ndarray, shape (N,), dtype=float32
         """
-        mz, intensity = self._p.merged_peaks(
+        mz, intensity = self._py.merged_peaks(
             float(max_ppm),
             bool(allow_cross_window_group),
         )
