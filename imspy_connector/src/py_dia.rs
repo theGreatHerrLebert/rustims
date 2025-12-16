@@ -1417,19 +1417,19 @@ impl PyRtPeak1D {
 
     #[staticmethod]
     #[pyo3(signature = (
-        grid,
-        mu_rt,
-        sigma_rt,
-        mu_tof,
-        sigma_tof,
-        amplitude,
-        baseline,
-        area,
-        tof_row,
-        rt_idx_raw,
-        k_sigma,
-        min_width
-    ))]
+    grid,
+    mu_rt,
+    sigma_rt,
+    mu_tof,
+    sigma_tof,
+    amplitude,
+    baseline,
+    area,
+    tof_row,
+    rt_idx_raw,
+    k_sigma,
+    min_width
+))]
     pub fn from_batch_detected<'py>(
         py: Python<'py>,
         grid: &PyTofRtGrid,
@@ -1496,6 +1496,10 @@ impl PyRtPeak1D {
         let rt_range_sec = grid.inner.rt_range_sec;
         let window_group = grid.inner.window_group;
 
+        // >>> FIX: snapshot TOF scale vectors so we can convert bin -> instrument TOF
+        let tof_centers = grid.inner.scale.centers.clone(); // len = rows
+        let tof_edges   = grid.inner.scale.edges.clone();   // len = rows + 1
+
         let k_sigma = k_sigma.max(0.0);
         let min_width = min_width.max(1);
 
@@ -1504,24 +1508,20 @@ impl PyRtPeak1D {
             (0..n)
                 .into_par_iter()
                 .map(|i| {
-                    let mu_rt_i      = mu_rt[i];
-                    let sigma_rt_i   = sigma_rt[i].max(1e-3);
-                    let mu_tof_i     = mu_tof[i];
-                    let sigma_tof_i  = sigma_tof[i].max(1e-3);
-                    let amp_i        = amplitude[i];
-                    let base_i       = baseline[i];
-                    let area_i       = area[i];
-                    let tof_row_i    = tof_row[i];
+                    let mu_rt_i       = mu_rt[i];
+                    let sigma_rt_i    = sigma_rt[i].max(1e-3);
+                    let mu_tof_i      = mu_tof[i];
+                    let sigma_tof_i   = sigma_tof[i].max(1e-3);
+                    let amp_i         = amplitude[i];
+                    let base_i        = baseline[i];
+                    let area_i        = area[i];
+                    let tof_row_i     = tof_row[i];
                     let _rt_idx_raw_i = rt_idx_raw[i];
 
                     // ----------------- RT geometry ------------------------
                     let mut rt_idx = mu_rt_i.round() as isize;
-                    if rt_idx < 0 {
-                        rt_idx = 0;
-                    }
-                    if rt_idx as usize >= cols {
-                        rt_idx = (cols - 1) as isize;
-                    }
+                    if rt_idx < 0 { rt_idx = 0; }
+                    if rt_idx as usize >= cols { rt_idx = (cols - 1) as isize; }
                     let rt_idx_u = rt_idx as usize;
 
                     let subframe = mu_rt_i - (rt_idx_u as f32);
@@ -1546,12 +1546,8 @@ impl PyRtPeak1D {
 
                     let mut rt_lo = rt_idx - half;
                     let mut rt_hi = rt_idx + half;
-                    if rt_lo < 0 {
-                        rt_lo = 0;
-                    }
-                    if rt_hi as usize >= cols {
-                        rt_hi = (cols - 1) as isize;
-                    }
+                    if rt_lo < 0 { rt_lo = 0; }
+                    if rt_hi as usize >= cols { rt_hi = (cols - 1) as isize; }
                     let rt_lo_u = rt_lo as usize;
                     let rt_hi_u = rt_hi as usize;
                     let width_frames = rt_hi_u.saturating_sub(rt_lo_u).saturating_add(1);
@@ -1568,42 +1564,52 @@ impl PyRtPeak1D {
                     let right_x = rt_hi_u as f32;
 
                     // ----------------- TOF geometry -----------------------
+                    // tof_row is a BIN ROW index
                     let mut tof_row_idx = tof_row_i.round() as isize;
-                    if tof_row_idx < 0 {
-                        tof_row_idx = 0;
-                    }
-                    if tof_row_idx as usize >= rows {
-                        tof_row_idx = (rows - 1) as isize;
-                    }
+                    if tof_row_idx < 0 { tof_row_idx = 0; }
+                    if tof_row_idx as usize >= rows { tof_row_idx = (rows - 1) as isize; }
                     let tof_row_u = tof_row_idx as usize;
 
+                    // mu_tof is a BIN coordinate (float); we clamp it to [0..rows-1]
                     let mut tof_center_idx = mu_tof_i.round() as isize;
-                    if tof_center_idx < 0 {
-                        tof_center_idx = 0;
-                    }
-                    if tof_center_idx as usize >= rows {
-                        tof_center_idx = (rows - 1) as isize;
-                    }
+                    if tof_center_idx < 0 { tof_center_idx = 0; }
+                    if tof_center_idx as usize >= rows { tof_center_idx = (rows - 1) as isize; }
                     let tof_center_u = tof_center_idx as usize;
 
+                    // window half-width in BIN units
                     let half_tof = (k_sigma * sigma_tof_i).ceil().max(1.0) as isize;
                     let mut tof_lo_idx = tof_center_idx - half_tof;
                     let mut tof_hi_idx = tof_center_idx + half_tof;
-                    if tof_lo_idx < 0 {
-                        tof_lo_idx = 0;
-                    }
-                    if tof_hi_idx as usize >= rows {
-                        tof_hi_idx = (rows - 1) as isize;
-                    }
+                    if tof_lo_idx < 0 { tof_lo_idx = 0; }
+                    if tof_hi_idx as usize >= rows { tof_hi_idx = (rows - 1) as isize; }
 
-                    let tof_bounds = (tof_lo_idx as i32, tof_hi_idx as i32);
-                    let tof_center = tof_center_u as i32;
+                    // >>> FIX: convert BIN indices -> instrument TOF units (edges/centers)
+                    let lo_u = (tof_lo_idx as usize).min(rows.saturating_sub(1));
+                    let hi_u = (tof_hi_idx as usize).min(rows.saturating_sub(1));
+
+                    // instrument TOF center for that bin
+                    let tof_center = tof_centers[tof_center_u].round() as i32;
+
+                    // instrument TOF bounds (use edges; hi edge uses hi_u+1)
+                    let lo_edge = tof_edges[lo_u];
+                    let hi_edge = tof_edges[(hi_u + 1).min(tof_edges.len().saturating_sub(1))];
+                    let tof_bounds = (lo_edge.round() as i32, hi_edge.round() as i32);
 
                     // ----------------- shape / intensity -------------------
                     let apex_raw = amp_i + base_i;
                     let apex_smoothed = apex_raw;
                     let prominence = amp_i;
                     let area_raw = area_i;
+
+                    #[cfg(debug_assertions)]
+                    {
+                        // quick sanity: bounds should resemble instrument TOF range, not [0..rows]
+                        // (allow a small slack due to rounding)
+                        let tmin = grid.inner.scale.tof_min - 10;
+                        let tmax = grid.inner.scale.tof_max + 10;
+                        debug_assert!(tof_bounds.0 >= tmin, "tof_bounds looks too small (bin-like?)");
+                        debug_assert!(tof_bounds.1 <= tmax, "tof_bounds exceeds tof_max (bad mapping?)");
+                    }
 
                     RtPeak1D {
                         rt_idx: rt_idx_u,
@@ -1619,9 +1625,9 @@ impl PyRtPeak1D {
                         rt_bounds_frames,
                         frame_id_bounds,
                         window_group,
-                        tof_row: tof_row_u,
-                        tof_center,
-                        tof_bounds,
+                        tof_row: tof_row_u,       // still BIN ROW index
+                        tof_center,              // NOW instrument TOF units
+                        tof_bounds,              // NOW instrument TOF units
                         parent_im_id: None,
                         id: i as i64,
                     }

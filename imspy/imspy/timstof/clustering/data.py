@@ -288,13 +288,19 @@ class RtPeak1D(RustWrapperObject):
         tof_lo_idx = max(0, tof_center_idx - half_tof)
         tof_hi_idx = min(rows - 1, tof_center_idx + half_tof)
 
-        tof_bounds = (int(tof_lo_idx), int(tof_hi_idx))
+        tof_centers = g.tof_centers
+        tof_edges = g.tof_edges
 
-        # for tof_center we can either:
-        #   - store the index, or
-        #   - convert to physical TOF using tof_centers
-        # Keeping it consistent with ImPeak1D: treat it as index.
-        tof_center = int(tof_center_idx)
+        # center in instrument TOF units
+        tof_center = int(round(float(tof_centers[tof_center_idx])))
+
+        # bounds in instrument TOF units (IMPORTANT: use edges, and hi edge is hi_idx+1)
+        tof_lo_idx = max(0, min(rows - 1, tof_lo_idx))
+        tof_hi_idx = max(0, min(rows - 1, tof_hi_idx))
+
+        tof_min = int(round(float(tof_edges[tof_lo_idx])))
+        tof_max = int(round(float(tof_edges[tof_hi_idx + 1])))  # +1 edge!
+        tof_bounds = (tof_min, tof_max)
 
         # ---------------------------------------------------------------
         # Peak shape / intensity proxies
