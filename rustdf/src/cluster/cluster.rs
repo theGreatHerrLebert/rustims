@@ -4,8 +4,8 @@ use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::slice::TimsSlice;
-use crate::cluster::peak::{FrameBinView, ImPeak1D, RtFrames, RtPeak1D};
-use crate::cluster::utility::{Fit1D, TofScale, fit1d_moment};
+use crate::cluster::peak::{expand_rt_peak_along_im, FrameBinView, ImExpandFromRtParams, ImPeak1D, RtFrames, RtPeak1D};
+use crate::cluster::utility::{Fit1D, TofScale, fit1d_moment, MobilityFn};
 use crate::data::handle::IndexConverter;
 
 fn compute_cluster_id_from_spec(spec: &ClusterSpec1D) -> u64 {
@@ -1970,4 +1970,64 @@ pub fn merge_clusters_by_distance(
     }
 
     out
+}
+
+pub fn clusters_from_rt_and_im(
+    rt_frames: &RtFrames,
+    rt_peak: &RtPeak1D,
+    im_peaks: &[ImPeak1D],
+    tof_hist_bins: usize,
+    ms_level: u8,
+    opts: &Eval1DOpts,
+) -> Vec<ClusterResult1D> {
+    im_peaks.iter().map(|im| {
+        // TOF window policy: use im.tof_bounds (instrument idx) as spec.tof_win
+        // since evaluate_spec_1d expects (i32,i32) “bin-index window encoded as i32”
+        // BUT your helper `bin_range_for_win` currently interprets these as bins.
+        //
+        // So you must decide ONE convention:
+        //  - spec.tof_win is BIN indices (recommended), OR
+        //  - spec.tof_win is TOF instrument indices and you add a mapping helper.
+        //
+        // Right now evaluate_spec_1d assumes bin indices (via bin_range_for_win),
+        // so: convert im_peak.tof_bounds -> (bin_lo, bin_hi) first.
+        let scale = &*rt_frames.scale;
+        let (bin_lo, bin_hi) = scale.index_range_for_tof_window(im.tof_bounds.0, im.tof_bounds.1);
+
+        let spec = ClusterSpec1D {
+            rt_lo: rt_peak.rt_bounds_frames.0,
+            rt_hi: rt_peak.rt_bounds_frames.1,
+            im_lo: im.left_abs,
+            im_hi: im.right_abs,
+            tof_win: (bin_lo as i32, bin_hi as i32),
+            tof_hist_bins,
+
+            window_group: rt_peak.window_group,
+            parent_im_id: Some(im.id),
+            parent_rt_id: Some(rt_peak.id),
+            ms_level,
+
+            im_prior_sigma: im.scan_sigma,
+        };
+
+        evaluate_spec_1d(rt_frames, &spec, opts)
+    }).collect()
+}
+
+pub fn rt_first_clusters_for_group(
+    rt_frames: &RtFrames,
+    rt_peaks: &[RtPeak1D],
+    global_num_scans: usize,
+    mobility_of: MobilityFn,
+    im_expand: ImExpandFromRtParams,
+    tof_hist_bins: usize,
+    ms_level: u8,
+    eval_opts: &Eval1DOpts,
+) -> Vec<ClusterResult1D> {
+    rt_peaks.par_iter()
+        .flat_map_iter(|rtp| {
+            let ims = expand_rt_peak_along_im(rt_frames, rtp, global_num_scans, mobility_of, im_expand.clone());
+            clusters_from_rt_and_im(rt_frames, rtp, &ims, tof_hist_bins, ms_level, eval_opts)
+        })
+        .collect()
 }

@@ -11,7 +11,7 @@ use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, Buil
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::{DiaIndex, TimsDatasetDIA};
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
+use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid, ImDetectParams};
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
@@ -2447,6 +2447,298 @@ impl PyTimsDatasetDIA {
 
             results_to_py(py, results)
         }
+    #[pyo3(signature = (
+    window_group,
+    tof_step,
+    rt_peaks,
+    // ImDetectParams
+    im_min_prom=50.0,
+    im_min_distance_scans=8,
+    im_min_width_scans=6,
+    im_smooth_sigma_scans=0.0,
+    im_smooth_trunc_k=3.0,
+    im_bin_pad=1,
+    // BuildSpecOpts (TOF-based)
+    extra_rt_pad=0,
+    extra_im_pad=0,
+    tof_bin_pad=0,
+    tof_hist_bins=64,
+    min_im_span=12,
+    // Eval1DOpts
+    refine_tof_once=true,
+    refine_k_sigma=3.0,
+    attach_axes=true,
+    attach_points=false,
+    attach_max_points=None,
+    attach_im_trace=false,
+    attach_rt_trace=false,
+    compute_mz_from_tof=true,
+    pad_rt_frames=0,
+    pad_im_scans=0,
+    pad_tof_bins=0,
+    // threads + optional merge
+    num_threads=0,
+    merge_duplicates=false,
+    max_rt_center_delta=0.0,
+    max_im_center_delta=0.0,
+    max_tof_center_delta=0.0,
+    ))]
+    pub fn clusters_for_group_from_rt_peaks(
+        &self,
+        py: Python<'_>,
+        window_group: u32,
+        tof_step: i32,
+        rt_peaks: Vec<Py<PyRtPeak1D>>,
+        // ImDetectParams
+        im_min_prom: f32,
+        im_min_distance_scans: usize,
+        im_min_width_scans: usize,
+        im_smooth_sigma_scans: f32,
+        im_smooth_trunc_k: f32,
+        im_bin_pad: usize,
+        // BuildSpecOpts
+        extra_rt_pad: usize,
+        extra_im_pad: usize,
+        tof_bin_pad: usize,
+        tof_hist_bins: usize,
+        min_im_span: usize,
+        // Eval1DOpts
+        refine_tof_once: bool,
+        refine_k_sigma: f32,
+        attach_axes: bool,
+        attach_points: bool,
+        attach_max_points: Option<usize>,
+        attach_im_trace: bool,
+        attach_rt_trace: bool,
+        compute_mz_from_tof: bool,
+        pad_rt_frames: usize,
+        pad_im_scans: usize,
+        pad_tof_bins: usize,
+        // threads + merge
+        num_threads: usize,
+        merge_duplicates: bool,
+        max_rt_center_delta: f32,
+        max_im_center_delta: f32,
+        max_tof_center_delta: f32,
+    ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+        // ---- convert Python RT peaks into Rust RtPeak1D ----------------------
+        let rt_rs: Vec<RtPeak1D> = rt_peaks
+            .iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        debug_assert!(
+            rt_rs.iter().all(|p| p.window_group == Some(window_group)),
+            "clusters_for_group_from_rt_peaks: some RT peaks have wrong/missing window_group"
+        );
+
+        // ---- IM detect params ------------------------------------------------
+        let im_params = ImDetectParams {
+            min_prom: im_min_prom,
+            min_distance_scans: im_min_distance_scans,
+            min_width_scans: im_min_width_scans,
+            smooth_sigma_scans: im_smooth_sigma_scans,
+            smooth_trunc_k: im_smooth_trunc_k,
+        };
+
+        // ---- BuildSpecOpts: TOF-based, MS2 enforced via with_ms_level in Rust -
+        let build_opts = BuildSpecOpts {
+            extra_rt_pad,
+            extra_im_pad,
+            tof_bin_pad,
+            tof_hist_bins,
+            ms_level: 2,         // harmless; Rust also enforces via with_ms_level
+            min_im_span,
+            im_k_sigma: 3.0,     // keep consistent with your IM-first wrapper
+        };
+
+        // ---- Eval1DOpts ------------------------------------------------------
+        let eval_opts = Eval1DOpts {
+            refine_tof_once,
+            refine_k_sigma,
+            attach_axes,
+            attach: Attach1DOptions {
+                attach_points,
+                attach_axes,
+                max_points: attach_max_points,
+            },
+            compute_mz_from_tof,
+            attach_im_trace,
+            attach_rt_trace,
+            pad_rt_frames,
+            pad_im_scans,
+            pad_tof_bins,
+        };
+
+        // ---- Run the core RT-first DIA clustering ----------------------------
+        let mut results = py.allow_threads(|| {
+            self.inner.clusters_for_group_from_rt_peaks(
+                window_group,
+                tof_step,
+                &rt_rs,
+                im_params,
+                im_bin_pad,
+                &build_opts,
+                &eval_opts,
+                num_threads,
+            )
+        });
+
+        // ---- Optional distance-based de-duplication --------------------------
+        if merge_duplicates {
+            let dist = ClusterMergeDistancePolicy {
+                max_rt_center_delta,
+                max_im_center_delta,
+                max_tof_center_delta,
+                max_mz_center_delta_da: 0.0,
+            };
+            results = merge_clusters_by_distance(results, &dist);
+        }
+
+        results_to_py(py, results)
+    }
+
+    #[pyo3(signature = (
+    tof_step,
+    rt_peaks,
+    // ImDetectParams
+    im_min_prom=50.0,
+    im_min_distance_scans=8,
+    im_min_width_scans=6,
+    im_smooth_sigma_scans=0.0,
+    im_smooth_trunc_k=3.0,
+    im_bin_pad=1,
+    // BuildSpecOpts (TOF-based)
+    extra_rt_pad=0,
+    extra_im_pad=0,
+    tof_bin_pad=0,
+    tof_hist_bins=64,
+    min_im_span=12,
+    // Eval1DOpts
+    refine_tof_once=true,
+    refine_k_sigma=3.0,
+    attach_axes=true,
+    attach_points=false,
+    attach_max_points=None,
+    attach_im_trace=false,
+    attach_rt_trace=false,
+    compute_mz_from_tof=true,
+    pad_rt_frames=0,
+    pad_im_scans=0,
+    pad_tof_bins=0,
+    // threads + optional merge
+    num_threads=0,
+    merge_duplicates=false,
+    max_rt_center_delta=0.0,
+    max_im_center_delta=0.0,
+    max_tof_center_delta=0.0,
+    ))]
+    pub fn clusters_for_precursor_from_rt_peaks(
+        &self,
+        py: Python<'_>,
+        tof_step: i32,
+        rt_peaks: Vec<Py<PyRtPeak1D>>,
+        // ImDetectParams
+        im_min_prom: f32,
+        im_min_distance_scans: usize,
+        im_min_width_scans: usize,
+        im_smooth_sigma_scans: f32,
+        im_smooth_trunc_k: f32,
+        im_bin_pad: usize,
+        // BuildSpecOpts
+        extra_rt_pad: usize,
+        extra_im_pad: usize,
+        tof_bin_pad: usize,
+        tof_hist_bins: usize,
+        min_im_span: usize,
+        // Eval1DOpts
+        refine_tof_once: bool,
+        refine_k_sigma: f32,
+        attach_axes: bool,
+        attach_points: bool,
+        attach_max_points: Option<usize>,
+        attach_im_trace: bool,
+        attach_rt_trace: bool,
+        compute_mz_from_tof: bool,
+        pad_rt_frames: usize,
+        pad_im_scans: usize,
+        pad_tof_bins: usize,
+        // threads + merge
+        num_threads: usize,
+        merge_duplicates: bool,
+        max_rt_center_delta: f32,
+        max_im_center_delta: f32,
+        max_tof_center_delta: f32,
+    ) -> PyResult<Vec<Py<PyClusterResult1D>>> {
+        let rt_rs: Vec<RtPeak1D> = rt_peaks
+            .iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        debug_assert!(
+            rt_rs.iter().all(|p| p.window_group.is_none()),
+            "clusters_for_precursor_from_rt_peaks: RT peaks unexpectedly carry window_group"
+        );
+
+        let im_params = ImDetectParams {
+            min_prom: im_min_prom,
+            min_distance_scans: im_min_distance_scans,
+            min_width_scans: im_min_width_scans,
+            smooth_sigma_scans: im_smooth_sigma_scans,
+            smooth_trunc_k: im_smooth_trunc_k,
+        };
+
+        let build_opts = BuildSpecOpts {
+            extra_rt_pad,
+            extra_im_pad,
+            tof_bin_pad,
+            tof_hist_bins,
+            ms_level: 1,     // MS1 enforced via with_ms_level in Rust anyway
+            min_im_span,
+            im_k_sigma: 3.0,
+        };
+
+        let eval_opts = Eval1DOpts {
+            refine_tof_once,
+            refine_k_sigma,
+            attach_axes,
+            attach: Attach1DOptions {
+                attach_points,
+                attach_axes,
+                max_points: attach_max_points,
+            },
+            compute_mz_from_tof,
+            attach_im_trace,
+            attach_rt_trace,
+            pad_rt_frames,
+            pad_im_scans,
+            pad_tof_bins,
+        };
+
+        let mut results = py.allow_threads(|| {
+            self.inner.clusters_for_precursor_from_rt_peaks(
+                tof_step,
+                &rt_rs,
+                im_params,
+                im_bin_pad,
+                &build_opts,
+                &eval_opts,
+                num_threads,
+            )
+        });
+
+        if merge_duplicates {
+            let dist = ClusterMergeDistancePolicy {
+                max_rt_center_delta,
+                max_im_center_delta,
+                max_tof_center_delta,
+                max_mz_center_delta_da: 0.0,
+            };
+            results = merge_clusters_by_distance(results, &dist);
+        }
+
+        results_to_py(py, results)
+    }
 
     #[pyo3(signature = (
         ms1_clusters,

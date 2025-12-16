@@ -687,7 +687,7 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             max_rt_center_delta: float = 0.1,
             max_im_center_delta: float = 5.0,
             max_tof_center_delta: float = 2.0,
-    ):
+    ) -> list["ClusterResult1D"]:
         from imspy.timstof.clustering.data import ClusterResult1D
         """
         Cluster in **MS1 precursor** space.
@@ -738,6 +738,172 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(num_threads),
             int(min_im_span),
             int(rt_pad_frames),
+            bool(merge_duplicates),
+            float(max_rt_center_delta),
+            float(max_im_center_delta),
+            float(max_tof_center_delta),
+        )
+        return [ClusterResult1D(r) for r in py_results]
+
+    def clusters_for_group_from_rt_peaks(
+            self,
+            window_group: int,
+            rt_peaks: list["RtPeak1D"],
+            *,
+            tof_step: int = 1,
+            # ImDetectParams
+            im_min_prom: float = 50.0,
+            im_min_distance_scans: int = 8,
+            im_min_width_scans: int = 6,
+            im_smooth_sigma_scans: float = 0.0,
+            im_smooth_trunc_k: float = 3.0,
+            im_bin_pad: int = 1,
+            # BuildSpecOpts
+            extra_rt_pad: int = 0,
+            extra_im_pad: int = 0,
+            tof_bin_pad: int = 0,
+            tof_hist_bins: int = 64,
+            # Eval1DOpts
+            refine_tof_once: bool = True,
+            refine_k_sigma: float = 3.0,
+            attach_axes: bool = True,
+            attach_points: bool = False,
+            attach_max_points: int | None = None,
+            attach_im_xic: bool = False,
+            attach_rt_xic: bool = False,
+            compute_mz_from_tof: bool = True,
+            pad_rt_frames: int = 0,
+            pad_im_scans: int = 0,
+            pad_tof_bins: int = 0,
+            num_threads: int = 0,
+            min_im_span: int = 10,
+            # merge duplicates (within same WG)
+            merge_duplicates: bool = False,
+            max_rt_center_delta: float = 0.1,
+            max_im_center_delta: float = 5.0,
+            max_tof_center_delta: float = 2.0,
+    ) -> list["ClusterResult1D"]:
+        from imspy.timstof.clustering.data import ClusterResult1D
+        """
+        RT-centric clustering in **MS2** for one DIA window group.
+
+        RT peaks are expanded into IM peaks (per RT window) and then evaluated into clusters.
+        """
+        if tof_step <= 0:
+            raise ValueError(f"tof_step must be > 0, got {tof_step}")
+
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_results = self.__dataset.clusters_for_group_from_rt_peaks(
+            int(window_group),
+            int(tof_step),
+            [p.get_py_ptr() for p in rt_peaks],
+            float(im_min_prom),
+            int(im_min_distance_scans),
+            int(im_min_width_scans),
+            float(im_smooth_sigma_scans),
+            float(im_smooth_trunc_k),
+            int(im_bin_pad),
+            int(extra_rt_pad),
+            int(extra_im_pad),
+            int(tof_bin_pad),
+            int(tof_hist_bins),
+            bool(refine_tof_once),
+            float(refine_k_sigma),
+            bool(attach_axes),
+            bool(attach_points),
+            attach_max_points,
+            bool(attach_im_xic),
+            bool(attach_rt_xic),
+            bool(compute_mz_from_tof),
+            int(pad_rt_frames),
+            int(pad_im_scans),
+            int(pad_tof_bins),
+            int(num_threads),
+            int(min_im_span),
+            bool(merge_duplicates),
+            float(max_rt_center_delta),
+            float(max_im_center_delta),
+            float(max_tof_center_delta),
+        )
+        return [ClusterResult1D(r) for r in py_results]
+
+    def clusters_for_precursor_from_rt_peaks(
+            self,
+            rt_peaks: list["RtPeak1D"],
+            *,
+            tof_step: int = 1,
+            # ImDetectParams
+            im_min_prom: float = 50.0,
+            im_min_distance_scans: int = 8,
+            im_min_width_scans: int = 6,
+            im_smooth_sigma_scans: float = 0.0,
+            im_smooth_trunc_k: float = 3.0,
+            im_bin_pad: int = 1,
+            # BuildSpecOpts
+            extra_rt_pad: int = 0,
+            extra_im_pad: int = 0,
+            tof_bin_pad: int = 0,
+            tof_hist_bins: int = 64,
+            # Eval1DOpts
+            refine_tof_once: bool = True,
+            refine_k_sigma: float = 3.0,
+            attach_axes: bool = True,
+            attach_points: bool = False,
+            attach_max_points: int | None = None,
+            attach_im_xic: bool = False,
+            attach_rt_xic: bool = False,
+            compute_mz_from_tof: bool = True,
+            pad_rt_frames: int = 0,
+            pad_im_scans: int = 0,
+            pad_tof_bins: int = 0,
+            num_threads: int = 0,
+            min_im_span: int = 10,
+            # merge duplicates
+            merge_duplicates: bool = False,
+            max_rt_center_delta: float = 0.1,
+            max_im_center_delta: float = 5.0,
+            max_tof_center_delta: float = 2.0,
+    ):
+        from imspy.timstof.clustering.data import ClusterResult1D
+        """
+        RT-centric clustering in **MS1 precursor** space.
+        """
+        if tof_step <= 0:
+            raise ValueError(f"tof_step must be > 0, got {tof_step}")
+
+        if self.use_bruker_sdk:
+            warnings.warn("Using Bruker SDK, forcing num_threads=1.")
+            num_threads = 1
+
+        py_results = self.__dataset.clusters_for_precursor_from_rt_peaks(
+            int(tof_step),
+            [p.get_py_ptr() for p in rt_peaks],
+            float(im_min_prom),
+            int(im_min_distance_scans),
+            int(im_min_width_scans),
+            float(im_smooth_sigma_scans),
+            float(im_smooth_trunc_k),
+            int(im_bin_pad),
+            int(extra_rt_pad),
+            int(extra_im_pad),
+            int(tof_bin_pad),
+            int(tof_hist_bins),
+            bool(refine_tof_once),
+            float(refine_k_sigma),
+            bool(attach_axes),
+            bool(attach_points),
+            attach_max_points,
+            bool(attach_im_xic),
+            bool(attach_rt_xic),
+            bool(compute_mz_from_tof),
+            int(pad_rt_frames),
+            int(pad_im_scans),
+            int(pad_tof_bins),
+            int(num_threads),
+            int(min_im_span),
             bool(merge_duplicates),
             float(max_rt_center_delta),
             float(max_im_center_delta),

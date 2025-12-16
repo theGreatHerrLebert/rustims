@@ -1022,3 +1022,115 @@ pub fn detect_im_peaks_from_tof_scan_window(
         p,
     )
 }
+
+/// Dense TOF(bin) × scan(abs) grid summed over frames [rt_lo..=rt_hi].
+pub fn build_tof_scan_grid_for_rt_window(
+    rt_frames: &RtFrames,
+    rt_lo: usize,
+    rt_hi: usize,
+    global_num_scans: usize,
+    // optional: restrict to a TOF bin window to keep memory down:
+    bin_lo: Option<usize>,
+    bin_hi: Option<usize>,
+) -> TofScanGrid {
+    let scale = &*rt_frames.scale;
+    let n_bins_total = scale.num_bins();
+
+    let (b0, b1) = match (bin_lo, bin_hi) {
+        (Some(lo), Some(hi)) => (lo.min(hi).min(n_bins_total.saturating_sub(1)),
+                                 hi.max(lo).min(n_bins_total.saturating_sub(1))),
+        _ => (0, n_bins_total.saturating_sub(1)),
+    };
+    let rows = b1 + 1 - b0;
+    let cols = global_num_scans.max(1);
+
+    let mut data = vec![0.0f32; rows.saturating_mul(cols)];
+    let scans: Vec<usize> = (0..cols).collect(); // absolute scan axis
+
+    let rt_lo = rt_lo.min(rt_frames.frames.len().saturating_sub(1));
+    let rt_hi = rt_hi.min(rt_frames.frames.len().saturating_sub(1));
+    let (rt_lo, rt_hi) = if rt_lo <= rt_hi { (rt_lo, rt_hi) } else { (rt_hi, rt_lo) };
+
+    for fbv in &rt_frames.frames[rt_lo..=rt_hi] {
+        let ub = &fbv.unique_bins;
+        if ub.is_empty() { continue; }
+
+        // Iterate bins in the *frame*, but only accumulate if bin ∈ [b0..b1]
+        for (i_bin, &bin_abs) in ub.iter().enumerate() {
+            if bin_abs < b0 || bin_abs > b1 { continue; }
+            let row = bin_abs - b0;
+
+            let lo = fbv.offsets[i_bin];
+            let hi = fbv.offsets[i_bin + 1];
+
+            for k in lo..hi {
+                let s = fbv.scan_idx[k] as usize;
+                if s < cols {
+                    data[row * cols + s] += fbv.intensity[k];
+                }
+            }
+        }
+    }
+
+    // Need a TofScale that matches *these* rows. Simplest: keep original scale,
+    // but be aware row index now has offset b0. Two options:
+    // 1) store row_offset and adjust centers/bounds at call sites (recommended),
+    // 2) build a tiny "sub-scale" view.
+    //
+    // I suggest adding row_offset to TofScanGrid (or wrap it in a view struct).
+    TofScanGrid {
+        scans,
+        data,
+        rows,
+        cols,
+        data_raw: None,
+        scale: (*rt_frames.scale).clone(), // plus remember b0 somewhere!
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ImExpandFromRtParams {
+    pub bin_pad: usize,      // pad around the RT-peak’s TOF context
+    pub im: ImDetectParams,  // your existing IM detection params
+}
+
+pub fn expand_rt_peak_along_im(
+    rt_frames: &RtFrames,
+    rt_peak: &RtPeak1D,
+    global_num_scans: usize,
+    mobility_of: MobilityFn,
+    p: ImExpandFromRtParams,
+) -> Vec<ImPeak1D> {
+    let (rt_lo, rt_hi) = rt_peak.rt_bounds_frames;
+
+    // define a compact TOF-bin window around the rt_peak’s TOF row/bounds
+    // You have rt_peak.tof_row and rt_peak.tof_bounds (instrument idx).
+    // If you prefer bin space: use rt_peak.tof_row as center bin, pad in bins.
+    // If rt_peak.tof_bounds are instrument indices, map to bins via scale.index_range_for_tof_window.
+    let scale = &*rt_frames.scale;
+    let (mut bin_lo, mut bin_hi) =
+        scale.index_range_for_tof_window(rt_peak.tof_bounds.0, rt_peak.tof_bounds.1);
+
+    bin_lo = bin_lo.saturating_sub(p.bin_pad);
+    bin_hi = bin_hi.saturating_add(p.bin_pad);
+
+    let grid = build_tof_scan_grid_for_rt_window(
+        rt_frames,
+        rt_lo,
+        rt_hi,
+        global_num_scans,
+        Some(bin_lo),
+        Some(bin_hi),
+    );
+
+    // IMPORTANT: you want the produced ImPeak1D to carry *rt bounds* = (rt_lo, rt_hi)
+    // and *frame_id_bounds* from rt_peak.frame_id_bounds.
+    detect_im_peaks_from_tof_scan_grid(
+        &grid,
+        (rt_lo, rt_hi),
+        rt_peak.frame_id_bounds,
+        rt_peak.window_group,
+        mobility_of,
+        p.im,
+    )
+}

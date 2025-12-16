@@ -10,8 +10,8 @@ use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
 use rayon::iter::IntoParallelRefIterator;
-use crate::cluster::peak::{build_frame_bin_view, build_tof_rt_grid_full, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames, TofRtGrid};
-use crate::cluster::utility::{TofScale};
+use crate::cluster::peak::{build_frame_bin_view, build_tof_rt_grid_full, build_tof_scan_grid_for_rt_window, detect_im_peaks_from_tof_scan_grid, expand_many_im_peaks_along_rt, FrameBinView, ImDetectParams, ImPeak1D, RtExpandParams, RtFrames, RtPeak1D, TofRtGrid};
+use crate::cluster::utility::{MobilityFn, TofScale};
 use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
@@ -886,6 +886,183 @@ impl TimsDatasetDIA {
             num_threads,
         )
     }
+
+    pub fn clusters_for_group_from_rt_peaks(
+        &self,
+        window_group: u32,
+        tof_step: i32,
+        rt_peaks: &[RtPeak1D],
+        im_params: ImDetectParams,
+        im_bin_pad: usize,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        debug_assert!(
+            rt_peaks.iter().all(|p| p.window_group == Some(window_group)),
+            "clusters_for_group_from_rt_peaks: some RT peaks have wrong/missing window_group"
+        );
+
+        let rt = self.make_rt_frames_for_group(window_group, tof_step);
+
+        let build_opts_ms2 = build_opts.with_ms_level(2);
+
+        self.clusters_for_rt_peaks_on_rt_frames(
+            rt,
+            rt_peaks,
+            im_params,
+            im_bin_pad,
+            &build_opts_ms2,
+            eval_opts,
+            num_threads,
+        )
+    }
+
+    pub fn clusters_for_precursor_from_rt_peaks(
+        &self,
+        tof_step: i32,
+        rt_peaks: &[RtPeak1D],
+        im_params: ImDetectParams,
+        im_bin_pad: usize,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        debug_assert!(
+            rt_peaks.iter().all(|p| p.window_group.is_none()),
+            "clusters_for_precursor_from_rt_peaks: RT peaks unexpectedly carry window_group"
+        );
+
+        let rt = self.make_rt_frames_for_precursor(tof_step);
+
+        let build_opts_ms1 = build_opts.with_ms_level(1);
+
+        self.clusters_for_rt_peaks_on_rt_frames(
+            rt,
+            rt_peaks,
+            im_params,
+            im_bin_pad,
+            &build_opts_ms1,
+            eval_opts,
+            num_threads,
+        )
+    }
+
+    pub fn clusters_for_rt_peaks_on_rt_frames(
+        &self,
+        rt: RtFrames,
+        rt_peaks: &[RtPeak1D],
+        im_params: ImDetectParams,
+        im_bin_pad: usize,
+        build_opts: &BuildSpecOpts,
+        eval_opts: &Eval1DOpts,
+        num_threads: usize,
+    ) -> Vec<ClusterResult1D> {
+        debug_assert!(rt.is_consistent());
+
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .expect("failed to build rayon pool");
+
+        // you need this from somewhere (dataset metadata). See note below.
+        let global_num_scans: usize = self.meta_data
+            .iter()
+            .map(|m| m.num_scans as usize)
+            .max()
+            .unwrap_or(1);
+
+        let mobility_of: MobilityFn = None;
+
+        pool.install(|| {
+            rt_peaks
+                .par_iter()
+                .flat_map_iter(|rtp| {
+                    // ---- (1) clamp RT window
+                    let n_frames = rt.frames.len();
+                    if n_frames == 0 { return Vec::new().into_iter(); }
+
+                    let (mut rt_lo, mut rt_hi) = rtp.rt_bounds_frames;
+                    rt_lo = rt_lo.min(n_frames - 1);
+                    rt_hi = rt_hi.min(n_frames - 1);
+                    if rt_lo > rt_hi { std::mem::swap(&mut rt_lo, &mut rt_hi); }
+
+                    // ---- (2) pick TOF-bin range around the RT peak’s TOF bounds
+                    let scale = &*rt.scale;
+                    let (mut bin_lo, mut bin_hi) =
+                        scale.index_range_for_tof_window(rtp.tof_bounds.0, rtp.tof_bounds.1);
+                    bin_lo = bin_lo.saturating_sub(im_bin_pad);
+                    bin_hi = bin_hi.saturating_add(im_bin_pad).min(scale.num_bins().saturating_sub(1));
+
+                    // ---- (3) build TOF×scan grid over frames [rt_lo..=rt_hi]
+                    // IMPORTANT: implement this with a row_offset if you restrict bins.
+                    let grid = build_tof_scan_grid_for_rt_window(
+                        &rt,
+                        rt_lo,
+                        rt_hi,
+                        global_num_scans,
+                        Some(bin_lo),
+                        Some(bin_hi),
+                    );
+
+                    // ---- (4) detect IM peaks (these should carry rt_bounds_frames + frame_id_bounds)
+                    let im_peaks = detect_im_peaks_from_tof_scan_grid(
+                        &grid,
+                        (rt_lo, rt_hi),
+                        rtp.frame_id_bounds,
+                        rtp.window_group,
+                        mobility_of,
+                        im_params,
+                    );
+
+                    if im_peaks.is_empty() {
+                        return Vec::new().into_iter();
+                    }
+
+                    // (optional) stamp parent_rt_id into IM peaks if you want that linkage early
+                    // (or just put it into ClusterSpec1D below)
+                    // for im in &mut im_peaks { ... }
+
+                    // ---- (5) spec+eval
+                    let mut out = Vec::with_capacity(im_peaks.len());
+                    for im in im_peaks {
+                        // Convert im.tof_bounds -> bin range
+                        let (b_lo, b_hi) = scale.index_range_for_tof_window(im.tof_bounds.0, im.tof_bounds.1);
+
+                        let spec = ClusterSpec1D {
+                            rt_lo,
+                            rt_hi,
+                            im_lo: im.left_abs,
+                            im_hi: im.right_abs,
+                            // be consistent: make this BIN indices (not instrument TOF indices)
+                            tof_win: (b_lo as i32, b_hi as i32),
+                            tof_hist_bins: build_opts.tof_hist_bins,
+
+                            window_group: rtp.window_group,
+                            parent_im_id: Some(im.id),
+                            parent_rt_id: Some(rtp.id),
+                            ms_level: build_opts.ms_level,
+
+                            im_prior_sigma: im.scan_sigma,
+                        };
+
+                        let mut res = evaluate_spec_1d(&rt, &spec, eval_opts);
+
+                        // optional: decorate m/z if you want (like you do elsewhere)
+                        if eval_opts.compute_mz_from_tof {
+                            decorate_with_mz_for_cluster(self, &rt, &mut res);
+                        }
+
+                        out.push(res);
+                    }
+
+                    out.into_iter()
+                })
+                .collect()
+        })
+    }
+
+
 
     /// End-to-end DIA → pseudo-DDA builder (geometric scoring).
     ///
