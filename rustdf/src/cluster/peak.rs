@@ -8,7 +8,7 @@ pub type PeakId = i64;
 
 #[derive(Clone, Debug)]
 pub struct ImPeak1D {
-    pub tof_row: usize,                  // row in current TOF grid
+    pub tof_row: usize,                  // ABSOLUTE TOF bin row (global scale)
     pub tof_center: i32,                 // center TOF index
     pub tof_bounds: (i32, i32),          // min, max TOF index
     pub rt_bounds: (usize, usize),       // columns [lo, hi] in current RT grid
@@ -53,18 +53,24 @@ pub struct TofScanGrid {
     pub cols: usize,
     pub data_raw: Option<Vec<f32>>,
     pub scale: TofScale,                 // TOF scale internally
+    pub row_offset: Option<usize>,
 }
 
 impl TofScanGrid {
     #[inline]
-    pub fn tof_center_for_row(&self, r: usize) -> f32 {
-        // In TOF mode this is actually the TOF center; higher levels can
-        // convert to m/z using calibration if needed.
-        self.scale.center(r)
+    pub fn abs_row(&self, r: usize) -> usize {
+        self.row_offset.map(|o| r + o).unwrap_or(r)
     }
+
+    #[inline]
+    pub fn tof_center_for_row(&self, r: usize) -> f32 {
+        self.scale.center(self.abs_row(r))
+    }
+
     #[inline]
     pub fn tof_bounds_for_row(&self, r: usize) -> (f32, f32) {
-        (self.scale.edges[r], self.scale.edges[r + 1])
+        let a = self.abs_row(r);
+        (self.scale.edges[a], self.scale.edges[a + 1])
     }
 }
 
@@ -948,11 +954,13 @@ pub fn detect_im_peaks_from_tof_scan_grid(
             let tof_center = tof_center_f.round() as i32;
             let tof_bounds = (tof_lo_f.round() as i32, tof_hi_f.round() as i32);
 
+            let tof_abs_row = grid.abs_row(tof_row);
+
             // IM detection with existing machinery
             find_im_peaks_row(
                 &row_smooth,
                 row_raw,
-                tof_row,
+                tof_abs_row,
                 tof_center,
                 tof_bounds,
                 rt_bounds_frames,
@@ -1011,6 +1019,7 @@ pub fn detect_im_peaks_from_tof_scan_window(
         cols,
         data_raw: win.data_raw.clone(),
         scale: (*win.scale).clone(),
+        row_offset: None,
     };
 
     detect_im_peaks_from_tof_scan_grid(
@@ -1072,19 +1081,14 @@ pub fn build_tof_scan_grid_for_rt_window(
         }
     }
 
-    // Need a TofScale that matches *these* rows. Simplest: keep original scale,
-    // but be aware row index now has offset b0. Two options:
-    // 1) store row_offset and adjust centers/bounds at call sites (recommended),
-    // 2) build a tiny "sub-scale" view.
-    //
-    // I suggest adding row_offset to TofScanGrid (or wrap it in a view struct).
     TofScanGrid {
         scans,
         data,
         rows,
         cols,
         data_raw: None,
-        scale: (*rt_frames.scale).clone(), // plus remember b0 somewhere!
+        scale: (*rt_frames.scale).clone(),
+        row_offset: Some(b0),
     }
 }
 
