@@ -800,16 +800,20 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(window_group),
             int(tof_step),
             [p.get_py_ptr() for p in rt_peaks],
+
             float(im_min_prom),
             int(im_min_distance_scans),
             int(im_min_width_scans),
             float(im_smooth_sigma_scans),
             float(im_smooth_trunc_k),
             int(im_bin_pad),
+
             int(extra_rt_pad),
             int(extra_im_pad),
             int(tof_bin_pad),
             int(tof_hist_bins),
+            int(min_im_span),  # <-- MOVE HERE (right after tof_hist_bins)
+
             bool(refine_tof_once),
             float(refine_k_sigma),
             bool(attach_axes),
@@ -821,8 +825,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(pad_rt_frames),
             int(pad_im_scans),
             int(pad_tof_bins),
+
             int(num_threads),
-            int(min_im_span),
+
             bool(merge_duplicates),
             float(max_rt_center_delta),
             float(max_im_center_delta),
@@ -881,16 +886,20 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         py_results = self.__dataset.clusters_for_precursor_from_rt_peaks(
             int(tof_step),
             [p.get_py_ptr() for p in rt_peaks],
+
             float(im_min_prom),
             int(im_min_distance_scans),
             int(im_min_width_scans),
             float(im_smooth_sigma_scans),
             float(im_smooth_trunc_k),
             int(im_bin_pad),
+
             int(extra_rt_pad),
             int(extra_im_pad),
             int(tof_bin_pad),
             int(tof_hist_bins),
+            int(min_im_span),  # <-- MOVE HERE
+
             bool(refine_tof_once),
             float(refine_k_sigma),
             bool(attach_axes),
@@ -902,8 +911,9 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
             int(pad_rt_frames),
             int(pad_im_scans),
             int(pad_tof_bins),
+
             int(num_threads),
-            int(min_im_span),
+
             bool(merge_duplicates),
             float(max_rt_center_delta),
             float(max_im_center_delta),
