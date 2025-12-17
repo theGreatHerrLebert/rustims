@@ -46,7 +46,7 @@ except Exception:
     print("Warning: tomllib not found, falling back to tomli")
     import tomli as toml  # type: ignore
 
-from imspy.timstof.clustering.torch_extractor import iter_im_peaks_batches
+from imspy.timstof.clustering.pipeline.torch_extractor import iter_im_peaks_batches
 from imspy.timstof.dia import (
     save_clusters_parquet,
     TimsDatasetDIA,

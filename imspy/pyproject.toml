@@ -39,10 +39,10 @@ imspy_ccs = "imspy.timstof.dbsearch.imspy_ccs:main"
 timsim = "imspy.simulation.timsim.simulator:main"
 timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
 imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
-im_t_tracer = "imspy.timstof.clustering.t_tracer_im:main"
-rt_t_tracer = "imspy.timstof.clustering.t_tracer_rt:main"
-t_tracer_deconvolute = "imspy.timstof.clustering.deconvolute_and_search:main"
-cluster_report = "imspy.timstof.clustering.cluster_report:main"
+im_t_tracer = "imspy.timstof.clustering.pipeline.t_tracer_im:main"
+rt_t_tracer = "imspy.timstof.clustering.pipeline.t_tracer_rt:main"
+t_tracer_deconvolute = "imspy.timstof.clustering.pipeline.t_tracer_deconvolute_and_search:main"
+t_tracer_rescore = "imspy.timstof.clustering.pipeline.re_score_dia:main"
 
 [build-system]
 requires = ["poetry-core"]

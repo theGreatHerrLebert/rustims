@@ -57,7 +57,7 @@ from imspy.timstof.dia import (
     save_clusters_parquet,
     TimsDatasetDIA,
 )
-from imspy.timstof.clustering.torch_extractor import detect_rt_peaks_for_grid
+from imspy.timstof.clustering.pipeline.torch_extractor import detect_rt_peaks_for_grid
 
 
 # --------------------------- logging ------------------------------------------
