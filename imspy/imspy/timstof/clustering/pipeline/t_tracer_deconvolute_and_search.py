@@ -414,7 +414,7 @@ def import_query_builder():
     Update this import if your builder lives elsewhere.
     """
     try:
-        from .utility import build_sagepy_queries_from_pseudo_spectra  # type: ignore
+        from imspy.timstof.clustering.utility import build_sagepy_queries_from_pseudo_spectra  # type: ignore
         return build_sagepy_queries_from_pseudo_spectra
     except Exception as e:
         raise ImportError(
