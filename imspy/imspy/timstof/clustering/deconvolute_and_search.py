@@ -449,7 +449,7 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     if bool(ps_cfg.get("build_from_features", True)) and features:
         log(f"[pseudospectra] scoring features → pseudospectra (n={len(features)})")
         n_batches = (len(features) + batch_size - 1) // batch_size
-        for i in tqdm(range(n_batches), desc="features→pseudospectra"):
+        for i in tqdm(range(n_batches), desc="features→pseudospectra", ncols=100):
             u, l = i * batch_size, min((i + 1) * batch_size, len(features))
             chunk = features[u:l]
             results = ms2_index.score_features_to_pseudospectra(
@@ -465,7 +465,7 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     if bool(ps_cfg.get("build_from_clusters", True)) and clusters_left:
         log(f"[pseudospectra] scoring leftover clusters → pseudospectra (n={len(clusters_left)})")
         n_batches = (len(clusters_left) + batch_size - 1) // batch_size
-        for i in tqdm(range(n_batches), desc="clusters→pseudospectra"):
+        for i in tqdm(range(n_batches), desc="clusters→pseudospectra", ncols=100):
             u, l = i * batch_size, min((i + 1) * batch_size, len(clusters_left))
             chunk = clusters_left[u:l]
             results = ms2_index.score_precursors_to_pseudospectra(
