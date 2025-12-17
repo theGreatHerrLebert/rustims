@@ -1,7 +1,5 @@
-from collections.abc import Iterable
 from typing import List, Sequence
 
-import numpy as np
 from sagepy.core import Precursor, RawSpectrum, SpectrumProcessor
 
 import imspy_connector
@@ -66,13 +64,20 @@ def build_sagepy_queries_from_pseudo_spectra(
     deisotope: bool = True,
     min_fragments: int = 5,
     use_charge: bool = True,
-    # fragment merging controls
     merge_fragments: bool = False,
     merge_max_ppm: float = 10.0,
     merge_allow_cross_window_group: bool = False,
+
     # NEW: MS1-derived precursor metadata
     ms1_index=None,
     ds=None,
+    feature_index=None,
+    intensity_source: str = "volume_proxy_then_raw_sum",
+    feature_agg: str = "most_intense_member",
+    feature_top_k: int = 3,
+
+    # forward compat (optional)
+    **_ignored,
 ):
     """
     Turn a list of PseudoSpectrum objects into SAGE Py query spectra.
@@ -139,7 +144,13 @@ def build_sagepy_queries_from_pseudo_spectra(
 
         if ms1_index is not None and ds is not None:
             try:
-                inv_mob, rt_mu, raw_sum = get_precursor_info(spec, ms1_index, ds)
+                inv_mob, rt_mu, raw_sum = get_precursor_info(
+                    spec, ms1_index, ds,
+                    feature_index=feature_index,
+                    intensity_source=intensity_source,
+                    feature_agg=feature_agg,
+                    feature_top_k=feature_top_k,
+                )
             except Exception:
                 # fail gracefully, keep them as None
                 inv_mob, rt_mu, raw_sum = None, None, None

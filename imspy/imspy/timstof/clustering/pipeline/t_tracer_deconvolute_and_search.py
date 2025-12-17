@@ -85,117 +85,18 @@ def _default_log_path(out_dir: str | os.PathLike) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path(out_dir) / "logs" / f"t_tracer_deconv_search_{ts}.log"
 
+import inspect
 
-# --------------------------- quant helpers -----------------------------------
-import numpy as np
+def _call_with_accepted_kwargs(fn, kwargs: dict[str, object]):
+    sig = inspect.signature(fn)
+    params = sig.parameters
 
-def _finite_pos(x) -> float | None:
-    try:
-        x = float(x)
-        if np.isfinite(x) and x > 0.0:
-            return x
-    except Exception:
-        pass
-    return None
+    # If builder has **kwargs, just pass everything
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return fn(**kwargs)
 
-
-def cluster_intensity(cluster, source: str = "volume_proxy_then_raw_sum") -> float | None:
-    if source == "raw_sum":
-        return _finite_pos(getattr(cluster, "raw_sum", None))
-    if source == "volume_proxy":
-        return _finite_pos(getattr(cluster, "volume_proxy", None))
-    if source == "rt_area_then_raw_sum":
-        v = _finite_pos(getattr(cluster, "rt_area", None))
-        return v if v is not None else _finite_pos(getattr(cluster, "raw_sum", None))
-
-    v = _finite_pos(getattr(cluster, "volume_proxy", None))
-    return v if v is not None else _finite_pos(getattr(cluster, "raw_sum", None))
-
-
-def feature_intensity(
-    feature,
-    ms1_index: dict[int, object] | None,
-    *,
-    intensity_source: str = "volume_proxy_then_raw_sum",
-    agg: str = "most_intense_member",
-    top_k: int = 3,
-) -> float | None:
-    ids = getattr(feature, "member_cluster_ids", None)
-    if not ids or ms1_index is None:
-        return None
-
-    vals: list[float] = []
-    for cid in ids:
-        c = ms1_index.get(int(cid))
-        if c is None:
-            continue
-        v = cluster_intensity(c, intensity_source)
-        if v is not None:
-            vals.append(float(v))
-
-    if not vals:
-        return None
-
-    vals.sort(reverse=True)
-
-    if agg == "sum_members":
-        return float(sum(vals))
-    if agg == "sum_top_k_members":
-        k = max(1, int(top_k))
-        return float(sum(vals[:k]))
-
-    return float(vals[0])
-
-
-def get_precursor_info(
-    spec,
-    ms1_index: dict[int, object] | None,
-    ds,
-    *,
-    feature_index: dict[int, object] | None = None,
-    intensity_source: str = "volume_proxy_then_raw_sum",
-    feature_agg: str = "most_intense_member",
-    feature_top_k: int = 3,
-):
-    inv_mob = rt_mu = inten = None
-
-    fid = getattr(spec, "feature_id", None)
-    if fid is not None and feature_index is not None and ms1_index is not None:
-        feat = feature_index.get(int(fid))
-        if feat is not None:
-            inten = feature_intensity(
-                feat,
-                ms1_index,
-                intensity_source=intensity_source,
-                agg=feature_agg,
-                top_k=feature_top_k,
-            )
-            try:
-                c0 = feat.most_intense_precursor
-                rt_mu = float(getattr(c0, "rt_mu"))
-                try:
-                    inv_mob = float(ds.scan_to_inverse_mobility(1, [int(getattr(c0, "im_mu"))])[0])
-                except Exception:
-                    inv_mob = None
-                return inv_mob, rt_mu, inten
-            except Exception:
-                pass
-
-    cids = getattr(spec, "precursor_cluster_ids", None)
-    if cids and ms1_index is not None:
-        c = ms1_index.get(int(cids[0]))
-        if c is not None:
-            inten = cluster_intensity(c, intensity_source)
-            try:
-                rt_mu = float(getattr(c, "rt_mu"))
-            except Exception:
-                rt_mu = None
-            try:
-                inv_mob = float(ds.scan_to_inverse_mobility(1, [int(getattr(c, "im_mu"))])[0])
-            except Exception:
-                inv_mob = None
-
-    return inv_mob, rt_mu, inten
+    accepted = {k: v for k, v in kwargs.items() if k in params}
+    return fn(**accepted)
 
 
 # --------------------------- config -------------------------------------------
@@ -590,15 +491,14 @@ def build_queries(
         )
 
     try:
-        return builder_fn(**kwargs)  # type: ignore[arg-type]
+        qc = q.get("quant", {})
+        log(f"[query.quant] feature_agg={qc.get('feature_agg')} feature_top_k={qc.get('feature_top_k')} intensity_source={qc.get('intensity_source')}")
+        return _call_with_accepted_kwargs(builder_fn, kwargs)
     except TypeError as e:
-        # Helpful error if builder wasn't updated yet
         raise TypeError(
-            "build_sagepy_queries_from_pseudo_spectra signature mismatch.\n"
-            "Either:\n"
-            "  (a) update your builder to accept feature_index/intensity_source/feature_agg/feature_top_k, OR\n"
-            "  (b) set query.attach_ms1_metadata=false in the TOML.\n"
-            f"Original error: {e}"
+            "build_sagepy_queries_from_pseudo_spectra failed. "
+            "This is likely an internal builder error (not a signature mismatch anymore). "
+            f"Args passed: {sorted(kwargs.keys())}"
         ) from e
 
 
