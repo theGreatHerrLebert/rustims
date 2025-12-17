@@ -30,6 +30,22 @@ import time
 
 import torch
 
+def assert_cuda_healthy(device: str) -> None:
+    if device != "cuda":
+        return
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
+
+    try:
+        # minimal alloc + sync to catch ECC immediately
+        _ = torch.empty((1,), device="cuda")
+        torch.cuda.synchronize()
+    except Exception as e:
+        raise RuntimeError(
+            "CUDA device is not healthy (often ECC). "
+            "Try CUDA_VISIBLE_DEVICES=1 or run on CPU."
+        ) from e
+
 # Python 3.11+ tomllib; fallback tomli
 try:
     import tomllib as toml
@@ -557,6 +573,8 @@ def main(argv=None):
     )
     if log_file:
         log(f"[log] writing logfile -> {log_file}")
+
+    assert_cuda_healthy(str(cfg["run"]["device"]))
 
     if args.stage:
         cfg["run"]["stage"] = args.stage
