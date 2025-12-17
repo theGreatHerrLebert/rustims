@@ -41,6 +41,7 @@ timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
 imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
 im_t_tracer = "imspy.timstof.clustering.t_tracer_im:main"
 rt_t_tracer = "imspy.timstof.clustering.t_tracer_rt:main"
+t_tracer_deconvolute = "imspy.timstof.clustering.deconvolute_and_search:main"
 cluster_report = "imspy.timstof.clustering.cluster_report:main"
 
 [build-system]
