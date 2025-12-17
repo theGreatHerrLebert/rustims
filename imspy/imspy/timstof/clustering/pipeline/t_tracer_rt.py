@@ -3,18 +3,18 @@
 """
 RT peak detection → clustering (TOML-configured) with logging and CLI overrides.
 
-This is the RT-centric sibling of the IM-first pipeline:
+RT-centric:
 - Build dense TOF×RT grids (precursor and optionally per fragment window-group)
 - Detect RT peaks via detect_rt_peaks_for_grid (torch extractor)
-- Cluster via:
-    - ds.clusters_for_precursor_from_rt_peaks(...)
-    - ds.clusters_for_group_from_rt_peaks(...)   (if available)
-      OR fallback to ds.clusters_for_group(...) if you implement the RT->IM expansion there.
+- Cluster via ds.clusters_for_precursor_from_rt_peaks(...) and
+  ds.clusters_for_group_from_rt_peaks(...)
 
-Notes:
-- No IM stitching stage here; RT peaks are already “global” in RT.
-- Keep the same output structure: <out>/precursor, <out>/fragment.
+Important config rule:
+- TOF downsampling for *grid building* is taken from:
+    [rt_grid.<role>].tof_step  -> else [rt_grid].tof_step
+  NOT from rt_detector defaults.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,9 +35,7 @@ def assert_cuda_healthy(device: str) -> None:
         return
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but torch.cuda.is_available() is False")
-
     try:
-        # minimal alloc + sync to catch ECC immediately
         _ = torch.empty((1,), device="cuda")
         torch.cuda.synchronize()
     except Exception as e:
@@ -135,6 +133,23 @@ def cuda_gc() -> None:
 
 
 # ------------------------ config helpers --------------------------------------
+
+def get_grid_tof_step(cfg: dict, role: str) -> int:
+    """
+    Single source of truth for TOF downsampling in *grid building*.
+
+    Reads:
+      [rt_grid.<role>].tof_step  -> else [rt_grid].tof_step -> else 3
+    """
+    rt_grid = cfg.get("rt_grid", {}) or {}
+    role_grid = rt_grid.get(role, {}) if isinstance(rt_grid.get(role, {}), dict) else {}
+    if isinstance(role_grid, dict) and "tof_step" in role_grid:
+        return int(role_grid["tof_step"])
+    if "tof_step" in rt_grid:
+        return int(rt_grid["tof_step"])
+    return 3
+
+
 def get_detector_cfg(cfg: dict, role: str) -> dict:
     """
     Build an *effective* RT detector config for a given role ("precursor" or "fragment").
@@ -142,12 +157,21 @@ def get_detector_cfg(cfg: dict, role: str) -> dict:
     Rules:
       - Start from [rt_detector] as shared defaults.
       - If [rt_detector.<role>] exists, overlay/override those keys.
+      - Ensure eff["tof_step"] matches rt_grid.<role>.tof_step unless explicitly set
+        in [rt_detector.<role>].tof_step (rare, but supported).
     """
     det_root = cfg.get("rt_detector", {}) or {}
     eff = dict(det_root)
+
     role_cfg = det_root.get(role)
     if isinstance(role_cfg, dict):
         eff.update(role_cfg)
+
+    # If user didn't explicitly set role-specific detector tof_step, mirror rt_grid
+    role_explicit = isinstance(role_cfg, dict) and ("tof_step" in role_cfg)
+    if not role_explicit:
+        eff["tof_step"] = get_grid_tof_step(cfg, role)
+
     return eff
 
 
@@ -155,7 +179,6 @@ def load_config(path: str) -> dict:
     with open(path, "rb") as f:
         cfg = toml.load(f)
 
-    # minimal validation
     for section in ("dataset", "output", "run"):
         if section not in cfg:
             raise ValueError(f"Missing [{section}] in config.")
@@ -173,10 +196,18 @@ def load_config(path: str) -> dict:
     cfg["run"].setdefault("fragments_enabled", False)
     cfg["run"].setdefault("attach_raw_data", False)
 
-    # RT detector defaults
+    # ---- rt_grid defaults (THIS drives tof_step for grid building)
+    cfg.setdefault("rt_grid", {})
+    rg = cfg["rt_grid"]
+    rg.setdefault("tof_step", 3)
+    rg.setdefault("precursor", {})
+    rg.setdefault("fragment", {})
+    rg["precursor"].setdefault("tof_step", int(rg["tof_step"]))
+    rg["fragment"].setdefault("tof_step", int(rg["tof_step"]))
+
+    # RT detector defaults (do NOT silently force tof_step=1 here)
     cfg.setdefault("rt_detector", {})
     d = cfg["rt_detector"]
-    d.setdefault("tof_step", 1)
 
     d.setdefault("pool_rt", 15)
     d.setdefault("pool_tof", 3)
@@ -224,22 +255,20 @@ def load_config(path: str) -> dict:
     cp = cfg["rt_cluster"]["precursor"]
     cp.setdefault("num_threads", 0)
     cp.setdefault("min_im_span", 15)
-
-    cp.setdefault("tof_step", 1)
+    # default cluster tof_step to rt_grid precursor tof_step
+    cp.setdefault("tof_step", get_grid_tof_step(cfg, "precursor"))
     cp.setdefault("pad_rt_frames", 2)
     cp.setdefault("pad_tof_bins", 2)
-
     cp.setdefault("im_smooth_sigma_scans", 10.0)
     cp.setdefault("im_min_prom", 20.0)
 
     cf = cfg["rt_cluster"]["fragment"]
     cf.setdefault("num_threads", 0)
     cf.setdefault("min_im_span", 10)
-
-    cf.setdefault("tof_step", 1)
+    # default cluster tof_step to rt_grid fragment tof_step
+    cf.setdefault("tof_step", get_grid_tof_step(cfg, "fragment"))
     cf.setdefault("pad_rt_frames", 0)
     cf.setdefault("pad_tof_bins", 2)
-
     cf.setdefault("im_smooth_sigma_scans", 10.0)
     cf.setdefault("im_min_prom", 15.0)
 
@@ -250,6 +279,7 @@ def print_config_summary(cfg: dict) -> None:
     ds_cfg = cfg.get("dataset", {})
     out_cfg = cfg.get("output", {})
     run_cfg = cfg.get("run", {})
+    rg = cfg.get("rt_grid", {}) or {}
 
     lines: list[str] = []
     lines.append("──────────────── CONFIG SUMMARY (RT) ───────────")
@@ -268,6 +298,11 @@ def print_config_summary(cfg: dict) -> None:
     lines.append(f"  precursor_parquet    : {out_cfg.get('precursor_parquet')}")
     lines.append(f"  fragment_parquet     : {out_cfg.get('fragment_parquet')}")
     lines.append(f"  fragment_split_by_wg : {bool(out_cfg.get('fragment_split_by_wg', False))}")
+
+    lines.append("[rt_grid]")
+    lines.append(f"  tof_step             : {rg.get('tof_step')}")
+    lines.append(f"  precursor.tof_step    : {get_grid_tof_step(cfg, 'precursor')}")
+    lines.append(f"  fragment.tof_step     : {get_grid_tof_step(cfg, 'fragment')}")
 
     for sec in ("precursor", "fragment"):
         eff = get_detector_cfg(cfg, sec)
@@ -296,16 +331,8 @@ def print_config_summary(cfg: dict) -> None:
         lines.append("  ⚠ You selected CPU but CUDA is available.")
     if dev == "cuda" and not cuda_avail:
         lines.append("  ⚠ CUDA requested but not available; this will fall back or fail.")
-
-    out_dir = out_cfg.get("dir")
-    if out_dir and not Path(out_dir).exists():
-        lines.append(f"  ℹ Output dir will be created: {out_dir}")
-
-    ds_path = ds_cfg.get("path")
-    if ds_path and not Path(ds_path).exists():
-        lines.append(f"  ⚠ Dataset path does not exist: {ds_path}")
-
     lines.append("───────────────────────────────────────────────")
+
     for ln in lines:
         log(ln)
 
@@ -319,23 +346,24 @@ def _default_log_path_from_cfg(cfg: dict) -> Path | None:
 
 
 # --------------------------- RT detection -------------------------------------
-def detect_rt_peaks(ds: TimsDatasetDIA, *, window_group: int | None, det_cfg: dict, device: str):
-    tof_step = int(det_cfg.get("tof_step", 1))
+def detect_rt_peaks(ds: TimsDatasetDIA, *, role: str, window_group: int | None, det_cfg: dict, device: str, cfg: dict):
+    # IMPORTANT: grid TOF downsample comes from rt_grid, not det_cfg defaults
+    tof_step = get_grid_tof_step(cfg, role)
 
-    with log_timing(f"grid.build.{('precursor' if window_group is None else f'WG{window_group:03d}')}.tof_step={tof_step}"):
+    with log_timing(
+        f"grid.build.{('precursor' if window_group is None else f'WG{window_group:03d}')}.tof_step={tof_step}"
+    ):
         if window_group is None:
             grid = ds.tof_rt_grid_precursor(tof_step=tof_step)
         else:
             grid = ds.tof_rt_grid_for_group(window_group=int(window_group), tof_step=tof_step)
 
-    # topk semantics
     topk = det_cfg.get("topk_per_tile", None)
     if topk is not None:
         topk = int(topk)
         if topk <= 0:
             topk = None
 
-    peaks = None
     with log_timing(f"rt.detect.{('precursor' if window_group is None else f'WG{window_group:03d}')}"):
         peaks = detect_rt_peaks_for_grid(
             grid,
@@ -382,7 +410,7 @@ def run_precursor(ds: TimsDatasetDIA, cfg: dict):
     cl = cfg.get("rt_cluster", {}).get("precursor", {})
 
     device = str(cfg["run"]["device"])
-    rt_peaks = detect_rt_peaks(ds, window_group=None, det_cfg=det, device=device)
+    rt_peaks = detect_rt_peaks(ds, role="precursor", window_group=None, det_cfg=det, device=device, cfg=cfg)
 
     attach_raw = bool(cfg["run"].get("attach_raw_data", False))
 
@@ -391,7 +419,7 @@ def run_precursor(ds: TimsDatasetDIA, cfg: dict):
             rt_peaks=rt_peaks,
             num_threads=int(cl.get("num_threads", 0)),
             min_im_span=int(cl.get("min_im_span", 15)),
-            tof_step=int(cl.get("tof_step", det.get("tof_step", 1))),
+            tof_step=int(cl.get("tof_step", get_grid_tof_step(cfg, "precursor"))),
             im_smooth_sigma_scans=float(cl.get("im_smooth_sigma_scans", 10.0)),
             im_min_prom=float(cl.get("im_min_prom", 20.0)),
             pad_rt_frames=int(cl.get("pad_rt_frames", 2)),
@@ -439,14 +467,12 @@ def run_fragments(ds: TimsDatasetDIA, cfg: dict):
     device = str(cfg["run"]["device"])
     attach_raw = bool(cfg["run"].get("attach_raw_data", False))
 
-    # We require a group-level RT-peaks clustering method. If you don't have it,
-    # implement it (recommended) or route via “expand RT→IM then ds.clusters_for_group”.
     have_group_from_rt = hasattr(ds, "clusters_for_group_from_rt_peaks")
 
     if fragment_split_by_wg:
         for wg in wgs:
             log(f"[fragment] WG={wg}")
-            rt_peaks = detect_rt_peaks(ds, window_group=wg, det_cfg=det, device=device)
+            rt_peaks = detect_rt_peaks(ds, role="fragment", window_group=wg, det_cfg=det, device=device, cfg=cfg)
 
             if not have_group_from_rt:
                 raise RuntimeError(
@@ -460,7 +486,7 @@ def run_fragments(ds: TimsDatasetDIA, cfg: dict):
                     rt_peaks=rt_peaks,
                     num_threads=int(cl.get("num_threads", 0)),
                     min_im_span=int(cl.get("min_im_span", 10)),
-                    tof_step=int(cl.get("tof_step", det.get("tof_step", 1))),
+                    tof_step=int(cl.get("tof_step", get_grid_tof_step(cfg, "fragment"))),
                     im_smooth_sigma_scans=float(cl.get("im_smooth_sigma_scans", 10.0)),
                     im_min_prom=float(cl.get("im_min_prom", 15.0)),
                     pad_rt_frames=int(cl.get("pad_rt_frames", 0)),
@@ -496,7 +522,7 @@ def run_fragments(ds: TimsDatasetDIA, cfg: dict):
     all_clusters: list = []
     for wg in wgs:
         log(f"[fragment] WG={wg}")
-        rt_peaks = detect_rt_peaks(ds, window_group=wg, det_cfg=det, device=device)
+        rt_peaks = detect_rt_peaks(ds, role="fragment", window_group=wg, det_cfg=det, device=device, cfg=cfg)
 
         if not have_group_from_rt:
             raise RuntimeError(
@@ -510,7 +536,7 @@ def run_fragments(ds: TimsDatasetDIA, cfg: dict):
                 rt_peaks=rt_peaks,
                 num_threads=int(cl.get("num_threads", 0)),
                 min_im_span=int(cl.get("min_im_span", 10)),
-                tof_step=int(cl.get("tof_step", det.get("tof_step", 1))),
+                tof_step=int(cl.get("tof_step", get_grid_tof_step(cfg, "fragment"))),
                 im_smooth_sigma_scans=float(cl.get("im_smooth_sigma_scans", 10.0)),
                 im_min_prom=float(cl.get("im_min_prom", 15.0)),
                 pad_rt_frames=int(cl.get("pad_rt_frames", 0)),
@@ -574,14 +600,15 @@ def main(argv=None):
     if log_file:
         log(f"[log] writing logfile -> {log_file}")
 
-    assert_cuda_healthy(str(cfg["run"]["device"]))
-
+    # CLI overrides (apply before health check)
     if args.stage:
         cfg["run"]["stage"] = args.stage
     if args.device:
         cfg["run"]["device"] = args.device
     if args.fragments is not None:
         cfg["run"]["fragments_enabled"] = bool(args.fragments)
+
+    assert_cuda_healthy(str(cfg["run"]["device"]))
 
     log(f"[env] Python {sys.version.split()[0]}")
     log(f"[env] Torch {torch.__version__} | CUDA available={torch.cuda.is_available()}")
