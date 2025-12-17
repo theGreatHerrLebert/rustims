@@ -216,37 +216,152 @@ def build_sagepy_queries_from_pseudo_spectra(
 
     return queries
 
-def get_precursor_info(spec, ms1_index, ds):
-    """
-    From a PseudoSpectrum, look up the corresponding MS1 cluster
-    and derive:
-      - inverse ion mobility (1/K0)
-      - retention time (rt_mu)
-      - precursor intensity (raw_sum)
+# --------------------------- quant helpers -----------------------------------
+import numpy as np
 
-    Assumptions:
-    -----------
-    - spec.precursor_cluster_ids[0] is a key into ms1_index
-    - ms1_index[idx] has attributes: im_mu (scan index), rt_mu, raw_sum
-    - ds.scan_to_inverse_mobility(frame, [scan]) -> [inv_mob]
-    """
-    # be defensive: no precursor cluster
-    if not getattr(spec, "precursor_cluster_ids", None):
-        return None, None, None
-
-    idx = spec.precursor_cluster_ids[0]
-    p = ms1_index[idx]
-
-    # mobility: convert scan index -> inverse ion mobility
-    inv_mob = None
+def _finite_pos(x) -> float | None:
     try:
-        inv_mob = float(ds.scan_to_inverse_mobility(1, [int(p.im_mu)])[0])
+        x = float(x)
+        if np.isfinite(x) and x > 0.0:
+            return x
     except Exception:
-        # if something goes wrong, just leave it None
-        inv_mob = None
+        pass
+    return None
 
-    # RT and intensity directly from the cluster
-    rt_mu = float(p.rt_mu)
-    raw_sum = float(p.raw_sum)
 
-    return inv_mob, rt_mu, raw_sum
+def cluster_intensity(cluster, source: str = "volume_proxy_then_raw_sum") -> float | None:
+    """
+    Choose a stable intensity proxy for a single MS1 cluster.
+
+    source:
+      - "raw_sum"
+      - "volume_proxy"
+      - "volume_proxy_then_raw_sum"  (default)
+      - "rt_area_then_raw_sum"       (optional, only if rt_area is meaningful for you)
+    """
+    if source == "raw_sum":
+        return _finite_pos(getattr(cluster, "raw_sum", None))
+
+    if source == "volume_proxy":
+        return _finite_pos(getattr(cluster, "volume_proxy", None))
+
+    if source == "rt_area_then_raw_sum":
+        v = _finite_pos(getattr(cluster, "rt_area", None))
+        return v if v is not None else _finite_pos(getattr(cluster, "raw_sum", None))
+
+    # default
+    v = _finite_pos(getattr(cluster, "volume_proxy", None))
+    return v if v is not None else _finite_pos(getattr(cluster, "raw_sum", None))
+
+
+def feature_intensity(
+    feature,
+    ms1_index: dict[int, object] | None,
+    *,
+    intensity_source: str = "volume_proxy_then_raw_sum",
+    agg: str = "most_intense_member",
+    top_k: int = 3,
+) -> float | None:
+    """
+    Aggregate intensity over isotopes (feature members) or pick the best member.
+
+    agg:
+      - "most_intense_member"  (robust default)
+      - "sum_members"
+      - "sum_top_k_members"    (nice compromise)
+    """
+    ids = getattr(feature, "member_cluster_ids", None)
+    if not ids or ms1_index is None:
+        return None
+
+    vals: list[float] = []
+    for cid in ids:
+        c = ms1_index.get(int(cid))
+        if c is None:
+            continue
+        v = cluster_intensity(c, intensity_source)
+        if v is not None:
+            vals.append(float(v))
+
+    if not vals:
+        return None
+
+    vals.sort(reverse=True)
+
+    if agg == "sum_members":
+        return float(sum(vals))
+
+    if agg == "sum_top_k_members":
+        k = max(1, int(top_k))
+        return float(sum(vals[:k]))
+
+    # default: most_intense_member
+    return float(vals[0])
+
+
+def get_precursor_info(
+    spec,
+    ms1_index: dict[int, object] | None,
+    ds,
+    *,
+    feature_index: dict[int, object] | None = None,
+    intensity_source: str = "volume_proxy_then_raw_sum",
+    feature_agg: str = "most_intense_member",
+    feature_top_k: int = 3,
+):
+    """
+    Returns (inv_mob, rt_mu_sec, intensity).
+
+    Preference order:
+      1) If spec.feature_id + feature_index available:
+           - intensity from aggregated feature members
+           - rt/im from most_intense_precursor (stable)
+      2) Else: from spec.precursor_cluster_ids[0] via ms1_index
+    """
+    inv_mob = rt_mu = inten = None
+
+    # --- feature-based path
+    fid = getattr(spec, "feature_id", None)
+    if fid is not None and feature_index is not None and ms1_index is not None:
+        feat = feature_index.get(int(fid))
+        if feat is not None:
+            inten = feature_intensity(
+                feat,
+                ms1_index,
+                intensity_source=intensity_source,
+                agg=feature_agg,
+                top_k=feature_top_k,
+            )
+            try:
+                c0 = feat.most_intense_precursor
+                rt_mu = _finite_pos(getattr(c0, "rt_mu", None))
+                # note: rt_mu is in seconds in your cluster wrapper
+                if rt_mu is not None:
+                    rt_mu = float(getattr(c0, "rt_mu"))
+                inv_mob = None
+                try:
+                    inv_mob = float(ds.scan_to_inverse_mobility(1, [int(getattr(c0, "im_mu"))])[0])
+                except Exception:
+                    inv_mob = None
+                return inv_mob, rt_mu, inten
+            except Exception:
+                # fall through to cluster-level if feature object is missing fields
+                pass
+
+    # --- cluster-based path
+    cids = getattr(spec, "precursor_cluster_ids", None)
+    if cids and ms1_index is not None:
+        c = ms1_index.get(int(cids[0]))
+        if c is not None:
+            inten = cluster_intensity(c, intensity_source)
+            try:
+                rt_mu = float(getattr(c, "rt_mu"))
+            except Exception:
+                rt_mu = None
+            inv_mob = None
+            try:
+                inv_mob = float(ds.scan_to_inverse_mobility(1, [int(getattr(c, "im_mu"))])[0])
+            except Exception:
+                inv_mob = None
+
+    return inv_mob, rt_mu, inten

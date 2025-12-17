@@ -2,37 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 Spectral deconvolution → SAGE search → initial PSMs (TOML-configured).
-
-Stages:
-  1) Load dataset + precursor clusters + build MS2 FragmentIndex from fragment clusters dir
-  2) Optional: deconvolve MS1 clusters into isotope features
-  3) Build pseudo-spectra from:
-       - features (use_charge=True)
-       - leftover MS1 clusters (use_charge=False)
-  4) Convert pseudo-spectra → SAGE query spectra (via build_sagepy_queries_from_pseudo_spectra)
-  5) Build SAGE database index
-  6) Search + initial FDR
-  7) Persist PSMs (.bin) and optionally Parquet
-
-Notes:
-- This script assumes your project provides:
-    build_sagepy_queries_from_pseudo_spectra(...)
-  If it lives in a different module path, update the import in `import_query_builder()`.
-
-- CUDA device selection:
-    use [run] cuda_visible_devices = "1"
-  to avoid the bad GPU (ECC). This sets CUDA_VISIBLE_DEVICES *before* torch import.
 """
 
 from __future__ import annotations
 
 import argparse
-
 import logging
 from logging.handlers import RotatingFileHandler
 import os
 import sys
-
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -108,33 +86,133 @@ def _default_log_path(out_dir: str | os.PathLike) -> Path:
     return Path(out_dir) / "logs" / f"t_tracer_deconv_search_{ts}.log"
 
 
+# --------------------------- quant helpers -----------------------------------
+import numpy as np
+
+def _finite_pos(x) -> float | None:
+    try:
+        x = float(x)
+        if np.isfinite(x) and x > 0.0:
+            return x
+    except Exception:
+        pass
+    return None
+
+
+def cluster_intensity(cluster, source: str = "volume_proxy_then_raw_sum") -> float | None:
+    if source == "raw_sum":
+        return _finite_pos(getattr(cluster, "raw_sum", None))
+    if source == "volume_proxy":
+        return _finite_pos(getattr(cluster, "volume_proxy", None))
+    if source == "rt_area_then_raw_sum":
+        v = _finite_pos(getattr(cluster, "rt_area", None))
+        return v if v is not None else _finite_pos(getattr(cluster, "raw_sum", None))
+
+    v = _finite_pos(getattr(cluster, "volume_proxy", None))
+    return v if v is not None else _finite_pos(getattr(cluster, "raw_sum", None))
+
+
+def feature_intensity(
+    feature,
+    ms1_index: dict[int, object] | None,
+    *,
+    intensity_source: str = "volume_proxy_then_raw_sum",
+    agg: str = "most_intense_member",
+    top_k: int = 3,
+) -> float | None:
+    ids = getattr(feature, "member_cluster_ids", None)
+    if not ids or ms1_index is None:
+        return None
+
+    vals: list[float] = []
+    for cid in ids:
+        c = ms1_index.get(int(cid))
+        if c is None:
+            continue
+        v = cluster_intensity(c, intensity_source)
+        if v is not None:
+            vals.append(float(v))
+
+    if not vals:
+        return None
+
+    vals.sort(reverse=True)
+
+    if agg == "sum_members":
+        return float(sum(vals))
+    if agg == "sum_top_k_members":
+        k = max(1, int(top_k))
+        return float(sum(vals[:k]))
+
+    return float(vals[0])
+
+
+def get_precursor_info(
+    spec,
+    ms1_index: dict[int, object] | None,
+    ds,
+    *,
+    feature_index: dict[int, object] | None = None,
+    intensity_source: str = "volume_proxy_then_raw_sum",
+    feature_agg: str = "most_intense_member",
+    feature_top_k: int = 3,
+):
+    inv_mob = rt_mu = inten = None
+
+    fid = getattr(spec, "feature_id", None)
+    if fid is not None and feature_index is not None and ms1_index is not None:
+        feat = feature_index.get(int(fid))
+        if feat is not None:
+            inten = feature_intensity(
+                feat,
+                ms1_index,
+                intensity_source=intensity_source,
+                agg=feature_agg,
+                top_k=feature_top_k,
+            )
+            try:
+                c0 = feat.most_intense_precursor
+                rt_mu = float(getattr(c0, "rt_mu"))
+                try:
+                    inv_mob = float(ds.scan_to_inverse_mobility(1, [int(getattr(c0, "im_mu"))])[0])
+                except Exception:
+                    inv_mob = None
+                return inv_mob, rt_mu, inten
+            except Exception:
+                pass
+
+    cids = getattr(spec, "precursor_cluster_ids", None)
+    if cids and ms1_index is not None:
+        c = ms1_index.get(int(cids[0]))
+        if c is not None:
+            inten = cluster_intensity(c, intensity_source)
+            try:
+                rt_mu = float(getattr(c, "rt_mu"))
+            except Exception:
+                rt_mu = None
+            try:
+                inv_mob = float(ds.scan_to_inverse_mobility(1, [int(getattr(c, "im_mu"))])[0])
+            except Exception:
+                inv_mob = None
+
+    return inv_mob, rt_mu, inten
+
+
 # --------------------------- config -------------------------------------------
-
-def _must(cfg: dict, *keys: str) -> Any:
-    cur = cfg
-    for k in keys:
-        if k not in cur:
-            raise ValueError(f"Missing key: {'.'.join(keys)} (stuck at '{k}')")
-        cur = cur[k]
-    return cur
-
 
 def load_config(path: str | os.PathLike) -> dict:
     with open(path, "rb") as f:
         cfg = toml.load(f)
 
-    # required sections
     for sec in ("input", "run", "output", "pseudospectra", "query", "sage"):
         if sec not in cfg:
             raise ValueError(f"Missing [{sec}] in config.")
 
-    # ---- run defaults
     run = cfg["run"]
     run.setdefault("device", "cuda")
     run.setdefault("cuda_visible_devices", None)  # e.g. "1"
     run.setdefault("num_threads", 0)
 
-    # ---- pseudospectra defaults
     ps = cfg["pseudospectra"]
     ps.setdefault("batch_size", 16384)
     ps.setdefault("max_scan_apex_delta", 7)
@@ -142,12 +220,10 @@ def load_config(path: str | os.PathLike) -> dict:
     ps.setdefault("build_from_features", True)
     ps.setdefault("build_from_clusters", True)
 
-    # ---- features defaults
     cfg.setdefault("deconv", {})
     cfg["deconv"].setdefault("features", {})
     feat = cfg["deconv"]["features"]
     feat.setdefault("enabled", True)
-
     feat.setdefault("z_min", 2)
     feat.setdefault("z_max", 4)
     feat.setdefault("iso_ppm_tol", 10.0)
@@ -160,17 +236,14 @@ def load_config(path: str | os.PathLike) -> dict:
     feat.setdefault("min_im_overlap_frac", 0.4)
     feat.setdefault("min_cosine", 0.7)
     feat.setdefault("w_spacing_penalty", 1.0)
-
     feat.setdefault("lut_k", 10)
     feat.setdefault("lut_resolution", 3)
     feat.setdefault("lut_step", 5.0)
 
-    # ---- MS2 index defaults
     cfg["deconv"].setdefault("ms2_index", {})
     ms2i = cfg["deconv"]["ms2_index"]
     ms2i.setdefault("min_raw_sum", 1.0)
 
-    # ---- query defaults
     q = cfg["query"]
     q.setdefault("merge_fragments", True)
     q.setdefault("merge_allow_cross_window_group", True)
@@ -178,7 +251,16 @@ def load_config(path: str | os.PathLike) -> dict:
     q.setdefault("take_top_n", 150)
     q.setdefault("min_fragments", 5)
 
-    # ---- sage defaults
+    # NEW: whether to attach MS1 metadata (inv_mob, rt, intensity) via your builder
+    q.setdefault("attach_ms1_metadata", True)
+
+    # NEW: quant policy knobs
+    q.setdefault("quant", {})
+    qc = q["quant"]
+    qc.setdefault("intensity_source", "volume_proxy_then_raw_sum")
+    qc.setdefault("feature_agg", "most_intense_member")     # or sum_top_k_members / sum_members
+    qc.setdefault("feature_top_k", 3)
+
     sage = cfg["sage"]
     sage.setdefault("enzyme", {})
     sage.setdefault("mods", {})
@@ -209,16 +291,13 @@ def load_config(path: str | os.PathLike) -> dict:
     se.setdefault("use_hyper_score", True)
     se.setdefault("num_threads", 0)
 
-    # ---- output defaults
     out = cfg["output"]
     out.setdefault("write_parquet", True)
     out.setdefault("write_debug_bins", False)
-
     out.setdefault("psms_features_bin", "psms_features.bin")
     out.setdefault("psms_clusters_bin", "psms_clusters.bin")
     out.setdefault("psms_features_parquet", "psms_features.parquet")
     out.setdefault("psms_clusters_parquet", "psms_clusters.parquet")
-
     out.setdefault("features_bin", "features.bin")
     out.setdefault("query_features_bin", "query_features.bin")
     out.setdefault("query_clusters_bin", "query_clusters.bin")
@@ -235,6 +314,7 @@ def print_config_summary(cfg: dict) -> None:
     feat = cfg["deconv"]["features"]
     ms2i = cfg["deconv"]["ms2_index"]
     sage = cfg["sage"]
+    qc = q.get("quant", {})
 
     log("──────────────── CONFIG SUMMARY (DECONV+SEARCH) ────────────────")
     log("[input]")
@@ -249,9 +329,6 @@ def print_config_summary(cfg: dict) -> None:
     log("[deconv.features]")
     log(f"  enabled              : {bool(feat.get('enabled'))}")
     log(f"  z_min..z_max         : {feat.get('z_min')}..{feat.get('z_max')}")
-    log(f"  iso_ppm_tol / abs_da : {feat.get('iso_ppm_tol')} / {feat.get('iso_abs_da')}")
-    log(f"  min_members..max     : {feat.get('min_members')}..{feat.get('max_members')}")
-    log(f"  min_raw_sum / min_mz : {feat.get('min_raw_sum')} / {feat.get('min_mz')}")
     log("[deconv.ms2_index]")
     log(f"  min_raw_sum          : {ms2i.get('min_raw_sum')}")
     log("[pseudospectra]")
@@ -261,11 +338,16 @@ def print_config_summary(cfg: dict) -> None:
     log(f"  build_from_features  : {bool(ps.get('build_from_features'))}")
     log(f"  build_from_clusters  : {bool(ps.get('build_from_clusters'))}")
     log("[query]")
+    log(f"  attach_ms1_metadata  : {bool(q.get('attach_ms1_metadata', True))}")
     log(f"  merge_fragments      : {bool(q.get('merge_fragments'))}")
     log(f"  merge_max_ppm        : {q.get('merge_max_ppm')}")
     log(f"  merge_cross_wg       : {bool(q.get('merge_allow_cross_window_group'))}")
     log(f"  take_top_n           : {q.get('take_top_n')}")
     log(f"  min_fragments        : {q.get('min_fragments')}")
+    log("[query.quant]")
+    log(f"  intensity_source     : {qc.get('intensity_source')}")
+    log(f"  feature_agg          : {qc.get('feature_agg')}")
+    log(f"  feature_top_k        : {qc.get('feature_top_k')}")
     log("[sage.search]")
     log(f"  precursor_ppm        : {sage['search'].get('precursor_ppm')}")
     log(f"  fragment_ppm         : {sage['search'].get('fragment_ppm')}")
@@ -282,9 +364,6 @@ def print_config_summary(cfg: dict) -> None:
 # --------------------------- imports that depend on env ------------------------
 
 def apply_cuda_visible_devices(cfg: dict) -> None:
-    """
-    Must run before importing torch to reliably select a GPU.
-    """
     devs = cfg.get("run", {}).get("cuda_visible_devices", None)
     if devs is not None and str(devs).strip() != "":
         os.environ["CUDA_VISIBLE_DEVICES"] = str(devs).strip()
@@ -296,29 +375,19 @@ def import_torch_and_deps():
 
 
 def import_imspy_and_sage():
-    # imspy
     from imspy.timstof.dia import TimsDatasetDIA  # noqa
     from imspy.timstof.dia import CandidateOpts, FragmentIndex  # noqa
     from imspy.timstof.dia import load_clusters_parquet  # noqa
-
-    # optional debug saving
     from imspy.timstof.dia import save_pseudo_spectra_bin  # noqa
     from imspy.timstof.clustering.feature import save_features_bin  # noqa
-
-    # deconv
     from imspy.timstof.clustering.feature import (  # noqa
         SimpleFeatureParams,
         build_simple_features_from_clusters,
         AveragineLut,
     )
-
-    # sagepy
     from sagepy.core import Scorer, EnzymeBuilder, SageSearchConfiguration, Tolerance  # noqa
     from sagepy.core.fdr import sage_fdr_psm  # noqa
-    from sagepy.utility import (  # noqa
-        psm_collection_to_pandas,
-        compress_psms,
-    )
+    from sagepy.utility import psm_collection_to_pandas, compress_psms  # noqa
 
     return {
         "TimsDatasetDIA": TimsDatasetDIA,
@@ -345,7 +414,6 @@ def import_query_builder():
     Update this import if your builder lives elsewhere.
     """
     try:
-        # You mentioned this exists in your project already.
         from .utility import build_sagepy_queries_from_pseudo_spectra  # type: ignore
         return build_sagepy_queries_from_pseudo_spectra
     except Exception as e:
@@ -366,8 +434,12 @@ def stable_sort_clusters(clusters: list) -> list:
     )
 
 
-def build_ms1_index(clusters: list) -> dict:
+def build_ms1_index(clusters: list) -> dict[int, object]:
     return {int(c.cluster_id): c for c in clusters}
+
+
+def build_feature_index(features: list) -> dict[int, object]:
+    return {int(getattr(f, "feature_id")): f for f in features}
 
 
 def build_features(cfg: dict, clusters: list, imspy: dict):
@@ -403,8 +475,11 @@ def build_features(cfg: dict, clusters: list, imspy: dict):
 
     log(f"[features] building from {len(clusters)} precursor clusters …")
     features = build_simple_features_from_clusters(clusters, params, lut=lut)
-    # deterministic ordering (raw_sum desc, feature_id asc)
-    features = sorted(features, key=lambda f: (float(getattr(f, "raw_sum", 0.0)), int(getattr(f, "feature_id", 0))), reverse=True)
+    features = sorted(
+        features,
+        key=lambda f: (float(getattr(f, "raw_sum", 0.0)), int(getattr(f, "feature_id", 0))),
+        reverse=True,
+    )
     log(f"[features] built {len(features)} features")
     return features
 
@@ -425,9 +500,7 @@ def build_fragment_index(cfg: dict, ds, imspy: dict):
     FragmentIndex = imspy["FragmentIndex"]
     CandidateOpts = imspy["CandidateOpts"]
 
-    inp = cfg["input"]
-    frag_dir = inp["fragment_clusters_dir"]
-
+    frag_dir = cfg["input"]["fragment_clusters_dir"]
     opts = CandidateOpts(min_raw_sum=float(cfg["deconv"]["ms2_index"]["min_raw_sum"]))
     log(f"[ms2] building FragmentIndex from {frag_dir} …")
     ms2_index = FragmentIndex.from_parquet_dir(ds, frag_dir, opts)
@@ -459,7 +532,6 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
             )
             if results:
                 spec_features.extend(results)
-
         log(f"[pseudospectra] feature pseudospectra: {len(spec_features)}")
 
     if bool(ps_cfg.get("build_from_clusters", True)) and clusters_left:
@@ -475,18 +547,27 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
             )
             if results:
                 spec_clusters.extend(results)
-
         log(f"[pseudospectra] cluster pseudospectra: {len(spec_clusters)}")
 
     return spec_features, spec_clusters
 
 
-def build_queries(cfg: dict, builder_fn, *, spectra: list, use_charge: bool, ms1_index: dict, ds):
+def build_queries(
+    cfg: dict,
+    builder_fn,
+    *,
+    spectra: list,
+    use_charge: bool,
+    ms1_index: dict[int, object],
+    feature_index: dict[int, object] | None,
+    ds,
+):
     q = cfg["query"]
     if not spectra:
         return None
 
-    queries = builder_fn(
+    # Base args (old builder signature)
+    kwargs: dict[str, object] = dict(
         spectra=spectra,
         use_charge=bool(use_charge),
         merge_fragments=bool(q["merge_fragments"]),
@@ -494,10 +575,31 @@ def build_queries(cfg: dict, builder_fn, *, spectra: list, use_charge: bool, ms1
         merge_max_ppm=float(q["merge_max_ppm"]),
         take_top_n=int(q["take_top_n"]),
         min_fragments=int(q["min_fragments"]),
-        ms1_index=ms1_index,
-        ds=ds,
     )
-    return queries
+
+    # Optional MS1 metadata + new quant knobs (new builder signature)
+    if bool(q.get("attach_ms1_metadata", True)):
+        qc = q.get("quant", {})
+        kwargs.update(
+            ms1_index=ms1_index,
+            feature_index=feature_index,
+            ds=ds,
+            intensity_source=str(qc.get("intensity_source", "volume_proxy_then_raw_sum")),
+            feature_agg=str(qc.get("feature_agg", "most_intense_member")),
+            feature_top_k=int(qc.get("feature_top_k", 3)),
+        )
+
+    try:
+        return builder_fn(**kwargs)  # type: ignore[arg-type]
+    except TypeError as e:
+        # Helpful error if builder wasn't updated yet
+        raise TypeError(
+            "build_sagepy_queries_from_pseudo_spectra signature mismatch.\n"
+            "Either:\n"
+            "  (a) update your builder to accept feature_index/intensity_source/feature_agg/feature_top_k, OR\n"
+            "  (b) set query.attach_ms1_metadata=false in the TOML.\n"
+            f"Original error: {e}"
+        ) from e
 
 
 def build_sage_db(cfg: dict, imspy: dict):
@@ -575,7 +677,6 @@ def run_sage_search(cfg: dict, imspy: dict, indexed_db, queries, *, static_mods:
 
 
 def flatten_results_dict(results: dict) -> list:
-    # results is a dict mapping spectrum-id to list[PSM]
     out = []
     for _, lst in results.items():
         out.extend(lst)
@@ -589,7 +690,6 @@ def write_psms(cfg: dict, imspy: dict, results: dict, *, out_dir: Path, prefix: 
     out_cfg = cfg["output"]
     write_parquet = bool(out_cfg["write_parquet"])
 
-    # bin
     bin_name = out_cfg["psms_features_bin"] if prefix == "features" else out_cfg["psms_clusters_bin"]
     bin_path = out_dir / bin_name
     ensure_dir_for_file(bin_path)
@@ -602,7 +702,6 @@ def write_psms(cfg: dict, imspy: dict, results: dict, *, out_dir: Path, prefix: 
         f.write(bytearray(psm_bin))
     log(f"[out] wrote {prefix} PSMs (bin) -> {bin_path}")
 
-    # parquet (optional)
     if write_parquet:
         parq_name = out_cfg["psms_features_parquet"] if prefix == "features" else out_cfg["psms_clusters_parquet"]
         parq_path = out_dir / parq_name
@@ -649,7 +748,6 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
-
     out_dir = Path(cfg["output"]["dir"])
     ensure_dir(out_dir)
 
@@ -666,12 +764,10 @@ def main(argv=None) -> int:
     # IMPORTANT: set CUDA_VISIBLE_DEVICES before torch import
     apply_cuda_visible_devices(cfg)
 
-    # now import torch and friends
     torch = import_torch_and_deps()
     imspy = import_imspy_and_sage()
     build_sagepy_queries_from_pseudo_spectra = import_query_builder()
 
-    # torch env info
     log(f"[env] Python {sys.version.split()[0]}")
     log(f"[env] Torch {torch.__version__} | CUDA available={torch.cuda.is_available()}")
     if torch.cuda.is_available():
@@ -680,31 +776,27 @@ def main(argv=None) -> int:
         except Exception:
             pass
 
-    # open dataset
     TimsDatasetDIA = imspy["TimsDatasetDIA"]
-    inp = cfg["input"]
+    load_clusters_parquet = imspy["load_clusters_parquet"]
 
+    inp = cfg["input"]
     ds = TimsDatasetDIA(
         inp["dataset"],
         use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)),
     )
 
-    # load MS1 clusters
-    load_clusters_parquet = imspy["load_clusters_parquet"]
     prec_clusters = load_clusters_parquet(inp["precursor_clusters"])
     prec_clusters = stable_sort_clusters(list(prec_clusters))
     log(f"[ms1] loaded precursor clusters: {len(prec_clusters)}")
 
     ms1_index = build_ms1_index(prec_clusters)
 
-    # MS2 index
     ms2_index = build_fragment_index(cfg, ds, imspy)
 
-    # Optional MS1 isotope features
     features = build_features(cfg, prec_clusters, imspy)
+    feature_index = build_feature_index(features) if features else None
     clusters_left = split_leftover_clusters(prec_clusters, features)
 
-    # Build pseudo-spectra
     spec_features, spec_clusters = build_pseudospectra(
         cfg,
         ms2_index,
@@ -712,10 +804,14 @@ def main(argv=None) -> int:
         clusters_left=clusters_left,
     )
 
-    # Optional debug artifact bins
-    maybe_write_debug_bins(cfg, imspy, out_dir=out_dir, features=features, spec_features=spec_features, spec_clusters=spec_clusters)
+    maybe_write_debug_bins(
+        cfg, imspy,
+        out_dir=out_dir,
+        features=features,
+        spec_features=spec_features,
+        spec_clusters=spec_clusters,
+    )
 
-    # Build queries
     log("[query] building SAGE query spectra …")
     queries_features = None
     queries_clusters = None
@@ -727,6 +823,7 @@ def main(argv=None) -> int:
             spectra=spec_features,
             use_charge=True,
             ms1_index=ms1_index,
+            feature_index=feature_index,
             ds=ds,
         )
         log("[query] features queries ready")
@@ -738,6 +835,7 @@ def main(argv=None) -> int:
             spectra=spec_clusters,
             use_charge=False,
             ms1_index=ms1_index,
+            feature_index=feature_index,
             ds=ds,
         )
         log("[query] cluster queries ready")
@@ -745,10 +843,8 @@ def main(argv=None) -> int:
     if queries_features is None and queries_clusters is None:
         raise RuntimeError("No query spectra were produced (no pseudo-spectra). Check thresholds / configs.")
 
-    # SAGE DB
     indexed_db, static_mods, variable_mods = build_sage_db(cfg, imspy)
 
-    # Search + FDR
     results_features = None
     results_clusters = None
 
@@ -758,7 +854,6 @@ def main(argv=None) -> int:
     if queries_clusters is not None:
         results_clusters = run_sage_search(cfg, imspy, indexed_db, queries_clusters, static_mods=static_mods, variable_mods=variable_mods)
 
-    # Write outputs
     if results_features is not None:
         write_psms(cfg, imspy, results_features, out_dir=out_dir, prefix="features")
     if results_clusters is not None:
