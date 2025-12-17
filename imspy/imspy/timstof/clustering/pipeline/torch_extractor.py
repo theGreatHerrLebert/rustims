@@ -448,6 +448,7 @@ def iter_detect_peaks_from_blurred(
     blur_sigma_scan: float | None = None,
     blur_sigma_tof: float | None = None,
     blur_truncate: float = 3.0,
+    refine_batch_max: int = 4096,
 ):
     """
     Stream peak stats on a 2D image derived from TOF×scan.
@@ -581,6 +582,10 @@ def iter_detect_peaks_from_blurred(
     bytes_per_patch = fit_h * fit_w * 4  # float32
     target_bytes = max(16, int(patch_batch_target_mb)) * (1024 ** 2)
     patch_batch = max(512, min(1_000_000, target_bytes // max(1, bytes_per_patch)))
+
+    # NEW: refinement explodes memory; cap hard.
+    if refine in ("adam", "gauss_newton", "gn"):
+        patch_batch = min(patch_batch, int(refine_batch_max))
 
     i = 0
     while i < H:
