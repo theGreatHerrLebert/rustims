@@ -448,7 +448,7 @@ def iter_detect_peaks_from_blurred(
     blur_sigma_scan: float | None = None,
     blur_sigma_tof: float | None = None,
     blur_truncate: float = 3.0,
-    refine_batch_max: int = 4096,
+    refine_batch_max: int = 100_000,
 ):
     """
     Stream peak stats on a 2D image derived from TOF×scan.
