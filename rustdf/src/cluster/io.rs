@@ -703,17 +703,26 @@ pub fn save_pseudo_bincode(
     }
 }
 
-pub fn load_pseudo_bincode(path: &str) -> io::Result<Vec<PseudoSpectrum>> {
-    let f = File::open(path)?;
+fn is_zstd_file(path: &str) -> io::Result<bool> {
+    use std::io::Read;
+    let mut f = File::open(path)?;
+    let mut magic = [0u8; 4];
+    let n = f.read(&mut magic)?;
+    if n < 4 {
+        return Ok(false);
+    }
+    Ok(magic == [0x28, 0xB5, 0x2F, 0xFD])
+}
 
-    // Try zstd first
-    if let Ok(mut zr) = zstd::Decoder::new(&f) {
+pub fn load_pseudo_bincode(path: &str) -> io::Result<Vec<PseudoSpectrum>> {
+    if is_zstd_file(path)? {
+        let f = File::open(path)?;
+        let mut zr = zstd::Decoder::new(f)?;
         let pf: PseudoSpectraFile = bincode::deserialize_from(&mut zr)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         return Ok(pf.spectra);
     }
 
-    // Fallback: plain bincode
     let f = BufReader::new(File::open(path)?);
     let pf: PseudoSpectraFile = bincode::deserialize_from(f)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
