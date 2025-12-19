@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Spectral deconvolution → SAGE search → initial PSMs (TOML-configured).
+Spectral deconvolution → PseudoSpectra → SAGE search → initial PSMs (TOML-configured).
 """
 
 from __future__ import annotations
 
 import argparse
+import inspect
 import logging
-from logging.handlers import RotatingFileHandler
 import os
 import sys
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
 
 # tomllib (py3.11+) with fallback
 try:
@@ -85,7 +85,6 @@ def _default_log_path(out_dir: str | os.PathLike) -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path(out_dir) / "logs" / f"t_tracer_deconv_search_{ts}.log"
 
-import inspect
 
 def _call_with_accepted_kwargs(fn, kwargs: dict[str, object]):
     sig = inspect.signature(fn)
@@ -109,11 +108,13 @@ def load_config(path: str | os.PathLike) -> dict:
         if sec not in cfg:
             raise ValueError(f"Missing [{sec}] in config.")
 
+    # run
     run = cfg["run"]
     run.setdefault("device", "cuda")
     run.setdefault("cuda_visible_devices", None)  # e.g. "1"
     run.setdefault("num_threads", 0)
 
+    # pseudospectra (now includes scored-query knobs)
     ps = cfg["pseudospectra"]
     ps.setdefault("batch_size", 16384)
     ps.setdefault("max_scan_apex_delta", 7)
@@ -121,6 +122,15 @@ def load_config(path: str | os.PathLike) -> dict:
     ps.setdefault("build_from_features", True)
     ps.setdefault("build_from_clusters", True)
 
+    ps.setdefault("mode", "geom")
+    ps.setdefault("min_score", 0.0)
+    ps.setdefault("reject_frag_inside_precursor_tile", True)
+    ps.setdefault("min_im_overlap_scans", 1)
+    ps.setdefault("require_tile_compat", True)
+    ps.setdefault("min_fragments", 4)
+    ps.setdefault("max_fragments", 512)
+
+    # deconv
     cfg.setdefault("deconv", {})
     cfg["deconv"].setdefault("features", {})
     feat = cfg["deconv"]["features"]
@@ -145,6 +155,7 @@ def load_config(path: str | os.PathLike) -> dict:
     ms2i = cfg["deconv"]["ms2_index"]
     ms2i.setdefault("min_raw_sum", 1.0)
 
+    # query
     q = cfg["query"]
     q.setdefault("merge_fragments", True)
     q.setdefault("merge_allow_cross_window_group", True)
@@ -152,16 +163,16 @@ def load_config(path: str | os.PathLike) -> dict:
     q.setdefault("take_top_n", 150)
     q.setdefault("min_fragments", 5)
 
-    # NEW: whether to attach MS1 metadata (inv_mob, rt, intensity) via your builder
     q.setdefault("attach_ms1_metadata", True)
 
-    # NEW: quant policy knobs
     q.setdefault("quant", {})
     qc = q["quant"]
-    qc.setdefault("intensity_source", "volume_proxy_then_raw_sum")
-    qc.setdefault("feature_agg", "most_intense_member")     # or sum_top_k_members / sum_members
+    # IMPORTANT: back to raw_sum (your request)
+    qc.setdefault("intensity_source", "raw_sum")
+    qc.setdefault("feature_agg", "most_intense_member")
     qc.setdefault("feature_top_k", 3)
 
+    # sage
     sage = cfg["sage"]
     sage.setdefault("enzyme", {})
     sage.setdefault("mods", {})
@@ -192,6 +203,7 @@ def load_config(path: str | os.PathLike) -> dict:
     se.setdefault("use_hyper_score", True)
     se.setdefault("num_threads", 0)
 
+    # output (THIS is where these belong)
     out = cfg["output"]
     out.setdefault("write_parquet", True)
     out.setdefault("write_debug_bins", False)
@@ -234,10 +246,13 @@ def print_config_summary(cfg: dict) -> None:
     log(f"  min_raw_sum          : {ms2i.get('min_raw_sum')}")
     log("[pseudospectra]")
     log(f"  batch_size           : {ps.get('batch_size')}")
-    log(f"  max_scan_apex_delta  : {ps.get('max_scan_apex_delta')}")
-    log(f"  max_rt_apex_delta_sec: {ps.get('max_rt_apex_delta_sec')}")
-    log(f"  build_from_features  : {bool(ps.get('build_from_features'))}")
-    log(f"  build_from_clusters  : {bool(ps.get('build_from_clusters'))}")
+    log(f"  mode                 : {ps.get('mode')}")
+    log(f"  min_score            : {ps.get('min_score')}")
+    log(f"  reject_inside_tile   : {bool(ps.get('reject_frag_inside_precursor_tile'))}")
+    log(f"  require_tile_compat  : {bool(ps.get('require_tile_compat'))}")
+    log(f"  min_im_overlap_scans : {ps.get('min_im_overlap_scans')}")
+    log(f"  min_fragments        : {ps.get('min_fragments')}")
+    log(f"  max_fragments        : {ps.get('max_fragments')}")
     log("[query]")
     log(f"  attach_ms1_metadata  : {bool(q.get('attach_ms1_metadata', True))}")
     log(f"  merge_fragments      : {bool(q.get('merge_fragments'))}")
@@ -311,9 +326,6 @@ def import_imspy_and_sage():
 
 
 def import_query_builder():
-    """
-    Update this import if your builder lives elsewhere.
-    """
     try:
         from imspy.timstof.clustering.utility import build_sagepy_queries_from_pseudo_spectra  # type: ignore
         return build_sagepy_queries_from_pseudo_spectra
@@ -403,7 +415,9 @@ def build_fragment_index(cfg: dict, ds, imspy: dict):
 
     frag_dir = cfg["input"]["fragment_clusters_dir"]
     opts = CandidateOpts(min_raw_sum=float(cfg["deconv"]["ms2_index"]["min_raw_sum"]))
+
     log(f"[ms2] building FragmentIndex from {frag_dir} …")
+    # IMPORTANT: must pass cand_opts
     ms2_index = FragmentIndex.from_parquet_dir(ds, frag_dir, opts)
     log("[ms2] FragmentIndex ready")
     return ms2_index
@@ -413,9 +427,19 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     from tqdm import tqdm
 
     ps_cfg = cfg["pseudospectra"]
+
     batch_size = int(ps_cfg["batch_size"])
     max_scan_apex_delta = int(ps_cfg["max_scan_apex_delta"])
     max_rt_apex_delta_sec = float(ps_cfg["max_rt_apex_delta_sec"])
+
+    # IMPORTANT knobs (now coming from TOML)
+    mode = str(ps_cfg.get("mode", "geom"))
+    min_score = float(ps_cfg.get("min_score", 0.0))
+    reject_inside = bool(ps_cfg.get("reject_frag_inside_precursor_tile", True))
+    min_im_overlap_scans = int(ps_cfg.get("min_im_overlap_scans", 1))
+    require_tile_compat = bool(ps_cfg.get("require_tile_compat", True))
+    min_frags = int(ps_cfg.get("min_fragments", 4))
+    max_frags = int(ps_cfg.get("max_fragments", 512))
 
     spec_features: list = []
     spec_clusters: list = []
@@ -428,8 +452,15 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
             chunk = features[u:l]
             results = ms2_index.score_features_to_pseudospectra(
                 features=chunk,
-                max_scan_apex_delta=max_scan_apex_delta,
+                mode=mode,
+                min_score=min_score,
+                reject_frag_inside_precursor_tile=reject_inside,
                 max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+                max_scan_apex_delta=max_scan_apex_delta,
+                min_im_overlap_scans=min_im_overlap_scans,
+                require_tile_compat=require_tile_compat,
+                min_fragments=min_frags,
+                max_fragments=max_frags,
             )
             if results:
                 spec_features.extend(results)
@@ -443,8 +474,15 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
             chunk = clusters_left[u:l]
             results = ms2_index.score_precursors_to_pseudospectra(
                 precursor_clusters=chunk,
-                max_scan_apex_delta=max_scan_apex_delta,
+                mode=mode,
+                min_score=min_score,
+                reject_frag_inside_precursor_tile=reject_inside,
                 max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+                max_scan_apex_delta=max_scan_apex_delta,
+                min_im_overlap_scans=min_im_overlap_scans,
+                require_tile_compat=require_tile_compat,
+                min_fragments=min_frags,
+                max_fragments=max_frags,
             )
             if results:
                 spec_clusters.extend(results)
@@ -467,7 +505,6 @@ def build_queries(
     if not spectra:
         return None
 
-    # Base args (old builder signature)
     kwargs: dict[str, object] = dict(
         spectra=spectra,
         use_charge=bool(use_charge),
@@ -478,28 +515,20 @@ def build_queries(
         min_fragments=int(q["min_fragments"]),
     )
 
-    # Optional MS1 metadata + new quant knobs (new builder signature)
     if bool(q.get("attach_ms1_metadata", True)):
         qc = q.get("quant", {})
         kwargs.update(
             ms1_index=ms1_index,
             feature_index=feature_index,
             ds=ds,
-            intensity_source=str(qc.get("intensity_source", "volume_proxy_then_raw_sum")),
+            intensity_source=str(qc.get("intensity_source", "raw_sum")),
             feature_agg=str(qc.get("feature_agg", "most_intense_member")),
             feature_top_k=int(qc.get("feature_top_k", 3)),
         )
 
-    try:
-        qc = q.get("quant", {})
-        log(f"[query.quant] feature_agg={qc.get('feature_agg')} feature_top_k={qc.get('feature_top_k')} intensity_source={qc.get('intensity_source')}")
-        return _call_with_accepted_kwargs(builder_fn, kwargs)
-    except TypeError as e:
-        raise TypeError(
-            "build_sagepy_queries_from_pseudo_spectra failed. "
-            "This is likely an internal builder error (not a signature mismatch anymore). "
-            f"Args passed: {sorted(kwargs.keys())}"
-        ) from e
+    qc = q.get("quant", {})
+    log(f"[query.quant] intensity_source={qc.get('intensity_source')} feature_agg={qc.get('feature_agg')} top_k={qc.get('feature_top_k')}")
+    return _call_with_accepted_kwargs(builder_fn, kwargs)
 
 
 def build_sage_db(cfg: dict, imspy: dict):
@@ -644,7 +673,6 @@ def main(argv=None) -> int:
     parser.add_argument("--log-file", default=None, help="Override log file path")
     parser.add_argument("--log-level", default="INFO", help="Log level (DEBUG/INFO/WARNING/ERROR)")
     parser.add_argument("--no-console-log", action="store_true", help="Disable console logging")
-
     args = parser.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -652,11 +680,7 @@ def main(argv=None) -> int:
     ensure_dir(out_dir)
 
     log_file = args.log_file or _default_log_path(out_dir)
-    setup_logging(
-        log_file=log_file,
-        level=args.log_level,
-        also_console=not args.no_console_log,
-    )
+    setup_logging(log_file=log_file, level=args.log_level, also_console=not args.no_console_log)
     log(f"[log] writing logfile -> {log_file}")
 
     print_config_summary(cfg)
@@ -680,10 +704,7 @@ def main(argv=None) -> int:
     load_clusters_parquet = imspy["load_clusters_parquet"]
 
     inp = cfg["input"]
-    ds = TimsDatasetDIA(
-        inp["dataset"],
-        use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)),
-    )
+    ds = TimsDatasetDIA(inp["dataset"], use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)))
 
     prec_clusters = load_clusters_parquet(inp["precursor_clusters"])
     prec_clusters = stable_sort_clusters(list(prec_clusters))
@@ -697,20 +718,9 @@ def main(argv=None) -> int:
     feature_index = build_feature_index(features) if features else None
     clusters_left = split_leftover_clusters(prec_clusters, features)
 
-    spec_features, spec_clusters = build_pseudospectra(
-        cfg,
-        ms2_index,
-        features=features,
-        clusters_left=clusters_left,
-    )
+    spec_features, spec_clusters = build_pseudospectra(cfg, ms2_index, features=features, clusters_left=clusters_left)
 
-    maybe_write_debug_bins(
-        cfg, imspy,
-        out_dir=out_dir,
-        features=features,
-        spec_features=spec_features,
-        spec_clusters=spec_clusters,
-    )
+    maybe_write_debug_bins(cfg, imspy, out_dir=out_dir, features=features, spec_features=spec_features, spec_clusters=spec_clusters)
 
     log("[query] building SAGE query spectra …")
     queries_features = None
@@ -745,14 +755,8 @@ def main(argv=None) -> int:
 
     indexed_db, static_mods, variable_mods = build_sage_db(cfg, imspy)
 
-    results_features = None
-    results_clusters = None
-
-    if queries_features is not None:
-        results_features = run_sage_search(cfg, imspy, indexed_db, queries_features, static_mods=static_mods, variable_mods=variable_mods)
-
-    if queries_clusters is not None:
-        results_clusters = run_sage_search(cfg, imspy, indexed_db, queries_clusters, static_mods=static_mods, variable_mods=variable_mods)
+    results_features = run_sage_search(cfg, imspy, indexed_db, queries_features, static_mods=static_mods, variable_mods=variable_mods) if queries_features is not None else None
+    results_clusters = run_sage_search(cfg, imspy, indexed_db, queries_clusters, static_mods=static_mods, variable_mods=variable_mods) if queries_clusters is not None else None
 
     if results_features is not None:
         write_psms(cfg, imspy, results_features, out_dir=out_dir, prefix="features")
