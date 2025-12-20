@@ -842,7 +842,11 @@ class TofScanWindowGrid(RustWrapperObject):
 
     @property
     def data_raw(self) -> Optional[np.ndarray]:
-        """Optional raw (pre-smoothing) matrix."""
+        """
+        Optional raw (pre-smoothing) matrix.
+
+        Note: calling this moves the data out of the Rust object.
+        """
         arr = self.__py_ptr.data_raw
         return None if arr is None else np.asarray(arr)
 
