@@ -706,21 +706,11 @@ impl PyTofScanPlanGroup {
             }
         }
 
-        let keep_raw = do_smooth || do_blur_tof;
-
         let (data, data_raw) = if do_smooth {
-            // raw needed for smoothing input; keep it if requested
-            let smoothed = smooth_rows_parallel(
-                &raw,
-                rows,
-                cols,
-                self.maybe_sigma_scans.unwrap(),
-                self.truncate,
-            );
-            (smoothed, if keep_raw { Some(raw) } else { None })
+            let smoothed = smooth_rows_parallel(&raw, rows, cols, self.maybe_sigma_scans.unwrap(), self.truncate);
+            (smoothed, Some(raw))
         } else {
-            // no smoothing: we can move raw directly into data
-            (raw, None) // NOTE: raw moved, not cloned
+            (raw, None)
         };
 
         let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
@@ -773,21 +763,11 @@ impl PyTofScanPlanGroup {
             }
         }
 
-        let keep_raw = do_smooth || do_blur_tof;
-
         let (data, data_raw) = if do_smooth {
-            // raw needed for smoothing input; keep it if requested
-            let smoothed = smooth_rows_parallel(
-                &raw,
-                rows,
-                cols,
-                self.maybe_sigma_scans.unwrap(),
-                self.truncate,
-            );
-            (smoothed, if keep_raw { Some(raw) } else { None })
+            let smoothed = smooth_rows_parallel(&raw, rows, cols, self.maybe_sigma_scans.unwrap(), self.truncate);
+            (smoothed, Some(raw))
         } else {
-            // no smoothing: we can move raw directly into data
-            (raw, None) // NOTE: raw moved, not cloned
+            (raw, None)
         };
 
         let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
@@ -1188,21 +1168,11 @@ impl PyTofScanPlan {
             }
         }
 
-        let keep_raw = do_smooth || do_blur_tof;
-
         let (data, data_raw) = if do_smooth {
-            // raw needed for smoothing input; keep it if requested
-            let smoothed = smooth_rows_parallel(
-                &raw,
-                rows,
-                cols,
-                self.maybe_sigma_scans.unwrap(),
-                self.truncate,
-            );
-            (smoothed, if keep_raw { Some(raw) } else { None })
+            let smoothed = smooth_rows_parallel(&raw, rows, cols, self.maybe_sigma_scans.unwrap(), self.truncate);
+            (smoothed, Some(raw))
         } else {
-            // no smoothing: we can move raw directly into data
-            (raw, None) // NOTE: raw moved, not cloned
+            (raw, None)
         };
 
         let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
@@ -1253,21 +1223,11 @@ impl PyTofScanPlan {
             }
         }
 
-        let keep_raw = do_smooth || do_blur_tof;
-
         let (data, data_raw) = if do_smooth {
-            // raw needed for smoothing input; keep it if requested
-            let smoothed = smooth_rows_parallel(
-                &raw,
-                rows,
-                cols,
-                self.maybe_sigma_scans.unwrap(),
-                self.truncate,
-            );
-            (smoothed, if keep_raw { Some(raw) } else { None })
+            let smoothed = smooth_rows_parallel(&raw, rows, cols, self.maybe_sigma_scans.unwrap(), self.truncate);
+            (smoothed, Some(raw))
         } else {
-            // no smoothing: we can move raw directly into data
-            (raw, None) // NOTE: raw moved, not cloned
+            (raw, None)
         };
 
         let frame_id_bounds = (self.frame_ids_sorted[lo], self.frame_ids_sorted[hi]);
