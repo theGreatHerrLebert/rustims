@@ -2,6 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 Spectral deconvolution → PseudoSpectra → SAGE search → initial PSMs (TOML-configured).
+
+NEW:
+- Searches *combined* query spectra (features + clusters) in ONE pass.
+- Works for both classic DB path and chunked-db path.
+- Writes a single combined output (bin + parquet).
 """
 
 from __future__ import annotations
@@ -15,14 +20,11 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-# tomllib (py3.11+) with fallback
 try:
     import tomllib as toml
 except Exception:  # pragma: no cover
     import tomli as toml  # type: ignore
 
-
-# --------------------------- logging ------------------------------------------
 
 _LOGGER_NAME = "t-tracer"
 _logger = logging.getLogger(_LOGGER_NAME)
@@ -90,15 +92,12 @@ def _call_with_accepted_kwargs(fn, kwargs: dict[str, object]):
     sig = inspect.signature(fn)
     params = sig.parameters
 
-    # If builder has **kwargs, just pass everything
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return fn(**kwargs)
 
     accepted = {k: v for k, v in kwargs.items() if k in params}
     return fn(**accepted)
 
-
-# --------------------------- config -------------------------------------------
 
 def load_config(path: str | os.PathLike) -> dict:
     with open(path, "rb") as f:
@@ -108,20 +107,17 @@ def load_config(path: str | os.PathLike) -> dict:
         if sec not in cfg:
             raise ValueError(f"Missing [{sec}] in config.")
 
-    # run
     run = cfg["run"]
     run.setdefault("device", "cuda")
-    run.setdefault("cuda_visible_devices", None)  # e.g. "1"
+    run.setdefault("cuda_visible_devices", None)
     run.setdefault("num_threads", 0)
 
-    # pseudospectra (now includes scored-query knobs)
     ps = cfg["pseudospectra"]
     ps.setdefault("batch_size", 16384)
     ps.setdefault("max_scan_apex_delta", 7)
     ps.setdefault("max_rt_apex_delta_sec", 1.5)
     ps.setdefault("build_from_features", True)
     ps.setdefault("build_from_clusters", True)
-
     ps.setdefault("mode", "geom")
     ps.setdefault("min_score", 0.0)
     ps.setdefault("reject_frag_inside_precursor_tile", True)
@@ -130,7 +126,6 @@ def load_config(path: str | os.PathLike) -> dict:
     ps.setdefault("min_fragments", 4)
     ps.setdefault("max_fragments", 512)
 
-    # deconv
     cfg.setdefault("deconv", {})
     cfg["deconv"].setdefault("features", {})
     feat = cfg["deconv"]["features"]
@@ -155,29 +150,25 @@ def load_config(path: str | os.PathLike) -> dict:
     ms2i = cfg["deconv"]["ms2_index"]
     ms2i.setdefault("min_raw_sum", 1.0)
 
-    # query
     q = cfg["query"]
     q.setdefault("merge_fragments", True)
     q.setdefault("merge_allow_cross_window_group", True)
     q.setdefault("merge_max_ppm", 10.0)
     q.setdefault("take_top_n", 150)
     q.setdefault("min_fragments", 5)
-
     q.setdefault("attach_ms1_metadata", True)
-
     q.setdefault("quant", {})
     qc = q["quant"]
-    # IMPORTANT: back to raw_sum (your request)
     qc.setdefault("intensity_source", "raw_sum")
     qc.setdefault("feature_agg", "most_intense_member")
     qc.setdefault("feature_top_k", 3)
 
-    # sage
     sage = cfg["sage"]
     sage.setdefault("enzyme", {})
     sage.setdefault("mods", {})
     sage.setdefault("db", {})
     sage.setdefault("search", {})
+    sage.setdefault("chunked", {})
 
     enz = sage["enzyme"]
     enz.setdefault("missed_cleavages", 2)
@@ -203,81 +194,26 @@ def load_config(path: str | os.PathLike) -> dict:
     se.setdefault("use_hyper_score", True)
     se.setdefault("num_threads", 0)
 
-    # output (THIS is where these belong)
+    ch = sage["chunked"]
+    ch.setdefault("enabled", False)
+    ch.setdefault("chunk_size", 50_000)
+    ch.setdefault("low_memory", False)
+    ch.setdefault("max_hits", None)
+
     out = cfg["output"]
     out.setdefault("write_parquet", True)
     out.setdefault("write_debug_bins", False)
-    out.setdefault("psms_features_bin", "psms_features.bin")
-    out.setdefault("psms_clusters_bin", "psms_clusters.bin")
-    out.setdefault("psms_features_parquet", "psms_features.parquet")
-    out.setdefault("psms_clusters_parquet", "psms_clusters.parquet")
+
+    # keep your old names, but also allow combined
+    out.setdefault("psms_combined_bin", "psms_combined.bin")
+    out.setdefault("psms_combined_parquet", "psms_combined.parquet")
+
     out.setdefault("features_bin", "features.bin")
     out.setdefault("query_features_bin", "query_features.bin")
     out.setdefault("query_clusters_bin", "query_clusters.bin")
 
     return cfg
 
-
-def print_config_summary(cfg: dict) -> None:
-    inp = cfg["input"]
-    run = cfg["run"]
-    out = cfg["output"]
-    ps = cfg["pseudospectra"]
-    q = cfg["query"]
-    feat = cfg["deconv"]["features"]
-    ms2i = cfg["deconv"]["ms2_index"]
-    sage = cfg["sage"]
-    qc = q.get("quant", {})
-
-    log("──────────────── CONFIG SUMMARY (DECONV+SEARCH) ────────────────")
-    log("[input]")
-    log(f"  dataset              : {inp.get('dataset')}")
-    log(f"  precursor_clusters   : {inp.get('precursor_clusters')}")
-    log(f"  fragment_clusters_dir: {inp.get('fragment_clusters_dir')}")
-    log(f"  fasta                : {inp.get('fasta')}")
-    log("[run]")
-    log(f"  device               : {run.get('device')}")
-    log(f"  cuda_visible_devices : {run.get('cuda_visible_devices')}")
-    log(f"  num_threads          : {run.get('num_threads')}")
-    log("[deconv.features]")
-    log(f"  enabled              : {bool(feat.get('enabled'))}")
-    log(f"  z_min..z_max         : {feat.get('z_min')}..{feat.get('z_max')}")
-    log("[deconv.ms2_index]")
-    log(f"  min_raw_sum          : {ms2i.get('min_raw_sum')}")
-    log("[pseudospectra]")
-    log(f"  batch_size           : {ps.get('batch_size')}")
-    log(f"  mode                 : {ps.get('mode')}")
-    log(f"  min_score            : {ps.get('min_score')}")
-    log(f"  reject_inside_tile   : {bool(ps.get('reject_frag_inside_precursor_tile'))}")
-    log(f"  require_tile_compat  : {bool(ps.get('require_tile_compat'))}")
-    log(f"  min_im_overlap_scans : {ps.get('min_im_overlap_scans')}")
-    log(f"  min_fragments        : {ps.get('min_fragments')}")
-    log(f"  max_fragments        : {ps.get('max_fragments')}")
-    log("[query]")
-    log(f"  attach_ms1_metadata  : {bool(q.get('attach_ms1_metadata', True))}")
-    log(f"  merge_fragments      : {bool(q.get('merge_fragments'))}")
-    log(f"  merge_max_ppm        : {q.get('merge_max_ppm')}")
-    log(f"  merge_cross_wg       : {bool(q.get('merge_allow_cross_window_group'))}")
-    log(f"  take_top_n           : {q.get('take_top_n')}")
-    log(f"  min_fragments        : {q.get('min_fragments')}")
-    log("[query.quant]")
-    log(f"  intensity_source     : {qc.get('intensity_source')}")
-    log(f"  feature_agg          : {qc.get('feature_agg')}")
-    log(f"  feature_top_k        : {qc.get('feature_top_k')}")
-    log("[sage.search]")
-    log(f"  precursor_ppm        : {sage['search'].get('precursor_ppm')}")
-    log(f"  fragment_ppm         : {sage['search'].get('fragment_ppm')}")
-    log(f"  min_matched_peaks    : {sage['search'].get('min_matched_peaks')}")
-    log(f"  report_psms          : {sage['search'].get('report_psms')}")
-    log(f"  use_hyper_score      : {bool(sage['search'].get('use_hyper_score'))}")
-    log("[output]")
-    log(f"  dir                  : {out.get('dir')}")
-    log(f"  write_parquet        : {bool(out.get('write_parquet'))}")
-    log(f"  write_debug_bins     : {bool(out.get('write_debug_bins'))}")
-    log("────────────────────────────────────────────────────────────────")
-
-
-# --------------------------- imports that depend on env ------------------------
 
 def apply_cuda_visible_devices(cfg: dict) -> None:
     devs = cfg.get("run", {}).get("cuda_visible_devices", None)
@@ -326,20 +262,11 @@ def import_imspy_and_sage():
 
 
 def import_query_builder():
-    try:
-        from imspy.timstof.clustering.utility import build_sagepy_queries_from_pseudo_spectra  # type: ignore
-        return build_sagepy_queries_from_pseudo_spectra
-    except Exception as e:
-        raise ImportError(
-            "Could not import build_sagepy_queries_from_pseudo_spectra. "
-            "Edit import_query_builder() to point to the right module path in your repo."
-        ) from e
+    from imspy.timstof.clustering.utility import build_sagepy_queries_from_pseudo_spectra  # type: ignore
+    return build_sagepy_queries_from_pseudo_spectra
 
-
-# --------------------------- core pipeline ------------------------------------
 
 def stable_sort_clusters(clusters: list) -> list:
-    # Deterministic order: (raw_sum desc, cluster_id asc)
     return sorted(
         clusters,
         key=lambda c: (float(getattr(c, "raw_sum", 0.0)), -int(getattr(c, "cluster_id", 0))),
@@ -417,7 +344,6 @@ def build_fragment_index(cfg: dict, ds, imspy: dict):
     opts = CandidateOpts(min_raw_sum=float(cfg["deconv"]["ms2_index"]["min_raw_sum"]))
 
     log(f"[ms2] building FragmentIndex from {frag_dir} …")
-    # IMPORTANT: must pass cand_opts
     ms2_index = FragmentIndex.from_parquet_dir(ds, frag_dir, opts)
     log("[ms2] FragmentIndex ready")
     return ms2_index
@@ -432,7 +358,6 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     max_scan_apex_delta = int(ps_cfg["max_scan_apex_delta"])
     max_rt_apex_delta_sec = float(ps_cfg["max_rt_apex_delta_sec"])
 
-    # IMPORTANT knobs (now coming from TOML)
     mode = str(ps_cfg.get("mode", "geom"))
     min_score = float(ps_cfg.get("min_score", 0.0))
     reject_inside = bool(ps_cfg.get("reject_frag_inside_precursor_tile", True))
@@ -526,17 +451,14 @@ def build_queries(
             feature_top_k=int(qc.get("feature_top_k", 3)),
         )
 
-    qc = q.get("quant", {})
-    log(f"[query.quant] intensity_source={qc.get('intensity_source')} feature_agg={qc.get('feature_agg')} top_k={qc.get('feature_top_k')}")
     return _call_with_accepted_kwargs(builder_fn, kwargs)
 
 
-def build_sage_db(cfg: dict, imspy: dict):
+def build_sage_config(cfg: dict, imspy: dict):
     SageSearchConfiguration = imspy["SageSearchConfiguration"]
     EnzymeBuilder = imspy["EnzymeBuilder"]
 
-    fasta_path = cfg["input"]["fasta"]
-    with open(fasta_path, "r") as f:
+    with open(cfg["input"]["fasta"], "r") as f:
         fasta = f.read()
 
     enz_cfg = cfg["sage"]["enzyme"]
@@ -557,7 +479,12 @@ def build_sage_db(cfg: dict, imspy: dict):
     bucket_pow2 = int(db_cfg["bucket_size_pow2"])
     bucket_size = int(2**bucket_pow2)
 
-    log(f"[sage.db] building index (bucket_size=2^{bucket_pow2}={bucket_size}) …")
+    ch = cfg["sage"].get("chunked", {})
+    chunked_enabled = bool(ch.get("enabled", False))
+    chunk_size = int(ch.get("chunk_size", 50_000))
+    low_memory = bool(ch.get("low_memory", False))
+
+    log(f"[sage.cfg] building SageSearchConfiguration (bucket_size=2^{bucket_pow2}={bucket_size}) …")
     sage_config = SageSearchConfiguration(
         fasta=fasta,
         static_mods=static_mods,
@@ -565,16 +492,16 @@ def build_sage_db(cfg: dict, imspy: dict):
         enzyme_builder=enzyme_builder,
         generate_decoys=bool(db_cfg["generate_decoys"]),
         bucket_size=bucket_size,
+
+        # only meaningful for chunked mode
+        prefilter=True if chunked_enabled else None,
+        prefilter_chunk_size=chunk_size if chunked_enabled else None,
+        prefilter_low_memory=low_memory if chunked_enabled else None,
     )
-    indexed_db = sage_config.generate_indexed_database()
-    log("[sage.db] indexed database ready")
-    return indexed_db, static_mods, variable_mods
+    return sage_config, static_mods, variable_mods
 
 
-def run_sage_search(cfg: dict, imspy: dict, indexed_db, queries, *, static_mods: dict, variable_mods: dict):
-    if queries is None:
-        return None
-
+def run_sage_search_combined(cfg: dict, imspy: dict, sage_config, indexed_db_or_none, queries_all, *, static_mods: dict, variable_mods: dict):
     Scorer = imspy["Scorer"]
     Tolerance = imspy["Tolerance"]
     sage_fdr_psm = imspy["sage_fdr_psm"]
@@ -593,16 +520,44 @@ def run_sage_search(cfg: dict, imspy: dict, indexed_db, queries, *, static_mods:
     )
 
     num_threads = int(se.get("num_threads", 0))
-    log(f"[sage.search] searching (threads={num_threads}) …")
-    results = scorer.score_collection_psm(
-        db=indexed_db,
-        spectrum_collection=queries,
-        num_threads=num_threads,
-    )
+
+    ch = cfg["sage"].get("chunked", {})
+    chunked_enabled = bool(ch.get("enabled", False))
+
+    if chunked_enabled:
+        chunk_size = int(ch.get("chunk_size", 50_000))
+        low_memory = bool(ch.get("low_memory", False))
+        max_hits = ch.get("max_hits", None)
+        if max_hits is None:
+            max_hits = int(se["report_psms"])
+        else:
+            max_hits = int(max_hits)
+
+        log(f"[sage.search] chunked-db COMBINED search (n={len(queries_all)}, chunk_size={chunk_size}, low_memory={low_memory}, threads={num_threads}, max_hits={max_hits}) …")
+        indexed_db, results, num_kept = sage_config.prefilter_build_and_search_psm(
+            queries_all,
+            scorer,
+            chunk_size=chunk_size,
+            low_memory=low_memory,
+            num_threads=num_threads,
+            max_hits=max_hits,
+        )
+        log(f"[sage.search] chunked-db kept spectra: {num_kept} / {len(queries_all)}")
+    else:
+        indexed_db = indexed_db_or_none
+        if indexed_db is None:
+            raise RuntimeError("indexed_db is None but chunked search is disabled (script bug).")
+
+        log(f"[sage.search] classic COMBINED search (n={len(queries_all)}, threads={num_threads}) …")
+        results = scorer.score_collection_psm(
+            db=indexed_db,
+            spectrum_collection=queries_all,
+            num_threads=num_threads,
+        )
 
     log("[sage.fdr] computing q-values …")
     sage_fdr_psm(results, indexed_db, use_hyper_score=bool(se["use_hyper_score"]))
-    return results
+    return results, indexed_db
 
 
 def flatten_results_dict(results: dict) -> list:
@@ -612,59 +567,33 @@ def flatten_results_dict(results: dict) -> list:
     return out
 
 
-def write_psms(cfg: dict, imspy: dict, results: dict, *, out_dir: Path, prefix: str):
+def write_psms_combined(cfg: dict, imspy: dict, results: dict, *, out_dir: Path):
     compress_psms = imspy["compress_psms"]
     psm_collection_to_pandas = imspy["psm_collection_to_pandas"]
 
     out_cfg = cfg["output"]
-    write_parquet = bool(out_cfg["write_parquet"])
+    write_parquet = bool(out_cfg.get("write_parquet", True))
 
-    bin_name = out_cfg["psms_features_bin"] if prefix == "features" else out_cfg["psms_clusters_bin"]
+    bin_name = out_cfg.get("psms_combined_bin", "psms_combined.bin")
+    parq_name = out_cfg.get("psms_combined_parquet", "psms_combined.parquet")
+
     bin_path = out_dir / bin_name
     ensure_dir_for_file(bin_path)
 
     flat = flatten_results_dict(results)
-    log(f"[out] {prefix}: total PSM objects = {len(flat)}")
+    log(f"[out] combined: total PSM objects = {len(flat)}")
 
     psm_bin = compress_psms(flat)
     with open(bin_path, "wb") as f:
         f.write(bytearray(psm_bin))
-    log(f"[out] wrote {prefix} PSMs (bin) -> {bin_path}")
+    log(f"[out] wrote combined PSMs (bin) -> {bin_path}")
 
     if write_parquet:
-        parq_name = out_cfg["psms_features_parquet"] if prefix == "features" else out_cfg["psms_clusters_parquet"]
         parq_path = out_dir / parq_name
         ensure_dir_for_file(parq_path)
         df = psm_collection_to_pandas(flat)
         df.to_parquet(parq_path, index=False)
-        log(f"[out] wrote {prefix} PSMs (parquet) -> {parq_path}")
-
-
-def maybe_write_debug_bins(cfg: dict, imspy: dict, *, out_dir: Path, features: list, spec_features: list, spec_clusters: list):
-    if not bool(cfg["output"].get("write_debug_bins", False)):
-        return
-
-    save_features_bin = imspy["save_features_bin"]
-    save_pseudo_spectra_bin = imspy["save_pseudo_spectra_bin"]
-    out_cfg = cfg["output"]
-
-    if features:
-        path = out_dir / out_cfg["features_bin"]
-        ensure_dir_for_file(path)
-        save_features_bin(path=str(path), features=features)
-        log(f"[debug] wrote features bin -> {path}")
-
-    if spec_features:
-        path = out_dir / out_cfg["query_features_bin"]
-        ensure_dir_for_file(path)
-        save_pseudo_spectra_bin(path=str(path), spectra=spec_features)
-        log(f"[debug] wrote query_features bin -> {path}")
-
-    if spec_clusters:
-        path = out_dir / out_cfg["query_clusters_bin"]
-        ensure_dir_for_file(path)
-        save_pseudo_spectra_bin(path=str(path), spectra=spec_clusters)
-        log(f"[debug] wrote query_clusters bin -> {path}")
+        log(f"[out] wrote combined PSMs (parquet) -> {parq_path}")
 
 
 def main(argv=None) -> int:
@@ -683,9 +612,6 @@ def main(argv=None) -> int:
     setup_logging(log_file=log_file, level=args.log_level, also_console=not args.no_console_log)
     log(f"[log] writing logfile -> {log_file}")
 
-    print_config_summary(cfg)
-
-    # IMPORTANT: set CUDA_VISIBLE_DEVICES before torch import
     apply_cuda_visible_devices(cfg)
 
     torch = import_torch_and_deps()
@@ -694,11 +620,6 @@ def main(argv=None) -> int:
 
     log(f"[env] Python {sys.version.split()[0]}")
     log(f"[env] Torch {torch.__version__} | CUDA available={torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        try:
-            log(f"[env] CUDA device: {torch.cuda.get_device_name(0)}")
-        except Exception:
-            pass
 
     TimsDatasetDIA = imspy["TimsDatasetDIA"]
     load_clusters_parquet = imspy["load_clusters_parquet"]
@@ -706,21 +627,17 @@ def main(argv=None) -> int:
     inp = cfg["input"]
     ds = TimsDatasetDIA(inp["dataset"], use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)))
 
-    prec_clusters = load_clusters_parquet(inp["precursor_clusters"])
-    prec_clusters = stable_sort_clusters(list(prec_clusters))
+    prec_clusters = stable_sort_clusters(list(load_clusters_parquet(inp["precursor_clusters"])))
     log(f"[ms1] loaded precursor clusters: {len(prec_clusters)}")
 
     ms1_index = build_ms1_index(prec_clusters)
 
     ms2_index = build_fragment_index(cfg, ds, imspy)
-
     features = build_features(cfg, prec_clusters, imspy)
     feature_index = build_feature_index(features) if features else None
     clusters_left = split_leftover_clusters(prec_clusters, features)
 
     spec_features, spec_clusters = build_pseudospectra(cfg, ms2_index, features=features, clusters_left=clusters_left)
-
-    maybe_write_debug_bins(cfg, imspy, out_dir=out_dir, features=features, spec_features=spec_features, spec_clusters=spec_clusters)
 
     log("[query] building SAGE query spectra …")
     queries_features = None
@@ -748,20 +665,45 @@ def main(argv=None) -> int:
             feature_index=feature_index,
             ds=ds,
         )
-        log("[query] cluster queries ready")
+        log("[query] clusters queries ready")
 
-    if queries_features is None and queries_clusters is None:
+    # --- NEW: COMBINE BOTH BRANCHES INTO ONE SEARCH LIST ----------------------
+    queries_all = []
+    if queries_features:
+        queries_all.extend(list(queries_features))
+    if queries_clusters:
+        queries_all.extend(list(queries_clusters))
+
+    if not queries_all:
         raise RuntimeError("No query spectra were produced (no pseudo-spectra). Check thresholds / configs.")
 
-    indexed_db, static_mods, variable_mods = build_sage_db(cfg, imspy)
+    log(f"[query] combined queries: {len(queries_all)} (features={len(queries_features or [])}, clusters={len(queries_clusters or [])})")
 
-    results_features = run_sage_search(cfg, imspy, indexed_db, queries_features, static_mods=static_mods, variable_mods=variable_mods) if queries_features is not None else None
-    results_clusters = run_sage_search(cfg, imspy, indexed_db, queries_clusters, static_mods=static_mods, variable_mods=variable_mods) if queries_clusters is not None else None
+    # Sage config
+    sage_config, static_mods, variable_mods = build_sage_config(cfg, imspy)
 
-    if results_features is not None:
-        write_psms(cfg, imspy, results_features, out_dir=out_dir, prefix="features")
-    if results_clusters is not None:
-        write_psms(cfg, imspy, results_clusters, out_dir=out_dir, prefix="clusters")
+    # Classic DB only if not chunked
+    chunked_enabled = bool(cfg["sage"].get("chunked", {}).get("enabled", False))
+    indexed_db = None
+    if not chunked_enabled:
+        log("[sage.db] building indexed database …")
+        indexed_db = sage_config.generate_indexed_database()
+        log("[sage.db] indexed database ready")
+    else:
+        log("[sage.db] chunked-db mode enabled: DB will be built inside the combined chunked search call")
+
+    # --- NEW: ONE SEARCH CALL -------------------------------------------------
+    results_all, indexed_db = run_sage_search_combined(
+        cfg,
+        imspy,
+        sage_config,
+        indexed_db,
+        queries_all,
+        static_mods=static_mods,
+        variable_mods=variable_mods,
+    )
+
+    write_psms_combined(cfg, imspy, results_all, out_dir=out_dir)
 
     log("[done]")
     return 0
