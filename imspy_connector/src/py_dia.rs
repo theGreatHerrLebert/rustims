@@ -3718,7 +3718,17 @@ impl PyFragmentIndex {
         // Convert Python MS2 objects → Vec<ClusterResult1D>
         let ms2_vec: Vec<ClusterResult1D> = ms2_clusters
             .into_iter()
-            .map(|p| p.borrow(py).inner.clone())
+            .map(|p| {
+                let mut c = p.borrow(py).inner.clone();
+                c.rt_axis_sec = None;
+                c.im_axis_scans = None;
+                c.mz_axis_da = None;
+                c.raw_points = None;
+                // keep traces only if you need XIC mode:
+                c.rt_trace = None;
+                c.im_trace = None;
+                c
+            })
             .collect();
 
         let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into();
