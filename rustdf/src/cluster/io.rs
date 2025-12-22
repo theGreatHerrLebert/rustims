@@ -247,7 +247,6 @@ impl ClusterRow {
 
 use std::io;
 use polars::prelude::*;
-use rayon::prelude::*;
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::PseudoSpectrum;
 
