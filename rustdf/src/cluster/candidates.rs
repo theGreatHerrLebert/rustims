@@ -893,6 +893,7 @@ impl FragmentIndex {
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
 
             let mut part = load_parquet(path_str)?;
+            all.reserve(part.len());
             all.append(&mut part);
         }
 
