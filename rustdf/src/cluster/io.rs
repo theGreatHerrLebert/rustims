@@ -456,116 +456,187 @@ pub fn strip_heavy(mut clusters: Vec<ClusterResult1D>, keep_points: bool, keep_a
     clusters
 }
 
-#[inline]
-fn col<'a>(df: &'a DataFrame, name: &str) -> io::Result<&'a Series> {
-    df.column(name).map_err(to_io)
-}
-
 pub fn load_parquet(path: &str) -> io::Result<Vec<ClusterResult1D>> {
-    let f = File::open(path)?;
+    use std::fs::File;
+    use polars::prelude::*;
 
-    // Full DataFrame read (still “en bloc”), but we avoid cloning columns into Vecs afterwards.
+    let f = File::open(path)?;
     let df = ParquetReader::new(f)
         .finish()
         .map_err(to_io)?;
 
     let n = df.height();
 
-    // --- typed views (borrowed) ---
-    let cluster_id   = col(&df, "cluster_id")?.u64().map_err(to_io)?;
-    let ms_level     = col(&df, "ms_level")?.u8().map_err(to_io)?;
-    let window_group = col(&df, "window_group")?.u32().map_err(to_io)?;
-    let parent_im_id = col(&df, "parent_im_id")?.i64().map_err(to_io)?;
-    let parent_rt_id = col(&df, "parent_rt_id")?.i64().map_err(to_io)?;
+    // --- Helper macros (LOCAL to this function) ---
+    macro_rules! col_u64 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u64()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u64>>()
+        }};
+    }
+    macro_rules! col_u8 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u8()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u8>>()
+        }};
+    }
+    macro_rules! col_u32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u32>>()
+        }};
+    }
+    macro_rules! col_i32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .i32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<i32>>()
+        }};
+    }
+    macro_rules! col_i64_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .i64()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<i64>>>()
+        }};
+    }
+    macro_rules! col_u32_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u32()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<u32>>>()
+        }};
+    }
+    macro_rules! col_f32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .f32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0.0))
+                .collect::<Vec<f32>>()
+        }};
+    }
+    macro_rules! col_f32_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .f32()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<f32>>>()
+        }};
+    }
 
-    let rt_lo        = col(&df, "rt_lo")?.u32().map_err(to_io)?;
-    let rt_hi        = col(&df, "rt_hi")?.u32().map_err(to_io)?;
-    let im_lo        = col(&df, "im_lo")?.u32().map_err(to_io)?;
-    let im_hi        = col(&df, "im_hi")?.u32().map_err(to_io)?;
-    let tof_lo       = col(&df, "tof_lo")?.u32().map_err(to_io)?;
-    let tof_hi       = col(&df, "tof_hi")?.u32().map_err(to_io)?;
-    let tof_index_lo = col(&df, "tof_index_lo")?.i32().map_err(to_io)?;
-    let tof_index_hi = col(&df, "tof_index_hi")?.i32().map_err(to_io)?;
-    let mz_lo        = col(&df, "mz_lo")?.f32().map_err(to_io)?;
-    let mz_hi        = col(&df, "mz_hi")?.f32().map_err(to_io)?;
+    // --- Materialize columns into Vecs (fast path) ---
+    let cluster_id      = col_u64!("cluster_id");
+    let ms_level        = col_u8!("ms_level");
+    let window_group    = col_u32_opt!("window_group");
+    let parent_im_id    = col_i64_opt!("parent_im_id");
+    let parent_rt_id    = col_i64_opt!("parent_rt_id");
 
-    let rt_mu        = col(&df, "rt_mu")?.f32().map_err(to_io)?;
-    let rt_sigma     = col(&df, "rt_sigma")?.f32().map_err(to_io)?;
-    let rt_height    = col(&df, "rt_height")?.f32().map_err(to_io)?;
-    let rt_area      = col(&df, "rt_area")?.f32().map_err(to_io)?;
+    let rt_lo           = col_u32!("rt_lo");
+    let rt_hi           = col_u32!("rt_hi");
+    let im_lo           = col_u32!("im_lo");
+    let im_hi           = col_u32!("im_hi");
+    let tof_lo          = col_u32!("tof_lo");
+    let tof_hi          = col_u32!("tof_hi");
+    let tof_index_lo    = col_i32!("tof_index_lo");
+    let tof_index_hi    = col_i32!("tof_index_hi");
+    let mz_lo           = col_f32_opt!("mz_lo");
+    let mz_hi           = col_f32_opt!("mz_hi");
 
-    let im_mu        = col(&df, "im_mu")?.f32().map_err(to_io)?;
-    let im_sigma     = col(&df, "im_sigma")?.f32().map_err(to_io)?;
-    let im_height    = col(&df, "im_height")?.f32().map_err(to_io)?;
-    let im_area      = col(&df, "im_area")?.f32().map_err(to_io)?;
+    let rt_mu           = col_f32!("rt_mu");
+    let rt_sigma        = col_f32!("rt_sigma");
+    let rt_height       = col_f32!("rt_height");
+    let rt_area         = col_f32!("rt_area");
 
-    let tof_mu       = col(&df, "tof_mu")?.f32().map_err(to_io)?;
-    let tof_sigma    = col(&df, "tof_sigma")?.f32().map_err(to_io)?;
-    let tof_height   = col(&df, "tof_height")?.f32().map_err(to_io)?;
-    let tof_area     = col(&df, "tof_area")?.f32().map_err(to_io)?;
+    let im_mu           = col_f32!("im_mu");
+    let im_sigma        = col_f32!("im_sigma");
+    let im_height       = col_f32!("im_height");
+    let im_area         = col_f32!("im_area");
 
-    let mz_mu        = col(&df, "mz_mu")?.f32().map_err(to_io)?;
-    let mz_sigma     = col(&df, "mz_sigma")?.f32().map_err(to_io)?;
-    let mz_height    = col(&df, "mz_height")?.f32().map_err(to_io)?;
-    let mz_area      = col(&df, "mz_area")?.f32().map_err(to_io)?;
+    let tof_mu          = col_f32!("tof_mu");
+    let tof_sigma       = col_f32!("tof_sigma");
+    let tof_height      = col_f32!("tof_height");
+    let tof_area        = col_f32!("tof_area");
 
-    let raw_sum      = col(&df, "raw_sum")?.f32().map_err(to_io)?;
-    let volume_proxy = col(&df, "volume_proxy")?.f32().map_err(to_io)?;
+    let mz_mu           = col_f32_opt!("mz_mu");
+    let mz_sigma        = col_f32_opt!("mz_sigma");
+    let mz_height       = col_f32_opt!("mz_height");
+    let mz_area         = col_f32_opt!("mz_area");
 
-    // --- build output without column Vec copies ---
+    let raw_sum         = col_f32!("raw_sum");
+    let volume_proxy    = col_f32!("volume_proxy");
+
+    debug_assert_eq!(cluster_id.len(), n);
+
+    // ✅ Drop df before allocating/building out: reduces peak memory a lot.
+    drop(df);
+
+    // --- Reconstruct ClusterResult1D (serial = usually fastest + lowest overhead) ---
     let mut out = Vec::with_capacity(n);
-
     for i in 0..n {
-        let cid = cluster_id.get(i).unwrap_or(0);
-        let lvl = ms_level.get(i).unwrap_or(0);
-
-        let wg  = window_group.get(i);       // Option<u32>
-        let pim = parent_im_id.get(i);       // Option<i64>
-        let prt = parent_rt_id.get(i);       // Option<i64>
-
-        let rt_w = (rt_lo.get(i).unwrap_or(0) as usize, rt_hi.get(i).unwrap_or(0) as usize);
-        let im_w = (im_lo.get(i).unwrap_or(0) as usize, im_hi.get(i).unwrap_or(0) as usize);
-        let tf_w = (tof_lo.get(i).unwrap_or(0) as usize, tof_hi.get(i).unwrap_or(0) as usize);
-        let tf_i = (tof_index_lo.get(i).unwrap_or(0), tof_index_hi.get(i).unwrap_or(0));
-
-        let mz_lo_v = mz_lo.get(i);          // Option<f32>
-        let mz_hi_v = mz_hi.get(i);          // Option<f32>
-        let mz_window = match (mz_lo_v, mz_hi_v) {
+        let mz_window = match (mz_lo[i], mz_hi[i]) {
             (Some(lo), Some(hi)) => Some((lo, hi)),
             _ => None,
         };
 
         let rt_fit = Fit1D {
-            mu: rt_mu.get(i).unwrap_or(0.0),
-            sigma: rt_sigma.get(i).unwrap_or(0.0),
-            height: rt_height.get(i).unwrap_or(0.0),
+            mu: rt_mu[i],
+            sigma: rt_sigma[i],
+            height: rt_height[i],
             baseline: 0.0,
-            area: rt_area.get(i).unwrap_or(0.0),
+            area: rt_area[i],
             r2: 0.0,
             n: 0,
         };
-
         let im_fit = Fit1D {
-            mu: im_mu.get(i).unwrap_or(0.0),
-            sigma: im_sigma.get(i).unwrap_or(0.0),
-            height: im_height.get(i).unwrap_or(0.0),
+            mu: im_mu[i],
+            sigma: im_sigma[i],
+            height: im_height[i],
             baseline: 0.0,
-            area: im_area.get(i).unwrap_or(0.0),
+            area: im_area[i],
             r2: 0.0,
             n: 0,
         };
-
         let tof_fit = Fit1D {
-            mu: tof_mu.get(i).unwrap_or(0.0),
-            sigma: tof_sigma.get(i).unwrap_or(0.0),
-            height: tof_height.get(i).unwrap_or(0.0),
+            mu: tof_mu[i],
+            sigma: tof_sigma[i],
+            height: tof_height[i],
             baseline: 0.0,
-            area: tof_area.get(i).unwrap_or(0.0),
+            area: tof_area[i],
             r2: 0.0,
             n: 0,
         };
 
-        let mz_fit = match (mz_mu.get(i), mz_sigma.get(i), mz_height.get(i), mz_area.get(i)) {
+        let mz_fit = match (mz_mu[i], mz_sigma[i], mz_height[i], mz_area[i]) {
             (Some(mu), Some(sig), Some(h), Some(a)) => Some(Fit1D {
                 mu,
                 sigma: sig,
@@ -579,16 +650,16 @@ pub fn load_parquet(path: &str) -> io::Result<Vec<ClusterResult1D>> {
         };
 
         out.push(ClusterResult1D {
-            cluster_id: cid,
-            ms_level: lvl,
-            window_group: wg,
-            parent_im_id: pim,
-            parent_rt_id: prt,
+            cluster_id: cluster_id[i],
+            ms_level: ms_level[i],
+            window_group: window_group[i],
+            parent_im_id: parent_im_id[i],
+            parent_rt_id: parent_rt_id[i],
 
-            rt_window: rt_w,
-            im_window: im_w,
-            tof_window: tf_w,
-            tof_index_window: tf_i,
+            rt_window: (rt_lo[i] as usize, rt_hi[i] as usize),
+            im_window: (im_lo[i] as usize, im_hi[i] as usize),
+            tof_window: (tof_lo[i] as usize, tof_hi[i] as usize),
+            tof_index_window: (tof_index_lo[i], tof_index_hi[i]),
             mz_window,
 
             rt_fit,
@@ -596,13 +667,10 @@ pub fn load_parquet(path: &str) -> io::Result<Vec<ClusterResult1D>> {
             tof_fit,
             mz_fit,
 
-            raw_sum: raw_sum.get(i).unwrap_or(0.0),
-            volume_proxy: volume_proxy.get(i).unwrap_or(0.0),
+            raw_sum: raw_sum[i],
+            volume_proxy: volume_proxy[i],
 
-            // not stored in parquet
             frame_ids_used: Vec::new(),
-
-            // heavy fields omitted
             rt_axis_sec: None,
             im_axis_scans: None,
             mz_axis_da: None,
