@@ -213,6 +213,43 @@ impl ClusterResult1D {
     ) -> Self {
         merge_clusters(self, other, new_id, policy)
     }
+
+    /// Clone without heavy optional fields (raw_points, traces, axes).
+    ///
+    /// This creates a slim copy suitable for indexing and geometric scoring,
+    /// but NOT for XIC-based scoring which requires the trace data.
+    ///
+    /// Heavy fields set to None:
+    /// - `raw_points`, `rt_trace`, `im_trace`
+    /// - `rt_axis_sec`, `im_axis_scans`, `mz_axis_da`
+    pub fn clone_slim(&self) -> Self {
+        Self {
+            cluster_id: self.cluster_id,
+            rt_window: self.rt_window,
+            im_window: self.im_window,
+            tof_window: self.tof_window,
+            tof_index_window: self.tof_index_window,
+            mz_window: self.mz_window,
+            rt_fit: self.rt_fit.clone(),
+            im_fit: self.im_fit.clone(),
+            tof_fit: self.tof_fit.clone(),
+            mz_fit: self.mz_fit.clone(),
+            raw_sum: self.raw_sum,
+            volume_proxy: self.volume_proxy,
+            frame_ids_used: self.frame_ids_used.clone(),
+            window_group: self.window_group,
+            parent_im_id: self.parent_im_id,
+            parent_rt_id: self.parent_rt_id,
+            ms_level: self.ms_level,
+            // Heavy fields omitted:
+            rt_axis_sec: None,
+            im_axis_scans: None,
+            mz_axis_da: None,
+            raw_points: None,
+            rt_trace: None,
+            im_trace: None,
+        }
+    }
 }
 
 pub fn decorate_with_mz_for_cluster<D: IndexConverter>(
