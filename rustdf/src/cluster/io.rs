@@ -3,6 +3,7 @@ use std::io::{BufReader, BufWriter};
 use serde::{Deserialize, Serialize};
 use crate::cluster::utility::Fit1D;
 use super::cluster::ClusterResult1D;
+use super::candidates::SlimCluster;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRow {
@@ -677,6 +678,151 @@ pub fn load_parquet(path: &str) -> io::Result<Vec<ClusterResult1D>> {
             raw_points: None,
             rt_trace: None,
             im_trace: None,
+        });
+    }
+
+    Ok(out)
+}
+
+/// Load only the fields needed for StreamingFragmentIndex from a parquet file.
+/// This uses selective column reading and produces SlimCluster instead of full ClusterResult1D.
+/// RAM usage: ~52 bytes per cluster vs ~280 bytes for full ClusterResult1D.
+pub fn load_parquet_slim(path: &str) -> io::Result<Vec<SlimCluster>> {
+    use std::fs::File;
+    use polars::prelude::*;
+
+    let f = File::open(path)?;
+
+    // Only read the columns we need for slim clusters
+    let columns = vec![
+        "cluster_id".to_string(),
+        "ms_level".to_string(),
+        "window_group".to_string(),
+        "rt_mu".to_string(),
+        "rt_sigma".to_string(),
+        "im_mu".to_string(),
+        "im_sigma".to_string(),
+        "im_lo".to_string(),
+        "im_hi".to_string(),
+        "mz_mu".to_string(),
+        "mz_lo".to_string(),
+        "mz_hi".to_string(),
+        "raw_sum".to_string(),
+    ];
+
+    let df = ParquetReader::new(f)
+        .with_columns(Some(columns))
+        .finish()
+        .map_err(to_io)?;
+
+    let n = df.height();
+
+    // --- Helper macros (same as load_parquet) ---
+    macro_rules! col_u64 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u64()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u64>>()
+        }};
+    }
+    macro_rules! col_u8 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u8()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u8>>()
+        }};
+    }
+    macro_rules! col_u32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0))
+                .collect::<Vec<u32>>()
+        }};
+    }
+    macro_rules! col_u32_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .u32()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<u32>>>()
+        }};
+    }
+    macro_rules! col_f32 {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .f32()
+                .map_err(to_io)?
+                .into_iter()
+                .map(|v| v.unwrap_or(0.0))
+                .collect::<Vec<f32>>()
+        }};
+    }
+    macro_rules! col_f32_opt {
+        ($name:literal) => {{
+            df.column($name)
+                .map_err(to_io)?
+                .f32()
+                .map_err(to_io)?
+                .into_iter()
+                .collect::<Vec<Option<f32>>>()
+        }};
+    }
+
+    // --- Materialize only the columns we need ---
+    let cluster_id   = col_u64!("cluster_id");
+    let ms_level     = col_u8!("ms_level");
+    let window_group = col_u32_opt!("window_group");
+    let rt_mu        = col_f32!("rt_mu");
+    let rt_sigma     = col_f32!("rt_sigma");
+    let im_mu        = col_f32!("im_mu");
+    let im_sigma     = col_f32!("im_sigma");
+    let im_lo        = col_u32!("im_lo");
+    let im_hi        = col_u32!("im_hi");
+    let mz_mu_col    = col_f32_opt!("mz_mu");
+    let mz_lo        = col_f32_opt!("mz_lo");
+    let mz_hi        = col_f32_opt!("mz_hi");
+    let raw_sum      = col_f32!("raw_sum");
+
+    // ✅ Drop df before building output: reduces peak memory
+    drop(df);
+
+    // --- Build SlimCluster vec ---
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        // Compute mz_mu: prefer mz_fit.mu, fallback to mz window midpoint
+        let mz_mu = mz_mu_col[i].unwrap_or_else(|| {
+            match (mz_lo[i], mz_hi[i]) {
+                (Some(lo), Some(hi)) => 0.5 * (lo + hi),
+                _ => 0.0,
+            }
+        });
+
+        out.push(SlimCluster {
+            cluster_id: cluster_id[i],
+            window_group: window_group[i],
+            ms_level: ms_level[i],
+            rt_mu: rt_mu[i],
+            im_mu: im_mu[i],
+            mz_mu,
+            rt_sigma: rt_sigma[i],
+            im_sigma: im_sigma[i],
+            im_window: (im_lo[i] as u16, im_hi[i] as u16),
+            raw_sum: raw_sum[i],
         });
     }
 

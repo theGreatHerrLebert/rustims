@@ -237,6 +237,35 @@ pub struct ThinPrecursor {
 }
 
 // ---------------------------------------------------------------------------
+// SlimCluster - minimal representation for streaming index (~52 bytes)
+// ---------------------------------------------------------------------------
+
+/// Minimal cluster representation for StreamingFragmentIndex queries.
+/// Contains only the fields needed for candidate enumeration and scoring.
+/// Size: ~52 bytes vs ~280 bytes for full ClusterResult1D.
+#[derive(Clone, Debug)]
+pub struct SlimCluster {
+    pub cluster_id: u64,           // 8 bytes - for id_to_idx lookup
+    pub window_group: Option<u32>, // 8 bytes - filtering by DIA window
+    pub ms_level: u8,              // 1 byte - filtering (MS1 vs MS2)
+    pub rt_mu: f32,                // 4 bytes - RT apex in seconds
+    pub im_mu: f32,                // 4 bytes - IM apex in scan space
+    pub mz_mu: f32,                // 4 bytes - m/z apex
+    pub rt_sigma: f32,             // 4 bytes - RT width for scoring
+    pub im_sigma: f32,             // 4 bytes - IM width for scoring
+    pub im_window: (u16, u16),     // 4 bytes - IM bounds (scans rarely > 65k)
+    pub raw_sum: f32,              // 4 bytes - intensity for filtering
+}
+
+/// Reference to locate a cluster in original parquet files for on-demand loading.
+/// Only needed if full cluster data is required (e.g., XIC traces for scoring).
+#[derive(Clone, Debug)]
+pub struct ClusterFileRef {
+    pub file_index: u16,    // Index into file path list (supports up to 65k files)
+    pub row_offset: u32,    // Row index within that file
+}
+
+// ---------------------------------------------------------------------------
 // FragmentIndex
 // ---------------------------------------------------------------------------
 
@@ -776,6 +805,304 @@ impl FragmentIndex {
             xic_opts,
             min_score,
         )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StreamingFragmentIndex - memory-efficient version (~52 bytes/cluster)
+// ---------------------------------------------------------------------------
+
+/// Memory-efficient FragmentIndex that stores only query-essential data.
+/// Uses SlimCluster (~52 bytes) instead of full ClusterResult1D (~280 bytes).
+/// Reduces RAM by ~80% for large datasets (e.g., 25M clusters: 7GB → 1.3GB).
+#[derive(Clone, Debug)]
+pub struct StreamingFragmentIndex {
+    dia_index: Arc<DiaIndex>,
+
+    /// Core data: slim clusters only (~52 bytes each)
+    ms2_slim: Vec<SlimCluster>,
+
+    /// Keep mask for filtering (1 byte per cluster)
+    ms2_keep: Vec<bool>,
+
+    /// Group index: group -> (rt-sorted ms2 indices, rt_apex values)
+    by_group: HashMap<u32, FragmentGroupIndex>,
+
+    /// cluster_id -> index into ms2_slim
+    id_to_idx: HashMap<u64, usize>,
+
+    /// Optional: file references for on-demand full data loading
+    file_refs: Option<Vec<ClusterFileRef>>,
+    file_paths: Option<Vec<String>>,
+}
+
+impl StreamingFragmentIndex {
+    /// Get slim cluster by index (fast, no I/O)
+    #[inline]
+    pub fn get_slim(&self, idx: usize) -> Option<&SlimCluster> {
+        self.ms2_slim.get(idx)
+    }
+
+    /// Get slim cluster by cluster_id (fast, no I/O)
+    #[inline]
+    pub fn get_slim_by_id(&self, cid: u64) -> Option<&SlimCluster> {
+        self.id_to_idx.get(&cid).and_then(|&i| self.ms2_slim.get(i))
+    }
+
+    /// Number of MS2 clusters in the index
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.ms2_slim.len()
+    }
+
+    /// Check if the index is empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.ms2_slim.is_empty()
+    }
+
+    /// Stream-load from a directory of parquet files with minimal RAM.
+    /// Processes one file at a time, extracts slim data, drops full data.
+    pub fn from_parquet_dir_streaming(
+        dia_index: Arc<DiaIndex>,
+        dir: impl AsRef<Path>,
+        opts: &CandidateOpts,
+        store_file_refs: bool,
+    ) -> io::Result<Self> {
+        use crate::cluster::io::load_parquet_slim;
+
+        let dir = dir.as_ref();
+
+        // 1. Collect parquet file paths
+        let mut file_paths_buf: Vec<std::path::PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() { continue; }
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("parquet") { continue; }
+            file_paths_buf.push(path);
+        }
+
+        // Sort for deterministic ordering
+        file_paths_buf.sort();
+
+        // 2. Stream each file
+        let mut all_slim: Vec<SlimCluster> = Vec::new();
+        let mut all_refs: Vec<ClusterFileRef> = Vec::new();
+
+        for (file_idx, path) in file_paths_buf.iter().enumerate() {
+            let path_str = path.to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+
+            // Load slim data only (drops DataFrame internally)
+            let slim_batch = load_parquet_slim(path_str)?;
+            let batch_len = slim_batch.len();
+
+            // Store file references if requested
+            if store_file_refs {
+                for row_offset in 0..batch_len {
+                    all_refs.push(ClusterFileRef {
+                        file_index: file_idx as u16,
+                        row_offset: row_offset as u32,
+                    });
+                }
+            }
+
+            // Append slim clusters (batch is dropped after this)
+            all_slim.extend(slim_batch);
+        }
+
+        // 3. Build the index from slim data
+        let file_paths_str = if store_file_refs {
+            Some(file_paths_buf.iter().map(|p| p.to_string_lossy().into_owned()).collect())
+        } else {
+            None
+        };
+
+        Ok(Self::build_from_slim(
+            dia_index,
+            all_slim,
+            opts,
+            if store_file_refs { Some(all_refs) } else { None },
+            file_paths_str,
+        ))
+    }
+
+    /// Build index from slim cluster data in a single pass.
+    /// Avoids creating intermediate vectors - builds by_group and id_to_idx directly.
+    fn build_from_slim(
+        dia_index: Arc<DiaIndex>,
+        ms2_slim: Vec<SlimCluster>,
+        opts: &CandidateOpts,
+        file_refs: Option<Vec<ClusterFileRef>>,
+        file_paths: Option<Vec<String>>,
+    ) -> Self {
+        // 1. Build keep mask (parallel for large datasets)
+        let ms2_keep: Vec<bool> = ms2_slim
+            .par_iter()
+            .map(|c| {
+                if c.ms_level != 2 { return false; }
+                if c.window_group.is_none() { return false; }
+                if c.raw_sum < opts.min_raw_sum { return false; }
+                if !c.rt_mu.is_finite() || c.rt_mu <= 0.0 { return false; }
+                true
+            })
+            .collect();
+
+        // 2. Build by_group and id_to_idx in single pass
+        let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
+        let mut id_to_idx: HashMap<u64, usize> = HashMap::with_capacity(ms2_slim.len());
+
+        for (j, c) in ms2_slim.iter().enumerate() {
+            // Always build id_to_idx
+            id_to_idx.insert(c.cluster_id, j);
+
+            // Only index valid clusters
+            if !ms2_keep[j] { continue; }
+
+            let g = match c.window_group {
+                Some(g) => g,
+                None => continue,
+            };
+
+            let rt = c.rt_mu;
+            if !rt.is_finite() { continue; }
+
+            by_group_raw.entry(g).or_default().push((rt, j));
+        }
+
+        // 3. Sort each group by RT (for binary search during queries)
+        let mut by_group: HashMap<u32, FragmentGroupIndex> = HashMap::with_capacity(by_group_raw.len());
+        for (g, mut v) in by_group_raw {
+            v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let (rt_apex, ms2_indices): (Vec<f32>, Vec<usize>) = v.into_iter().unzip();
+            by_group.insert(g, FragmentGroupIndex { ms2_indices, rt_apex });
+        }
+
+        Self {
+            dia_index,
+            ms2_slim,
+            ms2_keep,
+            by_group,
+            id_to_idx,
+            file_refs,
+            file_paths,
+        }
+    }
+
+    /// Enumerate candidate fragment indices for a precursor.
+    /// Uses slim data only - no I/O required.
+    pub fn enumerate_candidates_for_precursor_thin(
+        &self,
+        prec: &ThinPrecursor,
+        window_groups: Option<&[u32]>,
+        opts: &FragmentQueryOpts,
+    ) -> Vec<usize> {
+        let mut out = Vec::<usize>::new();
+
+        let prec_mz = prec.mz_mu;
+        let prec_rt = prec.rt_mu;
+        let prec_im = prec.im_mu;
+        let prec_im_win = prec.im_window;
+        let prec_scan_win = (prec_im_win.0 as u32, prec_im_win.1 as u32);
+
+        // Determine which groups to search
+        let groups: Vec<u32> = match window_groups {
+            Some(gs) if !gs.is_empty() => gs.to_vec(),
+            _ => self.dia_index.groups_for_precursor(prec_mz, prec_im),
+        };
+
+        if groups.is_empty() { return out; }
+
+        let require_tile = opts.require_tile_compat;
+        let reject_inside = opts.reject_frag_inside_precursor_tile;
+
+        for g in groups {
+            let fg = match self.by_group.get(&g) {
+                Some(fg) => fg,
+                None => continue,
+            };
+
+            // Binary search for RT window
+            let (lo_idx, hi_idx) = if let Some(dt) = opts.max_rt_apex_delta_sec {
+                if dt > 0.0 {
+                    let lo_t = prec_rt - dt;
+                    let hi_t = prec_rt + dt;
+                    (lower_bound(&fg.rt_apex, lo_t), upper_bound(&fg.rt_apex, hi_t))
+                } else {
+                    (0, fg.ms2_indices.len())
+                }
+            } else {
+                (0, fg.ms2_indices.len())
+            };
+
+            let slices = self.dia_index.program_slices_for_group(g);
+
+            'ms2_loop: for k in lo_idx..hi_idx {
+                let j = fg.ms2_indices[k];
+                if !self.ms2_keep[j] { continue; }
+
+                let slim = &self.ms2_slim[j];
+
+                // IM window overlap check using slim data
+                let im2 = (slim.im_window.0 as usize, slim.im_window.1 as usize);
+                let im_overlap = {
+                    let lo = prec_im_win.0.max(im2.0);
+                    let hi = prec_im_win.1.min(im2.1);
+                    hi.saturating_sub(lo).saturating_add(1)
+                };
+                if im_overlap < opts.min_im_overlap_scans { continue; }
+
+                // IM apex delta check using slim data
+                if let Some(max_d) = opts.max_scan_apex_delta {
+                    let d = (prec_im - slim.im_mu).abs();
+                    if d > max_d as f32 { continue; }
+                }
+
+                // Tile compatibility check (if required)
+                if require_tile || reject_inside {
+                    let frag_mz = slim.mz_mu;
+                    let frag_scan = (slim.im_window.0 as u32, slim.im_window.1 as u32);
+
+                    let mut tile_compatible = false;
+                    let mut inside_prec_tile = false;
+
+                    for s in &slices {
+                        // Check scan overlap
+                        if !ranges_overlap_u32(prec_scan_win, (s.scan_lo, s.scan_hi)) {
+                            continue;
+                        }
+                        if !ranges_overlap_u32(frag_scan, (s.scan_lo, s.scan_hi)) {
+                            continue;
+                        }
+
+                        tile_compatible = true;
+
+                        // Check if fragment's m/z is inside precursor's isolation tile
+                        if reject_inside && frag_mz.is_finite() {
+                            let prec_in_tile = prec_mz >= s.mz_lo as f32 && prec_mz <= s.mz_hi as f32;
+                            let frag_in_tile = frag_mz >= s.mz_lo as f32 && frag_mz <= s.mz_hi as f32;
+                            if prec_in_tile && frag_in_tile {
+                                inside_prec_tile = true;
+                            }
+                        }
+                    }
+
+                    if require_tile && !tile_compatible {
+                        continue 'ms2_loop;
+                    }
+                    if reject_inside && inside_prec_tile {
+                        continue 'ms2_loop;
+                    }
+                }
+
+                out.push(j);
+            }
+        }
+
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 
