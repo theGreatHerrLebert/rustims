@@ -6,7 +6,8 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{fragment_from_cluster, AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
+use rustdf::cluster::candidates::{fragment_from_cluster, CandidateOpts, FragmentIndex, FragmentQueryOpts, ScoreOpts};
+use rustdf::cluster::pseudo::PseudoBuildResult;
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::{DiaIndex, TimsDatasetDIA};
@@ -3039,11 +3040,14 @@ impl PyTimsDatasetDIA {
             ..PseudoSpecOpts::default()
         };
 
+        let cand_opts = CandidateOpts::default();
+
         // Call dataset-level all-pairs builder
         let result = self.inner.build_pseudo_spectra_all_pairs_from_clusters(
             &rust_ms1,
             &rust_ms2,
             rust_feats.as_deref(),
+            &cand_opts,
             &pseudo_opts,
         );
 
@@ -3471,69 +3475,34 @@ impl PyTofRtGrid {
 
 #[pyclass]
 #[derive(Clone)]
-pub struct PyAssignmentResult {
-    pub inner: AssignmentResult,
-}
-
-#[pymethods]
-impl PyAssignmentResult {
-    #[getter]
-    pub fn pairs(&self) -> Vec<(usize, usize)> {
-        self.inner.pairs.clone()
-    }
-
-    #[getter]
-    pub fn ms2_best_ms1(&self) -> Vec<Option<usize>> {
-        self.inner.ms2_best_ms1.clone()
-    }
-
-    #[getter]
-    pub fn ms1_to_ms2(&self) -> Vec<Vec<usize>> {
-        self.inner.ms1_to_ms2.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "AssignmentResult(pairs={}, ms2_best_ms1={}, ms1_to_ms2={})",
-            self.inner.pairs.len(),
-            self.inner.ms2_best_ms1.len(),
-            self.inner.ms1_to_ms2.len(),
-        )
-    }
-}
-
-#[pyclass]
-#[derive(Clone)]
 pub struct PyPseudoBuildResult {
     pub inner: PseudoBuildResult,
 }
 
 #[pymethods]
 impl PyPseudoBuildResult {
-    /// Accessor: assignment info (pairs, ms2→best ms1, ms1→ms2 lists).
-    #[getter]
-    pub fn assignment(&self) -> PyAssignmentResult {
-        PyAssignmentResult {
-            inner: self.inner.assignment.clone(),
-        }
-    }
-
     /// Accessor: pseudo-MS/MS spectra as PyPseudoSpectrum list.
     #[getter]
-    pub fn pseudo_spectra(&self) -> Vec<PyPseudoSpectrum> {
+    pub fn spectra(&self) -> Vec<PyPseudoSpectrum> {
         self.inner
-            .pseudo_spectra
+            .spectra
             .iter()
             .cloned()
             .map(|s| PyPseudoSpectrum { inner: s })
             .collect()
     }
 
+    /// Accessor: scored pairs as Vec<(ms2_idx, ms1_idx, score)>.
+    #[getter]
+    pub fn pairs_scored(&self) -> Vec<(usize, usize, f32)> {
+        self.inner.pairs_scored.clone()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "PseudoBuildResult(num_spectra={}, num_pairs={})",
-            self.inner.pseudo_spectra.len(),
-            self.inner.assignment.pairs.len(),
+            self.inner.spectra.len(),
+            self.inner.pairs_scored.len(),
         )
     }
 }
@@ -3784,8 +3753,16 @@ impl PyFragmentIndex {
         };
         let prec_rust = &prec.inner;
 
+        let thin = match self.inner.make_thin_precursor(prec_rust) {
+            Some(t) => t,
+            None => return Ok(Vec::new()),
+        };
+
         let groups_opt = window_groups.as_ref().map(|v| v.as_slice());
-        let hits = self.inner.query_precursor(prec_rust, groups_opt, &opts);
+        let indices = self.inner.enumerate_candidates_for_precursor_thin(&thin, groups_opt, &opts);
+
+        let ms2 = self.inner.ms2_slice();
+        let hits: Vec<u64> = indices.into_iter().map(|i| ms2[i].cluster_id).collect();
         Ok(hits)
     }
 
@@ -3809,6 +3786,8 @@ impl PyFragmentIndex {
         num_threads: usize,
         py: Python<'_>,
     ) -> PyResult<Vec<Vec<u64>>> {
+        let _ = num_threads; // thread pool managed by rayon
+
         let opts = FragmentQueryOpts {
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
@@ -3823,7 +3802,26 @@ impl PyFragmentIndex {
             .map(|p| p.borrow(py).inner.clone())
             .collect();
 
-        let all_hits = self.inner.query_precursors_par(&precs_rust, &opts, num_threads);
+        let thin_precs: Vec<Option<_>> = precs_rust
+            .iter()
+            .map(|c| self.inner.make_thin_precursor(c))
+            .collect();
+
+        let ms2 = self.inner.ms2_slice();
+
+        let all_hits: Vec<Vec<u64>> = thin_precs
+            .par_iter()
+            .map(|thin_opt| {
+                match thin_opt {
+                    Some(thin) => {
+                        let indices = self.inner.enumerate_candidates_for_precursor_thin(thin, None, &opts);
+                        indices.into_iter().map(|i| ms2[i].cluster_id).collect()
+                    }
+                    None => Vec::new(),
+                }
+            })
+            .collect();
+
         Ok(all_hits)
     }
 
@@ -4049,14 +4047,19 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
-        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_features_scored_par(
-            &feats_rust,
-            &frag_opts,
-            mode_rs,
-            &geom_opts,
-            &xic_opts,
-            min_score,
-        );
+        let all_hits: Vec<Vec<ScoredHit>> = feats_rust
+            .par_iter()
+            .map(|feat| {
+                self.inner.query_feature_scored(
+                    feat,
+                    &frag_opts,
+                    mode_rs,
+                    &geom_opts,
+                    &xic_opts,
+                    min_score,
+                )
+            })
+            .collect();
 
         let wrapped: Vec<Vec<PyScoredHit>> = all_hits
             .into_iter()
@@ -4115,14 +4118,19 @@ impl PyFragmentIndex {
         };
 
         // 2) Parallel scoring inside FragmentIndex
-        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_features_scored_par(
-            &feats_rust,
-            &frag_opts,
-            mode_rs,
-            &geom_opts,
-            &xic_opts,
-            min_score,
-        );
+        let all_hits: Vec<Vec<ScoredHit>> = feats_rust
+            .par_iter()
+            .map(|feat| {
+                self.inner.query_feature_scored(
+                    feat,
+                    &frag_opts,
+                    mode_rs,
+                    &geom_opts,
+                    &xic_opts,
+                    min_score,
+                )
+            })
+            .collect();
 
         let ms2 = self.inner.ms2_slice();
 
@@ -4457,7 +4465,6 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFit1D>()?;
     m.add_class::<PyClusterResult1D>()?;
     m.add_class::<PyTofRtGrid>()?;
-    m.add_class::<PyAssignmentResult>()?;
     m.add_class::<PyPseudoBuildResult>()?;
     m.add_class::<PyFragmentIndex>()?;
     m.add_class::<PyScoredHit>()?;

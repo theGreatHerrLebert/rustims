@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use crate::cluster::candidates::{CandidateOpts, PairFeatures, ScoreOpts};
+pub(crate) use crate::cluster::candidates::{CandidateOpts, PairFeatures, ScoreOpts};
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::cluster_mz_mu;

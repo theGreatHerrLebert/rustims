@@ -16,7 +16,13 @@ use crate::data::utility::merge_ranges;
 use rayon::prelude::*;
 use std::collections::{HashMap};
 use rayon::ThreadPoolBuilder;
-use crate::cluster::candidates::{build_pseudo_spectra_all_pairs, build_pseudo_spectra_end_to_end, build_pseudo_spectra_end_to_end_xic, PseudoBuildResult, ScoreOpts};
+use crate::cluster::candidates::{
+    build_pseudo_spectra_all_pairs,
+    build_pseudo_spectra_end_to_end,
+    build_pseudo_spectra_end_to_end_xic,
+    PseudoBuildResult,
+    ScoreOpts
+};
 use crate::cluster::cluster::{attach_raw_points_for_spec_1d_in_ctx, bin_range_for_win, build_scan_slices, decorate_with_mz_for_cluster, evaluate_spec_1d, make_specs_from_im_and_rt_groups_threads, BuildSpecOpts, ClusterResult1D, ClusterSpec1D, Eval1DOpts, RawAttachContext, RawPoints, ScanSlice};
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::{PseudoSpecOpts};
@@ -1080,7 +1086,7 @@ impl TimsDatasetDIA {
             self,
             ms1,
             ms2,
-            features,
+            features.unwrap_or(&[]),
             cand_opts,
             score_opts,
             pseudo_opts,
@@ -1103,7 +1109,7 @@ impl TimsDatasetDIA {
             self,
             ms1,
             ms2,
-            features,
+            features.unwrap_or(&[]),
             cand_opts,
             xic_opts,
             pseudo_opts,
@@ -1116,9 +1122,10 @@ impl TimsDatasetDIA {
         ms1: &[ClusterResult1D],
         ms2: &[ClusterResult1D],
         features: Option<&[SimpleFeature]>,
+        cand_opts: &CandidateOpts,
         pseudo_opts: &PseudoSpecOpts,
     ) -> PseudoBuildResult {
-        build_pseudo_spectra_all_pairs(self, ms1, ms2, features, pseudo_opts)
+        build_pseudo_spectra_all_pairs(self, ms1, ms2, features.unwrap_or(&[]), cand_opts, pseudo_opts)
     }
 
     /// Dense TOF×RT grid for all PRECURSOR (MS1) frames.

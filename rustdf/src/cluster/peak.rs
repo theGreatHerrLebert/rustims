@@ -38,7 +38,6 @@ pub struct ImPeak1D {
 
 #[derive(Clone, Debug)]
 pub struct FrameBinView {
-    pub _frame_id: u32,
     pub unique_bins: Vec<usize>,
     pub offsets: Vec<usize>,
     pub scan_idx: Vec<u32>,              // ABSOLUTE scan indices
@@ -157,7 +156,6 @@ pub fn build_frame_bin_view(
     }
 
     FrameBinView {
-        _frame_id: fr.frame_id as u32,
         unique_bins,
         offsets,
         scan_idx: scan_sorted,

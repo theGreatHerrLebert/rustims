@@ -292,7 +292,6 @@ pub fn gaussian_blur_tof_sparse(
     // Guarantee at least one offset (if frame is empty after filtering)
     if unique_bins.is_empty() {
         return FrameBinView {
-            _frame_id: fbv._frame_id,
             unique_bins: Vec::new(),
             offsets: vec![0],
             scan_idx: Vec::new(),
@@ -301,7 +300,6 @@ pub fn gaussian_blur_tof_sparse(
     }
 
     FrameBinView {
-        _frame_id: fbv._frame_id,
         unique_bins,
         offsets,
         scan_idx,

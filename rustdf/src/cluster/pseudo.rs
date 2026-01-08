@@ -117,11 +117,7 @@ fn build_cluster_to_feature_map(n_ms1: usize, features: &[SimpleFeature]) -> Vec
 /// Derive a precursor apex (RT, IM) from either a feature or an orphan MS1 cluster.
 ///
 /// Feature: weighted average of member cluster apex positions (weights = raw_sum).
-/// Orphan: use the single cluster’s rt_fit.mu / im_fit.mu.
-/// Derive a precursor apex (RT, IM) from either a feature or an orphan MS1 cluster.
-///
-/// Feature: weighted average of member cluster apex positions (weights = raw_sum).
-/// Orphan: use the single cluster’s rt_fit.mu / im_fit.mu.
+/// Orphan: use the single cluster's rt_fit.mu / im_fit.mu.
 fn precursor_apex_from_feature_or_cluster(
     key: PrecursorKey,
     ms1: &[ClusterResult1D],
@@ -369,4 +365,92 @@ pub fn build_pseudo_spectra_with_xic(
     );
 
     (spectra, pairs_scored)
+}
+
+// ---------------------------------------------------------------------------
+// Compatibility layer for older callers (dia.rs expects these symbols)
+// ---------------------------------------------------------------------------
+
+use crate::cluster::candidates::ScoreOpts;
+use crate::cluster::scoring::{best_ms1_for_each_ms2, ms1_to_ms2_map};
+
+#[derive(Clone, Debug)]
+pub struct PseudoBuildResult {
+    pub spectra: Vec<PseudoSpectrum>,
+    /// For geom/all-pairs this can be empty or filled with dummy scores.
+    pub pairs_scored: Vec<(usize, usize, f32)>,
+}
+
+#[deprecated(note = "Use build_pseudo_spectra_from_pairs directly")]
+/// Old name: "all pairs" (no competition), just glue pairs -> spectra.
+pub fn build_pseudo_spectra_all_pairs(
+    ds: &TimsDatasetDIA,
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    features: &[SimpleFeature],
+    cand_opts: &CandidateOpts,
+    pseudo_opts: &PseudoSpecOpts,
+) -> PseudoBuildResult {
+    let pairs = enumerate_ms2_ms1_pairs_simple(ds, ms1, ms2, cand_opts);
+
+    let spectra = build_pseudo_spectra_from_pairs(ms1, ms2, features, &pairs, pseudo_opts);
+
+    PseudoBuildResult {
+        spectra,
+        pairs_scored: Vec::new(),
+    }
+}
+
+#[deprecated(note = "Use XIC-based scoring via build_pseudo_spectra_with_xic instead")]
+/// Old name: "end-to-end" geometric assignment.
+/// 1) enumerate candidates
+/// 2) pick best MS1 per MS2 by geom score
+/// 3) build spectra from winners
+pub fn build_pseudo_spectra_end_to_end(
+    ds: &TimsDatasetDIA,
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    features: &[SimpleFeature],
+    cand_opts: &CandidateOpts,
+    score_opts: &ScoreOpts,
+    pseudo_opts: &PseudoSpecOpts,
+) -> PseudoBuildResult {
+    let pairs = enumerate_ms2_ms1_pairs_simple(ds, ms1, ms2, cand_opts);
+    if pairs.is_empty() {
+        return PseudoBuildResult { spectra: Vec::new(), pairs_scored: Vec::new() };
+    }
+
+    let ms2_best = best_ms1_for_each_ms2(ms1, ms2, &pairs, score_opts);
+    let ms1_to_ms2 = ms1_to_ms2_map(ms1.len(), &ms2_best);
+
+    let mut winners: Vec<(usize, usize)> = Vec::new();
+    for (ms1_idx, js) in ms1_to_ms2.iter().enumerate() {
+        for &ms2_idx in js {
+            winners.push((ms2_idx, ms1_idx));
+        }
+    }
+
+    let spectra = build_pseudo_spectra_from_pairs(ms1, ms2, features, &winners, pseudo_opts);
+
+    PseudoBuildResult {
+        spectra,
+        pairs_scored: Vec::new(),
+    }
+}
+
+#[deprecated(note = "Use build_pseudo_spectra_with_xic directly")]
+/// Old name: "end-to-end xic" — this is exactly your existing high-level function.
+pub fn build_pseudo_spectra_end_to_end_xic(
+    ds: &TimsDatasetDIA,
+    ms1: &[ClusterResult1D],
+    ms2: &[ClusterResult1D],
+    features: &[SimpleFeature],
+    cand_opts: &CandidateOpts,
+    xic_opts: &XicScoreOpts,
+    pseudo_opts: &PseudoSpecOpts,
+) -> PseudoBuildResult {
+    let (spectra, pairs_scored) =
+        build_pseudo_spectra_with_xic(ds, ms1, ms2, features, cand_opts, xic_opts, pseudo_opts);
+
+    PseudoBuildResult { spectra, pairs_scored }
 }

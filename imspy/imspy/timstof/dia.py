@@ -1021,8 +1021,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         High-level DIA → pseudo-DDA builder.
 
         Returns a PseudoBuildResult:
-          - .pseudo_spectra → list[PseudoSpectrum]
-          - .assignment     → AssignmentResult
+          - .spectra       → list[PseudoSpectrum]
+          - .pairs_scored  → list[tuple[int, int, float]]  # (ms2_idx, ms1_idx, score)
         """
         ms1_ptrs = [c.get_py_ptr() for c in ms1_clusters]
         ms2_ptrs = [c.get_py_ptr() for c in ms2_clusters]
@@ -1094,8 +1094,8 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         High-level DIA → pseudo-DDA builder (XIC-based scoring).
 
         Returns a PseudoBuildResult:
-          - .pseudo_spectra → list[PseudoSpectrum]
-          - .assignment     → AssignmentResult
+          - .spectra       → list[PseudoSpectrum]
+          - .pairs_scored  → list[tuple[int, int, float]]  # (ms2_idx, ms1_idx, score)
         """
 
         from imspy.timstof.clustering.data import PseudoBuildResult

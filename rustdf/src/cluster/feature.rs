@@ -340,9 +340,7 @@ struct GoodCluster {
     pub cluster_id: u64,
 
     mz_mu: f32,
-    _rt_mu: f32,
     rt_win: (usize, usize),
-    _im_mu: f32,
     im_win: (usize, usize),
     raw_sum: f32,
 }
@@ -378,9 +376,7 @@ pub fn build_simple_features_from_clusters(
                 orig_idx: i,
                 cluster_id: c.cluster_id,
                 mz_mu,
-                _rt_mu: c.rt_fit.mu,
                 rt_win: c.rt_window,
-                _im_mu: c.im_fit.mu,
                 im_win: c.im_window,
                 raw_sum: c.raw_sum,
             })
