@@ -862,14 +862,16 @@ impl StreamingFragmentIndex {
     }
 
     /// Stream-load from a directory of parquet files with minimal RAM.
-    /// Processes one file at a time, extracts slim data, drops full data.
+    /// Processes one file at a time using direct parquet crate (bypasses Polars overhead).
+    /// Uses row-group level streaming for minimal peak memory.
     pub fn from_parquet_dir_streaming(
         dia_index: Arc<DiaIndex>,
         dir: impl AsRef<Path>,
         opts: &CandidateOpts,
         store_file_refs: bool,
     ) -> io::Result<Self> {
-        use crate::cluster::io::load_parquet_slim;
+        // Use the ultra-low-memory streaming reader that bypasses Polars
+        use crate::cluster::io::load_parquet_slim_streaming;
 
         let dir = dir.as_ref();
 
@@ -886,7 +888,7 @@ impl StreamingFragmentIndex {
         // Sort for deterministic ordering
         file_paths_buf.sort();
 
-        // 2. Stream each file
+        // 2. Stream each file using direct parquet reader (no Polars overhead)
         let mut all_slim: Vec<SlimCluster> = Vec::new();
         let mut all_refs: Vec<ClusterFileRef> = Vec::new();
 
@@ -894,8 +896,8 @@ impl StreamingFragmentIndex {
             let path_str = path.to_str()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
 
-            // Load slim data only (drops DataFrame internally)
-            let slim_batch = load_parquet_slim(path_str)?;
+            // Load using row-group streaming (minimal RAM per file)
+            let slim_batch = load_parquet_slim_streaming(path_str)?;
             let batch_len = slim_batch.len();
 
             // Store file references if requested

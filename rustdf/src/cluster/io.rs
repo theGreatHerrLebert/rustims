@@ -829,6 +829,166 @@ pub fn load_parquet_slim(path: &str) -> io::Result<Vec<SlimCluster>> {
     Ok(out)
 }
 
+/// Ultra-low-memory parquet reader using direct parquet crate access.
+/// Reads row-groups one at a time without materializing entire file.
+/// RAM usage: Only holds one row-group + output SlimClusters at a time.
+pub fn load_parquet_slim_streaming(path: &str) -> io::Result<Vec<SlimCluster>> {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+    use parquet::record::RowAccessor;
+    use std::fs::File;
+
+    let file = File::open(path)?;
+    let reader = SerializedFileReader::new(file)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+    let metadata = reader.metadata();
+    let num_rows = metadata.file_metadata().num_rows() as usize;
+
+    let mut out = Vec::with_capacity(num_rows);
+
+    // Process row-groups one at a time to minimize peak memory
+    let num_row_groups = metadata.num_row_groups();
+    for rg_idx in 0..num_row_groups {
+        let row_group = reader.get_row_group(rg_idx)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        // Build a row iterator for this row group
+        let iter = row_group.get_row_iter(None)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        for row_result in iter {
+            let row = row_result
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+            // Extract fields by name - get column indices first
+            let cluster_id = row.get_long(0).unwrap_or(0) as u64;
+            let ms_level = row.get_ubyte(1).unwrap_or(0);
+            let window_group = row.get_uint(2).ok();
+            let rt_mu = row.get_float(5).unwrap_or(0.0);
+            let rt_sigma = row.get_float(6).unwrap_or(0.0);
+            let im_mu = row.get_float(9).unwrap_or(0.0);
+            let im_sigma = row.get_float(10).unwrap_or(0.0);
+            let im_lo = row.get_uint(7).unwrap_or(0) as u16;
+            let im_hi = row.get_uint(8).unwrap_or(0) as u16;
+            let raw_sum = row.get_float(24).unwrap_or(0.0);
+
+            // m/z: prefer mz_mu, fallback to mz window midpoint
+            let mz_mu_opt = row.get_float(20).ok();
+            let mz_lo_opt = row.get_float(13).ok();
+            let mz_hi_opt = row.get_float(14).ok();
+            let mz_mu = mz_mu_opt.unwrap_or_else(|| {
+                match (mz_lo_opt, mz_hi_opt) {
+                    (Some(lo), Some(hi)) => 0.5 * (lo + hi),
+                    _ => 0.0,
+                }
+            });
+
+            out.push(SlimCluster {
+                cluster_id,
+                window_group,
+                ms_level,
+                rt_mu,
+                im_mu,
+                mz_mu,
+                rt_sigma,
+                im_sigma,
+                im_window: (im_lo, im_hi),
+                raw_sum,
+            });
+        }
+        // row_group is dropped here, freeing memory before next iteration
+    }
+
+    Ok(out)
+}
+
+/// Even more memory-efficient: processes parquet file and directly populates index structures.
+/// Never holds all SlimClusters in memory at once - builds index incrementally.
+pub fn stream_parquet_to_index_data(
+    path: &str,
+    min_raw_sum: f32,
+) -> io::Result<(
+    Vec<SlimCluster>,        // Only kept clusters
+    Vec<(u32, f32, usize)>,  // (window_group, rt_mu, index) for by_group building
+)> {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+    use parquet::record::RowAccessor;
+    use std::fs::File;
+
+    let file = File::open(path)?;
+    let reader = SerializedFileReader::new(file)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+    let metadata = reader.metadata();
+    let num_rows = metadata.file_metadata().num_rows() as usize;
+
+    let mut slim_clusters = Vec::with_capacity(num_rows);
+    let mut group_entries = Vec::with_capacity(num_rows);
+
+    let num_row_groups = metadata.num_row_groups();
+    for rg_idx in 0..num_row_groups {
+        let row_group = reader.get_row_group(rg_idx)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        let iter = row_group.get_row_iter(None)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+        for row_result in iter {
+            let row = row_result
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+            let ms_level = row.get_ubyte(1).unwrap_or(0);
+            if ms_level != 2 { continue; } // Skip non-MS2
+
+            let window_group = match row.get_uint(2).ok() {
+                Some(g) => g,
+                None => continue, // Skip if no window group
+            };
+
+            let raw_sum = row.get_float(24).unwrap_or(0.0);
+            if raw_sum < min_raw_sum { continue; } // Skip low intensity
+
+            let rt_mu = row.get_float(5).unwrap_or(0.0);
+            if !rt_mu.is_finite() || rt_mu <= 0.0 { continue; }
+
+            let cluster_id = row.get_long(0).unwrap_or(0) as u64;
+            let rt_sigma = row.get_float(6).unwrap_or(0.0);
+            let im_mu = row.get_float(9).unwrap_or(0.0);
+            let im_sigma = row.get_float(10).unwrap_or(0.0);
+            let im_lo = row.get_uint(7).unwrap_or(0) as u16;
+            let im_hi = row.get_uint(8).unwrap_or(0) as u16;
+
+            let mz_mu_opt = row.get_float(20).ok();
+            let mz_lo_opt = row.get_float(13).ok();
+            let mz_hi_opt = row.get_float(14).ok();
+            let mz_mu = mz_mu_opt.unwrap_or_else(|| {
+                match (mz_lo_opt, mz_hi_opt) {
+                    (Some(lo), Some(hi)) => 0.5 * (lo + hi),
+                    _ => 0.0,
+                }
+            });
+
+            let idx = slim_clusters.len();
+            group_entries.push((window_group, rt_mu, idx));
+
+            slim_clusters.push(SlimCluster {
+                cluster_id,
+                window_group: Some(window_group),
+                ms_level,
+                rt_mu,
+                im_mu,
+                mz_mu,
+                rt_sigma,
+                im_sigma,
+                im_window: (im_lo, im_hi),
+                raw_sum,
+            });
+        }
+    }
+
+    Ok((slim_clusters, group_entries))
+}
+
 fn to_io(e: PolarsError) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
 }
