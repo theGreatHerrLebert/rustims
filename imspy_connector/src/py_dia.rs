@@ -317,6 +317,23 @@ impl PyClusterResult1D {
     pub fn drop_raw_data(&mut self) {
         self.inner.raw_points = None;
     }
+
+    /// Drop all heavy optional fields to free memory.
+    ///
+    /// This drops: raw_points, rt_trace, im_trace, rt_axis_sec, im_axis_scans, mz_axis_da
+    ///
+    /// After calling this, the cluster retains only essential fields needed for
+    /// indexing and geometric scoring. XIC-based scoring will NOT work.
+    ///
+    /// Use this before creating a FragmentIndex to reduce peak RAM usage.
+    pub fn drop_heavy_data(&mut self) {
+        self.inner.raw_points = None;
+        self.inner.rt_trace = None;
+        self.inner.im_trace = None;
+        self.inner.rt_axis_sec = None;
+        self.inner.im_axis_scans = None;
+        self.inner.mz_axis_da = None;
+    }
 }
 
 #[pyclass]
@@ -3125,6 +3142,29 @@ impl PyTimsDatasetDIA {
     }
 }
 
+/// Drop heavy data from all clusters in a list to free memory.
+///
+/// This is a batch operation - more efficient than calling drop_heavy_data()
+/// on each cluster individually from Python.
+///
+/// Drops: raw_points, rt_trace, im_trace, rt_axis_sec, im_axis_scans, mz_axis_da
+#[pyfunction]
+#[pyo3(signature = (clusters,))]
+pub fn drop_heavy_data_batch(
+    clusters: Vec<Py<PyClusterResult1D>>,
+    py: Python<'_>,
+) {
+    for cluster in clusters {
+        let mut c = cluster.borrow_mut(py);
+        c.inner.raw_points = None;
+        c.inner.rt_trace = None;
+        c.inner.im_trace = None;
+        c.inner.rt_axis_sec = None;
+        c.inner.im_axis_scans = None;
+        c.inner.mz_axis_da = None;
+    }
+}
+
 #[pyfunction]
 #[pyo3(signature = (
     flat,
@@ -4461,6 +4501,7 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyScoredHit>()?;
     m.add_class::<PyCandidateOpts>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
+    m.add_function(wrap_pyfunction!(drop_heavy_data_batch, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(load_clusters_bin, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_parquet, m)?)?;
