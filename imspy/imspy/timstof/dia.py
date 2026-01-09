@@ -461,13 +461,59 @@ class FragmentIndex(RustWrapperObject):
     ) -> "FragmentIndex":
         """
         Build a FragmentIndex directly from a directory of fragment cluster parquet files.
+        Loads full cluster data (higher RAM, supports XIC scoring).
         """
         p = ims.PyFragmentIndex.from_parquet_dir(
             ds.get_py_ptr(),
             parquet_dir,
-            cand_opts.get_py_ptr(),  # or cand_opts.inner depending on your pattern
+            cand_opts.get_py_ptr(),
         )
         return cls.from_py_ptr(p)
+
+    @classmethod
+    def from_parquet_dir_slim(
+            cls,
+            ds: "TimsDatasetDIA",
+            parquet_dir: str,
+            cand_opts: "CandidateOpts",
+    ) -> "FragmentIndex":
+        """
+        Build a FragmentIndex from parquet files using slim storage (~80% less RAM).
+
+        Only loads essential fields for geometric scoring. For XIC scoring or
+        pseudo-spectrum construction, call load_full_data() afterward.
+        """
+        p = ims.PyFragmentIndex.from_parquet_dir_slim(
+            ds.get_py_ptr(),
+            parquet_dir,
+            cand_opts.get_py_ptr(),
+        )
+        return cls.from_py_ptr(p)
+
+    def has_full_data(self) -> bool:
+        """Check if full cluster data is loaded (needed for XIC scoring)."""
+        return self._py.has_full_data()
+
+    def can_load_full_data(self) -> bool:
+        """Check if full data can be loaded via load_full_data()."""
+        return self._py.can_load_full_data()
+
+    def load_full_data(self) -> None:
+        """
+        Load full cluster data from parquet directory (for XIC scoring).
+
+        Only needed if index was created with from_parquet_dir_slim().
+        After calling this, has_full_data() returns True.
+        """
+        self._py.load_full_data()
+
+    def __len__(self) -> int:
+        """Number of MS2 clusters in the index."""
+        return self._py.len()
+
+    def len(self) -> int:
+        """Number of MS2 clusters in the index."""
+        return self._py.len()
 
 
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
