@@ -516,6 +516,195 @@ class FragmentIndex(RustWrapperObject):
         return self._py.len()
 
 
+class SlimPrecursor(RustWrapperObject):
+    """
+    Minimal precursor representation for memory-efficient storage (~32 bytes).
+
+    Contains only the fields needed for candidate enumeration and geometric scoring.
+    Use this when you don't need full cluster data (XIC traces, raw points, etc.).
+    """
+
+    def __init__(self, *a, **k):
+        raise RuntimeError(
+            "Use SlimPrecursor.from_cluster() or SlimPrecursor.from_py_ptr()"
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PySlimPrecursor) -> "SlimPrecursor":
+        inst = cls.__new__(cls)
+        inst._py = p
+        return inst
+
+    @classmethod
+    def from_cluster(cls, cluster: "ClusterResult1D") -> "SlimPrecursor":
+        """Create a SlimPrecursor from a full ClusterResult1D."""
+        return cls.from_py_ptr(ims.PySlimPrecursor.from_cluster(cluster.get_py_ptr()))
+
+    def get_py_ptr(self) -> ims.PySlimPrecursor:
+        return self._py
+
+    @property
+    def cluster_id(self) -> int:
+        return self._py.cluster_id
+
+    @property
+    def mz_mu(self) -> float:
+        return self._py.mz_mu
+
+    @property
+    def rt_mu(self) -> float:
+        return self._py.rt_mu
+
+    @property
+    def im_mu(self) -> float:
+        return self._py.im_mu
+
+    @property
+    def im_lo(self) -> int:
+        return self._py.im_lo
+
+    @property
+    def im_hi(self) -> int:
+        return self._py.im_hi
+
+    @property
+    def raw_sum(self) -> float:
+        return self._py.raw_sum
+
+
+class PrecursorIndex(RustWrapperObject):
+    """
+    Precursor index for efficient storage and lookup of MS1 clusters.
+
+    Uses a hybrid storage strategy:
+    - **Primary**: SlimPrecursor (~32 bytes/cluster) for queries
+    - **Optional**: Full ClusterResult1D (~280 bytes/cluster) for XIC
+    - **Lazy load**: Parquet path for on-demand full data loading
+
+    Memory savings: ~88% when using slim-only storage.
+    For 25M precursors: ~7GB → ~0.8GB.
+
+    Example:
+        # Load with slim storage (lowest RAM)
+        idx = PrecursorIndex.from_parquet_dir_slim("/path/to/precursors")
+
+        # Get slim precursor by ID
+        slim = idx.get_slim_by_id(123456)
+
+        # If XIC scoring is needed later:
+        idx.load_full_data()
+        full = idx.get_full_by_id(123456)
+    """
+
+    def __init__(self, *a, **k):
+        raise RuntimeError(
+            "Use PrecursorIndex.from_parquet_dir_slim() or PrecursorIndex.from_py_ptr()"
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p: ims.PyPrecursorIndex) -> "PrecursorIndex":
+        inst = cls.__new__(cls)
+        inst._py = p
+        return inst
+
+    def get_py_ptr(self) -> ims.PyPrecursorIndex:
+        return self._py
+
+    @classmethod
+    def from_parquet_dir_slim(cls, parquet_dir: str) -> "PrecursorIndex":
+        """
+        Load from parquet directory using slim storage (lowest RAM).
+
+        Only reads the fields needed for SlimPrecursor (~32 bytes/precursor).
+        Stores parquet path for lazy loading via load_full_data().
+
+        Args:
+            parquet_dir: Path to directory containing precursor parquet files.
+
+        Returns:
+            PrecursorIndex with slim storage.
+        """
+        p = ims.PyPrecursorIndex.from_parquet_dir_slim(parquet_dir)
+        return cls.from_py_ptr(p)
+
+    @classmethod
+    def from_parquet_dir(cls, parquet_dir: str) -> "PrecursorIndex":
+        """
+        Load from parquet directory (full data mode, higher RAM).
+
+        Args:
+            parquet_dir: Path to directory containing precursor parquet files.
+
+        Returns:
+            PrecursorIndex with full cluster data loaded.
+        """
+        p = ims.PyPrecursorIndex.from_parquet_dir(parquet_dir)
+        return cls.from_py_ptr(p)
+
+    def __len__(self) -> int:
+        """Number of precursors in the index."""
+        return self._py.len()
+
+    def len(self) -> int:
+        """Number of precursors in the index."""
+        return self._py.len()
+
+    def is_empty(self) -> bool:
+        """Check if the index is empty."""
+        return self._py.is_empty()
+
+    def has_full_data(self) -> bool:
+        """Check if full precursor data is loaded (needed for XIC scoring)."""
+        return self._py.has_full_data()
+
+    def can_load_full_data(self) -> bool:
+        """Check if full data can be loaded via load_full_data()."""
+        return self._py.can_load_full_data()
+
+    def load_full_data(self) -> None:
+        """
+        Load full precursor data from parquet directory (for XIC scoring).
+
+        Only needed if index was created with from_parquet_dir_slim().
+        After calling this, has_full_data() returns True.
+        """
+        self._py.load_full_data()
+
+    def get_slim(self, idx: int) -> SlimPrecursor | None:
+        """Get slim precursor by index."""
+        p = self._py.get_slim(idx)
+        return SlimPrecursor.from_py_ptr(p) if p is not None else None
+
+    def get_slim_by_id(self, cluster_id: int) -> SlimPrecursor | None:
+        """Get slim precursor by cluster_id."""
+        p = self._py.get_slim_by_id(cluster_id)
+        return SlimPrecursor.from_py_ptr(p) if p is not None else None
+
+    def get_idx(self, cluster_id: int) -> int | None:
+        """Get the index for a cluster_id."""
+        return self._py.get_idx(cluster_id)
+
+    def get_full(self, idx: int) -> "ClusterResult1D | None":
+        """Get full precursor by index (requires has_full_data() == True)."""
+        from imspy.timstof.clustering.cluster import ClusterResult1D
+        p = self._py.get_full(idx)
+        return ClusterResult1D.from_py_ptr(p) if p is not None else None
+
+    def get_full_by_id(self, cluster_id: int) -> "ClusterResult1D | None":
+        """Get full precursor by cluster_id (requires has_full_data() == True)."""
+        from imspy.timstof.clustering.cluster import ClusterResult1D
+        p = self._py.get_full_by_id(cluster_id)
+        return ClusterResult1D.from_py_ptr(p) if p is not None else None
+
+    def get_all_slim(self) -> list[SlimPrecursor]:
+        """Get all slim precursors as a list."""
+        return [SlimPrecursor.from_py_ptr(p) for p in self._py.get_all_slim()]
+
+    def get_cluster_ids(self):
+        """Get cluster IDs of all precursors as numpy array."""
+        return self._py.get_cluster_ids()
+
+
 class TimsDatasetDIA(TimsDataset, RustWrapperObject):
     """TimsDataset for DIA (Data-Independent Acquisition) data."""
 

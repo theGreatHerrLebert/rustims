@@ -237,6 +237,59 @@ pub struct ThinPrecursor {
 }
 
 // ---------------------------------------------------------------------------
+// SlimPrecursor - minimal representation for precursor index (~32 bytes)
+// ---------------------------------------------------------------------------
+
+/// Minimal precursor representation for PrecursorIndex queries.
+/// Contains only the fields needed for candidate enumeration and scoring.
+/// Size: ~32 bytes vs ~280 bytes for full ClusterResult1D.
+#[derive(Clone, Debug)]
+pub struct SlimPrecursor {
+    pub cluster_id: u64,       // 8 bytes - for id_to_idx lookup
+    pub mz_mu: f32,            // 4 bytes - m/z apex
+    pub rt_mu: f32,            // 4 bytes - RT apex in seconds
+    pub im_mu: f32,            // 4 bytes - IM apex in scan space
+    pub im_window: (u16, u16), // 4 bytes - IM bounds (scans rarely > 65k)
+    pub raw_sum: f32,          // 4 bytes - intensity for filtering
+}
+
+impl SlimPrecursor {
+    /// Convert to ThinPrecursor for query operations.
+    #[inline]
+    pub fn to_thin(&self) -> ThinPrecursor {
+        ThinPrecursor {
+            mz_mu: self.mz_mu,
+            rt_mu: self.rt_mu,
+            im_mu: self.im_mu,
+            im_window: (self.im_window.0 as usize, self.im_window.1 as usize),
+        }
+    }
+}
+
+impl ClusterResult1D {
+    /// Convert to SlimPrecursor for memory-efficient storage.
+    ///
+    /// SlimPrecursor contains only the fields needed for candidate enumeration
+    /// and geometric scoring (~32 bytes vs ~280 bytes for full ClusterResult1D).
+    #[inline]
+    pub fn to_slim_precursor(&self) -> SlimPrecursor {
+        SlimPrecursor {
+            cluster_id: self.cluster_id,
+            mz_mu: self.mz_fit.as_ref().map(|f| f.mu).unwrap_or_else(|| {
+                // Fallback to mz_window center if no mz_fit
+                self.mz_window
+                    .map(|(lo, hi)| 0.5 * (lo + hi))
+                    .unwrap_or(0.0)
+            }),
+            rt_mu: self.rt_fit.mu,
+            im_mu: self.im_fit.mu,
+            im_window: (self.im_window.0 as u16, self.im_window.1 as u16),
+            raw_sum: self.raw_sum,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SlimCluster - minimal representation for streaming index (~52 bytes)
 // ---------------------------------------------------------------------------
 
@@ -1377,4 +1430,254 @@ fn feature_representative_cluster<'a>(feat: &'a SimpleFeature) -> Option<&'a Clu
     feat.member_clusters
         .iter()
         .max_by(|a, b| a.raw_sum.partial_cmp(&b.raw_sum).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+// ---------------------------------------------------------------------------
+// PrecursorIndex - Hybrid storage for MS1 precursor clusters
+// ---------------------------------------------------------------------------
+
+/// Precursor index for efficient storage and lookup of MS1 clusters.
+///
+/// Uses a hybrid storage strategy:
+/// - **Primary**: `precursors_slim` - SlimPrecursor (~32 bytes/cluster) for queries
+/// - **Optional**: `precursors_full` - Full ClusterResult1D (~280 bytes/cluster) for XIC
+/// - **Lazy load**: `parquet_dir` - Path to parquet files for on-demand full data loading
+///
+/// This reduces RAM by ~88% compared to storing full ClusterResult1D for all clusters.
+/// For 25M precursors: ~7GB → ~0.8GB when using slim-only storage.
+#[derive(Clone, Debug)]
+pub struct PrecursorIndex {
+    // PRIMARY: Slim storage for precursors (~32 bytes/cluster)
+    precursors_slim: Vec<SlimPrecursor>,
+
+    // OPTIONAL: Full data for XIC scoring (lazy-loaded or explicitly set)
+    precursors_full: Option<Arc<[ClusterResult1D]>>,
+
+    // OPTIONAL: Parquet directory for on-demand full data loading
+    parquet_dir: Option<PathBuf>,
+
+    // Lookup: cluster_id -> index into precursors_slim
+    id_to_idx: HashMap<u64, usize>,
+}
+
+impl PrecursorIndex {
+    // -------------------------------------------------------------------------
+    // Accessor methods for slim data (always available, fast)
+    // -------------------------------------------------------------------------
+
+    /// Get slim precursor by index (always available, fast, no I/O)
+    #[inline]
+    pub fn get_slim(&self, idx: usize) -> Option<&SlimPrecursor> {
+        self.precursors_slim.get(idx)
+    }
+
+    /// Get slim precursor by cluster_id (always available, fast, no I/O)
+    #[inline]
+    pub fn get_slim_by_id(&self, cid: u64) -> Option<&SlimPrecursor> {
+        self.id_to_idx.get(&cid).and_then(|&i| self.precursors_slim.get(i))
+    }
+
+    /// Get index for a cluster_id
+    #[inline]
+    pub fn get_idx(&self, cid: u64) -> Option<usize> {
+        self.id_to_idx.get(&cid).copied()
+    }
+
+    /// Number of precursors in the index
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.precursors_slim.len()
+    }
+
+    /// Check if the index is empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.precursors_slim.is_empty()
+    }
+
+    /// Get slice of all slim precursors
+    #[inline]
+    pub fn slim_slice(&self) -> &[SlimPrecursor] {
+        &self.precursors_slim
+    }
+
+    /// Convert slim precursor to ThinPrecursor for query operations
+    #[inline]
+    pub fn to_thin(&self, idx: usize) -> Option<ThinPrecursor> {
+        self.precursors_slim.get(idx).map(|s| s.to_thin())
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessor methods for full data (optional, may require loading)
+    // -------------------------------------------------------------------------
+
+    /// Get full precursor data slice (only available if `has_full_data()` is true)
+    #[inline]
+    pub fn full_slice(&self) -> Option<&[ClusterResult1D]> {
+        self.precursors_full.as_ref().map(|arc| arc.as_ref())
+    }
+
+    /// Get full precursor by index (only available if `has_full_data()` is true)
+    #[inline]
+    pub fn get_full(&self, idx: usize) -> Option<&ClusterResult1D> {
+        self.precursors_full.as_ref().and_then(|arc| arc.get(idx))
+    }
+
+    /// Get full precursor by cluster_id (only available if `has_full_data()` is true)
+    #[inline]
+    pub fn get_full_by_id(&self, cid: u64) -> Option<&ClusterResult1D> {
+        self.id_to_idx.get(&cid).and_then(|&i| self.get_full(i))
+    }
+
+    /// Check if full precursor data is loaded (needed for XIC scoring)
+    #[inline]
+    pub fn has_full_data(&self) -> bool {
+        self.precursors_full.is_some()
+    }
+
+    /// Check if parquet path is set for lazy loading
+    #[inline]
+    pub fn can_load_full_data(&self) -> bool {
+        self.parquet_dir.is_some()
+    }
+
+    /// Load full data from parquet directory (if path is set).
+    /// After calling this, `has_full_data()` will return true.
+    pub fn load_full_data(&mut self) -> io::Result<()> {
+        if self.precursors_full.is_some() {
+            return Ok(()); // Already loaded
+        }
+
+        let dir = self.parquet_dir.as_ref()
+            .ok_or_else(|| io::Error::new(
+                io::ErrorKind::NotFound,
+                "No parquet directory set for lazy loading"
+            ))?;
+
+        // Load full clusters from parquet
+        let full_clusters = load_all_parquet_full(dir)?;
+        self.precursors_full = Some(Arc::from(full_clusters.into_boxed_slice()));
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal builder from slim data
+    // -------------------------------------------------------------------------
+
+    /// Build index from slim precursor data.
+    fn build_from_slim(
+        precursors_slim: Vec<SlimPrecursor>,
+        precursors_full: Option<Arc<[ClusterResult1D]>>,
+        parquet_dir: Option<PathBuf>,
+    ) -> Self {
+        eprintln!("[PrecursorIndex] building index from {} precursors...", fmt_num(precursors_slim.len()));
+
+        // Build id_to_idx lookup
+        eprintln!("[PrecursorIndex] building lookup table...");
+        let id_to_idx: HashMap<u64, usize> = precursors_slim
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.cluster_id, i))
+            .collect();
+
+        eprintln!("[PrecursorIndex] index build complete!");
+
+        Self {
+            precursors_slim,
+            precursors_full,
+            parquet_dir,
+            id_to_idx,
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Constructors
+    // -------------------------------------------------------------------------
+
+    /// Create from owned clusters (slim storage only, drops full data).
+    /// Uses slim storage by default (low RAM). Full data is NOT retained.
+    /// For XIC scoring, use `from_owned_with_full()` instead.
+    pub fn from_owned(precursors: Vec<ClusterResult1D>) -> Self {
+        let slim: Vec<SlimPrecursor> = precursors.iter().map(|c| c.to_slim_precursor()).collect();
+        Self::build_from_slim(slim, None, None)
+    }
+
+    /// Create from owned clusters, retaining full data for XIC scoring.
+    /// Higher RAM usage but enables XIC scoring without loading from parquet.
+    pub fn from_owned_with_full(
+        precursors: Vec<ClusterResult1D>,
+        parquet_dir: Option<PathBuf>,
+    ) -> Self {
+        let slim: Vec<SlimPrecursor> = precursors.iter().map(|c| c.to_slim_precursor()).collect();
+        let full = Arc::from(precursors.into_boxed_slice());
+        Self::build_from_slim(slim, Some(full), parquet_dir)
+    }
+
+    /// Create from a slice of slim precursors (e.g., from parquet streaming).
+    pub fn from_slim(slim: Vec<SlimPrecursor>, parquet_dir: Option<PathBuf>) -> Self {
+        Self::build_from_slim(slim, None, parquet_dir)
+    }
+
+    /// Load from parquet directory using streaming (lowest RAM).
+    ///
+    /// This method:
+    /// 1. Streams parquet files and only reads slim fields
+    /// 2. Stores only SlimPrecursor data (~32 bytes/precursor instead of ~280)
+    /// 3. Stores parquet path for lazy loading via `load_full_data()`
+    ///
+    /// Note: XIC scoring requires calling `load_full_data()` first.
+    pub fn from_parquet_dir_slim(dir: impl AsRef<Path>) -> io::Result<Self> {
+        use crate::cluster::io::load_parquet_precursor_slim;
+
+        let dir_path = dir.as_ref().to_path_buf();
+        let mut all_slim: Vec<SlimPrecursor> = Vec::new();
+
+        // Collect and sort parquet files for deterministic ordering
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&dir_path)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("parquet") {
+                continue;
+            }
+            paths.push(path);
+        }
+        paths.sort();
+
+        let n_files = paths.len();
+        eprintln!("[PrecursorIndex] loading {} parquet files (slim mode)...", n_files);
+
+        // Stream each file
+        for (i, path) in paths.iter().enumerate() {
+            let path_str = path
+                .to_str()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+
+            // Load slim precursors
+            let slim_batch = load_parquet_precursor_slim(path_str)?;
+            let batch_len = slim_batch.len();
+            all_slim.extend(slim_batch);
+
+            eprintln!(
+                "[PrecursorIndex] file {}/{}: {} precursors loaded (total: {})",
+                i + 1,
+                n_files,
+                fmt_num(batch_len),
+                fmt_num(all_slim.len())
+            );
+        }
+
+        // Store parquet path for lazy loading of full data
+        Ok(Self::build_from_slim(all_slim, None, Some(dir_path)))
+    }
+
+    /// Load from parquet directory (full data mode).
+    pub fn from_parquet_dir(dir: impl AsRef<Path>) -> io::Result<Self> {
+        let dir_path = dir.as_ref().to_path_buf();
+        let all = load_all_parquet_full(&dir_path)?;
+        Ok(Self::from_owned_with_full(all, Some(dir_path)))
+    }
 }

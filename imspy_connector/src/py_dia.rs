@@ -6,7 +6,7 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{fragment_from_cluster, fragment_from_slim, CandidateOpts, FragmentIndex, FragmentQueryOpts, ScoreOpts};
+use rustdf::cluster::candidates::{fragment_from_cluster, fragment_from_slim, CandidateOpts, FragmentIndex, FragmentQueryOpts, PrecursorIndex, ScoreOpts, SlimPrecursor};
 use rustdf::cluster::pseudo::PseudoBuildResult;
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
@@ -4802,6 +4802,243 @@ pub fn pseudospectrum_from_cluster_and_hits_slim(
     })
 }
 
+// ---------------------------------------------------------------------------
+// PySlimPrecursor - Python wrapper for SlimPrecursor
+// ---------------------------------------------------------------------------
+
+/// Minimal precursor representation for memory-efficient storage (~32 bytes).
+///
+/// Contains only the fields needed for candidate enumeration and geometric scoring.
+/// Use this when you don't need full cluster data (XIC traces, raw points, etc.).
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PySlimPrecursor {
+    pub(crate) inner: SlimPrecursor,
+}
+
+#[pymethods]
+impl PySlimPrecursor {
+    #[new]
+    #[pyo3(signature = (cluster_id, mz_mu, rt_mu, im_mu, im_lo, im_hi, raw_sum))]
+    pub fn new(
+        cluster_id: u64,
+        mz_mu: f32,
+        rt_mu: f32,
+        im_mu: f32,
+        im_lo: u16,
+        im_hi: u16,
+        raw_sum: f32,
+    ) -> Self {
+        Self {
+            inner: SlimPrecursor {
+                cluster_id,
+                mz_mu,
+                rt_mu,
+                im_mu,
+                im_window: (im_lo, im_hi),
+                raw_sum,
+            },
+        }
+    }
+
+    /// Create from a full PyClusterResult1D.
+    #[staticmethod]
+    pub fn from_cluster(cluster: &PyClusterResult1D) -> Self {
+        Self {
+            inner: cluster.inner.to_slim_precursor(),
+        }
+    }
+
+    #[getter]
+    pub fn cluster_id(&self) -> u64 {
+        self.inner.cluster_id
+    }
+
+    #[getter]
+    pub fn mz_mu(&self) -> f32 {
+        self.inner.mz_mu
+    }
+
+    #[getter]
+    pub fn rt_mu(&self) -> f32 {
+        self.inner.rt_mu
+    }
+
+    #[getter]
+    pub fn im_mu(&self) -> f32 {
+        self.inner.im_mu
+    }
+
+    #[getter]
+    pub fn im_lo(&self) -> u16 {
+        self.inner.im_window.0
+    }
+
+    #[getter]
+    pub fn im_hi(&self) -> u16 {
+        self.inner.im_window.1
+    }
+
+    #[getter]
+    pub fn raw_sum(&self) -> f32 {
+        self.inner.raw_sum
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PyPrecursorIndex - Python wrapper for PrecursorIndex
+// ---------------------------------------------------------------------------
+
+/// Precursor index for efficient storage and lookup of MS1 clusters.
+///
+/// Uses a hybrid storage strategy:
+/// - **Primary**: SlimPrecursor (~32 bytes/cluster) for queries
+/// - **Optional**: Full ClusterResult1D (~280 bytes/cluster) for XIC
+/// - **Lazy load**: Parquet path for on-demand full data loading
+///
+/// Memory savings: ~88% when using slim-only storage.
+/// For 25M precursors: ~7GB → ~0.8GB.
+#[pyclass]
+pub struct PyPrecursorIndex {
+    pub(crate) inner: PrecursorIndex,
+}
+
+#[pymethods]
+impl PyPrecursorIndex {
+    /// Create from a list of full clusters (slim storage only, drops full data).
+    #[new]
+    #[pyo3(signature = (clusters))]
+    pub fn new(clusters: Vec<Py<PyClusterResult1D>>, py: Python<'_>) -> PyResult<Self> {
+        let vec: Vec<ClusterResult1D> = clusters
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone_slim())
+            .collect();
+
+        Ok(Self {
+            inner: PrecursorIndex::from_owned(vec),
+        })
+    }
+
+    /// Create from a list of full clusters, retaining full data for XIC scoring.
+    #[staticmethod]
+    #[pyo3(signature = (clusters))]
+    pub fn from_owned_with_full(clusters: Vec<Py<PyClusterResult1D>>, py: Python<'_>) -> PyResult<Self> {
+        let vec: Vec<ClusterResult1D> = clusters
+            .into_iter()
+            .map(|p| p.borrow(py).inner.clone())
+            .collect();
+
+        Ok(Self {
+            inner: PrecursorIndex::from_owned_with_full(vec, None),
+        })
+    }
+
+    /// Load from parquet directory using streaming (lowest RAM).
+    ///
+    /// This method:
+    /// 1. Only reads slim fields (~32 bytes/precursor instead of ~280)
+    /// 2. Stores parquet path for lazy loading via `load_full_data()`
+    ///
+    /// Note: XIC scoring requires calling `load_full_data()` first.
+    #[staticmethod]
+    #[pyo3(signature = (parquet_dir))]
+    pub fn from_parquet_dir_slim(parquet_dir: String) -> PyResult<Self> {
+        let inner = PrecursorIndex::from_parquet_dir_slim(&parquet_dir)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))?;
+
+        Ok(Self { inner })
+    }
+
+    /// Load from parquet directory (full data mode, higher RAM).
+    #[staticmethod]
+    #[pyo3(signature = (parquet_dir))]
+    pub fn from_parquet_dir(parquet_dir: String) -> PyResult<Self> {
+        let inner = PrecursorIndex::from_parquet_dir(&parquet_dir)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))?;
+
+        Ok(Self { inner })
+    }
+
+    /// Number of precursors in the index.
+    #[pyo3(signature = ())]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Check if the index is empty.
+    #[pyo3(signature = ())]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Check if full precursor data is loaded (needed for XIC scoring).
+    #[pyo3(signature = ())]
+    pub fn has_full_data(&self) -> bool {
+        self.inner.has_full_data()
+    }
+
+    /// Check if parquet path is set for lazy loading.
+    #[pyo3(signature = ())]
+    pub fn can_load_full_data(&self) -> bool {
+        self.inner.can_load_full_data()
+    }
+
+    /// Load full precursor data from parquet directory (for XIC scoring).
+    ///
+    /// After calling this, has_full_data() will return True.
+    #[pyo3(signature = ())]
+    pub fn load_full_data(&mut self) -> PyResult<()> {
+        self.inner.load_full_data()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))
+    }
+
+    /// Get a slim precursor by index.
+    #[pyo3(signature = (idx))]
+    pub fn get_slim(&self, idx: usize) -> Option<PySlimPrecursor> {
+        self.inner.get_slim(idx).map(|s| PySlimPrecursor { inner: s.clone() })
+    }
+
+    /// Get a slim precursor by cluster_id.
+    #[pyo3(signature = (cluster_id))]
+    pub fn get_slim_by_id(&self, cluster_id: u64) -> Option<PySlimPrecursor> {
+        self.inner.get_slim_by_id(cluster_id).map(|s| PySlimPrecursor { inner: s.clone() })
+    }
+
+    /// Get the index for a cluster_id.
+    #[pyo3(signature = (cluster_id))]
+    pub fn get_idx(&self, cluster_id: u64) -> Option<usize> {
+        self.inner.get_idx(cluster_id)
+    }
+
+    /// Get a full precursor by index (requires has_full_data() == True).
+    #[pyo3(signature = (idx))]
+    pub fn get_full(&self, idx: usize) -> Option<PyClusterResult1D> {
+        self.inner.get_full(idx).map(|c| PyClusterResult1D { inner: c.clone() })
+    }
+
+    /// Get a full precursor by cluster_id (requires has_full_data() == True).
+    #[pyo3(signature = (cluster_id))]
+    pub fn get_full_by_id(&self, cluster_id: u64) -> Option<PyClusterResult1D> {
+        self.inner.get_full_by_id(cluster_id).map(|c| PyClusterResult1D { inner: c.clone() })
+    }
+
+    /// Get all slim precursors as a list.
+    #[pyo3(signature = ())]
+    pub fn get_all_slim(&self) -> Vec<PySlimPrecursor> {
+        self.inner.slim_slice()
+            .iter()
+            .map(|s| PySlimPrecursor { inner: s.clone() })
+            .collect()
+    }
+
+    /// Get cluster IDs of all precursors.
+    #[pyo3(signature = ())]
+    pub fn get_cluster_ids<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u64>>> {
+        let ids: Vec<u64> = self.inner.slim_slice().iter().map(|s| s.cluster_id).collect();
+        Ok(PyArray1::from_vec_bound(py, ids).unbind())
+    }
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -4815,6 +5052,8 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTofRtGrid>()?;
     m.add_class::<PyPseudoBuildResult>()?;
     m.add_class::<PyFragmentIndex>()?;
+    m.add_class::<PySlimPrecursor>()?;
+    m.add_class::<PyPrecursorIndex>()?;
     m.add_class::<PyScoredHit>()?;
     m.add_class::<PyCandidateOpts>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;

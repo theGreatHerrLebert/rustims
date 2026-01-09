@@ -3,7 +3,7 @@ use std::io::{BufReader, BufWriter};
 use serde::{Deserialize, Serialize};
 use crate::cluster::utility::Fit1D;
 use super::cluster::ClusterResult1D;
-use super::candidates::SlimCluster;
+use super::candidates::{SlimCluster, SlimPrecursor};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRow {
@@ -1127,4 +1127,95 @@ pub fn load_feature_bincode(path: &str) -> io::Result<Vec<SimpleFeature>> {
     let features: Vec<SimpleFeature> = bincode::deserialize_from(f)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     Ok(features)
+}
+
+// ---------------------------------------------------------------------------
+// SlimPrecursor parquet loading (minimal fields for precursor index)
+// ---------------------------------------------------------------------------
+
+/// Load SlimPrecursor data from parquet using Polars (fast columnar read).
+/// Only reads the columns needed for SlimPrecursor (~32 bytes/precursor).
+pub fn load_parquet_precursor_slim(path: &str) -> io::Result<Vec<SlimPrecursor>> {
+    use polars::prelude::*;
+
+    let f = File::open(path)?;
+
+    // Only read the columns we need for slim precursors
+    let cols = vec![
+        "cluster_id".into(),
+        "rt_mu".into(),
+        "im_mu".into(),
+        "im_lo".into(),
+        "im_hi".into(),
+        "mz_mu".into(),
+        "mz_lo".into(),
+        "mz_hi".into(),
+        "raw_sum".into(),
+    ];
+
+    let df = ParquetReader::new(f)
+        .with_columns(Some(cols))
+        .finish()
+        .map_err(to_io)?;
+
+    let n = df.height();
+
+    // Extract columns
+    let cluster_ids: Vec<u64> = df.column("cluster_id").map_err(to_io)?
+        .u64().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
+
+    let rt_mus: Vec<f32> = df.column("rt_mu").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    let im_mus: Vec<f32> = df.column("im_mu").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    let im_los: Vec<u32> = df.column("im_lo").map_err(to_io)?
+        .u32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
+
+    let im_his: Vec<u32> = df.column("im_hi").map_err(to_io)?
+        .u32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
+
+    let mz_mus: Vec<Option<f32>> = df.column("mz_mu").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().collect();
+
+    let mz_los: Vec<Option<f32>> = df.column("mz_lo").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().collect();
+
+    let mz_his: Vec<Option<f32>> = df.column("mz_hi").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().collect();
+
+    let raw_sums: Vec<f32> = df.column("raw_sum").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    // Build SlimPrecursors
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let mz_mu = mz_mus[i].unwrap_or_else(|| {
+            match (mz_los[i], mz_his[i]) {
+                (Some(lo), Some(hi)) => 0.5 * (lo + hi),
+                _ => 0.0,
+            }
+        });
+
+        out.push(SlimPrecursor {
+            cluster_id: cluster_ids[i],
+            mz_mu,
+            rt_mu: rt_mus[i],
+            im_mu: im_mus[i],
+            im_window: (im_los[i] as u16, im_his[i] as u16),
+            raw_sum: raw_sums[i],
+        });
+    }
+
+    Ok(out)
 }
