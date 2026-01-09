@@ -73,6 +73,44 @@ def log(msg: str, level: int = logging.INFO) -> None:
     _logger.log(level, msg)
 
 
+def get_memory_gb() -> float:
+    """Get current process memory in GB."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / (1024 ** 3)
+    except ImportError:
+        return 0.0
+
+
+def fmt_num(n: int) -> str:
+    """Format number with thousand separators."""
+    return f"{n:,}"
+
+
+class timed_stage:
+    """Context manager for timing pipeline stages with memory tracking."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.start_time = None
+        self.start_mem = None
+
+    def __enter__(self):
+        import time
+        self.start_time = time.perf_counter()
+        self.start_mem = get_memory_gb()
+        log(f"[{self.name}] starting... (RAM: {self.start_mem:.2f} GB)")
+        return self
+
+    def __exit__(self, *args):
+        import time
+        elapsed = time.perf_counter() - self.start_time
+        end_mem = get_memory_gb()
+        delta_mem = end_mem - self.start_mem
+        sign = "+" if delta_mem >= 0 else ""
+        log(f"[{self.name}] done in {elapsed:.1f}s (RAM: {end_mem:.2f} GB, {sign}{delta_mem:.2f} GB)")
+
+
 def ensure_dir(path: str | os.PathLike) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
@@ -314,14 +352,14 @@ def build_features(cfg: dict, clusters: list, imspy: dict):
         w_spacing_penalty=float(feat_cfg["w_spacing_penalty"]),
     )
 
-    log(f"[features] building from {len(clusters)} precursor clusters …")
+    log(f"[features] building from {fmt_num(len(clusters))} precursor clusters …")
     features = build_simple_features_from_clusters(clusters, params, lut=lut)
     features = sorted(
         features,
         key=lambda f: (float(getattr(f, "raw_sum", 0.0)), int(getattr(f, "feature_id", 0))),
         reverse=True,
     )
-    log(f"[features] built {len(features)} features")
+    log(f"[features] built {fmt_num(len(features))} features")
     return features
 
 
@@ -333,17 +371,8 @@ def split_leftover_clusters(clusters: list, features: list) -> list:
         for cid in getattr(ft, "member_cluster_ids", []):
             used.add(int(cid))
     left = [c for c in clusters if int(c.cluster_id) not in used]
-    log(f"[clusters] leftover clusters: {len(left)} / {len(clusters)} (not in any feature)")
+    log(f"[clusters] leftover: {fmt_num(len(left))} / {fmt_num(len(clusters))} clusters not in any feature")
     return left
-
-
-def get_process_memory_gb() -> float:
-    """Get current process memory usage in GB."""
-    try:
-        import psutil
-        return psutil.Process().memory_info().rss / (1024 ** 3)
-    except ImportError:
-        return 0.0
 
 
 def build_fragment_index(cfg: dict, ds, imspy: dict):
@@ -355,19 +384,14 @@ def build_fragment_index(cfg: dict, ds, imspy: dict):
     opts = CandidateOpts(min_raw_sum=float(ms2i_cfg["min_raw_sum"]))
     use_slim = bool(ms2i_cfg.get("use_slim_index", True))
 
-    mem_before = get_process_memory_gb()
-
     if use_slim:
         log(f"[ms2] building FragmentIndex (slim mode) from {frag_dir} …")
         ms2_index = FragmentIndex.from_parquet_dir_slim(ds, frag_dir, opts)
-        log(f"[ms2] FragmentIndex ready (slim): {ms2_index.len()} clusters, has_full_data={ms2_index.has_full_data()}")
+        log(f"[ms2] FragmentIndex ready: {fmt_num(ms2_index.len())} clusters (slim, has_full_data={ms2_index.has_full_data()})")
     else:
         log(f"[ms2] building FragmentIndex (full mode) from {frag_dir} …")
         ms2_index = FragmentIndex.from_parquet_dir(ds, frag_dir, opts)
-        log(f"[ms2] FragmentIndex ready (full): {ms2_index.len()} clusters")
-
-    mem_after = get_process_memory_gb()
-    log(f"[ms2] index memory delta: +{mem_after - mem_before:.2f} GB (total process: {mem_after:.2f} GB)")
+        log(f"[ms2] FragmentIndex ready: {fmt_num(ms2_index.len())} clusters (full)")
 
     return ms2_index
 
@@ -393,18 +417,18 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     # If using slim index, load full data now (lazy loading).
     if not ms2_index.has_full_data() and ms2_index.can_load_full_data():
         log("[pseudospectra] loading full cluster data for pseudo-spectrum construction …")
-        mem_before = get_process_memory_gb()
+        mem_before = get_memory_gb()
         ms2_index.load_full_data()
-        mem_after = get_process_memory_gb()
+        mem_after = get_memory_gb()
         log(f"[pseudospectra] full data loaded: +{mem_after - mem_before:.2f} GB (total: {mem_after:.2f} GB)")
 
     spec_features: list = []
     spec_clusters: list = []
 
     if bool(ps_cfg.get("build_from_features", True)) and features:
-        log(f"[pseudospectra] scoring features → pseudospectra (n={len(features)})")
+        log(f"[pseudospectra] scoring {fmt_num(len(features))} features → pseudospectra")
         n_batches = (len(features) + batch_size - 1) // batch_size
-        for i in tqdm(range(n_batches), desc="features→pseudospectra", ncols=100):
+        for i in tqdm(range(n_batches), desc="features→pseudospectra", ncols=100, unit="batch"):
             u, l = i * batch_size, min((i + 1) * batch_size, len(features))
             chunk = features[u:l]
             results = ms2_index.score_features_to_pseudospectra(
@@ -421,12 +445,12 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
             )
             if results:
                 spec_features.extend(results)
-        log(f"[pseudospectra] feature pseudospectra: {len(spec_features)}")
+        log(f"[pseudospectra] feature pseudospectra: {fmt_num(len(spec_features))}")
 
     if bool(ps_cfg.get("build_from_clusters", True)) and clusters_left:
-        log(f"[pseudospectra] scoring leftover clusters → pseudospectra (n={len(clusters_left)})")
+        log(f"[pseudospectra] scoring {fmt_num(len(clusters_left))} leftover clusters → pseudospectra")
         n_batches = (len(clusters_left) + batch_size - 1) // batch_size
-        for i in tqdm(range(n_batches), desc="clusters→pseudospectra", ncols=100):
+        for i in tqdm(range(n_batches), desc="clusters→pseudospectra", ncols=100, unit="batch"):
             u, l = i * batch_size, min((i + 1) * batch_size, len(clusters_left))
             chunk = clusters_left[u:l]
             results = ms2_index.score_precursors_to_pseudospectra(
@@ -443,7 +467,7 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
             )
             if results:
                 spec_clusters.extend(results)
-        log(f"[pseudospectra] cluster pseudospectra: {len(spec_clusters)}")
+        log(f"[pseudospectra] cluster pseudospectra: {fmt_num(len(spec_clusters))}")
 
     return spec_features, spec_clusters
 
@@ -657,49 +681,63 @@ def main(argv=None) -> int:
     load_clusters_parquet = imspy["load_clusters_parquet"]
 
     inp = cfg["input"]
-    ds = TimsDatasetDIA(inp["dataset"], use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)))
 
-    prec_clusters = stable_sort_clusters(list(load_clusters_parquet(inp["precursor_clusters"])))
-    log(f"[ms1] loaded precursor clusters: {len(prec_clusters)}")
+    # --- Stage 1: Load dataset ---
+    with timed_stage("dataset"):
+        ds = TimsDatasetDIA(inp["dataset"], use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)))
 
-    ms1_index = build_ms1_index(prec_clusters)
+    # --- Stage 2: Load precursor clusters ---
+    with timed_stage("ms1.load"):
+        prec_clusters = stable_sort_clusters(list(load_clusters_parquet(inp["precursor_clusters"])))
+        log(f"[ms1] loaded {fmt_num(len(prec_clusters))} precursor clusters")
+        ms1_index = build_ms1_index(prec_clusters)
 
-    ms2_index = build_fragment_index(cfg, ds, imspy)
-    features = build_features(cfg, prec_clusters, imspy)
-    feature_index = build_feature_index(features) if features else None
-    clusters_left = split_leftover_clusters(prec_clusters, features)
+    # --- Stage 3: Build fragment index ---
+    with timed_stage("ms2.index"):
+        ms2_index = build_fragment_index(cfg, ds, imspy)
 
-    spec_features, spec_clusters = build_pseudospectra(cfg, ms2_index, features=features, clusters_left=clusters_left)
+    # --- Stage 4: Build features ---
+    with timed_stage("features"):
+        features = build_features(cfg, prec_clusters, imspy)
+        feature_index = build_feature_index(features) if features else None
+        clusters_left = split_leftover_clusters(prec_clusters, features)
 
-    log("[query] building SAGE query spectra …")
-    queries_features = None
-    queries_clusters = None
+    # --- Stage 5: Build pseudospectra ---
+    with timed_stage("pseudospectra"):
+        spec_features, spec_clusters = build_pseudospectra(cfg, ms2_index, features=features, clusters_left=clusters_left)
 
-    if spec_features:
-        queries_features = build_queries(
-            cfg,
-            build_sagepy_queries_from_pseudo_spectra,
-            spectra=spec_features,
-            use_charge=True,
-            ms1_index=ms1_index,
-            feature_index=feature_index,
-            ds=ds,
-        )
-        log("[query] features queries ready")
+    # --- Stage 6: Build queries ---
+    with timed_stage("queries"):
+        queries_features = None
+        queries_clusters = None
 
-    if spec_clusters:
-        queries_clusters = build_queries(
-            cfg,
-            build_sagepy_queries_from_pseudo_spectra,
-            spectra=spec_clusters,
-            use_charge=False,
-            ms1_index=ms1_index,
-            feature_index=feature_index,
-            ds=ds,
-        )
-        log("[query] clusters queries ready")
+        if spec_features:
+            log(f"[query] building queries from {fmt_num(len(spec_features))} feature pseudospectra...")
+            queries_features = build_queries(
+                cfg,
+                build_sagepy_queries_from_pseudo_spectra,
+                spectra=spec_features,
+                use_charge=True,
+                ms1_index=ms1_index,
+                feature_index=feature_index,
+                ds=ds,
+            )
+            log(f"[query] feature queries: {fmt_num(len(queries_features) if queries_features else 0)}")
 
-    # --- NEW: COMBINE BOTH BRANCHES INTO ONE SEARCH LIST ----------------------
+        if spec_clusters:
+            log(f"[query] building queries from {fmt_num(len(spec_clusters))} cluster pseudospectra...")
+            queries_clusters = build_queries(
+                cfg,
+                build_sagepy_queries_from_pseudo_spectra,
+                spectra=spec_clusters,
+                use_charge=False,
+                ms1_index=ms1_index,
+                feature_index=feature_index,
+                ds=ds,
+            )
+            log(f"[query] cluster queries: {fmt_num(len(queries_clusters) if queries_clusters else 0)}")
+
+    # --- Combine queries ---
     queries_all = []
     if queries_features:
         queries_all.extend(list(queries_features))
@@ -709,35 +747,38 @@ def main(argv=None) -> int:
     if not queries_all:
         raise RuntimeError("No query spectra were produced (no pseudo-spectra). Check thresholds / configs.")
 
-    log(f"[query] combined queries: {len(queries_all)} (features={len(queries_features or [])}, clusters={len(queries_clusters or [])})")
+    log(f"[query] combined: {fmt_num(len(queries_all))} queries (features={fmt_num(len(queries_features or []))}, clusters={fmt_num(len(queries_clusters or []))})")
 
-    # Sage config
-    sage_config, static_mods, variable_mods = build_sage_config(cfg, imspy)
-
-    # Classic DB only if not chunked
+    # --- Stage 7: Build SAGE database ---
     chunked_enabled = bool(cfg["sage"].get("chunked", {}).get("enabled", False))
     indexed_db = None
+
     if not chunked_enabled:
-        log("[sage.db] building indexed database …")
-        indexed_db = sage_config.generate_indexed_database()
-        log("[sage.db] indexed database ready")
+        with timed_stage("sage.db"):
+            sage_config, static_mods, variable_mods = build_sage_config(cfg, imspy)
+            indexed_db = sage_config.generate_indexed_database()
     else:
-        log("[sage.db] chunked-db mode enabled: DB will be built inside the combined chunked search call")
+        log("[sage.db] chunked-db mode: DB will be built inside search call")
+        sage_config, static_mods, variable_mods = build_sage_config(cfg, imspy)
 
-    # --- NEW: ONE SEARCH CALL -------------------------------------------------
-    results_all, indexed_db = run_sage_search_combined(
-        cfg,
-        imspy,
-        sage_config,
-        indexed_db,
-        queries_all,
-        static_mods=static_mods,
-        variable_mods=variable_mods,
-    )
+    # --- Stage 8: SAGE search ---
+    with timed_stage("sage.search"):
+        results_all, indexed_db = run_sage_search_combined(
+            cfg,
+            imspy,
+            sage_config,
+            indexed_db,
+            queries_all,
+            static_mods=static_mods,
+            variable_mods=variable_mods,
+        )
 
-    write_psms_combined(cfg, imspy, results_all, out_dir=out_dir)
+    # --- Stage 9: Write output ---
+    with timed_stage("output"):
+        write_psms_combined(cfg, imspy, results_all, out_dir=out_dir)
 
-    log("[done]")
+    # --- Final summary ---
+    log(f"[done] final RAM: {get_memory_gb():.2f} GB")
     return 0
 
 
