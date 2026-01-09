@@ -149,6 +149,7 @@ def load_config(path: str | os.PathLike) -> dict:
     cfg["deconv"].setdefault("ms2_index", {})
     ms2i = cfg["deconv"]["ms2_index"]
     ms2i.setdefault("min_raw_sum", 1.0)
+    ms2i.setdefault("use_slim_index", True)  # Low RAM mode: ~80% less memory
 
     q = cfg["query"]
     q.setdefault("merge_fragments", True)
@@ -336,16 +337,38 @@ def split_leftover_clusters(clusters: list, features: list) -> list:
     return left
 
 
+def get_process_memory_gb() -> float:
+    """Get current process memory usage in GB."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / (1024 ** 3)
+    except ImportError:
+        return 0.0
+
+
 def build_fragment_index(cfg: dict, ds, imspy: dict):
     FragmentIndex = imspy["FragmentIndex"]
     CandidateOpts = imspy["CandidateOpts"]
 
     frag_dir = cfg["input"]["fragment_clusters_dir"]
-    opts = CandidateOpts(min_raw_sum=float(cfg["deconv"]["ms2_index"]["min_raw_sum"]))
+    ms2i_cfg = cfg["deconv"]["ms2_index"]
+    opts = CandidateOpts(min_raw_sum=float(ms2i_cfg["min_raw_sum"]))
+    use_slim = bool(ms2i_cfg.get("use_slim_index", True))
 
-    log(f"[ms2] building FragmentIndex from {frag_dir} …")
-    ms2_index = FragmentIndex.from_parquet_dir(ds, frag_dir, opts)
-    log("[ms2] FragmentIndex ready")
+    mem_before = get_process_memory_gb()
+
+    if use_slim:
+        log(f"[ms2] building FragmentIndex (slim mode) from {frag_dir} …")
+        ms2_index = FragmentIndex.from_parquet_dir_slim(ds, frag_dir, opts)
+        log(f"[ms2] FragmentIndex ready (slim): {ms2_index.len()} clusters, has_full_data={ms2_index.has_full_data()}")
+    else:
+        log(f"[ms2] building FragmentIndex (full mode) from {frag_dir} …")
+        ms2_index = FragmentIndex.from_parquet_dir(ds, frag_dir, opts)
+        log(f"[ms2] FragmentIndex ready (full): {ms2_index.len()} clusters")
+
+    mem_after = get_process_memory_gb()
+    log(f"[ms2] index memory delta: +{mem_after - mem_before:.2f} GB (total process: {mem_after:.2f} GB)")
+
     return ms2_index
 
 
@@ -365,6 +388,15 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     require_tile_compat = bool(ps_cfg.get("require_tile_compat", True))
     min_frags = int(ps_cfg.get("min_fragments", 4))
     max_frags = int(ps_cfg.get("max_fragments", 512))
+
+    # Pseudo-spectrum construction requires full cluster data.
+    # If using slim index, load full data now (lazy loading).
+    if not ms2_index.has_full_data() and ms2_index.can_load_full_data():
+        log("[pseudospectra] loading full cluster data for pseudo-spectrum construction …")
+        mem_before = get_process_memory_gb()
+        ms2_index.load_full_data()
+        mem_after = get_process_memory_gb()
+        log(f"[pseudospectra] full data loaded: +{mem_after - mem_before:.2f} GB (total: {mem_after:.2f} GB)")
 
     spec_features: list = []
     spec_clusters: list = []

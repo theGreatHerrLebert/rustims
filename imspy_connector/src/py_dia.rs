@@ -3762,9 +3762,10 @@ impl PyFragmentIndex {
     /// This method uses row-group streaming to minimize peak RAM:
     /// - Processes one row-group at a time
     /// - Only loads essential columns (no heavy data)
-    /// - Never holds full parquet data in memory
+    /// - Stores parquet path for lazy loading of full data
     ///
-    /// Note: XIC scoring will NOT work (no traces). Use geom scoring only.
+    /// Note: XIC scoring requires calling `load_full_data()` first.
+    /// Geometric scoring works immediately.
     ///
     /// Python signature:
     ///   PyFragmentIndex.from_parquet_dir_slim(ds, parquet_dir, cand_opts)
@@ -3783,6 +3784,56 @@ impl PyFragmentIndex {
         Ok(PyFragmentIndex { inner: idx })
     }
 
+    /// Check if full cluster data is loaded (needed for XIC scoring).
+    ///
+    /// Returns:
+    ///   bool: True if full data is available, False if only slim data.
+    #[pyo3(signature = ())]
+    pub fn has_full_data(&self) -> bool {
+        self.inner.has_full_data()
+    }
+
+    /// Check if parquet path is set for lazy loading.
+    ///
+    /// Returns:
+    ///   bool: True if full data can be loaded via load_full_data().
+    #[pyo3(signature = ())]
+    pub fn can_load_full_data(&self) -> bool {
+        self.inner.can_load_full_data()
+    }
+
+    /// Load full cluster data from parquet directory (for XIC scoring).
+    ///
+    /// This is only needed if:
+    /// 1. Index was created with from_parquet_dir_slim()
+    /// 2. You need XIC scoring (not just geometric scoring)
+    ///
+    /// After calling this, has_full_data() will return True.
+    ///
+    /// Raises:
+    ///   IOError: If no parquet directory was set or loading fails.
+    #[pyo3(signature = ())]
+    pub fn load_full_data(&mut self) -> PyResult<()> {
+        self.inner.load_full_data()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))
+    }
+
+    /// Number of MS2 clusters in the index.
+    #[pyo3(signature = ())]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Check if the index is empty.
+    #[pyo3(signature = ())]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Query candidate fragment clusters for a precursor.
+    ///
+    /// This method uses slim data only (no full cluster data needed).
+    /// Returns cluster IDs of matching fragments.
     #[pyo3(signature = (
         prec,
         window_groups = None,
@@ -3819,11 +3870,18 @@ impl PyFragmentIndex {
         let groups_opt = window_groups.as_ref().map(|v| v.as_slice());
         let indices = self.inner.enumerate_candidates_for_precursor_thin(&thin, groups_opt, &opts);
 
-        let ms2 = self.inner.ms2_slice();
-        let hits: Vec<u64> = indices.into_iter().map(|i| ms2[i].cluster_id).collect();
+        // Use slim data to get cluster IDs (always available)
+        let hits: Vec<u64> = indices
+            .into_iter()
+            .filter_map(|i| self.inner.get_slim(i).map(|s| s.cluster_id))
+            .collect();
         Ok(hits)
     }
 
+    /// Query candidate fragment clusters for multiple precursors in parallel.
+    ///
+    /// This method uses slim data only (no full cluster data needed).
+    /// Returns cluster IDs of matching fragments for each precursor.
     #[pyo3(signature = (
         precs,
         max_rt_apex_delta_sec = Some(2.0),
@@ -3865,15 +3923,17 @@ impl PyFragmentIndex {
             .map(|c| self.inner.make_thin_precursor(c))
             .collect();
 
-        let ms2 = self.inner.ms2_slice();
-
+        // Use slim data to get cluster IDs (always available)
         let all_hits: Vec<Vec<u64>> = thin_precs
             .par_iter()
             .map(|thin_opt| {
                 match thin_opt {
                     Some(thin) => {
                         let indices = self.inner.enumerate_candidates_for_precursor_thin(thin, None, &opts);
-                        indices.into_iter().map(|i| ms2[i].cluster_id).collect()
+                        indices
+                            .into_iter()
+                            .filter_map(|i| self.inner.get_slim(i).map(|s| s.cluster_id))
+                            .collect()
                     }
                     None => Vec::new(),
                 }
@@ -4175,6 +4235,15 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
+        // Require full data for pseudo-spectrum construction
+        let ms2 = match self.inner.ms2_slice() {
+            Some(data) => data,
+            None => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Full cluster data is required for pseudo-spectrum construction. \
+                 Call load_full_data() first if using from_parquet_dir_slim()."
+            )),
+        };
+
         // 2) Parallel scoring inside FragmentIndex
         let all_hits: Vec<Vec<ScoredHit>> = feats_rust
             .par_iter()
@@ -4189,8 +4258,6 @@ impl PyFragmentIndex {
                 )
             })
             .collect();
-
-        let ms2 = self.inner.ms2_slice();
 
         // 3) Build PseudoSpectra from (feature, hits) in parallel.
         //    Everything here is pure Rust data, so Rayon is safe.
@@ -4271,6 +4338,15 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
+        // Require full data for pseudo-spectrum construction
+        let ms2 = match self.inner.ms2_slice() {
+            Some(data) => data,
+            None => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Full cluster data is required for pseudo-spectrum construction. \
+                 Call load_full_data() first if using from_parquet_dir_slim()."
+            )),
+        };
+
         // 2) Parallel scoring inside FragmentIndex
         let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_precursors_scored_par(
             &precs_rust,
@@ -4280,8 +4356,6 @@ impl PyFragmentIndex {
             &xic_opts,
             min_score,
         );
-
-        let ms2 = self.inner.ms2_slice();
 
         // 3) Build PseudoSpectra in parallel
         let out: Vec<PyPseudoSpectrum> = precs_rust

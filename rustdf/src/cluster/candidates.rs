@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -266,216 +266,260 @@ pub struct ClusterFileRef {
 }
 
 // ---------------------------------------------------------------------------
-// FragmentIndex
+// ClusterResult1D -> SlimCluster conversion
 // ---------------------------------------------------------------------------
 
+impl ClusterResult1D {
+    /// Convert to SlimCluster for memory-efficient storage.
+    ///
+    /// SlimCluster contains only the fields needed for candidate enumeration
+    /// and geometric scoring (~52 bytes vs ~280 bytes for full ClusterResult1D).
+    #[inline]
+    pub fn to_slim(&self) -> SlimCluster {
+        SlimCluster {
+            cluster_id: self.cluster_id,
+            window_group: self.window_group,
+            ms_level: self.ms_level,
+            rt_mu: self.rt_fit.mu,
+            im_mu: self.im_fit.mu,
+            mz_mu: self.mz_fit.as_ref().map(|f| f.mu).unwrap_or_else(|| {
+                // Fallback to mz_window center if no mz_fit
+                self.mz_window
+                    .map(|(lo, hi)| 0.5 * (lo + hi))
+                    .unwrap_or(0.0)
+            }),
+            rt_sigma: self.rt_fit.sigma,
+            im_sigma: self.im_fit.sigma,
+            im_window: (self.im_window.0 as u16, self.im_window.1 as u16),
+            raw_sum: self.raw_sum,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: load all parquet files from a directory
+// ---------------------------------------------------------------------------
+
+/// Load all parquet files from a directory into full ClusterResult1D structs.
+fn load_all_parquet_full(dir: &Path) -> io::Result<Vec<ClusterResult1D>> {
+    let mut all: Vec<ClusterResult1D> = Vec::new();
+
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("parquet") {
+            continue;
+        }
+        paths.push(path);
+    }
+    paths.sort();
+
+    for path in paths {
+        let path_str = path
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+
+        let mut part = load_parquet(path_str)?;
+        all.append(&mut part);
+    }
+
+    Ok(all)
+}
+
+// ---------------------------------------------------------------------------
+// FragmentIndex - Hybrid storage for memory efficiency
+// ---------------------------------------------------------------------------
+
+/// Fragment index for matching precursors to MS2 fragment clusters.
+///
+/// Uses a hybrid storage strategy:
+/// - **Primary**: `ms2_slim` - SlimCluster (~52 bytes/cluster) for indexing and geometric scoring
+/// - **Optional**: `ms2_full` - Full ClusterResult1D (~280 bytes/cluster) for XIC scoring
+/// - **Lazy load**: `parquet_dir` - Path to parquet files for on-demand full data loading
+///
+/// This reduces RAM by ~80% compared to storing full ClusterResult1D for all clusters.
+/// For 25M clusters: ~7GB → ~1.3GB when using slim-only storage.
 #[derive(Clone, Debug)]
 pub struct FragmentIndex {
     dia_index: Arc<DiaIndex>,
 
-    // owned storage of MS2 clusters
-    ms2_storage: Arc<[ClusterResult1D]>,
+    // PRIMARY: Slim storage for indexing (~52 bytes/cluster)
+    ms2_slim: Vec<SlimCluster>,
 
-    // precomputed per-MS2 fields (aligned with ms2_storage indices)
+    // OPTIONAL: Full data for XIC scoring (lazy-loaded or explicitly set)
+    ms2_full: Option<Arc<[ClusterResult1D]>>,
+
+    // OPTIONAL: Parquet directory for on-demand full data loading
+    parquet_dir: Option<PathBuf>,
+
+    // Precomputed index structures
     ms2_keep: Vec<bool>,
-    ms2_im_windows: Vec<(usize, usize)>,
-    ms2_im_mu: Vec<f32>,
-    ms2_mz_mu: Vec<f32>,
 
-    // group -> (rt-sorted ms2 indices)
+    // group -> (rt-sorted ms2 indices, rt_apex values)
     by_group: HashMap<u32, FragmentGroupIndex>,
 
-    // cluster_id -> index into ms2_storage
+    // cluster_id -> index into ms2_slim
     id_to_idx: HashMap<u64, usize>,
 }
 
 impl FragmentIndex {
+    // -------------------------------------------------------------------------
+    // Accessor methods for slim data (always available, fast)
+    // -------------------------------------------------------------------------
+
+    /// Get slim cluster by index (always available, fast, no I/O)
     #[inline]
-    pub fn ms2_slice(&self) -> &[ClusterResult1D] {
-        &self.ms2_storage
+    pub fn get_slim(&self, idx: usize) -> Option<&SlimCluster> {
+        self.ms2_slim.get(idx)
     }
 
+    /// Get slim cluster by cluster_id (always available, fast, no I/O)
+    #[inline]
+    pub fn get_slim_by_id(&self, cid: u64) -> Option<&SlimCluster> {
+        self.id_to_idx.get(&cid).and_then(|&i| self.ms2_slim.get(i))
+    }
+
+    /// Number of MS2 clusters in the index
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.ms2_slim.len()
+    }
+
+    /// Check if the index is empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.ms2_slim.is_empty()
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessor methods for full data (optional, may require loading)
+    // -------------------------------------------------------------------------
+
+    /// Get full cluster data slice (only available if `has_full_data()` is true)
+    #[inline]
+    pub fn ms2_slice(&self) -> Option<&[ClusterResult1D]> {
+        self.ms2_full.as_ref().map(|arc| arc.as_ref())
+    }
+
+    /// Get full cluster by index (only available if `has_full_data()` is true)
     #[inline]
     pub fn get_ms2_by_index(&self, idx: usize) -> Option<&ClusterResult1D> {
-        self.ms2_storage.get(idx)
+        self.ms2_full.as_ref().and_then(|arc| arc.get(idx))
     }
 
+    /// Get full cluster by cluster_id (only available if `has_full_data()` is true)
     #[inline]
     pub fn get_ms2_by_cluster_id(&self, cid: u64) -> Option<&ClusterResult1D> {
-        self.id_to_idx.get(&cid).and_then(|&i| self.ms2_storage.get(i))
+        self.id_to_idx.get(&cid).and_then(|&i| self.get_ms2_by_index(i))
     }
 
-    fn build_with_storage(dia_index: Arc<DiaIndex>, ms2_storage: Arc<[ClusterResult1D]>, opts: &CandidateOpts) -> Self {
-        let ms2: &[ClusterResult1D] = &ms2_storage;
-        let frame_time = &dia_index.frame_time;
+    /// Check if full cluster data is loaded (needed for XIC scoring)
+    #[inline]
+    pub fn has_full_data(&self) -> bool {
+        self.ms2_full.is_some()
+    }
 
-        // 1) Absolute MS2 time bounds (seconds)
-        let ms2_time_bounds: Vec<(f64, f64)> = ms2
+    /// Check if parquet path is set for lazy loading
+    #[inline]
+    pub fn can_load_full_data(&self) -> bool {
+        self.parquet_dir.is_some()
+    }
+
+    /// Load full data from parquet directory (if path is set).
+    /// After calling this, `has_full_data()` will return true.
+    pub fn load_full_data(&mut self) -> io::Result<()> {
+        if self.ms2_full.is_some() {
+            return Ok(()); // Already loaded
+        }
+
+        let dir = self.parquet_dir.as_ref()
+            .ok_or_else(|| io::Error::new(
+                io::ErrorKind::NotFound,
+                "No parquet directory set for lazy loading"
+            ))?;
+
+        // Load full clusters from parquet
+        let full_clusters = load_all_parquet_full(dir)?;
+        self.ms2_full = Some(Arc::from(full_clusters.into_boxed_slice()));
+        Ok(())
+    }
+
+    // -------------------------------------------------------------------------
+    // Internal builder from slim data
+    // -------------------------------------------------------------------------
+
+    /// Build index from slim cluster data.
+    /// This is the core builder used by all constructors.
+    fn build_from_slim(
+        dia_index: Arc<DiaIndex>,
+        ms2_slim: Vec<SlimCluster>,
+        ms2_full: Option<Arc<[ClusterResult1D]>>,
+        parquet_dir: Option<PathBuf>,
+        opts: &CandidateOpts,
+    ) -> Self {
+        // 1) Build keep mask from slim data (parallel for large datasets)
+        let ms2_keep: Vec<bool> = ms2_slim
             .par_iter()
             .map(|c| {
-                let mut t_lo = f64::INFINITY;
-                let mut t_hi = f64::NEG_INFINITY;
-
-                if !c.frame_ids_used.is_empty() {
-                    for &fid in &c.frame_ids_used {
-                        if let Some(&t) = frame_time.get(&fid) {
-                            if t < t_lo { t_lo = t; }
-                            if t > t_hi { t_hi = t; }
-                        }
-                    }
-                }
-
-                if !t_lo.is_finite() || !t_hi.is_finite() {
-                    let (rt_lo, rt_hi) = c.rt_window;
-                    if rt_hi >= rt_lo {
-                        for fid in rt_lo as u32..=rt_hi as u32 {
-                            if let Some(&t) = frame_time.get(&fid) {
-                                if t < t_lo { t_lo = t; }
-                                if t > t_hi { t_hi = t; }
-                            }
-                        }
-                    }
-                }
-
-                (t_lo, t_hi)
-            })
-            .collect();
-
-        // 2) Keep mask
-        let ms2_keep: Vec<bool> = ms2
-            .par_iter()
-            .enumerate()
-            .map(|(i, c)| {
-                if c.ms_level != 2 {
-                    return false;
-                }
-                if c.window_group.is_none() {
-                    return false;
-                }
-                if c.raw_sum < opts.min_raw_sum {
-                    return false;
-                }
-
-                let (mut t0, mut t1) = ms2_time_bounds[i];
-                if t0.is_finite() { t0 -= opts.ms2_rt_guard_sec; }
-                if t1.is_finite() { t1 += opts.ms2_rt_guard_sec; }
-
-                if !(t0.is_finite() && t1.is_finite() && t1 > t0) {
-                    return false;
-                }
-
-                if let Some(max_rt) = opts.max_ms2_rt_span_sec {
-                    if (t1 - t0) > max_rt {
-                        return false;
-                    }
-                }
-
+                if c.ms_level != 2 { return false; }
+                if c.window_group.is_none() { return false; }
+                if c.raw_sum < opts.min_raw_sum { return false; }
+                if !c.rt_mu.is_finite() || c.rt_mu <= 0.0 { return false; }
                 true
             })
             .collect();
 
-        // 3) IM windows + IM apex
-        let ms2_im_windows: Vec<(usize, usize)> = ms2.iter().map(|c| c.im_window).collect();
-
-        let ms2_im_mu: Vec<f32> = ms2
-            .iter()
-            .map(|c| {
-                let mu = c.im_fit.mu;
-                if mu.is_finite() && mu > 0.0 {
-                    mu
-                } else {
-                    let (lo, hi) = c.im_window;
-                    if hi > lo { ((lo + hi) as f32) * 0.5 } else { f32::NAN }
-                }
-            })
-            .collect();
-
-        let ms2_cluster_ids: Vec<u64> = ms2.iter().map(|c| c.cluster_id).collect();
-
-        // 4) RT apex (seconds)
-        let ms2_rt_apex: Vec<f32> = ms2
-            .iter()
-            .enumerate()
-            .map(|(i, c)| {
-                let mu = c.rt_fit.mu;
-                if mu.is_finite() && mu > 0.0 {
-                    mu
-                } else {
-                    let (t0, t1) = ms2_time_bounds[i];
-                    if t0.is_finite() && t1.is_finite() && t1 > t0 {
-                        ((t0 + t1) * 0.5) as f32
-                    } else {
-                        f32::NAN
-                    }
-                }
-            })
-            .collect();
-
-        // 5) Representative m/z
-        let ms2_mz_mu: Vec<f32> = ms2
-            .iter()
-            .map(|c| {
-                if let Some(m) = cluster_mz_mu(c) {
-                    if m.is_finite() && m > 0.0 {
-                        m
-                    } else {
-                        match c.mz_window {
-                            Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => 0.5 * (lo + hi) as f32,
-                            _ => f32::NAN,
-                        }
-                    }
-                } else {
-                    match c.mz_window {
-                        Some((lo, hi)) if lo.is_finite() && hi.is_finite() && hi > lo => 0.5 * (lo + hi) as f32,
-                        _ => f32::NAN,
-                    }
-                }
-            })
-            .collect();
-
-        // 6) Group and sort by RT apex
+        // 2) Build by_group and id_to_idx in single pass
         let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
-        for (j, c2) in ms2.iter().enumerate() {
-            if !ms2_keep[j] {
-                continue;
-            }
-            let g = match c2.window_group {
+        let mut id_to_idx: HashMap<u64, usize> = HashMap::with_capacity(ms2_slim.len());
+
+        for (j, c) in ms2_slim.iter().enumerate() {
+            // Always build id_to_idx
+            id_to_idx.insert(c.cluster_id, j);
+
+            // Only index valid clusters
+            if !ms2_keep[j] { continue; }
+
+            let g = match c.window_group {
                 Some(g) => g,
                 None => continue,
             };
-            let rt = ms2_rt_apex[j];
-            if !rt.is_finite() {
-                continue;
-            }
+
+            let rt = c.rt_mu;
+            if !rt.is_finite() { continue; }
+
             by_group_raw.entry(g).or_default().push((rt, j));
         }
 
-        let mut by_group: HashMap<u32, FragmentGroupIndex> = HashMap::new();
+        // 3) Sort each group by RT (for binary search during queries)
+        let mut by_group: HashMap<u32, FragmentGroupIndex> = HashMap::with_capacity(by_group_raw.len());
         for (g, mut v) in by_group_raw {
             v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             let (rt_apex, ms2_indices): (Vec<f32>, Vec<usize>) = v.into_iter().unzip();
             by_group.insert(g, FragmentGroupIndex { ms2_indices, rt_apex });
         }
 
-        // 7) cluster_id -> idx
-        let id_to_idx: HashMap<u64, usize> = ms2_cluster_ids
-            .iter()
-            .enumerate()
-            .map(|(i, &cid)| (cid, i))
-            .collect();
-
         Self {
             dia_index,
-            ms2_storage,
+            ms2_slim,
+            ms2_full,
+            parquet_dir,
             ms2_keep,
-            ms2_im_windows,
-            ms2_im_mu,
-            ms2_mz_mu,
             by_group,
             id_to_idx,
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Constructors
+    // -------------------------------------------------------------------------
+
+    /// Create from a single parquet file.
+    /// Uses slim storage by default (low RAM). Call `load_full_data()` for XIC scoring.
     pub fn from_parquet_file(dia_index: Arc<DiaIndex>, parquet_path: impl AsRef<Path>, opts: &CandidateOpts) -> io::Result<Self> {
         let path_str = parquet_path
             .as_ref()
@@ -486,63 +530,63 @@ impl FragmentIndex {
         Ok(Self::from_owned(dia_index, clusters, opts))
     }
 
+    /// Create from a directory of parquet files.
+    /// Uses slim storage by default (low RAM). Call `load_full_data()` for XIC scoring.
     pub fn from_parquet_dir(dia_index: Arc<DiaIndex>, dir: impl AsRef<Path>, opts: &CandidateOpts) -> io::Result<Self> {
-        let dir = dir.as_ref();
-        let mut all: Vec<ClusterResult1D> = Vec::new();
-
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("parquet") {
-                continue;
-            }
-
-            let path_str = path
-                .to_str()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
-
-            let mut part = load_parquet(path_str)?;
-            all.append(&mut part);
-        }
-
-        Ok(Self::from_owned(dia_index, all, opts))
+        let dir_path = dir.as_ref().to_path_buf();
+        let all = load_all_parquet_full(&dir_path)?;
+        Ok(Self::from_owned_with_full(dia_index, all, Some(dir_path), opts))
     }
 
+    /// Create from a borrowed slice of clusters.
+    /// Uses slim storage by default (low RAM). Full data is NOT retained.
     pub fn from_slice(dia_index: Arc<DiaIndex>, ms2: &[ClusterResult1D], opts: &CandidateOpts) -> Self {
-        let storage: Arc<[ClusterResult1D]> = ms2.to_vec().into();
-        Self::build_with_storage(dia_index, storage, opts)
+        let ms2_slim: Vec<SlimCluster> = ms2.iter().map(|c| c.to_slim()).collect();
+        Self::build_from_slim(dia_index, ms2_slim, None, None, opts)
     }
 
+    /// Create from owned clusters (slim storage only, drops full data).
+    /// Uses slim storage by default (low RAM). Full data is NOT retained.
+    /// For XIC scoring, use `from_owned_with_full()` instead.
     pub fn from_owned(dia_index: Arc<DiaIndex>, ms2: Vec<ClusterResult1D>, opts: &CandidateOpts) -> Self {
-        let storage: Arc<[ClusterResult1D]> = ms2.into();
-        Self::build_with_storage(dia_index, storage, opts)
+        let ms2_slim: Vec<SlimCluster> = ms2.iter().map(|c| c.to_slim()).collect();
+        Self::build_from_slim(dia_index, ms2_slim, None, None, opts)
     }
 
-    /// Load from parquet directory using streaming (low memory).
+    /// Create from owned clusters, retaining full data for XIC scoring.
+    /// Higher RAM usage but enables XIC scoring without loading from parquet.
+    pub fn from_owned_with_full(
+        dia_index: Arc<DiaIndex>,
+        ms2: Vec<ClusterResult1D>,
+        parquet_dir: Option<PathBuf>,
+        opts: &CandidateOpts,
+    ) -> Self {
+        let ms2_slim: Vec<SlimCluster> = ms2.iter().map(|c| c.to_slim()).collect();
+        let ms2_full = Arc::from(ms2.into_boxed_slice());
+        Self::build_from_slim(dia_index, ms2_slim, Some(ms2_full), parquet_dir, opts)
+    }
+
+    /// Load from parquet directory using streaming (lowest RAM).
     ///
     /// This method:
     /// 1. Streams parquet files row-group by row-group (minimal peak RAM)
-    /// 2. Loads only essential columns (no heavy data)
-    /// 3. Converts SlimCluster to minimal ClusterResult1D
+    /// 2. Stores only SlimCluster data (~52 bytes/cluster instead of ~280)
+    /// 3. Stores parquet path for lazy loading via `load_full_data()`
     ///
-    /// Note: XIC scoring will NOT work (no traces). Use geom scoring only.
+    /// Note: XIC scoring requires calling `load_full_data()` first.
     pub fn from_parquet_dir_slim(
         dia_index: Arc<DiaIndex>,
-        dir: impl AsRef<std::path::Path>,
+        dir: impl AsRef<Path>,
         opts: &CandidateOpts,
-    ) -> std::io::Result<Self> {
+    ) -> io::Result<Self> {
         use crate::cluster::io::load_parquet_slim_streaming;
-        use crate::cluster::utility::Fit1D;
 
-        let dir = dir.as_ref();
-        let mut all_clusters: Vec<ClusterResult1D> = Vec::new();
+        let dir_path = dir.as_ref().to_path_buf();
+        let mut all_slim: Vec<SlimCluster> = Vec::new();
 
         // Collect and sort parquet files for deterministic ordering
-        let mut paths: Vec<std::path::PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(dir)? {
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&dir_path)? {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
                 continue;
@@ -555,71 +599,25 @@ impl FragmentIndex {
         }
         paths.sort();
 
-        // Stream each file and convert slim -> minimal ClusterResult1D
+        // Stream each file
         for path in paths {
             let path_str = path
                 .to_str()
-                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
 
             // Stream load slim clusters (row-group at a time)
-            let slim_clusters = load_parquet_slim_streaming(path_str)?;
-
-            // Convert to minimal ClusterResult1D
-            for slim in slim_clusters {
-                let cluster = ClusterResult1D {
-                    cluster_id: slim.cluster_id,
-                    ms_level: slim.ms_level,
-                    window_group: slim.window_group,
-                    parent_im_id: None,
-                    parent_rt_id: None,
-                    rt_window: (0, 0), // Not available in slim, but not needed for geom scoring
-                    im_window: (slim.im_window.0 as usize, slim.im_window.1 as usize),
-                    tof_window: (0, 0),
-                    tof_index_window: (0, 0),
-                    mz_window: None,
-                    rt_fit: Fit1D {
-                        mu: slim.rt_mu,
-                        sigma: slim.rt_sigma,
-                        height: 0.0,
-                        baseline: 0.0,
-                        area: 0.0,
-                        r2: 0.0,
-                        n: 0,
-                    },
-                    im_fit: Fit1D {
-                        mu: slim.im_mu,
-                        sigma: slim.im_sigma,
-                        height: 0.0,
-                        baseline: 0.0,
-                        area: 0.0,
-                        r2: 0.0,
-                        n: 0,
-                    },
-                    tof_fit: Fit1D::default(),
-                    mz_fit: Some(Fit1D {
-                        mu: slim.mz_mu,
-                        sigma: 0.0,
-                        height: 0.0,
-                        baseline: 0.0,
-                        area: 0.0,
-                        r2: 0.0,
-                        n: 0,
-                    }),
-                    raw_sum: slim.raw_sum,
-                    volume_proxy: 0.0,
-                    frame_ids_used: Vec::new(),
-                    rt_axis_sec: None,
-                    im_axis_scans: None,
-                    mz_axis_da: None,
-                    raw_points: None,
-                    rt_trace: None,
-                    im_trace: None,
-                };
-                all_clusters.push(cluster);
-            }
+            let slim_batch = load_parquet_slim_streaming(path_str)?;
+            all_slim.extend(slim_batch);
         }
 
-        Ok(Self::from_owned(dia_index, all_clusters, opts))
+        // Store parquet path for lazy loading of full data
+        Ok(Self::build_from_slim(
+            dia_index,
+            all_slim,
+            None,
+            Some(dir_path),
+            opts,
+        ))
     }
 
     fn precursor_rt_apex_sec(&self, prec: &ClusterResult1D) -> Option<f32> {
@@ -750,8 +748,9 @@ impl FragmentIndex {
                     continue;
                 }
 
-                let im2 = self.ms2_im_windows[j];
-                let frag_scan_win = (im2.0 as u32, im2.1 as u32);
+                let slim = &self.ms2_slim[j];
+                let im2 = (slim.im_window.0 as usize, slim.im_window.1 as usize);
+                let frag_scan_win = (slim.im_window.0 as u32, slim.im_window.1 as u32);
 
                 let im_overlap = {
                     let lo = prec_im_win.0.max(im2.0);
@@ -763,7 +762,7 @@ impl FragmentIndex {
                 }
 
                 if let Some(max_d) = opts.max_scan_apex_delta {
-                    let s2 = self.ms2_im_mu[j];
+                    let s2 = slim.im_mu;
                     if s2.is_finite() {
                         let d = (prec_im - s2).abs();
                         if d > max_d as f32 {
@@ -777,7 +776,7 @@ impl FragmentIndex {
                 if require_tile || reject_inside {
                     let mut tile_compatible = false;
                     let mut inside_prec_tile = false;
-                    let frag_mz = self.ms2_mz_mu[j];
+                    let frag_mz = slim.mz_mu;
 
                     for s in &slices {
                         let tile_scans = (s.scan_lo, s.scan_hi);
@@ -817,6 +816,12 @@ impl FragmentIndex {
         out
     }
 
+    /// Score candidate fragments for a precursor.
+    ///
+    /// Requires full cluster data to be loaded. If using slim-only index,
+    /// call `load_full_data()` first.
+    ///
+    /// Returns empty Vec if full data is not available.
     pub fn query_precursor_scored(
         &self,
         prec: &ClusterResult1D,
@@ -827,6 +832,12 @@ impl FragmentIndex {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
+        // Require full data for scoring
+        let ms2_data = match self.ms2_slice() {
+            Some(data) => data,
+            None => return Vec::new(), // No full data available
+        };
+
         let thin = match self.make_thin_precursor(prec) {
             Some(t) => t,
             None => return Vec::new(),
@@ -836,7 +847,7 @@ impl FragmentIndex {
 
         query_precursor_scored(
             PrecursorLike::Cluster(prec),
-            self.ms2_slice(),
+            ms2_data,
             &candidate_ids,
             mode,
             geom_opts,
@@ -845,6 +856,12 @@ impl FragmentIndex {
         )
     }
 
+    /// Score candidate fragments for multiple precursors in parallel.
+    ///
+    /// Requires full cluster data to be loaded. If using slim-only index,
+    /// call `load_full_data()` first.
+    ///
+    /// Returns empty Vec for each precursor if full data is not available.
     pub fn query_precursors_scored_par(
         &self,
         precs: &[ClusterResult1D],
@@ -854,6 +871,12 @@ impl FragmentIndex {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<Vec<ScoredHit>> {
+        // Require full data for scoring
+        let ms2_data = match self.ms2_slice() {
+            Some(data) => data,
+            None => return vec![Vec::new(); precs.len()], // No full data available
+        };
+
         let thin_precs: Vec<Option<ThinPrecursor>> = precs.iter().map(|c| self.make_thin_precursor(c)).collect();
 
         let all_candidates: Vec<Vec<usize>> = thin_precs
@@ -865,7 +888,7 @@ impl FragmentIndex {
 
         query_precursors_scored_par(
             &prec_like,
-            self.ms2_slice(),
+            ms2_data,
             &all_candidates,
             mode,
             geom_opts,
@@ -886,6 +909,12 @@ impl FragmentIndex {
         self.enumerate_candidates_for_precursor_thin(&thin, None, opts)
     }
 
+    /// Score candidate fragments for a feature.
+    ///
+    /// Requires full cluster data to be loaded. If using slim-only index,
+    /// call `load_full_data()` first.
+    ///
+    /// Returns empty Vec if full data is not available.
     pub fn query_feature_scored(
         &self,
         feat: &SimpleFeature,
@@ -895,11 +924,17 @@ impl FragmentIndex {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
+        // Require full data for scoring
+        let ms2_data = match self.ms2_slice() {
+            Some(data) => data,
+            None => return Vec::new(), // No full data available
+        };
+
         let candidate_ids = self.enumerate_candidates_for_feature(feat, opts);
 
         query_precursor_scored(
             PrecursorLike::Feature(feat),
-            self.ms2_slice(),
+            ms2_data,
             &candidate_ids,
             mode,
             geom_opts,
