@@ -189,6 +189,10 @@ def load_config(path: str | os.PathLike) -> dict:
     ms2i.setdefault("min_raw_sum", 1.0)
     ms2i.setdefault("use_slim_index", True)  # Low RAM mode: ~80% less memory
 
+    cfg["deconv"].setdefault("ms1_index", {})
+    ms1i = cfg["deconv"]["ms1_index"]
+    ms1i.setdefault("use_slim_precursors", True)  # Low RAM mode for precursor clusters
+
     q = cfg["query"]
     q.setdefault("merge_fragments", True)
     q.setdefault("merge_allow_cross_window_group", True)
@@ -268,6 +272,7 @@ def import_torch_and_deps():
 def import_imspy_and_sage():
     from imspy.timstof.dia import TimsDatasetDIA  # noqa
     from imspy.timstof.dia import CandidateOpts, FragmentIndex  # noqa
+    from imspy.timstof.dia import PrecursorIndex, SlimPrecursor  # noqa
     from imspy.timstof.dia import load_clusters_parquet  # noqa
     from imspy.timstof.dia import save_pseudo_spectra_bin  # noqa
     from imspy.timstof.clustering.feature import save_features_bin  # noqa
@@ -284,6 +289,8 @@ def import_imspy_and_sage():
         "TimsDatasetDIA": TimsDatasetDIA,
         "CandidateOpts": CandidateOpts,
         "FragmentIndex": FragmentIndex,
+        "PrecursorIndex": PrecursorIndex,
+        "SlimPrecursor": SlimPrecursor,
         "load_clusters_parquet": load_clusters_parquet,
         "save_pseudo_spectra_bin": save_pseudo_spectra_bin,
         "save_features_bin": save_features_bin,
@@ -396,7 +403,18 @@ def build_fragment_index(cfg: dict, ds, imspy: dict):
     return ms2_index
 
 
-def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: list):
+def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: list, slim_precursors: list | None = None):
+    """
+    Build pseudo-spectra from features and/or leftover clusters.
+
+    Args:
+        cfg: Config dict.
+        ms2_index: FragmentIndex for scoring.
+        features: List of SimpleFeature objects (for feature-based pseudo-spectra).
+        clusters_left: List of ClusterResult1D objects not assigned to features.
+        slim_precursors: Optional list of SlimPrecursor for memory-efficient cluster scoring.
+                        If provided and clusters_left is empty/None, uses slim scoring.
+    """
     from tqdm import tqdm
 
     ps_cfg = cfg["pseudospectra"]
@@ -445,24 +463,45 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
                 spec_features.extend(results)
         log(f"[pseudospectra] feature pseudospectra: {fmt_num(len(spec_features))}")
 
-    if bool(ps_cfg.get("build_from_clusters", True)) and clusters_left:
-        log(f"[pseudospectra] scoring {fmt_num(len(clusters_left))} leftover clusters → pseudospectra")
-        n_batches = (len(clusters_left) + batch_size - 1) // batch_size
+    # Use slim precursors if provided, otherwise use full clusters
+    use_slim_precs = slim_precursors is not None and len(slim_precursors) > 0
+    precs_to_score = slim_precursors if use_slim_precs else clusters_left
+
+    if bool(ps_cfg.get("build_from_clusters", True)) and precs_to_score:
+        mode_label = "slim" if use_slim_precs else "full"
+        log(f"[pseudospectra] scoring {fmt_num(len(precs_to_score))} {mode_label} precursors → pseudospectra")
+        n_batches = (len(precs_to_score) + batch_size - 1) // batch_size
         for i in tqdm(range(n_batches), desc="clusters→pseudospectra", ncols=100, unit="batch"):
-            u, l = i * batch_size, min((i + 1) * batch_size, len(clusters_left))
-            chunk = clusters_left[u:l]
-            results = ms2_index.score_precursors_to_pseudospectra(
-                precursor_clusters=chunk,
-                mode=mode,
-                min_score=min_score,
-                reject_frag_inside_precursor_tile=reject_inside,
-                max_rt_apex_delta_sec=max_rt_apex_delta_sec,
-                max_scan_apex_delta=max_scan_apex_delta,
-                min_im_overlap_scans=min_im_overlap_scans,
-                require_tile_compat=require_tile_compat,
-                min_fragments=min_frags,
-                max_fragments=max_frags,
-            )
+            u, l = i * batch_size, min((i + 1) * batch_size, len(precs_to_score))
+            chunk = precs_to_score[u:l]
+
+            if use_slim_precs:
+                # Use slim precursor scoring (geom only, memory-efficient)
+                results = ms2_index.score_slim_precursors_to_pseudospectra(
+                    slim_precursors=chunk,
+                    min_score=min_score,
+                    reject_frag_inside_precursor_tile=reject_inside,
+                    max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+                    max_scan_apex_delta=max_scan_apex_delta,
+                    min_im_overlap_scans=min_im_overlap_scans,
+                    require_tile_compat=require_tile_compat,
+                    min_fragments=min_frags,
+                    max_fragments=max_frags,
+                )
+            else:
+                # Use full cluster scoring
+                results = ms2_index.score_precursors_to_pseudospectra(
+                    precursor_clusters=chunk,
+                    mode=mode,
+                    min_score=min_score,
+                    reject_frag_inside_precursor_tile=reject_inside,
+                    max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+                    max_scan_apex_delta=max_scan_apex_delta,
+                    min_im_overlap_scans=min_im_overlap_scans,
+                    require_tile_compat=require_tile_compat,
+                    min_fragments=min_frags,
+                    max_fragments=max_frags,
+                )
             if results:
                 spec_clusters.extend(results)
         log(f"[pseudospectra] cluster pseudospectra: {fmt_num(len(spec_clusters))}")
@@ -685,10 +724,30 @@ def main(argv=None) -> int:
         ds = TimsDatasetDIA(inp["dataset"], use_bruker_sdk=bool(inp.get("use_bruker_sdk", False)))
 
     # --- Stage 2: Load precursor clusters ---
+    # Check if we should use slim precursor mode
+    ms1_cfg = cfg["deconv"].get("ms1_index", {})
+    use_slim_precursors = bool(ms1_cfg.get("use_slim_precursors", True))
+    features_enabled = bool(cfg["deconv"]["features"].get("enabled", True))
+
+    # Slim precursor mode only works when features are disabled (feature building needs full data)
+    can_use_slim = use_slim_precursors and not features_enabled
+    slim_precursors = None
+    prec_clusters = None
+
     with timed_stage("ms1.load"):
-        prec_clusters = stable_sort_clusters(list(load_clusters_parquet(inp["precursor_clusters"])))
-        log(f"[ms1] loaded {fmt_num(len(prec_clusters))} precursor clusters")
-        ms1_index = build_ms1_index(prec_clusters)
+        if can_use_slim:
+            # Slim mode: load minimal precursor data (~40 bytes per precursor)
+            PrecursorIndex = imspy["PrecursorIndex"]
+            prec_index = PrecursorIndex.from_parquet_dir_slim(inp["precursor_clusters"])
+            slim_precursors = prec_index.get_all_slim()
+            log(f"[ms1] loaded {fmt_num(len(slim_precursors))} slim precursors (low RAM mode)")
+            # Build MS1 index from slim data for query building
+            ms1_index = {int(p.cluster_id): p for p in slim_precursors}
+        else:
+            # Full mode: load complete cluster data
+            prec_clusters = stable_sort_clusters(list(load_clusters_parquet(inp["precursor_clusters"])))
+            log(f"[ms1] loaded {fmt_num(len(prec_clusters))} precursor clusters")
+            ms1_index = build_ms1_index(prec_clusters)
 
     # --- Stage 3: Build fragment index ---
     with timed_stage("ms2.index"):
@@ -696,13 +755,25 @@ def main(argv=None) -> int:
 
     # --- Stage 4: Build features ---
     with timed_stage("features"):
-        features = build_features(cfg, prec_clusters, imspy)
-        feature_index = build_feature_index(features) if features else None
-        clusters_left = split_leftover_clusters(prec_clusters, features)
+        if can_use_slim:
+            # Slim mode: no features (they require full cluster data)
+            log("[features] skipped (slim precursor mode)")
+            features = []
+            feature_index = None
+            clusters_left = []  # All precursors handled as slim
+        else:
+            features = build_features(cfg, prec_clusters, imspy)
+            feature_index = build_feature_index(features) if features else None
+            clusters_left = split_leftover_clusters(prec_clusters, features)
 
     # --- Stage 5: Build pseudospectra ---
     with timed_stage("pseudospectra"):
-        spec_features, spec_clusters = build_pseudospectra(cfg, ms2_index, features=features, clusters_left=clusters_left)
+        spec_features, spec_clusters = build_pseudospectra(
+            cfg, ms2_index,
+            features=features,
+            clusters_left=clusters_left,
+            slim_precursors=slim_precursors,
+        )
 
     # --- Stage 6: Build queries ---
     with timed_stage("queries"):

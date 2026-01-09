@@ -452,6 +452,53 @@ class FragmentIndex(RustWrapperObject):
         )
         return [PseudoSpectrum(ps) for ps in py_specs]
 
+    def score_slim_precursors_to_pseudospectra(
+            self,
+            slim_precursors: list["SlimPrecursor"],
+            *,
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
+            min_fragments: int = 4,
+            max_fragments: int = 512,
+    ) -> list["PseudoSpectrum"]:
+        """
+        Score slim precursors and build pseudo-spectra (memory-efficient version).
+
+        Takes SlimPrecursor objects instead of full ClusterResult1D, reducing
+        memory usage. Only geometric scoring is supported (no XIC mode).
+
+        Args:
+            slim_precursors: List of SlimPrecursor objects to score.
+            min_score: Minimum score threshold for fragment matches.
+            reject_frag_inside_precursor_tile: Reject fragments inside precursor tile.
+            max_rt_apex_delta_sec: Max RT delta between precursor and fragment.
+            max_scan_apex_delta: Max scan delta between precursor and fragment.
+            min_im_overlap_scans: Minimum IM overlap in scans.
+            require_tile_compat: Require DIA tile compatibility.
+            min_fragments: Minimum fragments per pseudo-spectrum.
+            max_fragments: Maximum fragments per pseudo-spectrum.
+
+        Returns:
+            List of PseudoSpectrum objects.
+        """
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+        py_specs = self._py.query_slim_precursors_to_pseudospectra_par(
+            [p.get_py_ptr() for p in slim_precursors],
+            min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
+            min_fragments=min_fragments,
+            max_fragments=max_fragments,
+        )
+        return [PseudoSpectrum(ps) for ps in py_specs]
+
     @classmethod
     def from_parquet_dir(
             cls,
@@ -518,7 +565,7 @@ class FragmentIndex(RustWrapperObject):
 
 class SlimPrecursor(RustWrapperObject):
     """
-    Minimal precursor representation for memory-efficient storage (~32 bytes).
+    Minimal precursor representation for memory-efficient storage (~40 bytes).
 
     Contains only the fields needed for candidate enumeration and geometric scoring.
     Use this when you don't need full cluster data (XIC traces, raw points, etc.).
@@ -558,6 +605,14 @@ class SlimPrecursor(RustWrapperObject):
     @property
     def im_mu(self) -> float:
         return self._py.im_mu
+
+    @property
+    def rt_sigma(self) -> float:
+        return self._py.rt_sigma
+
+    @property
+    def im_sigma(self) -> float:
+        return self._py.im_sigma
 
     @property
     def im_lo(self) -> int:

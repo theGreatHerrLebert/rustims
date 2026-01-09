@@ -304,13 +304,15 @@ pub struct ThinPrecursor {
 
 /// Minimal precursor representation for PrecursorIndex queries.
 /// Contains only the fields needed for candidate enumeration and scoring.
-/// Size: ~32 bytes vs ~280 bytes for full ClusterResult1D.
+/// Size: ~40 bytes vs ~280 bytes for full ClusterResult1D.
 #[derive(Clone, Debug)]
 pub struct SlimPrecursor {
     pub cluster_id: u64,       // 8 bytes - for id_to_idx lookup
     pub mz_mu: f32,            // 4 bytes - m/z apex
     pub rt_mu: f32,            // 4 bytes - RT apex in seconds
     pub im_mu: f32,            // 4 bytes - IM apex in scan space
+    pub rt_sigma: f32,         // 4 bytes - RT width (for scoring)
+    pub im_sigma: f32,         // 4 bytes - IM width (for scoring)
     pub im_window: (u16, u16), // 4 bytes - IM bounds (scans rarely > 65k)
     pub raw_sum: f32,          // 4 bytes - intensity for filtering
 }
@@ -345,6 +347,8 @@ impl ClusterResult1D {
             }),
             rt_mu: self.rt_fit.mu,
             im_mu: self.im_fit.mu,
+            rt_sigma: self.rt_fit.sigma,
+            im_sigma: self.im_fit.sigma,
             im_window: (self.im_window.0 as u16, self.im_window.1 as u16),
             raw_sum: self.raw_sum,
         }
@@ -1244,6 +1248,81 @@ impl FragmentIndex {
         });
 
         out
+    }
+
+    // -------------------------------------------------------------------------
+    // SlimPrecursor scoring methods (for slim-only precursor mode)
+    // -------------------------------------------------------------------------
+
+    /// Make a ThinPrecursor from a SlimPrecursor for candidate enumeration.
+    #[inline]
+    fn make_thin_from_slim(&self, slim: &SlimPrecursor) -> ThinPrecursor {
+        ThinPrecursor {
+            mz_mu: slim.mz_mu,
+            rt_mu: slim.rt_mu,
+            im_mu: slim.im_mu,
+            im_window: (slim.im_window.0 as usize, slim.im_window.1 as usize),
+        }
+    }
+
+    /// Score candidate fragments for a SlimPrecursor.
+    /// Only supports geometric scoring (slim data doesn't have traces for XIC).
+    pub fn query_slim_precursor_scored(
+        &self,
+        prec: &SlimPrecursor,
+        opts: &FragmentQueryOpts,
+        geom_opts: &ScoreOpts,
+        min_score: f32,
+    ) -> Vec<ScoredHit> {
+        use std::cmp::Ordering;
+
+        let thin = self.make_thin_from_slim(prec);
+        let candidate_ids = self.enumerate_candidates_for_precursor_thin(&thin, None, opts);
+
+        let prec_im_window = (prec.im_window.0 as usize, prec.im_window.1 as usize);
+        let mut out: Vec<ScoredHit> = Vec::with_capacity(candidate_ids.len());
+
+        for &j in &candidate_ids {
+            if let Some(frag) = self.ms2_slim.get(j) {
+                let f = build_features_slim(
+                    prec.rt_mu, prec.rt_sigma,
+                    prec.im_mu, prec.im_sigma,
+                    prec_im_window, prec.raw_sum,
+                    frag, geom_opts,
+                );
+                let s = score_from_features(&f, geom_opts);
+
+                if s.is_finite() && s >= min_score {
+                    out.push(ScoredHit {
+                        frag_idx: j,
+                        score: s,
+                        geom: Some(f),
+                        xic: None,
+                    });
+                }
+            }
+        }
+
+        out.sort_unstable_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal)
+        });
+
+        out
+    }
+
+    /// Score candidate fragments for multiple SlimPrecursors in parallel.
+    /// Only supports geometric scoring.
+    pub fn query_slim_precursors_scored_par(
+        &self,
+        precs: &[SlimPrecursor],
+        opts: &FragmentQueryOpts,
+        geom_opts: &ScoreOpts,
+        min_score: f32,
+    ) -> Vec<Vec<ScoredHit>> {
+        precs
+            .par_iter()
+            .map(|prec| self.query_slim_precursor_scored(prec, opts, geom_opts, min_score))
+            .collect()
     }
 }
 

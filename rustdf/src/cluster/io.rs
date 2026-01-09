@@ -1134,17 +1134,19 @@ pub fn load_feature_bincode(path: &str) -> io::Result<Vec<SimpleFeature>> {
 // ---------------------------------------------------------------------------
 
 /// Load SlimPrecursor data from parquet using Polars (fast columnar read).
-/// Only reads the columns needed for SlimPrecursor (~32 bytes/precursor).
+/// Only reads the columns needed for SlimPrecursor (~40 bytes/precursor).
 pub fn load_parquet_precursor_slim(path: &str) -> io::Result<Vec<SlimPrecursor>> {
     use polars::prelude::*;
 
     let f = File::open(path)?;
 
-    // Only read the columns we need for slim precursors
+    // Only read the columns we need for slim precursors (including sigma for scoring)
     let cols = vec![
         "cluster_id".into(),
         "rt_mu".into(),
+        "rt_sigma".into(),
         "im_mu".into(),
+        "im_sigma".into(),
         "im_lo".into(),
         "im_hi".into(),
         "mz_mu".into(),
@@ -1169,9 +1171,17 @@ pub fn load_parquet_precursor_slim(path: &str) -> io::Result<Vec<SlimPrecursor>>
         .f32().map_err(to_io)?
         .into_iter().map(|v| v.unwrap_or(0.0)).collect();
 
+    let rt_sigmas: Vec<f32> = df.column("rt_sigma").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(1.0)).collect();
+
     let im_mus: Vec<f32> = df.column("im_mu").map_err(to_io)?
         .f32().map_err(to_io)?
         .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    let im_sigmas: Vec<f32> = df.column("im_sigma").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(1.0)).collect();
 
     let im_los: Vec<u32> = df.column("im_lo").map_err(to_io)?
         .u32().map_err(to_io)?
@@ -1212,6 +1222,8 @@ pub fn load_parquet_precursor_slim(path: &str) -> io::Result<Vec<SlimPrecursor>>
             mz_mu,
             rt_mu: rt_mus[i],
             im_mu: im_mus[i],
+            rt_sigma: rt_sigmas[i],
+            im_sigma: im_sigmas[i],
             im_window: (im_los[i] as u16, im_his[i] as u16),
             raw_sum: raw_sums[i],
         });
