@@ -10,8 +10,8 @@ use crate::cluster::feature::SimpleFeature;
 use crate::cluster::io::load_parquet;
 use crate::cluster::pseudo::{cluster_mz_mu, PseudoFragment};
 use crate::cluster::scoring::{
-    query_precursor_scored, query_precursors_scored_par, MatchScoreMode, PrecursorLike, ScoredHit,
-    XicScoreOpts,
+    query_precursor_scored, MatchScoreMode, PrecursorLike, ScoredHit,
+    XicScoreOpts, score_from_features,
 };
 use crate::data::dia::{DiaIndex};
 
@@ -159,6 +159,68 @@ pub fn build_features(ms1: &ClusterResult1D,
         im_overlap_scans: im_inter,
         im_union_scans: im_union,
         ms1_raw_sum: ms1.raw_sum,
+        shape_ok,
+        z_rt,
+        z_im,
+        s_shape,
+    }
+}
+
+/// Build geometric scoring features from slim data (ThinPrecursor + SlimCluster).
+/// This enables geometric scoring without loading full cluster data.
+#[inline]
+pub fn build_features_slim(
+    prec_rt_mu: f32,
+    prec_rt_sigma: f32,
+    prec_im_mu: f32,
+    prec_im_sigma: f32,
+    prec_im_window: (usize, usize),
+    prec_raw_sum: f32,
+    frag: &SlimCluster,
+    opts: &ScoreOpts,
+) -> PairFeatures {
+    // RT bounds from mu±3σ
+    let (rt1_lo, rt1_hi) = (
+        prec_rt_mu as f64 - (prec_rt_sigma as f64) * 3.0,
+        prec_rt_mu as f64 + (prec_rt_sigma as f64) * 3.0,
+    );
+    let (rt2_lo, rt2_hi) = (
+        frag.rt_mu as f64 - (frag.rt_sigma as f64) * 3.0,
+        frag.rt_mu as f64 + (frag.rt_sigma as f64) * 3.0,
+    );
+
+    let jacc_rt = crate::cluster::scoring::jaccard_time(rt1_lo, rt1_hi, rt2_lo, rt2_hi).clamp(0.0, 1.0);
+
+    let rt_apex_delta_s = (prec_rt_mu - frag.rt_mu).abs();
+    let im_apex_delta_scans = (prec_im_mu - frag.im_mu).abs();
+
+    let frag_im_window = (frag.im_window.0 as usize, frag.im_window.1 as usize);
+    let (im_inter, im_union) = im_overlap_and_union(prec_im_window, frag_im_window);
+
+    let s1_rt = prec_rt_sigma.max(opts.min_sigma_rt);
+    let s2_rt = frag.rt_sigma.max(opts.min_sigma_rt);
+    let s1_im = prec_im_sigma.max(opts.min_sigma_im);
+    let s2_im = frag.im_sigma.max(opts.min_sigma_im);
+
+    let (mut shape_ok, mut z_rt, mut z_im, mut s_shape) = (false, 0.0, 0.0, 0.0);
+    if let (Some(sig_rt), Some(sig_im)) = (pooled_sigma(s1_rt, s2_rt), pooled_sigma(s1_im, s2_im)) {
+        if sig_rt.is_finite() && sig_rt > 0.0 && sig_im.is_finite() && sig_im > 0.0 {
+            z_rt = rt_apex_delta_s / sig_rt;
+            z_im = im_apex_delta_scans / sig_im;
+            let q = -0.5_f32 * (opts.w_shape_rt_inner * z_rt * z_rt
+                + opts.w_shape_im_inner * z_im * z_im);
+            s_shape = q.exp();
+            shape_ok = s_shape.is_finite();
+        }
+    }
+
+    PairFeatures {
+        jacc_rt,
+        rt_apex_delta_s,
+        im_apex_delta_scans,
+        im_overlap_scans: im_inter,
+        im_union_scans: im_union,
+        ms1_raw_sum: prec_raw_sum,
         shape_ok,
         z_rt,
         z_im,
@@ -921,10 +983,10 @@ impl FragmentIndex {
 
     /// Score candidate fragments for a precursor.
     ///
-    /// Requires full cluster data to be loaded. If using slim-only index,
-    /// call `load_full_data()` first.
+    /// For full data mode (XIC scoring), requires `has_full_data() == true`.
+    /// For slim mode (geom scoring only), works with slim data.
     ///
-    /// Returns empty Vec if full data is not available.
+    /// Note: XIC scoring requires full data; geom scoring works with slim data.
     pub fn query_precursor_scored(
         &self,
         prec: &ClusterResult1D,
@@ -935,12 +997,6 @@ impl FragmentIndex {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
-        // Require full data for scoring
-        let ms2_data = match self.ms2_slice() {
-            Some(data) => data,
-            None => return Vec::new(), // No full data available
-        };
-
         let thin = match self.make_thin_precursor(prec) {
             Some(t) => t,
             None => return Vec::new(),
@@ -948,23 +1004,37 @@ impl FragmentIndex {
 
         let candidate_ids = self.enumerate_candidates_for_precursor_thin(&thin, window_groups, opts);
 
-        query_precursor_scored(
-            PrecursorLike::Cluster(prec),
-            ms2_data,
-            &candidate_ids,
-            mode,
-            geom_opts,
-            xic_opts,
-            min_score,
-        )
+        // Try full data first, fall back to slim for geom scoring
+        if let Some(ms2_data) = self.ms2_slice() {
+            query_precursor_scored(
+                PrecursorLike::Cluster(prec),
+                ms2_data,
+                &candidate_ids,
+                mode,
+                geom_opts,
+                xic_opts,
+                min_score,
+            )
+        } else {
+            // Slim mode - only geometric scoring is supported
+            match mode {
+                MatchScoreMode::Geom => {
+                    self.query_precursor_scored_slim(prec, &candidate_ids, geom_opts, min_score)
+                }
+                MatchScoreMode::Xic => {
+                    // XIC requires full data - return empty
+                    Vec::new()
+                }
+            }
+        }
     }
 
     /// Score candidate fragments for multiple precursors in parallel.
     ///
-    /// Requires full cluster data to be loaded. If using slim-only index,
-    /// call `load_full_data()` first.
+    /// For full data mode (XIC scoring), requires `has_full_data() == true`.
+    /// For slim mode (geom scoring only), works with slim data.
     ///
-    /// Returns empty Vec for each precursor if full data is not available.
+    /// Note: XIC scoring requires full data; geom scoring works with slim data.
     pub fn query_precursors_scored_par(
         &self,
         precs: &[ClusterResult1D],
@@ -974,12 +1044,6 @@ impl FragmentIndex {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<Vec<ScoredHit>> {
-        // Require full data for scoring
-        let ms2_data = match self.ms2_slice() {
-            Some(data) => data,
-            None => return vec![Vec::new(); precs.len()], // No full data available
-        };
-
         let thin_precs: Vec<Option<ThinPrecursor>> = precs.iter().map(|c| self.make_thin_precursor(c)).collect();
 
         let all_candidates: Vec<Vec<usize>> = thin_precs
@@ -987,17 +1051,41 @@ impl FragmentIndex {
             .map(|p| p.as_ref().map(|tp| self.enumerate_candidates_for_precursor_thin(tp, None, opts)).unwrap_or_default())
             .collect();
 
-        let prec_like: Vec<PrecursorLike<'_>> = precs.iter().map(|c| PrecursorLike::Cluster(c)).collect();
-
-        query_precursors_scored_par(
-            &prec_like,
-            ms2_data,
-            &all_candidates,
-            mode,
-            geom_opts,
-            xic_opts,
-            min_score,
-        )
+        // Try full data first, fall back to slim for geom scoring
+        if let Some(ms2_data) = self.ms2_slice() {
+            precs
+                .par_iter()
+                .zip(all_candidates.par_iter())
+                .map(|(prec, cands)| {
+                    query_precursor_scored(
+                        PrecursorLike::Cluster(prec),
+                        ms2_data,
+                        cands,
+                        mode,
+                        geom_opts,
+                        xic_opts,
+                        min_score,
+                    )
+                })
+                .collect()
+        } else {
+            // Slim mode - only geometric scoring is supported
+            match mode {
+                MatchScoreMode::Geom => {
+                    precs
+                        .par_iter()
+                        .zip(all_candidates.par_iter())
+                        .map(|(prec, cands)| {
+                            self.query_precursor_scored_slim(prec, cands, geom_opts, min_score)
+                        })
+                        .collect()
+                }
+                MatchScoreMode::Xic => {
+                    // XIC requires full data - return empty for all
+                    vec![Vec::new(); precs.len()]
+                }
+            }
+        }
     }
 
     pub fn enumerate_candidates_for_feature(&self, feat: &SimpleFeature, opts: &FragmentQueryOpts) -> Vec<usize> {
@@ -1014,10 +1102,10 @@ impl FragmentIndex {
 
     /// Score candidate fragments for a feature.
     ///
-    /// Requires full cluster data to be loaded. If using slim-only index,
-    /// call `load_full_data()` first.
+    /// For full data mode (XIC scoring), requires `has_full_data() == true`.
+    /// For slim mode (geom scoring only), works with slim data.
     ///
-    /// Returns empty Vec if full data is not available.
+    /// Note: XIC scoring requires full data; geom scoring works with slim data.
     pub fn query_feature_scored(
         &self,
         feat: &SimpleFeature,
@@ -1027,23 +1115,135 @@ impl FragmentIndex {
         xic_opts: &XicScoreOpts,
         min_score: f32,
     ) -> Vec<ScoredHit> {
-        // Require full data for scoring
-        let ms2_data = match self.ms2_slice() {
-            Some(data) => data,
-            None => return Vec::new(), // No full data available
-        };
-
         let candidate_ids = self.enumerate_candidates_for_feature(feat, opts);
 
-        query_precursor_scored(
-            PrecursorLike::Feature(feat),
-            ms2_data,
-            &candidate_ids,
-            mode,
-            geom_opts,
-            xic_opts,
-            min_score,
-        )
+        // Try full data first, fall back to slim for geom scoring
+        if let Some(ms2_data) = self.ms2_slice() {
+            query_precursor_scored(
+                PrecursorLike::Feature(feat),
+                ms2_data,
+                &candidate_ids,
+                mode,
+                geom_opts,
+                xic_opts,
+                min_score,
+            )
+        } else {
+            // Slim mode - only geometric scoring is supported
+            match mode {
+                MatchScoreMode::Geom => {
+                    self.query_feature_scored_slim(feat, &candidate_ids, geom_opts, min_score)
+                }
+                MatchScoreMode::Xic => {
+                    // XIC requires full data - return empty
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    /// Score candidate fragments for a feature using slim data only.
+    /// Only supports geometric scoring (no XIC traces available in slim data).
+    fn query_feature_scored_slim(
+        &self,
+        feat: &SimpleFeature,
+        candidate_ids: &[usize],
+        geom_opts: &ScoreOpts,
+        min_score: f32,
+    ) -> Vec<ScoredHit> {
+        use std::cmp::Ordering;
+
+        // Get precursor info from feature's top cluster
+        let top = match feat.member_clusters.iter().max_by(|a, b| {
+            a.raw_sum.partial_cmp(&b.raw_sum).unwrap_or(Ordering::Equal)
+        }) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let prec_rt_mu = top.rt_fit.mu;
+        let prec_rt_sigma = top.rt_fit.sigma;
+        let prec_im_mu = top.im_fit.mu;
+        let prec_im_sigma = top.im_fit.sigma;
+        let prec_im_window = top.im_window;
+        let prec_raw_sum = top.raw_sum;
+
+        let mut out: Vec<ScoredHit> = Vec::with_capacity(candidate_ids.len());
+
+        for &j in candidate_ids {
+            if let Some(frag) = self.ms2_slim.get(j) {
+                let f = build_features_slim(
+                    prec_rt_mu, prec_rt_sigma,
+                    prec_im_mu, prec_im_sigma,
+                    prec_im_window, prec_raw_sum,
+                    frag, geom_opts,
+                );
+                let s = score_from_features(&f, geom_opts);
+
+                if s.is_finite() && s >= min_score {
+                    out.push(ScoredHit {
+                        frag_idx: j,
+                        score: s,
+                        geom: Some(f),
+                        xic: None,
+                    });
+                }
+            }
+        }
+
+        out.sort_unstable_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal)
+        });
+
+        out
+    }
+
+    /// Score candidate fragments for a precursor cluster using slim data only.
+    /// Only supports geometric scoring (no XIC traces available in slim data).
+    pub fn query_precursor_scored_slim(
+        &self,
+        prec: &ClusterResult1D,
+        candidate_ids: &[usize],
+        geom_opts: &ScoreOpts,
+        min_score: f32,
+    ) -> Vec<ScoredHit> {
+        use std::cmp::Ordering;
+
+        let prec_rt_mu = prec.rt_fit.mu;
+        let prec_rt_sigma = prec.rt_fit.sigma;
+        let prec_im_mu = prec.im_fit.mu;
+        let prec_im_sigma = prec.im_fit.sigma;
+        let prec_im_window = prec.im_window;
+        let prec_raw_sum = prec.raw_sum;
+
+        let mut out: Vec<ScoredHit> = Vec::with_capacity(candidate_ids.len());
+
+        for &j in candidate_ids {
+            if let Some(frag) = self.ms2_slim.get(j) {
+                let f = build_features_slim(
+                    prec_rt_mu, prec_rt_sigma,
+                    prec_im_mu, prec_im_sigma,
+                    prec_im_window, prec_raw_sum,
+                    frag, geom_opts,
+                );
+                let s = score_from_features(&f, geom_opts);
+
+                if s.is_finite() && s >= min_score {
+                    out.push(ScoredHit {
+                        frag_idx: j,
+                        score: s,
+                        geom: Some(f),
+                        xic: None,
+                    });
+                }
+            }
+        }
+
+        out.sort_unstable_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal)
+        });
+
+        out
     }
 }
 

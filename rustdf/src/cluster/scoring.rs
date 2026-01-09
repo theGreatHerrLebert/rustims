@@ -857,7 +857,7 @@ pub fn enumerate_ms2_ms1_pairs_simple(
 /// Single scalar score in [0, ∞), larger is better.
 /// Robust to missing fits (uses `shape_neutral` if shape is unavailable).
 #[inline]
-fn score_from_features(f: &PairFeatures, opts: &ScoreOpts) -> f32 {
+pub fn score_from_features(f: &PairFeatures, opts: &ScoreOpts) -> f32 {
     let shape_term = if f.shape_ok { f.s_shape } else { opts.shape_neutral };
 
     let rt_close = crate::cluster::candidates::exp_decay(f.rt_apex_delta_s, opts.rt_apex_scale_s);
