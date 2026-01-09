@@ -297,6 +297,22 @@ impl ClusterResult1D {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: format numbers with thousand separators
+// ---------------------------------------------------------------------------
+
+fn fmt_num(n: usize) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result.chars().rev().collect()
+}
+
+// ---------------------------------------------------------------------------
 // Helper: load all parquet files from a directory
 // ---------------------------------------------------------------------------
 
@@ -334,8 +350,8 @@ fn load_all_parquet_full(dir: &Path) -> io::Result<Vec<ClusterResult1D>> {
             "[FragmentIndex] file {}/{}: {} clusters loaded (total: {})",
             i + 1,
             n_files,
-            part_len,
-            all.len()
+            fmt_num(part_len),
+            fmt_num(all.len())
         );
     }
 
@@ -473,7 +489,7 @@ impl FragmentIndex {
         parquet_dir: Option<PathBuf>,
         opts: &CandidateOpts,
     ) -> Self {
-        eprintln!("[FragmentIndex] building index from {} clusters...", ms2_slim.len());
+        eprintln!("[FragmentIndex] building index from {} clusters...", fmt_num(ms2_slim.len()));
 
         // 1) Build keep mask from slim data (parallel for large datasets)
         eprintln!("[FragmentIndex] step 1/3: filtering clusters...");
@@ -489,7 +505,7 @@ impl FragmentIndex {
             .collect();
 
         let kept = ms2_keep.iter().filter(|&&k| k).count();
-        eprintln!("[FragmentIndex] step 1/3: {} of {} clusters pass filter", kept, ms2_slim.len());
+        eprintln!("[FragmentIndex] step 1/3: {} of {} clusters pass filter", fmt_num(kept), fmt_num(ms2_slim.len()));
 
         // 2) Build by_group and id_to_idx in single pass
         eprintln!("[FragmentIndex] step 2/3: building lookup tables...");
@@ -639,8 +655,8 @@ impl FragmentIndex {
                 "[FragmentIndex] file {}/{}: {} clusters loaded (total: {})",
                 i + 1,
                 n_files,
-                batch_len,
-                all_slim.len()
+                fmt_num(batch_len),
+                fmt_num(all_slim.len())
             );
         }
 
