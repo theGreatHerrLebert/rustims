@@ -829,74 +829,113 @@ pub fn load_parquet_slim(path: &str) -> io::Result<Vec<SlimCluster>> {
     Ok(out)
 }
 
-/// Ultra-low-memory parquet reader using direct parquet crate access.
-/// Reads row-groups one at a time without materializing entire file.
-/// RAM usage: Only holds one row-group + output SlimClusters at a time.
+/// Fast Polars-based slim parquet reader.
+/// Only reads columns needed for SlimCluster, skipping heavy data (traces, raw_points).
+/// Much faster than row-by-row iteration.
 pub fn load_parquet_slim_streaming(path: &str) -> io::Result<Vec<SlimCluster>> {
-    use parquet::file::reader::{FileReader, SerializedFileReader};
-    use parquet::record::RowAccessor;
-    use std::fs::File;
+    use polars::prelude::*;
 
-    let file = File::open(path)?;
-    let reader = SerializedFileReader::new(file)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let f = File::open(path)?;
 
-    let metadata = reader.metadata();
-    let num_rows = metadata.file_metadata().num_rows() as usize;
+    // Only read the columns we need for SlimCluster
+    let cols = vec![
+        "cluster_id".into(),
+        "ms_level".into(),
+        "window_group".into(),
+        "rt_mu".into(),
+        "rt_sigma".into(),
+        "im_mu".into(),
+        "im_sigma".into(),
+        "im_lo".into(),
+        "im_hi".into(),
+        "mz_mu".into(),
+        "mz_lo".into(),
+        "mz_hi".into(),
+        "raw_sum".into(),
+    ];
 
-    let mut out = Vec::with_capacity(num_rows);
+    let df = ParquetReader::new(f)
+        .with_columns(Some(cols))
+        .finish()
+        .map_err(to_io)?;
 
-    // Process row-groups one at a time to minimize peak memory
-    let num_row_groups = metadata.num_row_groups();
-    for rg_idx in 0..num_row_groups {
-        let row_group = reader.get_row_group(rg_idx)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let n = df.height();
 
-        // Build a row iterator for this row group
-        let iter = row_group.get_row_iter(None)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    // Extract columns
+    let cluster_ids: Vec<u64> = df.column("cluster_id").map_err(to_io)?
+        .u64().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
 
-        for row_result in iter {
-            let row = row_result
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let ms_levels: Vec<u8> = df.column("ms_level").map_err(to_io)?
+        .u8().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
 
-            // Extract fields by name - get column indices first
-            let cluster_id = row.get_long(0).unwrap_or(0) as u64;
-            let ms_level = row.get_ubyte(1).unwrap_or(0);
-            let window_group = row.get_uint(2).ok();
-            let rt_mu = row.get_float(5).unwrap_or(0.0);
-            let rt_sigma = row.get_float(6).unwrap_or(0.0);
-            let im_mu = row.get_float(9).unwrap_or(0.0);
-            let im_sigma = row.get_float(10).unwrap_or(0.0);
-            let im_lo = row.get_uint(7).unwrap_or(0) as u16;
-            let im_hi = row.get_uint(8).unwrap_or(0) as u16;
-            let raw_sum = row.get_float(24).unwrap_or(0.0);
+    let window_groups: Vec<Option<u32>> = df.column("window_group").map_err(to_io)?
+        .u32().map_err(to_io)?
+        .into_iter().collect();
 
-            // m/z: prefer mz_mu, fallback to mz window midpoint
-            let mz_mu_opt = row.get_float(20).ok();
-            let mz_lo_opt = row.get_float(13).ok();
-            let mz_hi_opt = row.get_float(14).ok();
-            let mz_mu = mz_mu_opt.unwrap_or_else(|| {
-                match (mz_lo_opt, mz_hi_opt) {
-                    (Some(lo), Some(hi)) => 0.5 * (lo + hi),
-                    _ => 0.0,
-                }
-            });
+    let rt_mus: Vec<f32> = df.column("rt_mu").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
 
-            out.push(SlimCluster {
-                cluster_id,
-                window_group,
-                ms_level,
-                rt_mu,
-                im_mu,
-                mz_mu,
-                rt_sigma,
-                im_sigma,
-                im_window: (im_lo, im_hi),
-                raw_sum,
-            });
-        }
-        // row_group is dropped here, freeing memory before next iteration
+    let rt_sigmas: Vec<f32> = df.column("rt_sigma").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    let im_mus: Vec<f32> = df.column("im_mu").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    let im_sigmas: Vec<f32> = df.column("im_sigma").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    let im_los: Vec<u32> = df.column("im_lo").map_err(to_io)?
+        .u32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
+
+    let im_his: Vec<u32> = df.column("im_hi").map_err(to_io)?
+        .u32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0)).collect();
+
+    let mz_mus: Vec<Option<f32>> = df.column("mz_mu").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().collect();
+
+    let mz_los: Vec<Option<f32>> = df.column("mz_lo").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().collect();
+
+    let mz_his: Vec<Option<f32>> = df.column("mz_hi").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().collect();
+
+    let raw_sums: Vec<f32> = df.column("raw_sum").map_err(to_io)?
+        .f32().map_err(to_io)?
+        .into_iter().map(|v| v.unwrap_or(0.0)).collect();
+
+    // Build SlimClusters
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let mz_mu = mz_mus[i].unwrap_or_else(|| {
+            match (mz_los[i], mz_his[i]) {
+                (Some(lo), Some(hi)) => 0.5 * (lo + hi),
+                _ => 0.0,
+            }
+        });
+
+        out.push(SlimCluster {
+            cluster_id: cluster_ids[i],
+            window_group: window_groups[i],
+            ms_level: ms_levels[i],
+            rt_mu: rt_mus[i],
+            im_mu: im_mus[i],
+            mz_mu,
+            rt_sigma: rt_sigmas[i],
+            im_sigma: im_sigmas[i],
+            im_window: (im_los[i] as u16, im_his[i] as u16),
+            raw_sum: raw_sums[i],
+        });
     }
 
     Ok(out)
