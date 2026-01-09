@@ -521,6 +521,107 @@ impl FragmentIndex {
         Self::build_with_storage(dia_index, storage, opts)
     }
 
+    /// Load from parquet directory using streaming (low memory).
+    ///
+    /// This method:
+    /// 1. Streams parquet files row-group by row-group (minimal peak RAM)
+    /// 2. Loads only essential columns (no heavy data)
+    /// 3. Converts SlimCluster to minimal ClusterResult1D
+    ///
+    /// Note: XIC scoring will NOT work (no traces). Use geom scoring only.
+    pub fn from_parquet_dir_slim(
+        dia_index: Arc<DiaIndex>,
+        dir: impl AsRef<std::path::Path>,
+        opts: &CandidateOpts,
+    ) -> std::io::Result<Self> {
+        use crate::cluster::io::load_parquet_slim_streaming;
+        use crate::cluster::utility::Fit1D;
+
+        let dir = dir.as_ref();
+        let mut all_clusters: Vec<ClusterResult1D> = Vec::new();
+
+        // Collect and sort parquet files for deterministic ordering
+        let mut paths: Vec<std::path::PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("parquet") {
+                continue;
+            }
+            paths.push(path);
+        }
+        paths.sort();
+
+        // Stream each file and convert slim -> minimal ClusterResult1D
+        for path in paths {
+            let path_str = path
+                .to_str()
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
+
+            // Stream load slim clusters (row-group at a time)
+            let slim_clusters = load_parquet_slim_streaming(path_str)?;
+
+            // Convert to minimal ClusterResult1D
+            for slim in slim_clusters {
+                let cluster = ClusterResult1D {
+                    cluster_id: slim.cluster_id,
+                    ms_level: slim.ms_level,
+                    window_group: slim.window_group,
+                    parent_im_id: None,
+                    parent_rt_id: None,
+                    rt_window: (0, 0), // Not available in slim, but not needed for geom scoring
+                    im_window: (slim.im_window.0 as usize, slim.im_window.1 as usize),
+                    tof_window: (0, 0),
+                    tof_index_window: (0, 0),
+                    mz_window: None,
+                    rt_fit: Fit1D {
+                        mu: slim.rt_mu,
+                        sigma: slim.rt_sigma,
+                        height: 0.0,
+                        baseline: 0.0,
+                        area: 0.0,
+                        r2: 0.0,
+                        n: 0,
+                    },
+                    im_fit: Fit1D {
+                        mu: slim.im_mu,
+                        sigma: slim.im_sigma,
+                        height: 0.0,
+                        baseline: 0.0,
+                        area: 0.0,
+                        r2: 0.0,
+                        n: 0,
+                    },
+                    tof_fit: Fit1D::default(),
+                    mz_fit: Some(Fit1D {
+                        mu: slim.mz_mu,
+                        sigma: 0.0,
+                        height: 0.0,
+                        baseline: 0.0,
+                        area: 0.0,
+                        r2: 0.0,
+                        n: 0,
+                    }),
+                    raw_sum: slim.raw_sum,
+                    volume_proxy: 0.0,
+                    frame_ids_used: Vec::new(),
+                    rt_axis_sec: None,
+                    im_axis_scans: None,
+                    mz_axis_da: None,
+                    raw_points: None,
+                    rt_trace: None,
+                    im_trace: None,
+                };
+                all_clusters.push(cluster);
+            }
+        }
+
+        Ok(Self::from_owned(dia_index, all_clusters, opts))
+    }
+
     fn precursor_rt_apex_sec(&self, prec: &ClusterResult1D) -> Option<f32> {
         let mu = prec.rt_fit.mu;
         if mu.is_finite() && mu > 0.0 {

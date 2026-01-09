@@ -71,10 +71,22 @@ class AcquisitionMode(RustWrapperObject):
 
 class TimsDataset(ABC):
     def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True):
-        """TimsDataHandle class.
+        """TimsDataset base class for reading Bruker TimsTOF data.
 
         Args:
-            data_path (str): Path to the data.
+            data_path (str): Path to the .d folder containing the dataset.
+            in_memory (bool): If True, memory-map the binary data file for faster
+                access. Only compatible with use_bruker_sdk=False. Default: False.
+            use_bruker_sdk (bool): If True, use Bruker's SDK for accurate m/z and
+                mobility calibration. If False, use linear approximation (faster,
+                but ~1-3% less accurate). Default: True.
+
+        Raises:
+            ValueError: If in_memory=True and use_bruker_sdk=True (incompatible).
+
+        Note:
+            On macOS or non-x86_64 architectures, use_bruker_sdk is automatically
+            set to False as the Bruker SDK is not available.
         """
         self.__dataset = None
         self.binary_path = None

@@ -2072,9 +2072,10 @@ pub struct PyTimsDatasetDIA {
 #[pymethods]
 impl PyTimsDatasetDIA {
     #[new]
-    pub fn new(data_path: &str, bruker_lib_path: &str, in_memory: bool, use_bruker_sdk: bool) -> Self {
-        let dataset = TimsDatasetDIA::new(bruker_lib_path, data_path, in_memory, use_bruker_sdk);
-        PyTimsDatasetDIA { inner: dataset }
+    pub fn new(data_path: &str, bruker_lib_path: &str, in_memory: bool, use_bruker_sdk: bool) -> PyResult<Self> {
+        let dataset = TimsDatasetDIA::new(bruker_lib_path, data_path, in_memory, use_bruker_sdk)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        Ok(PyTimsDatasetDIA { inner: dataset })
     }
 
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
@@ -3751,6 +3752,32 @@ impl PyFragmentIndex {
         let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into();
 
         let idx = FragmentIndex::from_parquet_dir(dia_arc, &parquet_dir, &cand_opts.inner)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))?;
+
+        Ok(PyFragmentIndex { inner: idx })
+    }
+
+    /// Build a FragmentIndex from Parquet files using streaming (ultra-low memory).
+    ///
+    /// This method uses row-group streaming to minimize peak RAM:
+    /// - Processes one row-group at a time
+    /// - Only loads essential columns (no heavy data)
+    /// - Never holds full parquet data in memory
+    ///
+    /// Note: XIC scoring will NOT work (no traces). Use geom scoring only.
+    ///
+    /// Python signature:
+    ///   PyFragmentIndex.from_parquet_dir_slim(ds, parquet_dir, cand_opts)
+    #[staticmethod]
+    #[pyo3(signature = (ds, parquet_dir, cand_opts))]
+    pub fn from_parquet_dir_slim(
+        ds: &PyTimsDatasetDIA,
+        parquet_dir: String,
+        cand_opts: &PyCandidateOpts,
+    ) -> PyResult<Self> {
+        let dia_arc: Arc<DiaIndex> = ds.inner.dia_index.clone().into();
+
+        let idx = FragmentIndex::from_parquet_dir_slim(dia_arc, &parquet_dir, &cand_opts.inner)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("{e}")))?;
 
         Ok(PyFragmentIndex { inner: idx })

@@ -101,8 +101,23 @@ class PrecursorDDA(RustWrapperObject):
 
 
 class TimsDatasetDDA(TimsDataset, RustWrapperObject):
+    """TimsDataset for DDA (Data-Dependent Acquisition) data."""
 
     def __init__(self, data_path: str, in_memory: bool = False, use_bruker_sdk: bool = True, rename_id: bool = True):
+        """Initialize a DDA TimsTOF dataset.
+
+        Args:
+            data_path (str): Path to the .d folder containing the dataset.
+            in_memory (bool): If True, memory-map the binary data file for faster
+                access. Only compatible with use_bruker_sdk=False. Default: False.
+            use_bruker_sdk (bool): If True, use Bruker's SDK for accurate m/z and
+                mobility calibration. Default: True.
+            rename_id (bool): If True, rename 'Id' column to 'frame_id' in metadata.
+                Default: True.
+
+        Raises:
+            ValueError: If in_memory=True and use_bruker_sdk=True (incompatible).
+        """
         super().__init__(data_path=data_path, in_memory=in_memory, use_bruker_sdk=use_bruker_sdk)
         self.__dataset = ims.PyTimsDatasetDDA(self.data_path, self.binary_path, in_memory, self.use_bruker_sdk)
         if rename_id:

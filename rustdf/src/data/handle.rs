@@ -4,6 +4,7 @@ use crate::data::utility::{
     flatten_scan_values, parse_decompressed_bruker_binary_data, zstd_decompress,
 };
 use byteorder::{LittleEndian, ReadBytesExt};
+use memmap2::Mmap;
 use mscore::data::spectrum::MsType;
 use mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
@@ -590,8 +591,8 @@ impl TimsData for TimsLazyLoder {
 
 pub struct TimsInMemoryLoader {
     pub raw_data_layout: TimsRawDataLayout,
-    pub index_converter: TimsIndexConverter,
-    compressed_data: Vec<u8>,
+    pub index_converter: SimpleIndexConverter,
+    compressed_data: Mmap,
 }
 
 impl TimsData for TimsInMemoryLoader {
@@ -739,44 +740,41 @@ impl TimsDataLoader {
     }
 
     pub fn new_in_memory(
-        bruker_lib_path: &str,
         data_path: &str,
-        use_bruker_sdk: bool,
         scan_max_index: u32,
         im_lower: f64,
         im_upper: f64,
         tof_max_index: u32,
         mz_lower: f64,
         mz_upper: f64,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
 
-        let index_converter = match use_bruker_sdk {
-            true => TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(
-                bruker_lib_path,
-                data_path,
-            )),
-            false => TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
-                mz_lower,
-                mz_upper,
-                tof_max_index,
-                im_lower,
-                im_upper,
-                scan_max_index,
-            )),
-        };
+        // In-memory mode always uses SimpleIndexConverter (no Bruker SDK)
+        let index_converter = SimpleIndexConverter::from_boundaries(
+            mz_lower,
+            mz_upper,
+            tof_max_index,
+            im_lower,
+            im_upper,
+            scan_max_index,
+        );
 
+        // Memory-map the file instead of loading into Vec<u8>
         let mut file_path = PathBuf::from(data_path);
         file_path.push("analysis.tdf_bin");
-        let mut infile = File::open(file_path).unwrap();
-        let mut data = Vec::new();
-        infile.read_to_end(&mut data).unwrap();
 
-        TimsDataLoader::InMemory(TimsInMemoryLoader {
+        let file = File::open(&file_path)
+            .map_err(|e| format!("Failed to open {}: {}", file_path.display(), e))?;
+
+        let mmap = unsafe { Mmap::map(&file) }
+            .map_err(|e| format!("Failed to memory-map {}: {}", file_path.display(), e))?;
+
+        Ok(TimsDataLoader::InMemory(TimsInMemoryLoader {
             raw_data_layout,
             index_converter,
-            compressed_data: data,
-        })
+            compressed_data: mmap,
+        }))
     }
     pub fn get_index_converter(&self) -> &dyn IndexConverter {
         match self {

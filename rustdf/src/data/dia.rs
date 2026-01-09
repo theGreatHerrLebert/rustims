@@ -363,12 +363,24 @@ impl TimsDatasetDIA {
         data_path: &str,
         in_memory: bool,
         use_bruker_sdk: bool,
-    ) -> Self {
-        // TODO: error handling
-        let global_meta_data = read_global_meta_sql(data_path).unwrap();
-        let meta_data = read_meta_data_sql(data_path).unwrap();
-        let dia_ms_mis_info = read_dia_ms_ms_info(data_path).unwrap();
-        let dia_ms_ms_windows = read_dia_ms_ms_windows(data_path).unwrap();
+    ) -> Result<Self, String> {
+        // Validate: in_memory requires use_bruker_sdk=false
+        if in_memory && use_bruker_sdk {
+            return Err(
+                "in_memory=true is not compatible with use_bruker_sdk=true. \
+                 Use in_memory=false for Bruker SDK, or use_bruker_sdk=false for in-memory mode."
+                    .to_string(),
+            );
+        }
+
+        let global_meta_data = read_global_meta_sql(data_path)
+            .map_err(|e| format!("Failed to read global metadata: {}", e))?;
+        let meta_data = read_meta_data_sql(data_path)
+            .map_err(|e| format!("Failed to read frame metadata: {}", e))?;
+        let dia_ms_mis_info = read_dia_ms_ms_info(data_path)
+            .map_err(|e| format!("Failed to read DIA MS/MS info: {}", e))?;
+        let dia_ms_ms_windows = read_dia_ms_ms_windows(data_path)
+            .map_err(|e| format!("Failed to read DIA MS/MS windows: {}", e))?;
 
         let scan_max_index = meta_data.iter().map(|x| x.num_scans).max().unwrap() as u32;
         let im_lower = global_meta_data.one_over_k0_range_lower;
@@ -378,8 +390,18 @@ impl TimsDatasetDIA {
         let mz_lower = global_meta_data.mz_acquisition_range_lower;
         let mz_upper = global_meta_data.mz_acquisition_range_upper;
 
-        let loader = match in_memory {
-            true => TimsDataLoader::new_in_memory(
+        let loader = if in_memory {
+            TimsDataLoader::new_in_memory(
+                data_path,
+                scan_max_index,
+                im_lower,
+                im_upper,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+            )?
+        } else {
+            TimsDataLoader::new_lazy(
                 bruker_lib_path,
                 data_path,
                 use_bruker_sdk,
@@ -389,30 +411,19 @@ impl TimsDatasetDIA {
                 tof_max_index,
                 mz_lower,
                 mz_upper,
-            ),
-            false => TimsDataLoader::new_lazy(
-                bruker_lib_path,
-                data_path,
-                use_bruker_sdk,
-                scan_max_index,
-                im_lower,
-                im_upper,
-                tof_max_index,
-                mz_lower,
-                mz_upper,
-            ),
+            )
         };
 
         let dia_index = DiaIndex::new(&meta_data, &dia_ms_mis_info, &dia_ms_ms_windows);
 
-        TimsDatasetDIA {
+        Ok(TimsDatasetDIA {
             loader,
             global_meta_data,
             meta_data,
             dia_ms_ms_info: dia_ms_mis_info,
             dia_ms_ms_windows,
             dia_index,
-        }
+        })
     }
 
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
