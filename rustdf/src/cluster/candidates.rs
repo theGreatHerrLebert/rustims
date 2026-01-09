@@ -318,13 +318,25 @@ fn load_all_parquet_full(dir: &Path) -> io::Result<Vec<ClusterResult1D>> {
     }
     paths.sort();
 
-    for path in paths {
+    let n_files = paths.len();
+    eprintln!("[FragmentIndex] loading {} parquet files (full mode)...", n_files);
+
+    for (i, path) in paths.iter().enumerate() {
         let path_str = path
             .to_str()
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
 
         let mut part = load_parquet(path_str)?;
+        let part_len = part.len();
         all.append(&mut part);
+
+        eprintln!(
+            "[FragmentIndex] file {}/{}: {} clusters loaded (total: {})",
+            i + 1,
+            n_files,
+            part_len,
+            all.len()
+        );
     }
 
     Ok(all)
@@ -461,7 +473,10 @@ impl FragmentIndex {
         parquet_dir: Option<PathBuf>,
         opts: &CandidateOpts,
     ) -> Self {
+        eprintln!("[FragmentIndex] building index from {} clusters...", ms2_slim.len());
+
         // 1) Build keep mask from slim data (parallel for large datasets)
+        eprintln!("[FragmentIndex] step 1/3: filtering clusters...");
         let ms2_keep: Vec<bool> = ms2_slim
             .par_iter()
             .map(|c| {
@@ -473,7 +488,11 @@ impl FragmentIndex {
             })
             .collect();
 
+        let kept = ms2_keep.iter().filter(|&&k| k).count();
+        eprintln!("[FragmentIndex] step 1/3: {} of {} clusters pass filter", kept, ms2_slim.len());
+
         // 2) Build by_group and id_to_idx in single pass
+        eprintln!("[FragmentIndex] step 2/3: building lookup tables...");
         let mut by_group_raw: HashMap<u32, Vec<(f32, usize)>> = HashMap::new();
         let mut id_to_idx: HashMap<u64, usize> = HashMap::with_capacity(ms2_slim.len());
 
@@ -496,12 +515,15 @@ impl FragmentIndex {
         }
 
         // 3) Sort each group by RT (for binary search during queries)
+        eprintln!("[FragmentIndex] step 3/3: sorting {} window groups by RT...", by_group_raw.len());
         let mut by_group: HashMap<u32, FragmentGroupIndex> = HashMap::with_capacity(by_group_raw.len());
         for (g, mut v) in by_group_raw {
             v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             let (rt_apex, ms2_indices): (Vec<f32>, Vec<usize>) = v.into_iter().unzip();
             by_group.insert(g, FragmentGroupIndex { ms2_indices, rt_apex });
         }
+
+        eprintln!("[FragmentIndex] index build complete!");
 
         Self {
             dia_index,
@@ -599,15 +621,27 @@ impl FragmentIndex {
         }
         paths.sort();
 
+        let n_files = paths.len();
+        eprintln!("[FragmentIndex] loading {} parquet files (slim mode)...", n_files);
+
         // Stream each file
-        for path in paths {
+        for (i, path) in paths.iter().enumerate() {
             let path_str = path
                 .to_str()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF8 path"))?;
 
             // Stream load slim clusters (row-group at a time)
             let slim_batch = load_parquet_slim_streaming(path_str)?;
+            let batch_len = slim_batch.len();
             all_slim.extend(slim_batch);
+
+            eprintln!(
+                "[FragmentIndex] file {}/{}: {} clusters loaded (total: {})",
+                i + 1,
+                n_files,
+                batch_len,
+                all_slim.len()
+            );
         }
 
         // Store parquet path for lazy loading of full data
