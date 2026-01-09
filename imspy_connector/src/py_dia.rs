@@ -5351,6 +5351,252 @@ impl PyPrecursorIndex {
     }
 }
 
+// ---------------------------------------------------------------
+// PyClusterQualityFilter - quality-based cluster filtering
+// ---------------------------------------------------------------
+
+use rustdf::cluster::filter::{ClusterQualityFilter, FilterDiagnostics};
+
+/// Quality filter configuration for clusters.
+///
+/// Filters clusters based on various quality metrics to reduce over-clustering
+/// without losing real signal. All bounds are inclusive.
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyClusterQualityFilter {
+    pub inner: ClusterQualityFilter,
+}
+
+#[pymethods]
+impl PyClusterQualityFilter {
+    /// Create a new quality filter with custom parameters.
+    ///
+    /// Args:
+    ///     min_raw_sum: Minimum total intensity
+    ///     max_raw_sum: Maximum total intensity
+    ///     min_rt_span: Minimum RT span in frames
+    ///     max_rt_span: Maximum RT span in frames
+    ///     min_im_span: Minimum IM span in scans
+    ///     max_im_span: Maximum IM span in scans
+    ///     min_rt_sigma: Minimum RT sigma from fit
+    ///     max_rt_sigma: Maximum RT sigma from fit
+    ///     min_im_sigma: Minimum IM sigma from fit
+    ///     max_im_sigma: Maximum IM sigma from fit
+    ///     min_rt_r2: Minimum RT fit R² (0 to disable)
+    ///     min_im_r2: Minimum IM fit R² (0 to disable)
+    ///     min_n_frames: Minimum number of frames used
+    #[new]
+    #[pyo3(signature = (
+        min_raw_sum = 0.0,
+        max_raw_sum = f32::MAX,
+        min_rt_span = 3,
+        max_rt_span = 500,
+        min_im_span = 3,
+        max_im_span = 150,
+        min_rt_sigma = 0.5,
+        max_rt_sigma = 100.0,
+        min_im_sigma = 0.5,
+        max_im_sigma = 50.0,
+        min_rt_r2 = 0.0,
+        min_im_r2 = 0.0,
+        min_n_frames = 2
+    ))]
+    pub fn new(
+        min_raw_sum: f32,
+        max_raw_sum: f32,
+        min_rt_span: usize,
+        max_rt_span: usize,
+        min_im_span: usize,
+        max_im_span: usize,
+        min_rt_sigma: f32,
+        max_rt_sigma: f32,
+        min_im_sigma: f32,
+        max_im_sigma: f32,
+        min_rt_r2: f32,
+        min_im_r2: f32,
+        min_n_frames: usize,
+    ) -> Self {
+        PyClusterQualityFilter {
+            inner: ClusterQualityFilter {
+                min_raw_sum,
+                max_raw_sum,
+                min_rt_span,
+                max_rt_span,
+                min_im_span,
+                max_im_span,
+                min_rt_sigma,
+                max_rt_sigma,
+                min_im_sigma,
+                max_im_sigma,
+                min_rt_r2,
+                min_im_r2,
+                min_n_frames,
+            },
+        }
+    }
+
+    /// Create a default filter (moderate settings).
+    #[staticmethod]
+    pub fn default() -> Self {
+        PyClusterQualityFilter {
+            inner: ClusterQualityFilter::default(),
+        }
+    }
+
+    /// Create a permissive filter (removes only obvious garbage).
+    #[staticmethod]
+    pub fn permissive() -> Self {
+        PyClusterQualityFilter {
+            inner: ClusterQualityFilter::permissive(),
+        }
+    }
+
+    /// Create a strict filter (aggressive noise removal).
+    #[staticmethod]
+    pub fn strict() -> Self {
+        PyClusterQualityFilter {
+            inner: ClusterQualityFilter::strict(),
+        }
+    }
+
+    /// Check if a single cluster passes this filter.
+    #[pyo3(signature = (cluster))]
+    pub fn passes(&self, cluster: &PyClusterResult1D) -> bool {
+        self.inner.passes(&cluster.inner)
+    }
+
+    /// Filter a list of clusters, returning only those that pass.
+    ///
+    /// Uses parallel processing for large lists.
+    #[pyo3(signature = (clusters))]
+    pub fn filter(&self, py: Python<'_>, clusters: Vec<Py<PyClusterResult1D>>) -> PyResult<Vec<PyClusterResult1D>> {
+        let rust_clusters: Vec<ClusterResult1D> = clusters
+            .iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        let filtered = self.inner.filter_par(&rust_clusters);
+
+        Ok(filtered
+            .into_iter()
+            .map(|c| PyClusterResult1D { inner: c })
+            .collect())
+    }
+
+    /// Get diagnostics about why clusters are failing.
+    ///
+    /// Returns a dict with counts for each failure reason.
+    #[pyo3(signature = (clusters))]
+    pub fn diagnose(&self, py: Python<'_>, clusters: Vec<Py<PyClusterResult1D>>) -> PyResult<PyFilterDiagnostics> {
+        let rust_clusters: Vec<ClusterResult1D> = clusters
+            .iter()
+            .map(|c| c.borrow(py).inner.clone())
+            .collect();
+
+        let diag = self.inner.diagnose(&rust_clusters);
+        Ok(PyFilterDiagnostics { inner: diag })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ClusterQualityFilter(min_raw_sum={}, min_rt_span={}, min_im_span={}, \
+             min_rt_sigma={}, min_im_sigma={}, min_n_frames={})",
+            self.inner.min_raw_sum,
+            self.inner.min_rt_span,
+            self.inner.min_im_span,
+            self.inner.min_rt_sigma,
+            self.inner.min_im_sigma,
+            self.inner.min_n_frames,
+        )
+    }
+
+    // Getters for inspection
+    #[getter]
+    pub fn min_raw_sum(&self) -> f32 { self.inner.min_raw_sum }
+    #[getter]
+    pub fn max_raw_sum(&self) -> f32 { self.inner.max_raw_sum }
+    #[getter]
+    pub fn min_rt_span(&self) -> usize { self.inner.min_rt_span }
+    #[getter]
+    pub fn max_rt_span(&self) -> usize { self.inner.max_rt_span }
+    #[getter]
+    pub fn min_im_span(&self) -> usize { self.inner.min_im_span }
+    #[getter]
+    pub fn max_im_span(&self) -> usize { self.inner.max_im_span }
+    #[getter]
+    pub fn min_rt_sigma(&self) -> f32 { self.inner.min_rt_sigma }
+    #[getter]
+    pub fn max_rt_sigma(&self) -> f32 { self.inner.max_rt_sigma }
+    #[getter]
+    pub fn min_im_sigma(&self) -> f32 { self.inner.min_im_sigma }
+    #[getter]
+    pub fn max_im_sigma(&self) -> f32 { self.inner.max_im_sigma }
+    #[getter]
+    pub fn min_rt_r2(&self) -> f32 { self.inner.min_rt_r2 }
+    #[getter]
+    pub fn min_im_r2(&self) -> f32 { self.inner.min_im_r2 }
+    #[getter]
+    pub fn min_n_frames(&self) -> usize { self.inner.min_n_frames }
+}
+
+/// Diagnostics about filter failures.
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyFilterDiagnostics {
+    pub inner: FilterDiagnostics,
+}
+
+#[pymethods]
+impl PyFilterDiagnostics {
+    #[getter]
+    pub fn total(&self) -> usize { self.inner.total }
+    #[getter]
+    pub fn passed(&self) -> usize { self.inner.passed }
+    #[getter]
+    pub fn failed(&self) -> usize { self.inner.total - self.inner.passed }
+
+    #[getter]
+    pub fn failed_min_raw_sum(&self) -> usize { self.inner.failed_min_raw_sum }
+    #[getter]
+    pub fn failed_max_raw_sum(&self) -> usize { self.inner.failed_max_raw_sum }
+    #[getter]
+    pub fn failed_min_rt_span(&self) -> usize { self.inner.failed_min_rt_span }
+    #[getter]
+    pub fn failed_max_rt_span(&self) -> usize { self.inner.failed_max_rt_span }
+    #[getter]
+    pub fn failed_min_im_span(&self) -> usize { self.inner.failed_min_im_span }
+    #[getter]
+    pub fn failed_max_im_span(&self) -> usize { self.inner.failed_max_im_span }
+    #[getter]
+    pub fn failed_min_rt_sigma(&self) -> usize { self.inner.failed_min_rt_sigma }
+    #[getter]
+    pub fn failed_max_rt_sigma(&self) -> usize { self.inner.failed_max_rt_sigma }
+    #[getter]
+    pub fn failed_min_im_sigma(&self) -> usize { self.inner.failed_min_im_sigma }
+    #[getter]
+    pub fn failed_max_im_sigma(&self) -> usize { self.inner.failed_max_im_sigma }
+    #[getter]
+    pub fn failed_min_rt_r2(&self) -> usize { self.inner.failed_min_rt_r2 }
+    #[getter]
+    pub fn failed_min_im_r2(&self) -> usize { self.inner.failed_min_im_r2 }
+    #[getter]
+    pub fn failed_min_n_frames(&self) -> usize { self.inner.failed_min_n_frames }
+
+    /// Get a summary string of the diagnostics.
+    pub fn summary(&self) -> String {
+        self.inner.summary()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "FilterDiagnostics(total={}, passed={}, failed={})",
+            self.inner.total,
+            self.inner.passed,
+            self.inner.total - self.inner.passed,
+        )
+    }
+}
+
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDIA>()?;
@@ -5368,6 +5614,8 @@ pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPrecursorIndex>()?;
     m.add_class::<PyScoredHit>()?;
     m.add_class::<PyCandidateOpts>()?;
+    m.add_class::<PyClusterQualityFilter>()?;
+    m.add_class::<PyFilterDiagnostics>()?;
     m.add_function(wrap_pyfunction!(stitch_im_peaks_flat_unordered, m)?)?;
     m.add_function(wrap_pyfunction!(drop_heavy_data_batch, m)?)?;
     m.add_function(wrap_pyfunction!(save_clusters_bin, m)?)?;

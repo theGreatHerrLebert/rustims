@@ -12,6 +12,180 @@ from imspy.timstof.frame import TimsFrame
 
 ims = imspy_connector.py_dia
 
+
+class ClusterQualityFilter(RustWrapperObject):
+    """
+    Quality filter for clusters based on various metrics.
+
+    Filters clusters based on intensity, span bounds, sigma bounds, and fit quality
+    to reduce over-clustering without losing real signal.
+
+    Example:
+        # Create a permissive filter
+        filt = ClusterQualityFilter.permissive()
+
+        # Get diagnostics to see why clusters fail
+        diag = filt.diagnose(clusters)
+        print(diag.summary())
+
+        # Apply filter
+        filtered = filt.filter(clusters)
+    """
+
+    def __init__(
+        self,
+        *,
+        min_raw_sum: float = 0.0,
+        max_raw_sum: float = float("inf"),
+        min_rt_span: int = 3,
+        max_rt_span: int = 500,
+        min_im_span: int = 3,
+        max_im_span: int = 150,
+        min_rt_sigma: float = 0.5,
+        max_rt_sigma: float = 100.0,
+        min_im_sigma: float = 0.5,
+        max_im_sigma: float = 50.0,
+        min_rt_r2: float = 0.0,
+        min_im_r2: float = 0.0,
+        min_n_frames: int = 2,
+    ) -> None:
+        self._py = ims.PyClusterQualityFilter(
+            min_raw_sum=min_raw_sum,
+            max_raw_sum=max_raw_sum if max_raw_sum != float("inf") else 3.4028235e+38,
+            min_rt_span=min_rt_span,
+            max_rt_span=max_rt_span,
+            min_im_span=min_im_span,
+            max_im_span=max_im_span,
+            min_rt_sigma=min_rt_sigma,
+            max_rt_sigma=max_rt_sigma,
+            min_im_sigma=min_im_sigma,
+            max_im_sigma=max_im_sigma,
+            min_rt_r2=min_rt_r2,
+            min_im_r2=min_im_r2,
+            min_n_frames=min_n_frames,
+        )
+
+    def get_py_ptr(self):
+        return self._py
+
+    @classmethod
+    def default(cls) -> "ClusterQualityFilter":
+        """Create a filter with default (moderate) settings."""
+        inst = cls.__new__(cls)
+        inst._py = ims.PyClusterQualityFilter.default()
+        return inst
+
+    @classmethod
+    def permissive(cls) -> "ClusterQualityFilter":
+        """Create a permissive filter that only removes obvious garbage."""
+        inst = cls.__new__(cls)
+        inst._py = ims.PyClusterQualityFilter.permissive()
+        return inst
+
+    @classmethod
+    def strict(cls) -> "ClusterQualityFilter":
+        """Create a strict filter for aggressive noise removal."""
+        inst = cls.__new__(cls)
+        inst._py = ims.PyClusterQualityFilter.strict()
+        return inst
+
+    def passes(self, cluster: "ClusterResult1D") -> bool:
+        """Check if a single cluster passes this filter."""
+        return self._py.passes(cluster.get_py_ptr())
+
+    def filter(self, clusters: list["ClusterResult1D"]) -> list["ClusterResult1D"]:
+        """Filter clusters, returning only those that pass."""
+        py_clusters = [c.get_py_ptr() for c in clusters]
+        filtered_py = self._py.filter(py_clusters)
+        return [ClusterResult1D.from_py_ptr(p) for p in filtered_py]
+
+    def diagnose(self, clusters: list["ClusterResult1D"]) -> "FilterDiagnostics":
+        """Get diagnostics about why clusters are failing."""
+        py_clusters = [c.get_py_ptr() for c in clusters]
+        diag_py = self._py.diagnose(py_clusters)
+        return FilterDiagnostics(diag_py)
+
+    # Getters for inspection
+    @property
+    def min_raw_sum(self) -> float:
+        return self._py.min_raw_sum
+
+    @property
+    def min_rt_span(self) -> int:
+        return self._py.min_rt_span
+
+    @property
+    def min_im_span(self) -> int:
+        return self._py.min_im_span
+
+    @property
+    def min_rt_sigma(self) -> float:
+        return self._py.min_rt_sigma
+
+    @property
+    def min_im_sigma(self) -> float:
+        return self._py.min_im_sigma
+
+    @property
+    def min_n_frames(self) -> int:
+        return self._py.min_n_frames
+
+
+class FilterDiagnostics:
+    """Diagnostics about filter failures."""
+
+    def __init__(self, py_diag):
+        self._py = py_diag
+
+    @property
+    def total(self) -> int:
+        return self._py.total
+
+    @property
+    def passed(self) -> int:
+        return self._py.passed
+
+    @property
+    def failed(self) -> int:
+        return self._py.failed
+
+    @property
+    def pass_rate(self) -> float:
+        return self.passed / max(1, self.total)
+
+    def summary(self) -> str:
+        """Get a human-readable summary."""
+        return self._py.summary()
+
+    # Individual failure reasons
+    @property
+    def failed_min_raw_sum(self) -> int:
+        return self._py.failed_min_raw_sum
+
+    @property
+    def failed_min_rt_span(self) -> int:
+        return self._py.failed_min_rt_span
+
+    @property
+    def failed_min_im_span(self) -> int:
+        return self._py.failed_min_im_span
+
+    @property
+    def failed_min_rt_sigma(self) -> int:
+        return self._py.failed_min_rt_sigma
+
+    @property
+    def failed_min_im_sigma(self) -> int:
+        return self._py.failed_min_im_sigma
+
+    @property
+    def failed_min_n_frames(self) -> int:
+        return self._py.failed_min_n_frames
+
+    def __repr__(self) -> str:
+        return f"FilterDiagnostics(total={self.total}, passed={self.passed}, failed={self.failed})"
+
+
 class CandidateOpts(RustWrapperObject):
     """
     Python wrapper for ims.PyCandidateOpts.

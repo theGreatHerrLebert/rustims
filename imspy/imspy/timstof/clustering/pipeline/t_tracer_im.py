@@ -50,6 +50,7 @@ from imspy.timstof.clustering.pipeline.torch_extractor import iter_im_peaks_batc
 from imspy.timstof.dia import (
     save_clusters_parquet,
     TimsDatasetDIA,
+    ClusterQualityFilter,
 )
 
 # --------------------------- logging ------------------------------------------
@@ -526,6 +527,13 @@ def run_precursor(ds, cfg):
             pad_rt_frames=1,
         )
 
+    log(f"[cluster.precursor] raw clusters: {len(clusters):,}")
+
+    # Apply quality filter
+    qf = build_quality_filter(cfg)
+    with log_timing("quality_filter.precursor"):
+        clusters = apply_quality_filter(clusters, qf, label=".precursor")
+
     # ---- precursor output dirs: <root>/precursor/ ----
     out_root = Path(cfg["output"]["dir"])
     prec_dir = out_root / "precursor"
@@ -627,6 +635,13 @@ def run_fragments(ds, cfg):
                     pad_rt_frames=0,
                 )
 
+            log(f"[cluster.fragment.WG{wg:03d}] raw clusters: {len(clusters_wg):,}")
+
+            # Apply quality filter
+            qf = build_quality_filter(cfg)
+            with log_timing(f"quality_filter.fragment.WG{wg:03d}"):
+                clusters_wg = apply_quality_filter(clusters_wg, qf, label=f".fragment.WG{wg:03d}")
+
             # ---- per-WG Parquet ----
             if frag_parq_pattern:
                 parq_fname = frag_parq_pattern.format(wg=wg)
@@ -702,6 +717,12 @@ def run_fragments(ds, cfg):
 
         del stitched_wg, clusters_wg
         cuda_gc()
+
+    # Apply quality filter to all collected clusters
+    log(f"[fragment] total raw clusters: {len(all_clusters):,}")
+    qf = build_quality_filter(cfg)
+    with log_timing("quality_filter.fragment.all"):
+        all_clusters = apply_quality_filter(all_clusters, qf, label=".fragment.all")
 
     # ---- Parquet save (all) ----
     with log_timing("write.fragment.parquet.all"):
@@ -868,7 +889,94 @@ def load_config(path: str) -> dict:
     cf.setdefault("num_threads", 0)
     cf.setdefault("min_im_span", 10)
 
+    # Quality filter defaults (applied after clustering, before saving)
+    cfg.setdefault("quality_filter", {})
+    qf = cfg["quality_filter"]
+    qf.setdefault("enabled", True)  # Enable quality filtering by default
+    qf.setdefault("preset", "permissive")  # "permissive", "default", "strict", or "custom"
+    # Custom params (only used if preset="custom")
+    qf.setdefault("min_raw_sum", 1.0)
+    qf.setdefault("min_rt_span", 2)
+    qf.setdefault("max_rt_span", 500)
+    qf.setdefault("min_im_span", 2)
+    qf.setdefault("max_im_span", 150)
+    qf.setdefault("min_rt_sigma", 0.3)
+    qf.setdefault("max_rt_sigma", 100.0)
+    qf.setdefault("min_im_sigma", 0.3)
+    qf.setdefault("max_im_sigma", 50.0)
+    qf.setdefault("min_n_frames", 2)
+
     return cfg
+
+
+def build_quality_filter(cfg: dict) -> ClusterQualityFilter | None:
+    """Build a ClusterQualityFilter from config, or None if disabled."""
+    qf_cfg = cfg.get("quality_filter", {})
+    if not bool(qf_cfg.get("enabled", True)):
+        return None
+
+    preset = str(qf_cfg.get("preset", "permissive")).lower()
+
+    if preset == "permissive":
+        return ClusterQualityFilter.permissive()
+    elif preset == "default":
+        return ClusterQualityFilter.default()
+    elif preset == "strict":
+        return ClusterQualityFilter.strict()
+    elif preset == "custom":
+        return ClusterQualityFilter(
+            min_raw_sum=float(qf_cfg.get("min_raw_sum", 1.0)),
+            min_rt_span=int(qf_cfg.get("min_rt_span", 2)),
+            max_rt_span=int(qf_cfg.get("max_rt_span", 500)),
+            min_im_span=int(qf_cfg.get("min_im_span", 2)),
+            max_im_span=int(qf_cfg.get("max_im_span", 150)),
+            min_rt_sigma=float(qf_cfg.get("min_rt_sigma", 0.3)),
+            max_rt_sigma=float(qf_cfg.get("max_rt_sigma", 100.0)),
+            min_im_sigma=float(qf_cfg.get("min_im_sigma", 0.3)),
+            max_im_sigma=float(qf_cfg.get("max_im_sigma", 50.0)),
+            min_n_frames=int(qf_cfg.get("min_n_frames", 2)),
+        )
+    else:
+        log(f"[quality_filter] unknown preset '{preset}', using permissive", level=logging.WARNING)
+        return ClusterQualityFilter.permissive()
+
+
+def apply_quality_filter(clusters: list, qf: ClusterQualityFilter | None, label: str = "") -> list:
+    """Apply quality filter to clusters, logging diagnostics."""
+    if qf is None:
+        return clusters
+
+    n_before = len(clusters)
+    if n_before == 0:
+        return clusters
+
+    # Get diagnostics first
+    diag = qf.diagnose(clusters)
+    filtered = qf.filter(clusters)
+    n_after = len(filtered)
+    n_removed = n_before - n_after
+    pct = (n_after / n_before) * 100 if n_before > 0 else 100.0
+
+    log(f"[quality_filter{label}] {n_before:,} -> {n_after:,} clusters ({pct:.1f}% kept, {n_removed:,} removed)")
+
+    # Log top failure reasons
+    failures = [
+        ("min_raw_sum", diag.failed_min_raw_sum),
+        ("min_rt_span", diag.failed_min_rt_span),
+        ("min_im_span", diag.failed_min_im_span),
+        ("min_rt_sigma", diag.failed_min_rt_sigma),
+        ("min_im_sigma", diag.failed_min_im_sigma),
+        ("min_n_frames", diag.failed_min_n_frames),
+    ]
+    failures = [(name, cnt) for name, cnt in failures if cnt > 0]
+    failures.sort(key=lambda x: -x[1])
+
+    if failures:
+        top_3 = failures[:3]
+        reasons = ", ".join(f"{name}={cnt:,}" for name, cnt in top_3)
+        log(f"[quality_filter{label}] top failure reasons: {reasons}")
+
+    return filtered
 
 
 def _default_log_path_from_cfg(cfg: dict) -> Path | None:

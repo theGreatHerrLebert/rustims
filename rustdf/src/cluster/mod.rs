@@ -1,6 +1,7 @@
 pub mod utility;
 pub mod cluster;
 pub mod feature;
+pub mod filter;
 pub mod io;
 pub mod pseudo;
 pub mod peak;
