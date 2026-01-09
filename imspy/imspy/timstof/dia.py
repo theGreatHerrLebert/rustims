@@ -499,6 +499,53 @@ class FragmentIndex(RustWrapperObject):
         )
         return [PseudoSpectrum(ps) for ps in py_specs]
 
+    def score_slim_features_to_pseudospectra(
+            self,
+            slim_features: list["SlimFeature"],
+            *,
+            min_score: float = 0.0,
+            reject_frag_inside_precursor_tile: bool = True,
+            max_rt_apex_delta_sec: float | None = 2.0,
+            max_scan_apex_delta: int | None = 6,
+            min_im_overlap_scans: int = 1,
+            require_tile_compat: bool = True,
+            min_fragments: int = 4,
+            max_fragments: int = 512,
+    ) -> list["PseudoSpectrum"]:
+        """
+        Score slim features and build pseudo-spectra (memory-efficient version).
+
+        Takes SlimFeature objects instead of full SimpleFeature with member_clusters,
+        reducing memory usage. Only geometric scoring is supported (no XIC mode).
+
+        Args:
+            slim_features: List of SlimFeature objects to score.
+            min_score: Minimum score threshold for fragment matches.
+            reject_frag_inside_precursor_tile: Reject fragments inside precursor tile.
+            max_rt_apex_delta_sec: Max RT delta between precursor and fragment.
+            max_scan_apex_delta: Max scan delta between precursor and fragment.
+            min_im_overlap_scans: Minimum IM overlap in scans.
+            require_tile_compat: Require DIA tile compatibility.
+            min_fragments: Minimum fragments per pseudo-spectrum.
+            max_fragments: Maximum fragments per pseudo-spectrum.
+
+        Returns:
+            List of PseudoSpectrum objects.
+        """
+        from imspy.timstof.clustering.pseudo import PseudoSpectrum
+        py_specs = self._py.query_slim_features_to_pseudospectra_par(
+            [f.get_py_ptr() for f in slim_features],
+            min_score=min_score,
+            reject_frag_inside_precursor_tile=reject_frag_inside_precursor_tile,
+            max_rt_apex_delta_sec=max_rt_apex_delta_sec,
+            max_scan_apex_delta=max_scan_apex_delta,
+            min_im_overlap_scans=min_im_overlap_scans,
+            require_tile_compat=require_tile_compat,
+            min_fragments=min_fragments,
+            max_fragments=max_fragments,
+        )
+        return [PseudoSpectrum(ps) for ps in py_specs]
+
     @classmethod
     def from_parquet_dir(
             cls,
@@ -625,6 +672,101 @@ class SlimPrecursor(RustWrapperObject):
     @property
     def raw_sum(self) -> float:
         return self._py.raw_sum
+
+
+class SlimFeature(RustWrapperObject):
+    """
+    Minimal feature representation for memory-efficient storage (~80 bytes).
+
+    Contains pre-computed values from the top (most intense) cluster for scoring
+    and pseudo-spectrum building, without storing full member cluster data.
+
+    Use this when you need to iterate features for pseudo-spectrum generation
+    but don't need access to individual member clusters.
+    """
+
+    def __init__(self, *a, **k):
+        raise RuntimeError(
+            "Use SlimFeature.from_feature() or SlimFeature.from_py_ptr()"
+        )
+
+    @classmethod
+    def from_py_ptr(cls, p) -> "SlimFeature":
+        inst = cls.__new__(cls)
+        inst._py = p
+        return inst
+
+    @classmethod
+    def from_feature(cls, feature: "SimpleFeature") -> "SlimFeature":
+        """Create a SlimFeature from a full SimpleFeature."""
+        return cls.from_py_ptr(feature.get_py_ptr().to_slim())
+
+    def get_py_ptr(self):
+        return self._py
+
+    @property
+    def feature_id(self) -> int:
+        return self._py.feature_id
+
+    @property
+    def charge(self) -> int:
+        return self._py.charge
+
+    @property
+    def mz_mono(self) -> float:
+        return self._py.mz_mono
+
+    @property
+    def neutral_mass(self) -> float:
+        return self._py.neutral_mass
+
+    @property
+    def rt_mu(self) -> float:
+        return self._py.rt_mu
+
+    @property
+    def rt_sigma(self) -> float:
+        return self._py.rt_sigma
+
+    @property
+    def im_mu(self) -> float:
+        return self._py.im_mu
+
+    @property
+    def im_sigma(self) -> float:
+        return self._py.im_sigma
+
+    @property
+    def im_lo(self) -> int:
+        return self._py.im_lo
+
+    @property
+    def im_hi(self) -> int:
+        return self._py.im_hi
+
+    @property
+    def raw_sum(self) -> float:
+        return self._py.raw_sum
+
+    @property
+    def top_cluster_id(self) -> int:
+        return self._py.top_cluster_id
+
+    @property
+    def rt_bounds(self) -> tuple[int, int]:
+        return self._py.rt_bounds
+
+    @property
+    def im_bounds(self) -> tuple[int, int]:
+        return self._py.im_bounds
+
+    @property
+    def n_members(self) -> int:
+        return self._py.n_members
+
+    @property
+    def member_cluster_ids(self) -> list[int]:
+        return self._py.member_cluster_ids
 
 
 class PrecursorIndex(RustWrapperObject):

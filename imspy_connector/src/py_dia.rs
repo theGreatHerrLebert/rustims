@@ -3269,7 +3269,8 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
 use rustdf::cluster::io as cio;
 use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpecOpts, PseudoSpectrum};
 use rustdf::cluster::scoring::{MatchScoreMode, ScoredHit, XicScoreOpts};
-use crate::py_feature::PySimpleFeature;
+use crate::py_feature::{PySimpleFeature, PySlimFeature};
+use rustdf::cluster::feature::SlimFeature;
 use crate::py_pseudo::PyPseudoSpectrum;
 
 #[pyfunction]
@@ -4319,6 +4320,78 @@ impl PyFragmentIndex {
         Ok(out)
     }
 
+    /// Score slim features and build pseudo-spectra (memory-efficient version).
+    ///
+    /// This method takes SlimFeature objects instead of full SimpleFeature,
+    /// reducing memory usage. Only geometric scoring is supported.
+    #[pyo3(signature = (feats, min_score, reject_frag_inside_precursor_tile, max_rt_apex_delta_sec, max_scan_apex_delta, min_im_overlap_scans, require_tile_compat, min_fragments, max_fragments))]
+    pub fn query_slim_features_to_pseudospectra_par(
+        &self,
+        feats: Vec<Py<PySlimFeature>>,
+        min_score: f32,
+        reject_frag_inside_precursor_tile: bool,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        require_tile_compat: bool,
+        min_fragments: usize,
+        max_fragments: usize,
+        py: Python<'_>,
+    ) -> PyResult<Vec<PyPseudoSpectrum>> {
+        // 1) Pull Rust SlimFeatures out of Py wrappers (sequential; needs GIL)
+        let feats_rust: Vec<SlimFeature> = feats
+            .into_iter()
+            .map(|f| f.borrow(py).inner.clone())
+            .collect();
+
+        let geom_opts = ScoreOpts::default();
+
+        let frag_opts = FragmentQueryOpts {
+            max_rt_apex_delta_sec,
+            max_scan_apex_delta,
+            min_im_overlap_scans,
+            require_tile_compat,
+            reject_frag_inside_precursor_tile,
+        };
+
+        // 2) Parallel scoring using slim feature method
+        let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_slim_features_scored_par(
+            &feats_rust,
+            &frag_opts,
+            &geom_opts,
+            min_score,
+        );
+
+        // 3) Build PseudoSpectra in parallel using slim data
+        let out: Vec<PyPseudoSpectrum> = feats_rust
+            .par_iter()
+            .zip(all_hits.par_iter())
+            .filter_map(|(feat, hits)| {
+                if hits.is_empty() {
+                    return None;
+                }
+
+                let mut local_hits: Vec<ScoredHit> = hits.clone();
+
+                if max_fragments > 0 && local_hits.len() > max_fragments {
+                    local_hits.sort_unstable_by(|a, b| {
+                        b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    local_hits.truncate(max_fragments);
+                }
+
+                if local_hits.len() < min_fragments {
+                    return None;
+                }
+
+                pseudospectrum_from_slim_feature_and_hits(feat, &local_hits, &self.inner)
+                    .map(|ps| PyPseudoSpectrum { inner: ps })
+            })
+            .collect();
+
+        Ok(out)
+    }
+
     #[pyo3(signature = (
         precs,
         mode = "geom",
@@ -4688,6 +4761,82 @@ pub fn pseudospectrum_from_slim_precursor_and_hits(
         feature_id: None,
         window_groups,
         precursor_cluster_ids: vec![prec.cluster_id],
+        fragments: frags,
+        precursor_cluster_indices: vec![],
+    })
+}
+
+/// Build a PseudoSpectrum from a SlimFeature and its scored hits.
+/// Uses slim fragment data from the FragmentIndex.
+pub fn pseudospectrum_from_slim_feature_and_hits(
+    feat: &SlimFeature,
+    hits: &[ScoredHit],
+    index: &FragmentIndex,
+) -> Option<PseudoSpectrum> {
+    use std::cmp::Ordering;
+
+    const MAX_FRAGMENTS_PER_SPECTRUM: usize = 1024;
+
+    let mut frags: Vec<PseudoFragment> = Vec::new();
+    let mut window_groups: Vec<u32> = Vec::new();
+
+    for h in hits {
+        let j = h.frag_idx;
+        if let Some(slim) = index.get_slim(j) {
+            // Only keep MS2 clusters as fragments
+            if slim.ms_level != 2 {
+                continue;
+            }
+
+            if let Some(wg) = slim.window_group {
+                window_groups.push(wg);
+            }
+
+            // Build PseudoFragment from slim data
+            frags.push(PseudoFragment {
+                mz: slim.mz_mu,
+                intensity: slim.raw_sum,
+                ms2_cluster_index: j,
+                ms2_cluster_id: slim.cluster_id,
+                window_group: slim.window_group.unwrap_or(0),
+            });
+        }
+    }
+
+    if frags.is_empty() {
+        return None;
+    }
+
+    // Deduplicate window groups
+    window_groups.sort_unstable();
+    window_groups.dedup();
+
+    // Optional: cap by intensity first
+    if MAX_FRAGMENTS_PER_SPECTRUM > 0 && frags.len() > MAX_FRAGMENTS_PER_SPECTRUM {
+        frags.sort_unstable_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(Ordering::Equal)
+        });
+        frags.truncate(MAX_FRAGMENTS_PER_SPECTRUM);
+    }
+
+    // Final deterministic ordering by m/z
+    frags.sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+
+    let precursor_mz = feat.mz_mono;
+    if !precursor_mz.is_finite() || precursor_mz <= 0.0 {
+        return None;
+    }
+
+    Some(PseudoSpectrum {
+        precursor_mz,
+        precursor_charge: feat.charge,
+        rt_apex: feat.rt_mu,
+        im_apex: feat.im_mu,
+        feature_id: Some(feat.feature_id),
+        window_groups,
+        precursor_cluster_ids: vec![feat.top_cluster_id],
         fragments: frags,
         precursor_cluster_indices: vec![],
     })

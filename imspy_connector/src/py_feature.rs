@@ -8,6 +8,7 @@ use rustdf::cluster::feature::{
     AveragineLut,
     SimpleFeature,
     SimpleFeatureParams,
+    SlimFeature,
     build_simple_features_from_clusters,
 };
 use rustdf::cluster::io as cio;
@@ -297,6 +298,121 @@ impl PySimpleFeature {
             self.inner.cos_averagine,
         )
     }
+
+    /// Convert to SlimFeature for memory-efficient storage.
+    /// Pre-computes scoring parameters from the top (most intense) member cluster.
+    pub fn to_slim(&self) -> PySlimFeature {
+        PySlimFeature {
+            inner: self.inner.to_slim(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------
+// PySlimFeature – memory-efficient feature representation
+// ---------------------------------------------------------------
+
+/// Minimal feature representation for memory-efficient storage (~80 bytes).
+/// Contains pre-computed values from the top cluster for scoring and
+/// pseudo-spectrum building, without storing full member cluster data.
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PySlimFeature {
+    pub inner: SlimFeature,
+}
+
+#[pymethods]
+impl PySlimFeature {
+    #[getter]
+    pub fn feature_id(&self) -> usize {
+        self.inner.feature_id
+    }
+
+    #[getter]
+    pub fn charge(&self) -> u8 {
+        self.inner.charge
+    }
+
+    #[getter]
+    pub fn mz_mono(&self) -> f32 {
+        self.inner.mz_mono
+    }
+
+    #[getter]
+    pub fn neutral_mass(&self) -> f32 {
+        self.inner.neutral_mass
+    }
+
+    #[getter]
+    pub fn rt_mu(&self) -> f32 {
+        self.inner.rt_mu
+    }
+
+    #[getter]
+    pub fn rt_sigma(&self) -> f32 {
+        self.inner.rt_sigma
+    }
+
+    #[getter]
+    pub fn im_mu(&self) -> f32 {
+        self.inner.im_mu
+    }
+
+    #[getter]
+    pub fn im_sigma(&self) -> f32 {
+        self.inner.im_sigma
+    }
+
+    #[getter]
+    pub fn im_lo(&self) -> u16 {
+        self.inner.im_window.0
+    }
+
+    #[getter]
+    pub fn im_hi(&self) -> u16 {
+        self.inner.im_window.1
+    }
+
+    #[getter]
+    pub fn raw_sum(&self) -> f32 {
+        self.inner.raw_sum
+    }
+
+    #[getter]
+    pub fn top_cluster_id(&self) -> u64 {
+        self.inner.top_cluster_id
+    }
+
+    #[getter]
+    pub fn rt_bounds(&self) -> (u16, u16) {
+        self.inner.rt_bounds
+    }
+
+    #[getter]
+    pub fn im_bounds(&self) -> (u16, u16) {
+        self.inner.im_bounds
+    }
+
+    #[getter]
+    pub fn n_members(&self) -> u8 {
+        self.inner.n_members
+    }
+
+    #[getter]
+    pub fn member_cluster_ids(&self) -> Vec<u64> {
+        self.inner.member_cluster_ids.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SlimFeature(id={}, z={}, mz_mono={:.4}, n_members={}, raw_sum={:.1})",
+            self.inner.feature_id,
+            self.inner.charge,
+            self.inner.mz_mono,
+            self.inner.n_members,
+            self.inner.raw_sum,
+        )
+    }
 }
 
 // ---------------------------------------------------------------
@@ -374,6 +490,7 @@ pub fn py_feature(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAveragineLut>()?;
     m.add_class::<PySimpleFeatureParams>()?;
     m.add_class::<PySimpleFeature>()?;
+    m.add_class::<PySlimFeature>()?;
 
     m.add_function(wrap_pyfunction!(build_simple_features_from_clusters_py, m)?)?;
     m.add_function(wrap_pyfunction!(save_features_bin, m)?)?;

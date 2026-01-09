@@ -191,6 +191,114 @@ pub struct SimpleFeature {
     pub member_clusters: Vec<ClusterResult1D>,
 }
 
+// ---------------------------------------------------------------------------
+// SlimFeature - memory-efficient feature representation (~80 bytes)
+// ---------------------------------------------------------------------------
+
+/// Minimal feature representation for memory-efficient storage.
+/// Contains pre-computed values from the top cluster for scoring and
+/// pseudo-spectrum building, without storing full member cluster data.
+///
+/// Size: ~80 bytes vs ~1-3 KB for SimpleFeature with member_clusters
+#[derive(Clone, Debug)]
+pub struct SlimFeature {
+    // Identity
+    pub feature_id: usize,          // 8 bytes
+    pub charge: u8,                 // 1 byte
+
+    // Precursor info
+    pub mz_mono: f32,               // 4 bytes - monoisotopic m/z
+    pub neutral_mass: f32,          // 4 bytes
+
+    // Scoring fields (from top cluster)
+    pub rt_mu: f32,                 // 4 bytes - RT apex in seconds
+    pub rt_sigma: f32,              // 4 bytes - RT width
+    pub im_mu: f32,                 // 4 bytes - IM apex in scan space
+    pub im_sigma: f32,              // 4 bytes - IM width
+    pub im_window: (u16, u16),      // 4 bytes - IM bounds
+    pub raw_sum: f32,               // 4 bytes - total or top cluster intensity
+
+    // Pseudo-spectrum building
+    pub top_cluster_id: u64,        // 8 bytes - cluster ID of top member
+    pub rt_bounds: (u16, u16),      // 4 bytes - RT bounds (frame indices)
+    pub im_bounds: (u16, u16),      // 4 bytes - IM bounds (scan indices)
+
+    // Tracking (no heavy Vec storage)
+    pub n_members: u8,              // 1 byte - number of isotope peaks
+    pub member_cluster_ids: Vec<u64>, // variable - stable cluster IDs
+}
+
+impl SlimFeature {
+    /// Convert to parameters needed for scoring.
+    #[inline]
+    pub fn scoring_params(&self) -> (f32, f32, f32, f32, (usize, usize), f32) {
+        (
+            self.rt_mu,
+            self.rt_sigma,
+            self.im_mu,
+            self.im_sigma,
+            (self.im_window.0 as usize, self.im_window.1 as usize),
+            self.raw_sum,
+        )
+    }
+}
+
+impl SimpleFeature {
+    /// Convert to SlimFeature for memory-efficient storage.
+    ///
+    /// Pre-computes scoring parameters from the top (most intense) member cluster.
+    pub fn to_slim(&self) -> SlimFeature {
+        use std::cmp::Ordering;
+
+        // Find the top cluster by raw_sum
+        let top = self.member_clusters.iter().max_by(|a, b| {
+            a.raw_sum.partial_cmp(&b.raw_sum).unwrap_or(Ordering::Equal)
+        });
+
+        let (rt_mu, rt_sigma, im_mu, im_sigma, im_window, top_cluster_id) = match top {
+            Some(c) => (
+                c.rt_fit.mu,
+                c.rt_fit.sigma,
+                c.im_fit.mu,
+                c.im_fit.sigma,
+                (c.im_window.0 as u16, c.im_window.1 as u16),
+                c.cluster_id,
+            ),
+            None => {
+                // Fallback if no member clusters
+                let rt_mid = 0.5 * (self.rt_bounds.0 as f32 + self.rt_bounds.1 as f32);
+                let im_mid = 0.5 * (self.im_bounds.0 as f32 + self.im_bounds.1 as f32);
+                (
+                    rt_mid,
+                    1.0, // default sigma
+                    im_mid,
+                    1.0, // default sigma
+                    (self.im_bounds.0 as u16, self.im_bounds.1 as u16),
+                    0,
+                )
+            }
+        };
+
+        SlimFeature {
+            feature_id: self.feature_id,
+            charge: self.charge,
+            mz_mono: self.mz_mono,
+            neutral_mass: self.neutral_mass,
+            rt_mu,
+            rt_sigma,
+            im_mu,
+            im_sigma,
+            im_window,
+            raw_sum: self.raw_sum,
+            top_cluster_id,
+            rt_bounds: (self.rt_bounds.0 as u16, self.rt_bounds.1 as u16),
+            im_bounds: (self.im_bounds.0 as u16, self.im_bounds.1 as u16),
+            n_members: self.n_members.min(255) as u8,
+            member_cluster_ids: self.member_cluster_ids.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SimpleFeatureParams {
     pub z_min: u8,

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use crate::cluster::cluster::ClusterResult1D;
-use crate::cluster::feature::SimpleFeature;
+use crate::cluster::feature::{SimpleFeature, SlimFeature};
 use crate::cluster::io::load_parquet;
 use crate::cluster::pseudo::{cluster_mz_mu, PseudoFragment};
 use crate::cluster::scoring::{
@@ -1322,6 +1322,81 @@ impl FragmentIndex {
         precs
             .par_iter()
             .map(|prec| self.query_slim_precursor_scored(prec, opts, geom_opts, min_score))
+            .collect()
+    }
+
+    // -------------------------------------------------------------------------
+    // SlimFeature scoring methods (for slim-only feature mode)
+    // -------------------------------------------------------------------------
+
+    /// Make a ThinPrecursor from a SlimFeature for candidate enumeration.
+    #[inline]
+    fn make_thin_from_slim_feature(&self, feat: &SlimFeature) -> ThinPrecursor {
+        ThinPrecursor {
+            mz_mu: feat.mz_mono,
+            rt_mu: feat.rt_mu,
+            im_mu: feat.im_mu,
+            im_window: (feat.im_window.0 as usize, feat.im_window.1 as usize),
+        }
+    }
+
+    /// Score candidate fragments for a SlimFeature.
+    /// Only supports geometric scoring (slim data doesn't have traces for XIC).
+    pub fn query_slim_feature_scored(
+        &self,
+        feat: &SlimFeature,
+        opts: &FragmentQueryOpts,
+        geom_opts: &ScoreOpts,
+        min_score: f32,
+    ) -> Vec<ScoredHit> {
+        use std::cmp::Ordering;
+
+        let thin = self.make_thin_from_slim_feature(feat);
+        let candidate_ids = self.enumerate_candidates_for_precursor_thin(&thin, None, opts);
+
+        let im_window = (feat.im_window.0 as usize, feat.im_window.1 as usize);
+        let mut out: Vec<ScoredHit> = Vec::with_capacity(candidate_ids.len());
+
+        for &j in &candidate_ids {
+            if let Some(frag) = self.ms2_slim.get(j) {
+                let f = build_features_slim(
+                    feat.rt_mu, feat.rt_sigma,
+                    feat.im_mu, feat.im_sigma,
+                    im_window, feat.raw_sum,
+                    frag, geom_opts,
+                );
+                let s = score_from_features(&f, geom_opts);
+
+                if s.is_finite() && s >= min_score {
+                    out.push(ScoredHit {
+                        frag_idx: j,
+                        score: s,
+                        geom: Some(f),
+                        xic: None,
+                    });
+                }
+            }
+        }
+
+        out.sort_unstable_by(|a, b| {
+            b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal)
+        });
+
+        out
+    }
+
+    /// Score candidate fragments for multiple SlimFeatures in parallel.
+    /// Only supports geometric scoring.
+    pub fn query_slim_features_scored_par(
+        &self,
+        feats: &[SlimFeature],
+        opts: &FragmentQueryOpts,
+        geom_opts: &ScoreOpts,
+        min_score: f32,
+    ) -> Vec<Vec<ScoredHit>> {
+        feats
+            .par_iter()
+            .map(|feat| self.query_slim_feature_scored(feat, opts, geom_opts, min_score))
             .collect()
     }
 }
