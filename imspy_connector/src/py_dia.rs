@@ -6,7 +6,7 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{fragment_from_cluster, CandidateOpts, FragmentIndex, FragmentQueryOpts, ScoreOpts};
+use rustdf::cluster::candidates::{fragment_from_cluster, fragment_from_slim, CandidateOpts, FragmentIndex, FragmentQueryOpts, ScoreOpts};
 use rustdf::cluster::pseudo::PseudoBuildResult;
 use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
 use rustdf::cluster::feature::SimpleFeature;
@@ -4235,14 +4235,8 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
-        // Require full data for pseudo-spectrum construction
-        let ms2 = match self.inner.ms2_slice() {
-            Some(data) => data,
-            None => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Full cluster data is required for pseudo-spectrum construction. \
-                 Call load_full_data() first if using from_parquet_dir_slim()."
-            )),
-        };
+        // Check if we have full data or need to use slim
+        let use_slim = !self.inner.has_full_data();
 
         // 2) Parallel scoring inside FragmentIndex
         let all_hits: Vec<Vec<ScoredHit>> = feats_rust
@@ -4260,36 +4254,67 @@ impl PyFragmentIndex {
             .collect();
 
         // 3) Build PseudoSpectra from (feature, hits) in parallel.
-        //    Everything here is pure Rust data, so Rayon is safe.
-        let out: Vec<PyPseudoSpectrum> = feats_rust
-            .par_iter()
-            .zip(all_hits.par_iter())
-            .filter_map(|(feat, hits)| {
-                if hits.is_empty() {
-                    return None;
-                }
+        //    Use slim data if full data not available.
+        let out: Vec<PyPseudoSpectrum> = if use_slim {
+            // Slim mode - no full data needed
+            feats_rust
+                .par_iter()
+                .zip(all_hits.par_iter())
+                .filter_map(|(feat, hits)| {
+                    if hits.is_empty() {
+                        return None;
+                    }
 
-                // Take a local copy so we can sort / truncate
-                let mut local_hits: Vec<ScoredHit> = hits.clone();
+                    let mut local_hits: Vec<ScoredHit> = hits.clone();
 
-                if max_fragments > 0 && local_hits.len() > max_fragments {
-                    // sort by score descending, keep best N
-                    local_hits.sort_unstable_by(|a, b| {
-                        b.score
-                            .partial_cmp(&a.score)
-                            .unwrap_or(Ordering::Equal)
-                    });
-                    local_hits.truncate(max_fragments);
-                }
+                    if max_fragments > 0 && local_hits.len() > max_fragments {
+                        local_hits.sort_unstable_by(|a, b| {
+                            b.score
+                                .partial_cmp(&a.score)
+                                .unwrap_or(Ordering::Equal)
+                        });
+                        local_hits.truncate(max_fragments);
+                    }
 
-                if local_hits.len() < min_fragments {
-                    return None;
-                }
+                    if local_hits.len() < min_fragments {
+                        return None;
+                    }
 
-                pseudospectrum_from_feature_and_hits(feat, &local_hits, ms2)
-                    .map(|ps| PyPseudoSpectrum { inner: ps })
-            })
-            .collect();
+                    pseudospectrum_from_feature_and_hits_slim(feat, &local_hits, &self.inner)
+                        .map(|ps| PyPseudoSpectrum { inner: ps })
+                })
+                .collect()
+        } else {
+            // Full mode - use full cluster data
+            let ms2 = self.inner.ms2_slice().unwrap();
+            feats_rust
+                .par_iter()
+                .zip(all_hits.par_iter())
+                .filter_map(|(feat, hits)| {
+                    if hits.is_empty() {
+                        return None;
+                    }
+
+                    let mut local_hits: Vec<ScoredHit> = hits.clone();
+
+                    if max_fragments > 0 && local_hits.len() > max_fragments {
+                        local_hits.sort_unstable_by(|a, b| {
+                            b.score
+                                .partial_cmp(&a.score)
+                                .unwrap_or(Ordering::Equal)
+                        });
+                        local_hits.truncate(max_fragments);
+                    }
+
+                    if local_hits.len() < min_fragments {
+                        return None;
+                    }
+
+                    pseudospectrum_from_feature_and_hits(feat, &local_hits, ms2)
+                        .map(|ps| PyPseudoSpectrum { inner: ps })
+                })
+                .collect()
+        };
 
         Ok(out)
     }
@@ -4338,14 +4363,8 @@ impl PyFragmentIndex {
             reject_frag_inside_precursor_tile,
         };
 
-        // Require full data for pseudo-spectrum construction
-        let ms2 = match self.inner.ms2_slice() {
-            Some(data) => data,
-            None => return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "Full cluster data is required for pseudo-spectrum construction. \
-                 Call load_full_data() first if using from_parquet_dir_slim()."
-            )),
-        };
+        // Check if we have full data or need to use slim
+        let use_slim = !self.inner.has_full_data();
 
         // 2) Parallel scoring inside FragmentIndex
         let all_hits: Vec<Vec<ScoredHit>> = self.inner.query_precursors_scored_par(
@@ -4358,33 +4377,67 @@ impl PyFragmentIndex {
         );
 
         // 3) Build PseudoSpectra in parallel
-        let out: Vec<PyPseudoSpectrum> = precs_rust
-            .par_iter()
-            .zip(all_hits.par_iter())
-            .filter_map(|(prec, hits)| {
-                if hits.is_empty() {
-                    return None;
-                }
+        //    Use slim data if full data not available.
+        let out: Vec<PyPseudoSpectrum> = if use_slim {
+            // Slim mode - no full data needed
+            precs_rust
+                .par_iter()
+                .zip(all_hits.par_iter())
+                .filter_map(|(prec, hits)| {
+                    if hits.is_empty() {
+                        return None;
+                    }
 
-                let mut local_hits: Vec<ScoredHit> = hits.clone();
+                    let mut local_hits: Vec<ScoredHit> = hits.clone();
 
-                if max_fragments > 0 && local_hits.len() > max_fragments {
-                    local_hits.sort_unstable_by(|a, b| {
-                        b.score
-                            .partial_cmp(&a.score)
-                            .unwrap_or(Ordering::Equal)
-                    });
-                    local_hits.truncate(max_fragments);
-                }
+                    if max_fragments > 0 && local_hits.len() > max_fragments {
+                        local_hits.sort_unstable_by(|a, b| {
+                            b.score
+                                .partial_cmp(&a.score)
+                                .unwrap_or(Ordering::Equal)
+                        });
+                        local_hits.truncate(max_fragments);
+                    }
 
-                if local_hits.len() < min_fragments {
-                    return None;
-                }
+                    if local_hits.len() < min_fragments {
+                        return None;
+                    }
 
-                pseudospectrum_from_cluster_and_hits(prec, &local_hits, ms2)
-                    .map(|ps| PyPseudoSpectrum { inner: ps })
-            })
-            .collect();
+                    pseudospectrum_from_cluster_and_hits_slim(prec, &local_hits, &self.inner)
+                        .map(|ps| PyPseudoSpectrum { inner: ps })
+                })
+                .collect()
+        } else {
+            // Full mode - use full cluster data
+            let ms2 = self.inner.ms2_slice().unwrap();
+            precs_rust
+                .par_iter()
+                .zip(all_hits.par_iter())
+                .filter_map(|(prec, hits)| {
+                    if hits.is_empty() {
+                        return None;
+                    }
+
+                    let mut local_hits: Vec<ScoredHit> = hits.clone();
+
+                    if max_fragments > 0 && local_hits.len() > max_fragments {
+                        local_hits.sort_unstable_by(|a, b| {
+                            b.score
+                                .partial_cmp(&a.score)
+                                .unwrap_or(Ordering::Equal)
+                        });
+                        local_hits.truncate(max_fragments);
+                    }
+
+                    if local_hits.len() < min_fragments {
+                        return None;
+                    }
+
+                    pseudospectrum_from_cluster_and_hits(prec, &local_hits, ms2)
+                        .map(|ps| PyPseudoSpectrum { inner: ps })
+                })
+                .collect()
+        };
 
         Ok(out)
     }
@@ -4583,6 +4636,169 @@ pub fn pseudospectrum_from_feature_and_hits(
         precursor_cluster_ids,
         fragments: frags,
         precursor_cluster_indices: feat.member_cluster_indices.clone(),
+    })
+}
+
+/// Build a PseudoSpectrum from a feature and scored hits using SLIM data only.
+/// No full cluster data required - uses ms2_slim from FragmentIndex.
+pub fn pseudospectrum_from_feature_and_hits_slim(
+    feat: &SimpleFeature,
+    hits: &[ScoredHit],
+    index: &FragmentIndex,
+) -> Option<PseudoSpectrum> {
+    use std::cmp::Ordering;
+
+    const MAX_FRAGMENTS_PER_SPECTRUM: usize = 1024;
+
+    let mut frags: Vec<PseudoFragment> = Vec::new();
+    let mut window_groups: Vec<u32> = Vec::new();
+
+    for h in hits {
+        let idx = h.frag_idx;
+        if let Some(slim) = index.get_slim(idx) {
+            if slim.ms_level != 2 {
+                continue;
+            }
+
+            if let Some(wg) = slim.window_group {
+                window_groups.push(wg);
+            }
+
+            if let Some(pf) = fragment_from_slim(slim, idx) {
+                frags.push(pf);
+            }
+        }
+    }
+
+    if frags.is_empty() {
+        return None;
+    }
+
+    window_groups.sort_unstable();
+    window_groups.dedup();
+
+    if MAX_FRAGMENTS_PER_SPECTRUM > 0 && frags.len() > MAX_FRAGMENTS_PER_SPECTRUM {
+        frags.sort_unstable_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(Ordering::Equal)
+        });
+        frags.truncate(MAX_FRAGMENTS_PER_SPECTRUM);
+    }
+
+    frags.sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+
+    let precursor_mz     = feat.mz_mono;
+    let precursor_charge = feat.charge;
+    let feature_id       = Some(feat.feature_id);
+
+    let rt_apex: f32;
+    let im_apex: f32;
+    let mut precursor_cluster_ids: Vec<u64> = Vec::new();
+
+    if let Some(top) = feat
+        .member_clusters
+        .iter()
+        .max_by(|a, b| {
+            a.raw_sum
+                .partial_cmp(&b.raw_sum)
+                .unwrap_or(Ordering::Equal)
+        })
+    {
+        rt_apex = top.rt_fit.mu;
+        im_apex = top.im_fit.mu;
+        precursor_cluster_ids.push(top.cluster_id);
+    } else {
+        let (rt_lo, rt_hi) = feat.rt_bounds;
+        let (im_lo, im_hi) = feat.im_bounds;
+        rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
+        im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
+    }
+
+    Some(PseudoSpectrum {
+        precursor_mz,
+        precursor_charge,
+        rt_apex,
+        im_apex,
+        feature_id,
+        window_groups,
+        precursor_cluster_ids,
+        fragments: frags,
+        precursor_cluster_indices: feat.member_cluster_indices.clone(),
+    })
+}
+
+/// Build a PseudoSpectrum from a precursor cluster and scored hits using SLIM data only.
+pub fn pseudospectrum_from_cluster_and_hits_slim(
+    prec: &ClusterResult1D,
+    hits: &[ScoredHit],
+    index: &FragmentIndex,
+) -> Option<PseudoSpectrum> {
+    use std::cmp::Ordering;
+
+    const MAX_FRAGMENTS_PER_SPECTRUM: usize = 1024;
+
+    let mut frags: Vec<PseudoFragment> = Vec::new();
+    let mut window_groups: Vec<u32> = Vec::new();
+
+    for h in hits {
+        let idx = h.frag_idx;
+        if let Some(slim) = index.get_slim(idx) {
+            if slim.ms_level != 2 {
+                continue;
+            }
+
+            if let Some(wg) = slim.window_group {
+                window_groups.push(wg);
+            }
+
+            if let Some(pf) = fragment_from_slim(slim, idx) {
+                frags.push(pf);
+            }
+        }
+    }
+
+    if frags.is_empty() {
+        return None;
+    }
+
+    window_groups.sort_unstable();
+    window_groups.dedup();
+
+    if MAX_FRAGMENTS_PER_SPECTRUM > 0 && frags.len() > MAX_FRAGMENTS_PER_SPECTRUM {
+        frags.sort_unstable_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(Ordering::Equal)
+        });
+        frags.truncate(MAX_FRAGMENTS_PER_SPECTRUM);
+    }
+
+    frags.sort_unstable_by(|a, b| a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal));
+
+    // Get precursor info from the cluster
+    let precursor_mz = prec.mz_fit.as_ref()
+        .map(|f| f.mu)
+        .or_else(|| prec.mz_window.map(|(lo, hi)| 0.5 * (lo + hi)))
+        .unwrap_or(0.0);
+
+    let precursor_charge = 0u8; // Unknown for orphan clusters
+    let feature_id = None;
+
+    let rt_apex = prec.rt_fit.mu;
+    let im_apex = prec.im_fit.mu;
+    let precursor_cluster_ids = vec![prec.cluster_id];
+
+    Some(PseudoSpectrum {
+        precursor_mz,
+        precursor_charge,
+        rt_apex,
+        im_apex,
+        feature_id,
+        window_groups,
+        precursor_cluster_ids,
+        fragments: frags,
+        precursor_cluster_indices: vec![],
     })
 }
 

@@ -1353,6 +1353,23 @@ pub fn fragment_from_cluster(c: &ClusterResult1D) -> Option<PseudoFragment> {
     })
 }
 
+/// Create a PseudoFragment from a SlimCluster (no full data needed).
+#[inline]
+pub fn fragment_from_slim(c: &SlimCluster, idx: usize) -> Option<PseudoFragment> {
+    let mz = c.mz_mu;
+    if !mz.is_finite() || mz <= 0.0 {
+        return None;
+    }
+
+    Some(PseudoFragment {
+        mz,
+        intensity: c.raw_sum,
+        ms2_cluster_index: idx,
+        ms2_cluster_id: c.cluster_id,
+        window_group: c.window_group.unwrap_or(0),
+    })
+}
+
 fn feature_representative_cluster<'a>(feat: &'a SimpleFeature) -> Option<&'a ClusterResult1D> {
     if feat.member_clusters.is_empty() {
         return None;

@@ -413,14 +413,12 @@ def build_pseudospectra(cfg: dict, ms2_index, *, features: list, clusters_left: 
     min_frags = int(ps_cfg.get("min_fragments", 4))
     max_frags = int(ps_cfg.get("max_fragments", 512))
 
-    # Pseudo-spectrum construction requires full cluster data.
-    # If using slim index, load full data now (lazy loading).
-    if not ms2_index.has_full_data() and ms2_index.can_load_full_data():
-        log("[pseudospectra] loading full cluster data for pseudo-spectrum construction …")
-        mem_before = get_memory_gb()
-        ms2_index.load_full_data()
-        mem_after = get_memory_gb()
-        log(f"[pseudospectra] full data loaded: +{mem_after - mem_before:.2f} GB (total: {mem_after:.2f} GB)")
+    # Pseudo-spectrum construction now works with slim data (geom scoring).
+    # Full data is only needed for XIC scoring mode.
+    if ms2_index.has_full_data():
+        log("[pseudospectra] using full cluster data (XIC scoring available)")
+    else:
+        log("[pseudospectra] using slim cluster data (geom scoring only, RAM-efficient)")
 
     spec_features: list = []
     spec_clusters: list = []
