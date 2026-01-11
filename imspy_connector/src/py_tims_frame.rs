@@ -6,7 +6,7 @@ use mscore::timstof::spectrum::{TimsSpectrum};
 use mscore::data::spectrum::{MsType, ToResolution, Vectorized, };
 use mscore::timstof::frame::{TimsFrame, TimsFrameVectorized, ImsFrameVectorized, RawTimsFrame};
 use crate::py_annotation::PyTimsFrameAnnotated;
-
+use std::sync::OnceLock;
 
 use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
 
@@ -73,9 +73,42 @@ impl PyRawTimsFrame {
 }
 
 #[pyclass]
-#[derive(Clone)]
 pub struct PyTimsFrame {
     pub inner: TimsFrame,
+    // Cached numpy arrays - lazily initialized on first access (stored as PyObject for Clone)
+    mz_cache: OnceLock<PyObject>,
+    intensity_cache: OnceLock<PyObject>,
+    mobility_cache: OnceLock<PyObject>,
+    scan_cache: OnceLock<PyObject>,
+    tof_cache: OnceLock<PyObject>,
+}
+
+impl Clone for PyTimsFrame {
+    fn clone(&self) -> Self {
+        // Clone resets caches - new instance lazily creates its own numpy arrays
+        PyTimsFrame {
+            inner: self.inner.clone(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+            mobility_cache: OnceLock::new(),
+            scan_cache: OnceLock::new(),
+            tof_cache: OnceLock::new(),
+        }
+    }
+}
+
+impl PyTimsFrame {
+    /// Create a new PyTimsFrame from a TimsFrame (internal use)
+    pub fn from_inner(inner: TimsFrame) -> Self {
+        PyTimsFrame {
+            inner,
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+            mobility_cache: OnceLock::new(),
+            scan_cache: OnceLock::new(),
+            tof_cache: OnceLock::new(),
+        }
+    }
 }
 
 #[pymethods]
@@ -101,31 +134,48 @@ impl PyTimsFrame {
                 mz.as_slice()?.to_vec(),
                 intensity.as_slice()?.to_vec(),
             ),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+            mobility_cache: OnceLock::new(),
+            scan_cache: OnceLock::new(),
+            tof_cache: OnceLock::new(),
         })
     }
     #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.ims_frame.mz).clone().into_pyarray_bound(py).unbind()
+    pub fn mz(&self, py: Python) -> PyObject {
+        self.mz_cache.get_or_init(|| {
+            (*self.inner.ims_frame.mz).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
     #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.ims_frame.intensity).clone().into_pyarray_bound(py).unbind()
+    pub fn intensity(&self, py: Python) -> PyObject {
+        self.intensity_cache.get_or_init(|| {
+            (*self.inner.ims_frame.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
     #[getter]
-    pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.scan.clone().into_pyarray_bound(py).unbind()
+    pub fn scan(&self, py: Python) -> PyObject {
+        self.scan_cache.get_or_init(|| {
+            self.inner.scan.clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
     #[getter]
-    pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.ims_frame.mobility).clone().into_pyarray_bound(py).unbind()
+    pub fn mobility(&self, py: Python) -> PyObject {
+        self.mobility_cache.get_or_init(|| {
+            (*self.inner.ims_frame.mobility).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
     #[getter]
-    pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.tof.clone().into_pyarray_bound(py).unbind()
+    pub fn tof(&self, py: Python) -> PyObject {
+        self.tof_cache.get_or_init(|| {
+            self.inner.tof.clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
     #[setter]
     pub unsafe fn set_tof(&mut self, tof: &Bound<'_, PyArray1<i32>>) {
         self.inner.tof = tof.as_slice().unwrap().to_vec();
+        // Clear the cache since data changed
+        self.tof_cache = OnceLock::new();
     }
 
     #[getter]
@@ -146,7 +196,7 @@ impl PyTimsFrame {
     }
 
     pub fn to_resolution(&self, resolution: i32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.to_resolution(resolution) }
+        PyTimsFrame::from_inner(self.inner.to_resolution(resolution))
     }
 
     pub fn get_tims_spectrum(&self, scan_index: i32) -> Option<PyTimsSpectrum> {
@@ -191,7 +241,7 @@ impl PyTimsFrame {
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max) }
+        PyTimsFrame::from_inner(self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max))
     }
 
     pub fn get_inverse_mobility_along_scan_marginal(&self) -> f64 {
@@ -210,13 +260,13 @@ impl PyTimsFrame {
             spectra.push(window.inner.clone());
         }
 
-        Ok(PyTimsFrame { inner: TimsFrame::from_windows(spectra) })
+        Ok(PyTimsFrame::from_inner(TimsFrame::from_windows(spectra)))
     }
 
     #[staticmethod]
     pub fn from_tims_spectra(_py: Python, spectra: Vec<PyTimsSpectrum>) -> PyResult<Self> {
         // Use into_iter() to move ownership instead of cloning each spectrum
-        Ok(PyTimsFrame { inner: TimsFrame::from_tims_spectra(spectra.into_iter().map(|s| s.inner).collect()) })
+        Ok(PyTimsFrame::from_inner(TimsFrame::from_tims_spectra(spectra.into_iter().map(|s| s.inner).collect())))
     }
 
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
@@ -250,17 +300,17 @@ impl PyTimsFrame {
     pub fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
         // Only clone self.inner (borrowed), other.inner can be moved
         let result = self.inner.clone() + other.inner;
-        PyTimsFrame { inner: result }
+        PyTimsFrame::from_inner(result)
     }
 
     pub fn random_subsample_frame(&self, take_probability: f64) -> PyTimsFrame {
         let result = self.inner.generate_random_sample(take_probability);
-        PyTimsFrame { inner: result }
+        PyTimsFrame::from_inner(result)
     }
 
     pub fn fold_along_scan_axis(&self, fold_width: usize) -> PyTimsFrame {
         let folded_frame = self.inner.clone().fold_along_scan_axis(fold_width);
-        PyTimsFrame { inner: folded_frame }
+        PyTimsFrame::from_inner(folded_frame)
     }
 }
 

@@ -91,7 +91,7 @@ impl PyTimsDatasetDDA {
         PyTimsDatasetDDA { inner: dataset }
     }
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.get_frame(frame_id) }
+        PyTimsFrame::from_inner(self.inner.get_frame(frame_id))
     }
 
     pub fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> PyTimsSlice {
@@ -122,7 +122,7 @@ impl PyTimsDatasetDDA {
 
     pub fn get_precursor_frames(&self, min_intensity: f64, max_peaks: usize, num_threads: usize) -> Vec<PyTimsFrame> {
         let precursor_frames = self.inner.get_precursor_frames(min_intensity, max_peaks, num_threads);
-        precursor_frames.iter().map(|frame| PyTimsFrame { inner: frame.clone() }).collect()
+        precursor_frames.iter().map(|frame| PyTimsFrame::from_inner(frame.clone())).collect()
     }
     
     pub fn sample_pasef_fragments_random(&self, target_scan_apex_values: Vec<i32>, experiment_max_scan: i32, ) -> PyTimsFrame {
@@ -130,11 +130,11 @@ impl PyTimsDatasetDDA {
             target_scan_apex_values,
             experiment_max_scan,
         );
-        PyTimsFrame { inner: tims_frame }
+        PyTimsFrame::from_inner(tims_frame)
     }
 
     pub fn sample_precursor_signal(&self, num_frames: usize, max_intensity: f64, take_probability: f64) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability) }
+        PyTimsFrame::from_inner(self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability))
     }
 }
 
@@ -165,7 +165,7 @@ impl PyTimsFragmentDDA {
     pub fn precursor_id(&self) -> u32 { self.inner.precursor_id }
 
     #[getter]
-    pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame { inner: self.inner.selected_fragment.clone() } }
+    pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame::from_inner(self.inner.selected_fragment.clone()) }
 
     #[getter]
     pub fn collision_energy(&self) -> f64 { self.inner.collision_energy }

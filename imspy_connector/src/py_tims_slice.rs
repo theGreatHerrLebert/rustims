@@ -90,7 +90,7 @@ impl PyTimsSlice {
         let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for frame in frames {
-            let py_tims_frame = Py::new(py, PyTimsFrame { inner: frame.clone() })?;
+            let py_tims_frame = Py::new(py, PyTimsFrame::from_inner(frame.clone()))?;
             list.bind(py).append(py_tims_frame)?;
         }
 
@@ -127,7 +127,7 @@ impl PyTimsSlice {
     }
 
     pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
+        PyTimsFrame::from_inner(self.inner.frames[index as usize].clone())
     }
 
     pub fn to_resolution(&self, resolution: i32, num_threads: usize) -> PyTimsSlice {

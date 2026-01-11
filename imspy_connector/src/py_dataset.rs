@@ -25,7 +25,7 @@ impl PyTimsDataset {
     }
 
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.get_frame(frame_id) }
+        PyTimsFrame::from_inner(self.inner.get_frame(frame_id))
     }
 
     pub fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> PyTimsSlice {

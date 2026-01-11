@@ -93,7 +93,7 @@ impl PyTimsTransmissionDDA {
 
     #[pyo3(signature = (frame, min_probability=None))]
     pub fn transmit_tims_frame(&self, frame: PyTimsFrame, min_probability: Option<f64>) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.transmit_tims_frame(&frame.inner, min_probability) }
+        PyTimsFrame::from_inner(self.inner.transmit_tims_frame(&frame.inner, min_probability))
     }
 
     #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
@@ -169,7 +169,7 @@ impl PyTimsTransmissionDIA {
 
     #[pyo3(signature = (frame, min_probability=None))]
     pub fn transmit_tims_frame(&self, frame: PyTimsFrame, min_probability: Option<f64>) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.transmit_tims_frame(&frame.inner, min_probability) }
+        PyTimsFrame::from_inner(self.inner.transmit_tims_frame(&frame.inner, min_probability))
     }
 
     #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
