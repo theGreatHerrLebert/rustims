@@ -1,4 +1,5 @@
 import os
+import warnings
 import pandas as pd
 
 import imspy_connector
@@ -6,7 +7,19 @@ ims = imspy_connector.py_simulation
 
 
 class TimsTofSyntheticsDataHandleRust:
+    """Legacy transmission handle. Use data.TransmissionHandle instead.
+
+    .. deprecated::
+        Use :class:`imspy.simulation.data.TransmissionHandle` instead.
+    """
+
     def __init__(self, path: str):
+        warnings.warn(
+            "TimsTofSyntheticsDataHandleRust is deprecated. "
+            "Use imspy.simulation.data.TransmissionHandle instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.path = path
         self.__handle = ims.PyTimsTofSyntheticsDataHandle(path)
 

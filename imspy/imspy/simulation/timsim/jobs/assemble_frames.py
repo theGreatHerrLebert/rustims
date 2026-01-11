@@ -7,10 +7,10 @@ from tqdm import tqdm
 
 from .add_noise_from_real_data import add_real_data_noise_to_frames
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
-from imspy.simulation.experiment import (
-    TimsTofSyntheticFrameBuilderDIA,
-    TimsTofSyntheticFrameBuilderDDA,
-    TimsTofLazyFrameBuilderDIA,
+from imspy.simulation.builders import (
+    create_frame_builder,
+    AcquisitionMode,
+    LoadingStrategy,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,27 +76,22 @@ def assemble_frames(
     num_batches = len(frames) // batch_size + 1
     frame_ids = frames.frame_id.values
 
-    if acquisition_builder.acquisition_mode.mode == 'DDA':
-        if lazy_loading:
-            logger.warning('Lazy loading is not yet supported for DDA mode, using standard builder.')
-        frame_builder = TimsTofSyntheticFrameBuilderDDA(
-            db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-            with_annotations=False,
-            num_threads=num_threads,
-        )
-    else:
-        if lazy_loading:
-            logger.info('Using lazy frame builder for DIA mode.')
-            frame_builder = TimsTofLazyFrameBuilderDIA(
-                db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-                num_threads=num_threads,
-            )
-        else:
-            frame_builder = TimsTofSyntheticFrameBuilderDIA(
-                db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-                with_annotations=False,
-                num_threads=num_threads,
-            )
+    # Determine acquisition mode and loading strategy
+    acq_mode = (
+        AcquisitionMode.DDA
+        if acquisition_builder.acquisition_mode.mode == 'DDA'
+        else AcquisitionMode.DIA
+    )
+    loading_strategy = LoadingStrategy.LAZY if lazy_loading else LoadingStrategy.STANDARD
+
+    # Create frame builder using factory
+    frame_builder = create_frame_builder(
+        db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+        acquisition_mode=acq_mode,
+        loading_strategy=loading_strategy,
+        num_threads=num_threads,
+        with_annotations=False,
+    )
 
     logger.info("Signal noise settings:")
     logger.info(f'Precursor m/z noise: {mz_noise_precursor}')

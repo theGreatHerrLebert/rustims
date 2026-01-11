@@ -10,7 +10,7 @@ from imspy.simulation.timsim.jobs.peptdeep_utils import (
     simulate_peptdeep_intensities_pandas,
 )
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
-from imspy.simulation.handle import TimsTofSyntheticsDataHandleRust
+from imspy.simulation.data import TransmissionHandle
 from imspy.simulation.utility import (
     flatten_prosit_array,
     flat_intensity_to_sparse,
@@ -60,7 +60,7 @@ def simulate_fragment_intensities(
     assert 0 <= down_sample_factor < 1, "down_sample_factor must be in the range [0, 1)"
 
     native_path = Path(path) / name / "synthetic_data.db"
-    native_handle = TimsTofSyntheticsDataHandleRust(str(native_path))
+    native_handle = TransmissionHandle(str(native_path))
 
     if lazy_loading:
         _simulate_fragment_intensities_lazy(
@@ -88,7 +88,7 @@ def simulate_fragment_intensities(
 
 
 def _simulate_fragment_intensities_standard(
-    native_handle: TimsTofSyntheticsDataHandleRust,
+    native_handle: TransmissionHandle,
     acquisition_builder: TimsTofAcquisitionBuilder,
     batch_size: int,
     num_threads: int,
@@ -213,7 +213,7 @@ def _simulate_fragment_intensities_standard(
 
 
 def _simulate_fragment_intensities_lazy(
-    native_handle: TimsTofSyntheticsDataHandleRust,
+    native_handle: TransmissionHandle,
     acquisition_builder: TimsTofAcquisitionBuilder,
     batch_size: int,
     num_threads: int,

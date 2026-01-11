@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import warnings
 from abc import ABC
 from typing import List, Tuple, Dict
 
@@ -20,15 +21,31 @@ from imspy.timstof.quadrupole import PasefMeta
 ims = imspy_connector.py_simulation
 
 
+def _deprecation_warning(old_name: str, new_name: str) -> None:
+    """Issue a deprecation warning for legacy classes."""
+    warnings.warn(
+        f"{old_name} is deprecated and will be removed in a future version. "
+        f"Use {new_name} instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
+    """Legacy DDA frame builder. Use builders.DDAFrameBuilder instead."""
+
     def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
         """Initializes the TimsTofSyntheticFrameBuilderDDA.
+
+        .. deprecated::
+            Use :class:`imspy.simulation.builders.DDAFrameBuilder` instead.
 
         Args:
             db_path (str): Path to the raw data file.
             with_annotations (bool): If true, frame annotations can be created during frame building, but this will slow down the process and needs a lot of extra memory, use with caution.
             num_threads (int): Number of threads.
         """
+        _deprecation_warning("TimsTofSyntheticFrameBuilderDDA", "builders.DDAFrameBuilder")
         self.path = db_path
 
         if num_threads == -1:
@@ -185,14 +202,20 @@ class TimsTofSyntheticFrameBuilderDDA(RustWrapperObject):
         return self.__py_ptr
 
 class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
+    """Legacy DIA frame builder. Use builders.DIAFrameBuilder instead."""
+
     def __init__(self, db_path: str, with_annotations: bool = False, num_threads: int = -1):
         """Initializes the TimsTofSyntheticFrameBuilderDIA.
+
+        .. deprecated::
+            Use :class:`imspy.simulation.builders.DIAFrameBuilder` instead.
 
         Args:
             db_path (str): Path to the raw data file.
             with_annotations (bool): If true, frame annotations can be created during frame building, but this will slow down the process and needs a lot of extra memory, use with caution.
             num_threads (int): Number of threads.
         """
+        _deprecation_warning("TimsTofSyntheticFrameBuilderDIA", "builders.DIAFrameBuilder")
         self.path = db_path
 
         if num_threads == -1:
@@ -352,7 +375,7 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
 
 
 class TimsTofLazyFrameBuilderDIA(RustWrapperObject):
-    """A lazy frame builder for DIA experiments that only loads data as needed.
+    """Legacy lazy DIA frame builder. Use builders.DIAFrameBuilder(lazy=True) instead.
 
     Unlike TimsTofSyntheticFrameBuilderDIA, this builder does not load all peptides,
     ions, and fragment ions into memory at construction time. Instead, it stores only
@@ -360,6 +383,9 @@ class TimsTofLazyFrameBuilderDIA(RustWrapperObject):
     peptide/ion data on-demand for each batch of frames being built.
 
     This can significantly reduce memory usage for large simulations.
+
+    .. deprecated::
+        Use :class:`imspy.simulation.builders.DIAFrameBuilder` with ``lazy=True`` instead.
     """
     def __init__(self, db_path: str, num_threads: int = -1):
         """Initializes the TimsTofLazyFrameBuilderDIA.
@@ -368,6 +394,7 @@ class TimsTofLazyFrameBuilderDIA(RustWrapperObject):
             db_path (str): Path to the synthetic data database.
             num_threads (int): Number of threads for parallel processing.
         """
+        _deprecation_warning("TimsTofLazyFrameBuilderDIA", "builders.DIAFrameBuilder(lazy=True)")
         self.path = db_path
 
         if num_threads == -1:
@@ -486,11 +513,18 @@ class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
 
 
 class SyntheticExperimentDataHandle:
+    """Legacy database handle. Use data.SimulationDatabase instead.
+
+    .. deprecated::
+        Use :class:`imspy.simulation.data.SimulationDatabase` instead.
+    """
+
     def __init__(self,
                  database_path: str,
                  database_name: str = 'synthetic_data.db',
                  verbose: bool = True,
                  ):
+        _deprecation_warning("SyntheticExperimentDataHandle", "data.SimulationDatabase")
         self.verbose = verbose
         self.base_path = database_path
         self.database_path = os.path.join(self.base_path, database_name)
