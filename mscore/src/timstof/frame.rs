@@ -391,13 +391,13 @@ impl TimsFrame {
             Some(first_spec) => first_spec.frame_id,
             _ => 1
         };
-        
+
         let ms_type = match first_spec {
             Some(first_spec) => first_spec.ms_type.clone(),
             _ => MsType::Unknown,
         };
-        
-        let retention_time = match first_spec { 
+
+        let retention_time = match first_spec {
             Some(first_spec) => first_spec.retention_time,
             _ => 0.0
         };
@@ -426,6 +426,87 @@ impl TimsFrame {
 
         for (scan_val, (mobility_val, mz_map)) in frame_map {
             for (mz_val, (tof_val, intensity_val)) in mz_map {
+                scan.push(scan_val);
+                mobility.push(mobility_val);
+                tof.push(tof_val);
+                mzs.push(mz_val as f64 / 1_000_000.0);
+                intensity.push(intensity_val);
+            }
+        }
+
+        TimsFrame::new(frame_id, ms_type, retention_time, scan, mobility, tof, mzs, intensity)
+    }
+
+    /// Create a TimsFrame from a vector of TimsSpectrum, filtering during construction.
+    /// This is more efficient than calling from_tims_spectra followed by filter_ranged,
+    /// as it avoids creating an intermediate unfiltered frame.
+    pub fn from_tims_spectra_filtered(
+        spectra: Vec<TimsSpectrum>,
+        mz_min: f64,
+        mz_max: f64,
+        scan_min: i32,
+        scan_max: i32,
+        inv_mob_min: f64,
+        inv_mob_max: f64,
+        intensity_min: f64,
+        intensity_max: f64,
+    ) -> TimsFrame {
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        let first_spec = spectra.first();
+        let frame_id = first_spec.map(|s| s.frame_id).unwrap_or(1);
+        let ms_type = first_spec.map(|s| s.ms_type.clone()).unwrap_or(MsType::Unknown);
+        let retention_time = first_spec.map(|s| s.retention_time).unwrap_or(0.0);
+
+        let mut frame_map: BTreeMap<i32, (f64, BTreeMap<i64, (i32, f64)>)> = BTreeMap::new();
+        let mut capacity_count = 0;
+
+        // Group by scan, filtering out-of-range scans and mobilities
+        for spectrum in &spectra {
+            // Early filter on scan range
+            if spectrum.scan < scan_min || spectrum.scan > scan_max {
+                continue;
+            }
+            // Early filter on mobility range
+            if spectrum.mobility < inv_mob_min || spectrum.mobility > inv_mob_max {
+                continue;
+            }
+
+            let inv_mobility = spectrum.mobility;
+            let entry = frame_map.entry(spectrum.scan).or_insert_with(|| (inv_mobility, BTreeMap::new()));
+
+            for (i, mz) in spectrum.spectrum.mz_spectrum.mz.iter().enumerate() {
+                // Filter on mz range
+                if *mz < mz_min || *mz > mz_max {
+                    continue;
+                }
+                let intensity = spectrum.spectrum.mz_spectrum.intensity[i];
+                // Filter on intensity range
+                if intensity < intensity_min || intensity > intensity_max {
+                    continue;
+                }
+
+                let tof = spectrum.spectrum.index[i];
+                entry.1.entry(quantize(*mz)).and_modify(|e| *e = (tof, e.1 + intensity)).or_insert((tof, intensity));
+                capacity_count += 1;
+            }
+        }
+
+        // Unroll the map to vectors
+        let mut scan = Vec::with_capacity(capacity_count);
+        let mut mobility = Vec::with_capacity(capacity_count);
+        let mut tof = Vec::with_capacity(capacity_count);
+        let mut mzs = Vec::with_capacity(capacity_count);
+        let mut intensity = Vec::with_capacity(capacity_count);
+
+        for (scan_val, (mobility_val, mz_map)) in frame_map {
+            for (mz_val, (tof_val, intensity_val)) in mz_map {
+                // Final intensity filter after aggregation (sum may push over threshold)
+                if intensity_val < intensity_min || intensity_val > intensity_max {
+                    continue;
+                }
                 scan.push(scan_val);
                 mobility.push(mobility_val);
                 tof.push(tof_val);

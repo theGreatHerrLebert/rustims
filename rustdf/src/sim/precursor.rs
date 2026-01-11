@@ -1,7 +1,7 @@
 use mscore::data::peptide::PeptideIon;
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::simulation::annotation::{
-    MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated, TimsSpectrumAnnotated,
+    MzSpectrumAnnotated, TimsFrameAnnotated, TimsSpectrumAnnotated,
 };
 use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::spectrum::TimsSpectrum;
@@ -12,7 +12,6 @@ use std::path::Path;
 use crate::sim::containers::{FramesSim, IonSim, PeptidesSim, ScansSim};
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 
 pub struct TimsTofSyntheticsPrecursorFrameBuilder {
     pub ions: BTreeMap<u32, Vec<IonSim>>,
@@ -86,83 +85,74 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         precursor_noise_ppm: f64,
         right_drag: bool,
     ) -> TimsFrame {
-        let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
-            true => MsType::Precursor,
-            false => MsType::Unknown,
+        // Cache frame-level lookups
+        let ms_type = if self.precursor_frame_id_set.contains(&frame_id) {
+            MsType::Precursor
+        } else {
+            MsType::Unknown
+        };
+        let rt = *self.frame_to_rt.get(&frame_id).unwrap() as f64;
+
+        // Single lookup instead of contains_key + get
+        let Some((peptide_ids, abundances)) = self.frame_to_abundances.get(&frame_id) else {
+            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
         };
 
-        let mut tims_spectra: Vec<TimsSpectrum> = Vec::new();
+        // Preallocate with estimated capacity
+        let estimated_capacity = peptide_ids.len() * 4;
+        let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(estimated_capacity);
 
-        // Frame might not have any peptides
-        if !self.frame_to_abundances.contains_key(&frame_id) {
-            return TimsFrame::new(
-                frame_id as i32,
-                ms_type.clone(),
-                *self.frame_to_rt.get(&frame_id).unwrap() as f64,
-                vec![],
-                vec![],
-                vec![],
-                vec![],
-                vec![],
-            );
-        }
-        // Get the peptide ids and abundances for the frame, should now save to unwrap since we checked if the frame is in the map
-        let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
-
-        // go over all peptides and their abundances in the frame
+        // Go over all peptides and their abundances in the frame
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            // jump to next peptide if the peptide_id is not in the peptide_to_ions map
-            if !self.peptide_to_ions.contains_key(&peptide_id) {
+            // Single lookup instead of contains_key + get
+            let Some((ion_abundances, scan_occurrences, scan_abundances, _, spectra)) =
+                self.peptide_to_ions.get(peptide_id)
+            else {
                 continue;
-            }
+            };
 
-            // one peptide can have multiple ions, occurring in multiple scans
-            let (ion_abundances, scan_occurrences, scan_abundances, _, spectra) =
-                self.peptide_to_ions.get(&peptide_id).unwrap();
+            // Cache peptide-level lookup
+            let total_events = *self.peptide_to_events.get(peptide_id).unwrap();
 
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let scan_occurrence = scan_occurrences.get(index).unwrap();
-                let scan_abundance = scan_abundances.get(index).unwrap();
-                let spectrum = spectra.get(index).unwrap();
+                let scan_occurrence = &scan_occurrences[index];
+                let scan_abundance = &scan_abundances[index];
+                let spectrum = &spectra[index];
 
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
-                    let abundance_factor = abundance
-                        * ion_abundance
-                        * scan_abu
-                        * self.peptide_to_events.get(&peptide_id).unwrap();
-                    let scan_id = *scan;
+                    let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
                     let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
 
                     let mz_spectrum = if mz_noise_precursor {
-                        match uniform {
-                            true => {
-                                scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
-                            }
-                            false => scaled_spec.add_mz_noise_normal(precursor_noise_ppm),
+                        if uniform {
+                            scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
+                        } else {
+                            scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
                         }
                     } else {
                         scaled_spec
                     };
 
-                    let tims_spec = TimsSpectrum::new(
+                    // Cache scan mobility
+                    let scan_mobility = *self.scan_to_mobility.get(scan).unwrap() as f64;
+                    let spectrum_len = mz_spectrum.mz.len();
+
+                    tims_spectra.push(TimsSpectrum::new(
                         frame_id as i32,
                         *scan as i32,
-                        *self.frame_to_rt.get(&frame_id).unwrap() as f64,
-                        *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
+                        rt,
+                        scan_mobility,
                         ms_type.clone(),
                         IndexedMzSpectrum::from_mz_spectrum(
-                            vec![0; mz_spectrum.mz.len()],
+                            vec![0; spectrum_len],
                             mz_spectrum,
                         ),
-                    );
-                    tims_spectra.push(tims_spec);
+                    ));
                 }
             }
         }
 
-        let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
-
-        tims_frame.filter_ranged(0.0, 10000.0, 0, 2000, 0.0, 10.0, 1.0, 1e9)
+        TimsFrame::from_tims_spectra_filtered(tims_spectra, 0.0, 10000.0, 0, 2000, 0.0, 10.0, 1.0, 1e9)
     }
 
     /// Build a collection of precursor frames in parallel
@@ -185,30 +175,32 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         right_drag: bool,
         num_threads: usize,
     ) -> Vec<TimsFrame> {
-        let thread_pool = ThreadPoolBuilder::new()
+        let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
             .unwrap();
-        let mut tims_frames: Vec<TimsFrame> = Vec::new();
 
-        thread_pool.install(|| {
-            tims_frames = frame_ids
-                .par_iter()
-                .map(|frame_id| {
-                    self.build_precursor_frame(
-                        *frame_id,
-                        mz_noise_precursor,
-                        uniform,
-                        precursor_noise_ppm,
-                        right_drag,
-                    )
-                })
-                .collect();
-        });
+        pool.install(|| {
+            // Use indexed parallel iteration to maintain order, avoiding post-sort
+            let mut tims_frames: Vec<TimsFrame> = Vec::with_capacity(frame_ids.len());
+            unsafe { tims_frames.set_len(frame_ids.len()); }
 
-        tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
+            frame_ids.par_iter().enumerate().for_each(|(idx, frame_id)| {
+                let frame = self.build_precursor_frame(
+                    *frame_id,
+                    mz_noise_precursor,
+                    uniform,
+                    precursor_noise_ppm,
+                    right_drag,
+                );
+                unsafe {
+                    let ptr = tims_frames.as_ptr() as *mut TimsFrame;
+                    std::ptr::write(ptr.add(idx), frame);
+                }
+            });
 
-        tims_frames
+            tims_frames
+        })
     }
 
     pub fn build_precursor_frame_annotated(
@@ -219,46 +211,43 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         precursor_noise_ppm: f64,
         right_drag: bool,
     ) -> TimsFrameAnnotated {
-        let ms_type = match self.precursor_frame_id_set.contains(&frame_id) {
-            true => MsType::Precursor,
-            false => MsType::Unknown,
+        // Cache frame-level lookups
+        let ms_type = if self.precursor_frame_id_set.contains(&frame_id) {
+            MsType::Precursor
+        } else {
+            MsType::Unknown
+        };
+        let rt = *self.frame_to_rt.get(&frame_id).unwrap_or(&0.0) as f64;
+
+        // Single lookup instead of contains_key + get
+        let Some((peptide_ids, abundances)) = self.frame_to_abundances.get(&frame_id) else {
+            return TimsFrameAnnotated::new(frame_id as i32, rt, ms_type, vec![], vec![], vec![], vec![], vec![], vec![]);
         };
 
-        // no peptides in the frame
-        if !self.frame_to_abundances.contains_key(&frame_id) {
-            return TimsFrameAnnotated::new(
-                frame_id as i32,
-                0.0,
-                ms_type.clone(),
-                vec![],
-                vec![],
-                vec![],
-                vec![],
-                vec![],
-                vec![],
-            );
-        }
-
-        let (peptide_ids, abundances) = self.frame_to_abundances.get(&frame_id).unwrap();
-        let mut tims_spectra: Vec<TimsSpectrumAnnotated> = Vec::new();
+        // Preallocate with estimated capacity
+        let estimated_capacity = peptide_ids.len() * 4;
+        let mut tims_spectra: Vec<TimsSpectrumAnnotated> = Vec::with_capacity(estimated_capacity);
 
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            // jump to next peptide if the peptide_id is not in the peptide_to_ions map
-            if !self.peptide_to_ions.contains_key(&peptide_id) {
+            // Single lookup
+            let Some((ion_abundances, scan_occurrences, scan_abundances, charges, _)) =
+                self.peptide_to_ions.get(peptide_id)
+            else {
                 continue;
-            }
+            };
 
-            let (ion_abundances, scan_occurrences, scan_abundances, charges, _) =
-                self.peptide_to_ions.get(&peptide_id).unwrap();
+            // Cache peptide-level lookups
+            let total_events = *self.peptide_to_events.get(peptide_id).unwrap();
+            let peptide = self.peptides.get(peptide_id).unwrap();
 
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let scan_occurrence = scan_occurrences.get(index).unwrap();
-                let scan_abundance = scan_abundances.get(index).unwrap();
-                let charge = charges.get(index).unwrap();
-                let peptide = self.peptides.get(peptide_id).unwrap();
+                let scan_occurrence = &scan_occurrences[index];
+                let scan_abundance = &scan_abundances[index];
+                let charge = charges[index];
+
                 let ion = PeptideIon::new(
                     peptide.sequence.sequence.clone(),
-                    *charge as i32,
+                    charge as i32,
                     *ion_abundance as f64,
                     Some(*peptide_id as i32),
                 );
@@ -266,41 +255,37 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
                 let spectrum = ion.calculate_isotopic_spectrum_annotated(1e-3, 1e-8, 200, 1e-4);
 
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
-                    let abundance_factor = abundance
-                        * ion_abundance
-                        * scan_abu
-                        * self.peptide_to_events.get(&peptide_id).unwrap();
-                    let scan_id = *scan;
-                    let scaled_spec: MzSpectrumAnnotated =
-                        spectrum.clone() * abundance_factor as f64;
+                    let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
+                    let scaled_spec: MzSpectrumAnnotated = spectrum.clone() * abundance_factor as f64;
 
                     let mz_spectrum = if mz_noise_precursor {
-                        match uniform {
-                            true => {
-                                scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
-                            }
-                            false => scaled_spec.add_mz_noise_normal(precursor_noise_ppm),
+                        if uniform {
+                            scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
+                        } else {
+                            scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
                         }
                     } else {
                         scaled_spec
                     };
 
-                    let tims_spec = TimsSpectrumAnnotated::new(
+                    // Cache scan mobility
+                    let scan_mobility = *self.scan_to_mobility.get(scan).unwrap() as f64;
+                    let spectrum_len = mz_spectrum.mz.len();
+
+                    tims_spectra.push(TimsSpectrumAnnotated::new(
                         frame_id as i32,
                         *scan,
-                        *self.frame_to_rt.get(&frame_id).unwrap() as f64,
-                        *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
+                        rt,
+                        scan_mobility,
                         ms_type.clone(),
-                        vec![0; mz_spectrum.mz.len()],
+                        vec![0; spectrum_len],
                         mz_spectrum,
-                    );
-                    tims_spectra.push(tims_spec);
+                    ));
                 }
             }
         }
 
         let tims_frame = TimsFrameAnnotated::from_tims_spectra_annotated(tims_spectra);
-
         let filtered_frame = tims_frame.filter_ranged(0.0, 2000.0, 0.0, 2.0, 0, 1000, 1.0, 1e9);
 
         TimsFrameAnnotated {
@@ -314,20 +299,16 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             intensity: filtered_frame.intensity,
             annotations: filtered_frame
                 .annotations
-                .iter()
-                .map(|x| {
-                    let mut contributions = x.contributions.clone();
-                    contributions.sort_by(|a, b| {
+                .into_iter()
+                .map(|mut x| {
+                    x.contributions.sort_by(|a, b| {
                         a.intensity_contribution
                             .partial_cmp(&b.intensity_contribution)
                             .unwrap()
                     });
-                    PeakAnnotation {
-                        contributions,
-                        ..*x
-                    }
+                    x
                 })
-                .collect::<Vec<PeakAnnotation>>(),
+                .collect(),
         }
     }
 
@@ -340,29 +321,31 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         right_drag: bool,
         num_threads: usize,
     ) -> Vec<TimsFrameAnnotated> {
-        let thread_pool = ThreadPoolBuilder::new()
+        let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
             .unwrap();
-        let mut tims_frames: Vec<TimsFrameAnnotated> = Vec::new();
 
-        thread_pool.install(|| {
-            tims_frames = frame_ids
-                .par_iter()
-                .map(|frame_id| {
-                    self.build_precursor_frame_annotated(
-                        *frame_id,
-                        mz_noise_precursor,
-                        uniform,
-                        precursor_noise_ppm,
-                        right_drag,
-                    )
-                })
-                .collect();
-        });
+        pool.install(|| {
+            // Use indexed parallel iteration to maintain order, avoiding post-sort
+            let mut tims_frames: Vec<TimsFrameAnnotated> = Vec::with_capacity(frame_ids.len());
+            unsafe { tims_frames.set_len(frame_ids.len()); }
 
-        tims_frames.sort_by(|a, b| a.frame_id.cmp(&b.frame_id));
+            frame_ids.par_iter().enumerate().for_each(|(idx, frame_id)| {
+                let frame = self.build_precursor_frame_annotated(
+                    *frame_id,
+                    mz_noise_precursor,
+                    uniform,
+                    precursor_noise_ppm,
+                    right_drag,
+                );
+                unsafe {
+                    let ptr = tims_frames.as_ptr() as *mut TimsFrameAnnotated;
+                    std::ptr::write(ptr.add(idx), frame);
+                }
+            });
 
-        tims_frames
+            tims_frames
+        })
     }
 }
