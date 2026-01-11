@@ -287,6 +287,9 @@ def get_default_settings() -> dict:
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
 
+        # Fragment intensity model
+        'fragment_intensity_model': None,  # None/"prosit" or "peptdeep"
+
         # Proteome mixture
         'proteome_mix': False,
         'multi_fasta_dilution': None,
@@ -1014,6 +1017,8 @@ def main():
 
     # JOB 9: Simulate fragment intensities
     logger.info(section_header("Simulating Fragment Intensities", use_unicode))
+    if config.fragment_intensity_model:
+        logger.info(f"  Using intensity model: {config.fragment_intensity_model}")
     simulate_fragment_intensities(
         path=save_path,
         name=name,
@@ -1023,6 +1028,7 @@ def main():
         num_threads=num_threads,
         down_sample_factor=config.down_sample_factor,
         dda=config.acquisition_type == 'DDA',
+        model_name=config.fragment_intensity_model,
     )
 
     # JOB 10: Assemble frames
