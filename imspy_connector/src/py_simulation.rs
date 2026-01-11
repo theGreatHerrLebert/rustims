@@ -159,7 +159,7 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         for (key, value) in self.inner.fragment_ions.clone().unwrap().iter() {
             let (peptide_ions, mz_spectra) = value;
             let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
-            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum { inner: x.clone() }).collect::<Vec<_>>();
+            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum::from_inner(x.clone())).collect::<Vec<_>>();
             result.insert(key.clone(), (peptide_ions, mz_spectra));
         }
         result
@@ -239,7 +239,7 @@ impl PyTimsTofSyntheticsFrameBuilderDDA {
         for (key, value) in self.inner.fragment_ions.clone().unwrap().iter() {
             let (peptide_ions, mz_spectra) = value;
             let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
-            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum { inner: x.clone() }).collect::<Vec<_>>();
+            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum::from_inner(x.clone())).collect::<Vec<_>>();
             result.insert(key.clone(), (peptide_ions, mz_spectra));
         }
         result

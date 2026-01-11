@@ -9,7 +9,7 @@ use crate::py_peptide::{PyPeptideSequence};
 
 #[pyfunction]
 pub fn generate_precursor_spectrum(mass: f64, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> PyMzSpectrum {
-    PyMzSpectrum { inner: generate_averagine_spectrum(mass, charge, min_intensity, k, resolution, centroid, None) }
+    PyMzSpectrum::from_inner(generate_averagine_spectrum(mass, charge, min_intensity, k, resolution, centroid, None))
 }
 
 #[pyfunction]
@@ -23,7 +23,7 @@ pub fn generate_precursor_spectra(
     num_threads: usize
 ) -> Vec<PyMzSpectrum> {
     let result = generate_averagine_spectra(masses, charges, min_intensity, k, resolution, centroid, num_threads, None);
-    result.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
+    result.into_iter().map(|spectrum| PyMzSpectrum::from_inner(spectrum)).collect()
 }
 
 #[pyfunction]
@@ -112,13 +112,13 @@ pub fn calculate_mz(mono_isotopic_mass: f64, charge: i32) -> f64 {
 #[pyfunction]
 #[pyo3(signature = (sequence, charge, peptide_id=None))]
 pub fn simulate_precursor_spectrum(sequence: &str, charge: i32, peptide_id: Option<i32>) -> PyMzSpectrum {
-    PyMzSpectrum { inner: mscore::algorithm::isotope::generate_precursor_spectrum(&sequence, charge, peptide_id) }
+    PyMzSpectrum::from_inner(mscore::algorithm::isotope::generate_precursor_spectrum(&sequence, charge, peptide_id))
 }
 
 #[pyfunction]
 pub fn simulate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<PyMzSpectrum> {
     let spectra = mscore::algorithm::isotope::generate_precursor_spectra(&sequences, &charges, num_threads, peptide_ids);
-    spectra.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
+    spectra.into_iter().map(|spectrum| PyMzSpectrum::from_inner(spectrum)).collect()
 }
 
 #[pyfunction]
@@ -135,7 +135,7 @@ pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(target
 
     let mz_vec: Vec<f64> = result.iter().map(|(mz, _)| *mz).collect();
     let intensity_vec: Vec<f64> = result.iter().map(|(_, intensity)| *intensity).collect();
-    PyMzSpectrum { inner: MzSpectrum::new(mz_vec, intensity_vec) }
+    PyMzSpectrum::from_inner(MzSpectrum::new(mz_vec, intensity_vec))
 }
 
 #[pymodule]

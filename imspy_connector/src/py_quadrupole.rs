@@ -88,7 +88,7 @@ impl PyTimsTransmissionDDA {
 
     #[pyo3(signature = (frame_id, scan_id, spectrum, min_probability=None))]
     pub fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: PyMzSpectrum, min_probability: Option<f64>) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability) }
+        PyMzSpectrum::from_inner(self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability))
     }
 
     #[pyo3(signature = (frame, min_probability=None))]
@@ -99,7 +99,7 @@ impl PyTimsTransmissionDDA {
     #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
     pub fn transmit_ion(&self, frames: Vec<i32>, scans: Vec<i32>, spectrum: PyMzSpectrum, min_proba: Option<f64>) -> Vec<Vec<PyMzSpectrum>> {
         let transmission_profile = self.inner.transmit_ion(frames, scans, spectrum.inner, min_proba);
-        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum { inner: y.clone() }).collect::<Vec<_>>()).collect::<Vec<_>>()
+        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum::from_inner(y.clone())).collect::<Vec<_>>()).collect::<Vec<_>>()
     }
 
     #[pyo3(signature = (frame_id, scan_id, mz, min_proba=None))]
@@ -164,7 +164,7 @@ impl PyTimsTransmissionDIA {
 
     #[pyo3(signature = (frame_id, scan_id, spectrum, min_probability=None))]
     pub fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: PyMzSpectrum, min_probability: Option<f64>) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability) }
+        PyMzSpectrum::from_inner(self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability))
     }
 
     #[pyo3(signature = (frame, min_probability=None))]
@@ -175,7 +175,7 @@ impl PyTimsTransmissionDIA {
     #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
     pub fn transmit_ion(&self, frames: Vec<i32>, scans: Vec<i32>, spectrum: PyMzSpectrum, min_proba: Option<f64>) -> Vec<Vec<PyMzSpectrum>> {
         let transmission_profile = self.inner.transmit_ion(frames, scans, spectrum.inner, min_proba);
-        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum { inner: y.clone() }).collect::<Vec<_>>()).collect::<Vec<_>>()
+        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum::from_inner(y.clone())).collect::<Vec<_>>()).collect::<Vec<_>>()
     }
 
     pub fn get_setting(&self, window_group: i32, scan_id: i32) -> (f64, f64) {
