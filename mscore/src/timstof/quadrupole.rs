@@ -161,10 +161,7 @@ pub trait IonTransmission {
             }
         }
 
-        MzSpectrum {
-            mz: filtered_mz,
-            intensity: filtered_intensity,
-        }
+        MzSpectrum::new(filtered_mz, filtered_intensity)
     }
 
     /// Transmit an annotated spectrum given a frame id and scan id

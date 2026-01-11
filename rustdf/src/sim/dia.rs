@@ -584,10 +584,9 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                                 .get(&scan)
                                 .unwrap() as f64,
                             ms_type.clone(),
-                            IndexedMzSpectrum::new(
+                            IndexedMzSpectrum::from_mz_spectrum(
                                 vec![0; mz_spectrum.mz.len()],
-                                mz_spectrum.mz,
-                                mz_spectrum.intensity,
+                                mz_spectrum,
                             )
                             .filter_ranged(100.0, 1700.0, 1.0, 1e9),
                         ));

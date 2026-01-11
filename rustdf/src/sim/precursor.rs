@@ -150,10 +150,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
                         *self.frame_to_rt.get(&frame_id).unwrap() as f64,
                         *self.scan_to_mobility.get(&scan_id).unwrap() as f64,
                         ms_type.clone(),
-                        IndexedMzSpectrum::new(
+                        IndexedMzSpectrum::from_mz_spectrum(
                             vec![0; mz_spectrum.mz.len()],
-                            mz_spectrum.mz,
-                            mz_spectrum.intensity,
+                            mz_spectrum,
                         ),
                     );
                     tims_spectra.push(tims_spec);

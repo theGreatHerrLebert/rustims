@@ -26,7 +26,7 @@ rayon = "1.10.0"
 # Matrix operations
 nalgebra = "0.33.2"
 # Serialization
-serde = { version = "1.0.217", features = ["derive"] }
+serde = { version = "1.0.217", features = ["derive", "rc"] }
 # Regular expressions
 regex = "1.11.1"
 # Random number generation

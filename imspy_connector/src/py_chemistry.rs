@@ -133,7 +133,9 @@ pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(target
         &target, &complement, &transmitted_map, max_isotope
     );
 
-    PyMzSpectrum { inner: MzSpectrum { mz: result.iter().map(|(mz, _)| *mz).collect(), intensity: result.iter().map(|(_, intensity)| *intensity).collect() } }
+    let mz_vec: Vec<f64> = result.iter().map(|(mz, _)| *mz).collect();
+    let intensity_vec: Vec<f64> = result.iter().map(|(_, intensity)| *intensity).collect();
+    PyMzSpectrum { inner: MzSpectrum::new(mz_vec, intensity_vec) }
 }
 
 #[pymodule]

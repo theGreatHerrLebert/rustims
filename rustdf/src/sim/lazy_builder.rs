@@ -327,10 +327,9 @@ impl TimsTofLazyFrameBuilderDIA {
                         rt,
                         *self.scan_to_mobility.get(scan).unwrap_or(&0.0) as f64,
                         ms_type.clone(),
-                        IndexedMzSpectrum::new(
+                        IndexedMzSpectrum::from_mz_spectrum(
                             vec![0; mz_spectrum.mz.len()],
-                            mz_spectrum.mz,
-                            mz_spectrum.intensity,
+                            mz_spectrum,
                         ),
                     );
                     tims_spectra.push(tims_spec);
@@ -471,10 +470,9 @@ impl TimsTofLazyFrameBuilderDIA {
                             rt,
                             *self.scan_to_mobility.get(scan).unwrap_or(&0.0) as f64,
                             ms_type.clone(),
-                            IndexedMzSpectrum::new(
+                            IndexedMzSpectrum::from_mz_spectrum(
                                 vec![0; mz_spectrum.mz.len()],
-                                mz_spectrum.mz,
-                                mz_spectrum.intensity,
+                                mz_spectrum,
                             )
                             .filter_ranged(100.0, 1700.0, 1.0, 1e9),
                         ));

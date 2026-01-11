@@ -437,7 +437,7 @@ impl TimsFrame {
 
         IndexedMzSpectrum {
             index,
-            mz_spectrum: MzSpectrum { mz, intensity },
+            mz_spectrum: MzSpectrum::new(mz, intensity),
         }
     }
 
