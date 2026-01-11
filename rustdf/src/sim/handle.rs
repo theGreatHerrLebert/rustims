@@ -724,6 +724,116 @@ impl TimsTofSyntheticsDataHandle {
         )
     }
 
+    /// Lazy version of get_transmitted_ions that only loads data for a specific frame range.
+    /// This reduces memory usage by only loading peptides and ions that are relevant to the
+    /// specified frame range instead of all data from the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_min` - Minimum frame ID to include (inclusive)
+    /// * `frame_max` - Maximum frame ID to include (inclusive)
+    /// * `num_threads` - Number of threads to use for parallel processing
+    /// * `dda_mode` - If true, use DDA transmission; if false, use DIA transmission
+    ///
+    /// # Returns
+    ///
+    /// Tuple of (peptide_ids, ion_ids, sequences, charges, collision_energies) for transmitted ions
+    pub fn get_transmitted_ions_for_frame_range(
+        &self,
+        frame_min: u32,
+        frame_max: u32,
+        num_threads: usize,
+        dda_mode: bool,
+    ) -> (Vec<i32>, Vec<i32>, Vec<String>, Vec<i8>, Vec<f32>) {
+
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
+
+        // Only load peptides for the specified frame range
+        let peptides = self.read_peptides_for_frame_range(frame_min, frame_max).unwrap();
+
+        if peptides.is_empty() {
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        }
+
+        let peptide_ids: Vec<u32> = peptides.iter().map(|p| p.peptide_id).collect();
+        let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
+
+        let precursor_frames =
+            TimsTofSyntheticsDataHandle::build_precursor_frame_id_set(&self.read_frames().unwrap());
+
+        // Only load ions for the peptides in our frame range
+        let ions = self.read_ions_for_peptides(&peptide_ids).unwrap();
+
+        if ions.is_empty() {
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        }
+
+        let trees = match dda_mode {
+            true => {
+                let transmission = self.get_transmission_dda();
+                thread_pool.install(|| {
+                    ions.par_iter()
+                        .map(|ion| {
+                            TimsTofSyntheticsDataHandle::ion_map_fn_dda(
+                                ion.clone(),
+                                &peptide_map,
+                                &precursor_frames,
+                                &transmission,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+            },
+            false => {
+                let transmission = self.get_transmission_dia();
+                let collision_energy = self.get_collision_energy_dia();
+                thread_pool.install(|| {
+                    ions.par_iter()
+                        .map(|ion| {
+                            TimsTofSyntheticsDataHandle::ion_map_fn_dia(
+                                ion.clone(),
+                                &peptide_map,
+                                &precursor_frames,
+                                &transmission,
+                                &collision_energy,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+            },
+        };
+
+        let mut ret_tree: BTreeSet<(u32, u32, String, i8, i32)> = BTreeSet::new();
+        for tree in trees {
+            ret_tree.extend(tree);
+        }
+
+        let mut ret_peptide_id = Vec::new();
+        let mut ret_ion_id = Vec::new();
+        let mut ret_sequence = Vec::new();
+        let mut ret_charge = Vec::new();
+        let mut ret_energy = Vec::new();
+
+        for (peptide_id, ion_id, sequence, charge, energy) in ret_tree {
+            ret_peptide_id.push(peptide_id as i32);
+            ret_ion_id.push(ion_id as i32);
+            ret_sequence.push(sequence);
+            ret_charge.push(charge);
+            ret_energy.push(energy as f32 / 100.0);
+        }
+
+        (
+            ret_peptide_id,
+            ret_ion_id,
+            ret_sequence,
+            ret_charge,
+            ret_energy,
+        )
+    }
+
     /// Method to build a map from peptide id to ions
     pub fn build_peptide_to_ion_map(ions: &Vec<IonSim>) -> BTreeMap<u32, Vec<IonSim>> {
         let mut ion_map = BTreeMap::new();

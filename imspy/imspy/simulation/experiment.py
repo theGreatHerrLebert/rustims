@@ -351,6 +351,99 @@ class TimsTofSyntheticFrameBuilderDIA(RustWrapperObject):
         return self.__py_ptr.count_number_transmissions_parallel(peptide_ids, charges, num_threads)
 
 
+class TimsTofLazyFrameBuilderDIA(RustWrapperObject):
+    """A lazy frame builder for DIA experiments that only loads data as needed.
+
+    Unlike TimsTofSyntheticFrameBuilderDIA, this builder does not load all peptides,
+    ions, and fragment ions into memory at construction time. Instead, it stores only
+    the static metadata (frame info, scan info, transmission settings) and loads
+    peptide/ion data on-demand for each batch of frames being built.
+
+    This can significantly reduce memory usage for large simulations.
+    """
+    def __init__(self, db_path: str, num_threads: int = -1):
+        """Initializes the TimsTofLazyFrameBuilderDIA.
+
+        Args:
+            db_path (str): Path to the synthetic data database.
+            num_threads (int): Number of threads for parallel processing.
+        """
+        self.path = db_path
+
+        if num_threads == -1:
+            num_threads = os.cpu_count()
+
+        self.__py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(db_path, num_threads)
+
+    def build_frames(
+        self,
+        frame_ids: List[int],
+        fragment: bool = True,
+        mz_noise_precursor: bool = False,
+        mz_noise_uniform: bool = False,
+        precursor_noise_ppm: float = 5.,
+        mz_noise_fragment: bool = False,
+        fragment_noise_ppm: float = 5.,
+        right_drag: bool = True,
+        num_threads: int = 4,
+    ) -> List[TimsFrame]:
+        """Build frames for the specified frame IDs using lazy loading.
+
+        Only loads peptide/ion data for the frames being built, then releases it.
+
+        Args:
+            frame_ids (List[int]): Frame IDs to build.
+            fragment (bool): If true, perform synthetic fragmentation.
+            mz_noise_precursor (bool): If true, add noise to precursor m/z values.
+            mz_noise_uniform (bool): If true, use uniform noise distribution.
+            precursor_noise_ppm (float): PPM of precursor noise.
+            mz_noise_fragment (bool): If true, add noise to fragment m/z values.
+            fragment_noise_ppm (float): PPM of fragment noise.
+            right_drag (bool): If true, noise is shifted to the right.
+            num_threads (int): Number of threads (unused, included for API compatibility).
+
+        Returns:
+            List[TimsFrame]: Built frames.
+        """
+        frames = self.__py_ptr.build_frames_lazy(
+            frame_ids,
+            fragment,
+            mz_noise_precursor,
+            mz_noise_uniform,
+            precursor_noise_ppm,
+            mz_noise_fragment,
+            fragment_noise_ppm,
+            right_drag,
+        )
+        return [TimsFrame.from_py_ptr(frame) for frame in frames]
+
+    def num_frames(self) -> int:
+        """Get total number of frames."""
+        return self.__py_ptr.num_frames()
+
+    def frame_ids(self) -> List[int]:
+        """Get all frame IDs."""
+        return self.__py_ptr.frame_ids()
+
+    def precursor_frame_ids(self) -> List[int]:
+        """Get precursor frame IDs."""
+        return self.__py_ptr.precursor_frame_ids()
+
+    def fragment_frame_ids(self) -> List[int]:
+        """Get fragment frame IDs."""
+        return self.__py_ptr.fragment_frame_ids()
+
+    def get_collision_energy(self, frame_id: int, scan_id: int) -> float:
+        """Get collision energy for a specific frame and scan."""
+        return self.__py_ptr.get_collision_energy(frame_id, scan_id)
+
+    def __repr__(self):
+        return f"TimsTofLazyFrameBuilderDIA(path={self.path})"
+
+    def get_py_ptr(self):
+        return self.__py_ptr
+
+
 class TimsTofSyntheticPrecursorFrameBuilder(RustWrapperObject):
     def __init__(self, db_path: str):
         self.__py_ptr = ims.PyTimsTofSyntheticsPrecursorFrameBuilder(db_path)

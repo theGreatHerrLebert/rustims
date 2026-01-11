@@ -1,12 +1,19 @@
 from pathlib import Path
 from typing import Optional
+import logging
 
 import pandas as pd
 from tqdm import tqdm
 
 from .add_noise_from_real_data import add_real_data_noise_to_frames
 from imspy.simulation.acquisition import TimsTofAcquisitionBuilder
-from imspy.simulation.experiment import TimsTofSyntheticFrameBuilderDIA, TimsTofSyntheticFrameBuilderDDA
+from imspy.simulation.experiment import (
+    TimsTofSyntheticFrameBuilderDIA,
+    TimsTofSyntheticFrameBuilderDDA,
+    TimsTofLazyFrameBuilderDIA,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def assemble_frames(
@@ -29,6 +36,7 @@ def assemble_frames(
         num_fragment_frames: int = 10,
         fragment: bool = True,
         pasef_meta: Optional[pd.DataFrame] = None,
+        lazy_loading: bool = False,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -52,42 +60,50 @@ def assemble_frames(
         num_fragment_frames: Number of fragment frames.
         fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
         pasef_meta: PASEF metadata, if None, will be read from the database.
+        lazy_loading: If True, use lazy loading to reduce memory usage (DIA only).
 
 
     Returns:
         None, writes frames to disk and metadata to database.
     """
 
-    if verbose:
-        print('Starting frame assembly ...')
+    logger.info('Starting frame assembly ...')
 
-        if add_real_data_noise:
-            print('Real data noise will be added to the frames.')
+    if add_real_data_noise:
+        logger.info('Real data noise will be added to the frames.')
 
     batch_size = batch_size
     num_batches = len(frames) // batch_size + 1
     frame_ids = frames.frame_id.values
 
     if acquisition_builder.acquisition_mode.mode == 'DDA':
+        if lazy_loading:
+            logger.warning('Lazy loading is not yet supported for DDA mode, using standard builder.')
         frame_builder = TimsTofSyntheticFrameBuilderDDA(
             db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
             with_annotations=False,
             num_threads=num_threads,
         )
     else:
-        frame_builder = TimsTofSyntheticFrameBuilderDIA(
-            db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-            with_annotations=False,
-            num_threads=num_threads,
-        )
+        if lazy_loading:
+            logger.info('Using lazy frame builder for DIA mode.')
+            frame_builder = TimsTofLazyFrameBuilderDIA(
+                db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+                num_threads=num_threads,
+            )
+        else:
+            frame_builder = TimsTofSyntheticFrameBuilderDIA(
+                db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+                with_annotations=False,
+                num_threads=num_threads,
+            )
 
-    if verbose:
-        print("Signal noise settings:")
-        print(f'Precursor m/z noise: {mz_noise_precursor} ...')
-        print(f'Uniform m/z noise: {mz_noise_uniform} ...')
-        print(f'Precursor noise PPM: {precursor_noise_ppm} ...')
-        print(f'Fragment m/z noise: {mz_noise_fragment} ...')
-        print(f'Fragment noise PPM: {fragment_noise_ppm} ...')
+    logger.info("Signal noise settings:")
+    logger.info(f'Precursor m/z noise: {mz_noise_precursor}')
+    logger.info(f'Uniform m/z noise: {mz_noise_uniform}')
+    logger.info(f'Precursor noise PPM: {precursor_noise_ppm}')
+    logger.info(f'Fragment m/z noise: {mz_noise_fragment}')
+    logger.info(f'Fragment noise PPM: {fragment_noise_ppm}')
 
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
@@ -125,15 +141,13 @@ def assemble_frames(
             else:
                 acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
 
-    if verbose:
-        print('Writing frame meta data to database ...')
+    logger.info('Writing frame meta data to database ...')
 
     # write frame meta data to database
     acquisition_builder.tdf_writer.write_frame_meta_data()
 
     if acquisition_builder.acquisition_mode.mode == 'DIA':
-        if verbose:
-            print("Writing DIA specific meta data to database ...")
+        logger.info("Writing DIA specific meta data to database ...")
         # write frame ms/ms info to database
         acquisition_builder.tdf_writer.write_dia_ms_ms_info(
             acquisition_builder.synthetics_handle.get_table('dia_ms_ms_info'))
@@ -158,8 +172,7 @@ def assemble_frames(
             acquisition_builder.tdf_writer.write_calibration_info(mz_standard_deviation_ppm=0.0)
 
     elif acquisition_builder.acquisition_mode.mode == 'DDA':
-        if verbose:
-            print("Writing DDA specific meta data to database ...")
+        logger.info("Writing DDA specific meta data to database ...")
         # write precursor table to database
         acquisition_builder.tdf_writer.write_precursor_table(
             acquisition_builder.synthetics_handle.get_table('precursors'))
