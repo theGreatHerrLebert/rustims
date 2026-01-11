@@ -1,0 +1,65 @@
+# =============================================================================
+# TIMSIM DDA-PASEF Example Configuration
+# =============================================================================
+# Example configuration for simulating a DDA-PASEF experiment with realistic
+# noise and 25,000 peptides.
+# =============================================================================
+
+[paths]
+save_path = "/path/to/output/dda_simulation"
+reference_path = "/path/to/reference_dda.d"
+fasta_path = "/path/to/human_proteome.fasta"
+
+[experiment]
+experiment_name = "TIMSIM-DDA-25K"
+acquisition_type = "DDA"
+gradient_length = 3600.0
+use_reference_layout = true
+apply_fragmentation = true
+
+[digestion]
+n_proteins = 15000
+num_peptides_total = 200000
+num_sample_peptides = 25000
+sample_peptides = true
+sample_seed = 42
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+
+[retention_time]
+min_rt_percent = 2.0
+target_p = 0.999
+
+[charge_states]
+p_charge = 0.8
+max_charge = 4
+min_charge_contrib = 0.005
+
+[fragment_intensity]
+fragment_intensity_model = ""
+down_sample_factor = 0.5
+
+[noise]
+mz_noise_precursor = true
+precursor_noise_ppm = 5.0
+mz_noise_fragment = true
+fragment_noise_ppm = 5.0
+add_real_data_noise = true
+reference_noise_intensity_max = 25.0
+
+[dda]
+precursors_every = 10
+precursor_intensity_threshold = 500
+max_precursors = 25
+exclusion_width = 25
+selection_mode = "topN"
+
+[performance]
+num_threads = -1
+batch_size = 256
+frame_batch_size = 500
+gpu_memory_limit_gb = 4
+
+[logging]
+log_level = "INFO"

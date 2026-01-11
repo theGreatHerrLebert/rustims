@@ -229,6 +229,9 @@ def get_default_settings() -> dict:
         'decoys': False,
         'digest_proteins': True,
         'remove_degenerate_peptides': False,
+        'upscale_factor': 100_000,
+        'min_rt_percent': 2.0,
+        'exclude_accumulated_gradient_start': True,
 
         # Modifications
         'modifications': None,
@@ -244,7 +247,6 @@ def get_default_settings() -> dict:
         # Distribution settings
         'gradient_length': 3600,
         'koina_rt_model': None,
-        'z_score': 0.999,
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
         'sigma_alpha_rt': 4,
@@ -255,8 +257,14 @@ def get_default_settings() -> dict:
         'k_beta_rt': 20,
         'target_p': 0.999,
         'sampling_step_size': 0.001,
+        'n_steps': 1000,
+        'remove_epsilon': 1e-4,
         'use_inverse_mobility_std_mean': True,
         'inverse_mobility_std_mean': 0.009,
+
+        # Acquisition settings
+        'round_collision_energy': True,
+        'collision_energy_decimals': 0,
 
         # Variation settings
         're_scale_rt': False,
@@ -274,6 +282,7 @@ def get_default_settings() -> dict:
         'max_charge': 4,
         'binomial_charge_model': False,
         'normalize_charge_states': True,
+        'charge_state_one_probability': 0.0,
 
         # Noise settings
         'noise_frame_abundance': False,
@@ -299,6 +308,7 @@ def get_default_settings() -> dict:
 
         # Frame assembly
         'lazy_frame_assembly': False,
+        'frame_batch_size': 500,
 
         # Real data noise settings
         'precursor_sample_fraction': 0.2,
@@ -374,11 +384,6 @@ class SimulationConfig:
         k_upper = self._config.get('k_upper_rt', 10)
         if k_lower >= k_upper:
             raise ValueError("k_lower_rt must be less than k_upper_rt")
-
-        # Validate z_score
-        z_score = self._config.get('z_score', 0.999)
-        if not (0.0 < z_score < 1.0):
-            raise ValueError(f"z_score must be between 0 and 1, got {z_score}")
 
         # Validate p_charge
         p_charge = self._config.get('p_charge', 0.8)
@@ -675,6 +680,9 @@ def main():
         gradient_length=config.gradient_length,
         use_reference_ds_layout=config.use_reference_layout,
         reference_in_memory=config.reference_in_memory,
+        round_collision_energy=config.round_collision_energy,
+        collision_energy_decimals=config.collision_energy_decimals,
+        use_bruker_sdk=use_bruker_sdk,
     )
 
     if not config.silent_mode:
@@ -813,6 +821,7 @@ def main():
             proteins_tmp = simulate_proteins(
                 fasta_file_path=fasta_path,
                 n_proteins=config.n_proteins,
+                upscale_factor=config.upscale_factor,
                 cleave_at=config.cleave_at,
                 restrict=config.restrict,
                 missed_cleavages=config.missed_cleavages,
@@ -834,10 +843,12 @@ def main():
                 protein_table=proteins_tmp,
                 num_peptides_total=config.num_peptides_total,
                 verbose=not config.silent_mode,
-                exclude_accumulated_gradient_start=True,
-                min_rt_percent=2.0,
+                exclude_accumulated_gradient_start=config.exclude_accumulated_gradient_start,
+                min_rt_percent=config.min_rt_percent,
                 gradient_length=acquisition_builder.gradient_length,
                 down_sample=config.sample_peptides,
+                min_length=config.min_len,
+                max_length=config.max_len,
                 proteome_mix=config.proteome_mix,
             )
 
@@ -918,11 +929,13 @@ def main():
         step_size=config.sampling_step_size,
         verbose=not config.silent_mode,
         add_noise=config.noise_frame_abundance,
+        n_steps=config.n_steps,
         num_threads=num_threads,
         from_existing=config.from_existing,
         sigmas=rt_sigma,
         lambdas=rt_lambda,
         gradient_length=acquisition_builder.gradient_length,
+        remove_epsilon=config.remove_epsilon,
     )
 
     # Save proteins
@@ -954,6 +967,7 @@ def main():
             mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
             p_charge=config.p_charge,
             max_charge=config.max_charge,
+            charge_state_one_probability=config.charge_state_one_probability,
             use_binomial=config.binomial_charge_model,
             min_charge_contrib=config.min_charge_contrib,
             normalize=config.normalize_charge_states,
@@ -1019,6 +1033,8 @@ def main():
     logger.info(section_header("Simulating Fragment Intensities", use_unicode))
     if config.fragment_intensity_model:
         logger.info(f"  Using intensity model: {config.fragment_intensity_model}")
+    if config.lazy_frame_assembly:
+        logger.info("  Using lazy loading for fragment intensity simulation")
     simulate_fragment_intensities(
         path=save_path,
         name=name,
@@ -1029,6 +1045,8 @@ def main():
         down_sample_factor=config.down_sample_factor,
         dda=config.acquisition_type == 'DDA',
         model_name=config.fragment_intensity_model,
+        lazy_loading=config.lazy_frame_assembly,
+        frame_batch_size=config.frame_batch_size,
     )
 
     # JOB 10: Assemble frames

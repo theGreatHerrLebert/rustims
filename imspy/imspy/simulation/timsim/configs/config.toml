@@ -1,91 +1,333 @@
-[main_settings]
-save_path = "/scratch/timsim/midia/no-noise"
-reference_path = "/media/hd02/data/raw/midia/hela/G8602.d"
-fasta_path = "/media/hd02/data/fasta/hela/plain/uniprotkb_proteome_UP000005640_AND_revi_2024_05_21.fasta"
-experiment_name = "TIMSIM-MIDIA-NO-NOISE-P75K"
-acquisition_type = "MIDIA"
-use_reference_layout = true
-reference_in_memory = false
-sample_peptides = true
-sample_seed = 41
-add_decoys = false
-proteome_mix = false
-silent_mode = false
-from_existing = false
+# =============================================================================
+# TIMSIM Configuration File
+# =============================================================================
+# This file contains all configurable parameters for the timsim proteomics
+# simulation engine. Parameters are organized into logical sections.
+#
+# For more information, see: https://github.com/theGreatHerrLebert/rustims
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PATHS - Required settings for input/output locations
+# -----------------------------------------------------------------------------
+[paths]
+# Output directory for simulated data (required)
+save_path = "/path/to/output"
+
+# Reference timsTOF .d folder for acquisition parameters (required)
+reference_path = "/path/to/reference.d"
+
+# FASTA file or directory containing protein sequences (required)
+fasta_path = "/path/to/proteome.fasta"
+
+# Path to modifications config file (optional, uses default if empty)
+modifications = ""
+
+# Path to existing simulation to use as template (optional)
 existing_path = ""
+
+# -----------------------------------------------------------------------------
+# EXPERIMENT - General experiment configuration
+# -----------------------------------------------------------------------------
+[experiment]
+# Experiment name (use [PLACEHOLDER] to auto-insert acquisition type)
+experiment_name = "TIMSIM-[PLACEHOLDER]"
+
+# Acquisition type: "DIA" or "DDA"
+acquisition_type = "DIA"
+
+# LC gradient length in seconds
+gradient_length = 3600.0
+
+# Use reference dataset layout for frames/scans
+use_reference_layout = true
+
+# Load reference dataset into memory (faster but uses more RAM)
+reference_in_memory = false
+
+# Use Bruker SDK for accurate mass/mobility calibration (not available on macOS)
+use_bruker_sdk = true
+
+# Apply fragmentation to peptide ions
 apply_fragmentation = true
-multi_fasta = ""
-multi_fasta_dilution = ""
 
-[peptide_digestion]
-num_sample_peptides = 75000
-missed_cleavages = 2
-min_len = 7
-max_len = 30
+# Continue from existing simulation
+from_existing = false
+
+# Suppress verbose output
+silent_mode = false
+
+# -----------------------------------------------------------------------------
+# DIGESTION - Protein digestion and peptide sampling
+# -----------------------------------------------------------------------------
+[digestion]
+# Number of proteins to sample from FASTA
+n_proteins = 20000
+
+# Total number of peptides to generate before sampling
+num_peptides_total = 250000
+
+# Number of peptides to sample for simulation
+num_sample_peptides = 25000
+
+# Whether to sample peptides (false = use all)
+sample_peptides = true
+
+# Random seed for reproducible sampling
+sample_seed = 41
+
+# Perform enzymatic digestion (false = use full sequences)
+digest_proteins = true
+
+# Remove peptides that map to multiple proteins
+remove_degenerate_peptides = false
+
+# Enzyme cleavage sites (e.g., "KR" for trypsin)
 cleave_at = "KR"
+
+# Residues that block cleavage (e.g., "P" for proline)
 restrict = "P"
-modifications = "/scratch/timsim/midia/modifications.toml"
 
-[variable_modifications]
-M = ["[UNIMOD:35]"] # Oxidation of methionine
-"[" = ["[UNIMOD:1]"] # Acetylation of the peptide N-terminus of proteins
+# Number of allowed missed cleavages
+missed_cleavages = 2
 
-[static_modifications]
-C = "[UNIMOD:4]" # Carbamidomethylation of cysteine
+# Minimum peptide length
+min_len = 7
 
-[peptide_intensity]
-intensity_mean = 7
-intensity_min = 5
-intensity_max = 9
-sample_occurrences = true
-intensity_value = 6
+# Maximum peptide length
+max_len = 30
 
-[isotopic_pattern]
-isotope_k = 8
-isotope_min_intensity = 1
-isotope_centroid = true
+# Generate decoy peptides
+decoys = false
 
-[koina_property_prediction]
+# Intensity upscale factor for protein abundance model
+upscale_factor = 100000
+
+# -----------------------------------------------------------------------------
+# RETENTION TIME - Chromatographic peak settings
+# -----------------------------------------------------------------------------
+[retention_time]
+# Use Koina model for RT prediction (leave empty for default GRU model)
+# Options: "" (default), "Deeplc_hela_hf"
 koina_rt_model = ""
 
-[distribution_settings]
-gradient_length = 3600.0
-sigma_lower_rt  = 0.1
-sigma_upper_rt  = 2
-sigma_alpha_rt  = 1
-sigma_beta_rt   = 1
-k_lower_rt = 0.1
-k_upper_rt = 2
+# Minimum RT as percentage of gradient (exclude early eluting peptides)
+min_rt_percent = 2.0
+
+# Exclude peptides that elute before gradient accumulation phase
+exclude_accumulated_gradient_start = true
+
+# EMG peak shape parameters - sigma (peak width)
+# If null, calculated automatically from gradient_length
+sigma_lower_rt = 1.0
+sigma_upper_rt = 2.5
+sigma_alpha_rt = 4
+sigma_beta_rt = 4
+
+# EMG peak shape parameters - k (asymmetry/tailing)
+k_lower_rt = 0
+k_upper_rt = 10
 k_alpha_rt = 1
-k_beta_rt  = 1
-std_im = 0.01
-variance_std_im = 0.001
-z_score = 0.99
+k_beta_rt = 20
+
+# Target probability mass for peak boundaries
 target_p = 0.999
+
+# Step size for EMG integration
 sampling_step_size = 0.001
 
-[noise_settings]
-add_noise_to_signals = true
-mz_noise_precursor = true
+# Number of integration steps for EMG calculation
+n_steps = 1000
+
+# Threshold for removing low-probability frame occurrences
+remove_epsilon = 1e-4
+
+# -----------------------------------------------------------------------------
+# ION MOBILITY - Ion mobility settings
+# -----------------------------------------------------------------------------
+[ion_mobility]
+# Use mean inverse mobility standard deviation
+use_inverse_mobility_std_mean = true
+
+# Mean inverse mobility standard deviation (1/K0 units)
+inverse_mobility_std_mean = 0.009
+
+# -----------------------------------------------------------------------------
+# CHARGE STATES - Ionization and charge state distribution
+# -----------------------------------------------------------------------------
+[charge_states]
+# Probability parameter for charge state model
+p_charge = 0.8
+
+# Maximum charge state to simulate
+max_charge = 4
+
+# Minimum contribution threshold for charge states
+min_charge_contrib = 0.005
+
+# Use binomial model instead of deep learning model
+binomial_charge_model = false
+
+# Normalize charge state distribution
+normalize_charge_states = true
+
+# Probability of charge state +1 (for deep learning model)
+charge_state_one_probability = 0.0
+
+# -----------------------------------------------------------------------------
+# ISOTOPIC PATTERN - Isotope distribution settings
+# -----------------------------------------------------------------------------
+[isotopic_pattern]
+# Number of isotope peaks to simulate
+isotope_k = 8
+
+# Minimum relative intensity for isotope peaks
+isotope_min_intensity = 1
+
+# Use centroid mode for isotope peaks
+isotope_centroid = true
+
+# -----------------------------------------------------------------------------
+# FRAGMENT INTENSITY - Fragment ion intensity prediction
+# -----------------------------------------------------------------------------
+[fragment_intensity]
+# Model for fragment intensity prediction
+# Options: "" (default/prosit), "prosit", "peptdeep"
+fragment_intensity_model = ""
+
+# Downsampling factor for fragment spectra (0.0-1.0)
+down_sample_factor = 0.5
+
+# -----------------------------------------------------------------------------
+# NOISE - Signal noise and variation settings
+# -----------------------------------------------------------------------------
+[noise]
+# Add noise to frame-level abundances
+noise_frame_abundance = false
+
+# Add noise to scan-level abundances
+noise_scan_abundance = false
+
+# Add m/z noise to precursor ions
+mz_noise_precursor = false
+
+# Precursor m/z noise in PPM
 precursor_noise_ppm = 5.0
-mz_noise_fragment = true
+
+# Add m/z noise to fragment ions
+mz_noise_fragment = false
+
+# Fragment m/z noise in PPM
 fragment_noise_ppm = 5.0
+
+# Use uniform distribution for m/z noise (vs. Gaussian)
 mz_noise_uniform = false
-add_real_data_noise = true
-reference_noise_intensity_max = 25.0
-down_sample_factor = 0.6
 
-[charge_state_probabilities]
-p_charge = 0.5
-min_charge_contrib = 0.25
+# Add real chemical/electronic noise from reference data
+add_real_data_noise = false
 
-[dda_settings]
-precursors_every = 2
-max_precursors = 6
-exclusion_width = 25
+# Maximum intensity for reference noise peaks
+reference_noise_intensity_max = 30.0
+
+# Sample fraction for precursor noise frames
+precursor_sample_fraction = 0.2
+
+# Sample fraction for fragment noise frames
+fragment_sample_fraction = 0.2
+
+# Number of precursor frames to sample for noise
+num_precursor_noise_frames = 5
+
+# Number of fragment frames to sample for noise
+num_fragment_noise_frames = 5
+
+# -----------------------------------------------------------------------------
+# VARIATION - Apply variation to existing simulation
+# -----------------------------------------------------------------------------
+[variation]
+# Re-scale retention times to new gradient length
+re_scale_rt = false
+
+# Standard deviation for RT variation (seconds, null = no variation)
+rt_variation_std = ""
+
+# Standard deviation for ion mobility variation (1/K0 units, null = no variation)
+ion_mobility_variation_std = ""
+
+# Standard deviation for log-intensity variation (null = no variation)
+intensity_variation_std = ""
+
+# -----------------------------------------------------------------------------
+# ACQUISITION - Acquisition-specific settings
+# -----------------------------------------------------------------------------
+[acquisition]
+# Round collision energies to integers
+round_collision_energy = true
+
+# Decimal places for collision energy (0 = integer)
+collision_energy_decimals = 0
+
+# -----------------------------------------------------------------------------
+# DDA SETTINGS - DDA-PASEF specific parameters
+# -----------------------------------------------------------------------------
+[dda]
+# Acquire precursor scan every N frames
+precursors_every = 10
+
+# Minimum intensity for precursor selection
 precursor_intensity_threshold = 500
-selection_mode = "random"
 
-[performance_settings]
+# Maximum precursors per cycle
+max_precursors = 25
+
+# Exclusion window width in frames
+exclusion_width = 25
+
+# Selection mode: "topN" or "random"
+selection_mode = "topN"
+
+# -----------------------------------------------------------------------------
+# PROTEOME MIX - Multi-FASTA mixing settings
+# -----------------------------------------------------------------------------
+[proteome_mix]
+# Enable proteome mixture mode
+proteome_mix = false
+
+# Dilution factors for multi-FASTA (JSON format or path to file)
+multi_fasta_dilution = ""
+
+# -----------------------------------------------------------------------------
+# PHOSPHORYLATION - Phosphoproteomics simulation
+# -----------------------------------------------------------------------------
+[phosphorylation]
+# Enable phosphorylation mode
+phospho_mode = false
+
+# -----------------------------------------------------------------------------
+# PERFORMANCE - Computational performance settings
+# -----------------------------------------------------------------------------
+[performance]
+# Number of threads (-1 = auto-detect)
 num_threads = -1
+
+# Batch size for processing
 batch_size = 256
+
+# Batch size for frame assembly
+frame_batch_size = 500
+
+# Use lazy loading for frame assembly (reduces memory usage)
+lazy_frame_assembly = false
+
+# GPU memory limit in GB
+gpu_memory_limit_gb = 4
+
+# -----------------------------------------------------------------------------
+# LOGGING - Logging configuration
+# -----------------------------------------------------------------------------
+[logging]
+# Log level: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+log_level = "INFO"
+
+# Log file path (relative to save_path, empty = console only)
+log_file = ""
