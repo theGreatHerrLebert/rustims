@@ -217,7 +217,8 @@ impl PyTimsFrame {
 
     #[staticmethod]
     pub fn from_tims_spectra(_py: Python, spectra: Vec<PyTimsSpectrum>) -> PyResult<Self> {
-        Ok(PyTimsFrame { inner: TimsFrame::from_tims_spectra(spectra.iter().map(|spectrum| spectrum.inner.clone()).collect()) })
+        // Use into_iter() to move ownership instead of cloning each spectrum
+        Ok(PyTimsFrame { inner: TimsFrame::from_tims_spectra(spectra.into_iter().map(|s| s.inner).collect()) })
     }
 
     pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
@@ -249,7 +250,8 @@ impl PyTimsFrame {
     }
 
     pub fn __add__(&self, other: PyTimsFrame) -> PyTimsFrame {
-        let result = self.inner.clone() + other.inner.clone();
+        // Only clone self.inner (borrowed), other.inner can be moved
+        let result = self.inner.clone() + other.inner;
         PyTimsFrame { inner: result }
     }
 

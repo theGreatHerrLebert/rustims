@@ -174,7 +174,8 @@ impl PyTimsSlice {
 
     #[staticmethod]
     pub fn from_frames(frames: Vec<PyTimsFrame>) -> PyTimsSlice {
-        PyTimsSlice { inner: TimsSlice::new(frames.iter().map(|frame| frame.inner.clone()).collect()) }
+        // Use into_iter() to move ownership instead of cloning each frame
+        PyTimsSlice { inner: TimsSlice::new(frames.into_iter().map(|f| f.inner).collect()) }
     }
 }
 

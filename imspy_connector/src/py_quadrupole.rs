@@ -74,7 +74,8 @@ impl PyTimsTransmissionDDA {
     #[new]
     #[pyo3(signature = (pasef_meta, k=None))]
     pub fn new(pasef_meta: Vec<PyPasefMeta>, k: Option<f64>) -> Self {
-        let inner_meta_vec = pasef_meta.iter().map(|x| x.inner.clone()).collect::<Vec<_>>();
+        // Use into_iter() to move instead of cloning
+        let inner_meta_vec = pasef_meta.into_iter().map(|x| x.inner).collect::<Vec<_>>();
         PyTimsTransmissionDDA {
             inner: TimsTransmissionDDA::new(inner_meta_vec, k)
         }

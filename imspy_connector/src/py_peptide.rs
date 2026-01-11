@@ -65,8 +65,9 @@ pub struct PyPeptideProductIonSeries {
 impl PyPeptideProductIonSeries {
     #[new]
     pub fn new(charge: i32, n_ions: Vec<PyPeptideProductIon>, c_ions: Vec<PyPeptideProductIon>) -> Self {
-        let n_ions: Vec<PeptideProductIon> = n_ions.iter().map(|ion| ion.inner.clone()).collect();
-        let c_ions: Vec<PeptideProductIon> = c_ions.iter().map(|ion| ion.inner.clone()).collect();
+        // Use into_iter() to move instead of cloning
+        let n_ions: Vec<PeptideProductIon> = n_ions.into_iter().map(|ion| ion.inner).collect();
+        let c_ions: Vec<PeptideProductIon> = c_ions.into_iter().map(|ion| ion.inner).collect();
         PyPeptideProductIonSeries { inner: PeptideProductIonSeries::new(charge, n_ions, c_ions) }
     }
 
@@ -99,7 +100,8 @@ pub struct PyPeptideProductIonSeriesCollection {
 impl PyPeptideProductIonSeriesCollection {
     #[new]
     pub fn new(peptide_product_ion_series: Vec<PyPeptideProductIonSeries>) -> Self {
-        let inner: Vec<PeptideProductIonSeries> = peptide_product_ion_series.iter().map(|series| series.inner.clone()).collect();
+        // Use into_iter() to move instead of cloning
+        let inner: Vec<PeptideProductIonSeries> = peptide_product_ion_series.into_iter().map(|s| s.inner).collect();
         PyPeptideProductIonSeriesCollection { inner: PeptideProductIonSeriesCollection::new(inner) }
     }
 
