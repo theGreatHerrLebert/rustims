@@ -69,6 +69,9 @@ def assemble_frames(
 
     logger.info('Starting frame assembly ...')
 
+    if lazy_loading:
+        logger.info('Using lazy loading strategy for reduced memory usage')
+
     if add_real_data_noise:
         logger.info('Real data noise will be added to the frames.')
 
