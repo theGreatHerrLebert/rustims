@@ -10,10 +10,68 @@ import argparse
 import logging
 import time
 from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Dict, Optional
 
 import toml
 import pandas as pd
 from tabulate import tabulate
+
+try:
+    from importlib.metadata import version as get_version
+    __version__ = get_version("imspy")
+except Exception:
+    __version__ = "0.3.23"  # Fallback
+
+
+@dataclass
+class SimulationTimer:
+    """Track timing for simulation steps."""
+    start_time: float = field(default_factory=time.time)
+    step_times: Dict[str, float] = field(default_factory=dict)
+    _current_step: Optional[str] = None
+    _step_start: float = 0.0
+
+    def start_step(self, name: str) -> None:
+        """Start timing a step."""
+        self._current_step = name
+        self._step_start = time.time()
+
+    def end_step(self) -> None:
+        """End timing the current step."""
+        if self._current_step:
+            self.step_times[self._current_step] = time.time() - self._step_start
+            self._current_step = None
+
+    def total_elapsed(self) -> float:
+        """Get total elapsed time."""
+        return time.time() - self.start_time
+
+    @staticmethod
+    def format_duration(seconds: float) -> str:
+        """Format seconds as human-readable duration."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            minutes = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{minutes}m {secs}s"
+        else:
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            return f"{hours}h {minutes}m"
+
+
+@dataclass
+class SimulationStats:
+    """Track statistics for simulation summary."""
+    n_proteins: int = 0
+    n_peptides: int = 0
+    n_ions: int = 0
+    n_frames: int = 0
+    acquisition_type: str = ""
+    experiment_name: str = ""
+    output_path: str = ""
 
 # imspy imports
 from imspy.simulation.experiment import SyntheticExperimentDataHandleDIA, SyntheticExperimentDataHandle
@@ -239,6 +297,15 @@ def get_default_settings() -> dict:
         # Frame assembly
         'lazy_frame_assembly': False,
 
+        # Real data noise settings
+        'precursor_sample_fraction': 0.2,
+        'fragment_sample_fraction': 0.2,
+        'num_precursor_noise_frames': 5,
+        'num_fragment_noise_frames': 5,
+
+        # GPU settings
+        'gpu_memory_limit_gb': 4,
+
         # DDA settings
         'precursors_every': 10,
         'precursor_intensity_threshold': 500,
@@ -388,6 +455,44 @@ def simulation_complete_banner(use_unicode: bool = True) -> str:
 """
 
 
+def reorder_peptide_columns(peptides: pd.DataFrame, phospho_mode: bool = False,
+                            proteome_mix: bool = False) -> pd.DataFrame:
+    """
+    Reorder peptide DataFrame columns based on simulation mode.
+
+    Args:
+        peptides: DataFrame containing peptide data.
+        phospho_mode: Whether phosphorylation mode is enabled.
+        proteome_mix: Whether proteome mixture mode is enabled.
+
+    Returns:
+        DataFrame with columns reordered appropriately.
+    """
+    if phospho_mode:
+        columns = [
+            'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
+            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
+            'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
+            'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
+            'frame_abundance', 'rt_mu',
+            'phospho_site_a', 'phospho_site_b', 'sequence_original',
+        ]
+        return peptides[columns]
+    elif proteome_mix:
+        columns = [
+            'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
+            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
+            'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
+            'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
+            'frame_abundance',
+            'total_events', 'fasta'
+        ]
+        # Only include columns that exist in the DataFrame
+        return peptides[[col for col in columns if col in peptides.columns]]
+    else:
+        return peptides
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """
     Build a minimal argument parser that only accepts a TOML config file.
@@ -494,17 +599,18 @@ def main():
 
     # Print banner
     print(banner(use_unicode))
-    logger.info("Version: 0.3.23")
+    logger.info(f"Version: {__version__}")
     logger.info("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     logger.info("License: MIT")
     logger.info("")
 
+    # Initialize timer and stats
+    timer = SimulationTimer()
+    stats = SimulationStats()
+
     # Configure GPU memory
     logger.info(section_header("GPU Configuration", use_unicode))
-    configure_gpu_memory(memory_limit_gb=4)
-
-    # Create a namespace-like object for backward compatibility
-    args = config
+    configure_gpu_memory(memory_limit_gb=config.gpu_memory_limit_gb)
 
     # Handle macOS Bruker SDK limitation
     use_bruker_sdk = config.use_bruker_sdk
@@ -732,10 +838,6 @@ def main():
                 proteome_mix=config.proteome_mix,
             )
 
-            if not config.remove_degenerate_peptides:
-                # peptides_tmp = peptides_tmp.drop_duplicates(subset=['sequence'])
-                pass
-
             if config.proteome_mix:
                 # Scale by mixture factor
                 peptides_tmp['events'] *= mixture_factor
@@ -824,31 +926,14 @@ def main():
     acquisition_builder.synthetics_handle.create_table(table_name='proteins', table=proteins)
 
     # Handle final column ordering for phospho or proteome mixes
-    if config.phospho_mode:
-        # Columns for phospho
-        columns_phospho = [
-            'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
-            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
-            'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
-            'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
-            'frame_abundance', 'rt_mu',
-            'phospho_site_a', 'phospho_site_b', 'sequence_original',
-        ]
-        peptides = peptides[columns_phospho]
-    elif config.proteome_mix:
-        columns_mixed = [
-            'protein_id', 'peptide_id', 'sequence', 'protein', 'decoy',
-            'missed_cleavages', 'n_term', 'c_term', 'monoisotopic-mass',
-            'retention_time_gru_predictor', 'events', 'rt_sigma', 'rt_lambda',
-            'frame_occurrence_start', 'frame_occurrence_end', 'frame_occurrence',
-            'frame_abundance',
-            'total_events', 'fasta'
-        ]
-        # Ensure columns exist in the DataFrame
-        peptides = peptides[[col for col in columns_mixed if col in peptides.columns]]
+    peptides = reorder_peptide_columns(
+        peptides,
+        phospho_mode=config.phospho_mode,
+        proteome_mix=config.proteome_mix
+    )
 
     if config.proteome_mix:
-        # need to drop duplicates by sequence for proteome mix
+        # Remove duplicate sequences for proteome mix
         peptides = peptides.drop_duplicates(subset=['sequence'])
 
     # Save peptides
@@ -956,17 +1041,39 @@ def main():
         add_real_data_noise=config.add_real_data_noise,
         intensity_max_precursor=config.reference_noise_intensity_max,
         intensity_max_fragment=config.reference_noise_intensity_max,
-        precursor_sample_fraction=0.2,
-        fragment_sample_fraction=0.2,
-        num_precursor_frames=5,
-        num_fragment_frames=5,
+        precursor_sample_fraction=config.precursor_sample_fraction,
+        fragment_sample_fraction=config.fragment_sample_fraction,
+        num_precursor_frames=config.num_precursor_noise_frames,
+        num_fragment_frames=config.num_fragment_noise_frames,
         fragment=config.apply_fragmentation,
         pasef_meta=pasef_meta,
         lazy_loading=config.lazy_frame_assembly,
     )
 
+    # Collect final statistics
+    stats.n_proteins = len(proteins) if proteins is not None else 0
+    stats.n_peptides = len(peptides) if peptides is not None else 0
+    stats.n_ions = len(ions) if ions is not None else 0
+    stats.n_frames = len(acquisition_builder.frame_table)
+    stats.acquisition_type = config.acquisition_type
+    stats.experiment_name = name
+    stats.output_path = str(save_path)
+
+    # Print completion banner and summary
     print(simulation_complete_banner(use_unicode))
-    logger.info(f"  Output: {save_path}")
+
+    total_time = timer.format_duration(timer.total_elapsed())
+    logger.info("  Simulation Summary")
+    logger.info(f"  {'─' * 40}")
+    logger.info(f"  Experiment:    {stats.experiment_name}")
+    logger.info(f"  Type:          {stats.acquisition_type}")
+    logger.info(f"  Proteins:      {stats.n_proteins:,}")
+    logger.info(f"  Peptides:      {stats.n_peptides:,}")
+    logger.info(f"  Ions:          {stats.n_ions:,}")
+    logger.info(f"  Frames:        {stats.n_frames:,}")
+    logger.info(f"  {'─' * 40}")
+    logger.info(f"  Total time:    {total_time}")
+    logger.info(f"  Output:        {stats.output_path}")
     logger.info("")
 
 
