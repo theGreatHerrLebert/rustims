@@ -41,6 +41,7 @@ imspy_ccs = "imspy.timstof.dbsearch.imspy_ccs:main"
 timsim = "imspy.simulation.timsim.simulator:main"
 timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
 imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
+timsim_validate = "imspy.simulation.timsim.validate.cli:main"
 
 [build-system]
 requires = ["poetry-core"]

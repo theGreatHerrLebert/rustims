@@ -1,0 +1,55 @@
+# =============================================================================
+# TIMSIM-VALIDATE Default Configuration
+# =============================================================================
+# This file contains default settings for the timsim-validate tool.
+# These can be overridden via command-line arguments.
+# =============================================================================
+
+[simulation]
+# Number of peptides to simulate (smaller = faster validation)
+num_peptides = 5000
+
+# Gradient length in seconds (1800 = 30 minutes)
+gradient_length = 1800.0
+
+# Acquisition type (DIA or DDA)
+acquisition_type = "DIA"
+
+# Apply fragmentation to peptide ions
+apply_fragmentation = true
+
+# Processing batch size
+batch_size = 256
+
+# Number of threads (-1 = auto-detect)
+num_threads = -1
+
+[diann]
+# Path to DiaNN executable (or just 'diann' if in PATH)
+executable_path = "diann"
+
+# Number of threads for DiaNN
+threads = 4
+
+# Timeout in seconds (3600 = 1 hour)
+timeout_seconds = 3600
+
+[thresholds]
+# Minimum identification rate (fraction of ground truth found)
+min_identification_rate = 0.30
+
+# Minimum RT correlation (Pearson R)
+min_rt_correlation = 0.90
+
+# Maximum RT mean absolute error in minutes
+max_rt_mae_minutes = 1.0
+
+# Minimum IM correlation (Pearson R)
+min_im_correlation = 0.90
+
+# Maximum IM mean absolute error in 1/K0 units
+max_im_mae = 0.05
+
+# Minimum quantification correlation (Pearson R on log-transformed intensities)
+# This is informational and doesn't affect pass/fail
+min_quant_correlation = 0.70
