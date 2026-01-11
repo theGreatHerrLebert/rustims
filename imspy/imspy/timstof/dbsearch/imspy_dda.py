@@ -43,22 +43,24 @@ from sagepy.utility import decompress_psms, compress_psms
 
 # suppress tensorflow warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import tensorflow as tf
 
-# don't use all the memory for the GPU (if available)
-gpus = tf.config.experimental.list_physical_devices('GPU')
 
-if gpus:
-    try:
-        for i, _ in enumerate(gpus):
-            tf.config.experimental.set_virtual_device_configuration(
-                gpus[i],
-                [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * 4)]
-            )
-            print(f"GPU: {i} memory restricted to 4GB.")
+def configure_gpu_memory(memory_limit_gb: int = 4) -> None:
+    """Configure TensorFlow to limit GPU memory usage."""
+    import tensorflow as tf
 
-    except RuntimeError as e:
-        print(e)
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for i, _ in enumerate(gpus):
+                tf.config.experimental.set_virtual_device_configuration(
+                    gpus[i],
+                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * memory_limit_gb)]
+                )
+                print(f"GPU: {i} memory restricted to {memory_limit_gb}GB.")
+        except RuntimeError as e:
+            print(e)
+
 
 def create_database(fasta, static, variab, enzyme_builder, generate_decoys, bucket_size,
                     shuffle_decoys=True, keep_ends=True):
@@ -82,6 +84,9 @@ def load_config(config_path):
     return config
 
 def main():
+    # Configure GPU memory before TensorFlow is used
+    configure_gpu_memory(memory_limit_gb=4)
+
     # check memory
     check_memory(limit_in_gb=16)
 

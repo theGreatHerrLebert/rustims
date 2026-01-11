@@ -3,7 +3,6 @@ import pandas as pd
 from typing import List
 
 from numpy.typing import NDArray
-from tensorflow import sparse as sp
 
 from imspy.utility.utilities import re_index_indices
 from imspy.timstof.frame import TimsFrame, TimsFrameVectorized
@@ -356,6 +355,7 @@ class TimsSliceVectorized:
 
     def get_tensor_repr(self, dense=True, zero_index=True, re_index=True, frame_max=None, scan_max=None,
                         index_max=None):
+        from tensorflow import sparse as sp
 
         frames, scans, _, _, _, indices, intensities = self.__slice_ptr.to_arrays()
 

@@ -4,14 +4,12 @@ import numba
 import numpy as np
 import pandas as pd
 
-import tensorflow as tf
-
-from dlomix.constants import ALPHABET_UNMOD
-
-from dlomix.reports.postprocessing import (reshape_flat, reshape_dims,
-                                           normalize_base_peak, mask_outofcharge, mask_outofrange)
 from sagepy.core import IonType
 from imspy.utility import tokenize_unimod_sequence
+
+
+# Cache for lazy-loaded dlomix modules
+_dlomix_cache = {}
 
 
 @numba.njit
@@ -53,6 +51,14 @@ def beta_score(fragments_observed, fragments_predicted) -> float:
     return np.log1p(intensity) + 2.0 * _log_factorial(int(i_min), 2) + _log_factorial(int(i_max), int(i_min) + 1)
 
 
+def _get_alphabet_unmod():
+    """Lazy load ALPHABET_UNMOD from dlomix."""
+    if 'ALPHABET_UNMOD' not in _dlomix_cache:
+        from dlomix.constants import ALPHABET_UNMOD
+        _dlomix_cache['ALPHABET_UNMOD'] = ALPHABET_UNMOD
+    return _dlomix_cache['ALPHABET_UNMOD']
+
+
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     """Convert a sequence to a list of indices into the alphabet.
 
@@ -63,6 +69,8 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     Returns:
         A list of integers, each representing an index into the alphabet.
     """
+    ALPHABET_UNMOD = _get_alphabet_unmod()
+
     ret_arr = np.zeros(max_length, dtype=np.int32)
     tokenized_seq = tokenize_unimod_sequence(seq)[1:-1]
     assert len(tokenized_seq) <= max_length, f"Allowed sequence length is {max_length}, but got {len(tokenized_seq)}"
@@ -97,7 +105,7 @@ def generate_prosit_intensity_prediction_dataset(
     Returns:
         A tf.data.Dataset object that yields batches of data in the format expected by the model.
     """
-
+    import tensorflow as tf
 
     # set default for unprovided collision_energies
     if collision_energies is None:
@@ -132,6 +140,28 @@ def unpack_dict(features):
     return features['peptides_in'], features['precursor_charge_in'], features['collision_energy_in']
 
 
+def _get_dlomix_postprocessing():
+    """Lazy load postprocessing functions from dlomix."""
+    if 'postprocessing' not in _dlomix_cache:
+        from dlomix.reports.postprocessing import (
+            reshape_flat, reshape_dims, normalize_base_peak,
+            mask_outofcharge, mask_outofrange
+        )
+        _dlomix_cache['postprocessing'] = {
+            'reshape_flat': reshape_flat,
+            'reshape_dims': reshape_dims,
+            'normalize_base_peak': normalize_base_peak,
+            'mask_outofcharge': mask_outofcharge,
+            'mask_outofrange': mask_outofrange,
+        }
+    return _dlomix_cache['postprocessing']
+
+
+def reshape_dims(intensities):
+    """Reshape flat intensities to 3D (wrapper for lazy-loaded dlomix function)."""
+    return _get_dlomix_postprocessing()['reshape_dims'](intensities)
+
+
 def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
     """
     post process the predicted fragment intensities
@@ -141,6 +171,13 @@ def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
     Returns:
         numpy array of fragment intensities
     """
+    pp = _get_dlomix_postprocessing()
+    reshape_dims = pp['reshape_dims']
+    mask_outofrange = pp['mask_outofrange']
+    mask_outofcharge = pp['mask_outofcharge']
+    reshape_flat = pp['reshape_flat']
+    normalize_base_peak = pp['normalize_base_peak']
+
     # get sequence length for masking out of sequence
     sequence_lengths = data_pred["sequence_length"]
 
@@ -164,7 +201,7 @@ def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
     return intensities
 
 
-def to_prosit_tensor(sequences: List) -> tf.Tensor:
+def to_prosit_tensor(sequences: List):
     """
     translate a list of fixed length numpy arrays into a tensorflow tensor
     Args:
@@ -173,6 +210,7 @@ def to_prosit_tensor(sequences: List) -> tf.Tensor:
     Returns:
         tensorflow tensor
     """
+    import tensorflow as tf
     return tf.convert_to_tensor(sequences, dtype=tf.string)
 
 

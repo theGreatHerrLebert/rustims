@@ -3,8 +3,6 @@ import pandas as pd
 from typing import List, Tuple, Optional
 from numpy.typing import NDArray
 
-from tensorflow import sparse as sp
-
 import numpy as np
 from imspy.data.spectrum import TimsSpectrum, IndexedMzSpectrum
 from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
@@ -491,6 +489,8 @@ class TimsFrameVectorized(RustWrapperObject):
                 f"num_peaks={len(self.__frame_ptr.indices)})")
 
     def get_tensor_repr(self, dense=True, zero_indexed=True, re_index=True, scan_max=None, index_max=None):
+        from tensorflow import sparse as sp
+
         s = self.scan
         f = self.indices
         i = self.intensity

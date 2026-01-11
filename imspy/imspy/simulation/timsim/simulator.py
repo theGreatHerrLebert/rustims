@@ -1,5 +1,10 @@
 import os
 import sys
+
+# Silence verbose package outputs before importing them
+os.environ["WANDB_SILENT"] = "true"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import platform
 import argparse
 import logging
@@ -8,7 +13,6 @@ from pathlib import Path
 
 import toml
 import pandas as pd
-import tensorflow as tf
 from tabulate import tabulate
 
 # imspy imports
@@ -82,11 +86,6 @@ def setup_logging(log_level: str = "INFO", log_file: str = None) -> None:
 # Environment setup and GPU configuration
 # ----------------------------------------------------------------------
 
-# Silence console spam
-os.environ["WANDB_SILENT"] = "true"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-
 def configure_gpu_memory(memory_limit_gb: int = 4) -> None:
     """
     Restricts TensorFlow GPU memory usage to the specified limit per GPU.
@@ -94,6 +93,8 @@ def configure_gpu_memory(memory_limit_gb: int = 4) -> None:
     Args:
         memory_limit_gb: Memory limit in gigabytes per GPU.
     """
+    import tensorflow as tf
+
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
         try:
@@ -102,9 +103,11 @@ def configure_gpu_memory(memory_limit_gb: int = 4) -> None:
                     gpus[i],
                     [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * memory_limit_gb)]
                 )
-                logger.info(f"GPU {i}: memory restricted to {memory_limit_gb}GB")
+                logger.info(f"  GPU {i}: memory restricted to {memory_limit_gb}GB")
         except RuntimeError as e:
-            logger.error(f"GPU configuration error: {e}")
+            logger.error(f"  GPU configuration error: {e}")
+    else:
+        logger.info("  No GPU detected, using CPU")
 
 
 # ----------------------------------------------------------------------
@@ -329,9 +332,57 @@ class SimulationConfig:
 def banner(use_unicode: bool = True) -> str:
     """Return the application banner."""
     if use_unicode:
-        return "🦀💻 TIMSIM 🔬🐍 - Proteomics Simulation Engine"
+        return """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   🦀💻  TIMSIM  🔬🐍                                                         ║
+║                                                                              ║
+║   Proteomics Simulation Engine for timsTOF                                   ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
     else:
-        return "TIMSIM - Proteomics Simulation Engine"
+        return """
++------------------------------------------------------------------------------+
+|                                                                              |
+|   TIMSIM - Proteomics Simulation Engine for timsTOF                          |
+|                                                                              |
++------------------------------------------------------------------------------+
+"""
+
+
+def section_header(title: str, use_unicode: bool = True) -> str:
+    """Return a formatted section header."""
+    width = 78
+    if use_unicode:
+        return f"\n{'─' * width}\n  ▶ {title}\n{'─' * width}"
+    else:
+        return f"\n{'-' * width}\n  > {title}\n{'-' * width}"
+
+
+def subsection_header(title: str) -> str:
+    """Return a formatted subsection header."""
+    return f"\n  ┌─ {title}"
+
+
+def simulation_complete_banner(use_unicode: bool = True) -> str:
+    """Return the simulation complete banner."""
+    if use_unicode:
+        return """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   ✅  SIMULATION COMPLETED SUCCESSFULLY                                      ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+    else:
+        return """
++------------------------------------------------------------------------------+
+|                                                                              |
+|   SIMULATION COMPLETED SUCCESSFULLY                                          |
+|                                                                              |
++------------------------------------------------------------------------------+
+"""
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -341,14 +392,66 @@ def build_arg_parser() -> argparse.ArgumentParser:
     Returns:
         ArgumentParser configured for TOML-only configuration.
     """
+    description = """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   TIMSIM - Proteomics Simulation Engine for timsTOF                          ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Run a proteomics experiment simulation with PASEF-like acquisition on a
+BRUKER timsTOF instrument. All configuration is provided via a TOML file.
+"""
+
+    epilog = """
+──────────────────────────────────────────────────────────────────────────────
+  Configuration File Structure
+──────────────────────────────────────────────────────────────────────────────
+
+  The TOML configuration file should contain the following sections:
+
+    [paths]
+      save_path       = "/path/to/output"
+      reference_path  = "/path/to/reference.d"
+      fasta_path      = "/path/to/proteome.fasta"
+
+    [experiment]
+      experiment_name   = "MyExperiment"
+      acquisition_type  = "DIA"  # or "DDA"
+      gradient_length   = 3600
+
+    [digestion]
+      num_sample_peptides = 25000
+      missed_cleavages    = 2
+      min_len             = 7
+      max_len             = 30
+
+    [simulation]
+      batch_size   = 256
+      num_threads  = -1  # -1 for auto-detect
+
+──────────────────────────────────────────────────────────────────────────────
+  Examples
+──────────────────────────────────────────────────────────────────────────────
+
+    timsim config.toml
+    timsim /path/to/my-experiment-config.toml
+
+──────────────────────────────────────────────────────────────────────────────
+  Author: David Teschner | License: MIT | GitHub: @theGreatHerrLebert
+──────────────────────────────────────────────────────────────────────────────
+"""
+
     parser = argparse.ArgumentParser(
-        description='TIMSIM - Run a proteomics experiment simulation with PASEF-like acquisition '
-                    'on a BRUKER TimsTOF. Configuration is provided via a TOML file.'
+        description=description,
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "config",
         type=str,
-        help="Path to the TOML configuration file (required)"
+        metavar="CONFIG_FILE",
+        help="Path to the TOML configuration file"
     )
     return parser
 
@@ -383,13 +486,18 @@ def main():
 
     setup_logging(log_level=config.log_level, log_file=log_file)
 
+    # Detect terminal capability
+    use_unicode = sys.stdout.isatty()
+
     # Print banner
-    logger.info(banner(sys.stdout.isatty()))
+    print(banner(use_unicode))
     logger.info("Version: 0.3.23")
     logger.info("Author: David Teschner, JGU Mainz, GitHub: @theGreatHerrLebert")
     logger.info("License: MIT")
+    logger.info("")
 
     # Configure GPU memory
+    logger.info(section_header("GPU Configuration", use_unicode))
     configure_gpu_memory(memory_limit_gb=4)
 
     # Create a namespace-like object for backward compatibility
@@ -402,6 +510,7 @@ def main():
         use_bruker_sdk = False
 
     # Load modifications config
+    logger.info(section_header("Loading Configuration", use_unicode))
     script_dir = Path(__file__).parent
     modifications_path = config.modifications
     if not modifications_path or modifications_path == "":
@@ -412,12 +521,14 @@ def main():
 
     # Log configuration details
     if not config.silent_mode:
-        logger.info(f"Variable modifications: {variable_modifications}")
-        logger.info(f"Static modifications: {static_modifications}")
+        logger.info("")
+        logger.info(f"  Variable modifications: {variable_modifications}")
+        logger.info(f"  Static modifications:   {static_modifications}")
+        logger.info("")
         if config.apply_fragmentation:
-            logger.info("Fragmentation is enabled")
+            logger.info("  Fragmentation: ENABLED")
         else:
-            logger.info("Fragmentation is disabled")
+            logger.info("  Fragmentation: DISABLED")
 
     # Log configuration table in debug mode
     config_dict = config.to_dict()
@@ -436,8 +547,12 @@ def main():
         f.write(tabulate(table_data, headers=["Argument", "Value"], tablefmt="grid"))
 
     # Build the acquisition (frames, scans, etc.)
+    logger.info(section_header("Building Acquisition", use_unicode))
     if not config.silent_mode:
-        logger.info(f"Simulating experiment {name} at {save_path}")
+        logger.info("")
+        logger.info(f"  Experiment:  {name}")
+        logger.info(f"  Output path: {save_path}")
+        logger.info("")
 
     acquisition_builder = build_acquisition(
         path=save_path,
@@ -465,6 +580,7 @@ def main():
         factors = {}
 
     if config.from_existing:
+        logger.info(section_header("Loading Existing Simulation", use_unicode))
         # Load existing simulation data
         if config.acquisition_type == 'DIA':
             existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=config.existing_path)
@@ -479,9 +595,10 @@ def main():
         rt_lambda = peptides['rt_lambda'].values
 
         if not config.silent_mode:
-            logger.info(f"Using existing simulation from {config.existing_path}")
-            logger.info(f"Peptides: {peptides.shape[0]}")
-            logger.info(f"Ions: {ions.shape[0]}")
+            logger.info("")
+            logger.info(f"  Source:   {config.existing_path}")
+            logger.info(f"  Peptides: {peptides.shape[0]}")
+            logger.info(f"  Ions:     {ions.shape[0]}")
 
         if config.re_scale_rt:
             if not config.silent_mode:
@@ -568,9 +685,11 @@ def main():
     protein_list, peptide_list = [], []
 
     if not config.from_existing:
+        logger.info(section_header("Processing FASTA Files", use_unicode))
         for fasta_name, fasta_path in fastas.items():
             if not config.silent_mode:
-                logger.info(f"Digesting FASTA file: {fasta_name}")
+                logger.info("")
+                logger.info(f"  Digesting: {fasta_name}")
 
             mixture_factor = 1.0
             if config.proteome_mix:
@@ -597,7 +716,7 @@ def main():
 
             # JOB 1: Simulate peptides
             if not config.silent_mode:
-                logger.info("Creating peptides from proteins")
+                logger.info("  Creating peptides from proteins...")
 
             peptides_tmp = simulate_peptides(
                 protein_table=proteins_tmp,
@@ -650,9 +769,11 @@ def main():
                 )
 
         if not config.silent_mode:
-            logger.info(f"Simulating {peptides.shape[0]} peptides")
+            logger.info("")
+            logger.info(f"  Total peptides to simulate: {peptides.shape[0]}")
 
         # JOB 3: Simulate retention times
+        logger.info(section_header("Simulating Retention Times", use_unicode))
         peptides = simulate_retention_times(
             peptides=peptides,
             verbose=not config.silent_mode,
@@ -672,6 +793,7 @@ def main():
         num_threads = os.cpu_count()
 
     # JOB 4: Frame distributions
+    logger.info(section_header("Simulating Frame Distributions", use_unicode))
     peptides = simulate_frame_distributions_emg(
         peptides=peptides,
         frames=acquisition_builder.frame_table,
@@ -733,6 +855,7 @@ def main():
     # Further steps if not from existing simulation
     # ------------------------------------------------------------------
     if not config.from_existing:
+        logger.info(section_header("Simulating Ion Properties", use_unicode))
         # JOB 5: Charge states
         ions = simulate_charge_states(
             peptides=peptides,
@@ -769,6 +892,7 @@ def main():
         )
 
     # JOB 8: Scan distributions
+    logger.info(section_header("Simulating Scan Distributions", use_unicode))
     ions = simulate_scan_distributions_with_variance(
         ions=ions,
         scans=acquisition_builder.scan_table,
@@ -787,6 +911,7 @@ def main():
     pasef_meta = None
 
     if config.acquisition_type == 'DDA':
+        logger.info(section_header("Simulating DDA-PASEF Selection", use_unicode))
         pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
             acquisition_builder=acquisition_builder,
             verbose=not config.silent_mode,
@@ -800,6 +925,7 @@ def main():
         acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
 
     # JOB 9: Simulate fragment intensities
+    logger.info(section_header("Simulating Fragment Intensities", use_unicode))
     simulate_fragment_intensities(
         path=save_path,
         name=name,
@@ -812,6 +938,7 @@ def main():
     )
 
     # JOB 10: Assemble frames
+    logger.info(section_header("Assembling Frames", use_unicode))
     assemble_frames(
         acquisition_builder=acquisition_builder,
         frames=acquisition_builder.frame_table,
@@ -834,7 +961,9 @@ def main():
         pasef_meta=pasef_meta,
     )
 
-    logger.info("Simulation completed successfully")
+    print(simulation_complete_banner(use_unicode))
+    logger.info(f"  Output: {save_path}")
+    logger.info("")
 
 
 if __name__ == '__main__':

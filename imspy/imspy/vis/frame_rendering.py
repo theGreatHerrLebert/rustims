@@ -1,6 +1,5 @@
 import os
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import imageio.v2 as imageio
@@ -18,6 +17,8 @@ COLORS = list(mcolors.TABLEAU_COLORS.values()) + [
 ]
 
 def configure_gpu_memory(limit_gb: float = 4.0):
+    import tensorflow as tf
+
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if not gpus:
         return

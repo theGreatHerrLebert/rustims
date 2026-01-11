@@ -3,8 +3,10 @@ import json
 import math
 import numba
 import numpy as np
-import tensorflow as tf
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import tensorflow as tf
 
 from numpy.typing import ArrayLike
 
@@ -218,7 +220,7 @@ def re_index_indices(ids):
     return inverse
 
 
-def tokenizer_to_json(tokenizer: tf.keras.preprocessing.text.Tokenizer, path: str):
+def tokenizer_to_json(tokenizer: "tf.keras.preprocessing.text.Tokenizer", path: str):
     """
     save a fit keras tokenizer to json for later use
     :param tokenizer: fit keras tokenizer to save
@@ -235,6 +237,8 @@ def tokenizer_from_json(path: str):
     :param path: path to tokenizer as json file
     :return: a keras tokenizer loaded from json
     """
+    import tensorflow as tf
+
     with open(path) as f:
         data = json.load(f)
     return tf.keras.preprocessing.text.tokenizer_from_json(data)
