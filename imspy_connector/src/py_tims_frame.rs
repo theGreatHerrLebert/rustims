@@ -200,7 +200,7 @@ impl PyTimsFrame {
     }
 
     pub fn get_tims_spectrum(&self, scan_index: i32) -> Option<PyTimsSpectrum> {
-        self.inner.get_tims_spectrum(scan_index).map(|spectrum| PyTimsSpectrum { inner: spectrum })
+        self.inner.get_tims_spectrum(scan_index).map(|spectrum| PyTimsSpectrum::from_inner(spectrum))
     }
 
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
@@ -208,7 +208,7 @@ impl PyTimsFrame {
         let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for spec in spectra {
-            let py_tims_spectrum = Py::new(py, PyTimsSpectrum { inner: spec })?;
+            let py_tims_spectrum = Py::new(py, PyTimsSpectrum::from_inner(spec))?;
             list.bind(py).append(py_tims_spectrum)?;
         }
 
@@ -221,7 +221,7 @@ impl PyTimsFrame {
         let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum::from_inner(window))?;
             list.bind(py).append(py_mz_spectrum)?;
         }
 
@@ -229,7 +229,7 @@ impl PyTimsFrame {
     }
 
     pub fn to_indexed_mz_spectrum(&self) -> PyIndexedMzSpectrum {
-        PyIndexedMzSpectrum { inner: self.inner.to_indexed_mz_spectrum() }
+        PyIndexedMzSpectrum::from_inner(self.inner.to_indexed_mz_spectrum())
     }
 
     pub fn vectorized(&self, resolution: i32) -> PyTimsFrameVectorized {

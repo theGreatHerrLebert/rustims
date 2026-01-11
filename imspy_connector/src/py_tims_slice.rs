@@ -115,7 +115,7 @@ impl PyTimsSlice {
         let list: Py<PyList> = PyList::empty_bound(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum::from_inner(window))?;
             list.bind(py).append(py_mz_spectrum)?;
         }
 

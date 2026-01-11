@@ -191,6 +191,32 @@ impl PyMzSpectrumVectorized {
 #[pyclass]
 pub struct PyIndexedMzSpectrum {
     pub inner: IndexedMzSpectrum,
+    // Cached numpy arrays
+    index_cache: OnceLock<PyObject>,
+    mz_cache: OnceLock<PyObject>,
+    intensity_cache: OnceLock<PyObject>,
+}
+
+impl Clone for PyIndexedMzSpectrum {
+    fn clone(&self) -> Self {
+        PyIndexedMzSpectrum {
+            inner: self.inner.clone(),
+            index_cache: OnceLock::new(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+        }
+    }
+}
+
+impl PyIndexedMzSpectrum {
+    pub fn from_inner(inner: IndexedMzSpectrum) -> Self {
+        PyIndexedMzSpectrum {
+            inner,
+            index_cache: OnceLock::new(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+        }
+    }
 }
 
 #[pymethods]
@@ -203,37 +229,68 @@ impl PyIndexedMzSpectrum {
                 mz.as_slice()?.to_vec(),
                 intensity.as_slice()?.to_vec(),
             ),
+            index_cache: OnceLock::new(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
         })
     }
 
     #[getter]
-    pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.index.clone().into_pyarray_bound(py).unbind()
+    pub fn index(&self, py: Python) -> PyObject {
+        self.index_cache.get_or_init(|| {
+            self.inner.index.clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
 
     #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.mz_spectrum.mz).clone().into_pyarray_bound(py).unbind()
+    pub fn mz(&self, py: Python) -> PyObject {
+        self.mz_cache.get_or_init(|| {
+            (*self.inner.mz_spectrum.mz).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
 
     #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.mz_spectrum.intensity).clone().into_pyarray_bound(py).unbind()
+    pub fn intensity(&self, py: Python) -> PyObject {
+        self.intensity_cache.get_or_init(|| {
+            (*self.inner.mz_spectrum.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyResult<PyIndexedMzSpectrum> {
         let filtered = self.inner.filter_ranged(mz_min, mz_max, intensity_min, intensity_max);
-        let py_filtered = PyIndexedMzSpectrum {
-            inner: filtered,
-        };
-        Ok(py_filtered)
+        Ok(PyIndexedMzSpectrum::from_inner(filtered))
     }
 }
 
 #[pyclass]
-#[derive(Clone)]
 pub struct PyTimsSpectrum {
     pub inner: TimsSpectrum,
+    // Cached numpy arrays
+    index_cache: OnceLock<PyObject>,
+    mz_cache: OnceLock<PyObject>,
+    intensity_cache: OnceLock<PyObject>,
+}
+
+impl Clone for PyTimsSpectrum {
+    fn clone(&self) -> Self {
+        PyTimsSpectrum {
+            inner: self.inner.clone(),
+            index_cache: OnceLock::new(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+        }
+    }
+}
+
+impl PyTimsSpectrum {
+    pub fn from_inner(inner: TimsSpectrum) -> Self {
+        PyTimsSpectrum {
+            inner,
+            index_cache: OnceLock::new(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
+        }
+    }
 }
 
 #[pymethods]
@@ -254,6 +311,9 @@ impl PyTimsSpectrum {
                     intensity.as_slice()?.to_vec(),
                 ),
             },
+            index_cache: OnceLock::new(),
+            mz_cache: OnceLock::new(),
+            intensity_cache: OnceLock::new(),
         })
     }
 
@@ -278,18 +338,24 @@ impl PyTimsSpectrum {
     }
 
     #[getter]
-    pub fn index(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.spectrum.index.clone().into_pyarray_bound(py).unbind()
+    pub fn index(&self, py: Python) -> PyObject {
+        self.index_cache.get_or_init(|| {
+            self.inner.spectrum.index.clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
 
     #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.spectrum.mz_spectrum.mz).clone().into_pyarray_bound(py).unbind()
+    pub fn mz(&self, py: Python) -> PyObject {
+        self.mz_cache.get_or_init(|| {
+            (*self.inner.spectrum.mz_spectrum.mz).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
 
     #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        (*self.inner.spectrum.mz_spectrum.intensity).clone().into_pyarray_bound(py).unbind()
+    pub fn intensity(&self, py: Python) -> PyObject {
+        self.intensity_cache.get_or_init(|| {
+            (*self.inner.spectrum.mz_spectrum.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+        }).clone_ref(py)
     }
 
     #[getter]
@@ -300,7 +366,7 @@ impl PyTimsSpectrum {
 
     #[getter]
     pub fn indexed_mz_spectrum(&self) -> PyIndexedMzSpectrum {
-        PyIndexedMzSpectrum { inner: self.inner.spectrum.clone() }
+        PyIndexedMzSpectrum::from_inner(self.inner.spectrum.clone())
     }
 
     #[getter]
@@ -310,18 +376,15 @@ impl PyTimsSpectrum {
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> PyResult<PyTimsSpectrum> {
         let filtered = self.inner.filter_ranged(mz_min, mz_max, intensity_min, intensity_max);
-        let py_filtered = PyTimsSpectrum {
-            inner: filtered,
-        };
-        Ok(py_filtered)
+        Ok(PyTimsSpectrum::from_inner(filtered))
     }
 
     pub fn to_resolution(&self, resolution: i32) -> Self {
-        PyTimsSpectrum{ inner: self.inner.to_resolution(resolution)}
+        PyTimsSpectrum::from_inner(self.inner.to_resolution(resolution))
     }
 
     pub fn __add__(&self, other: PyTimsSpectrum) -> PyResult<Self> {
-        Ok(PyTimsSpectrum { inner: self.inner.clone() + other.inner })
+        Ok(PyTimsSpectrum::from_inner(self.inner.clone() + other.inner))
     }
 }
 
