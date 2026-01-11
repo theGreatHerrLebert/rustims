@@ -1,4 +1,6 @@
 from typing import Union
+import os
+import sys
 
 import numpy as np
 import pandas as pd
@@ -7,6 +9,19 @@ from collections import Counter
 
 from sagepy.core.database import PeptideIx
 from sagepy.core import EnzymeBuilder, SageSearchConfiguration
+
+
+class SuppressStderr:
+    """Context manager to suppress stderr output (including Rust panic messages)."""
+    def __enter__(self):
+        self._stderr = sys.stderr
+        self._devnull = open(os.devnull, 'w')
+        sys.stderr = self._devnull
+        return self
+
+    def __exit__(self, *args):
+        sys.stderr = self._stderr
+        self._devnull.close()
 
 
 def parse_fasta_to_dataframe(file_path):
@@ -118,7 +133,9 @@ def protein_to_peptides(fasta,
     )
 
     try:
-        indexed_db = sage_config.generate_indexed_database()
+        # Suppress Rust panic messages that occur for proteins with no valid peptides
+        with SuppressStderr():
+            indexed_db = sage_config.generate_indexed_database()
 
         peptide_set = set()
 
@@ -131,8 +148,7 @@ def protein_to_peptides(fasta,
         return peptide_set
 
     except Exception as e:
-        # print(f"Error generating peptides: {e}")
-        # print("This error can usually be safely ignored when using TIMSIM ...")
+        # Proteins with no valid peptides after digestion will raise an exception
         return None
 
 

@@ -236,6 +236,9 @@ def get_default_settings() -> dict:
         # Phosphorylation
         'phospho_mode': False,
 
+        # Frame assembly
+        'lazy_frame_assembly': False,
+
         # DDA settings
         'precursors_every': 10,
         'precursor_intensity_threshold': 500,
@@ -959,6 +962,7 @@ def main():
         num_fragment_frames=5,
         fragment=config.apply_fragmentation,
         pasef_meta=pasef_meta,
+        lazy_loading=config.lazy_frame_assembly,
     )
 
     print(simulation_complete_banner(use_unicode))
