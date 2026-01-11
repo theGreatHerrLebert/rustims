@@ -417,6 +417,34 @@ class SyntheticExperimentDataHandle:
     def create_table(self, table_name: str, table: pd.DataFrame):
         # Create a table from a pandas DataFrame
         table.to_sql(table_name, self.conn, if_exists='replace', index=False)
+        # Create indexes for efficient lazy loading queries
+        self._create_indexes_for_table(table_name)
+
+    def _create_indexes_for_table(self, table_name: str):
+        """Create indexes for efficient lazy loading queries based on table name."""
+        indexes = {
+            'peptides': [
+                "CREATE INDEX IF NOT EXISTS idx_peptides_frame_range ON peptides(frame_occurrence_start, frame_occurrence_end)",
+                "CREATE INDEX IF NOT EXISTS idx_peptides_peptide_id ON peptides(peptide_id)",
+            ],
+            'ions': [
+                "CREATE INDEX IF NOT EXISTS idx_ions_peptide_id ON ions(peptide_id)",
+            ],
+            'fragment_ions': [
+                "CREATE INDEX IF NOT EXISTS idx_fragment_ions_peptide_id ON fragment_ions(peptide_id)",
+                "CREATE INDEX IF NOT EXISTS idx_fragment_ions_lookup ON fragment_ions(peptide_id, charge)",
+            ],
+        }
+
+        if table_name in indexes:
+            cursor = self.conn.cursor()
+            for sql in indexes[table_name]:
+                try:
+                    cursor.execute(sql)
+                except sqlite3.Error as e:
+                    if self.verbose:
+                        print(f"Warning: Could not create index: {e}")
+            self.conn.commit()
 
     def append_table(self, table_name: str, table: pd.DataFrame):
         # Append a table to an existing table in the database

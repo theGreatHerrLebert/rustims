@@ -210,6 +210,224 @@ impl TimsTofSyntheticsDataHandle {
         Ok(pasef_meta)
     }
 
+    /// Read peptides that are present in the given frame range.
+    /// A peptide is included if its frame range overlaps with [frame_min, frame_max].
+    pub fn read_peptides_for_frame_range(
+        &self,
+        frame_min: u32,
+        frame_max: u32,
+    ) -> rusqlite::Result<Vec<PeptidesSim>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT * FROM peptides WHERE frame_occurrence_start <= ?1 AND frame_occurrence_end >= ?2"
+        )?;
+
+        let peptides_iter = stmt.query_map([frame_max, frame_min], |row| {
+            let frame_occurrence_str: String = row.get(15)?;
+            let frame_abundance_str: String = row.get(16)?;
+
+            let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
+                Ok(value) => value,
+                Err(e) => {
+                    return Err(rusqlite::Error::FromSqlConversionFailure(
+                        15,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    ))
+                }
+            };
+
+            let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
+                Ok(value) => value,
+                Err(_e) => vec![0.0; frame_occurrence.len()],
+            };
+
+            let frame_distribution =
+                SignalDistribution::new(0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
+
+            Ok(PeptidesSim {
+                protein_id: row.get(0)?,
+                peptide_id: row.get(1)?,
+                sequence: PeptideSequence::new(row.get(2)?, row.get(1)?),
+                proteins: row.get(3)?,
+                decoy: row.get(4)?,
+                missed_cleavages: row.get(5)?,
+                n_term: row.get(6)?,
+                c_term: row.get(7)?,
+                mono_isotopic_mass: row.get(8)?,
+                retention_time: row.get(9)?,
+                events: row.get(10)?,
+                frame_start: row.get(13)?,
+                frame_end: row.get(14)?,
+                frame_distribution,
+            })
+        })?;
+
+        let mut peptides = Vec::new();
+        for peptide in peptides_iter {
+            peptides.push(peptide?);
+        }
+        Ok(peptides)
+    }
+
+    /// Read ions for specific peptide IDs.
+    /// Uses batched queries for efficiency with large peptide ID lists.
+    pub fn read_ions_for_peptides(&self, peptide_ids: &[u32]) -> rusqlite::Result<Vec<IonSim>> {
+        if peptide_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_ions = Vec::new();
+
+        // Process in chunks to avoid SQLite parameter limits
+        const CHUNK_SIZE: usize = 500;
+
+        for chunk in peptide_ids.chunks(CHUNK_SIZE) {
+            let placeholders: String = chunk.iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                "SELECT * FROM ions WHERE peptide_id IN ({})",
+                placeholders
+            );
+
+            let mut stmt = self.connection.prepare(&sql)?;
+
+            let ions_iter = stmt.query_map(
+                rusqlite::params_from_iter(chunk.iter()),
+                |row| {
+                    let simulated_spectrum_str: String = row.get(8)?;
+                    let scan_occurrence_str: String = row.get(9)?;
+                    let scan_abundance_str: String = row.get(10)?;
+
+                    let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                8,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            ))
+                        }
+                    };
+
+                    let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                9,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            ))
+                        }
+                    };
+
+                    let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                10,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            ))
+                        }
+                    };
+
+                    Ok(IonSim::new(
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        simulated_spectrum,
+                        scan_occurrence,
+                        scan_abundance,
+                    ))
+                },
+            )?;
+
+            for ion in ions_iter {
+                all_ions.push(ion?);
+            }
+        }
+
+        Ok(all_ions)
+    }
+
+    /// Read fragment ions for specific peptide IDs.
+    /// Uses batched queries for efficiency with large peptide ID lists.
+    pub fn read_fragment_ions_for_peptides(&self, peptide_ids: &[u32]) -> rusqlite::Result<Vec<FragmentIonSim>> {
+        if peptide_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_fragment_ions = Vec::new();
+
+        // Process in chunks to avoid SQLite parameter limits
+        const CHUNK_SIZE: usize = 500;
+
+        for chunk in peptide_ids.chunks(CHUNK_SIZE) {
+            let placeholders: String = chunk.iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sql = format!(
+                "SELECT * FROM fragment_ions WHERE peptide_id IN ({})",
+                placeholders
+            );
+
+            let mut stmt = self.connection.prepare(&sql)?;
+
+            let fragment_ion_iter = stmt.query_map(
+                rusqlite::params_from_iter(chunk.iter()),
+                |row| {
+                    let indices_string: String = row.get(4)?;
+                    let values_string: String = row.get(5)?;
+
+                    let indices: Vec<u32> = match serde_json::from_str(&indices_string) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                4,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            ))
+                        }
+                    };
+
+                    let values: Vec<f64> = match serde_json::from_str(&values_string) {
+                        Ok(value) => value,
+                        Err(e) => {
+                            return Err(rusqlite::Error::FromSqlConversionFailure(
+                                5,
+                                rusqlite::types::Type::Text,
+                                Box::new(e),
+                            ))
+                        }
+                    };
+
+                    Ok(FragmentIonSim::new(
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        indices,
+                        values,
+                    ))
+                },
+            )?;
+
+            for fragment_ion in fragment_ion_iter {
+                all_fragment_ions.push(fragment_ion?);
+            }
+        }
+
+        Ok(all_fragment_ions)
+    }
+
     pub fn read_fragment_ions(&self) -> rusqlite::Result<Vec<FragmentIonSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM fragment_ions")?;
 
