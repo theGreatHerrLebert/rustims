@@ -70,3 +70,7 @@ min_charge_contrib = 0.25
 [performance_settings]
 num_threads = -1
 batch_size = 256
+
+[logging_settings]
+log_level = "INFO"
+# log_file = "timsim.log"  # Uncomment to enable file logging
