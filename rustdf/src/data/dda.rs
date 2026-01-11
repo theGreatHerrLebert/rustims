@@ -287,7 +287,7 @@ impl TimsDatasetDDA {
         );
 
         // Update the inverse mobility values
-        combined_frame.ims_frame.mobility = im_values;
+        combined_frame.ims_frame.mobility = std::sync::Arc::new(im_values);
         
         combined_frame
     }

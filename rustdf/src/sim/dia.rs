@@ -9,6 +9,7 @@ use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::timstof::spectrum::TimsSpectrum;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -280,7 +281,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             .iter()
             .map(|x| x.round())
             .collect::<Vec<_>>();
-        tims_frame.ims_frame.intensity = intensities_rounded;
+        tims_frame.ims_frame.intensity = Arc::new(intensities_rounded);
         tims_frame
     }
 
@@ -337,7 +338,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     .iter()
                     .map(|x| x.round())
                     .collect::<Vec<_>>();
-                frame.ims_frame.intensity = intensities_rounded;
+                frame.ims_frame.intensity = Arc::new(intensities_rounded);
                 frame.ms_type = MsType::FragmentDia;
                 frame
             }
@@ -359,7 +360,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     .iter()
                     .map(|x| x.round())
                     .collect::<Vec<_>>();
-                frame.ims_frame.intensity = intensities_rounded;
+                frame.ims_frame.intensity = Arc::new(intensities_rounded);
                 frame
             }
         }

@@ -12,6 +12,7 @@ use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
 use mscore::timstof::spectrum::TimsSpectrum;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -347,7 +348,7 @@ impl TimsTofLazyFrameBuilderDIA {
             .iter()
             .map(|x| x.round())
             .collect();
-        filtered.ims_frame.intensity = intensities_rounded;
+        filtered.ims_frame.intensity = Arc::new(intensities_rounded);
 
         filtered
     }
@@ -504,7 +505,7 @@ impl TimsTofLazyFrameBuilderDIA {
             .iter()
             .map(|x| x.round())
             .collect();
-        filtered.ims_frame.intensity = intensities_rounded;
+        filtered.ims_frame.intensity = Arc::new(intensities_rounded);
 
         filtered
     }

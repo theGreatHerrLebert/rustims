@@ -113,15 +113,15 @@ impl PyTimsDataset {
             1
         };
 
-        let mz = frame.inner.ims_frame.mz.clone();
-        let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, &mz);
-        let inv_mob = frame.inner.ims_frame.mobility.clone();
-        let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
+        let mz = &*frame.inner.ims_frame.mz;
+        let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, mz);
+        let inv_mob = &*frame.inner.ims_frame.mobility;
+        let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
 
         let compressed_frame = reconstruct_compressed_data(
             scan,
             tof,
-            frame.inner.ims_frame.intensity.clone().iter().map(|x| *x as u32).collect::<Vec<_>>(),
+            frame.inner.ims_frame.intensity.iter().map(|x| *x as u32).collect::<Vec<_>>(),
             total_scans, compression_level).unwrap();
 
         let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray_bound(py);
@@ -142,20 +142,20 @@ impl PyTimsDataset {
                 1
             };
 
-            let mz = frame.inner.ims_frame.mz.clone();
-            let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, &mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
-            let inv_mob = frame.inner.ims_frame.mobility.clone();
-            let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as i32).collect::<Vec<_>>();
+            let mz = &*frame.inner.ims_frame.mz;
+            let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
+            let inv_mob = &*frame.inner.ims_frame.mobility;
+            let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, inv_mob).iter().map(|x| *x as i32).collect::<Vec<_>>();
 
             let frame = TimsFrame::new(
                 frame.inner.frame_id,
                 frame.inner.ms_type.clone(),
                 frame.inner.ims_frame.retention_time,
                 scan,
-                inv_mob,
+                inv_mob.clone(),
                 tof,
-                mz,
-                frame.inner.ims_frame.intensity,
+                mz.clone(),
+                (*frame.inner.ims_frame.intensity).clone(),
             );
 
             filled_tims_frames.push(frame);

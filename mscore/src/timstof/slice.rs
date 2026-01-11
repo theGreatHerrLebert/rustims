@@ -189,12 +189,12 @@ impl TimsSlice {
                 intensity.push(intensities[index]);
             }
 
-            let ims_frame = ImsFrame {
-                retention_time: retention_time[0],
+            let ims_frame = ImsFrame::new(
+                retention_time[0],
                 mobility,
                 mz,
                 intensity,
-            };
+            );
 
             let tims_frame = TimsFrame {
                 frame_id,
@@ -225,9 +225,9 @@ impl TimsSlice {
             scans.extend(frame.scan.clone());
             tofs.extend(frame.tof.clone());
             retention_times.extend(vec![frame.ims_frame.retention_time; length].into_iter());
-            mobilities.extend(&frame.ims_frame.mobility);
-            mzs.extend(&frame.ims_frame.mz);
-            intensities.extend(&frame.ims_frame.intensity);
+            mobilities.extend(frame.ims_frame.mobility.iter());
+            mzs.extend(frame.ims_frame.mz.iter());
+            intensities.extend(frame.ims_frame.intensity.iter());
         }
 
         TimsSliceFlat {

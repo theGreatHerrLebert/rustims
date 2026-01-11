@@ -326,13 +326,12 @@ impl TimsData for TimsLazyLoder {
                 ms_type,
                 scan: Vec::new(),
                 tof: Vec::new(),
-                ims_frame: ImsFrame {
-                    retention_time: self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize]
-                        .time,
-                    mobility: Vec::new(),
-                    mz: Vec::new(),
-                    intensity: Vec::new(),
-                },
+                ims_frame: ImsFrame::new(
+                    self.raw_data_layout.frame_meta_data[(frame_id - 1) as usize].time,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                ),
             };
         }
 
@@ -439,12 +438,12 @@ impl TimsData for TimsLazyLoder {
                     ms_type,
                     scan: scan.iter().map(|&x| x as i32).collect(),
                     tof: tof_i32,
-                    ims_frame: ImsFrame {
-                        retention_time: self.raw_data_layout.frame_meta_data[frame_index].time,
-                        mobility: inv_mobility,
+                    ims_frame: ImsFrame::new(
+                        self.raw_data_layout.frame_meta_data[frame_index].time,
+                        inv_mobility,
                         mz,
-                        intensity: intensity_dbl,
-                    },
+                        intensity_dbl,
+                    ),
                 }
             }
 
@@ -480,12 +479,12 @@ impl TimsData for TimsLazyLoder {
                     ms_type,
                     scan: scan.iter().map(|&x| x as i32).collect(),
                     tof: tof_i32,
-                    ims_frame: ImsFrame {
-                        retention_time: self.raw_data_layout.frame_meta_data[frame_index].time,
-                        mobility: inv_mobility,
+                    ims_frame: ImsFrame::new(
+                        self.raw_data_layout.frame_meta_data[frame_index].time,
+                        inv_mobility,
                         mz,
-                        intensity: intensity_dbl,
-                    },
+                        intensity_dbl,
+                    ),
                 }
             }
 
@@ -616,12 +615,12 @@ impl TimsData for TimsInMemoryLoader {
             .index_converter
             .scan_to_inverse_mobility(frame_id, &scan);
 
-        let ims_frame = ImsFrame {
-            retention_time: raw_frame.retention_time,
+        let ims_frame = ImsFrame::new(
+            raw_frame.retention_time,
+            inverse_mobility,
             mz,
-            intensity: raw_frame.intensity,
-            mobility: inverse_mobility,
-        };
+            raw_frame.intensity,
+        );
 
         TimsFrame {
             frame_id: frame_id as i32,

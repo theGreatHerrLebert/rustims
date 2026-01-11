@@ -4,7 +4,7 @@ use pyo3::types::PyTuple;
 use numpy::{PyArray1, IntoPyArray, PyArrayMethods};
 use mscore::timstof::spectrum::{TimsSpectrum};
 use mscore::data::spectrum::{MsType, ToResolution, Vectorized, };
-use mscore::timstof::frame::{TimsFrame, ImsFrame, TimsFrameVectorized, ImsFrameVectorized, RawTimsFrame};
+use mscore::timstof::frame::{TimsFrame, TimsFrameVectorized, ImsFrameVectorized, RawTimsFrame};
 use crate::py_annotation::PyTimsFrameAnnotated;
 
 
@@ -91,27 +91,25 @@ impl PyTimsFrame {
                       mz: &Bound<'_, PyArray1<f64>>,
                       intensity: &Bound<'_, PyArray1<f64>>) -> PyResult<Self> {
         Ok(PyTimsFrame {
-            inner: TimsFrame {
+            inner: TimsFrame::new(
                 frame_id,
-                ms_type: MsType::new(ms_type),
-                scan: scan.as_slice()?.to_vec(),
-                tof: tof.as_slice()?.to_vec(),
-                ims_frame: ImsFrame {
-                    retention_time,
-                    mobility: mobility.as_slice()?.to_vec(),
-                    mz: mz.as_slice()?.to_vec(),
-                    intensity: intensity.as_slice()?.to_vec(),
-                },
-            },
+                MsType::new(ms_type),
+                retention_time,
+                scan.as_slice()?.to_vec(),
+                mobility.as_slice()?.to_vec(),
+                tof.as_slice()?.to_vec(),
+                mz.as_slice()?.to_vec(),
+                intensity.as_slice()?.to_vec(),
+            ),
         })
     }
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.mz.clone().into_pyarray_bound(py).unbind()
+        (*self.inner.ims_frame.mz).clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.intensity.clone().into_pyarray_bound(py).unbind()
+        (*self.inner.ims_frame.intensity).clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
@@ -119,7 +117,7 @@ impl PyTimsFrame {
     }
     #[getter]
     pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.ims_frame.mobility.clone().into_pyarray_bound(py).unbind()
+        (*self.inner.ims_frame.mobility).clone().into_pyarray_bound(py).unbind()
     }
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
