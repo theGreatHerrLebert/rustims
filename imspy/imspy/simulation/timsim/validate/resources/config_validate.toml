@@ -17,14 +17,16 @@
 # Required if NOT using existing_simulation
 reference_path = "/path/to/reference.d"
 
-# Path to FASTA file (optional, uses bundled test proteome if not specified)
+# Path to FASTA file
+# Optional for new simulations (uses bundled test proteome if not specified)
+# REQUIRED when using existing_simulation
 # fasta_path = "/path/to/proteome.fasta"
 
 # Output directory for validation results
 output_dir = "./timsim-validate-output"
 
 # Path to existing simulation .d folder (skips simulation step)
-# If set, reference_path is not required
+# If set, reference_path is not required but fasta_path IS required
 # existing_simulation = "/path/to/existing/simulation.d"
 
 [simulation]
