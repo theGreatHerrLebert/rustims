@@ -27,12 +27,14 @@ dependencies = [
     "dlomix>=0.0.6",
     "toml>=0.10.2",
     "koinapy>=0.0.10; python_version < '3.13'",
-    "peptdeep>=1.4.0",
     "poetry (>=2.0.0,<3.0.0)",
     "qdarkstyle >=3.2.3",
     "pyqt5 >=5.15.11",
     "vtk >=9.5.0",
 ]
+
+[project.optional-dependencies]
+peptdeep = ["peptdeep>=1.4.0"]
 
 [project.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
