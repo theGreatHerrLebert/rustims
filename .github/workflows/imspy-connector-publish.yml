@@ -13,19 +13,49 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13, macos-14]
-        python-version: ['3.11']
+        python-version: ['3.11', '3.12', '3.13']
         include:
+          # Ubuntu builds
           - os: ubuntu-latest
             python-version: '3.11'
             publish: true
+          - os: ubuntu-latest
+            python-version: '3.12'
+            publish: true
+          - os: ubuntu-latest
+            python-version: '3.13'
+            publish: true
+          # Windows builds
           - os: windows-latest
             python-version: '3.11'
             publish: true
+          - os: windows-latest
+            python-version: '3.12'
+            publish: true
+          - os: windows-latest
+            python-version: '3.13'
+            publish: true
+          # macOS Intel builds
           - os: macos-13
             python-version: '3.11'
             publish: true
+          - os: macos-13
+            python-version: '3.12'
+            publish: true
+          - os: macos-13
+            python-version: '3.13'
+            publish: true
+          # macOS ARM builds
           - os: macos-14
             python-version: '3.11'
+            publish: true
+            target: aarch64-apple-darwin
+          - os: macos-14
+            python-version: '3.12'
+            publish: true
+            target: aarch64-apple-darwin
+          - os: macos-14
+            python-version: '3.13'
             publish: true
             target: aarch64-apple-darwin
 
