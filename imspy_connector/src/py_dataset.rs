@@ -7,7 +7,7 @@ use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::types::PyList;
-use pyo3::{PyResult, Python, PyObject};
+use pyo3::{PyResult, Python};
 use rustdf::data::acquisition::AcquisitionMode;
 use rustdf::data::handle::TimsData;
 
@@ -82,7 +82,7 @@ impl PyTimsDataset {
 
     pub fn scan_tof_intensities_to_compressed_u8(&self, py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32, compression_level: i32) -> Py<PyArray1<u8>> {
         let result = reconstruct_compressed_data(scan_values, tof_values, intensity_values, total_scans, compression_level).unwrap();
-        result.into_pyarray_bound(py).unbind()
+        result.into_pyarray(py).unbind()
     }
 
     #[staticmethod]
@@ -97,14 +97,14 @@ impl PyTimsDataset {
         }
 
         Ok((
-            expanded_scans.into_pyarray_bound(py).unbind(),
-            tof.into_pyarray_bound(py).unbind(),
-            intensities.into_pyarray_bound(py).unbind(),
+            expanded_scans.into_pyarray(py).unbind(),
+            tof.into_pyarray(py).unbind(),
+            intensities.into_pyarray(py).unbind(),
         ))
     }
 
     #[pyo3(signature = (frame, total_scans, use_frame_id=None, compression_level=None))]
-    pub fn compress_frame(&self, py: Python<'_>, frame: PyTimsFrame, total_scans: u32, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
+    pub fn compress_frame(&self, py: Python<'_>, frame: PyTimsFrame, total_scans: u32, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<Py<PyAny>> {
 
         let compression_level = compression_level.unwrap_or(0);
 
@@ -125,12 +125,12 @@ impl PyTimsDataset {
             frame.inner.ims_frame.intensity.iter().map(|x| *x as u32).collect::<Vec<_>>(),
             total_scans, compression_level).unwrap();
 
-        let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray_bound(py);
+        let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray(py);
         Ok(py_array.unbind().into())
     }
 
     #[pyo3(signature = (frames, total_scans, num_threads, use_frame_id=None, compression_level=None))]
-    pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
+    pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<Py<PyAny>> {
 
         let mut filled_tims_frames = Vec::with_capacity(frames.len());
         let compression_level = compression_level.unwrap_or(0);
@@ -166,10 +166,10 @@ impl PyTimsDataset {
         let compressed_frames = compress_collection(filled_tims_frames, total_scans, compression_level, num_threads);
 
         // convert the compressed frames to a python list of numpy arrays
-        let py_list = PyList::empty_bound(py);
+        let py_list = PyList::empty(py);
 
         for frame in compressed_frames {
-            let np_array = frame.into_pyarray_bound(py).unbind();
+            let np_array = frame.into_pyarray(py).unbind();
             py_list.append(np_array)?;
         }
 

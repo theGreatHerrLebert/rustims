@@ -1,7 +1,7 @@
 import sqlite3
 from typing import List
 
-from imspy.simulation.annotation import RustWrapperObject
+from imspy.core.base import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 import pandas as pd
 

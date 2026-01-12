@@ -1,12 +1,21 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, TYPE_CHECKING
 
 import imspy_connector
 
 from imspy.data.spectrum import MzSpectrum
-from imspy.simulation.annotation import MzSpectrumAnnotated, RustWrapperObject
+from imspy.core.base import RustWrapperObject
+
+if TYPE_CHECKING:
+    from imspy.simulation.annotation import MzSpectrumAnnotated
 
 ims = imspy_connector.py_peptide
+
+
+def _get_mz_spectrum_annotated():
+    """Lazy import of MzSpectrumAnnotated to avoid circular imports."""
+    from imspy.simulation.annotation import MzSpectrumAnnotated
+    return MzSpectrumAnnotated
 
 
 class PeptideProductIonSeriesCollection(RustWrapperObject):
@@ -77,7 +86,7 @@ class PeptideProductIonSeriesCollection(RustWrapperObject):
             abundance_threshold: float = 1e-6,
             max_result: int = 2000,
             intensity_min: float = 1e-6
-    ) -> MzSpectrumAnnotated:
+    ) -> 'MzSpectrumAnnotated':
         """Calculate the isotope distribution of the product ion series collection.
 
         Args:
@@ -89,6 +98,7 @@ class PeptideProductIonSeriesCollection(RustWrapperObject):
         Returns:
             The isotope distribution of the product ion series collection.
         """
+        MzSpectrumAnnotated = _get_mz_spectrum_annotated()
         py_spec = self.__py_ptr.generate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
@@ -315,7 +325,7 @@ class PeptideSequence(RustWrapperObject):
         return MzSpectrum.from_py_ptr(py_spec)
 
     def calculate_mono_isotopic_product_ion_spectrum_annotated(self, charge: int = 1,
-                                                               fragment_type: str = 'b') -> MzSpectrumAnnotated:
+                                                               fragment_type: str = 'b') -> 'MzSpectrumAnnotated':
         """Calculate the mono-isotopic product ion spectrum of the peptide sequence.
 
         Args:
@@ -329,6 +339,7 @@ class PeptideSequence(RustWrapperObject):
         assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
                                                                     f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
+        MzSpectrumAnnotated = _get_mz_spectrum_annotated()
         py_spec = self.__py_ptr.calculate_mono_isotopic_product_ion_spectrum_annotated(charge, fragment_type)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
@@ -339,7 +350,7 @@ class PeptideSequence(RustWrapperObject):
                                                           abundance_threshold: float = 1e-8,
                                                           max_result: int = 200,
                                                           intensity_min: float = 1e-4
-                                                          ) -> MzSpectrumAnnotated:
+                                                          ) -> 'MzSpectrumAnnotated':
         """Calculate the isotopic product ion spectrum of the peptide sequence.
 
         Args:
@@ -357,6 +368,7 @@ class PeptideSequence(RustWrapperObject):
         assert fragment_type in ['a', 'b', 'c', 'x', 'y', 'z'], (f"Invalid fragment type: {fragment_type}, "
                                                                     f"must be one of 'a', 'b', 'c', 'x', 'y', 'z'")
 
+        MzSpectrumAnnotated = _get_mz_spectrum_annotated()
         py_spec = self.__py_ptr.calculate_isotopic_product_ion_spectrum_annotated(charge, fragment_type, mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 
@@ -463,7 +475,7 @@ class PeptideIon(RustWrapperObject):
             abundance_threshold: float = 1e-8,
             max_result: int = 200,
             intensity_min: float = 1e-4,
-    ) -> MzSpectrumAnnotated:
+    ) -> 'MzSpectrumAnnotated':
         """Calculate the isotopic spectrum of the peptide ion.
 
         Args:
@@ -476,6 +488,7 @@ class PeptideIon(RustWrapperObject):
             The isotopic spectrum of the peptide ion.
         """
         assert 0 <= abundance_threshold <= 1, f"Abundance threshold must be between 0 and 1, was: {abundance_threshold}"
+        MzSpectrumAnnotated = _get_mz_spectrum_annotated()
         py_spec = self.__py_ptr.calculate_isotopic_spectrum_annotated(mass_tolerance, abundance_threshold, max_result, intensity_min)
         return MzSpectrumAnnotated.from_py_ptr(py_spec)
 

@@ -11,7 +11,8 @@ import pandas as pd
 
 from imspy.data.peptide import PeptideProductIonSeriesCollection
 from imspy.data.spectrum import MzSpectrum
-from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
+from imspy.core.base import RustWrapperObject
+from imspy.simulation.annotation import TimsFrameAnnotated
 from imspy.timstof.frame import TimsFrame
 
 import imspy_connector

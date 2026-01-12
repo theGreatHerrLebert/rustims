@@ -1,7 +1,7 @@
 import imspy_connector
 
 from imspy.data.spectrum import MzSpectrum
-from imspy.simulation.annotation import RustWrapperObject
+from imspy.core.base import RustWrapperObject
 
 ims = imspy_connector.py_sum_formula
 

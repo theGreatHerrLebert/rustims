@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from scipy.signal import find_peaks
 import imspy_connector
 
-from imspy.simulation.annotation import RustWrapperObject
+from imspy.core.base import RustWrapperObject
 
 ims = imspy_connector.py_spectrum
 

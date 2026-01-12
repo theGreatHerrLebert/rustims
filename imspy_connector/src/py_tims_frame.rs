@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use pyo3::types::PyTuple;
 use numpy::{PyArray1, IntoPyArray, PyArrayMethods};
 use mscore::timstof::spectrum::{TimsSpectrum};
 use mscore::data::spectrum::{MsType, ToResolution, Vectorized, };
@@ -39,16 +38,16 @@ impl PyRawTimsFrame {
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray_bound(py).unbind()
+        self.inner.intensity.clone().into_pyarray(py).unbind()
     }
     #[getter]
     pub fn scan(&self, py: Python) -> Py<PyArray1<u32>> {
-        self.inner.scan.clone().into_pyarray_bound(py).unbind()
+        self.inner.scan.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<u32>> {
-        self.inner.tof.clone().into_pyarray_bound(py).unbind()
+        self.inner.tof.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
@@ -75,12 +74,12 @@ impl PyRawTimsFrame {
 #[pyclass]
 pub struct PyTimsFrame {
     pub inner: TimsFrame,
-    // Cached numpy arrays - lazily initialized on first access (stored as PyObject for Clone)
-    mz_cache: OnceLock<PyObject>,
-    intensity_cache: OnceLock<PyObject>,
-    mobility_cache: OnceLock<PyObject>,
-    scan_cache: OnceLock<PyObject>,
-    tof_cache: OnceLock<PyObject>,
+    // Cached numpy arrays - lazily initialized on first access (stored as Py<PyAny> for Clone)
+    mz_cache: OnceLock<Py<PyAny>>,
+    intensity_cache: OnceLock<Py<PyAny>>,
+    mobility_cache: OnceLock<Py<PyAny>>,
+    scan_cache: OnceLock<Py<PyAny>>,
+    tof_cache: OnceLock<Py<PyAny>>,
 }
 
 impl Clone for PyTimsFrame {
@@ -142,33 +141,33 @@ impl PyTimsFrame {
         })
     }
     #[getter]
-    pub fn mz(&self, py: Python) -> PyObject {
+    pub fn mz(&self, py: Python) -> Py<PyAny> {
         self.mz_cache.get_or_init(|| {
-            (*self.inner.ims_frame.mz).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.ims_frame.mz).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
     #[getter]
-    pub fn intensity(&self, py: Python) -> PyObject {
+    pub fn intensity(&self, py: Python) -> Py<PyAny> {
         self.intensity_cache.get_or_init(|| {
-            (*self.inner.ims_frame.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.ims_frame.intensity).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
     #[getter]
-    pub fn scan(&self, py: Python) -> PyObject {
+    pub fn scan(&self, py: Python) -> Py<PyAny> {
         self.scan_cache.get_or_init(|| {
-            self.inner.scan.clone().into_pyarray_bound(py).unbind().into_any()
+            self.inner.scan.clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
     #[getter]
-    pub fn mobility(&self, py: Python) -> PyObject {
+    pub fn mobility(&self, py: Python) -> Py<PyAny> {
         self.mobility_cache.get_or_init(|| {
-            (*self.inner.ims_frame.mobility).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.ims_frame.mobility).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
     #[getter]
-    pub fn tof(&self, py: Python) -> PyObject {
+    pub fn tof(&self, py: Python) -> Py<PyAny> {
         self.tof_cache.get_or_init(|| {
-            self.inner.tof.clone().into_pyarray_bound(py).unbind().into_any()
+            self.inner.tof.clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
     #[setter]
@@ -205,7 +204,7 @@ impl PyTimsFrame {
 
     pub fn to_tims_spectra(&self, py: Python) -> PyResult<Py<PyList>> {
         let spectra = self.inner.to_tims_spectra();
-        let list: Py<PyList> = PyList::empty_bound(py).into();
+        let list: Py<PyList> = PyList::empty(py).into();
 
         for spec in spectra {
             let py_tims_spectrum = Py::new(py, PyTimsSpectrum::from_inner(spec))?;
@@ -218,7 +217,7 @@ impl PyTimsFrame {
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<Py<PyList>> {
 
         let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
-        let list: Py<PyList> = PyList::empty_bound(py).into();
+        let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
             let py_mz_spectrum = Py::new(py, PyTimsSpectrum::from_inner(window))?;
@@ -269,27 +268,16 @@ impl PyTimsFrame {
         Ok(PyTimsFrame::from_inner(TimsFrame::from_tims_spectra(spectra.into_iter().map(|s| s.inner).collect())))
     }
 
-    pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
+    pub fn to_dense_windows(&self, py: Python, window_length: f64, resolution: i32, overlapping: bool, min_peaks: usize, min_intensity: f64) -> (usize, usize, Py<PyArray1<f64>>, Py<PyArray1<f64>>, Py<PyArray1<f64>>, Py<PyArray1<i32>>, Py<PyArray1<i32>>) {
 
         let (data, mobilities, mzs, scans, window_indices, rows, cols) = self.inner.to_dense_windows(window_length, overlapping, min_peaks, min_intensity, resolution);
-        let py_array: Bound<'_, PyArray1<f64>> = data.into_pyarray_bound(py);
-        let mobilities: Bound<'_, PyArray1<f64>> = mobilities.into_pyarray_bound(py);
-        let mzs: Bound<'_, PyArray1<f64>> = mzs.into_pyarray_bound(py);
-        let py_scans: Bound<'_, PyArray1<i32>> = scans.into_pyarray_bound(py);
-        let py_window_indices: Bound<'_, PyArray1<i32>> = window_indices.into_pyarray_bound(py);
+        let py_array = data.into_pyarray(py).unbind();
+        let mobilities = mobilities.into_pyarray(py).unbind();
+        let mzs = mzs.into_pyarray(py).unbind();
+        let py_scans = scans.into_pyarray(py).unbind();
+        let py_window_indices = window_indices.into_pyarray(py).unbind();
 
-        // If you need them outside the GIL context, unbind them:
-        let py_array = py_array.unbind();
-        let py_scans = py_scans.unbind();
-        let py_window_indices = py_window_indices.unbind();
-        let tuple = PyTuple::new_bound(py, &[rows.to_owned().into_py(py), cols.to_owned().into_py(py),
-            py_array.into_py(py),
-            mobilities.into_py(py),
-            mzs.into_py(py),
-            py_scans.into_py(py),
-            py_window_indices.into_py(py)]);
-
-        Ok(tuple.into())
+        (rows, cols, py_array, mobilities, mzs, py_scans, py_window_indices)
     }
 
     pub fn to_noise_annotated_tims_frame(&self) -> PyTimsFrameAnnotated {
@@ -351,12 +339,12 @@ impl  PyTimsFrameVectorized {
    }
    #[getter]
     pub fn indices(&self, py: Python) -> Py<PyArray1<i32>> {
-         self.inner.ims_frame.indices.clone().into_pyarray_bound(py).unbind()
+         self.inner.ims_frame.indices.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn values(&self, py: Python) -> Py<PyArray1<f64>> {
-         self.inner.ims_frame.values.clone().into_pyarray_bound(py).unbind()
+         self.inner.ims_frame.values.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
@@ -366,17 +354,17 @@ impl  PyTimsFrameVectorized {
 
     #[getter]
     pub fn scan(&self, py: Python) -> Py<PyArray1<i32>> {
-         self.inner.scan.clone().into_pyarray_bound(py).unbind()
+         self.inner.scan.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn mobility(&self, py: Python) -> Py<PyArray1<f64>> {
-         self.inner.ims_frame.mobility.clone().into_pyarray_bound(py).unbind()
+         self.inner.ims_frame.mobility.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn tof(&self, py: Python) -> Py<PyArray1<i32>> {
-         self.inner.tof.clone().into_pyarray_bound(py).unbind()
+         self.inner.tof.clone().into_pyarray(py).unbind()
     }
 
     #[getter]

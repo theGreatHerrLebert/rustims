@@ -4,7 +4,7 @@ from typing import List, Optional
 import numpy as np
 import pandas as pd
 
-from imspy.simulation.annotation import RustWrapperObject
+from imspy.core.base import RustWrapperObject
 from imspy.timstof.data import TimsDataset
 from imspy.timstof.frame import TimsFrame
 

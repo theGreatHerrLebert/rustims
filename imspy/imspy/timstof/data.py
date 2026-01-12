@@ -13,7 +13,7 @@ import opentims_bruker_bridge as obb
 
 from abc import ABC
 
-from imspy.simulation.annotation import RustWrapperObject
+from imspy.core.base import RustWrapperObject
 from imspy.timstof.frame import TimsFrame
 from imspy.timstof.slice import TimsSlice
 

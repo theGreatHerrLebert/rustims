@@ -1,23 +1,13 @@
 from typing import Union, List, Tuple
-from abc import ABC, abstractmethod
 import imspy_connector
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
+# Re-export RustWrapperObject for backward compatibility
+from imspy.core.base import RustWrapperObject
+
 ims = imspy_connector.py_annotation
-
-
-# TODO: Add docstrings, add interface to all other classes that bind rust code
-class RustWrapperObject(ABC):
-    @classmethod
-    @abstractmethod
-    def from_py_ptr(cls, obj):
-        pass
-
-    @abstractmethod
-    def get_py_ptr(self):
-        pass
 
 
 class SourceType(RustWrapperObject):

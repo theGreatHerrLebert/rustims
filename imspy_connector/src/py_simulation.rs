@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
 use rustdf::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
 use rustdf::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
 use rustdf::sim::lazy_builder::TimsTofLazyFrameBuilderDIA;
@@ -13,7 +12,7 @@ use crate::py_peptide::PyPeptideProductIonSeriesCollection;
 use crate::py_quadrupole::PyPasefMeta;
 use crate::py_tims_frame::PyTimsFrame;
 
-#[pyclass]
+#[pyclass(unsendable)]
 pub struct PyTimsTofSyntheticsDataHandle {
     pub inner: TimsTofSyntheticsDataHandle,
 }
@@ -144,10 +143,8 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
         self.inner.get_ion_transmission_matrix(peptide_id, charge, include_precursor_frames)
     }
 
-    pub fn count_number_transmissions(&self, py: Python, peptide_id: u32, charge: i8) -> PyResult<PyObject> {
-        let (frame_count, scan_count) = self.inner.count_number_transmissions(peptide_id, charge);
-        let tuple = PyTuple::new_bound(py, &[frame_count.to_owned().into_py(py), scan_count.to_owned().into_py(py)]);
-        Ok(tuple.into())
+    pub fn count_number_transmissions(&self, peptide_id: u32, charge: i8) -> (usize, usize) {
+        self.inner.count_number_transmissions(peptide_id, charge)
     }
 
     pub fn count_number_transmissions_parallel(&self, peptide_ids: Vec<u32>, charge: Vec<i8>, num_threads: usize) -> Vec<(usize, usize)> {

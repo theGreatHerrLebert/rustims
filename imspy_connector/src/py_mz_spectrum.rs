@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use numpy::{PyArray1, IntoPyArray, PyArrayMethods};
+use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 use mscore::data::spectrum::{ToResolution, Vectorized};
 use mscore::data::spectrum::{MzSpectrum, IndexedMzSpectrum, MsType, MzSpectrumVectorized};
 use mscore::timstof::spectrum::{TimsSpectrum};
@@ -31,8 +31,8 @@ impl PyMsType {
 pub struct PyMzSpectrum {
     pub inner: MzSpectrum,
     // Cached numpy arrays
-    mz_cache: OnceLock<PyObject>,
-    intensity_cache: OnceLock<PyObject>,
+    mz_cache: OnceLock<Py<PyAny>>,
+    intensity_cache: OnceLock<Py<PyAny>>,
 }
 
 impl Clone for PyMzSpectrum {
@@ -81,32 +81,32 @@ impl PyMzSpectrum {
     }
 
     #[getter]
-    pub fn mz(&self, py: Python) -> PyObject {
+    pub fn mz(&self, py: Python) -> Py<PyAny> {
         self.mz_cache.get_or_init(|| {
-            (*self.inner.mz).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.mz).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
     #[getter]
-    pub fn intensity(&self, py: Python) -> PyObject {
+    pub fn intensity(&self, py: Python) -> Py<PyAny> {
         self.intensity_cache.get_or_init(|| {
-            (*self.inner.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.intensity).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
-    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<PyObject> {
+    pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> PyResult<Py<PyAny>> {
         let spectra = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity);
 
         let mut indices: Vec<i32> = Vec::new();
-        let py_list: Py<PyList> = PyList::empty_bound(py).into();
+        let py_list = PyList::empty(py);
 
         for (index, spec) in spectra {
             indices.push(index);
             let py_spec = Py::new(py, PyMzSpectrum::from_inner(spec))?;
-            py_list.bind(py).append(py_spec)?;
+            py_list.append(py_spec)?;
         }
 
-        let numpy_indices = indices.into_pyarray_bound(py).unbind();
+        let numpy_indices = indices.into_pyarray(py).unbind();
 
-        Ok(PyTuple::new_bound(py, &[numpy_indices.to_object(py), py_list.into()]).to_object(py))
+        Ok(PyTuple::new(py, [numpy_indices.into_any(), py_list.unbind().into_any()])?.unbind().into_any())
     }
 
     pub fn to_resolution(&self, resolution: i32) -> PyMzSpectrum {
@@ -179,12 +179,12 @@ impl PyMzSpectrumVectorized {
 
     #[getter]
     pub fn indices(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.indices.clone().into_pyarray_bound(py).unbind()
+        self.inner.indices.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn values(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.values.clone().into_pyarray_bound(py).unbind()
+        self.inner.values.clone().into_pyarray(py).unbind()
     }
 }
 
@@ -192,9 +192,9 @@ impl PyMzSpectrumVectorized {
 pub struct PyIndexedMzSpectrum {
     pub inner: IndexedMzSpectrum,
     // Cached numpy arrays
-    index_cache: OnceLock<PyObject>,
-    mz_cache: OnceLock<PyObject>,
-    intensity_cache: OnceLock<PyObject>,
+    index_cache: OnceLock<Py<PyAny>>,
+    mz_cache: OnceLock<Py<PyAny>>,
+    intensity_cache: OnceLock<Py<PyAny>>,
 }
 
 impl Clone for PyIndexedMzSpectrum {
@@ -236,23 +236,23 @@ impl PyIndexedMzSpectrum {
     }
 
     #[getter]
-    pub fn index(&self, py: Python) -> PyObject {
+    pub fn index(&self, py: Python) -> Py<PyAny> {
         self.index_cache.get_or_init(|| {
-            self.inner.index.clone().into_pyarray_bound(py).unbind().into_any()
+            self.inner.index.clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
 
     #[getter]
-    pub fn mz(&self, py: Python) -> PyObject {
+    pub fn mz(&self, py: Python) -> Py<PyAny> {
         self.mz_cache.get_or_init(|| {
-            (*self.inner.mz_spectrum.mz).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.mz_spectrum.mz).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
 
     #[getter]
-    pub fn intensity(&self, py: Python) -> PyObject {
+    pub fn intensity(&self, py: Python) -> Py<PyAny> {
         self.intensity_cache.get_or_init(|| {
-            (*self.inner.mz_spectrum.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.mz_spectrum.intensity).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
 
@@ -266,9 +266,9 @@ impl PyIndexedMzSpectrum {
 pub struct PyTimsSpectrum {
     pub inner: TimsSpectrum,
     // Cached numpy arrays
-    index_cache: OnceLock<PyObject>,
-    mz_cache: OnceLock<PyObject>,
-    intensity_cache: OnceLock<PyObject>,
+    index_cache: OnceLock<Py<PyAny>>,
+    mz_cache: OnceLock<Py<PyAny>>,
+    intensity_cache: OnceLock<Py<PyAny>>,
 }
 
 impl Clone for PyTimsSpectrum {
@@ -338,23 +338,23 @@ impl PyTimsSpectrum {
     }
 
     #[getter]
-    pub fn index(&self, py: Python) -> PyObject {
+    pub fn index(&self, py: Python) -> Py<PyAny> {
         self.index_cache.get_or_init(|| {
-            self.inner.spectrum.index.clone().into_pyarray_bound(py).unbind().into_any()
+            self.inner.spectrum.index.clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
 
     #[getter]
-    pub fn mz(&self, py: Python) -> PyObject {
+    pub fn mz(&self, py: Python) -> Py<PyAny> {
         self.mz_cache.get_or_init(|| {
-            (*self.inner.spectrum.mz_spectrum.mz).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.spectrum.mz_spectrum.mz).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
 
     #[getter]
-    pub fn intensity(&self, py: Python) -> PyObject {
+    pub fn intensity(&self, py: Python) -> Py<PyAny> {
         self.intensity_cache.get_or_init(|| {
-            (*self.inner.spectrum.mz_spectrum.intensity).clone().into_pyarray_bound(py).unbind().into_any()
+            (*self.inner.spectrum.mz_spectrum.intensity).clone().into_pyarray(py).unbind().into_any()
         }).clone_ref(py)
     }
 
