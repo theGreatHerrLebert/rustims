@@ -59,6 +59,43 @@ threads = 4
 # Increase for larger simulations or slower systems
 timeout_seconds = 3600
 
+# Q-value threshold for filtering
+qvalue = 0.01
+
+# Run in library-free mode (no spectral library required)
+library_free = true
+
+# Use deep learning predictors for RT/IM
+use_predictor = true
+
+# Mass accuracy settings (in ppm)
+# Leave commented to use DiaNN auto-detection
+# mass_acc = 10.0
+# mass_acc_ms1 = 10.0
+
+# Peptide settings
+min_pep_len = 7
+max_pep_len = 30
+missed_cleavages = 2
+enzyme = "K*,R*"  # Trypsin (K*,R* = cut after K and R)
+met_excision = true  # N-terminal methionine excision
+
+# Fragment m/z range (optional)
+# min_fr_mz = 200.0
+# max_fr_mz = 1800.0
+
+# Modifications
+# Fixed modification format: "residue,modification_name"
+# Example: "C,carbamidomethyl" for carbamidomethylation of cysteine
+# fixed_mod = "C,carbamidomethyl"
+
+# Variable modification format: "residue,modification_name"
+# Example: "M,oxidation" for oxidation of methionine
+# var_mod = "M,oxidation"
+
+# Maximum number of variable modifications per peptide
+var_mods = 2
+
 [thresholds]
 # Validation thresholds determine pass/fail criteria
 # Adjust these based on your expected simulation quality

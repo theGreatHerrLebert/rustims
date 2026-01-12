@@ -10,7 +10,7 @@ import os
 import toml
 
 from .runner import ValidationRunner, SimulationConfig
-from .diann_executor import DiannExecutor
+from .diann_executor import DiannExecutor, DiannConfig
 from .metrics import ValidationThresholds
 
 
@@ -32,9 +32,32 @@ def get_default_config() -> dict:
         "batch_size": 256,
         "num_threads": -1,
 
-        # DiaNN
+        # DiaNN basic
         "diann_threads": 4,
         "diann_timeout": 3600,
+        "diann_qvalue": 0.01,
+        "diann_library_free": True,
+        "diann_use_predictor": True,
+
+        # DiaNN mass accuracy
+        "diann_mass_acc": None,
+        "diann_mass_acc_ms1": None,
+
+        # DiaNN peptide settings
+        "diann_min_pep_len": 7,
+        "diann_max_pep_len": 30,
+        "diann_missed_cleavages": 2,
+        "diann_enzyme": "K*,R*",
+        "diann_met_excision": True,
+
+        # DiaNN fragment settings
+        "diann_min_fr_mz": None,
+        "diann_max_fr_mz": None,
+
+        # DiaNN modifications
+        "diann_fixed_mod": None,
+        "diann_var_mod": None,
+        "diann_var_mods": 2,
 
         # Thresholds
         "min_identification_rate": 0.30,
@@ -78,14 +101,31 @@ def load_toml_config(config_path: str) -> dict:
             for key, value in section_value.items():
                 # Handle key mapping from TOML naming to internal naming
                 if section_key == "diann":
-                    if key == "executable_path":
-                        flat_config["diann_path"] = value
-                    elif key == "threads":
-                        flat_config["diann_threads"] = value
-                    elif key == "timeout_seconds":
-                        flat_config["diann_timeout"] = value
+                    # Map diann section keys to diann_ prefixed config keys
+                    diann_key_mapping = {
+                        "executable_path": "diann_path",
+                        "threads": "diann_threads",
+                        "timeout_seconds": "diann_timeout",
+                        "qvalue": "diann_qvalue",
+                        "library_free": "diann_library_free",
+                        "use_predictor": "diann_use_predictor",
+                        "mass_acc": "diann_mass_acc",
+                        "mass_acc_ms1": "diann_mass_acc_ms1",
+                        "min_pep_len": "diann_min_pep_len",
+                        "max_pep_len": "diann_max_pep_len",
+                        "missed_cleavages": "diann_missed_cleavages",
+                        "enzyme": "diann_enzyme",
+                        "met_excision": "diann_met_excision",
+                        "min_fr_mz": "diann_min_fr_mz",
+                        "max_fr_mz": "diann_max_fr_mz",
+                        "fixed_mod": "diann_fixed_mod",
+                        "var_mod": "diann_var_mod",
+                        "var_mods": "diann_var_mods",
+                    }
+                    if key in diann_key_mapping:
+                        flat_config[diann_key_mapping[key]] = value
                     else:
-                        flat_config[key] = value
+                        flat_config[f"diann_{key}"] = value
                 elif section_key == "paths":
                     # Map paths section keys
                     if key == "fasta_path":
@@ -414,10 +454,29 @@ def main() -> int:
         gradient_length=config["gradient_length"],
     )
 
+    diann_config = DiannConfig(
+        qvalue=config["diann_qvalue"],
+        library_free=config["diann_library_free"],
+        use_predictor=config["diann_use_predictor"],
+        mass_acc=config["diann_mass_acc"],
+        mass_acc_ms1=config["diann_mass_acc_ms1"],
+        min_pep_len=config["diann_min_pep_len"],
+        max_pep_len=config["diann_max_pep_len"],
+        missed_cleavages=config["diann_missed_cleavages"],
+        enzyme=config["diann_enzyme"],
+        met_excision=config["diann_met_excision"],
+        min_fr_mz=config["diann_min_fr_mz"],
+        max_fr_mz=config["diann_max_fr_mz"],
+        fixed_mod=config["diann_fixed_mod"],
+        var_mod=config["diann_var_mod"],
+        var_mods=config["diann_var_mods"],
+    )
+
     diann_executor = DiannExecutor(
         executable_path=config["diann_path"],
         threads=config["diann_threads"],
         timeout_seconds=config["diann_timeout"],
+        config=diann_config,
     )
 
     # Create and run validator
