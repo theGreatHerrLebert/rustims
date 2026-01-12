@@ -7,9 +7,151 @@ import logging
 import sys
 import os
 
+import toml
+
 from .runner import ValidationRunner, SimulationConfig
 from .diann_executor import DiannExecutor
 from .metrics import ValidationThresholds
+
+
+def get_default_config() -> dict:
+    """Return default configuration values for timsim-validate."""
+    return {
+        # Paths
+        "reference_path": None,
+        "fasta_path": None,
+        "diann_path": "diann",
+        "output_dir": "./timsim-validate-output",
+
+        # Simulation
+        "num_peptides": 5000,
+        "gradient_length": 1800.0,
+        "acquisition_type": "DIA",
+        "apply_fragmentation": True,
+        "batch_size": 256,
+        "num_threads": -1,
+
+        # DiaNN
+        "diann_threads": 4,
+        "diann_timeout": 3600,
+
+        # Thresholds
+        "min_identification_rate": 0.30,
+        "min_rt_correlation": 0.90,
+        "min_im_correlation": 0.90,
+        "max_rt_mae_minutes": 1.0,
+        "max_im_mae": 0.05,
+
+        # Behavior
+        "keep_temp": False,
+        "verbose": False,
+        "quiet": False,
+    }
+
+
+def load_toml_config(config_path: str) -> dict:
+    """
+    Load a TOML configuration file and flatten sections.
+
+    Args:
+        config_path: Path to the TOML configuration file.
+
+    Returns:
+        Flattened dictionary of configuration values.
+
+    Raises:
+        FileNotFoundError: If the config file doesn't exist.
+        toml.TomlDecodeError: If the config file is invalid.
+    """
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    with open(config_path, 'r') as f:
+        raw_config = toml.load(f)
+
+    # Flatten sections into a single dict
+    flat_config = {}
+    for section_key, section_value in raw_config.items():
+        if isinstance(section_value, dict):
+            # Map TOML section keys to flat config keys
+            for key, value in section_value.items():
+                # Handle key mapping from TOML naming to internal naming
+                if section_key == "diann":
+                    if key == "executable_path":
+                        flat_config["diann_path"] = value
+                    elif key == "threads":
+                        flat_config["diann_threads"] = value
+                    elif key == "timeout_seconds":
+                        flat_config["diann_timeout"] = value
+                    else:
+                        flat_config[key] = value
+                elif section_key == "paths":
+                    # Map paths section keys
+                    if key == "fasta_path":
+                        flat_config["fasta_path"] = value
+                    else:
+                        flat_config[key] = value
+                elif section_key == "behavior":
+                    # Behavior section maps directly
+                    flat_config[key] = value
+                elif section_key == "simulation":
+                    # Simulation section maps directly
+                    flat_config[key] = value
+                elif section_key == "thresholds":
+                    # Thresholds section maps directly
+                    flat_config[key] = value
+                else:
+                    flat_config[key] = value
+        else:
+            flat_config[section_key] = section_value
+
+    return flat_config
+
+
+def merge_config_with_args(config: dict, args: argparse.Namespace) -> dict:
+    """
+    Merge TOML config with CLI arguments (CLI takes precedence).
+
+    Args:
+        config: Dictionary from TOML config.
+        args: Parsed CLI arguments.
+
+    Returns:
+        Merged configuration dictionary.
+    """
+    merged = config.copy()
+
+    # Map CLI arg names to config keys
+    cli_mapping = {
+        "reference_path": "reference_path",
+        "fasta": "fasta_path",
+        "diann_path": "diann_path",
+        "output_dir": "output_dir",
+        "num_peptides": "num_peptides",
+        "gradient_length": "gradient_length",
+        "min_id_rate": "min_identification_rate",
+        "min_rt_corr": "min_rt_correlation",
+        "min_im_corr": "min_im_correlation",
+        "max_rt_mae": "max_rt_mae_minutes",
+        "max_im_mae": "max_im_mae",
+        "diann_threads": "diann_threads",
+        "diann_timeout": "diann_timeout",
+        "keep_temp": "keep_temp",
+        "verbose": "verbose",
+        "quiet": "quiet",
+    }
+
+    for cli_key, config_key in cli_mapping.items():
+        cli_value = getattr(args, cli_key, None)
+        # Only override if CLI provided a non-default value
+        # For boolean flags, they're False by default, so check explicitly
+        if cli_key in ("keep_temp", "verbose", "quiet"):
+            if cli_value:  # Only override if True
+                merged[config_key] = cli_value
+        elif cli_value is not None:
+            merged[config_key] = cli_value
+
+    return merged
 
 
 def setup_logging(verbose: bool = False, quiet: bool = False) -> None:
@@ -54,9 +196,15 @@ This tool:
 
     epilog = """
 Examples:
+  # Using TOML config file
+  timsim-validate --config /path/to/config.toml
+
+  # Using CLI arguments
   timsim-validate /path/to/reference.d
   timsim-validate /path/to/reference.d --fasta /path/to/custom.fasta
-  timsim-validate /path/to/reference.d --min-id-rate 0.4 --verbose
+
+  # Mix: TOML config with CLI overrides
+  timsim-validate --config config.toml --min-id-rate 0.4 --verbose
 
 Exit codes:
   0: Validation PASSED
@@ -73,10 +221,21 @@ Exit codes:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # Required arguments
+    # Config file argument
+    parser.add_argument(
+        "--config", "-c",
+        type=str,
+        default=None,
+        metavar="CONFIG_FILE",
+        help="Path to TOML configuration file (CLI args override config values)",
+    )
+
+    # Reference path - optional if config is provided
     parser.add_argument(
         "reference_path",
         type=str,
+        nargs="?",
+        default=None,
         help="Path to reference .d folder for instrument layout",
     )
 
@@ -190,48 +349,71 @@ def main() -> int:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    # Build configuration: defaults -> TOML config -> CLI args
+    config = get_default_config()
+
+    # Load TOML config if provided
+    if args.config:
+        if not os.path.exists(args.config):
+            print(f"Error: Configuration file not found: {args.config}", file=sys.stderr)
+            return 5
+        try:
+            toml_config = load_toml_config(args.config)
+            config.update(toml_config)
+        except Exception as e:
+            print(f"Error loading configuration file: {e}", file=sys.stderr)
+            return 5
+
+    # Merge CLI arguments (CLI takes precedence)
+    config = merge_config_with_args(config, args)
+
     # Setup logging
-    setup_logging(verbose=args.verbose, quiet=args.quiet)
+    setup_logging(verbose=config["verbose"], quiet=config["quiet"])
 
     # Print banner unless quiet
-    if not args.quiet:
+    if not config["quiet"]:
         print(banner())
 
-    # Validate reference path
-    if not os.path.exists(args.reference_path):
-        print(f"Error: Reference path does not exist: {args.reference_path}", file=sys.stderr)
+    # Validate reference path is provided
+    reference_path = config.get("reference_path")
+    if not reference_path:
+        print("Error: reference_path is required (provide via CLI or config file)", file=sys.stderr)
+        return 5
+
+    if not os.path.exists(reference_path):
+        print(f"Error: Reference path does not exist: {reference_path}", file=sys.stderr)
         return 5
 
     # Create configuration objects
     thresholds = ValidationThresholds(
-        min_identification_rate=args.min_id_rate,
-        min_rt_correlation=args.min_rt_corr,
-        min_im_correlation=args.min_im_corr,
-        max_rt_mae_minutes=args.max_rt_mae,
-        max_im_mae=args.max_im_mae,
+        min_identification_rate=config["min_identification_rate"],
+        min_rt_correlation=config["min_rt_correlation"],
+        min_im_correlation=config["min_im_correlation"],
+        max_rt_mae_minutes=config["max_rt_mae_minutes"],
+        max_im_mae=config["max_im_mae"],
     )
 
     simulation_config = SimulationConfig(
-        num_peptides=args.num_peptides,
-        gradient_length=args.gradient_length,
+        num_peptides=config["num_peptides"],
+        gradient_length=config["gradient_length"],
     )
 
     diann_executor = DiannExecutor(
-        executable_path=args.diann_path,
-        threads=args.diann_threads,
-        timeout_seconds=args.diann_timeout,
+        executable_path=config["diann_path"],
+        threads=config["diann_threads"],
+        timeout_seconds=config["diann_timeout"],
     )
 
     # Create and run validator
     runner = ValidationRunner(
-        reference_path=args.reference_path,
-        output_dir=args.output_dir,
-        fasta_path=args.fasta,
+        reference_path=reference_path,
+        output_dir=config["output_dir"],
+        fasta_path=config["fasta_path"],
         diann_executor=diann_executor,
         thresholds=thresholds,
         simulation_config=simulation_config,
-        keep_temp=args.keep_temp,
-        verbose=args.verbose,
+        keep_temp=config["keep_temp"],
+        verbose=config["verbose"],
     )
 
     result = runner.run()
