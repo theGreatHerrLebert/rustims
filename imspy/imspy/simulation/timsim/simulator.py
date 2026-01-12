@@ -144,14 +144,23 @@ def setup_logging(log_level: str = "INFO", log_file: str = None) -> None:
 # Environment setup and GPU configuration
 # ----------------------------------------------------------------------
 
-def configure_gpu_memory(memory_limit_gb: int = 4) -> None:
+def configure_gpu_memory(memory_limit_gb: int = 4, use_gpu: bool = True) -> None:
     """
-    Restricts TensorFlow GPU memory usage to the specified limit per GPU.
+    Configures GPU usage for TensorFlow.
 
     Args:
         memory_limit_gb: Memory limit in gigabytes per GPU.
+        use_gpu: If False, disables GPU and forces CPU-only mode.
     """
+    # Must set CUDA_VISIBLE_DEVICES before importing TensorFlow
+    if not use_gpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        logger.info("  GPU disabled via config, using CPU only")
+
     import tensorflow as tf
+
+    if not use_gpu:
+        return
 
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
@@ -317,6 +326,7 @@ def get_default_settings() -> dict:
         'num_fragment_noise_frames': 5,
 
         # GPU settings
+        'use_gpu': True,
         'gpu_memory_limit_gb': 4,
 
         # DDA settings
@@ -625,9 +635,9 @@ def main():
     timer = SimulationTimer()
     stats = SimulationStats()
 
-    # Configure GPU memory
+    # Configure GPU
     logger.info(section_header("GPU Configuration", use_unicode))
-    configure_gpu_memory(memory_limit_gb=config.gpu_memory_limit_gb)
+    configure_gpu_memory(memory_limit_gb=config.gpu_memory_limit_gb, use_gpu=config.use_gpu)
 
     # Handle macOS Bruker SDK limitation
     use_bruker_sdk = config.use_bruker_sdk

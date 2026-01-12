@@ -59,6 +59,7 @@ selection_mode = "topN"
 num_threads = -1
 batch_size = 256
 frame_batch_size = 500
+use_gpu = true
 gpu_memory_limit_gb = 4
 
 [logging]
