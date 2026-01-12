@@ -24,7 +24,7 @@ timeout_seconds = 3600
 # Q-value threshold for filtering
 qvalue = 0.01
 
-# Run in library-free mode
+# Run in library-free mode (enables --fasta-search, no spectral library needed)
 library_free = true
 
 # Use deep learning predictors for RT/IM
