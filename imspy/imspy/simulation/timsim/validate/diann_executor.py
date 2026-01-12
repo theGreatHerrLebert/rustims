@@ -159,9 +159,6 @@ class DiannExecutor:
         if cfg.library_free:
             cmd.append("--fasta-search")
 
-        # Output as TSV (DiaNN 2.3+ defaults to parquet)
-        cmd.append("--no-compression")
-
         # Predictor
         if cfg.use_predictor:
             cmd.append("--predictor")
@@ -268,9 +265,7 @@ class DiannExecutor:
                 f.write("\n\nSTDERR:\n")
                 f.write(result.stderr)
 
-            success = result.returncode == 0 and os.path.exists(output_path)
-
-            if not success and result.returncode != 0:
+            if result.returncode != 0:
                 logger.error(f"DiaNN failed with return code {result.returncode}")
                 logger.error(f"STDERR: {result.stderr[:1000]}")  # First 1000 chars
                 raise DiannExecutionError(
@@ -278,18 +273,28 @@ class DiannExecutor:
                     f"Check log at {log_path}"
                 )
 
-            if not success and not os.path.exists(output_path):
+            # DiaNN 2.3+ outputs .parquet by default, check for both formats
+            actual_output_path = output_path
+            parquet_path = output_path.replace(".tsv", ".parquet")
+
+            if os.path.exists(output_path):
+                actual_output_path = output_path
+            elif os.path.exists(parquet_path):
+                actual_output_path = parquet_path
+                logger.info(f"DiaNN output found as parquet: {parquet_path}")
+            else:
                 raise DiannExecutionError(
-                    f"DiaNN completed but output file not found: {output_path}"
+                    f"DiaNN completed but output file not found. "
+                    f"Checked: {output_path} and {parquet_path}"
                 )
 
             return DiannResult(
-                report_path=output_path,
+                report_path=actual_output_path,
                 log_path=log_path,
                 return_code=result.returncode,
                 stdout=result.stdout,
                 stderr=result.stderr,
-                success=success,
+                success=True,
             )
 
         except subprocess.TimeoutExpired as e:
