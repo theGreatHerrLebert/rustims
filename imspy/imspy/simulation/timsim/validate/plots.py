@@ -52,7 +52,8 @@ def plot_rt_correlation(
     rt_sim_col: str = "rt_sim",
     rt_obs_col: str = "rt_obs",
     title: str = "Retention Time Correlation",
-    convert_to_minutes: bool = True,
+    sim_in_seconds: bool = True,
+    obs_in_minutes: bool = True,
 ) -> Dict[str, float]:
     """
     Plot retention time correlation between simulated and observed values.
@@ -63,7 +64,8 @@ def plot_rt_correlation(
         rt_sim_col: Column name for simulated RT.
         rt_obs_col: Column name for observed RT.
         title: Plot title.
-        convert_to_minutes: Convert RT from seconds to minutes.
+        sim_in_seconds: If True, simulated RT is in seconds (will convert to minutes).
+        obs_in_minutes: If True, observed RT is already in minutes (no conversion).
 
     Returns:
         Dictionary with correlation statistics.
@@ -86,13 +88,13 @@ def plot_rt_correlation(
         ax.set_title(title)
         return {"r": np.nan, "r2": np.nan, "mae": np.nan, "n": len(rt_sim)}
 
-    # Convert to minutes if needed
-    if convert_to_minutes:
+    # Convert to common unit (minutes)
+    # Ground truth (simulated) is in seconds, DiaNN observed is in minutes
+    if sim_in_seconds:
         rt_sim = rt_sim / 60.0
+    if not obs_in_minutes:
         rt_obs = rt_obs / 60.0
-        unit = "min"
-    else:
-        unit = "sec"
+    unit = "min"
 
     # Calculate statistics
     r = np.corrcoef(rt_sim, rt_obs)[0, 1]
@@ -118,7 +120,7 @@ def plot_rt_correlation(
     ax.plot(lims, lims, 'r--', alpha=0.75, linewidth=1, label='y=x')
 
     # Labels and title
-    ax.set_xlabel(f"Simulated RT ({unit})")
+    ax.set_xlabel(f"True RT ({unit})")
     ax.set_ylabel(f"Observed RT ({unit})")
     ax.set_title(title)
 
@@ -197,7 +199,7 @@ def plot_im_correlation(
     ax.plot(lims, lims, 'r--', alpha=0.75, linewidth=1, label='y=x')
 
     # Labels and title
-    ax.set_xlabel("Simulated 1/K0 (Vs/cm²)")
+    ax.set_xlabel("True 1/K0 (Vs/cm²)")
     ax.set_ylabel("Observed 1/K0 (Vs/cm²)")
     ax.set_title(title)
 
@@ -245,6 +247,8 @@ def plot_quant_correlation(
 
     if intensity_sim_col in matched_df.columns:
         int_sim = matched_df[intensity_sim_col].values
+    elif "intensity_true" in matched_df.columns:
+        int_sim = matched_df["intensity_true"].values
     elif "intensity_sim" in matched_df.columns:
         int_sim = matched_df["intensity_sim"].values
     elif "intensity" in matched_df.columns:
@@ -252,6 +256,8 @@ def plot_quant_correlation(
 
     if intensity_obs_col in matched_df.columns:
         int_obs = matched_df[intensity_obs_col].values
+    elif "intensity_observed" in matched_df.columns:
+        int_obs = matched_df["intensity_observed"].values
     elif "intensity_obs" in matched_df.columns:
         int_obs = matched_df["intensity_obs"].values
     elif "Precursor.Quantity" in matched_df.columns:
@@ -299,7 +305,7 @@ def plot_quant_correlation(
     ax.plot(lims, lims, 'w--', alpha=0.75, linewidth=1, label='y=x')
 
     # Labels and title
-    ax.set_xlabel("log10(Simulated Intensity)")
+    ax.set_xlabel("log10(True Intensity)")
     ax.set_ylabel("log10(Observed Intensity)")
     ax.set_title(title)
 
@@ -511,11 +517,11 @@ def generate_summary_figure(
         # Try different column naming conventions
         rt_sim_col = None
         rt_obs_col = None
-        for col in ['rt_sim', 'retention_time', 'rt', 'RT']:
+        for col in ['rt_true', 'rt_sim', 'retention_time', 'rt', 'RT']:
             if col in matched_df.columns:
                 rt_sim_col = col
                 break
-        for col in ['rt_obs', 'RT', 'iRT', 'retention_time_obs']:
+        for col in ['rt_observed', 'rt_obs', 'RT', 'iRT', 'retention_time_obs']:
             if col in matched_df.columns and col != rt_sim_col:
                 rt_obs_col = col
                 break
@@ -534,11 +540,11 @@ def generate_summary_figure(
     if not matched_df.empty:
         im_sim_col = None
         im_obs_col = None
-        for col in ['im_sim', 'inv_mobility', 'mobility', 'im', 'IM']:
+        for col in ['im_true', 'im_sim', 'inv_mobility', 'mobility', 'im', 'IM']:
             if col in matched_df.columns:
                 im_sim_col = col
                 break
-        for col in ['im_obs', 'IM', 'inv_mobility_obs', 'CCS']:
+        for col in ['im_observed', 'im_obs', 'IM', 'inv_mobility_obs', 'CCS']:
             if col in matched_df.columns and col != im_sim_col:
                 im_obs_col = col
                 break
@@ -683,13 +689,13 @@ def generate_all_plots(
     try:
         fig, ax = plt.subplots(figsize=(6, 5))
         if not matched_df.empty:
-            for col in ['rt_sim', 'retention_time', 'rt']:
+            for col in ['rt_true', 'rt_sim', 'retention_time', 'rt']:
                 if col in matched_df.columns:
                     rt_sim_col = col
                     break
             else:
                 rt_sim_col = None
-            for col in ['rt_obs', 'RT', 'retention_time_obs']:
+            for col in ['rt_observed', 'rt_obs', 'RT', 'retention_time_obs']:
                 if col in matched_df.columns and col != rt_sim_col:
                     rt_obs_col = col
                     break
@@ -709,13 +715,13 @@ def generate_all_plots(
     try:
         fig, ax = plt.subplots(figsize=(6, 5))
         if not matched_df.empty:
-            for col in ['im_sim', 'inv_mobility', 'mobility']:
+            for col in ['im_true', 'im_sim', 'inv_mobility', 'mobility']:
                 if col in matched_df.columns:
                     im_sim_col = col
                     break
             else:
                 im_sim_col = None
-            for col in ['im_obs', 'IM', 'inv_mobility_obs']:
+            for col in ['im_observed', 'im_obs', 'IM', 'inv_mobility_obs']:
                 if col in matched_df.columns and col != im_sim_col:
                     im_obs_col = col
                     break
