@@ -1,0 +1,48 @@
+# =============================================================================
+# TIMSIM-VALIDATE Configuration - Using Existing Simulation
+# =============================================================================
+# This config uses a pre-run simulation dataset, skipping the simulation step.
+# =============================================================================
+
+[paths]
+# Path to existing simulation .d folder (skips simulation step)
+existing_simulation = "/home/dateschn/validate-sim/timsim-validate-output/simulation/timsim-validate/timsim-validate.d"
+
+# Output directory for validation results
+output_dir = "/home/dateschn/validate-sim/timsim-validate-output-rerun"
+
+[diann]
+# Path to DiaNN executable
+executable_path = "/home/dateschn/validate-sim/diann/diann-2.3.1/diann-linux"
+
+# Number of threads for DiaNN analysis
+threads = 8
+
+# Timeout in seconds (3600 = 1 hour)
+timeout_seconds = 3600
+
+[thresholds]
+# Minimum identification rate (fraction of ground truth peptides found by DiaNN)
+min_identification_rate = 0.30
+
+# Minimum retention time correlation (Pearson R)
+min_rt_correlation = 0.90
+
+# Maximum retention time mean absolute error in minutes
+max_rt_mae_minutes = 1.0
+
+# Minimum ion mobility correlation (Pearson R)
+min_im_correlation = 0.90
+
+# Maximum ion mobility mean absolute error in 1/K0 units
+max_im_mae = 0.05
+
+[behavior]
+# Keep temporary files
+keep_temp = true
+
+# Verbose output
+verbose = true
+
+# Quiet mode
+quiet = false

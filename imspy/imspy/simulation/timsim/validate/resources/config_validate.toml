@@ -13,9 +13,8 @@
 # =============================================================================
 
 [paths]
-# Path to reference .d folder for instrument layout (REQUIRED)
-# This should point to an existing timsTOF .d folder that defines the
-# instrument parameters (scan range, mobility range, etc.)
+# Path to reference .d folder for instrument layout
+# Required if NOT using existing_simulation
 reference_path = "/path/to/reference.d"
 
 # Path to FASTA file (optional, uses bundled test proteome if not specified)
@@ -23,6 +22,10 @@ reference_path = "/path/to/reference.d"
 
 # Output directory for validation results
 output_dir = "./timsim-validate-output"
+
+# Path to existing simulation .d folder (skips simulation step)
+# If set, reference_path is not required
+# existing_simulation = "/path/to/existing/simulation.d"
 
 [simulation]
 # Number of peptides to simulate (smaller = faster validation)

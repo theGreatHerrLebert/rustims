@@ -94,6 +94,7 @@ class ValidationRunner:
         simulation_config: Optional[SimulationConfig] = None,
         keep_temp: bool = False,
         verbose: bool = False,
+        existing_simulation: Optional[str] = None,
     ):
         """
         Initialize validation runner.
@@ -107,6 +108,7 @@ class ValidationRunner:
             simulation_config: Simulation configuration.
             keep_temp: Keep temporary simulation files.
             verbose: Verbose output.
+            existing_simulation: Path to existing .d folder to skip simulation.
         """
         self.reference_path = reference_path
         self.output_dir = output_dir
@@ -116,6 +118,7 @@ class ValidationRunner:
         self.simulation_config = simulation_config or SimulationConfig()
         self.keep_temp = keep_temp
         self.verbose = verbose
+        self.existing_simulation = existing_simulation
 
         # Will be set during run
         self._simulation_path: Optional[str] = None
@@ -145,9 +148,13 @@ class ValidationRunner:
         os.makedirs(self.output_dir, exist_ok=True)
 
         try:
-            # Step 1: Run simulation
-            logger.info("Step 1/5: Running timsim simulation...")
-            self._run_simulation()
+            # Step 1: Run simulation (or use existing)
+            if self.existing_simulation:
+                logger.info("Step 1/5: Using existing simulation...")
+                self._use_existing_simulation()
+            else:
+                logger.info("Step 1/5: Running timsim simulation...")
+                self._run_simulation()
 
             # Step 2: Execute DiaNN
             logger.info("Step 2/5: Executing DiaNN analysis...")
@@ -271,6 +278,30 @@ batch_size = {self.simulation_config.batch_size}
             raise SimulationError(f"Failed to import timsim simulator: {e}")
         except Exception as e:
             raise SimulationError(f"Simulation failed: {e}")
+
+    def _use_existing_simulation(self) -> None:
+        """Use an existing simulation instead of running a new one."""
+        if not os.path.exists(self.existing_simulation):
+            raise SimulationError(
+                f"Existing simulation path not found: {self.existing_simulation}"
+            )
+
+        # The existing_simulation should be the .d folder path
+        # The database should be in the parent directory
+        if self.existing_simulation.endswith(".d"):
+            self._simulation_path = os.path.dirname(self.existing_simulation)
+        else:
+            self._simulation_path = self.existing_simulation
+
+        self._database_path = os.path.join(self._simulation_path, "synthetic_data.db")
+
+        if not os.path.exists(self._database_path):
+            raise SimulationError(
+                f"Database not found in existing simulation: {self._database_path}"
+            )
+
+        logger.info(f"  Using simulation: {self._simulation_path}")
+        logger.info(f"  Database: {self._database_path}")
 
     def _run_diann(self) -> None:
         """Execute DiaNN analysis."""

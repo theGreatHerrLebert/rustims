@@ -22,6 +22,7 @@ def get_default_config() -> dict:
         "fasta_path": None,
         "diann_path": "diann",
         "output_dir": "./timsim-validate-output",
+        "existing_simulation": None,  # Path to existing .d folder to skip simulation
 
         # Simulation
         "num_peptides": 5000,
@@ -127,6 +128,7 @@ def merge_config_with_args(config: dict, args: argparse.Namespace) -> dict:
         "fasta": "fasta_path",
         "diann_path": "diann_path",
         "output_dir": "output_dir",
+        "existing_simulation": "existing_simulation",
         "num_peptides": "num_peptides",
         "gradient_length": "gradient_length",
         "min_id_rate": "min_identification_rate",
@@ -259,6 +261,12 @@ Exit codes:
         default="./timsim-validate-output",
         help="Output directory for results (default: ./timsim-validate-output)",
     )
+    path_group.add_argument(
+        "--existing-simulation",
+        type=str,
+        default=None,
+        help="Path to existing .d folder to skip simulation step",
+    )
 
     # Simulation arguments
     sim_group = parser.add_argument_group("Simulation")
@@ -374,14 +382,22 @@ def main() -> int:
     if not config["quiet"]:
         print(banner())
 
-    # Validate reference path is provided
+    # Validate paths
     reference_path = config.get("reference_path")
-    if not reference_path:
-        print("Error: reference_path is required (provide via CLI or config file)", file=sys.stderr)
-        return 5
+    existing_simulation = config.get("existing_simulation")
 
-    if not os.path.exists(reference_path):
-        print(f"Error: Reference path does not exist: {reference_path}", file=sys.stderr)
+    # reference_path is only required if not using existing simulation
+    if not existing_simulation:
+        if not reference_path:
+            print("Error: reference_path is required (provide via CLI or config file)", file=sys.stderr)
+            return 5
+        if not os.path.exists(reference_path):
+            print(f"Error: Reference path does not exist: {reference_path}", file=sys.stderr)
+            return 5
+
+    # Validate existing simulation path if provided
+    if existing_simulation and not os.path.exists(existing_simulation):
+        print(f"Error: Existing simulation path does not exist: {existing_simulation}", file=sys.stderr)
         return 5
 
     # Create configuration objects
@@ -414,6 +430,7 @@ def main() -> int:
         simulation_config=simulation_config,
         keep_temp=config["keep_temp"],
         verbose=config["verbose"],
+        existing_simulation=config.get("existing_simulation"),
     )
 
     result = runner.run()
