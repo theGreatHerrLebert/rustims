@@ -155,9 +155,9 @@ class DiannExecutor:
             "--qvalue", str(cfg.qvalue),
         ]
 
-        # Library mode
+        # Library-free mode uses --fasta-search instead of --lib
         if cfg.library_free:
-            cmd.extend(["--lib", ""])
+            cmd.append("--fasta-search")
 
         # Predictor
         if cfg.use_predictor:
