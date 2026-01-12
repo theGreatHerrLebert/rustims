@@ -1,15 +1,24 @@
 import pandas as pd
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, TYPE_CHECKING
 from numpy.typing import NDArray
 
 import numpy as np
 from imspy.data.spectrum import TimsSpectrum, IndexedMzSpectrum
-from imspy.simulation.annotation import TimsFrameAnnotated, RustWrapperObject
+from imspy.core.base import RustWrapperObject
 from imspy.utility.utilities import re_index_indices
+
+if TYPE_CHECKING:
+    from imspy.simulation.annotation import TimsFrameAnnotated
 
 import imspy_connector
 ims = imspy_connector.py_tims_frame
+
+
+def _get_tims_frame_annotated():
+    """Lazy import of TimsFrameAnnotated to avoid circular imports."""
+    from imspy.simulation.annotation import TimsFrameAnnotated
+    return TimsFrameAnnotated
 
 
 class TimsFrame(RustWrapperObject):
@@ -290,6 +299,7 @@ class TimsFrame(RustWrapperObject):
         Returns:
             TimsFrameAnnotated: Noise annotated frame.
         """
+        TimsFrameAnnotated = _get_tims_frame_annotated()
         return TimsFrameAnnotated.from_py_ptr(self.__frame_ptr.to_noise_annotated_tims_frame())
 
     def get_inverse_mobility_along_scan_marginal(self) -> float:

@@ -39,8 +39,9 @@ pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usi
 
 #[pyfunction]
 #[pyo3(signature = (sequences, num_threads, max_charge=None, charge_probability=None))]
-pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
-    mscore::algorithm::peptide::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
+pub fn simulate_charge_states_for_sequences(sequences: Vec<String>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
+    let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
+    mscore::algorithm::peptide::simulate_charge_states_for_sequences(seq_refs, num_threads, max_charge, charge_probability)
 }
 
 #[pyfunction]
@@ -59,8 +60,9 @@ pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
 }
 
 #[pyfunction]
-pub fn sequence_to_all_ions_par(sequences: Vec<&str>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<String> {
-    rustdf::sim::utility::sequence_to_all_ions_par(sequences, charges, intensities, normalize, half_charge_one, num_threads, peptide_ids)
+pub fn sequence_to_all_ions_par(sequences: Vec<String>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<String> {
+    let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
+    rustdf::sim::utility::sequence_to_all_ions_par(seq_refs, charges, intensities, normalize, half_charge_one, num_threads, peptide_ids)
 }
 
 #[pyfunction]
@@ -116,8 +118,9 @@ pub fn simulate_precursor_spectrum(sequence: &str, charge: i32, peptide_id: Opti
 }
 
 #[pyfunction]
-pub fn simulate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<PyMzSpectrum> {
-    let spectra = mscore::algorithm::isotope::generate_precursor_spectra(&sequences, &charges, num_threads, peptide_ids);
+pub fn simulate_precursor_spectra(sequences: Vec<String>, charges: Vec<i32>, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<PyMzSpectrum> {
+    let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
+    let spectra = mscore::algorithm::isotope::generate_precursor_spectra(&seq_refs, &charges, num_threads, peptide_ids);
     spectra.into_iter().map(|spectrum| PyMzSpectrum::from_inner(spectrum)).collect()
 }
 

@@ -59,12 +59,12 @@ impl PyTimsSpectrumAnnotated {
 
     #[getter]
     pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.mz.clone().into_pyarray_bound(py).unbind()
+        self.inner.spectrum.mz.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.spectrum.intensity.clone().into_pyarray_bound(py).unbind()
+        self.inner.spectrum.intensity.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
@@ -144,19 +144,19 @@ impl PyTimsFrameAnnotated {
     #[getter]
     pub fn retention_time(&self) -> f64 { self.inner.retention_time }
     #[getter]
-    pub fn tof(&self, py: Python) -> Py<PyArray1<u32>> { self.inner.tof.clone().into_pyarray_bound(py).unbind() }
+    pub fn tof(&self, py: Python) -> Py<PyArray1<u32>> { self.inner.tof.clone().into_pyarray(py).unbind() }
 
     #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.mz.clone().into_pyarray_bound(py).unbind() }
+    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.mz.clone().into_pyarray(py).unbind() }
 
     #[getter]
-    pub fn scan(&self, py: Python) -> Py<PyArray1<u32>> { self.inner.scan.clone().into_pyarray_bound(py).unbind() }
+    pub fn scan(&self, py: Python) -> Py<PyArray1<u32>> { self.inner.scan.clone().into_pyarray(py).unbind() }
 
     #[getter]
-    pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.inv_mobility.clone().into_pyarray_bound(py).unbind() }
+    pub fn inv_mobility(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.inv_mobility.clone().into_pyarray(py).unbind() }
 
     #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.intensity.clone().into_pyarray_bound(py).unbind() }
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.intensity.clone().into_pyarray(py).unbind() }
 
     #[getter]
     pub fn annotations(&self) -> Vec<PyPeakAnnotation> {
@@ -170,7 +170,7 @@ impl PyTimsFrameAnnotated {
                 contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.peptide_id)
             })
         }).collect();
-        data.into_pyarray_bound(py).unbind()
+        data.into_pyarray(py).unbind()
     }
 
     #[getter]
@@ -180,7 +180,7 @@ impl PyTimsFrameAnnotated {
                 contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.charge_state)
             })
         }).collect();
-        data.into_pyarray_bound(py).unbind()
+        data.into_pyarray(py).unbind()
     }
 
     #[getter]
@@ -190,7 +190,7 @@ impl PyTimsFrameAnnotated {
                 contribution.signal_attributes.as_ref().map_or(-1, |signal_attributes| signal_attributes.isotope_peak)
             })
         }).collect();
-        data.into_pyarray_bound(py).unbind()
+        data.into_pyarray(py).unbind()
     }
 
     #[getter]
@@ -301,10 +301,10 @@ impl PyMzSpectrumAnnotated {
         })
     }
     #[getter]
-    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.mz.clone().into_pyarray_bound(py).unbind() }
+    pub fn mz(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.mz.clone().into_pyarray(py).unbind() }
 
     #[getter]
-    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.intensity.clone().into_pyarray_bound(py).unbind() }
+    pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> { self.inner.intensity.clone().into_pyarray(py).unbind() }
 
     #[getter]
     pub fn annotations(&self) -> Vec<PyPeakAnnotation> {
