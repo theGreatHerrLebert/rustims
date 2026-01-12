@@ -12,6 +12,10 @@ existing_simulation = "/home/dateschn/validate-sim/timsim-validate-output/simula
 # Should match the FASTA used in the original simulation
 fasta_path = "/home/dateschn/validate-sim/sim/hela.fasta"
 
+# Path to synthetic_data.db (REQUIRED when using existing_simulation)
+# This is the ground truth database from the original simulation
+database_path = "/home/dateschn/validate-sim/sim/TIMSIM-HELA-SMALL/synthetic_data.db"
+
 # Output directory for validation results
 output_dir = "/home/dateschn/validate-sim/timsim-validate-output-rerun"
 

@@ -95,6 +95,7 @@ class ValidationRunner:
         keep_temp: bool = False,
         verbose: bool = False,
         existing_simulation: Optional[str] = None,
+        database_path: Optional[str] = None,
     ):
         """
         Initialize validation runner.
@@ -109,6 +110,7 @@ class ValidationRunner:
             keep_temp: Keep temporary simulation files.
             verbose: Verbose output.
             existing_simulation: Path to existing .d folder to skip simulation.
+            database_path: Explicit path to synthetic_data.db (required with existing_simulation).
         """
         self.reference_path = reference_path
         self.output_dir = output_dir
@@ -119,6 +121,7 @@ class ValidationRunner:
         self.keep_temp = keep_temp
         self.verbose = verbose
         self.existing_simulation = existing_simulation
+        self.database_path_override = database_path
 
         # Will be set during run
         self._simulation_path: Optional[str] = None
@@ -287,17 +290,22 @@ batch_size = {self.simulation_config.batch_size}
             )
 
         # The existing_simulation should be the .d folder path
-        # The database should be in the parent directory
         if self.existing_simulation.endswith(".d"):
             self._simulation_path = os.path.dirname(self.existing_simulation)
         else:
             self._simulation_path = self.existing_simulation
 
-        self._database_path = os.path.join(self._simulation_path, "synthetic_data.db")
+        # Use explicit database_path if provided, otherwise look in simulation directory
+        if self.database_path_override:
+            self._database_path = self.database_path_override
+        else:
+            self._database_path = os.path.join(self._simulation_path, "synthetic_data.db")
 
         if not os.path.exists(self._database_path):
             raise SimulationError(
-                f"Database not found in existing simulation: {self._database_path}"
+                f"Database not found: {self._database_path}\n"
+                f"When using existing_simulation, you may need to specify database_path "
+                f"explicitly if the database is not in the simulation directory."
             )
 
         logger.info(f"  Using simulation: {self._simulation_path}")

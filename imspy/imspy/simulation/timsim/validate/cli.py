@@ -23,6 +23,7 @@ def get_default_config() -> dict:
         "diann_path": "diann",
         "output_dir": "./timsim-validate-output",
         "existing_simulation": None,  # Path to existing .d folder to skip simulation
+        "database_path": None,  # Explicit path to synthetic_data.db
 
         # Simulation
         "num_peptides": 5000,
@@ -127,11 +128,8 @@ def load_toml_config(config_path: str) -> dict:
                     else:
                         flat_config[f"diann_{key}"] = value
                 elif section_key == "paths":
-                    # Map paths section keys
-                    if key == "fasta_path":
-                        flat_config["fasta_path"] = value
-                    else:
-                        flat_config[key] = value
+                    # Map paths section keys directly
+                    flat_config[key] = value
                 elif section_key == "behavior":
                     # Behavior section maps directly
                     flat_config[key] = value
@@ -169,6 +167,7 @@ def merge_config_with_args(config: dict, args: argparse.Namespace) -> dict:
         "diann_path": "diann_path",
         "output_dir": "output_dir",
         "existing_simulation": "existing_simulation",
+        "database_path": "database_path",
         "num_peptides": "num_peptides",
         "gradient_length": "gradient_length",
         "min_id_rate": "min_identification_rate",
@@ -306,6 +305,12 @@ Exit codes:
         type=str,
         default=None,
         help="Path to existing .d folder to skip simulation step",
+    )
+    path_group.add_argument(
+        "--database-path",
+        type=str,
+        default=None,
+        help="Explicit path to synthetic_data.db (required with --existing-simulation if DB is not in simulation dir)",
     )
 
     # Simulation arguments
@@ -495,6 +500,7 @@ def main() -> int:
         keep_temp=config["keep_temp"],
         verbose=config["verbose"],
         existing_simulation=config.get("existing_simulation"),
+        database_path=config.get("database_path"),
     )
 
     result = runner.run()

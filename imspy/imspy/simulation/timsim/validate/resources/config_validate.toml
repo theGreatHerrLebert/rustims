@@ -29,6 +29,10 @@ output_dir = "./timsim-validate-output"
 # If set, reference_path is not required but fasta_path IS required
 # existing_simulation = "/path/to/existing/simulation.d"
 
+# Path to synthetic_data.db (only needed if DB is not in parent of .d folder)
+# By default, the database is assumed to be in the parent directory of the .d folder
+# database_path = "/path/to/synthetic_data.db"
+
 [simulation]
 # Number of peptides to simulate (smaller = faster validation)
 # Recommended: 5000 for quick validation, 10000+ for thorough testing
