@@ -264,6 +264,71 @@ pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&
     composition.iter().map(|(k, v)| (*k, *v)).collect()
 }
 
+/// Calculate the atomic composition of the complementary fragment.
+///
+/// When a peptide is fragmented, the resulting fragment ion has a complementary
+/// portion (the rest of the precursor). This function calculates the atomic
+/// composition of that complementary fragment, which is needed for quad-selection
+/// dependent isotope distribution calculations.
+///
+/// # Arguments
+///
+/// * `precursor_composition` - atomic composition of the full precursor
+/// * `fragment_composition` - atomic composition of the fragment ion (from atomic_product_ion_composition)
+///
+/// # Returns
+///
+/// * `HashMap<String, i32>` - atomic composition of the complementary fragment
+///
+/// # Examples
+///
+/// ```
+/// use mscore::algorithm::peptide::{peptide_sequence_to_atomic_composition, atomic_product_ion_composition, calculate_complementary_fragment_composition};
+/// use mscore::data::peptide::{PeptideSequence, PeptideProductIon, PeptideIon, FragmentType};
+///
+/// let precursor = PeptideSequence::new("PEPTIDE".to_string(), Some(1));
+/// let precursor_comp = peptide_sequence_to_atomic_composition(&precursor);
+///
+/// // Create a b3 ion (PEP)
+/// let b3_ion = PeptideProductIon {
+///     kind: FragmentType::B,
+///     ion: PeptideIon {
+///         sequence: PeptideSequence::new("PEP".to_string(), Some(1)),
+///         charge: 1,
+///         intensity: 1.0,
+///     },
+/// };
+/// let fragment_comp: Vec<(&str, i32)> = atomic_product_ion_composition(&b3_ion);
+/// let fragment_map: std::collections::HashMap<&str, i32> = fragment_comp.into_iter().collect();
+///
+/// let complementary = calculate_complementary_fragment_composition(&precursor_comp, &fragment_map);
+/// // Complementary should be TIDE as y-ion (precursor - b-ion)
+/// ```
+pub fn calculate_complementary_fragment_composition(
+    precursor_composition: &HashMap<&str, i32>,
+    fragment_composition: &HashMap<&str, i32>,
+) -> HashMap<String, i32> {
+    let mut complementary: HashMap<String, i32> = HashMap::new();
+
+    // Start with precursor - fragment
+    for (element, &prec_count) in precursor_composition.iter() {
+        let frag_count = fragment_composition.get(element).copied().unwrap_or(0);
+        let diff = prec_count - frag_count;
+        if diff != 0 {
+            complementary.insert(element.to_string(), diff);
+        }
+    }
+
+    // Check for any elements in fragment that might not be in precursor (edge case)
+    for (element, &frag_count) in fragment_composition.iter() {
+        if !precursor_composition.contains_key(element) {
+            complementary.insert(element.to_string(), -frag_count);
+        }
+    }
+
+    complementary
+}
+
 /// calculate the atomic composition of a peptide product ion series
 /// Arguments:
 ///

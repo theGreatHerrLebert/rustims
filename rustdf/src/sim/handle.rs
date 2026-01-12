@@ -1039,4 +1039,163 @@ impl TimsTofSyntheticsDataHandle {
 
         fragment_ion_map
     }
+
+    /// Build fragment ions with complementary isotope distribution data.
+    ///
+    /// This variant calculates both the fragment isotope distribution and
+    /// the complementary fragment isotope distribution, which are needed
+    /// for quad-selection dependent isotope transmission calculations.
+    ///
+    /// # Arguments
+    ///
+    /// * `peptides_sim` - Map of peptide_id to PeptidesSim
+    /// * `fragment_ions` - Vector of FragmentIonSim
+    /// * `num_threads` - Number of threads for parallel processing
+    ///
+    /// # Returns
+    ///
+    /// * `BTreeMap` mapping (peptide_id, charge, collision_energy) to
+    ///   (PeptideProductIonSeriesCollection, fragment spectra, fragment distributions, complementary distributions)
+    /// Build fragment ions with transmission data for both precursor scaling and per-fragment modes.
+    ///
+    /// This function calculates:
+    /// - Precursor isotope distribution (for PrecursorScaling mode)
+    /// - Per-fragment isotope distributions with their complementary distributions (for PerFragment mode)
+    pub fn build_fragment_ions_with_transmission_data(
+        peptides_sim: &BTreeMap<u32, PeptidesSim>,
+        fragment_ions: &Vec<FragmentIonSim>,
+        num_threads: usize,
+    ) -> BTreeMap<(u32, i8, i32), FragmentIonsWithComplementary> {
+        let thread_pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
+
+        let fragment_ion_map = thread_pool.install(|| {
+            fragment_ions
+                .par_iter()
+                .map(|fragment_ion| {
+                    let key = (
+                        fragment_ion.peptide_id,
+                        fragment_ion.charge,
+                        (fragment_ion.collision_energy * 1e3).round() as i32,
+                    );
+
+                    let peptide_sim = peptides_sim.get(&fragment_ion.peptide_id).unwrap();
+
+                    // Get precursor atomic composition for complementary calculations
+                    let precursor_composition = peptide_sim.sequence.atomic_composition();
+
+                    // Calculate precursor isotope distribution for PrecursorScaling mode
+                    let precursor_composition_owned: std::collections::HashMap<String, i32> =
+                        precursor_composition.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+                    let precursor_isotope_distribution = mscore::algorithm::isotope::generate_isotope_distribution(
+                        &precursor_composition_owned,
+                        1e-3,
+                        1e-8,
+                        100,
+                    ).into_iter().filter(|&(_, abundance)| abundance > 1e-10).collect();
+
+                    let ion_series_collection = peptide_sim
+                        .sequence
+                        .associate_with_predicted_intensities(
+                            fragment_ion.charge as i32,
+                            FragmentType::B,
+                            fragment_ion.to_dense(174),
+                            true,
+                            true,
+                        );
+
+                    // Calculate fragment spectra and per-fragment transmission data
+                    let mut fragment_spectra: Vec<MzSpectrum> = Vec::new();
+                    let mut per_fragment_data: Vec<Vec<FragmentIonTransmissionData>> = Vec::new();
+
+                    for ion_series in &ion_series_collection.peptide_ions {
+                        // Generate the full isotopic spectrum for this ion series
+                        let spectrum = ion_series.generate_isotopic_spectrum(1e-2, 1e-3, 100, 1e-5);
+                        fragment_spectra.push(spectrum);
+
+                        // Build per-fragment data for this series
+                        let mut series_fragment_data: Vec<FragmentIonTransmissionData> = Vec::new();
+
+                        // Process n-terminal ions (b-ions)
+                        for n_ion in &ion_series.n_ions {
+                            let frag_dist = n_ion.isotope_distribution(1e-3, 1e-8, 100, 1e-10);
+                            let comp_dist = n_ion.complementary_isotope_distribution(
+                                &precursor_composition,
+                                1e-3,
+                                1e-8,
+                                100,
+                            );
+
+                            series_fragment_data.push(FragmentIonTransmissionData {
+                                fragment_distribution: frag_dist,
+                                complementary_distribution: comp_dist,
+                                predicted_intensity: n_ion.ion.intensity,
+                            });
+                        }
+
+                        // Process c-terminal ions (y-ions)
+                        for c_ion in &ion_series.c_ions {
+                            let frag_dist = c_ion.isotope_distribution(1e-3, 1e-8, 100, 1e-10);
+                            let comp_dist = c_ion.complementary_isotope_distribution(
+                                &precursor_composition,
+                                1e-3,
+                                1e-8,
+                                100,
+                            );
+
+                            series_fragment_data.push(FragmentIonTransmissionData {
+                                fragment_distribution: frag_dist,
+                                complementary_distribution: comp_dist,
+                                predicted_intensity: c_ion.ion.intensity,
+                            });
+                        }
+
+                        per_fragment_data.push(series_fragment_data);
+                    }
+
+                    let data = FragmentIonsWithComplementary {
+                        ion_series_collection,
+                        fragment_spectra,
+                        precursor_isotope_distribution,
+                        per_fragment_data,
+                    };
+
+                    (key, data)
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
+
+        fragment_ion_map
+    }
+}
+
+/// Data for a single fragment ion with its complementary distribution.
+#[derive(Debug, Clone)]
+pub struct FragmentIonTransmissionData {
+    /// Fragment isotope distribution as (m/z, abundance) pairs
+    pub fragment_distribution: Vec<(f64, f64)>,
+    /// Complementary fragment isotope distribution as (mass, abundance) pairs
+    pub complementary_distribution: Vec<(f64, f64)>,
+    /// Predicted intensity of this fragment ion
+    pub predicted_intensity: f64,
+}
+
+/// Struct holding fragment ion data along with transmission calculation data.
+///
+/// This is used for quad-selection dependent isotope transmission calculations,
+/// where fragment isotope patterns are adjusted based on which precursor isotopes
+/// were transmitted through the quadrupole.
+#[derive(Debug, Clone)]
+pub struct FragmentIonsWithComplementary {
+    /// The original ion series collection with intensity predictions
+    pub ion_series_collection: PeptideProductIonSeriesCollection,
+    /// Pre-calculated fragment spectra (standard isotope patterns)
+    pub fragment_spectra: Vec<MzSpectrum>,
+    /// Precursor isotope distribution for scaling mode (m/z, abundance)
+    pub precursor_isotope_distribution: Vec<(f64, f64)>,
+    /// Per-fragment transmission data for per-fragment mode
+    /// Outer Vec: one per ion_series, Inner Vec: one per fragment ion in that series
+    pub per_fragment_data: Vec<Vec<FragmentIonTransmissionData>>,
 }

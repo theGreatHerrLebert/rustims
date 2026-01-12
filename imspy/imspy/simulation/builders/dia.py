@@ -48,6 +48,9 @@ class DIAFrameBuilder:
         num_threads: int = -1,
         lazy: bool = False,
         with_annotations: bool = False,
+        quad_isotope_transmission_mode: str = 'none',
+        quad_transmission_min_probability: float = 0.5,
+        quad_transmission_max_isotopes: int = 10,
     ):
         """Initialize the DIA frame builder.
 
@@ -57,6 +60,16 @@ class DIAFrameBuilder:
             lazy: If True, use lazy loading strategy.
             with_annotations: If True, enable annotation support.
                             Only available when lazy=False.
+            quad_isotope_transmission_mode: Mode for quad-selection dependent
+                isotope transmission. Options:
+                - "none": Standard isotope patterns (default)
+                - "precursor_scaling": Fast mode - uniform scaling based on precursor transmission
+                - "per_fragment": Accurate mode - individual fragment ion recalculation
+                Note: Not supported with lazy loading.
+            quad_transmission_min_probability: Minimum probability threshold for
+                isotope transmission (default 0.5).
+            quad_transmission_max_isotopes: Maximum number of isotope peaks to
+                consider for transmission (default 10).
 
         Raises:
             ValueError: If annotations requested with lazy loading.
@@ -71,11 +84,25 @@ class DIAFrameBuilder:
             raise ValueError("Annotation support is not available with lazy loading.")
 
         if lazy:
+            if quad_isotope_transmission_mode != 'none':
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Quad-dependent isotope transmission is not supported with lazy loading, ignoring."
+                )
             self._py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(db_path, num_threads)
             self._with_annotations = False
         else:
+            # Create isotope transmission config if mode is not 'none'
+            isotope_config = None
+            if quad_isotope_transmission_mode != 'none':
+                isotope_config = ims.PyIsotopeTransmissionConfig(
+                    mode=quad_isotope_transmission_mode,
+                    min_probability=quad_transmission_min_probability,
+                    max_isotopes=quad_transmission_max_isotopes,
+                )
+
             self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(
-                db_path, with_annotations, num_threads
+                db_path, with_annotations, num_threads, isotope_config
             )
             self._with_annotations = with_annotations
 

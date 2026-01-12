@@ -40,6 +40,9 @@ def create_frame_builder(
     loading_strategy: LoadingStrategy = LoadingStrategy.STANDARD,
     num_threads: int = -1,
     with_annotations: bool = False,
+    quad_isotope_transmission_mode: str = 'none',
+    quad_transmission_min_probability: float = 0.5,
+    quad_transmission_max_isotopes: int = 10,
 ) -> FrameBuilder:
     """Create a frame builder based on acquisition mode and loading strategy.
 
@@ -54,6 +57,15 @@ def create_frame_builder(
         num_threads: Number of threads for parallel processing. -1 for auto-detect.
         with_annotations: If True, enable annotation support (memory-intensive).
                          Only supported for standard loading strategy.
+        quad_isotope_transmission_mode: Mode for quad-selection dependent
+            isotope transmission (DDA and DIA). Options:
+            - "none": Standard isotope patterns (default)
+            - "precursor_scaling": Fast mode - uniform scaling based on precursor transmission
+            - "per_fragment": Accurate mode - individual fragment ion recalculation
+        quad_transmission_min_probability: Minimum probability threshold for
+            isotope transmission (default 0.5).
+        quad_transmission_max_isotopes: Maximum number of isotope peaks to
+            consider for transmission (default 10).
 
     Returns:
         A FrameBuilder implementation appropriate for the given parameters.
@@ -85,16 +97,23 @@ def create_frame_builder(
     if acquisition_mode == AcquisitionMode.DDA:
         from .dda import DDAFrameBuilder
         logger.info("Creating DDA frame builder with standard loading.")
+        if quad_isotope_transmission_mode != 'none':
+            logger.info(f"Quad-dependent isotope transmission enabled: {quad_isotope_transmission_mode}")
         return DDAFrameBuilder(
             db_path=db_path,
             num_threads=num_threads,
             with_annotations=with_annotations,
+            quad_isotope_transmission_mode=quad_isotope_transmission_mode,
+            quad_transmission_min_probability=quad_transmission_min_probability,
+            quad_transmission_max_isotopes=quad_transmission_max_isotopes,
         )
 
     elif acquisition_mode == AcquisitionMode.DIA:
         if loading_strategy == LoadingStrategy.LAZY:
             from .dia import DIAFrameBuilder
             logger.info("Creating DIA frame builder with lazy loading.")
+            if quad_isotope_transmission_mode != 'none':
+                logger.warning("Quad-dependent isotope transmission is not supported with lazy loading, ignoring.")
             return DIAFrameBuilder(
                 db_path=db_path,
                 num_threads=num_threads,
@@ -103,11 +122,16 @@ def create_frame_builder(
         else:
             from .dia import DIAFrameBuilder
             logger.info("Creating DIA frame builder with standard loading.")
+            if quad_isotope_transmission_mode != 'none':
+                logger.info(f"Quad-dependent isotope transmission enabled: {quad_isotope_transmission_mode}")
             return DIAFrameBuilder(
                 db_path=db_path,
                 num_threads=num_threads,
                 lazy=False,
                 with_annotations=with_annotations,
+                quad_isotope_transmission_mode=quad_isotope_transmission_mode,
+                quad_transmission_min_probability=quad_transmission_min_probability,
+                quad_transmission_max_isotopes=quad_transmission_max_isotopes,
             )
 
     raise ValueError(f"Unknown acquisition mode: {acquisition_mode}")

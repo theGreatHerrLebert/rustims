@@ -283,3 +283,83 @@ impl FragmentIonSim {
         dense
     }
 }
+
+/// Mode for quad-selection dependent isotope transmission calculation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IsotopeTransmissionMode {
+    /// Disabled - no transmission-dependent calculation
+    None,
+    /// Precursor-based scaling - calculate transmission factor from precursor isotope
+    /// distribution and apply uniform scaling to all fragment intensities.
+    /// This is computationally efficient and captures the main intensity reduction effect.
+    PrecursorScaling,
+    /// Per-fragment calculation - calculate transmission-dependent isotope distribution
+    /// for each individual fragment ion based on its complementary fragment.
+    /// This is more accurate but computationally expensive.
+    /// Implements the algorithm from OpenMS's CoarseIsotopePatternGenerator.
+    PerFragment,
+}
+
+impl Default for IsotopeTransmissionMode {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Configuration for quad-selection dependent isotope transmission.
+///
+/// When enabled, fragment ion isotope distributions and/or intensities are adjusted
+/// based on which precursor isotopes were transmitted through the quadrupole isolation
+/// window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsotopeTransmissionConfig {
+    /// Mode for transmission-dependent calculation
+    pub mode: IsotopeTransmissionMode,
+    /// Minimum probability threshold for isotope transmission
+    pub min_probability: f64,
+    /// Maximum number of isotope peaks to consider
+    pub max_isotopes: usize,
+}
+
+impl Default for IsotopeTransmissionConfig {
+    fn default() -> Self {
+        Self {
+            mode: IsotopeTransmissionMode::None,
+            min_probability: 0.5,
+            max_isotopes: 10,
+        }
+    }
+}
+
+impl IsotopeTransmissionConfig {
+    pub fn new(mode: IsotopeTransmissionMode, min_probability: f64, max_isotopes: usize) -> Self {
+        Self {
+            mode,
+            min_probability,
+            max_isotopes,
+        }
+    }
+
+    /// Create config with precursor scaling mode
+    pub fn precursor_scaling(min_probability: f64) -> Self {
+        Self {
+            mode: IsotopeTransmissionMode::PrecursorScaling,
+            min_probability,
+            max_isotopes: 10,
+        }
+    }
+
+    /// Create config with per-fragment mode
+    pub fn per_fragment(min_probability: f64, max_isotopes: usize) -> Self {
+        Self {
+            mode: IsotopeTransmissionMode::PerFragment,
+            min_probability,
+            max_isotopes,
+        }
+    }
+
+    /// Check if any transmission mode is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.mode != IsotopeTransmissionMode::None
+    }
+}

@@ -37,6 +37,9 @@ def assemble_frames(
         fragment: bool = True,
         pasef_meta: Optional[pd.DataFrame] = None,
         lazy_loading: bool = False,
+        quad_isotope_transmission_mode: str = 'none',
+        quad_transmission_min_probability: float = 0.5,
+        quad_transmission_max_isotopes: int = 10,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -61,7 +64,15 @@ def assemble_frames(
         fragment: if False, Quadrupole isolation will still be used, but no fragmentation will be performed.
         pasef_meta: PASEF metadata, if None, will be read from the database.
         lazy_loading: If True, use lazy loading to reduce memory usage (DIA only).
-
+        quad_isotope_transmission_mode: Mode for quad-selection dependent isotope
+            transmission (DDA and DIA). Options:
+            - "none": Standard isotope patterns (default)
+            - "precursor_scaling": Fast mode - uniform scaling based on precursor transmission
+            - "per_fragment": Accurate mode - individual fragment ion recalculation
+        quad_transmission_min_probability: Minimum probability threshold for
+            isotope transmission (default 0.5).
+        quad_transmission_max_isotopes: Maximum number of isotope peaks to
+            consider for transmission (default 10).
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -94,6 +105,9 @@ def assemble_frames(
         loading_strategy=loading_strategy,
         num_threads=num_threads,
         with_annotations=False,
+        quad_isotope_transmission_mode=quad_isotope_transmission_mode,
+        quad_transmission_min_probability=quad_transmission_min_probability,
+        quad_transmission_max_isotopes=quad_transmission_max_isotopes,
     )
 
     logger.info("Signal noise settings:")

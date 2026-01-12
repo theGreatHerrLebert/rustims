@@ -326,6 +326,15 @@ def get_default_settings() -> dict:
         'exclusion_width': 25,
         'selection_mode': 'topN',
 
+        # Quad-dependent isotope transmission (DDA and DIA)
+        # Mode options: "none", "precursor_scaling", "per_fragment"
+        # - "none": Standard isotope patterns (default)
+        # - "precursor_scaling": Fast mode - uniform scaling based on precursor transmission
+        # - "per_fragment": Accurate mode - individual fragment ion recalculation
+        'quad_isotope_transmission_mode': 'none',
+        'quad_transmission_min_probability': 0.5,
+        'quad_transmission_max_isotopes': 10,
+
         # Logging settings
         'log_level': 'INFO',
         'log_file': None,
@@ -1072,6 +1081,9 @@ def main():
         fragment=config.apply_fragmentation,
         pasef_meta=pasef_meta,
         lazy_loading=config.lazy_frame_assembly,
+        quad_isotope_transmission_mode=config.quad_isotope_transmission_mode,
+        quad_transmission_min_probability=config.quad_transmission_min_probability,
+        quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
     )
 
     # Collect final statistics

@@ -5,7 +5,7 @@ mode frame building.
 """
 
 import os
-from typing import List
+from typing import List, Optional
 
 import imspy_connector
 
@@ -33,6 +33,9 @@ class DDAFrameBuilder:
         db_path: str,
         num_threads: int = -1,
         with_annotations: bool = False,
+        quad_isotope_transmission_mode: str = 'none',
+        quad_transmission_min_probability: float = 0.5,
+        quad_transmission_max_isotopes: int = 10,
     ):
         """Initialize the DDA frame builder.
 
@@ -40,14 +43,32 @@ class DDAFrameBuilder:
             db_path: Path to the synthetic data database.
             num_threads: Number of threads. -1 for auto-detect.
             with_annotations: If True, enable annotation support.
+            quad_isotope_transmission_mode: Mode for quad-selection dependent
+                isotope transmission. Options:
+                - "none": Standard isotope patterns (default)
+                - "precursor_scaling": Fast mode - uniform scaling based on precursor transmission
+                - "per_fragment": Accurate mode - individual fragment ion recalculation
+            quad_transmission_min_probability: Minimum probability threshold for
+                isotope transmission (default 0.5).
+            quad_transmission_max_isotopes: Maximum number of isotope peaks to
+                consider for transmission (default 10).
         """
         self.path = db_path
 
         if num_threads == -1:
             num_threads = os.cpu_count() or 4
 
+        # Create isotope transmission config if mode is not 'none'
+        isotope_config = None
+        if quad_isotope_transmission_mode != 'none':
+            isotope_config = ims.PyIsotopeTransmissionConfig(
+                mode=quad_isotope_transmission_mode,
+                min_probability=quad_transmission_min_probability,
+                max_isotopes=quad_transmission_max_isotopes,
+            )
+
         self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(
-            db_path, with_annotations, num_threads
+            db_path, with_annotations, num_threads, isotope_config
         )
         self._with_annotations = with_annotations
 

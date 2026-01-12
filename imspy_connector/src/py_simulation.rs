@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
+use rustdf::sim::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
 use rustdf::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
 use rustdf::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
 use rustdf::sim::lazy_builder::TimsTofLazyFrameBuilderDIA;
@@ -11,6 +12,82 @@ use crate::py_mz_spectrum::PyMzSpectrum;
 use crate::py_peptide::PyPeptideProductIonSeriesCollection;
 use crate::py_quadrupole::PyPasefMeta;
 use crate::py_tims_frame::PyTimsFrame;
+
+/// Configuration for quad-selection dependent isotope transmission.
+///
+/// # Arguments
+///
+/// * `mode` - The isotope transmission mode:
+///   - "none" (default): No transmission-dependent calculation
+///   - "precursor_scaling": Calculate transmission factor from precursor isotope distribution
+///     and apply uniform scaling to all fragment intensities (computationally efficient)
+///   - "per_fragment": Calculate transmission-dependent isotope distribution for each
+///     individual fragment ion based on its complementary fragment (more accurate but slower)
+/// * `min_probability` - Minimum probability threshold for isotope transmission (default: 0.5)
+/// * `max_isotopes` - Maximum number of isotope peaks to consider (default: 10)
+#[pyclass]
+#[derive(Clone)]
+pub struct PyIsotopeTransmissionConfig {
+    pub inner: IsotopeTransmissionConfig,
+}
+
+#[pymethods]
+impl PyIsotopeTransmissionConfig {
+    #[new]
+    #[pyo3(signature = (mode="none", min_probability=0.5, max_isotopes=10))]
+    pub fn new(mode: &str, min_probability: f64, max_isotopes: usize) -> Self {
+        let transmission_mode = match mode.to_lowercase().as_str() {
+            "precursor_scaling" | "precursor" => IsotopeTransmissionMode::PrecursorScaling,
+            "per_fragment" | "fragment" => IsotopeTransmissionMode::PerFragment,
+            _ => IsotopeTransmissionMode::None,
+        };
+        PyIsotopeTransmissionConfig {
+            inner: IsotopeTransmissionConfig::new(transmission_mode, min_probability, max_isotopes),
+        }
+    }
+
+    /// Create config with precursor scaling mode
+    #[staticmethod]
+    #[pyo3(signature = (min_probability=0.5))]
+    pub fn precursor_scaling(min_probability: f64) -> Self {
+        PyIsotopeTransmissionConfig {
+            inner: IsotopeTransmissionConfig::precursor_scaling(min_probability),
+        }
+    }
+
+    /// Create config with per-fragment mode
+    #[staticmethod]
+    #[pyo3(signature = (min_probability=0.5, max_isotopes=10))]
+    pub fn per_fragment(min_probability: f64, max_isotopes: usize) -> Self {
+        PyIsotopeTransmissionConfig {
+            inner: IsotopeTransmissionConfig::per_fragment(min_probability, max_isotopes),
+        }
+    }
+
+    #[getter]
+    pub fn mode(&self) -> String {
+        match self.inner.mode {
+            IsotopeTransmissionMode::None => "none".to_string(),
+            IsotopeTransmissionMode::PrecursorScaling => "precursor_scaling".to_string(),
+            IsotopeTransmissionMode::PerFragment => "per_fragment".to_string(),
+        }
+    }
+
+    #[getter]
+    pub fn enabled(&self) -> bool {
+        self.inner.is_enabled()
+    }
+
+    #[getter]
+    pub fn min_probability(&self) -> f64 {
+        self.inner.min_probability
+    }
+
+    #[getter]
+    pub fn max_isotopes(&self) -> usize {
+        self.inner.max_isotopes
+    }
+}
 
 #[pyclass(unsendable)]
 pub struct PyTimsTofSyntheticsDataHandle {
@@ -101,9 +178,23 @@ pub struct PyTimsTofSyntheticsFrameBuilderDIA {
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDIA {
     #[new]
-    pub fn new(db_path: &str, with_annotations: bool, num_threads: usize) -> Self {
+    #[pyo3(signature = (db_path, with_annotations, num_threads, isotope_config=None))]
+    pub fn new(
+        db_path: &str,
+        with_annotations: bool,
+        num_threads: usize,
+        isotope_config: Option<PyIsotopeTransmissionConfig>,
+    ) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsFrameBuilderDIA { inner: TimsTofSyntheticsFrameBuilderDIA::new(path, with_annotations, num_threads).unwrap() }
+        let config = isotope_config.map(|c| c.inner).unwrap_or_default();
+        PyTimsTofSyntheticsFrameBuilderDIA {
+            inner: TimsTofSyntheticsFrameBuilderDIA::new_with_config(
+                path,
+                with_annotations,
+                num_threads,
+                config,
+            ).unwrap()
+        }
     }
 
     pub fn build_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrame {
@@ -172,9 +263,18 @@ pub struct PyTimsTofSyntheticsFrameBuilderDDA {
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDDA {
     #[new]
-    pub fn new(db_path: &str, with_annotations: bool, num_threads: usize) -> Self {
+    #[pyo3(signature = (db_path, with_annotations, num_threads, isotope_config=None))]
+    pub fn new(
+        db_path: &str,
+        with_annotations: bool,
+        num_threads: usize,
+        isotope_config: Option<PyIsotopeTransmissionConfig>,
+    ) -> Self {
         let path = std::path::Path::new(db_path);
-        PyTimsTofSyntheticsFrameBuilderDDA { inner: TimsTofSyntheticsFrameBuilderDDA::new(path, with_annotations, num_threads) }
+        let config = isotope_config.map(|c| c.inner);
+        PyTimsTofSyntheticsFrameBuilderDDA {
+            inner: TimsTofSyntheticsFrameBuilderDDA::new(path, with_annotations, num_threads, config),
+        }
     }
 
     pub fn build_frame(&self, frame_id: u32, fragmentation: bool, mz_noise_precursor: bool, uniform: bool, precursor_noise_ppm: f64, mz_noise_fragment: bool, fragment_noise_ppm: f64, right_drag: bool) -> PyTimsFrame {
@@ -324,6 +424,7 @@ impl PyTimsTofLazyFrameBuilderDIA {
 
 #[pymodule]
 pub fn py_simulation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyIsotopeTransmissionConfig>()?;
     m.add_class::<PyTimsTofSyntheticsDataHandle>()?;
     m.add_class::<PyTimsTofSyntheticsPrecursorFrameBuilder>()?;
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;

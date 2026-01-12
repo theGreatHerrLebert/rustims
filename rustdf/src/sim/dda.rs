@@ -1,3 +1,8 @@
+use mscore::algorithm::isotope::{
+    calculate_transmission_dependent_fragment_ion_isotope_distribution,
+    calculate_precursor_transmission_factor,
+};
+use crate::sim::containers::IsotopeTransmissionMode;
 use mscore::data::peptide::{PeptideIon, PeptideProductIonSeriesCollection};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::simulation::annotation::{
@@ -11,7 +16,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use crate::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::sim::containers::IsotopeTransmissionConfig;
+use crate::sim::handle::{FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
 pub struct TimsTofSyntheticsFrameBuilderDDA {
@@ -23,23 +29,51 @@ pub struct TimsTofSyntheticsFrameBuilderDDA {
     pub fragment_ions_annotated: Option<
         BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
     >,
+    /// Configuration for quad-selection dependent isotope transmission
+    pub isotope_transmission_config: IsotopeTransmissionConfig,
+    /// Fragment ions with complementary distribution data (only populated when isotope_transmission_config.enabled)
+    pub fragment_ions_with_complementary: Option<BTreeMap<(u32, i8, i32), FragmentIonsWithComplementary>>,
 }
 
 impl TimsTofSyntheticsFrameBuilderDDA {
-    pub fn new(path: &Path, with_annotations: bool, num_threads: usize) -> Self {
-
+    /// Create a new DDA frame builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the simulation database
+    /// * `with_annotations` - Whether to include annotations
+    /// * `num_threads` - Number of threads for parallel processing
+    /// * `isotope_config` - Optional configuration for quad-dependent isotope transmission
+    pub fn new(
+        path: &Path,
+        with_annotations: bool,
+        num_threads: usize,
+        isotope_config: Option<IsotopeTransmissionConfig>,
+    ) -> Self {
         let handle = TimsTofSyntheticsDataHandle::new(path).unwrap();
-        let fragment_ions = handle.read_fragment_ions().unwrap();
+        let fragment_ions_raw = handle.read_fragment_ions().unwrap();
         let transmission_settings = handle.get_transmission_dda();
 
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap();
+        let config = isotope_config.unwrap_or_default();
+
+        // Build fragment ions with complementary data if any transmission mode is enabled
+        let fragment_ions_with_complementary = if config.is_enabled() {
+            Some(TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
+                &synthetics.peptides,
+                &fragment_ions_raw,
+                num_threads,
+            ))
+        } else {
+            None
+        };
 
         match with_annotations {
             true => {
                 let fragment_ions =
                     Some(TimsTofSyntheticsDataHandle::build_fragment_ions_annotated(
                         &synthetics.peptides,
-                        &fragment_ions,
+                        &fragment_ions_raw,
                         num_threads,
                     ));
                 Self {
@@ -48,12 +82,14 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     transmission_settings,
                     fragment_ions: None,
                     fragment_ions_annotated: fragment_ions,
+                    isotope_transmission_config: config,
+                    fragment_ions_with_complementary,
                 }
             }
             false => {
                 let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
                     &synthetics.peptides,
-                    &fragment_ions,
+                    &fragment_ions_raw,
                     num_threads,
                 ));
                 Self {
@@ -62,6 +98,8 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     transmission_settings,
                     fragment_ions,
                     fragment_ions_annotated: None,
+                    isotope_transmission_config: config,
+                    fragment_ions_with_complementary,
                 }
             }
         }
@@ -493,13 +531,30 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                 let charge_state = charges[index];
 
                 for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
-                    // Check if precursor is transmitted
-                    if !self.transmission_settings.any_transmitted(
-                        frame_id as i32,
-                        *scan as i32,
-                        &spectrum.mz,
-                        None,
-                    ) {
+                    // Get transmitted isotope indices based on config mode
+                    let (is_transmitted, transmitted_indices) = match self.isotope_transmission_config.mode {
+                        IsotopeTransmissionMode::None => {
+                            // Standard check without indices
+                            let any = self.transmission_settings.any_transmitted(
+                                frame_id as i32,
+                                *scan as i32,
+                                &spectrum.mz,
+                                None,
+                            );
+                            (any, HashSet::new())
+                        },
+                        IsotopeTransmissionMode::PrecursorScaling | IsotopeTransmissionMode::PerFragment => {
+                            let indices = self.transmission_settings.get_transmission_set(
+                                frame_id as i32,
+                                *scan as i32,
+                                &spectrum.mz,
+                                Some(self.isotope_transmission_config.min_probability),
+                            );
+                            (!indices.is_empty(), indices)
+                        },
+                    };
+
+                    if !is_transmitted {
                         continue;
                     }
 
@@ -522,17 +577,85 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     // Cache scan mobility
                     let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;
 
-                    for fragment_ion_series in fragment_series_vec.iter() {
-                        let scaled_spec = fragment_ion_series.clone() * fraction_events as f64;
+                    // Calculate transmission factor for PrecursorScaling mode
+                    let transmission_factor = if self.isotope_transmission_config.mode == IsotopeTransmissionMode::PrecursorScaling {
+                        if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
+                            if let Some(frag_data) = comp_data.get(&(*peptide_id, charge_state, collision_energy_quantized)) {
+                                calculate_precursor_transmission_factor(
+                                    &frag_data.precursor_isotope_distribution,
+                                    &transmitted_indices,
+                                )
+                            } else {
+                                1.0
+                            }
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        1.0
+                    };
+
+                    for (series_idx, fragment_ion_series) in fragment_series_vec.iter().enumerate() {
+                        let final_spectrum = match self.isotope_transmission_config.mode {
+                            IsotopeTransmissionMode::None => {
+                                // Standard spectrum scaling
+                                fragment_ion_series.clone() * fraction_events as f64
+                            },
+                            IsotopeTransmissionMode::PrecursorScaling => {
+                                // Apply precursor-based transmission factor
+                                fragment_ion_series.clone() * (fraction_events as f64 * transmission_factor)
+                            },
+                            IsotopeTransmissionMode::PerFragment => {
+                                // Per-fragment transmission-dependent calculation
+                                if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
+                                    if let Some(frag_data) = comp_data.get(&(*peptide_id, charge_state, collision_energy_quantized)) {
+                                        if series_idx < frag_data.per_fragment_data.len() {
+                                            // Aggregate adjusted spectra from all fragment ions in this series
+                                            let series_data = &frag_data.per_fragment_data[series_idx];
+                                            let mut aggregated_mz: Vec<f64> = Vec::new();
+                                            let mut aggregated_intensity: Vec<f64> = Vec::new();
+
+                                            for frag_ion_data in series_data {
+                                                // Apply transmission-dependent calculation for this fragment
+                                                let adjusted_dist = calculate_transmission_dependent_fragment_ion_isotope_distribution(
+                                                    &frag_ion_data.fragment_distribution,
+                                                    &frag_ion_data.complementary_distribution,
+                                                    &transmitted_indices,
+                                                    self.isotope_transmission_config.max_isotopes,
+                                                );
+
+                                                // Scale by predicted intensity and fraction_events
+                                                for (mz, abundance) in adjusted_dist {
+                                                    aggregated_mz.push(mz);
+                                                    aggregated_intensity.push(abundance * frag_ion_data.predicted_intensity * fraction_events as f64);
+                                                }
+                                            }
+
+                                            if !aggregated_mz.is_empty() {
+                                                MzSpectrum::new(aggregated_mz, aggregated_intensity)
+                                            } else {
+                                                fragment_ion_series.clone() * fraction_events as f64
+                                            }
+                                        } else {
+                                            fragment_ion_series.clone() * fraction_events as f64
+                                        }
+                                    } else {
+                                        fragment_ion_series.clone() * fraction_events as f64
+                                    }
+                                } else {
+                                    fragment_ion_series.clone() * fraction_events as f64
+                                }
+                            },
+                        };
 
                         let mz_spectrum = if mz_noise_fragment {
                             if uniform {
-                                scaled_spec.add_mz_noise_uniform(fragment_ppm, right_drag_val)
+                                final_spectrum.add_mz_noise_uniform(fragment_ppm, right_drag_val)
                             } else {
-                                scaled_spec.add_mz_noise_normal(fragment_ppm)
+                                final_spectrum.add_mz_noise_normal(fragment_ppm)
                             }
                         } else {
-                            scaled_spec
+                            final_spectrum
                         };
 
                         let spectrum_len = mz_spectrum.mz.len();
