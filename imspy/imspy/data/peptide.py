@@ -190,7 +190,7 @@ class PeptideProductIon(RustWrapperObject):
 
     @property
     def mono_isotopic_mass(self) -> float:
-        return self.__py_ptr.mono_isotopic_mass()
+        return self.__py_ptr.mono_isotopic_mass
 
     @property
     def mz(self) -> float:
