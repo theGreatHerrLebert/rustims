@@ -34,7 +34,13 @@ def load_ground_truth(
         - intensity: Simulated intensity (events * relative_abundance)
         - precursor_id: Unique identifier (sequence_charge)
     """
+    import os
     from imspy.simulation.experiment import SyntheticExperimentDataHandle
+
+    # SyntheticExperimentDataHandle expects a directory path and appends synthetic_data.db
+    # If a full file path was provided, extract the directory
+    if database_path.endswith('.db') and os.path.isfile(database_path):
+        database_path = os.path.dirname(database_path)
 
     # Initialize handle
     handle = SyntheticExperimentDataHandle(database_path, verbose=False)
@@ -347,3 +353,234 @@ def calculate_correlation_metrics(
             metrics["quant_spearman_p"] = np.nan
 
     return metrics
+
+
+def calculate_charge_state_metrics(
+    ground_truth: pd.DataFrame,
+    matched: pd.DataFrame,
+    unidentified: pd.DataFrame,
+) -> dict:
+    """
+    Calculate identification metrics broken down by charge state.
+
+    Args:
+        ground_truth: Full ground truth DataFrame.
+        matched: DataFrame of matched (identified) precursors.
+        unidentified: DataFrame of unidentified precursors.
+
+    Returns:
+        Dictionary with per-charge-state metrics.
+    """
+    charge_metrics = {}
+
+    # Get all charge states present
+    all_charges = sorted(ground_truth["charge"].unique())
+
+    for charge in all_charges:
+        gt_count = len(ground_truth[ground_truth["charge"] == charge])
+        id_count = len(matched[matched["charge"] == charge])
+        id_rate = id_count / gt_count if gt_count > 0 else 0.0
+
+        charge_metrics[int(charge)] = {
+            "ground_truth": gt_count,
+            "identified": id_count,
+            "identification_rate": id_rate,
+        }
+
+    return charge_metrics
+
+
+def calculate_intensity_bin_metrics(
+    ground_truth: pd.DataFrame,
+    matched: pd.DataFrame,
+    n_bins: int = 5,
+) -> dict:
+    """
+    Calculate identification metrics across intensity bins.
+
+    Args:
+        ground_truth: Full ground truth DataFrame with intensity column.
+        matched: DataFrame of matched (identified) precursors.
+        n_bins: Number of intensity bins to create.
+
+    Returns:
+        Dictionary with per-bin metrics.
+    """
+    intensity_metrics = {}
+
+    # Use log10 intensity for binning
+    gt = ground_truth.copy()
+    gt["log_intensity"] = np.log10(gt["intensity"].clip(lower=1))
+
+    # Create bins based on quantiles
+    gt["intensity_bin"] = pd.qcut(gt["log_intensity"], q=n_bins, labels=False, duplicates="drop")
+
+    # Get matched precursor IDs
+    matched_keys = set(matched["match_key"]) if "match_key" in matched.columns else set()
+
+    # Add match_key to ground truth if not present
+    if "match_key" not in gt.columns:
+        gt["match_key"] = gt["sequence_modified"].apply(replace_I_with_L) + "_" + gt["charge"].astype(str)
+
+    for bin_idx in sorted(gt["intensity_bin"].dropna().unique()):
+        bin_data = gt[gt["intensity_bin"] == bin_idx]
+        gt_count = len(bin_data)
+        id_count = len(bin_data[bin_data["match_key"].isin(matched_keys)])
+        id_rate = id_count / gt_count if gt_count > 0 else 0.0
+
+        # Get intensity range for this bin
+        min_int = 10 ** bin_data["log_intensity"].min()
+        max_int = 10 ** bin_data["log_intensity"].max()
+
+        intensity_metrics[int(bin_idx)] = {
+            "intensity_range": f"{min_int:.0e}-{max_int:.0e}",
+            "log_intensity_range": [bin_data["log_intensity"].min(), bin_data["log_intensity"].max()],
+            "ground_truth": gt_count,
+            "identified": id_count,
+            "identification_rate": id_rate,
+        }
+
+    return intensity_metrics
+
+
+def calculate_mass_accuracy_metrics(
+    matched: pd.DataFrame,
+    diann_results: pd.DataFrame,
+) -> dict:
+    """
+    Calculate precursor mass accuracy metrics.
+
+    Args:
+        matched: DataFrame of matched precursors.
+        diann_results: Original DiaNN results with mass info.
+
+    Returns:
+        Dictionary with mass accuracy metrics.
+    """
+    mass_metrics = {}
+
+    # Get DiaNN entries for matched precursors
+    matched_keys = set(matched["match_key"]) if "match_key" in matched.columns else set()
+
+    if not matched_keys:
+        return mass_metrics
+
+    if "match_key" not in diann_results.columns:
+        diann_results = diann_results.copy()
+        diann_results["match_key"] = (
+            diann_results["sequence_modified"].apply(replace_I_with_L) + "_" +
+            diann_results["charge"].astype(str)
+        )
+
+    matched_diann = diann_results[diann_results["match_key"].isin(matched_keys)]
+
+    ppm_errors = pd.Series(dtype=float)
+
+    # Try different mass error columns
+    if "Mass.Error.PPM" in matched_diann.columns:
+        ppm_errors = matched_diann["Mass.Error.PPM"].dropna()
+    elif "mz_delta" in matched_diann.columns and "mz" in matched_diann.columns:
+        # Calculate ppm error from m/z delta: ppm = (delta / mz) * 1e6
+        valid_mask = (
+            matched_diann["mz_delta"].notna() &
+            matched_diann["mz"].notna() &
+            (matched_diann["mz"] > 0)
+        )
+        if valid_mask.any():
+            mz_delta = matched_diann.loc[valid_mask, "mz_delta"]
+            precursor_mz = matched_diann.loc[valid_mask, "mz"]
+            ppm_errors = (mz_delta / precursor_mz) * 1e6
+    elif "Ms1.Apex.Mz.Delta" in matched_diann.columns and "Precursor.Mz" in matched_diann.columns:
+        # Fallback for raw DiaNN column names
+        valid_mask = (
+            matched_diann["Ms1.Apex.Mz.Delta"].notna() &
+            matched_diann["Precursor.Mz"].notna() &
+            (matched_diann["Precursor.Mz"] > 0)
+        )
+        if valid_mask.any():
+            mz_delta = matched_diann.loc[valid_mask, "Ms1.Apex.Mz.Delta"]
+            precursor_mz = matched_diann.loc[valid_mask, "Precursor.Mz"]
+            ppm_errors = (mz_delta / precursor_mz) * 1e6
+
+    if len(ppm_errors) > 0:
+        mass_metrics["mean_ppm_error"] = float(np.mean(ppm_errors))
+        mass_metrics["median_ppm_error"] = float(np.median(ppm_errors))
+        mass_metrics["std_ppm_error"] = float(np.std(ppm_errors))
+        mass_metrics["mae_ppm"] = float(np.mean(np.abs(ppm_errors)))
+        mass_metrics["n_measurements"] = int(len(ppm_errors))
+    else:
+        mass_metrics["mean_ppm_error"] = None
+        mass_metrics["median_ppm_error"] = None
+        mass_metrics["std_ppm_error"] = None
+        mass_metrics["mae_ppm"] = None
+        mass_metrics["n_measurements"] = 0
+
+    return mass_metrics
+
+
+def calculate_peptide_property_metrics(
+    ground_truth: pd.DataFrame,
+    matched: pd.DataFrame,
+) -> dict:
+    """
+    Calculate identification metrics by peptide properties (length, missed cleavages).
+
+    Args:
+        ground_truth: Full ground truth DataFrame.
+        matched: DataFrame of matched (identified) precursors.
+
+    Returns:
+        Dictionary with metrics by peptide length and missed cleavages.
+    """
+    property_metrics = {"by_length": {}, "by_missed_cleavages": {}}
+
+    gt = ground_truth.copy()
+
+    # Calculate peptide length from plain sequence
+    gt["peptide_length"] = gt["sequence"].str.len()
+
+    # Calculate missed cleavages (count K or R not at C-terminus)
+    def count_missed_cleavages(seq):
+        # Count K and R that are not at the end and not followed by P
+        count = 0
+        for i, aa in enumerate(seq[:-1]):  # Exclude last position
+            if aa in "KR":
+                if i + 1 < len(seq) and seq[i + 1] != "P":
+                    count += 1
+        return count
+
+    gt["missed_cleavages"] = gt["sequence"].apply(count_missed_cleavages)
+
+    # Get matched keys
+    matched_keys = set(matched["match_key"]) if "match_key" in matched.columns else set()
+    if "match_key" not in gt.columns:
+        gt["match_key"] = gt["sequence_modified"].apply(replace_I_with_L) + "_" + gt["charge"].astype(str)
+
+    # By length bins
+    length_bins = [(7, 10), (11, 15), (16, 20), (21, 25), (26, 30)]
+    for min_len, max_len in length_bins:
+        bin_data = gt[(gt["peptide_length"] >= min_len) & (gt["peptide_length"] <= max_len)]
+        gt_count = len(bin_data)
+        id_count = len(bin_data[bin_data["match_key"].isin(matched_keys)])
+        id_rate = id_count / gt_count if gt_count > 0 else 0.0
+
+        property_metrics["by_length"][f"{min_len}-{max_len}"] = {
+            "ground_truth": gt_count,
+            "identified": id_count,
+            "identification_rate": id_rate,
+        }
+
+    # By missed cleavages
+    for mc in sorted(gt["missed_cleavages"].unique()):
+        mc_data = gt[gt["missed_cleavages"] == mc]
+        gt_count = len(mc_data)
+        id_count = len(mc_data[mc_data["match_key"].isin(matched_keys)])
+        id_rate = id_count / gt_count if gt_count > 0 else 0.0
+
+        property_metrics["by_missed_cleavages"][int(mc)] = {
+            "ground_truth": gt_count,
+            "identified": id_count,
+            "identification_rate": id_rate,
+        }
+
+    return property_metrics

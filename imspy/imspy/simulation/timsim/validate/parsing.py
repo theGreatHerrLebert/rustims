@@ -115,6 +115,10 @@ def parse_diann_report(
     if "Precursor.Mz" in df.columns:
         column_mapping["Precursor.Mz"] = "mz"
 
+    # Add mass accuracy columns if available
+    if "Ms1.Apex.Mz.Delta" in df.columns:
+        column_mapping["Ms1.Apex.Mz.Delta"] = "mz_delta"
+
     # Rename columns
     df = df.rename(columns=column_mapping)
 
@@ -138,6 +142,9 @@ def parse_diann_report(
 
     if "mz" in df.columns:
         output_columns.insert(3, "mz")
+
+    if "mz_delta" in df.columns:
+        output_columns.append("mz_delta")
 
     # Keep only existing columns
     output_columns = [col for col in output_columns if col in df.columns]

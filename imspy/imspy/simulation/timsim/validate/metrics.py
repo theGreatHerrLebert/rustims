@@ -68,6 +68,12 @@ class ValidationMetrics:
     quant_spearman_r: float = np.nan
     quant_spearman_p: float = np.nan
 
+    # Detailed breakdown metrics
+    charge_state_metrics: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    intensity_bin_metrics: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    mass_accuracy_metrics: Dict[str, Any] = field(default_factory=dict)
+    peptide_property_metrics: Dict[str, Any] = field(default_factory=dict)
+
     # Overall result
     overall_pass: bool = False
     threshold_checks: Dict[str, bool] = field(default_factory=dict)
@@ -102,6 +108,10 @@ class ValidationMetrics:
                 "spearman_r": self.quant_spearman_r if not np.isnan(self.quant_spearman_r) else None,
                 "spearman_p": self.quant_spearman_p if not np.isnan(self.quant_spearman_p) else None,
             },
+            "charge_state_breakdown": self.charge_state_metrics,
+            "intensity_bin_breakdown": self.intensity_bin_metrics,
+            "mass_accuracy": self.mass_accuracy_metrics,
+            "peptide_properties": self.peptide_property_metrics,
             "overall_pass": self.overall_pass,
             "threshold_checks": self.threshold_checks,
         }

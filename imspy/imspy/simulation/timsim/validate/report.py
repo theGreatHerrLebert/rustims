@@ -7,7 +7,24 @@ import os
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
+
 from .metrics import ValidationMetrics, ValidationThresholds
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy types."""
+
+    def default(self, obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
 
 
 def get_version() -> str:
@@ -61,7 +78,7 @@ def generate_json_report(
 
     output_path = os.path.join(output_dir, "validation_report.json")
     with open(output_path, 'w') as f:
-        json.dump(report, f, indent=2)
+        json.dump(report, f, indent=2, cls=NumpyEncoder)
 
     return output_path
 
@@ -131,7 +148,66 @@ QUANTIFICATION METRICS (informational)
 Pearson R (log):           {format_float(metrics.quant_pearson_r)} {check_mark(checks.get('quant_correlation', False))}
                            (threshold: >= {thresholds.min_quant_correlation:.2f})
 Spearman R:                {format_float(metrics.quant_spearman_r)}
+"""
 
+    # Charge state breakdown
+    if metrics.charge_state_metrics:
+        summary += """
+CHARGE STATE BREAKDOWN
+----------------------
+"""
+        summary += f"  {'Charge':<8} {'Ground Truth':>14} {'Identified':>12} {'ID Rate':>10}\n"
+        summary += f"  {'-'*8} {'-'*14} {'-'*12} {'-'*10}\n"
+        for charge, data in sorted(metrics.charge_state_metrics.items()):
+            summary += f"  {charge}+{'':<6} {data['ground_truth']:>14,} {data['identified']:>12,} {data['identification_rate']:>9.1%}\n"
+
+    # Intensity bin breakdown
+    if metrics.intensity_bin_metrics:
+        summary += """
+INTENSITY DEPENDENCE
+--------------------
+"""
+        summary += f"  {'Bin':<5} {'Intensity Range':<18} {'Ground Truth':>14} {'Identified':>12} {'ID Rate':>10}\n"
+        summary += f"  {'-'*5} {'-'*18} {'-'*14} {'-'*12} {'-'*10}\n"
+        for bin_idx, data in sorted(metrics.intensity_bin_metrics.items()):
+            summary += f"  {bin_idx:<5} {data['intensity_range']:<18} {data['ground_truth']:>14,} {data['identified']:>12,} {data['identification_rate']:>9.1%}\n"
+
+    # Mass accuracy
+    if metrics.mass_accuracy_metrics and metrics.mass_accuracy_metrics.get("mean_ppm_error") is not None:
+        summary += f"""
+MASS ACCURACY
+-------------
+Mean Error:                {format_float(metrics.mass_accuracy_metrics.get('mean_ppm_error'), 2)} ppm
+Median Error:              {format_float(metrics.mass_accuracy_metrics.get('median_ppm_error'), 2)} ppm
+Std Dev:                   {format_float(metrics.mass_accuracy_metrics.get('std_ppm_error'), 2)} ppm
+MAE:                       {format_float(metrics.mass_accuracy_metrics.get('mae_ppm'), 2)} ppm
+"""
+
+    # Peptide length breakdown
+    if metrics.peptide_property_metrics and metrics.peptide_property_metrics.get("by_length"):
+        summary += """
+PEPTIDE LENGTH BREAKDOWN
+------------------------
+"""
+        summary += f"  {'Length':<10} {'Ground Truth':>14} {'Identified':>12} {'ID Rate':>10}\n"
+        summary += f"  {'-'*10} {'-'*14} {'-'*12} {'-'*10}\n"
+        for length_range, data in metrics.peptide_property_metrics["by_length"].items():
+            if data['ground_truth'] > 0:
+                summary += f"  {length_range:<10} {data['ground_truth']:>14,} {data['identified']:>12,} {data['identification_rate']:>9.1%}\n"
+
+    # Missed cleavages breakdown
+    if metrics.peptide_property_metrics and metrics.peptide_property_metrics.get("by_missed_cleavages"):
+        summary += """
+MISSED CLEAVAGES BREAKDOWN
+--------------------------
+"""
+        summary += f"  {'MC':<5} {'Ground Truth':>14} {'Identified':>12} {'ID Rate':>10}\n"
+        summary += f"  {'-'*5} {'-'*14} {'-'*12} {'-'*10}\n"
+        for mc, data in sorted(metrics.peptide_property_metrics["by_missed_cleavages"].items()):
+            if data['ground_truth'] > 0:
+                summary += f"  {mc:<5} {data['ground_truth']:>14,} {data['identified']:>12,} {data['identification_rate']:>9.1%}\n"
+
+    summary += """
 ================================================================================
                            THRESHOLD SUMMARY
 ================================================================================

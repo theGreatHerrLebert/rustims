@@ -348,6 +348,13 @@ batch_size = {self.simulation_config.batch_size}
         diann_results,
     ) -> ValidationMetrics:
         """Compute validation metrics from comparison."""
+        from .comparison import (
+            calculate_charge_state_metrics,
+            calculate_intensity_bin_metrics,
+            calculate_mass_accuracy_metrics,
+            calculate_peptide_property_metrics,
+        )
+
         # Create sets for identification metrics
         gt_peptides, gt_precursors = create_peptide_sets(
             ground_truth, use_modifications=False, normalize=True
@@ -367,12 +374,24 @@ batch_size = {self.simulation_config.batch_size}
         # Calculate correlation metrics
         correlation_metrics = calculate_correlation_metrics(matched)
 
+        # Calculate detailed breakdown metrics
+        charge_metrics = calculate_charge_state_metrics(ground_truth, matched, unidentified)
+        intensity_metrics = calculate_intensity_bin_metrics(ground_truth, matched)
+        mass_metrics = calculate_mass_accuracy_metrics(matched, diann_results)
+        property_metrics = calculate_peptide_property_metrics(ground_truth, matched)
+
         # Create metrics object
         metrics = create_metrics_from_comparison(
             id_metrics=id_metrics,
             correlation_metrics=correlation_metrics,
             num_ground_truth=len(gt_precursors),
         )
+
+        # Add detailed breakdown metrics
+        metrics.charge_state_metrics = charge_metrics
+        metrics.intensity_bin_metrics = intensity_metrics
+        metrics.mass_accuracy_metrics = mass_metrics
+        metrics.peptide_property_metrics = property_metrics
 
         # Check thresholds
         metrics = check_thresholds(metrics, self.thresholds)
