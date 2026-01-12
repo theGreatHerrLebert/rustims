@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 from .diann_executor import DiannExecutor, DiannError
 from .parsing import parse_diann_report
@@ -30,6 +30,7 @@ from .report import (
     generate_text_summary,
     save_text_report,
 )
+from .plots import generate_all_plots, PlotPaths
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class ValidationResult:
     metrics: Optional[ValidationMetrics] = None
     report_path: Optional[str] = None
     text_report_path: Optional[str] = None
+    plot_paths: Optional[PlotPaths] = None
     exit_code: int = 0
     error_message: Optional[str] = None
 
@@ -153,27 +155,40 @@ class ValidationRunner:
         try:
             # Step 1: Run simulation (or use existing)
             if self.existing_simulation:
-                logger.info("Step 1/5: Using existing simulation...")
+                logger.info("Step 1/6: Using existing simulation...")
                 self._use_existing_simulation()
             else:
-                logger.info("Step 1/5: Running timsim simulation...")
+                logger.info("Step 1/6: Running timsim simulation...")
                 self._run_simulation()
 
             # Step 2: Execute DiaNN
-            logger.info("Step 2/5: Executing DiaNN analysis...")
+            logger.info("Step 2/6: Executing DiaNN analysis...")
             self._run_diann()
 
             # Step 3: Load ground truth
-            logger.info("Step 3/5: Loading ground truth data...")
+            logger.info("Step 3/6: Loading ground truth data...")
             ground_truth = load_ground_truth(self._database_path)
 
             # Step 4: Parse DiaNN results and compare
-            logger.info("Step 4/5: Comparing results...")
+            logger.info("Step 4/6: Comparing results...")
             diann_results = parse_diann_report(self._diann_report_path)
-            metrics = self._compute_metrics(ground_truth, diann_results)
+            metrics, matched_df = self._compute_metrics(ground_truth, diann_results)
 
-            # Step 5: Generate reports
-            logger.info("Step 5/5: Generating reports...")
+            # Step 5: Generate plots
+            logger.info("Step 5/6: Generating plots...")
+            try:
+                plot_paths = generate_all_plots(
+                    ground_truth_df=ground_truth,
+                    matched_df=matched_df,
+                    metrics=metrics,
+                    output_dir=self.output_dir,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate plots: {e}")
+                plot_paths = PlotPaths()
+
+            # Step 6: Generate reports
+            logger.info("Step 6/6: Generating reports...")
             report_path = generate_json_report(
                 metrics=metrics,
                 thresholds=self.thresholds,
@@ -181,6 +196,7 @@ class ValidationRunner:
                 simulation_path=self._simulation_path,
                 diann_report_path=self._diann_report_path,
                 fasta_path=self.fasta_path,
+                plot_paths=plot_paths,
             )
 
             text_summary = generate_text_summary(metrics, self.thresholds)
@@ -200,6 +216,7 @@ class ValidationRunner:
                 metrics=metrics,
                 report_path=report_path,
                 text_report_path=text_report_path,
+                plot_paths=plot_paths,
                 exit_code=exit_code,
             )
 
@@ -346,7 +363,7 @@ batch_size = {self.simulation_config.batch_size}
         self,
         ground_truth,
         diann_results,
-    ) -> ValidationMetrics:
+    ) -> Tuple[ValidationMetrics, Any]:
         """Compute validation metrics from comparison."""
         from .comparison import (
             calculate_charge_state_metrics,
@@ -396,7 +413,7 @@ batch_size = {self.simulation_config.batch_size}
         # Check thresholds
         metrics = check_thresholds(metrics, self.thresholds)
 
-        return metrics
+        return metrics, matched
 
     def _cleanup_simulation(self) -> None:
         """Clean up temporary simulation files."""

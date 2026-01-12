@@ -10,6 +10,7 @@ from typing import Optional
 import numpy as np
 
 from .metrics import ValidationMetrics, ValidationThresholds
+from .plots import PlotPaths
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -43,6 +44,7 @@ def generate_json_report(
     simulation_path: Optional[str] = None,
     diann_report_path: Optional[str] = None,
     fasta_path: Optional[str] = None,
+    plot_paths: Optional[PlotPaths] = None,
 ) -> str:
     """
     Generate machine-parseable JSON validation report.
@@ -54,10 +56,25 @@ def generate_json_report(
         simulation_path: Path to the simulated .d folder.
         diann_report_path: Path to DiaNN report.tsv.
         fasta_path: Path to FASTA file used.
+        plot_paths: Paths to generated plots.
 
     Returns:
         Path to the generated JSON report.
     """
+    # Build plots dict from PlotPaths
+    plots_dict = {}
+    if plot_paths:
+        if plot_paths.summary_plot:
+            plots_dict["summary"] = plot_paths.summary_plot
+        if plot_paths.rt_correlation:
+            plots_dict["rt_correlation"] = plot_paths.rt_correlation
+        if plot_paths.im_correlation:
+            plots_dict["im_correlation"] = plot_paths.im_correlation
+        if plot_paths.intensity_histogram:
+            plots_dict["intensity_histogram"] = plot_paths.intensity_histogram
+        if plot_paths.quant_correlation:
+            plots_dict["quant_correlation"] = plot_paths.quant_correlation
+
     report = {
         "metadata": {
             "tool": "timsim-validate",
@@ -68,6 +85,7 @@ def generate_json_report(
                 "diann_report": diann_report_path,
                 "fasta": fasta_path,
             },
+            "plots": plots_dict,
         },
         "configuration": {
             "thresholds": thresholds.to_dict(),

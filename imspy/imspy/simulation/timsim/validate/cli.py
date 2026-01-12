@@ -524,6 +524,18 @@ def main() -> int:
             if result.text_report_path:
                 print(f"  Text: {result.text_report_path}")
 
+        if result.plot_paths and result.plot_paths.summary_plot:
+            print(f"\nPlots saved to:")
+            print(f"  Summary: {result.plot_paths.summary_plot}")
+            if result.plot_paths.rt_correlation:
+                print(f"  RT Correlation: {result.plot_paths.rt_correlation}")
+            if result.plot_paths.im_correlation:
+                print(f"  IM Correlation: {result.plot_paths.im_correlation}")
+            if result.plot_paths.intensity_histogram:
+                print(f"  Intensity Histogram: {result.plot_paths.intensity_histogram}")
+            if result.plot_paths.quant_correlation:
+                print(f"  Quant Correlation: {result.plot_paths.quant_correlation}")
+
     return result.exit_code
 
 
