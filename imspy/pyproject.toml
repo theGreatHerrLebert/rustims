@@ -19,7 +19,7 @@ dependencies = [
     "wandb>=0.12.1",
     "mokapot>=0.10.0",
     "sagepy>=0.3.12",
-    "imspy-connector>=0.4.0",
+    "imspy-connector>=0.3.0",
     "scipy>=1.7.1",
     "tqdm>=4.66",
     "pyarrow>=13.0",
@@ -32,9 +32,6 @@ dependencies = [
     "pyqt5 >=5.15.11",
     "vtk >=9.5.0",
 ]
-
-[project.optional-dependencies]
-peptdeep = ["peptdeep>=1.4.0"]
 
 [project.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
