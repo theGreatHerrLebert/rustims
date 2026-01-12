@@ -53,19 +53,19 @@ impl PyTimsDataset {
     }
 
     pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
-        self.inner.loader.get_index_converter().mz_to_tof(frame_id, &mz_values.clone())
+        self.inner.loader.get_index_converter().mz_to_tof(frame_id, &mz_values)
     }
 
     pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
-        self.inner.loader.get_index_converter().tof_to_mz(frame_id, &tof_values.clone())
+        self.inner.loader.get_index_converter().tof_to_mz(frame_id, &tof_values)
     }
 
     pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<u32>) -> Vec<f64> {
-        self.inner.loader.get_index_converter().scan_to_inverse_mobility(frame_id, &scan_values.clone())
+        self.inner.loader.get_index_converter().scan_to_inverse_mobility(frame_id, &scan_values)
     }
 
     pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<u32> {
-        self.inner.loader.get_index_converter().inverse_mobility_to_scan(frame_id, &inverse_mobility_values.clone())
+        self.inner.loader.get_index_converter().inverse_mobility_to_scan(frame_id, &inverse_mobility_values)
     }
 
     #[staticmethod]
@@ -90,7 +90,8 @@ impl PyTimsDataset {
         let (scan_counts, tof, intensities) = parse_decompressed_bruker_binary_data(&data).unwrap();
 
         // Expand the scan counts
-        let mut expanded_scans = Vec::new();
+        let total_len: usize = scan_counts.iter().map(|&c| c as usize).sum();
+        let mut expanded_scans = Vec::with_capacity(total_len);
         for (index, &count) in scan_counts.iter().enumerate() {
             expanded_scans.extend(std::iter::repeat(index as u32).take(count as usize));
         }
@@ -220,15 +221,9 @@ pub fn get_peak_cnts(total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
 
 // pub fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
 #[pyfunction]
-pub fn modify_tofs(tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
-    // Create a mutable copy of `tofs` that can be modified.
-    let mut mutable_tofs = tofs.clone();
-
-    // Directly pass the mutable reference of the cloned `tofs`.
-    rustdf::data::utility::modify_tofs(&mut mutable_tofs, &scans);
-
-    // Return the modified `mutable_tofs`.
-    mutable_tofs
+pub fn modify_tofs(mut tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
+    rustdf::data::utility::modify_tofs(&mut tofs, &scans);
+    tofs
 }
 #[pyfunction]
 pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {

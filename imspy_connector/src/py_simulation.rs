@@ -156,11 +156,12 @@ impl PyTimsTofSyntheticsFrameBuilderDIA {
 
     pub fn get_fragment_ions_map(&self) -> BTreeMap<(u32, i8, i32), (PyPeptideProductIonSeriesCollection, Vec<PyMzSpectrum>)> {
         let mut result = BTreeMap::new();
-        for (key, value) in self.inner.fragment_ions.clone().unwrap().iter() {
-            let (peptide_ions, mz_spectra) = value;
-            let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
-            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum::from_inner(x.clone())).collect::<Vec<_>>();
-            result.insert(key.clone(), (peptide_ions, mz_spectra));
+        if let Some(ref fragment_ions) = self.inner.fragment_ions {
+            for (key, (peptide_ions, mz_spectra)) in fragment_ions.iter() {
+                let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
+                let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum::from_inner(x.clone())).collect::<Vec<_>>();
+                result.insert(*key, (peptide_ions, mz_spectra));
+            }
         }
         result
     }
@@ -212,35 +213,30 @@ impl PyTimsTofSyntheticsFrameBuilderDDA {
     }
 
     pub fn get_pasef_meta(&self) -> Vec<PyPasefMeta> {
-        let pasef_meta = self.inner.transmission_settings.pasef_meta.clone();
-        // go over all key, list<value> pairs, extract the values, flatten
-        let mut result = Vec::new();
-        for (_, values) in pasef_meta.iter() {
+        // Estimate capacity: sum of all value list lengths
+        let total_len: usize = self.inner.transmission_settings.pasef_meta.values().map(|v| v.len()).sum();
+        let mut result = Vec::with_capacity(total_len);
+        for values in self.inner.transmission_settings.pasef_meta.values() {
             for value in values.iter() {
                 result.push(PyPasefMeta { inner: value.clone() });
             }
         }
-
         result
     }
 
     pub fn get_fragment_frames(&self) -> Vec<i32> {
         // extract the keys from the pasef_meta to get all fragment frames sorted by frame_id ascending
-        let pasef_meta = self.inner.transmission_settings.pasef_meta.clone();
-        let mut result = Vec::new();
-        for (key, _) in pasef_meta.iter() {
-            result.push(key.clone());
-        }
-        result
+        self.inner.transmission_settings.pasef_meta.keys().copied().collect()
     }
 
     pub fn get_fragment_ions_map(&self) -> BTreeMap<(u32, i8, i32), (PyPeptideProductIonSeriesCollection, Vec<PyMzSpectrum>)> {
         let mut result = BTreeMap::new();
-        for (key, value) in self.inner.fragment_ions.clone().unwrap().iter() {
-            let (peptide_ions, mz_spectra) = value;
-            let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
-            let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum::from_inner(x.clone())).collect::<Vec<_>>();
-            result.insert(key.clone(), (peptide_ions, mz_spectra));
+        if let Some(ref fragment_ions) = self.inner.fragment_ions {
+            for (key, (peptide_ions, mz_spectra)) in fragment_ions.iter() {
+                let peptide_ions = PyPeptideProductIonSeriesCollection { inner: peptide_ions.clone() };
+                let mz_spectra = mz_spectra.iter().map(|x| PyMzSpectrum::from_inner(x.clone())).collect::<Vec<_>>();
+                result.insert(*key, (peptide_ions, mz_spectra));
+            }
         }
         result
     }

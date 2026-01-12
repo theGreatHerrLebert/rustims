@@ -254,7 +254,7 @@ impl PyTimsFrame {
 
     #[staticmethod]
     pub fn from_windows(_py: Python, windows: &Bound<'_, PyList>) -> PyResult<Self> {
-        let mut spectra: Vec<TimsSpectrum> = Vec::new();
+        let mut spectra: Vec<TimsSpectrum> = Vec::with_capacity(windows.len());
         for window in windows.iter() {
             let window: PyRef<PyTimsSpectrum> = window.extract()?;
             spectra.push(window.inner.clone());
