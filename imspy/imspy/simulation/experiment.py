@@ -596,6 +596,14 @@ class SyntheticExperimentDataHandle:
         # Get a table as a pandas DataFrame
         return pd.read_sql(f"SELECT * FROM {table_name}", self.conn)
 
+    def get_frame_meta_data(self) -> pd.DataFrame:
+        """Get frame metadata table.
+
+        Returns:
+            Frame metadata DataFrame.
+        """
+        return self.get_table("frames")
+
     def list_tables(self):
         with self.conn:
             cursor = self.conn.cursor()
