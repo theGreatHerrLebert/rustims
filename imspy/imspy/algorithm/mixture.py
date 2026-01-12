@@ -1,11 +1,23 @@
 import tensorflow as tf
 import numpy as np
-import tensorflow_probability as tfp
 
-tfd = tfp.distributions
+try:
+    import tensorflow_probability as tfp
+    tfd = tfp.distributions
+    TFP_AVAILABLE = True
+except ImportError:
+    tfp = None
+    tfd = None
+    TFP_AVAILABLE = False
 
 
 class GaussianMixtureModel(tf.Module):
+    """
+    TensorFlow-based Gaussian Mixture Model.
+
+    Note: Requires tensorflow-probability to be installed.
+    Install with: pip install tensorflow-probability
+    """
 
     def __init__(self, num_components: int, data_dim: int, prior_stddevs=None, data=None,
                  init_means=None, init_stds=None):
@@ -21,6 +33,11 @@ class GaussianMixtureModel(tf.Module):
         - init_means (optional): Explicit initial means for the components.
         - init_scales (optional): Explicit initial scales (variances) for the components.
         """
+        if not TFP_AVAILABLE:
+            raise ImportError(
+                "GaussianMixtureModel requires tensorflow-probability. "
+                "Install with: pip install tensorflow-probability"
+            )
 
         # Initialize the locations of the GMM components
         super().__init__()

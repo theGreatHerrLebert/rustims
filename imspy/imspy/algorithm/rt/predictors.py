@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 import numpy as np
 import tensorflow as tf
+import keras
 from abc import ABC, abstractmethod
 from numpy.typing import NDArray
 from sagepy.core.scoring import Psm
@@ -81,7 +82,7 @@ def load_deep_retention_time_predictor() -> tf.keras.models.Model:
         'GRURetentionTimePredictor': GRURetentionTimePredictor
     }
 
-    return load_model(path, custom_objects=custom_objects)
+    return load_model(path, custom_objects=custom_objects, compile=False)
 
 
 class PeptideChromatographyApex(ABC):
@@ -101,7 +102,7 @@ class PeptideChromatographyApex(ABC):
         pass
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class GRURetentionTimePredictor(tf.keras.models.Model):
     def __init__(self, num_tokens, seq_len=50, emb_dim=128, gru_1=128, gru_2=64, rdo=0.0, do=0.2):
         super(GRURetentionTimePredictor, self).__init__()

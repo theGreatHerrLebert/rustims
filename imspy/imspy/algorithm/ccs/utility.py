@@ -23,6 +23,7 @@ from imspy.algorithm.ccs.model_std import GRUCCSPredictorStd
 from imspy.algorithm.ccs.predictors import SquareRootProjectionLayer
 from imspy.algorithm.utility import get_model_path
 import tensorflow as tf
+import keras
 from tensorflow.keras.models import load_model
 
 def load_tokenizer_from_resources(tokenizer_name: str = "unimod-vocab") -> Dict[str, int]:
@@ -91,7 +92,7 @@ def tokenize_and_pad(token_list: List[str], tokenizer: Dict[str, int], target_le
     return token_indices
 
 
-@tf.keras.utils.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class CustomLossMean(tf.keras.losses.Loss):
     def call(self, y_true, y_pred):
         """
@@ -99,7 +100,7 @@ class CustomLossMean(tf.keras.losses.Loss):
         """
         return tf.reduce_mean(tf.square(y_true - y_pred))
 
-@tf.keras.utils.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class CustomLossStd(tf.keras.losses.Loss):
     def call(self, y_true, y_pred):
         """
@@ -126,7 +127,7 @@ def load_deep_ccs_std_predictor() -> tf.keras.models.Model:
         'CustomLossStd': CustomLossStd,
     }
 
-    return load_model(path, custom_objects=custom_objects)
+    return load_model(path, custom_objects=custom_objects, compile=False)
 
 
 def to_tf_dataset_with_variance(

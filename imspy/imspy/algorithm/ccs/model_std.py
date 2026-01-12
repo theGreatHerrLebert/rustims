@@ -1,7 +1,8 @@
 import tensorflow as tf
+import keras
 from imspy.algorithm.ccs.predictors import SquareRootProjectionLayer
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class GRUCCSPredictorStd(tf.keras.models.Model):
     """
     Deep Learning model combining initial linear fit with sequence-based features, both scalar and complex.

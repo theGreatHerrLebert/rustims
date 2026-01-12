@@ -1,5 +1,6 @@
 import pandas as pd
 import tensorflow as tf
+import keras
 import numpy as np
 
 from abc import ABC, abstractmethod
@@ -27,7 +28,7 @@ def load_deep_charge_state_predictor() -> tf.keras.models.Model:
         'GRUChargeStatePredictor': GRUChargeStatePredictor
     }
 
-    return load_model(path, custom_objects=custom_objects)
+    return load_model(path, custom_objects=custom_objects, compile=False)
 
 
 def charge_state_distribution_from_sequence_rust(sequence: str, max_charge: int = None,
@@ -166,7 +167,7 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution, ABC):
         return pd.DataFrame(r_table)
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class GRUChargeStatePredictor(tf.keras.models.Model):
 
     def __init__(self,

@@ -3,6 +3,7 @@ from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import keras
 from sagepy.core.scoring import Psm
 
 from sagepy.utility import psm_collection_to_pandas
@@ -70,7 +71,7 @@ def load_deep_ccs_predictor() -> tf.keras.models.Model:
         'GRUCCSPredictor': GRUCCSPredictor
     }
 
-    return load_model(path, custom_objects=custom_objects)
+    return load_model(path, custom_objects=custom_objects, compile=False)
 
 
 class PeptideIonMobilityApex(ABC):
@@ -131,7 +132,7 @@ def get_sqrt_slopes_and_intercepts(
     return np.array(slopes, np.float32), np.array(intercepts, np.float32)
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class SquareRootProjectionLayer(tf.keras.layers.Layer):
     def __init__(self, slopes, intercepts, trainable: bool = True, **kwargs):
         super(SquareRootProjectionLayer, self).__init__(**kwargs)
@@ -171,7 +172,7 @@ class SquareRootProjectionLayer(tf.keras.layers.Layer):
         return f"SquareRootProjectionLayer(slopes={self.slopes_init}, intercepts={self.intercepts_init})"
 
 
-@tf.keras.saving.register_keras_serializable()
+@keras.saving.register_keras_serializable()
 class GRUCCSPredictor(tf.keras.models.Model):
     def __init__(self, slopes, intercepts, num_tokens,
                  max_peptide_length=50,
