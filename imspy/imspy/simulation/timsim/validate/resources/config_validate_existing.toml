@@ -8,6 +8,10 @@
 # Path to existing simulation .d folder (skips simulation step)
 existing_simulation = "/home/dateschn/validate-sim/timsim-validate-output/simulation/timsim-validate/timsim-validate.d"
 
+# FASTA file for DiaNN analysis (REQUIRED when using existing_simulation)
+# Should match the FASTA used in the original simulation
+fasta_path = "/home/dateschn/validate-sim/sim/hela.fasta"
+
 # Output directory for validation results
 output_dir = "/home/dateschn/validate-sim/timsim-validate-output-rerun"
 
@@ -16,7 +20,7 @@ output_dir = "/home/dateschn/validate-sim/timsim-validate-output-rerun"
 executable_path = "/home/dateschn/validate-sim/diann/diann-2.3.1/diann-linux"
 
 # Number of threads for DiaNN analysis
-threads = 8
+threads = 120
 
 # Timeout in seconds (3600 = 1 hour)
 timeout_seconds = 3600

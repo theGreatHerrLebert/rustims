@@ -159,6 +159,9 @@ class DiannExecutor:
         if cfg.library_free:
             cmd.append("--fasta-search")
 
+        # Output as TSV (DiaNN 2.3+ defaults to parquet)
+        cmd.append("--no-compression")
+
         # Predictor
         if cfg.use_predictor:
             cmd.append("--predictor")

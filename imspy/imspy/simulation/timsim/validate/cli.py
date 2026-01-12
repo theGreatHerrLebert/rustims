@@ -436,9 +436,14 @@ def main() -> int:
             return 5
 
     # Validate existing simulation path if provided
-    if existing_simulation and not os.path.exists(existing_simulation):
-        print(f"Error: Existing simulation path does not exist: {existing_simulation}", file=sys.stderr)
-        return 5
+    if existing_simulation:
+        if not os.path.exists(existing_simulation):
+            print(f"Error: Existing simulation path does not exist: {existing_simulation}", file=sys.stderr)
+            return 5
+        # fasta_path is required when using existing simulation
+        if not config.get("fasta_path"):
+            print("Error: fasta_path is required when using existing_simulation", file=sys.stderr)
+            return 5
 
     # Create configuration objects
     thresholds = ValidationThresholds(
