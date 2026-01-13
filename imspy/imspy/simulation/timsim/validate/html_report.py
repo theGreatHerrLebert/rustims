@@ -790,6 +790,45 @@ def generate_html_report(
 """)
         html_parts.append("</table>")
 
+    # DDA-specific metrics
+    if result.dda_metrics:
+        dda = result.dda_metrics
+        html_parts.append("<h3>DDA Acquisition Metrics</h3>")
+        html_parts.append("<p>Data-Dependent Acquisition (DDA) MS2 selection and identification efficiency.</p>")
+
+        # Acquisition overview
+        html_parts.append("<h4>MS2 Acquisition Summary</h4>")
+        html_parts.append("<table>")
+        html_parts.append("<tr><th>Metric</th><th>Value</th><th>Description</th></tr>")
+        html_parts.append(f"<tr><td>Total MS2 Events</td><td>{dda.total_ms2_events:,}</td><td>Number of MS2 scans acquired</td></tr>")
+        html_parts.append(f"<tr><td>Unique Precursors Selected</td><td>{dda.unique_precursors_selected:,}</td><td>Distinct precursors targeted for fragmentation</td></tr>")
+        html_parts.append(f"<tr><td>MS2 Frames</td><td>{dda.ms2_frames:,}</td><td>Number of PASEF frames with MS2 events</td></tr>")
+        html_parts.append(f"<tr><td>Precursor Selection Rate</td><td>{dda.precursor_selection_rate:.1%}</td><td>Fraction of available precursors selected for MS2</td></tr>")
+        html_parts.append(f"<tr><td>Avg Precursors/Frame</td><td>{dda.avg_precursors_per_frame:.1f}</td><td>Average precursors per MS2 frame (TopN efficiency)</td></tr>")
+        html_parts.append(f"<tr><td>Precursor Redundancy</td><td>{dda.precursor_redundancy:.2f}x</td><td>Average times each precursor was selected (&gt;1 = resampling)</td></tr>")
+        html_parts.append("</table>")
+
+        # Per-tool identification efficiency
+        html_parts.append("<h4>MS2 Identification Efficiency</h4>")
+        html_parts.append("<p>How efficiently each tool converts MS2 events into identifications.</p>")
+        html_parts.append("<table>")
+        html_parts.append("<tr><th>Tool</th><th>Precursors ID'd</th><th>MS2 Events</th><th>ID Efficiency</th><th>Description</th></tr>")
+
+        for tool_name in tool_names:
+            identified = dda.identified_per_tool.get(tool_name, 0)
+            efficiency = dda.ms2_id_efficiency_per_tool.get(tool_name, 0.0)
+            eff_class = "good" if efficiency >= 0.30 else ""
+            html_parts.append(f"""
+<tr>
+    <td>{tool_name}</td>
+    <td>{identified:,}</td>
+    <td>{dda.total_ms2_events:,}</td>
+    <td class='{eff_class}'>{efficiency:.1%}</td>
+    <td>IDs per MS2 event</td>
+</tr>
+""")
+        html_parts.append("</table>")
+
     html_parts.append("</div>")
 
     # Footer

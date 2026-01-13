@@ -115,6 +115,27 @@ class PTMLocalizationMetrics:
 
 
 @dataclass
+class DDAMetrics:
+    """DDA-specific acquisition and identification metrics."""
+    # MS2 acquisition metrics
+    total_ms2_events: int  # Total MS2 scans/events
+    unique_precursors_selected: int  # Unique precursors targeted for MS2
+    ms2_frames: int  # Number of MS2 frames
+    total_precursors_available: int  # Total precursors in ground truth
+
+    # Derived metrics
+    precursor_selection_rate: float  # fraction of available precursors selected
+    avg_precursors_per_frame: float  # average precursors per MS2 frame
+    precursor_redundancy: float  # avg times each precursor was selected (>1 means resampling)
+
+    # Per-tool MS2 identification efficiency
+    ms2_id_efficiency_per_tool: Dict[str, float]  # tool -> (IDs / MS2 events)
+
+    # Per-tool metrics
+    identified_per_tool: Dict[str, int]  # tool -> precursors identified
+
+
+@dataclass
 class ComparisonResult:
     """Complete comparison results."""
     ground_truth_precursors: int
@@ -141,6 +162,9 @@ class ComparisonResult:
 
     # PTM localization metrics (for phosphoproteomics experiments)
     ptm_metrics: Optional[PTMLocalizationMetrics] = None
+
+    # DDA-specific metrics
+    dda_metrics: Optional[DDAMetrics] = None
 
     # Tool version information
     tool_versions: Optional[Dict[str, str]] = None  # Tool name -> version string
@@ -705,16 +729,111 @@ def calculate_ptm_localization(
     )
 
 
+def calculate_dda_metrics(
+    database_path: str,
+    tool_results: Dict[str, ToolResult],
+    ground_truth_precursors: int,
+) -> Optional[DDAMetrics]:
+    """
+    Calculate DDA-specific acquisition and identification metrics.
+
+    Args:
+        database_path: Path to simulation database.
+        tool_results: Dictionary of ToolResult objects.
+        ground_truth_precursors: Total precursors in ground truth.
+
+    Returns:
+        DDAMetrics if DDA tables exist in database, None otherwise.
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(database_path)
+        cursor = conn.cursor()
+
+        # Check if pasef_meta table exists (DDA-specific)
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='pasef_meta'"
+        )
+        if not cursor.fetchone():
+            conn.close()
+            return None
+
+        # Get MS2 acquisition metrics
+        cursor.execute("SELECT COUNT(*) FROM pasef_meta")
+        total_ms2_events = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(DISTINCT precursor) FROM pasef_meta")
+        unique_precursors_selected = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(DISTINCT frame) FROM pasef_meta")
+        ms2_frames = cursor.fetchone()[0]
+
+        conn.close()
+
+        # If no MS2 events, this is likely not DDA
+        if total_ms2_events == 0:
+            return None
+
+        # Calculate derived metrics
+        precursor_selection_rate = (
+            unique_precursors_selected / ground_truth_precursors
+            if ground_truth_precursors > 0
+            else 0.0
+        )
+
+        avg_precursors_per_frame = (
+            total_ms2_events / ms2_frames if ms2_frames > 0 else 0.0
+        )
+
+        precursor_redundancy = (
+            total_ms2_events / unique_precursors_selected
+            if unique_precursors_selected > 0
+            else 0.0
+        )
+
+        # Calculate per-tool MS2 identification efficiency
+        ms2_id_efficiency_per_tool: Dict[str, float] = {}
+        identified_per_tool: Dict[str, int] = {}
+
+        for tool_name, tool in tool_results.items():
+            identified = tool.num_precursors
+            identified_per_tool[tool_name] = identified
+
+            # MS2 ID efficiency = identified precursors / MS2 events
+            ms2_id_efficiency_per_tool[tool_name] = (
+                identified / total_ms2_events if total_ms2_events > 0 else 0.0
+            )
+
+        return DDAMetrics(
+            total_ms2_events=total_ms2_events,
+            unique_precursors_selected=unique_precursors_selected,
+            ms2_frames=ms2_frames,
+            total_precursors_available=ground_truth_precursors,
+            precursor_selection_rate=precursor_selection_rate,
+            avg_precursors_per_frame=avg_precursors_per_frame,
+            precursor_redundancy=precursor_redundancy,
+            ms2_id_efficiency_per_tool=ms2_id_efficiency_per_tool,
+            identified_per_tool=identified_per_tool,
+        )
+
+    except Exception as e:
+        logger.warning(f"Error calculating DDA metrics: {e}")
+        return None
+
+
 def compare_tools(
     ground_truth_df: pd.DataFrame,
     tool_results: Dict[str, pd.DataFrame],
     normalize: bool = True,
+    database_path: Optional[str] = None,
 ) -> ComparisonResult:
     """
     Compare multiple analysis tools against ground truth.
 
     Args:
         ground_truth_df: Ground truth DataFrame from simulation.
+        database_path: Optional path to simulation database (for DDA metrics).
         tool_results: Dictionary mapping tool name to parsed results DataFrame.
         normalize: Whether to normalize sequences for matching.
 
@@ -779,6 +898,11 @@ def compare_tools(
     # Calculate PTM localization metrics (for phosphoproteomics experiments)
     ptm_metrics = calculate_ptm_localization(ground_truth_df, tools, normalize)
 
+    # Calculate DDA-specific metrics (if database_path provided)
+    dda_metrics = None
+    if database_path:
+        dda_metrics = calculate_dda_metrics(database_path, tools, len(gt_precursors))
+
     return ComparisonResult(
         ground_truth_precursors=len(gt_precursors),
         ground_truth_peptides=len(gt_peptides),
@@ -793,6 +917,7 @@ def compare_tools(
         charge_breakdown=charge_breakdown,
         species_breakdown=species_breakdown,
         ptm_metrics=ptm_metrics,
+        dda_metrics=dda_metrics,
     )
 
 
@@ -999,6 +1124,31 @@ def generate_comparison_text_report(result: ComparisonResult) -> str:
             accuracy = result.ptm_metrics.site_accuracy_per_tool.get(name, 0.0)
             status = "PASS" if accuracy >= 0.80 else "FAIL"
             lines.append(f"  {name:<15} {identified:>12,} {correct:>14,} {accuracy:>11.1%} {status:>10}")
+        lines.append("")
+
+    # DDA-specific metrics
+    if result.dda_metrics:
+        lines.append("DDA ACQUISITION METRICS")
+        lines.append("-" * 80)
+        dda = result.dda_metrics
+        tool_names = list(result.tool_results.keys())
+
+        lines.append(f"  MS2 Events (scans):          {dda.total_ms2_events:,}")
+        lines.append(f"  Unique Precursors Selected:  {dda.unique_precursors_selected:,}")
+        lines.append(f"  MS2 Frames:                  {dda.ms2_frames:,}")
+        lines.append(f"  Total Precursors Available:  {dda.total_precursors_available:,}")
+        lines.append("")
+        lines.append(f"  Precursor Selection Rate:    {dda.precursor_selection_rate:.1%}")
+        lines.append(f"  Avg Precursors per Frame:    {dda.avg_precursors_per_frame:.1f}")
+        lines.append(f"  Precursor Redundancy:        {dda.precursor_redundancy:.2f}x")
+        lines.append("")
+
+        # Per-tool MS2 identification efficiency
+        lines.append("  MS2 Identification Efficiency (IDs / MS2 Events):")
+        for name in tool_names:
+            efficiency = dda.ms2_id_efficiency_per_tool.get(name, 0.0)
+            identified = dda.identified_per_tool.get(name, 0)
+            lines.append(f"    {name:<15} {efficiency:>6.1%}  ({identified:,} IDs from {dda.total_ms2_events:,} MS2)")
         lines.append("")
 
     lines.append("=" * 80)
@@ -1554,7 +1704,7 @@ def run_comparison(
 
     # Run comparison
     logger.info("Comparing tool results...")
-    result = compare_tools(ground_truth_df, tool_results)
+    result = compare_tools(ground_truth_df, tool_results, database_path=database_path)
 
     # Add tool versions to result
     result.tool_versions = tool_versions or {}
