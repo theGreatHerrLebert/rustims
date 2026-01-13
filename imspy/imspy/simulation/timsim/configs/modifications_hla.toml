@@ -1,0 +1,8 @@
+# Modifications for HLA immunopeptidomics
+# No carbamidomethylation since HLA peptides are naturally processed
+[variable_modifications]
+M = ["[UNIMOD:35]"] # Oxidation of methionine
+"[" = ["[UNIMOD:1]"] # Acetylation of the peptide N-terminus
+
+[static_modifications]
+# No static modifications for HLA peptides (no alkylation)

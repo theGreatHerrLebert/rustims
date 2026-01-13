@@ -15,6 +15,7 @@ Usage:
 import argparse
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import shutil
@@ -106,11 +107,37 @@ def load_test_config(test_id: str) -> Dict:
         return toml.load(f)
 
 
+def resolve_placeholder_string(value: str, env_config: Dict) -> str:
+    """
+    Resolve all ${key} placeholders in a string.
+
+    Args:
+        value: String potentially containing ${key} placeholders.
+        env_config: Environment configuration with actual values.
+
+    Returns:
+        String with all placeholders resolved.
+    """
+    import re
+
+    def replacer(match):
+        key = match.group(1)
+        if key in env_config:
+            return str(env_config[key])
+        else:
+            logger.warning(f"Unresolved placeholder: ${{{key}}}")
+            return match.group(0)  # Keep original if not found
+
+    # Match ${key} patterns
+    return re.sub(r'\$\{([^}]+)\}', replacer, value)
+
+
 def resolve_paths(test_config: Dict, env_config: Dict) -> Dict:
     """
     Resolve path placeholders in test config using env config.
 
     Replaces ${key} patterns with values from env_config.
+    Supports string interpolation like "${output_base}/subdir".
 
     Args:
         test_config: Test configuration with placeholders.
@@ -125,14 +152,8 @@ def resolve_paths(test_config: Dict, env_config: Dict) -> Dict:
         if isinstance(values, dict):
             result[section] = {}
             for key, value in values.items():
-                if isinstance(value, str) and value.startswith("${"):
-                    # Extract placeholder name: ${key} -> key
-                    placeholder = value[2:-1]
-                    if placeholder in env_config:
-                        result[section][key] = env_config[placeholder]
-                    else:
-                        logger.warning(f"Unresolved placeholder: {value}")
-                        result[section][key] = value
+                if isinstance(value, str) and "${" in value:
+                    result[section][key] = resolve_placeholder_string(value, env_config)
                 else:
                     result[section][key] = value
         else:
@@ -211,6 +232,9 @@ def run_simulation(config_path: Path, test_id: str) -> bool:
     """
     Run timsim simulation with the given config.
 
+    Uses subprocess to run timsim CLI, which ensures proper isolation
+    and mimics actual user workflow.
+
     Args:
         config_path: Path to the simulation config file.
         test_id: Test identifier for logging.
@@ -222,14 +246,22 @@ def run_simulation(config_path: Path, test_id: str) -> bool:
     logger.info(f"[{test_id}] Config: {config_path}")
 
     try:
-        # Import here to avoid slow startup
-        from imspy.simulation.timsim.simulator import SimulationConfig, run_simulation as timsim_run
+        # Run timsim via subprocess using the CLI entry point
+        cmd = [sys.executable, "-m", "imspy.simulation.timsim.simulator", str(config_path)]
+        logger.info(f"[{test_id}] Command: {' '.join(cmd)}")
 
-        config = SimulationConfig(str(config_path))
-        timsim_run(config)
+        result = subprocess.run(
+            cmd,
+            capture_output=False,  # Let output stream to console
+            text=True,
+        )
 
-        logger.info(f"[{test_id}] Simulation completed successfully")
-        return True
+        if result.returncode == 0:
+            logger.info(f"[{test_id}] Simulation completed successfully")
+            return True
+        else:
+            logger.error(f"[{test_id}] Simulation failed with exit code {result.returncode}")
+            return False
 
     except Exception as e:
         logger.error(f"[{test_id}] Simulation failed: {e}")
@@ -283,7 +315,12 @@ def run_test(test_id: str, env_config: Dict, dry_run: bool = False) -> bool:
         # Run simulation
         success = run_simulation(config_path, test_id)
 
-        # Write status file
+        # Clean up old status files and write new one
+        for old_status in ["SIM_SUCCESS", "SIM_FAILED"]:
+            old_file = test_output_dir / old_status
+            if old_file.exists():
+                old_file.unlink()
+
         status_file = test_output_dir / ("SIM_SUCCESS" if success else "SIM_FAILED")
         status_file.touch()
 

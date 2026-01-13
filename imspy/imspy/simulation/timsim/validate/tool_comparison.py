@@ -100,6 +100,9 @@ class ComparisonResult:
     intensity_breakdown: Optional[List[IntensityBinMetrics]] = None
     charge_breakdown: Optional[List[ChargeStateMetrics]] = None
 
+    # Tool version information
+    tool_versions: Optional[Dict[str, str]] = None  # Tool name -> version string
+
 
 def load_tool_result(
     name: str,
@@ -211,6 +214,10 @@ def calculate_rt_correlation(
     Returns:
         Pearson correlation coefficient or None if insufficient data.
     """
+    # Handle empty DataFrames
+    if tool_df.empty or ground_truth.empty:
+        return None
+
     # Create matching keys
     gt = ground_truth.copy()
     tool = tool_df.copy()
@@ -269,6 +276,10 @@ def calculate_im_correlation(
     Returns:
         Pearson correlation coefficient or None if insufficient data.
     """
+    # Handle empty DataFrames
+    if tool_df.empty or ground_truth.empty:
+        return None
+
     gt = ground_truth.copy()
     tool = tool_df.copy()
 
@@ -664,7 +675,14 @@ def generate_comparison_plots(
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    from matplotlib_venn import venn2, venn3
+
+    # Try to import matplotlib_venn, use None as fallback marker
+    try:
+        from matplotlib_venn import venn2, venn3
+        has_venn = True
+    except ImportError:
+        has_venn = False
+        logger.warning("matplotlib_venn not available, using bar chart fallback for overlap plots")
 
     os.makedirs(output_dir, exist_ok=True)
     plot_paths = {}
@@ -738,8 +756,6 @@ def generate_comparison_plots(
 
     # 3. Venn diagram: Tool overlap with ground truth
     if len(tool_names) == 2:
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-
         # Get precursor sets
         gt_set = set()
         for _, row in ground_truth_df.iterrows():
@@ -752,40 +768,101 @@ def generate_comparison_plots(
         tool1_set = result.tool_results[tool_names[0]].precursors
         tool2_set = result.tool_results[tool_names[1]].precursors
 
-        # Venn: GT vs Tool 1
-        ax = axes[0]
-        venn2([gt_set, tool1_set], set_labels=('Ground Truth', tool_names[0]), ax=ax)
-        ax.set_title(f'Ground Truth vs {tool_names[0]}', fontsize=12, fontweight='bold')
+        if has_venn:
+            # Use Venn diagrams
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-        # Venn: GT vs Tool 2
-        ax = axes[1]
-        venn2([gt_set, tool2_set], set_labels=('Ground Truth', tool_names[1]), ax=ax)
-        ax.set_title(f'Ground Truth vs {tool_names[1]}', fontsize=12, fontweight='bold')
+            # Venn: GT vs Tool 1
+            ax = axes[0]
+            venn2([gt_set, tool1_set], set_labels=('Ground Truth', tool_names[0]), ax=ax)
+            ax.set_title(f'Ground Truth vs {tool_names[0]}', fontsize=12, fontweight='bold')
 
-        # Venn: Tool 1 vs Tool 2
-        ax = axes[2]
-        venn2([tool1_set, tool2_set], set_labels=(tool_names[0], tool_names[1]), ax=ax)
-        ax.set_title(f'{tool_names[0]} vs {tool_names[1]}', fontsize=12, fontweight='bold')
+            # Venn: GT vs Tool 2
+            ax = axes[1]
+            venn2([gt_set, tool2_set], set_labels=('Ground Truth', tool_names[1]), ax=ax)
+            ax.set_title(f'Ground Truth vs {tool_names[1]}', fontsize=12, fontweight='bold')
 
-        plt.suptitle('Precursor Overlap Analysis', fontsize=14, fontweight='bold', y=1.02)
-        plt.tight_layout()
+            # Venn: Tool 1 vs Tool 2
+            ax = axes[2]
+            venn2([tool1_set, tool2_set], set_labels=(tool_names[0], tool_names[1]), ax=ax)
+            ax.set_title(f'{tool_names[0]} vs {tool_names[1]}', fontsize=12, fontweight='bold')
 
-        path = os.path.join(output_dir, "venn_overlap.png")
-        plt.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close()
-        plot_paths['venn_overlap'] = path
+            plt.suptitle('Precursor Overlap Analysis', fontsize=14, fontweight='bold', y=1.02)
+            plt.tight_layout()
 
-        # 3-way Venn: GT vs both tools
-        fig, ax = plt.subplots(figsize=(8, 8))
-        venn3([gt_set, tool1_set, tool2_set],
-              set_labels=('Ground Truth', tool_names[0], tool_names[1]), ax=ax)
-        ax.set_title('Three-Way Precursor Overlap', fontsize=14, fontweight='bold')
-        plt.tight_layout()
+            path = os.path.join(output_dir, "venn_overlap.png")
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close()
+            plot_paths['venn_overlap'] = path
 
-        path = os.path.join(output_dir, "venn_three_way.png")
-        plt.savefig(path, dpi=150, bbox_inches='tight')
-        plt.close()
-        plot_paths['venn_three_way'] = path
+            # 3-way Venn: GT vs both tools
+            fig, ax = plt.subplots(figsize=(8, 8))
+            venn3([gt_set, tool1_set, tool2_set],
+                  set_labels=('Ground Truth', tool_names[0], tool_names[1]), ax=ax)
+            ax.set_title('Three-Way Precursor Overlap', fontsize=14, fontweight='bold')
+            plt.tight_layout()
+
+            path = os.path.join(output_dir, "venn_three_way.png")
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close()
+            plot_paths['venn_three_way'] = path
+        else:
+            # Fallback: Use grouped bar charts for overlap visualization
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+            # Calculate overlaps
+            gt_tool1_overlap = len(gt_set & tool1_set)
+            gt_tool1_only_gt = len(gt_set - tool1_set)
+            gt_tool1_only_tool = len(tool1_set - gt_set)
+
+            gt_tool2_overlap = len(gt_set & tool2_set)
+            gt_tool2_only_gt = len(gt_set - tool2_set)
+            gt_tool2_only_tool = len(tool2_set - gt_set)
+
+            tool_overlap = len(tool1_set & tool2_set)
+            tool1_only = len(tool1_set - tool2_set)
+            tool2_only = len(tool2_set - tool1_set)
+
+            # GT vs Tool 1
+            ax = axes[0]
+            categories = ['GT Only', 'Both', f'{tool_names[0]} Only']
+            values = [gt_tool1_only_gt, gt_tool1_overlap, gt_tool1_only_tool]
+            bar_colors = ['#3498db', '#27ae60', colors.get(tool_names[0], '#e74c3c')]
+            ax.bar(categories, values, color=bar_colors, edgecolor='black')
+            ax.set_ylabel('Precursors')
+            ax.set_title(f'GT vs {tool_names[0]}', fontsize=12, fontweight='bold')
+            for i, v in enumerate(values):
+                ax.text(i, v + max(values)*0.02, f'{v:,}', ha='center', fontsize=9)
+
+            # GT vs Tool 2
+            ax = axes[1]
+            values = [gt_tool2_only_gt, gt_tool2_overlap, gt_tool2_only_tool]
+            categories = ['GT Only', 'Both', f'{tool_names[1]} Only']
+            bar_colors = ['#3498db', '#27ae60', colors.get(tool_names[1], '#e74c3c')]
+            ax.bar(categories, values, color=bar_colors, edgecolor='black')
+            ax.set_ylabel('Precursors')
+            ax.set_title(f'GT vs {tool_names[1]}', fontsize=12, fontweight='bold')
+            for i, v in enumerate(values):
+                ax.text(i, v + max(values)*0.02, f'{v:,}', ha='center', fontsize=9)
+
+            # Tool 1 vs Tool 2
+            ax = axes[2]
+            categories = [f'{tool_names[0]} Only', 'Both', f'{tool_names[1]} Only']
+            values = [tool1_only, tool_overlap, tool2_only]
+            bar_colors = [colors.get(tool_names[0], '#3498db'), '#27ae60', colors.get(tool_names[1], '#e74c3c')]
+            ax.bar(categories, values, color=bar_colors, edgecolor='black')
+            ax.set_ylabel('Precursors')
+            ax.set_title(f'{tool_names[0]} vs {tool_names[1]}', fontsize=12, fontweight='bold')
+            for i, v in enumerate(values):
+                ax.text(i, v + max(values)*0.02, f'{v:,}', ha='center', fontsize=9)
+
+            plt.suptitle('Precursor Overlap Analysis', fontsize=14, fontweight='bold', y=1.02)
+            plt.tight_layout()
+
+            path = os.path.join(output_dir, "overlap_bars.png")
+            plt.savefig(path, dpi=150, bbox_inches='tight')
+            plt.close()
+            plot_paths['overlap_bars'] = path
 
     # 4. Correlation comparison bar chart
     if result.rt_correlations:
@@ -952,8 +1029,122 @@ Ground Truth: {result.ground_truth_precursors:,} precursors
     plt.close()
     plot_paths['comparison_summary'] = path
 
+    # 7. Intensity-dependent comparison (line plot)
+    if result.intensity_breakdown:
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Extract data for each tool
+        bins = [b.bin_index for b in result.intensity_breakdown]
+        intensity_labels = [b.intensity_range for b in result.intensity_breakdown]
+
+        for tool_name in tool_names:
+            id_rates = []
+            for b in result.intensity_breakdown:
+                tool_metrics = b.metrics_per_tool.get(tool_name, {})
+                id_rates.append(tool_metrics.get("id_rate", 0) * 100)
+
+            color = colors.get(tool_name, '#95a5a6')
+            ax.plot(bins, id_rates, marker='o', linewidth=2, markersize=8,
+                    label=tool_name, color=color)
+
+        ax.set_xlabel('Intensity Bin', fontsize=12)
+        ax.set_ylabel('Identification Rate (%)', fontsize=12)
+        ax.set_title('Intensity-Dependent Identification Rates', fontsize=14, fontweight='bold')
+        ax.set_xticks(bins)
+        ax.set_xticklabels([l.split('-')[0] for l in intensity_labels], rotation=45, ha='right', fontsize=9)
+        ax.legend(loc='lower right', fontsize=10)
+        ax.axhline(y=30, color='red', linestyle='--', linewidth=1, alpha=0.5, label='Threshold')
+        ax.set_ylim(0, max(100, ax.get_ylim()[1]))
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        plt.tight_layout()
+
+        path = os.path.join(output_dir, "intensity_comparison.png")
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        plt.close()
+        plot_paths['intensity_comparison'] = path
+
+    # 8. Charge-dependent comparison (grouped bar chart)
+    if result.charge_breakdown:
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        charges = [c.charge for c in result.charge_breakdown]
+        x = np.arange(len(charges))
+        width = 0.8 / len(tool_names)
+
+        for i, tool_name in enumerate(tool_names):
+            id_rates = []
+            for c in result.charge_breakdown:
+                tool_metrics = c.metrics_per_tool.get(tool_name, {})
+                id_rates.append(tool_metrics.get("id_rate", 0) * 100)
+
+            color = colors.get(tool_name, '#95a5a6')
+            offset = (i - len(tool_names)/2 + 0.5) * width
+            bars = ax.bar(x + offset, id_rates, width, label=tool_name, color=color, edgecolor='black', linewidth=0.5)
+
+            # Add value labels
+            for bar, rate in zip(bars, id_rates):
+                if rate > 0:
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1,
+                            f'{rate:.0f}%', ha='center', va='bottom', fontsize=8)
+
+        ax.set_xlabel('Charge State', fontsize=12)
+        ax.set_ylabel('Identification Rate (%)', fontsize=12)
+        ax.set_title('Charge-Dependent Identification Rates', fontsize=14, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels([f'{c}+' for c in charges], fontsize=11)
+        ax.legend(loc='upper right', fontsize=10)
+        ax.axhline(y=30, color='red', linestyle='--', linewidth=1, alpha=0.5)
+        ax.set_ylim(0, 100)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        plt.tight_layout()
+
+        path = os.path.join(output_dir, "charge_comparison.png")
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+        plt.close()
+        plot_paths['charge_comparison'] = path
+
     logger.info(f"Generated {len(plot_paths)} comparison plots in {output_dir}")
     return plot_paths
+
+
+def _find_fragpipe_file(output_dir: str, filename: str) -> Optional[str]:
+    """
+    Find a FragPipe output file in the directory or subdirectories.
+
+    FragPipe DDA puts results in experiment subdirectories, while DIA
+    puts them at the root. This searches both locations.
+
+    Args:
+        output_dir: FragPipe output directory.
+        filename: Name of the file to find (e.g., "psm.tsv").
+
+    Returns:
+        Path to the file if found, None otherwise.
+    """
+    # First check root directory
+    root_path = os.path.join(output_dir, filename)
+    if os.path.exists(root_path):
+        return root_path
+
+    # Check for combined_* variant at root (DDA combined output)
+    combined_name = f"combined_{filename}"
+    combined_path = os.path.join(output_dir, combined_name)
+    if os.path.exists(combined_path):
+        return combined_path
+
+    # Search in subdirectories (DDA experiment directories)
+    for entry in os.listdir(output_dir):
+        subdir = os.path.join(output_dir, entry)
+        if os.path.isdir(subdir) and not entry.startswith('.'):
+            sub_path = os.path.join(subdir, filename)
+            if os.path.exists(sub_path):
+                return sub_path
+
+    return None
 
 
 def run_comparison(
@@ -962,6 +1153,7 @@ def run_comparison(
     fragpipe_output_dir: Optional[str] = None,
     output_dir: Optional[str] = None,
     generate_plots: bool = True,
+    tool_versions: Optional[Dict[str, str]] = None,
 ) -> ComparisonResult:
     """
     Run a complete comparison between tools.
@@ -972,6 +1164,8 @@ def run_comparison(
         fragpipe_output_dir: Path to FragPipe output directory.
         output_dir: Optional directory to save reports.
         generate_plots: Whether to generate comparison plots.
+        tool_versions: Dictionary mapping tool names to version strings
+            (e.g., {"DIA-NN": "2.3.1", "FragPipe": "24.0"}).
 
     Returns:
         ComparisonResult with all statistics.
@@ -988,14 +1182,15 @@ def run_comparison(
         tool_results["DIA-NN"] = parse_diann_report(diann_report_path)
 
     if fragpipe_output_dir and os.path.exists(fragpipe_output_dir):
-        psm_path = os.path.join(fragpipe_output_dir, "psm.tsv")
-        if os.path.exists(psm_path):
+        # Search for PSM file - may be at root (DIA) or in subdirectory (DDA)
+        psm_path = _find_fragpipe_file(fragpipe_output_dir, "psm.tsv")
+        if psm_path:
             logger.info(f"Loading FragPipe results from {fragpipe_output_dir}...")
             tool_results["FragPipe"] = parse_fragpipe_combined(
                 psm_path=psm_path,
-                peptide_path=os.path.join(fragpipe_output_dir, "peptide.tsv"),
-                protein_path=os.path.join(fragpipe_output_dir, "protein.tsv"),
-                ion_path=os.path.join(fragpipe_output_dir, "ion.tsv"),
+                peptide_path=_find_fragpipe_file(fragpipe_output_dir, "peptide.tsv"),
+                protein_path=_find_fragpipe_file(fragpipe_output_dir, "protein.tsv"),
+                ion_path=_find_fragpipe_file(fragpipe_output_dir, "ion.tsv"),
             )
 
     if not tool_results:
@@ -1004,6 +1199,9 @@ def run_comparison(
     # Run comparison
     logger.info("Comparing tool results...")
     result = compare_tools(ground_truth_df, tool_results)
+
+    # Add tool versions to result
+    result.tool_versions = tool_versions or {}
 
     # Generate and save report
     if output_dir:
@@ -1028,6 +1226,7 @@ def run_comparison(
                     "diann_report": diann_report_path,
                     "fragpipe_output": fragpipe_output_dir,
                 },
+                "tool_versions": result.tool_versions or {},
             },
             "ground_truth": {
                 "num_precursors": result.ground_truth_precursors,
@@ -1096,11 +1295,61 @@ def run_comparison(
             try:
                 plot_dir = os.path.join(output_dir, "plots")
                 plot_paths = generate_comparison_plots(result, ground_truth_df, plot_dir)
-                logger.info(f"Plots saved to {plot_dir}")
+                logger.info(f"Comparison plots saved to {plot_dir}")
             except ImportError as e:
-                logger.warning(f"Could not generate plots (missing matplotlib_venn?): {e}")
+                logger.warning(f"Could not generate comparison plots (missing matplotlib_venn?): {e}")
             except Exception as e:
-                logger.warning(f"Error generating plots: {e}")
+                logger.warning(f"Error generating comparison plots: {e}")
+
+            # Generate per-tool validation plots
+            try:
+                from .plots import generate_tool_validation_plots, generate_tool_summary_grid
+
+                for tool_name, tool_df in tool_results.items():
+                    logger.info(f"Generating {tool_name} validation plots...")
+                    try:
+                        # Get version for this tool
+                        tool_version = result.tool_versions.get(tool_name) if result.tool_versions else None
+
+                        # Generate individual plots
+                        tool_plot_dir = os.path.join(output_dir, f"{tool_name}_plots")
+                        generate_tool_validation_plots(
+                            ground_truth_df=ground_truth_df,
+                            tool_df=tool_df,
+                            tool_name=tool_name,
+                            output_dir=output_dir,
+                            tool_version=tool_version,
+                        )
+
+                        # Generate summary grid
+                        summary_grid_path = os.path.join(tool_plot_dir, "summary_grid.png")
+                        generate_tool_summary_grid(
+                            tool_name=tool_name,
+                            ground_truth_df=ground_truth_df,
+                            tool_df=tool_df,
+                            output_path=summary_grid_path,
+                            tool_version=tool_version,
+                        )
+                        logger.info(f"{tool_name} plots saved to {tool_plot_dir}")
+                    except Exception as e:
+                        logger.warning(f"Error generating {tool_name} plots: {e}")
+            except ImportError as e:
+                logger.warning(f"Could not import plotting functions: {e}")
+
+            # Generate HTML report
+            try:
+                from .html_report import generate_html_report
+                html_path = generate_html_report(
+                    result=result,
+                    output_dir=output_dir,
+                    test_name="TIMSIM Validation",
+                    database_path=database_path,
+                    diann_report_path=diann_report_path,
+                    fragpipe_output_dir=fragpipe_output_dir,
+                )
+                logger.info(f"HTML report saved to {html_path}")
+            except Exception as e:
+                logger.warning(f"Error generating HTML report: {e}")
 
         # Print report
         print(report_text)

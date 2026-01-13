@@ -54,6 +54,7 @@ class DiannConfig:
     qvalue: float = 0.01
     library_free: bool = True
     use_predictor: bool = True
+    dda_mode: bool = False  # Set to True for DDA data
 
     # Mass accuracy
     mass_acc: Optional[float] = None  # Fragment mass accuracy in ppm
@@ -105,6 +106,40 @@ class DiannExecutor:
         self.timeout_seconds = timeout_seconds
         self.extra_args = extra_args or []
         self.config = config or DiannConfig()
+        self._version: Optional[str] = None
+
+    def get_version(self) -> str:
+        """
+        Get DiaNN version string.
+
+        Returns:
+            Version string (e.g., "2.3.1") or "unknown" if unavailable.
+        """
+        if self._version is not None:
+            return self._version
+
+        try:
+            result = subprocess.run(
+                [self.executable_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            # Search through lines for one containing "DIA-NN X.X.X"
+            output = result.stdout or result.stderr or ""
+            for line in output.split('\n'):
+                if 'DIA-NN' in line:
+                    parts = line.split()
+                    # Find the version number after DIA-NN
+                    for i, part in enumerate(parts):
+                        if part == 'DIA-NN' and i + 1 < len(parts):
+                            self._version = parts[i + 1]
+                            return self._version
+        except Exception:
+            pass
+
+        self._version = "unknown"
+        return self._version
 
     def verify_executable(self) -> bool:
         """
@@ -158,6 +193,10 @@ class DiannExecutor:
         # Library-free mode uses --fasta-search instead of --lib
         if cfg.library_free:
             cmd.append("--fasta-search")
+
+        # DDA mode
+        if cfg.dda_mode:
+            cmd.append("--dda")
 
         # Predictor
         if cfg.use_predictor:

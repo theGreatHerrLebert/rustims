@@ -49,6 +49,48 @@ class TestThresholds:
     min_im_correlation: float = 0.90
 
 
+def get_tool_versions(env_config: Dict) -> Dict[str, str]:
+    """
+    Get version strings for analysis tools from environment config paths.
+
+    Args:
+        env_config: Environment configuration dictionary.
+
+    Returns:
+        Dictionary mapping tool names to version strings.
+    """
+    import re
+    versions = {}
+
+    # Get DiaNN version
+    diann_path = env_config.get("diann_path", "")
+    if diann_path:
+        try:
+            from imspy.simulation.timsim.validate.diann_executor import DiannExecutor
+            executor = DiannExecutor(executable_path=diann_path)
+            versions["DIA-NN"] = executor.get_version()
+        except Exception:
+            # Fallback: extract from path
+            match = re.search(r'diann[_-]?(\d+\.\d+(?:\.\d+)?)', diann_path)
+            if match:
+                versions["DIA-NN"] = match.group(1)
+
+    # Get FragPipe version
+    fragpipe_path = env_config.get("fragpipe_path", "")
+    if fragpipe_path:
+        try:
+            from imspy.simulation.timsim.validate.fragpipe_executor import FragPipeExecutor
+            executor = FragPipeExecutor(executable_path=fragpipe_path)
+            versions["FragPipe"] = executor.get_version()
+        except Exception:
+            # Fallback: extract from path
+            match = re.search(r'fragpipe[_-]?(\d+\.\d+(?:\.\d+)?)', fragpipe_path)
+            if match:
+                versions["FragPipe"] = match.group(1)
+
+    return versions
+
+
 def get_integration_dir() -> Path:
     """Get the integration test directory."""
     return Path(__file__).parent
@@ -108,19 +150,13 @@ def find_simulation_outputs(test_dir: Path) -> Tuple[Optional[Path], Optional[Pa
     Returns:
         Tuple of (d_folder_path, database_path) or (None, None) if not found.
     """
-    # Look for .d folder
-    d_folders = list(test_dir.glob("*.d"))
+    # Look for .d folder recursively
+    d_folders = list(test_dir.glob("**/*.d"))
     d_folder = d_folders[0] if d_folders else None
 
-    # Look for synthetic_data.db
+    # Look for synthetic_data.db recursively
     db_paths = list(test_dir.glob("**/synthetic_data.db"))
     db_path = db_paths[0] if db_paths else None
-
-    # Also check inside .d folder
-    if d_folder and not db_path:
-        db_in_d = d_folder / "synthetic_data.db"
-        if db_in_d.exists():
-            db_path = db_in_d
 
     return d_folder, db_path
 
@@ -154,9 +190,9 @@ def run_diann_analysis(
 
         # Configure DiaNN
         config = DiannConfig(
-            fasta_path=fasta_path,
             library_free=True,
             use_predictor=True,
+            dda_mode=is_dda,  # Enable DDA mode for DDA data
             qvalue=env_config.get("diann_qvalue", 0.01),
             min_pep_len=7,
             max_pep_len=30,
@@ -173,17 +209,17 @@ def run_diann_analysis(
         diann_output = output_dir / "diann"
         diann_output.mkdir(parents=True, exist_ok=True)
 
-        success = executor.run(
-            raw_files=[str(d_folder)],
+        result = executor.execute(
+            data_path=str(d_folder),
+            fasta_path=fasta_path,
             output_dir=str(diann_output),
         )
 
-        if success:
-            # Find the report file
-            report_files = list(diann_output.glob("report*.tsv")) + list(diann_output.glob("report*.parquet"))
-            if report_files:
-                logger.info(f"[{test_id}] DiaNN completed: {report_files[0]}")
-                return report_files[0]
+        if result.success:
+            report_path = Path(result.report_path)
+            if report_path.exists():
+                logger.info(f"[{test_id}] DiaNN completed: {report_path}")
+                return report_path
 
         logger.error(f"[{test_id}] DiaNN failed or no report generated")
         return None
@@ -234,9 +270,10 @@ def run_fragpipe_analysis(
 
         config = FragPipeConfig(
             workflow_path=workflow,
-            fasta_path=fasta_path,
             tools_folder=env_config.get("fragpipe_tools", ""),
             python_path=env_config.get("fragpipe_python", ""),
+            diann_path=env_config.get("diann_path", ""),
+            threads=env_config.get("num_threads", 8),
         )
 
         executor = FragPipeExecutor(
@@ -249,12 +286,15 @@ def run_fragpipe_analysis(
         fragpipe_output = output_dir / "fragpipe"
         fragpipe_output.mkdir(parents=True, exist_ok=True)
 
-        success = executor.run(
-            raw_files=[str(d_folder)],
+        result = executor.execute(
+            data_path=str(d_folder),
+            fasta_path=fasta_path,
             output_dir=str(fragpipe_output),
+            workflow_path=workflow,
+            is_dda=is_dda,
         )
 
-        if success:
+        if result.success:
             logger.info(f"[{test_id}] FragPipe completed: {fragpipe_output}")
             return fragpipe_output
 
@@ -275,6 +315,7 @@ def run_validation(
     output_dir: Path,
     test_id: str,
     thresholds: TestThresholds,
+    tool_versions: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, Dict]:
     """
     Run validation comparison against ground truth.
@@ -286,6 +327,7 @@ def run_validation(
         output_dir: Output directory for validation results.
         test_id: Test identifier for logging.
         thresholds: Pass/fail thresholds.
+        tool_versions: Dictionary mapping tool names to version strings.
 
     Returns:
         Tuple of (passed, metrics_dict).
@@ -304,6 +346,7 @@ def run_validation(
             fragpipe_output_dir=str(fragpipe_output) if fragpipe_output else None,
             output_dir=str(validation_output),
             generate_plots=True,
+            tool_versions=tool_versions,
         )
 
         # Check thresholds
@@ -320,7 +363,10 @@ def run_validation(
         }
 
         for tool_name, tool_result in result.tool_results.items():
-            id_rate = tool_result.precision  # or use id_count / ground_truth
+            # Get overlap stats for precision and ID rate
+            overlap = result.gt_overlaps.get(tool_name)
+            id_rate = overlap.identification_rate if overlap else 0.0
+            precision = overlap.precision if overlap else 0.0
 
             # Get correlations
             rt_corr = result.rt_correlations.get(tool_name, 0.0)
@@ -342,8 +388,9 @@ def run_validation(
                 failures.append(f"IM correlation {im_corr:.3f} < {thresholds.min_im_correlation:.3f}")
 
             metrics["tool_results"][tool_name] = {
-                "id_count": tool_result.id_count,
-                "precision": tool_result.precision,
+                "id_count": tool_result.num_precursors,
+                "precision": precision,
+                "id_rate": id_rate,
                 "rt_correlation": rt_corr,
                 "im_correlation": im_corr,
                 "passed": tool_passed,
@@ -427,9 +474,15 @@ def run_test_evaluation(
     logger.info(f"[{test_id}] Found simulation: {d_folder}")
     logger.info(f"[{test_id}] Found database: {db_path}")
 
-    # Determine FASTA path
+    # Determine FASTA paths
+    # DiaNN can use regular FASTA (generates decoys internally)
+    # FragPipe requires decoys in the FASTA file
     fasta_key = f"fasta_{sample_type}"
     fasta_path = env_config.get(fasta_key, env_config.get("fasta_hela", ""))
+
+    # Try to get decoy FASTA for FragPipe
+    fasta_key_decoys = f"fasta_{sample_type}_decoys"
+    fasta_path_decoys = env_config.get(fasta_key_decoys, env_config.get("fasta_hela_decoys", ""))
 
     if not fasta_path:
         logger.error(f"[{test_id}] No FASTA path configured for {sample_type}")
@@ -446,14 +499,23 @@ def run_test_evaluation(
             )
 
         if tool in ["fragpipe", "both"]:
+            # Use decoy FASTA for FragPipe if available
+            fragpipe_fasta = fasta_path_decoys if fasta_path_decoys else fasta_path
+            if fragpipe_fasta != fasta_path:
+                logger.info(f"[{test_id}] Using decoy FASTA for FragPipe: {fragpipe_fasta}")
             fragpipe_output = run_fragpipe_analysis(
-                d_folder, fasta_path, test_dir, env_config, test_id, is_dda
+                d_folder, fragpipe_fasta, test_dir, env_config, test_id, is_dda
             )
     else:
         # Look for existing analysis outputs
-        existing_diann = list(test_dir.glob("diann/report*.tsv")) + list(test_dir.glob("diann/report*.parquet"))
-        if existing_diann:
-            diann_report = existing_diann[0]
+        # Prefer parquet over tsv, and avoid .stats.tsv files
+        diann_parquet = test_dir / "diann" / "report.parquet"
+        diann_tsv = test_dir / "diann" / "report.tsv"
+        if diann_parquet.exists():
+            diann_report = diann_parquet
+            logger.info(f"[{test_id}] Using existing DiaNN output: {diann_report}")
+        elif diann_tsv.exists():
+            diann_report = diann_tsv
             logger.info(f"[{test_id}] Using existing DiaNN output: {diann_report}")
 
         existing_fragpipe = test_dir / "fragpipe"
@@ -466,8 +528,12 @@ def run_test_evaluation(
         logger.error(f"[{test_id}] No analysis results to validate")
         return False, {"error": "No analysis results"}
 
+    # Get tool versions for reporting
+    tool_versions = get_tool_versions(env_config)
+
     passed, metrics = run_validation(
-        db_path, diann_report, fragpipe_output, test_dir, test_id, thresholds
+        db_path, diann_report, fragpipe_output, test_dir, test_id, thresholds,
+        tool_versions=tool_versions
     )
 
     # Write status file

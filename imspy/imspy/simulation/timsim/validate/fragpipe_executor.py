@@ -115,6 +115,41 @@ class FragPipeExecutor:
         self.ram = ram
         self.timeout_seconds = timeout_seconds
         self.config = config or FragPipeConfig()
+        self._version: Optional[str] = None
+
+    def get_version(self) -> str:
+        """
+        Get FragPipe version string.
+
+        Extracts version from executable path or directory structure.
+
+        Returns:
+            Version string (e.g., "24.0") or "unknown" if unavailable.
+        """
+        if self._version is not None:
+            return self._version
+
+        import re
+
+        # Try to extract from executable path (e.g., fragpipe-24.0/bin/fragpipe)
+        path_match = re.search(r'fragpipe[_-]?(\d+\.\d+(?:\.\d+)?)', self.executable_path)
+        if path_match:
+            self._version = path_match.group(1)
+            return self._version
+
+        # Try to find version in parent directories
+        try:
+            path = Path(self.executable_path).resolve()
+            for parent in path.parents:
+                match = re.search(r'fragpipe[_-]?(\d+\.\d+(?:\.\d+)?)', parent.name)
+                if match:
+                    self._version = match.group(1)
+                    return self._version
+        except Exception:
+            pass
+
+        self._version = "unknown"
+        return self._version
 
     def verify_executable(self) -> bool:
         """
@@ -128,8 +163,10 @@ class FragPipeExecutor:
                 [self.executable_path, "--help"],
                 capture_output=True,
                 timeout=30,
+                text=True,
             )
-            return result.returncode == 0
+            # FragPipe returns exit code 1 for --help, so check output instead
+            return "FragPipe" in result.stdout or "FragPipe" in result.stderr
         except FileNotFoundError:
             return False
         except subprocess.TimeoutExpired:
@@ -141,6 +178,7 @@ class FragPipeExecutor:
         self,
         data_path: str,
         manifest_path: str,
+        is_dda: bool = False,
     ) -> None:
         """
         Create a FragPipe manifest file for the input data.
@@ -148,20 +186,28 @@ class FragPipeExecutor:
         Args:
             data_path: Path to the .d folder to analyze.
             manifest_path: Path to write the manifest file.
+            is_dda: If True, mark as DDA data type; otherwise DIA.
         """
-        # Extract experiment name from data path
-        experiment_name = Path(data_path).stem
+        data_type = "DDA" if is_dda else "DIA"
+        # Extract experiment name from .d folder
+        exp_name = os.path.basename(data_path).replace(".d", "")
 
-        # Manifest format: path\texperiment\tbiorep\ttechrep\tdata_type
-        # For timsTOF DIA: data_type is typically "DIA"
-        with open(manifest_path, 'w') as f:
-            f.write(f"{data_path}\t{experiment_name}\t1\t1\tDIA\n")
+        if is_dda:
+            # DDA with LFQ-MBR requires experiment annotation
+            # Format: path\texperiment\tbiorep\ttechrep\tdata_type
+            with open(manifest_path, 'w') as f:
+                f.write(f"{data_path}\t{exp_name}\t1\t1\t{data_type}\n")
+        else:
+            # DIA format: path\t\t\tdata_type (empty experiment fields for diaTracer)
+            with open(manifest_path, 'w') as f:
+                f.write(f"{data_path}\t\t\t{data_type}\n")
 
     def _update_workflow(
         self,
         base_workflow_path: str,
         output_workflow_path: str,
         fasta_path: str,
+        is_timstof: bool = True,
     ) -> None:
         """
         Update workflow file with new FASTA path and other settings.
@@ -170,21 +216,79 @@ class FragPipeExecutor:
             base_workflow_path: Path to the base workflow file.
             output_workflow_path: Path to write the updated workflow file.
             fasta_path: Path to the FASTA database.
+            is_timstof: If True, configure for timsTOF ion mobility data.
         """
         with open(base_workflow_path, 'r') as f:
             workflow_content = f.read()
 
-        # Update FASTA path
+        # Update FASTA path and other settings
         lines = workflow_content.split('\n')
         updated_lines = []
+        found_db_path = False
+        found_im_ms = False
+        found_regular_ms = False
+
         for line in lines:
             if line.startswith('database.db-path='):
                 updated_lines.append(f'database.db-path={fasta_path}')
+                found_db_path = True
+            elif is_timstof and line.startswith('workflow.input.data-type.im-ms='):
+                updated_lines.append('workflow.input.data-type.im-ms=true')
+                found_im_ms = True
+            elif is_timstof and line.startswith('workflow.input.data-type.regular-ms='):
+                updated_lines.append('workflow.input.data-type.regular-ms=false')
+                found_regular_ms = True
             else:
                 updated_lines.append(line)
 
+        # Add database.db-path if it wasn't found
+        if not found_db_path:
+            # Insert after header comment if present, otherwise at the beginning
+            insert_idx = 0
+            for i, line in enumerate(updated_lines):
+                if line.startswith('#'):
+                    insert_idx = i + 1
+                else:
+                    break
+            updated_lines.insert(insert_idx, f'database.db-path={fasta_path}')
+
         with open(output_workflow_path, 'w') as f:
             f.write('\n'.join(updated_lines))
+
+    def _find_output_file(self, output_dir: str, filename: str) -> Optional[str]:
+        """
+        Find an output file in the output directory or its subdirectories.
+
+        FragPipe DDA puts results in experiment subdirectories, while DIA
+        puts them at the root. This method searches both locations.
+
+        Args:
+            output_dir: Base output directory.
+            filename: Name of the file to find (e.g., "psm.tsv").
+
+        Returns:
+            Path to the file if found, None otherwise.
+        """
+        # First check root directory
+        root_path = os.path.join(output_dir, filename)
+        if os.path.exists(root_path):
+            return root_path
+
+        # Check for combined_* variant at root (DDA combined output)
+        combined_name = f"combined_{filename}"
+        combined_path = os.path.join(output_dir, combined_name)
+        if os.path.exists(combined_path):
+            return combined_path
+
+        # Search in subdirectories (DDA experiment directories)
+        for entry in os.listdir(output_dir):
+            subdir = os.path.join(output_dir, entry)
+            if os.path.isdir(subdir) and not entry.startswith('.'):
+                sub_path = os.path.join(subdir, filename)
+                if os.path.exists(sub_path):
+                    return sub_path
+
+        return None
 
     def build_command(
         self,
@@ -209,8 +313,11 @@ class FragPipeExecutor:
             "--workflow", workflow_path,
             "--manifest", manifest_path,
             "--workdir", output_dir,
-            "--threads", str(self.threads),
         ]
+
+        # Only add threads if positive (FragPipe uses core-1 as default)
+        if self.threads > 0:
+            cmd.extend(["--threads", str(self.threads)])
 
         if self.ram > 0:
             cmd.extend(["--ram", str(self.ram)])
@@ -233,6 +340,7 @@ class FragPipeExecutor:
         fasta_path: str,
         output_dir: str,
         workflow_path: Optional[str] = None,
+        is_dda: bool = False,
     ) -> FragPipeResult:
         """
         Execute FragPipe analysis.
@@ -242,6 +350,7 @@ class FragPipeExecutor:
             fasta_path: Path to the FASTA file.
             output_dir: Directory for output files.
             workflow_path: Path to workflow file (uses config if not specified).
+            is_dda: If True, configure for DDA data; otherwise DIA.
 
         Returns:
             FragPipeResult containing paths and execution status.
@@ -273,7 +382,7 @@ class FragPipeExecutor:
 
         # Create manifest
         manifest_path = os.path.join(output_dir, "manifest.fp-manifest")
-        self._create_manifest(data_path, manifest_path)
+        self._create_manifest(data_path, manifest_path, is_dda=is_dda)
 
         # Create updated workflow with correct FASTA path
         updated_workflow_path = os.path.join(output_dir, "workflow.workflow")
@@ -317,22 +426,23 @@ class FragPipeExecutor:
                 )
 
             # Check for expected output files
-            psm_path = os.path.join(output_dir, "psm.tsv")
-            peptide_path = os.path.join(output_dir, "peptide.tsv")
-            protein_path = os.path.join(output_dir, "protein.tsv")
-            ion_path = os.path.join(output_dir, "ion.tsv")
+            # For DDA, files may be in experiment subdirectories
+            psm_path = self._find_output_file(output_dir, "psm.tsv")
+            peptide_path = self._find_output_file(output_dir, "peptide.tsv")
+            protein_path = self._find_output_file(output_dir, "protein.tsv")
+            ion_path = self._find_output_file(output_dir, "ion.tsv")
 
-            if not os.path.exists(psm_path):
+            if not psm_path:
                 raise FragPipeExecutionError(
-                    f"FragPipe completed but PSM file not found: {psm_path}"
+                    f"FragPipe completed but PSM file not found in: {output_dir}"
                 )
 
             return FragPipeResult(
                 output_dir=output_dir,
                 psm_path=psm_path,
-                peptide_path=peptide_path,
-                protein_path=protein_path,
-                ion_path=ion_path if os.path.exists(ion_path) else None,
+                peptide_path=peptide_path or "",
+                protein_path=protein_path or "",
+                ion_path=ion_path,
                 log_path=log_path,
                 return_code=result.returncode,
                 stdout=result.stdout,
@@ -372,21 +482,27 @@ class FragPipeExecutor:
         Raises:
             FragPipeError: If required output files are not found.
         """
-        psm_path = os.path.join(output_dir, "psm.tsv")
-        peptide_path = os.path.join(output_dir, "peptide.tsv")
-        protein_path = os.path.join(output_dir, "protein.tsv")
-        ion_path = os.path.join(output_dir, "ion.tsv")
+        # Search for files in root or subdirectories
+        psm_path = self._find_output_file(output_dir, "psm.tsv")
+        peptide_path = self._find_output_file(output_dir, "peptide.tsv")
+        protein_path = self._find_output_file(output_dir, "protein.tsv")
+        ion_path = self._find_output_file(output_dir, "ion.tsv")
 
-        if not os.path.exists(psm_path):
-            raise FragPipeError(f"PSM file not found: {psm_path}")
+        if not psm_path:
+            raise FragPipeError(f"PSM file not found in: {output_dir}")
+
+        # Find log file
+        log_path = os.path.join(output_dir, "fragpipe_runner.log")
+        if not os.path.exists(log_path):
+            log_path = os.path.join(output_dir, "fragpipe.log")
 
         return FragPipeResult(
             output_dir=output_dir,
             psm_path=psm_path,
-            peptide_path=peptide_path,
-            protein_path=protein_path,
-            ion_path=ion_path if os.path.exists(ion_path) else None,
-            log_path=os.path.join(output_dir, "fragpipe.log"),
+            peptide_path=peptide_path or "",
+            protein_path=protein_path or "",
+            ion_path=ion_path,
+            log_path=log_path,
             return_code=0,
             stdout="",
             stderr="",

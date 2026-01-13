@@ -1103,3 +1103,351 @@ def generate_all_plots(
 
     logger.info(f"Generated validation plots in {plots_dir}")
     return paths
+
+
+def generate_tool_validation_plots(
+    ground_truth_df: pd.DataFrame,
+    tool_df: pd.DataFrame,
+    tool_name: str,
+    output_dir: str,
+    tool_version: Optional[str] = None,
+) -> PlotPaths:
+    """
+    Generate validation plots for a specific tool (DIA-NN or FragPipe).
+
+    Creates matched DataFrame using match_results(), then generates individual
+    plots with tool-specific titles.
+
+    Args:
+        ground_truth_df: DataFrame with ground truth peptides from simulation.
+        tool_df: DataFrame with tool identification results (parsed format).
+        tool_name: Name of the tool for plot titles (e.g., "DIA-NN", "FragPipe").
+        output_dir: Directory to save plots.
+        tool_version: Optional version string to include in plot titles.
+
+    Returns:
+        PlotPaths with paths to all generated plots.
+    """
+    # Create display name with version
+    display_name = f"{tool_name} v{tool_version}" if tool_version else tool_name
+    from .comparison import match_results, calculate_correlation_metrics
+
+    _setup_style()
+
+    # Create output directory
+    plots_dir = os.path.join(output_dir, f"{tool_name}_plots")
+    os.makedirs(plots_dir, exist_ok=True)
+
+    paths = PlotPaths()
+
+    # Create matched DataFrame
+    try:
+        matched, unidentified, false_positives = match_results(
+            ground_truth_df, tool_df, match_on="sequence_modified", normalize=True
+        )
+    except Exception as e:
+        logger.warning(f"Failed to match results for {tool_name}: {e}")
+        return paths
+
+    if matched.empty:
+        logger.warning(f"No matched results for {tool_name}")
+        return paths
+
+    # RT Correlation
+    try:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        if "rt_true" in matched.columns and "rt_observed" in matched.columns:
+            plot_rt_correlation(
+                ax, matched,
+                rt_sim_col="rt_true",
+                rt_obs_col="rt_observed",
+                title=f"{display_name} - RT Correlation",
+                sim_in_seconds=True,
+                obs_in_minutes=True,
+            )
+        else:
+            ax.text(0.5, 0.5, "No RT data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{display_name} - RT Correlation")
+        rt_path = os.path.join(plots_dir, "rt_correlation.png")
+        plt.savefig(rt_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.rt_correlation = rt_path
+    except Exception as e:
+        logger.warning(f"Failed to generate RT correlation plot for {tool_name}: {e}")
+
+    # IM Correlation
+    try:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        if "im_true" in matched.columns and "im_observed" in matched.columns:
+            plot_im_correlation(
+                ax, matched,
+                im_sim_col="im_true",
+                im_obs_col="im_observed",
+                title=f"{display_name} - Ion Mobility Correlation",
+            )
+        else:
+            ax.text(0.5, 0.5, "No IM data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{display_name} - Ion Mobility Correlation")
+        im_path = os.path.join(plots_dir, "im_correlation.png")
+        plt.savefig(im_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.im_correlation = im_path
+    except Exception as e:
+        logger.warning(f"Failed to generate IM correlation plot for {tool_name}: {e}")
+
+    # Intensity histogram
+    try:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        identified_seqs = set(matched["sequence"].unique()) if "sequence" in matched.columns else set()
+        if "intensity" in ground_truth_df.columns and "sequence" in ground_truth_df.columns:
+            plot_intensity_histogram(
+                ax, ground_truth_df, identified_seqs,
+                intensity_col="intensity",
+                sequence_col="sequence",
+                title=f"{display_name} - Intensity Distribution",
+            )
+        else:
+            ax.text(0.5, 0.5, "No intensity data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{display_name} - Intensity Distribution")
+        hist_path = os.path.join(plots_dir, "intensity_histogram.png")
+        plt.savefig(hist_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.intensity_histogram = hist_path
+    except Exception as e:
+        logger.warning(f"Failed to generate intensity histogram for {tool_name}: {e}")
+
+    # Quantification correlation
+    try:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        if "intensity_true" in matched.columns and "intensity_observed" in matched.columns:
+            plot_quant_correlation(
+                ax, matched,
+                intensity_sim_col="intensity_true",
+                intensity_obs_col="intensity_observed",
+                title=f"{display_name} - Quantification Correlation",
+            )
+        else:
+            ax.text(0.5, 0.5, "No quant data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title(f"{display_name} - Quantification Correlation")
+        quant_path = os.path.join(plots_dir, "quant_correlation.png")
+        plt.savefig(quant_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.quant_correlation = quant_path
+    except Exception as e:
+        logger.warning(f"Failed to generate quant correlation plot for {tool_name}: {e}")
+
+    logger.info(f"Generated {tool_name} validation plots in {plots_dir}")
+    return paths
+
+
+def generate_tool_summary_grid(
+    tool_name: str,
+    ground_truth_df: pd.DataFrame,
+    tool_df: pd.DataFrame,
+    output_path: str,
+    tool_version: Optional[str] = None,
+) -> str:
+    """
+    Generate a comprehensive 3x3 summary grid for a single tool.
+
+    Shows all key validation metrics in a single figure for quick assessment.
+
+    Args:
+        tool_name: Name of the tool (e.g., "DIA-NN", "FragPipe").
+        ground_truth_df: DataFrame with ground truth peptides.
+        tool_df: DataFrame with tool results.
+        output_path: Path to save the summary grid figure.
+        tool_version: Optional version string to include in plot title.
+
+    Returns:
+        Path to the saved figure.
+    """
+    # Create display name with version
+    display_name = f"{tool_name} v{tool_version}" if tool_version else tool_name
+    from .comparison import (
+        match_results,
+        calculate_identification_metrics,
+        calculate_correlation_metrics,
+        calculate_charge_state_metrics,
+        calculate_intensity_bin_metrics,
+        create_peptide_sets,
+    )
+
+    _setup_style()
+
+    # Create matched DataFrame
+    try:
+        matched, unidentified, false_positives = match_results(
+            ground_truth_df, tool_df, match_on="sequence_modified", normalize=True
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create matched data for {tool_name}: {e}")
+        return ""
+
+    # Calculate metrics
+    gt_peptides, gt_precursors = create_peptide_sets(ground_truth_df, use_modifications=False, normalize=True)
+    tool_peptides, tool_precursors = create_peptide_sets(tool_df, use_modifications=False, normalize=True)
+
+    id_metrics = calculate_identification_metrics(gt_precursors, tool_precursors)
+    corr_metrics = calculate_correlation_metrics(matched)
+    charge_metrics = calculate_charge_state_metrics(ground_truth_df, matched, unidentified)
+    intensity_metrics = calculate_intensity_bin_metrics(ground_truth_df, matched)
+
+    # Create figure with 3x3 grid
+    fig = plt.figure(figsize=(16, 14))
+    gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
+
+    # Row 1: ID Rate, Precision, RT Correlation
+    # Panel 1: ID Rate gauge
+    ax1 = fig.add_subplot(gs[0, 0])
+    id_rate = id_metrics["identification_rate"] * 100
+    colors_id = ['#e74c3c' if id_rate < 30 else '#f39c12' if id_rate < 50 else '#27ae60']
+    ax1.barh([0], [id_rate], color=colors_id, height=0.5, edgecolor='black')
+    ax1.barh([0], [100 - id_rate], left=[id_rate], color='#ecf0f1', height=0.5, edgecolor='black')
+    ax1.set_xlim(0, 100)
+    ax1.set_yticks([])
+    ax1.axvline(x=30, color='red', linestyle='--', linewidth=2, label='Threshold (30%)')
+    ax1.set_xlabel('Identification Rate (%)')
+    ax1.set_title(f'{display_name} - ID Rate: {id_rate:.1f}%', fontsize=12, fontweight='bold')
+    ax1.text(id_rate/2, 0, f'{id_rate:.1f}%', ha='center', va='center', fontsize=14, fontweight='bold', color='white')
+
+    # Panel 2: Precision gauge
+    ax2 = fig.add_subplot(gs[0, 1])
+    precision = id_metrics["precision"] * 100
+    colors_prec = ['#e74c3c' if precision < 90 else '#f39c12' if precision < 95 else '#27ae60']
+    ax2.barh([0], [precision], color=colors_prec, height=0.5, edgecolor='black')
+    ax2.barh([0], [100 - precision], left=[precision], color='#ecf0f1', height=0.5, edgecolor='black')
+    ax2.set_xlim(0, 100)
+    ax2.set_yticks([])
+    ax2.set_xlabel('Precision (%)')
+    ax2.set_title(f'{display_name} - Precision: {precision:.1f}%', fontsize=12, fontweight='bold')
+    ax2.text(precision/2 if precision > 10 else precision + 5, 0, f'{precision:.1f}%',
+             ha='center', va='center', fontsize=14, fontweight='bold', color='white' if precision > 10 else 'black')
+
+    # Panel 3: RT Correlation
+    ax3 = fig.add_subplot(gs[0, 2])
+    if "rt_true" in matched.columns and "rt_observed" in matched.columns:
+        plot_rt_correlation(
+            ax3, matched,
+            rt_sim_col="rt_true",
+            rt_obs_col="rt_observed",
+            title=f"RT Correlation",
+            sim_in_seconds=True,
+            obs_in_minutes=True,
+        )
+    else:
+        ax3.text(0.5, 0.5, "No RT data", ha="center", va="center", transform=ax3.transAxes)
+        ax3.set_title("RT Correlation")
+
+    # Row 2: IM Correlation, Intensity Histogram, Quant Correlation
+    # Panel 4: IM Correlation
+    ax4 = fig.add_subplot(gs[1, 0])
+    if "im_true" in matched.columns and "im_observed" in matched.columns:
+        plot_im_correlation(
+            ax4, matched,
+            im_sim_col="im_true",
+            im_obs_col="im_observed",
+            title=f"IM Correlation",
+        )
+    else:
+        ax4.text(0.5, 0.5, "No IM data", ha="center", va="center", transform=ax4.transAxes)
+        ax4.set_title("IM Correlation")
+
+    # Panel 5: Intensity Histogram
+    ax5 = fig.add_subplot(gs[1, 1])
+    identified_seqs = set(matched["sequence"].unique()) if "sequence" in matched.columns else set()
+    if "intensity" in ground_truth_df.columns and "sequence" in ground_truth_df.columns:
+        plot_intensity_histogram(
+            ax5, ground_truth_df, identified_seqs,
+            intensity_col="intensity",
+            sequence_col="sequence",
+            title="Intensity Distribution",
+        )
+    else:
+        ax5.text(0.5, 0.5, "No intensity data", ha="center", va="center", transform=ax5.transAxes)
+        ax5.set_title("Intensity Distribution")
+
+    # Panel 6: Quant Correlation
+    ax6 = fig.add_subplot(gs[1, 2])
+    if "intensity_true" in matched.columns and "intensity_observed" in matched.columns:
+        plot_quant_correlation(
+            ax6, matched,
+            intensity_sim_col="intensity_true",
+            intensity_obs_col="intensity_observed",
+            title="Quantification Correlation",
+        )
+    else:
+        ax6.text(0.5, 0.5, "No quant data", ha="center", va="center", transform=ax6.transAxes)
+        ax6.set_title("Quantification Correlation")
+
+    # Row 3: Charge Breakdown, Intensity ID Rate, Summary Text
+    # Panel 7: Charge state breakdown
+    ax7 = fig.add_subplot(gs[2, 0])
+    if charge_metrics:
+        plot_charge_state_breakdown(ax7, charge_metrics, title="ID Rate by Charge")
+    else:
+        ax7.text(0.5, 0.5, "No charge data", ha="center", va="center", transform=ax7.transAxes)
+        ax7.set_title("ID Rate by Charge")
+
+    # Panel 8: Intensity bin ID rate
+    ax8 = fig.add_subplot(gs[2, 1])
+    if intensity_metrics:
+        plot_intensity_id_rate(ax8, intensity_metrics, title="ID Rate by Intensity")
+    else:
+        ax8.text(0.5, 0.5, "No intensity bin data", ha="center", va="center", transform=ax8.transAxes)
+        ax8.set_title("ID Rate by Intensity")
+
+    # Panel 9: Summary metrics text
+    ax9 = fig.add_subplot(gs[2, 2])
+    ax9.axis('off')
+
+    # Build summary text
+    summary_lines = [
+        f"{'='*30}",
+        f"{display_name} VALIDATION SUMMARY",
+        f"{'='*30}",
+        "",
+        "IDENTIFICATION",
+        f"  Ground Truth:    {len(gt_precursors):,}",
+        f"  Identified:      {id_metrics['true_positives']:,}",
+        f"  ID Rate:         {id_rate:.1f}%",
+        f"  Precision:       {precision:.1f}%",
+        f"  FDR:             {id_metrics['fdr']*100:.1f}%",
+        "",
+        "CORRELATIONS",
+    ]
+
+    rt_r = corr_metrics.get('rt_pearson_r', np.nan)
+    rt_mae = corr_metrics.get('rt_mae_minutes', np.nan)
+    im_r = corr_metrics.get('im_pearson_r', np.nan)
+    im_mae = corr_metrics.get('im_mae', np.nan)
+
+    if not np.isnan(rt_r):
+        summary_lines.append(f"  RT R:            {rt_r:.4f}")
+        summary_lines.append(f"  RT MAE:          {rt_mae:.2f} min")
+    if not np.isnan(im_r):
+        summary_lines.append(f"  IM R:            {im_r:.4f}")
+        summary_lines.append(f"  IM MAE:          {im_mae:.4f}")
+
+    summary_lines.extend(["", f"{'='*30}"])
+
+    ax9.text(
+        0.05, 0.95,
+        "\n".join(summary_lines),
+        transform=ax9.transAxes,
+        ha="left", va="top",
+        fontsize=10,
+        family="monospace",
+        bbox=dict(boxstyle="round", facecolor="lightgray", alpha=0.3),
+    )
+
+    # Main title
+    fig.suptitle(f"{display_name} Validation Summary Grid", fontsize=16, fontweight="bold", y=0.98)
+
+    # Save figure
+    os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else ".", exist_ok=True)
+    plt.savefig(output_path, bbox_inches='tight', dpi=150)
+    plt.close(fig)
+
+    logger.info(f"Saved {tool_name} summary grid to {output_path}")
+    return output_path

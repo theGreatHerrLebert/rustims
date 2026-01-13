@@ -42,21 +42,24 @@ existing_path = ""
 apply_fragmentation = true
 use_bruker_sdk = true
 fragment_intensity_model = "prosit"
-modifications = ""
+# Use HLA-specific modifications file (no carbamidomethylation)
+modifications = "${modifications_hla}"
 
 [peptide_digestion]
-# Lower complexity for HLA - typically fewer unique peptides
-num_sample_peptides = 10000
-num_peptides_total = 100000
-n_proteins = 10000
-missed_cleavages = 0
-# HLA peptides are typically 8-11 amino acids
+# HLA immunopeptidome simulation
+# Note: Using trypsin digest with length filter (8-14 aa) as approximation
+# For true non-specific cleavage, use a pre-digested HLA peptide FASTA
+num_sample_peptides = 5000
+num_peptides_total = 50000
+n_proteins = 100
+missed_cleavages = 2
+# HLA peptides are typically 8-14 amino acids
 min_len = 8
 max_len = 14
-# Non-specific cleavage for HLA peptides
-cleave_at = ""
-restrict = ""
-digest_proteins = false
+# Trypsin digest (sagepy requires valid enzyme; filter by length)
+cleave_at = "KR"
+restrict = "P"
+digest_proteins = true
 remove_degenerate_peptides = false
 upscale_factor = 100000
 min_rt_percent = 2.0
@@ -105,13 +108,13 @@ selection_mode = "topN"
 re_scale_rt = false
 
 [charge_state_probabilities]
-# HLA peptides often have lower charge states
+# HLA peptides often have lower charge states - use binomial model for proper c1
 p_charge = 0.6
 min_charge_contrib = 0.25
 max_charge = 3
-binomial_charge_model = false
+binomial_charge_model = true
 normalize_charge_states = true
-charge_state_one_probability = 0.05
+charge_state_one_probability = 0.15
 
 [noise_settings]
 noise_frame_abundance = false

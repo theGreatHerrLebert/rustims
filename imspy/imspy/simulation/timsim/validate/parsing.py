@@ -362,14 +362,28 @@ def parse_fragpipe_combined(
     # Add peptide-level quality if available
     if peptide_path and os.path.exists(peptide_path):
         peptide_df = pd.read_csv(peptide_path, sep='\t')
-        peptide_quality = dict(zip(peptide_df["Peptide"], peptide_df.get("Probability", 0.99)))
-        psm_df["peptide_probability"] = psm_df["sequence"].map(peptide_quality).fillna(0.99)
+        # Handle both individual (Peptide) and combined (Peptide Sequence) column names
+        peptide_col = "Peptide" if "Peptide" in peptide_df.columns else "Peptide Sequence"
+        if peptide_col in peptide_df.columns:
+            # Handle presence/absence of Probability column
+            if "Probability" in peptide_df.columns:
+                peptide_quality = dict(zip(peptide_df[peptide_col], peptide_df["Probability"]))
+            else:
+                # Default to 0.99 if probability column not present
+                peptide_quality = dict(zip(peptide_df[peptide_col], [0.99] * len(peptide_df)))
+            psm_df["peptide_probability"] = psm_df["sequence"].map(peptide_quality).fillna(0.99)
 
     # Add protein-level quality if available
     if protein_path and os.path.exists(protein_path):
         protein_df = pd.read_csv(protein_path, sep='\t')
-        protein_quality = dict(zip(protein_df["Protein ID"], protein_df.get("Protein Probability", 0.99)))
-        psm_df["protein_probability"] = psm_df["protein_id"].map(protein_quality).fillna(0.99)
+        if "Protein ID" in protein_df.columns:
+            # Handle presence/absence of Protein Probability column
+            if "Protein Probability" in protein_df.columns:
+                protein_quality = dict(zip(protein_df["Protein ID"], protein_df["Protein Probability"]))
+            else:
+                # Default to 0.99 if probability column not present
+                protein_quality = dict(zip(protein_df["Protein ID"], [0.99] * len(protein_df)))
+            psm_df["protein_probability"] = psm_df["protein_id"].map(protein_quality).fillna(0.99)
 
     # Add ion intensities if available
     if ion_path and os.path.exists(ion_path):
@@ -382,18 +396,26 @@ def parse_fragpipe_combined(
                     return ""
                 return str(s).replace("(", "[").replace(")", "]").replace("UniMod", "UNIMOD")
 
-            ion_df["sequence_modified"] = ion_df["Modified Sequence"].apply(safe_format_sequence)
-            ion_intensity = ion_df.groupby(["sequence_modified", "Charge"])["Intensity"].max().reset_index()
-            ion_intensity = ion_intensity.rename(columns={"Charge": "charge", "Intensity": "ion_intensity"})
-            psm_df = psm_df.merge(
-                ion_intensity,
-                on=["sequence_modified", "charge"],
-                how="left"
-            )
-            # Use ion intensity if available and PSM intensity is missing/zero
-            if "ion_intensity" in psm_df.columns:
-                psm_df["intensity"] = psm_df["intensity"].fillna(psm_df["ion_intensity"])
-                psm_df = psm_df.drop(columns=["ion_intensity"])
+            # Find intensity column (may be "Intensity" or "{experiment} Intensity")
+            intensity_col = None
+            for col in ion_df.columns:
+                if col == "Intensity" or col.endswith(" Intensity"):
+                    intensity_col = col
+                    break
+
+            if intensity_col:
+                ion_df["sequence_modified"] = ion_df["Modified Sequence"].apply(safe_format_sequence)
+                ion_intensity = ion_df.groupby(["sequence_modified", "Charge"])[intensity_col].max().reset_index()
+                ion_intensity = ion_intensity.rename(columns={"Charge": "charge", intensity_col: "ion_intensity"})
+                psm_df = psm_df.merge(
+                    ion_intensity,
+                    on=["sequence_modified", "charge"],
+                    how="left"
+                )
+                # Use ion intensity if available and PSM intensity is missing/zero
+                if "ion_intensity" in psm_df.columns:
+                    psm_df["intensity"] = psm_df["intensity"].fillna(psm_df["ion_intensity"])
+                    psm_df = psm_df.drop(columns=["ion_intensity"])
 
     return psm_df
 
