@@ -982,6 +982,7 @@ Examples:
             "hela": "HeLa Proteome",
             "hye": "HYE Mixed Species (Human/Yeast/E.coli)",
             "phospho": "Phosphoproteomics (PTM Localization)",
+            "hla": "HLA Immunopeptidomics",
         }
 
         for test_id, result in results.items():

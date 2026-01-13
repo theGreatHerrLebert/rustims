@@ -430,6 +430,7 @@ def generate_html_report(
         "hela": "HeLa Proteome",
         "hye": "HYE Mixed Species (Human/Yeast/E.coli)",
         "phospho": "Phosphoproteomics (PTM Localization)",
+        "hla": "HLA Immunopeptidomics",
     }
     sample_type_label = sample_type_labels.get(sample_type.lower(), sample_type.title())
     benchmark_type_str = f"{acquisition_type}-PASEF {sample_type_label}"
@@ -1177,6 +1178,7 @@ def generate_meta_report(
         "hela": "HeLa Proteome",
         "hye": "HYE Mixed Species",
         "phospho": "Phosphoproteomics",
+        "hla": "HLA Immunopeptidomics",
     }
 
     for result in benchmark_results:
