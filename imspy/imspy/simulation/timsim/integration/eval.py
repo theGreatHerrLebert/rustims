@@ -48,6 +48,7 @@ class TestThresholds:
     min_rt_correlation: float = 0.90
     min_im_correlation: float = 0.90
     max_species_ratio_error: float = 0.20  # For HYE experiments
+    min_ptm_site_accuracy: float = 0.80  # For phosphoproteomics experiments
 
 
 def get_tool_versions(env_config: Dict) -> Dict[str, str]:
@@ -137,6 +138,7 @@ def get_test_thresholds(test_id: str) -> TestThresholds:
             min_rt_correlation=thresholds.get("min_rt_correlation", 0.90),
             min_im_correlation=thresholds.get("min_im_correlation", 0.90),
             max_species_ratio_error=thresholds.get("max_species_ratio_error", 0.20),
+            min_ptm_site_accuracy=thresholds.get("min_ptm_site_accuracy", 0.80),
         )
     except Exception:
         return TestThresholds()
@@ -361,12 +363,16 @@ def run_validation(
                 "min_rt_correlation": thresholds.min_rt_correlation,
                 "min_im_correlation": thresholds.min_im_correlation,
                 "max_species_ratio_error": thresholds.max_species_ratio_error,
+                "min_ptm_site_accuracy": thresholds.min_ptm_site_accuracy,
             },
             "tool_results": {},
         }
 
         # Check if this is an HYE experiment (species breakdown available)
         has_species_breakdown = result.species_breakdown is not None
+
+        # Check if this is a phospho experiment (PTM metrics available)
+        has_ptm_metrics = result.ptm_metrics is not None
 
         for tool_name, tool_result in result.tool_results.items():
             # Get overlap stats for precision and ID rate
@@ -404,6 +410,17 @@ def run_validation(
                         f"{thresholds.max_species_ratio_error:.2%}"
                     )
 
+            # Check PTM site accuracy (for phosphoproteomics experiments)
+            ptm_site_accuracy = None
+            if has_ptm_metrics:
+                ptm_site_accuracy = result.ptm_metrics.site_accuracy_per_tool.get(tool_name, 0.0)
+                if ptm_site_accuracy < thresholds.min_ptm_site_accuracy:
+                    tool_passed = False
+                    failures.append(
+                        f"PTM site accuracy {ptm_site_accuracy:.2%} < "
+                        f"{thresholds.min_ptm_site_accuracy:.2%}"
+                    )
+
             metrics["tool_results"][tool_name] = {
                 "id_count": tool_result.num_precursors,
                 "precision": precision,
@@ -411,6 +428,7 @@ def run_validation(
                 "rt_correlation": rt_corr,
                 "im_correlation": im_corr,
                 "species_ratio_error": species_ratio_error,
+                "ptm_site_accuracy": ptm_site_accuracy,
                 "passed": tool_passed,
                 "failures": failures,
             }
@@ -425,6 +443,15 @@ def run_validation(
                 "ground_truth_counts": result.species_breakdown.ground_truth_counts,
                 "observed_ratios_per_tool": result.species_breakdown.observed_ratios_per_tool,
                 "max_ratio_error_per_tool": result.species_breakdown.max_ratio_error_per_tool,
+            }
+
+        # Add PTM metrics summary if available
+        if has_ptm_metrics:
+            metrics["ptm_metrics"] = {
+                "ground_truth_phosphopeptides": result.ptm_metrics.ground_truth_phosphopeptides,
+                "identified_phosphopeptides_per_tool": result.ptm_metrics.identified_phosphopeptides_per_tool,
+                "correctly_localized_per_tool": result.ptm_metrics.correctly_localized_per_tool,
+                "site_accuracy_per_tool": result.ptm_metrics.site_accuracy_per_tool,
             }
 
         # Save metrics

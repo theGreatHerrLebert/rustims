@@ -16,7 +16,8 @@ analysis_tools = ["diann", "fragpipe"]
 min_id_rate = 0.25
 min_rt_correlation = 0.95
 min_im_correlation = 0.95
-# Additional: ptm_site_accuracy > 0.80
+# PTM site localization accuracy threshold
+min_ptm_site_accuracy = 0.80
 
 # -----------------------------------------------------------------------------
 # Paths - Resolved from env.toml at runtime
@@ -44,7 +45,8 @@ fragment_intensity_model = "prosit"
 modifications = ""
 
 [peptide_digestion]
-num_sample_peptides = 25000
+# 300 phosphopeptides for integration testing (faster than full 25k)
+num_sample_peptides = 300
 num_peptides_total = 250000
 n_proteins = 20000
 missed_cleavages = 2

@@ -67,6 +67,12 @@ def load_ground_truth(
     if "fasta" in peptides.columns:
         peptide_cols.append("fasta")
 
+    # Include phospho columns if present (for phospho_mode / phosphoproteomics)
+    phospho_cols = ["phospho_site_a", "phospho_site_b", "sequence_original"]
+    for col in phospho_cols:
+        if col in peptides.columns:
+            peptide_cols.append(col)
+
     # Merge peptides and ions
     ground_truth = pd.merge(
         peptides[peptide_cols],

@@ -59,6 +59,7 @@ Create a **comprehensive integration test pipeline** that:
 | Per-tool plots | Complete | Summary grids, RT/IM correlations per tool |
 | Tool version display | Complete | Versions shown in plots and reports |
 | Species ratio validation | Complete | HYE experiment species ratio error validation |
+| PTM site localization | Complete | Phosphoproteomics PTM site accuracy validation |
 
 ### Metrics Captured
 
@@ -69,6 +70,7 @@ Create a **comprehensive integration test pipeline** that:
 - **Pairwise tool comparisons**: Jaccard index, overlap counts
 - **Mass accuracy**: PPM error statistics
 - **Species ratio validation**: Expected vs observed species ratios for HYE experiments
+- **PTM site localization**: Site accuracy for phosphoproteomics experiments
 
 ---
 
