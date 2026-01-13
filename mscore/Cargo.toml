@@ -24,7 +24,7 @@ itertools = "0.14.0"
 # Parallelism
 rayon = "1.10.0"
 # Matrix operations
-nalgebra = "0.33.2"
+nalgebra = "0.34.1"
 # Serialization
 serde = { version = "1.0.217", features = ["derive", "rc"] }
 # Regular expressions
@@ -32,7 +32,7 @@ regex = "1.11.1"
 # Random number generation
 rand = "0.8.5"
 # Ordered floats
-ordered-float = "4.6.0"
+ordered-float = "5.1.0"
 # Binary serialization
 bincode = "2.0.0-rc.3"
 
