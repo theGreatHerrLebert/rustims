@@ -813,3 +813,447 @@ def generate_html_report(
 
     logger.info(f"Generated HTML report: {html_path}")
     return html_path
+
+
+# CSS for meta report (extends base CSS)
+META_CSS_ADDITIONS = """
+.dashboard-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.stats-row {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin: 20px 0;
+}
+
+.stat-box {
+    background: var(--bg-light);
+    border-radius: 10px;
+    padding: 20px 40px;
+    text-align: center;
+    min-width: 150px;
+}
+
+.stat-box.pass {
+    border-left: 4px solid var(--pass-color);
+}
+
+.stat-box.fail {
+    border-left: 4px solid var(--fail-color);
+}
+
+.stat-box .number {
+    font-size: 2.5em;
+    font-weight: bold;
+    color: #333;
+}
+
+.stat-box.pass .number {
+    color: var(--pass-color);
+}
+
+.stat-box.fail .number {
+    color: var(--fail-color);
+}
+
+.stat-box .label {
+    font-size: 0.9em;
+    color: #666;
+    margin-top: 5px;
+}
+
+.benchmark-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 20px;
+    margin: 20px 0;
+}
+
+.benchmark-card {
+    background: var(--bg-light);
+    border-radius: 10px;
+    padding: 20px;
+    border-left: 4px solid #95a5a6;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.benchmark-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.benchmark-card.pass {
+    border-left-color: var(--pass-color);
+}
+
+.benchmark-card.fail {
+    border-left-color: var(--fail-color);
+}
+
+.benchmark-card h3 {
+    margin: 0 0 10px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.benchmark-card .benchmark-type {
+    font-size: 0.85em;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+.benchmark-card .tools-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.tool-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 15px;
+    font-size: 0.85em;
+    background: white;
+}
+
+.tool-chip.pass {
+    border: 1px solid var(--pass-color);
+    color: var(--pass-color);
+}
+
+.tool-chip.fail {
+    border: 1px solid var(--fail-color);
+    color: var(--fail-color);
+}
+
+.benchmark-card .view-link {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 8px 16px;
+    background: var(--diann-color);
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+    font-size: 0.9em;
+    transition: background 0.2s;
+}
+
+.benchmark-card .view-link:hover {
+    background: #2980b9;
+}
+
+.nav-tabs {
+    display: flex;
+    border-bottom: 2px solid var(--border-color);
+    margin-bottom: 20px;
+}
+
+.nav-tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-size: 1em;
+    color: #666;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.nav-tab:hover {
+    color: var(--diann-color);
+}
+
+.nav-tab.active {
+    color: var(--diann-color);
+    border-bottom-color: var(--diann-color);
+    font-weight: 600;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.summary-table {
+    width: 100%;
+    margin: 20px 0;
+}
+
+.summary-table th {
+    text-align: left;
+    padding: 12px;
+    background: var(--bg-light);
+}
+
+.summary-table td {
+    padding: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.summary-table tr:hover {
+    background: rgba(52, 152, 219, 0.05);
+}
+"""
+
+META_JS_ADDITIONS = """
+function switchTab(tabId) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+
+    // Show selected tab
+    document.getElementById(tabId).classList.add('active');
+    document.querySelector(`[data-tab="${tabId}"]`).classList.add('active');
+}
+
+function filterBenchmarks(status) {
+    const cards = document.querySelectorAll('.benchmark-card');
+    cards.forEach(card => {
+        if (status === 'all') {
+            card.style.display = 'block';
+        } else if (status === 'pass' && card.classList.contains('pass')) {
+            card.style.display = 'block';
+        } else if (status === 'fail' && card.classList.contains('fail')) {
+            card.style.display = 'block';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+"""
+
+
+def generate_meta_report(
+    benchmark_results: List[Dict[str, Any]],
+    output_path: str,
+    title: str = "TIMSIM Integration Test Dashboard",
+) -> str:
+    """
+    Generate a meta HTML report that provides an overview of all benchmarks.
+
+    Args:
+        benchmark_results: List of dictionaries containing:
+            - test_id: Test identifier
+            - passed: Overall pass/fail status
+            - benchmark_type: Human-readable benchmark type
+            - acquisition_type: DIA or DDA
+            - sample_type: hela, hye, phospho, etc.
+            - report_path: Path to individual HTML report (relative)
+            - tool_results: Dict of tool name -> {passed, id_rate, precision, ...}
+        output_path: Path to write the meta HTML report.
+        title: Title for the dashboard.
+
+    Returns:
+        Path to the generated HTML file.
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Calculate summary statistics
+    total = len(benchmark_results)
+    passed = sum(1 for r in benchmark_results if r.get("passed", False))
+    failed = total - passed
+
+    # Group by sample type
+    by_sample_type = {}
+    for result in benchmark_results:
+        sample_type = result.get("sample_type", "unknown")
+        if sample_type not in by_sample_type:
+            by_sample_type[sample_type] = []
+        by_sample_type[sample_type].append(result)
+
+    # Build HTML
+    html_parts = []
+
+    # Document start
+    html_parts.append(f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+{CSS_STYLES}
+{META_CSS_ADDITIONS}
+    </style>
+</head>
+<body>
+""")
+
+    # Header
+    html_parts.append(f"""
+<div class="dashboard-header">
+    <h1>{title}</h1>
+    <p style="color: #666;">Generated: {timestamp}</p>
+</div>
+
+<div class="stats-row">
+    <div class="stat-box pass">
+        <div class="number">{passed}</div>
+        <div class="label">Passed</div>
+    </div>
+    <div class="stat-box fail">
+        <div class="number">{failed}</div>
+        <div class="label">Failed</div>
+    </div>
+    <div class="stat-box">
+        <div class="number">{total}</div>
+        <div class="label">Total Tests</div>
+    </div>
+</div>
+""")
+
+    # Navigation tabs
+    html_parts.append("""
+<div class="nav-tabs">
+    <button class="nav-tab active" data-tab="cards-view" onclick="switchTab('cards-view')">Card View</button>
+    <button class="nav-tab" data-tab="table-view" onclick="switchTab('table-view')">Table View</button>
+</div>
+""")
+
+    # Card View
+    html_parts.append("""
+<div id="cards-view" class="tab-content active">
+    <div style="margin-bottom: 15px;">
+        <strong>Filter:</strong>
+        <button onclick="filterBenchmarks('all')" style="margin-left: 10px;">All</button>
+        <button onclick="filterBenchmarks('pass')" style="margin-left: 5px;">Passed</button>
+        <button onclick="filterBenchmarks('fail')" style="margin-left: 5px;">Failed</button>
+    </div>
+    <div class="benchmark-grid">
+""")
+
+    # Sample type labels
+    sample_type_labels = {
+        "hela": "HeLa Proteome",
+        "hye": "HYE Mixed Species",
+        "phospho": "Phosphoproteomics",
+    }
+
+    for result in benchmark_results:
+        test_id = result.get("test_id", "Unknown")
+        is_passed = result.get("passed", False)
+        benchmark_type = result.get("benchmark_type", "")
+        report_path = result.get("report_path", "")
+        tool_results = result.get("tool_results", {})
+
+        card_class = "pass" if is_passed else "fail"
+
+        # Build tool chips
+        tool_chips = []
+        for tool_name, tool_data in tool_results.items():
+            tool_passed = tool_data.get("passed", False)
+            chip_class = "pass" if tool_passed else "fail"
+            id_rate = tool_data.get("id_rate", 0) * 100
+            precision = tool_data.get("precision", 0) * 100
+            tool_chips.append(
+                f'<span class="tool-chip {chip_class}">{tool_name}: {id_rate:.0f}% ID, {precision:.0f}% Prec</span>'
+            )
+
+        html_parts.append(f"""
+        <div class="benchmark-card {card_class}">
+            <h3>
+                {test_id}
+                {get_status_badge(is_passed)}
+            </h3>
+            <div class="benchmark-type">{benchmark_type}</div>
+            <div class="tools-summary">
+                {''.join(tool_chips)}
+            </div>
+            <a href="{report_path}" class="view-link">View Full Report →</a>
+        </div>
+""")
+
+    html_parts.append("""
+    </div>
+</div>
+""")
+
+    # Table View
+    html_parts.append("""
+<div id="table-view" class="tab-content">
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th>Test ID</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Tools</th>
+                <th>Best ID Rate</th>
+                <th>Best Precision</th>
+                <th>Report</th>
+            </tr>
+        </thead>
+        <tbody>
+""")
+
+    for result in benchmark_results:
+        test_id = result.get("test_id", "Unknown")
+        is_passed = result.get("passed", False)
+        acquisition_type = result.get("acquisition_type", "DIA")
+        sample_type = result.get("sample_type", "unknown")
+        report_path = result.get("report_path", "")
+        tool_results = result.get("tool_results", {})
+
+        # Get best metrics
+        best_id_rate = max((t.get("id_rate", 0) for t in tool_results.values()), default=0)
+        best_precision = max((t.get("precision", 0) for t in tool_results.values()), default=0)
+
+        # Tool status summary
+        tool_summary = ", ".join(
+            f"{name} ({'✓' if data.get('passed') else '✗'})"
+            for name, data in tool_results.items()
+        )
+
+        sample_label = sample_type_labels.get(sample_type, sample_type.title())
+
+        html_parts.append(f"""
+            <tr>
+                <td><strong>{test_id}</strong></td>
+                <td>{acquisition_type} {sample_label}</td>
+                <td>{get_status_badge(is_passed)}</td>
+                <td>{tool_summary}</td>
+                <td>{best_id_rate * 100:.1f}%</td>
+                <td>{best_precision * 100:.1f}%</td>
+                <td><a href="{report_path}">View →</a></td>
+            </tr>
+""")
+
+    html_parts.append("""
+        </tbody>
+    </table>
+</div>
+""")
+
+    # Footer
+    html_parts.append(f"""
+<div class="footer">
+    <p>Generated by <strong>timsim-validate</strong> | {timestamp}</p>
+    <p>{passed} passed, {failed} failed out of {total} benchmarks</p>
+</div>
+
+<script>
+{JS_SCRIPT}
+{META_JS_ADDITIONS}
+</script>
+</body>
+</html>
+""")
+
+    # Write HTML file
+    html_content = "\n".join(html_parts)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+
+    logger.info(f"Generated meta report: {output_path}")
+    return output_path

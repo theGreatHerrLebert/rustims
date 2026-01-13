@@ -790,6 +790,66 @@ Examples:
         json.dump(summary, f, indent=2, default=str)
     logger.info(f"Summary written to: {summary_file}")
 
+    # Generate meta HTML report (dashboard)
+    try:
+        from imspy.simulation.timsim.validate.html_report import generate_meta_report
+
+        # Build benchmark results for meta report
+        benchmark_results = []
+        sample_type_labels = {
+            "hela": "HeLa Proteome",
+            "hye": "HYE Mixed Species (Human/Yeast/E.coli)",
+            "phospho": "Phosphoproteomics (PTM Localization)",
+        }
+
+        for test_id, result in results.items():
+            # Get test metadata
+            try:
+                test_config = load_test_config(test_id)
+                test_meta = test_config.get("test_metadata", {})
+                acquisition_type = test_meta.get("acquisition_type", "DIA")
+                sample_type = test_meta.get("sample_type", "hela")
+            except Exception:
+                acquisition_type = "DDA" if "DDA" in test_id else "DIA"
+                sample_type = "hela"
+
+            sample_label = sample_type_labels.get(sample_type, sample_type.title())
+            benchmark_type = f"{acquisition_type}-PASEF {sample_label}"
+
+            # Build tool results for meta report
+            tool_results_meta = {}
+            for tool_name, tool_metrics in result.get("metrics", {}).get("tool_results", {}).items():
+                tool_results_meta[tool_name] = {
+                    "passed": tool_metrics.get("passed", False),
+                    "id_rate": tool_metrics.get("id_rate", 0),
+                    "precision": tool_metrics.get("precision", 0),
+                }
+
+            # Relative path to individual report
+            report_path = f"{test_id}/validation/validation_report.html"
+
+            benchmark_results.append({
+                "test_id": test_id,
+                "passed": result.get("passed", False),
+                "benchmark_type": benchmark_type,
+                "acquisition_type": acquisition_type,
+                "sample_type": sample_type,
+                "report_path": report_path,
+                "tool_results": tool_results_meta,
+            })
+
+        # Generate meta report
+        meta_report_path = Path(output_base) / "index.html"
+        generate_meta_report(
+            benchmark_results=benchmark_results,
+            output_path=str(meta_report_path),
+            title="TIMSIM Integration Test Dashboard",
+        )
+        logger.info(f"Dashboard written to: {meta_report_path}")
+
+    except Exception as e:
+        logger.warning(f"Failed to generate meta report: {e}")
+
     sys.exit(0 if failed_count == 0 else 1)
 
 
