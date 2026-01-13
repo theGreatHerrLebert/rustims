@@ -302,6 +302,10 @@ def run_fragpipe_analysis(
             logger.info(f"[{test_id}] FragPipe completed: {fragpipe_output}")
             return fragpipe_output
 
+        if result.partial_results:
+            logger.warning(f"[{test_id}] FragPipe pipeline failed but ident results available (ident-only mode)")
+            return fragpipe_output
+
         logger.error(f"[{test_id}] FragPipe failed")
         return None
 

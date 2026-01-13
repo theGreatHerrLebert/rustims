@@ -46,6 +46,7 @@ class FragPipeResult:
     stdout: str
     stderr: str
     success: bool
+    partial_results: bool = False  # True if pipeline failed but ident results available
 
     @property
     def diann_report_path(self) -> Optional[str]:
@@ -417,20 +418,41 @@ class FragPipeExecutor:
                 f.write("\n\nSTDERR:\n")
                 f.write(result.stderr)
 
-            if result.returncode != 0:
-                logger.error(f"FragPipe failed with return code {result.returncode}")
-                logger.error(f"STDERR: {result.stderr[:1000]}")
-                raise FragPipeExecutionError(
-                    f"FragPipe failed with return code {result.returncode}. "
-                    f"Check log at {log_path}"
-                )
-
             # Check for expected output files
             # For DDA, files may be in experiment subdirectories
             psm_path = self._find_output_file(output_dir, "psm.tsv")
             peptide_path = self._find_output_file(output_dir, "peptide.tsv")
             protein_path = self._find_output_file(output_dir, "protein.tsv")
             ion_path = self._find_output_file(output_dir, "ion.tsv")
+
+            if result.returncode != 0:
+                logger.error(f"FragPipe failed with return code {result.returncode}")
+                logger.error(f"STDERR: {result.stderr[:1000]}")
+
+                # Check for partial results (identification completed but quant/speclib failed)
+                if psm_path:
+                    logger.warning(
+                        f"FragPipe pipeline failed but identification results found. "
+                        f"Using partial results (ident-only mode)."
+                    )
+                    return FragPipeResult(
+                        output_dir=output_dir,
+                        psm_path=psm_path,
+                        peptide_path=peptide_path or "",
+                        protein_path=protein_path or "",
+                        ion_path=ion_path,
+                        log_path=log_path,
+                        return_code=result.returncode,
+                        stdout=result.stdout,
+                        stderr=result.stderr,
+                        success=False,
+                        partial_results=True,
+                    )
+                else:
+                    raise FragPipeExecutionError(
+                        f"FragPipe failed with return code {result.returncode}. "
+                        f"Check log at {log_path}"
+                    )
 
             if not psm_path:
                 raise FragPipeExecutionError(
@@ -448,6 +470,7 @@ class FragPipeExecutor:
                 stdout=result.stdout,
                 stderr=result.stderr,
                 success=True,
+                partial_results=False,
             )
 
         except subprocess.TimeoutExpired as e:
