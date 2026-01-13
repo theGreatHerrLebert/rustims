@@ -15,6 +15,7 @@ import numpy as np
 from .parsing import (
     parse_diann_report,
     parse_fragpipe_combined,
+    parse_sage_results,
     normalize_sequence_for_matching,
     create_precursor_id,
 )
@@ -1651,6 +1652,7 @@ def run_comparison(
     database_path: str,
     diann_report_path: Optional[str] = None,
     fragpipe_output_dir: Optional[str] = None,
+    sage_results_path: Optional[str] = None,
     output_dir: Optional[str] = None,
     generate_plots: bool = True,
     tool_versions: Optional[Dict[str, str]] = None,
@@ -1663,10 +1665,11 @@ def run_comparison(
         database_path: Path to simulation synthetic_data.db.
         diann_report_path: Path to DIA-NN report.tsv or .parquet file.
         fragpipe_output_dir: Path to FragPipe output directory.
+        sage_results_path: Path to Sage results.sage.tsv file.
         output_dir: Optional directory to save reports.
         generate_plots: Whether to generate comparison plots.
         tool_versions: Dictionary mapping tool names to version strings
-            (e.g., {"DIA-NN": "2.3.1", "FragPipe": "24.0"}).
+            (e.g., {"DIA-NN": "2.3.1", "FragPipe": "24.0", "Sage": "0.15.0"}).
         test_metadata: Dictionary with test metadata for HTML report:
             - test_id: Test identifier (e.g., "IT-DIA-HELA")
             - acquisition_type: "DIA" or "DDA"
@@ -1698,6 +1701,10 @@ def run_comparison(
                 protein_path=_find_fragpipe_file(fragpipe_output_dir, "protein.tsv"),
                 ion_path=_find_fragpipe_file(fragpipe_output_dir, "ion.tsv"),
             )
+
+    if sage_results_path and os.path.exists(sage_results_path):
+        logger.info(f"Loading Sage results from {sage_results_path}...")
+        tool_results["Sage"] = parse_sage_results(sage_results_path)
 
     if not tool_results:
         raise ValueError("No tool results found. Provide at least one of diann_report_path or fragpipe_output_dir.")
@@ -1731,6 +1738,7 @@ def run_comparison(
                     "database": database_path,
                     "diann_report": diann_report_path,
                     "fragpipe_output": fragpipe_output_dir,
+                    "sage_results": sage_results_path,
                 },
                 "tool_versions": result.tool_versions or {},
             },

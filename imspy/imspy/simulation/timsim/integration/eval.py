@@ -90,6 +90,18 @@ def get_tool_versions(env_config: Dict) -> Dict[str, str]:
             if match:
                 versions["FragPipe"] = match.group(1)
 
+    # Get Sage version
+    sage_path = env_config.get("sage_path", "")
+    if sage_path:
+        try:
+            from imspy.simulation.timsim.validate.sage_executor import get_sage_version
+            versions["Sage"] = get_sage_version(sage_path)
+        except Exception:
+            # Fallback: extract from path
+            match = re.search(r'sage[_-]?(\d+\.\d+(?:\.\d+)?(?:-[a-z]+\.\d+)?)', sage_path)
+            if match:
+                versions["Sage"] = match.group(1)
+
     return versions
 
 
@@ -402,10 +414,81 @@ def run_fragpipe_analysis(
         return None
 
 
+def run_sage_analysis(
+    d_folder: Path,
+    fasta_path: str,
+    output_dir: Path,
+    env_config: Dict,
+    test_id: str,
+) -> Optional[Path]:
+    """
+    Run Sage search on DDA data.
+
+    Args:
+        d_folder: Path to the .d folder.
+        fasta_path: Path to FASTA file (should include decoys).
+        output_dir: Output directory for results.
+        env_config: Environment configuration.
+        test_id: Test identifier for logging.
+
+    Returns:
+        Path to Sage results.sage.tsv file, or None if failed.
+    """
+    logger.info(f"[{test_id}] Running Sage analysis...")
+
+    try:
+        from imspy.simulation.timsim.validate.sage_executor import run_sage, SageConfig
+
+        # Configure Sage
+        config = SageConfig(
+            fasta_path=fasta_path,
+            missed_cleavages=env_config.get("sage_missed_cleavages", 2),
+            min_peptide_len=7,
+            max_peptide_len=50,
+            precursor_tol_ppm=env_config.get("sage_precursor_ppm", 20.0),
+            fragment_tol_ppm=env_config.get("sage_fragment_ppm", 20.0),
+            min_charge=2,
+            max_charge=4,
+            decoy_tag="rev_",
+            generate_decoys=False,  # Assume FASTA has decoys
+        )
+
+        sage_output = output_dir / "sage"
+        sage_output.mkdir(parents=True, exist_ok=True)
+
+        sage_path = env_config.get("sage_path")
+
+        result = run_sage(
+            d_folder=str(d_folder),
+            fasta_path=fasta_path,
+            output_dir=str(sage_output),
+            config=config,
+            sage_path=sage_path,
+        )
+
+        if result.success:
+            results_path = Path(result.results_path)
+            if results_path.exists():
+                logger.info(f"[{test_id}] Sage completed: {result.psm_count} PSMs at 1% FDR")
+                return results_path
+
+        logger.error(f"[{test_id}] Sage failed")
+        if result.log_path:
+            logger.error(f"[{test_id}] Check log file: {result.log_path}")
+        return None
+
+    except Exception as e:
+        logger.error(f"[{test_id}] Sage error: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def run_validation(
     database_path: Path,
     diann_report: Optional[Path],
     fragpipe_output: Optional[Path],
+    sage_results: Optional[Path],
     output_dir: Path,
     test_id: str,
     thresholds: TestThresholds,
@@ -440,6 +523,7 @@ def run_validation(
             database_path=str(database_path),
             diann_report_path=str(diann_report) if diann_report else None,
             fragpipe_output_dir=str(fragpipe_output) if fragpipe_output else None,
+            sage_results_path=str(sage_results) if sage_results else None,
             output_dir=str(validation_output),
             generate_plots=True,
             tool_versions=tool_versions,
@@ -641,6 +725,7 @@ def run_test_evaluation(
     # Run analysis tools
     diann_report = None
     fragpipe_output = None
+    sage_results = None
 
     # Detect if this is a phospho experiment
     is_phospho = sample_type == "phospho"
@@ -659,6 +744,16 @@ def run_test_evaluation(
             fragpipe_output = run_fragpipe_analysis(
                 d_folder, fragpipe_fasta, test_dir, env_config, test_id, is_dda
             )
+
+        # Run Sage for DDA tests (Sage is DDA-only)
+        if is_dda and tool in ["sage", "both"]:
+            # Sage requires FASTA with decoys
+            sage_fasta = fasta_path_decoys if fasta_path_decoys else fasta_path
+            if sage_fasta != fasta_path:
+                logger.info(f"[{test_id}] Using decoy FASTA for Sage: {sage_fasta}")
+            sage_results = run_sage_analysis(
+                d_folder, sage_fasta, test_dir, env_config, test_id
+            )
     else:
         # Look for existing analysis outputs
         # Prefer parquet over tsv, and avoid .stats.tsv files
@@ -676,8 +771,14 @@ def run_test_evaluation(
             fragpipe_output = existing_fragpipe
             logger.info(f"[{test_id}] Using existing FragPipe output: {fragpipe_output}")
 
+        # Look for existing Sage results
+        existing_sage = test_dir / "sage" / "results.sage.tsv"
+        if existing_sage.exists():
+            sage_results = existing_sage
+            logger.info(f"[{test_id}] Using existing Sage output: {sage_results}")
+
     # Run validation
-    if not diann_report and not fragpipe_output:
+    if not diann_report and not fragpipe_output and not sage_results:
         logger.error(f"[{test_id}] No analysis results to validate")
         return False, {"error": "No analysis results"}
 
@@ -693,7 +794,7 @@ def run_test_evaluation(
     }
 
     passed, metrics = run_validation(
-        db_path, diann_report, fragpipe_output, test_dir, test_id, thresholds,
+        db_path, diann_report, fragpipe_output, sage_results, test_dir, test_id, thresholds,
         tool_versions=tool_versions,
         test_metadata=test_metadata,
     )
@@ -755,9 +856,9 @@ Examples:
     parser.add_argument(
         "--tool",
         type=str,
-        choices=["diann", "fragpipe", "both"],
+        choices=["diann", "fragpipe", "sage", "both"],
         default="both",
-        help="Which analysis tool(s) to run (default: both)",
+        help="Which analysis tool(s) to run (default: both). Sage is only used for DDA tests.",
     )
     parser.add_argument(
         "--skip-analysis",

@@ -10,7 +10,7 @@ test_id = "IT-DDA-TOPN"
 description = "Standard HeLa DDA-PASEF TopN benchmark"
 acquisition_type = "DDA"
 sample_type = "hela"
-analysis_tools = ["diann", "fragpipe"]
+analysis_tools = ["diann", "fragpipe", "sage"]
 
 [thresholds]
 min_id_rate = 0.30

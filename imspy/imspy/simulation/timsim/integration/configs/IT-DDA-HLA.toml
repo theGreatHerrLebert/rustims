@@ -11,7 +11,7 @@ test_id = "IT-DDA-HLA"
 description = "HLA immunopeptidomics thunder-PASEF benchmark"
 acquisition_type = "DDA"
 sample_type = "hla"
-analysis_tools = ["diann", "fragpipe"]
+analysis_tools = ["diann", "fragpipe", "sage"]
 
 [thresholds]
 min_id_rate = 0.20

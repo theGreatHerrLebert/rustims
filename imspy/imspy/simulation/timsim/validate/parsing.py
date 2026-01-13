@@ -422,3 +422,110 @@ def parse_fragpipe_combined(
 
 # Import os for file existence checks
 import os
+
+
+# =============================================================================
+# Sage parsing utilities
+# =============================================================================
+
+def format_sage_sequence(peptide: str) -> str:
+    """
+    Convert Sage modified sequence to standard UNIMOD format.
+
+    Sage uses bracket notation with mass values, e.g., "PEP[+79.9663]TIDE".
+    We convert to UNIMOD format: "PEP[UNIMOD:21]TIDE".
+
+    Args:
+        peptide: The modified peptide sequence from Sage.
+
+    Returns:
+        The formatted peptide sequence with UNIMOD annotations.
+    """
+    # Common Sage mass-to-UNIMOD mappings
+    mass_replacements = [
+        (r"\[+57\.0214\d*\]", "[UNIMOD:4]"),    # Carbamidomethyl (C)
+        (r"\[+15\.9949\d*\]", "[UNIMOD:35]"),   # Oxidation (M)
+        (r"\[+42\.0106\d*\]", "[UNIMOD:1]"),    # Acetyl (Protein N-term)
+        (r"\[+79\.9663\d*\]", "[UNIMOD:21]"),   # Phospho (STY)
+        (r"\[-17\.0265\d*\]", "[UNIMOD:385]"),  # Ammonia loss (N-term Q)
+        (r"\[-18\.0106\d*\]", "[UNIMOD:23]"),   # Water loss (N-term E)
+    ]
+
+    result = peptide
+    for pattern, replacement in mass_replacements:
+        result = re.sub(pattern, replacement, result)
+
+    return result
+
+
+def parse_sage_results(
+    results_path: str,
+    fdr_threshold: float = 0.01,
+) -> pd.DataFrame:
+    """
+    Parse Sage results.sage.tsv file and extract relevant columns.
+
+    Args:
+        results_path: Path to the Sage results.sage.tsv file.
+        fdr_threshold: FDR threshold for filtering results (default: 1%).
+
+    Returns:
+        DataFrame with standardized columns matching DiaNN/FragPipe output format:
+        - sequence: Plain sequence without modifications
+        - sequence_modified: Sequence with UNIMOD annotations
+        - charge: Precursor charge state
+        - rt: Retention time in minutes
+        - inverse_mobility: Ion mobility (1/K0)
+        - intensity: MS2 intensity
+        - q_value: Spectrum q-value for FDR filtering
+        - protein_id: Protein identifier(s)
+    """
+    df = pd.read_csv(results_path, sep='\t')
+
+    # Format sequences
+    df["sequence_modified"] = df["peptide"].apply(format_sage_sequence)
+    df["sequence"] = df["sequence_modified"].apply(remove_unimod_annotation)
+
+    # Rename columns to match standard format
+    column_mapping = {
+        "charge": "charge",
+        "rt": "rt",
+        "ion_mobility": "inverse_mobility",
+        "ms2_intensity": "intensity",
+        "spectrum_q": "q_value",
+        "proteins": "protein_id",
+        "hyperscore": "hyperscore",
+        "peptide_q": "peptide_q",
+        "protein_q": "protein_q",
+    }
+
+    df = df.rename(columns=column_mapping)
+
+    # Filter by FDR threshold using spectrum q-value
+    df = df[df["q_value"] <= fdr_threshold]
+
+    # Filter charge states (typically 1-4 for timsTOF)
+    df = df[df["charge"] <= 4]
+
+    # Select output columns
+    output_columns = [
+        "sequence",
+        "sequence_modified",
+        "charge",
+        "rt",
+        "inverse_mobility",
+        "intensity",
+        "q_value",
+        "protein_id",
+    ]
+
+    # Add optional columns if present
+    if "hyperscore" in df.columns:
+        output_columns.append("hyperscore")
+    if "peptide_q" in df.columns:
+        output_columns.append("peptide_q")
+
+    # Keep only existing columns
+    output_columns = [col for col in output_columns if col in df.columns]
+
+    return df[output_columns].reset_index(drop=True)
