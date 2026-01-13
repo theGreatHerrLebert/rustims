@@ -272,7 +272,8 @@ pub fn get_data_for_compression(
     let mut tof_copy = tofs.clone();
     modify_tofs(&mut tof_copy, &scans);
     let peak_cnts = get_peak_cnts(max_scans, &scans);
-    let interleaved: Vec<u32> = tofs
+    // Use delta-encoded tof_copy, not original tofs
+    let interleaved: Vec<u32> = tof_copy
         .iter()
         .zip(intensities.iter())
         .flat_map(|(tof, intensity)| vec![*tof, *intensity])
@@ -312,4 +313,92 @@ pub fn flatten_scan_values(scan: &Vec<u32>, zero_indexed: bool) -> Vec<u32> {
         .enumerate()
         .flat_map(|(index, &count)| vec![(index + add) as u32; count as usize].into_iter())
         .collect()
+}
+
+/// Merge duplicate (scan, tof) pairs by summing intensities.
+/// Returns sorted (scan, tof, intensity) arrays, sorted by scan first, then tof.
+///
+/// This handles the non-bijective nature of m/z -> tof conversion where multiple
+/// m/z values can map to the same tof index.
+///
+/// # Arguments
+/// * `scans` - Scan indices
+/// * `tofs` - TOF indices (already converted from m/z)
+/// * `intensities` - Intensity values
+///
+/// # Returns
+/// Tuple of (sorted_scans, sorted_tofs, summed_intensities)
+pub fn merge_and_sort_peaks(
+    scans: Vec<u32>,
+    tofs: Vec<u32>,
+    intensities: Vec<u32>,
+) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    use std::collections::BTreeMap;
+
+    // Use BTreeMap keyed by (scan, tof) for automatic sorting and deduplication
+    let mut peak_map: BTreeMap<(u32, u32), u64> = BTreeMap::new();
+
+    for ((&scan, &tof), &intensity) in scans.iter().zip(tofs.iter()).zip(intensities.iter()) {
+        *peak_map.entry((scan, tof)).or_insert(0) += intensity as u64;
+    }
+
+    // Extract sorted results
+    let len = peak_map.len();
+    let mut sorted_scans = Vec::with_capacity(len);
+    let mut sorted_tofs = Vec::with_capacity(len);
+    let mut sorted_intensities = Vec::with_capacity(len);
+
+    for ((scan, tof), intensity) in peak_map {
+        sorted_scans.push(scan);
+        sorted_tofs.push(tof);
+        // Clamp to u32::MAX if overflow
+        sorted_intensities.push(intensity.min(u32::MAX as u64) as u32);
+    }
+
+    (sorted_scans, sorted_tofs, sorted_intensities)
+}
+
+/// Compress multiple frames in parallel, with duplicate merging.
+/// Each frame is represented as (scan, tof, intensity) arrays that have already
+/// been converted from m/z/mobility by the caller.
+///
+/// # Arguments
+/// * `frames` - Vector of (scans, tofs, intensities) tuples for each frame
+/// * `total_scans` - Total number of scans per frame
+/// * `compression_level` - ZSTD compression level (0 = default)
+/// * `num_threads` - Number of parallel threads
+///
+/// # Returns
+/// Vector of compressed frame data (including header with size and scan count)
+pub fn compress_frames_with_merge(
+    frames: Vec<(Vec<u32>, Vec<u32>, Vec<u32>)>,
+    total_scans: u32,
+    compression_level: i32,
+    num_threads: usize,
+) -> Vec<Vec<u8>> {
+    let pool = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .unwrap();
+
+    pool.install(|| {
+        frames
+            .par_iter()
+            .map(|(scans, tofs, intensities)| {
+                // Merge duplicates and sort
+                let (merged_scans, merged_tofs, merged_intensities) =
+                    merge_and_sort_peaks(scans.clone(), tofs.clone(), intensities.clone());
+
+                // Compress using existing function
+                reconstruct_compressed_data(
+                    merged_scans,
+                    merged_tofs,
+                    merged_intensities,
+                    total_scans,
+                    compression_level,
+                )
+                .unwrap()
+            })
+            .collect()
+    })
 }

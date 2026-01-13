@@ -117,6 +117,9 @@ def assemble_frames(
     logger.info(f'Fragment m/z noise: {mz_noise_fragment}')
     logger.info(f'Fragment noise PPM: {fragment_noise_ppm}')
 
+    # Determine scan_mode based on acquisition mode
+    scan_mode = 8 if acquisition_builder.acquisition_mode.mode == 'DDA' else 9
+
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
         start_index = b * batch_size
@@ -147,11 +150,12 @@ def assemble_frames(
             pasef_meta=pasef_meta,
         )
 
-        for frame in built_frames:
-            if acquisition_builder.acquisition_mode.mode == 'DDA':
-                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=8)
-            else:
-                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
+        # Use batch writing for parallel compression (much faster than sequential)
+        acquisition_builder.tdf_writer.write_frames_batch(
+            built_frames,
+            scan_mode=scan_mode,
+            num_threads=num_threads,
+        )
 
     logger.info('Writing frame meta data to database ...')
 
