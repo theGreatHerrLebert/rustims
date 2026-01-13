@@ -34,6 +34,11 @@ class PlotPaths:
     intensity_histogram: Optional[str] = None
     venn_diagram: Optional[str] = None
     quant_correlation: Optional[str] = None
+    charge_state_breakdown: Optional[str] = None
+    intensity_id_rate: Optional[str] = None
+    peptide_length_breakdown: Optional[str] = None
+    missed_cleavages_breakdown: Optional[str] = None
+    mass_accuracy: Optional[str] = None
 
 
 def _setup_style():
@@ -467,6 +472,263 @@ def plot_intensity_histogram(
     }
 
 
+def plot_charge_state_breakdown(
+    ax: plt.Axes,
+    charge_state_metrics: Dict[int, Dict[str, Any]],
+    title: str = "Identification Rate by Charge State",
+) -> None:
+    """
+    Plot identification rate breakdown by charge state.
+
+    Args:
+        ax: Matplotlib axes to plot on.
+        charge_state_metrics: Dictionary with per-charge-state metrics.
+        title: Plot title.
+    """
+    if not charge_state_metrics:
+        ax.text(0.5, 0.5, "No charge state data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(title)
+        return
+
+    charges = sorted(charge_state_metrics.keys())
+    id_rates = [charge_state_metrics[c]["identification_rate"] * 100 for c in charges]
+    gt_counts = [charge_state_metrics[c]["ground_truth"] for c in charges]
+    id_counts = [charge_state_metrics[c]["identified"] for c in charges]
+
+    x = np.arange(len(charges))
+    width = 0.6
+
+    bars = ax.bar(x, id_rates, width, color=[COLOR_IDENTIFIED, COLOR_SIMULATED, "#9467bd"][:len(charges)],
+                  edgecolor='black', linewidth=0.5)
+
+    # Add value labels on bars
+    for i, (bar, gt, idc) in enumerate(zip(bars, gt_counts, id_counts)):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{height:.1f}%\n({idc}/{gt})',
+                ha='center', va='bottom', fontsize=8)
+
+    ax.set_xlabel("Charge State")
+    ax.set_ylabel("Identification Rate (%)")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels([f"{c}+" for c in charges])
+    ax.set_ylim(0, max(id_rates) * 1.2 if id_rates else 100)
+    ax.axhline(y=30, color='red', linestyle='--', alpha=0.5, label='Threshold (30%)')
+    ax.legend(loc='upper right', fontsize=8)
+
+
+def plot_intensity_id_rate(
+    ax: plt.Axes,
+    intensity_bin_metrics: Dict[int, Dict[str, Any]],
+    title: str = "Identification Rate by Intensity",
+) -> None:
+    """
+    Plot identification rate across intensity bins.
+
+    Args:
+        ax: Matplotlib axes to plot on.
+        intensity_bin_metrics: Dictionary with per-bin metrics.
+        title: Plot title.
+    """
+    if not intensity_bin_metrics:
+        ax.text(0.5, 0.5, "No intensity bin data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(title)
+        return
+
+    bins = sorted(intensity_bin_metrics.keys())
+    id_rates = [intensity_bin_metrics[b]["identification_rate"] * 100 for b in bins]
+    ranges = [intensity_bin_metrics[b]["intensity_range"] for b in bins]
+    gt_counts = [intensity_bin_metrics[b]["ground_truth"] for b in bins]
+
+    x = np.arange(len(bins))
+    width = 0.7
+
+    # Color gradient from low (red) to high (green) intensity
+    colors = plt.cm.RdYlGn(np.linspace(0.2, 0.8, len(bins)))
+    bars = ax.bar(x, id_rates, width, color=colors, edgecolor='black', linewidth=0.5)
+
+    # Add value labels
+    for bar, gt in zip(bars, gt_counts):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{height:.1f}%',
+                ha='center', va='bottom', fontsize=8)
+
+    ax.set_xlabel("Intensity Bin")
+    ax.set_ylabel("Identification Rate (%)")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    # Simplify intensity range labels
+    labels = [r.split('-')[0] for r in ranges]  # Just show lower bound
+    ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+    ax.set_ylim(0, max(id_rates) * 1.2 if id_rates else 100)
+
+
+def plot_peptide_length_breakdown(
+    ax: plt.Axes,
+    peptide_property_metrics: Dict[str, Any],
+    title: str = "Identification Rate by Peptide Length",
+) -> None:
+    """
+    Plot identification rate breakdown by peptide length.
+
+    Args:
+        ax: Matplotlib axes to plot on.
+        peptide_property_metrics: Dictionary with peptide property metrics.
+        title: Plot title.
+    """
+    by_length = peptide_property_metrics.get("by_length", {})
+    if not by_length:
+        ax.text(0.5, 0.5, "No length data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(title)
+        return
+
+    length_bins = list(by_length.keys())
+    id_rates = [by_length[lb]["identification_rate"] * 100 for lb in length_bins]
+    gt_counts = [by_length[lb]["ground_truth"] for lb in length_bins]
+    id_counts = [by_length[lb]["identified"] for lb in length_bins]
+
+    x = np.arange(len(length_bins))
+    width = 0.6
+
+    colors = plt.cm.viridis(np.linspace(0.2, 0.8, len(length_bins)))
+    bars = ax.bar(x, id_rates, width, color=colors, edgecolor='black', linewidth=0.5)
+
+    # Add value labels
+    for bar, gt, idc in zip(bars, gt_counts, id_counts):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{height:.1f}%',
+                ha='center', va='bottom', fontsize=8)
+
+    ax.set_xlabel("Peptide Length (aa)")
+    ax.set_ylabel("Identification Rate (%)")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels(length_bins, fontsize=9)
+    ax.set_ylim(0, max(id_rates) * 1.2 if id_rates else 100)
+
+
+def plot_missed_cleavages_breakdown(
+    ax: plt.Axes,
+    peptide_property_metrics: Dict[str, Any],
+    title: str = "Identification Rate by Missed Cleavages",
+) -> None:
+    """
+    Plot identification rate breakdown by missed cleavages.
+
+    Args:
+        ax: Matplotlib axes to plot on.
+        peptide_property_metrics: Dictionary with peptide property metrics.
+        title: Plot title.
+    """
+    by_mc = peptide_property_metrics.get("by_missed_cleavages", {})
+    if not by_mc:
+        ax.text(0.5, 0.5, "No missed cleavages data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(title)
+        return
+
+    mc_values = sorted(by_mc.keys())
+    id_rates = [by_mc[mc]["identification_rate"] * 100 for mc in mc_values]
+    gt_counts = [by_mc[mc]["ground_truth"] for mc in mc_values]
+    id_counts = [by_mc[mc]["identified"] for mc in mc_values]
+
+    x = np.arange(len(mc_values))
+    width = 0.5
+
+    colors = ['#2ecc71', '#f39c12', '#e74c3c'][:len(mc_values)]  # Green, orange, red
+    bars = ax.bar(x, id_rates, width, color=colors, edgecolor='black', linewidth=0.5)
+
+    # Add value labels
+    for bar, gt, idc in zip(bars, gt_counts, id_counts):
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 1,
+                f'{height:.1f}%\n({idc}/{gt})',
+                ha='center', va='bottom', fontsize=8)
+
+    ax.set_xlabel("Missed Cleavages")
+    ax.set_ylabel("Identification Rate (%)")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels([str(mc) for mc in mc_values])
+    ax.set_ylim(0, max(id_rates) * 1.2 if id_rates else 100)
+
+
+def plot_mass_accuracy(
+    ax: plt.Axes,
+    mass_accuracy_metrics: Dict[str, Any],
+    matched_df: pd.DataFrame,
+    diann_results: Optional[pd.DataFrame] = None,
+    title: str = "Mass Accuracy Distribution",
+) -> None:
+    """
+    Plot mass accuracy distribution as histogram.
+
+    Args:
+        ax: Matplotlib axes to plot on.
+        mass_accuracy_metrics: Dictionary with mass accuracy metrics.
+        matched_df: DataFrame with matched results (for extracting ppm errors if available).
+        diann_results: Optional original DiaNN results DataFrame.
+        title: Plot title.
+    """
+    # Try to get ppm errors from various sources
+    ppm_errors = None
+
+    # Check if matched_df has mass error info
+    if "Mass.Error.PPM" in matched_df.columns:
+        ppm_errors = matched_df["Mass.Error.PPM"].dropna().values
+    elif diann_results is not None and "Mass.Error.PPM" in diann_results.columns:
+        ppm_errors = diann_results["Mass.Error.PPM"].dropna().values
+
+    if ppm_errors is None or len(ppm_errors) == 0:
+        # Show metrics as text if we have them but no raw data
+        if mass_accuracy_metrics and mass_accuracy_metrics.get("n_measurements", 0) > 0:
+            text_lines = [
+                "Mass Accuracy Metrics",
+                "=" * 25,
+                f"Mean Error: {mass_accuracy_metrics.get('mean_ppm_error', 0):.2f} ppm",
+                f"Median Error: {mass_accuracy_metrics.get('median_ppm_error', 0):.2f} ppm",
+                f"Std Dev: {mass_accuracy_metrics.get('std_ppm_error', 0):.2f} ppm",
+                f"MAE: {mass_accuracy_metrics.get('mae_ppm', 0):.2f} ppm",
+                f"N = {mass_accuracy_metrics.get('n_measurements', 0)}",
+            ]
+            ax.text(0.5, 0.5, "\n".join(text_lines), ha="center", va="center",
+                    transform=ax.transAxes, fontsize=10, family="monospace",
+                    bbox=dict(boxstyle="round", facecolor="lightgray", alpha=0.3))
+        else:
+            ax.text(0.5, 0.5, "No mass accuracy data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(title)
+        ax.axis('off')
+        return
+
+    # Plot histogram
+    bins = np.linspace(-5, 5, 51)  # -5 to +5 ppm in 0.2 ppm bins
+    ax.hist(ppm_errors, bins=bins, color=COLOR_SIMULATED, edgecolor='black',
+            linewidth=0.5, alpha=0.7)
+
+    # Add vertical line at 0
+    ax.axvline(x=0, color='red', linestyle='--', linewidth=1.5, alpha=0.7)
+
+    # Add mean line
+    mean_err = np.mean(ppm_errors)
+    ax.axvline(x=mean_err, color='green', linestyle='-', linewidth=1.5, alpha=0.7,
+               label=f'Mean: {mean_err:.2f} ppm')
+
+    # Stats annotation
+    std_err = np.std(ppm_errors)
+    mae = np.mean(np.abs(ppm_errors))
+    ax.text(0.95, 0.95,
+            f"Mean: {mean_err:.2f} ppm\nStd: {std_err:.2f} ppm\nMAE: {mae:.2f} ppm\nN = {len(ppm_errors)}",
+            transform=ax.transAxes, ha="right", va="top", fontsize=9,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
+
+    ax.set_xlabel("Mass Error (ppm)")
+    ax.set_ylabel("Count")
+    ax.set_title(title)
+    ax.legend(loc='upper left', fontsize=8)
+
+
 def generate_summary_figure(
     ground_truth_df: pd.DataFrame,
     matched_df: pd.DataFrame,
@@ -766,6 +1028,78 @@ def generate_all_plots(
         paths.quant_correlation = quant_path
     except Exception as e:
         logger.warning(f"Failed to generate quantification plot: {e}")
+
+    # Charge state breakdown
+    try:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        if hasattr(metrics, 'charge_state_metrics') and metrics.charge_state_metrics:
+            plot_charge_state_breakdown(ax, metrics.charge_state_metrics)
+        else:
+            ax.text(0.5, 0.5, "No charge state data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Identification Rate by Charge State")
+        charge_path = os.path.join(plots_dir, "charge_state_breakdown.png")
+        plt.savefig(charge_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.charge_state_breakdown = charge_path
+    except Exception as e:
+        logger.warning(f"Failed to generate charge state breakdown plot: {e}")
+
+    # Intensity-dependent ID rate
+    try:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        if hasattr(metrics, 'intensity_bin_metrics') and metrics.intensity_bin_metrics:
+            plot_intensity_id_rate(ax, metrics.intensity_bin_metrics)
+        else:
+            ax.text(0.5, 0.5, "No intensity bin data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Identification Rate by Intensity")
+        intensity_path = os.path.join(plots_dir, "intensity_id_rate.png")
+        plt.savefig(intensity_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.intensity_id_rate = intensity_path
+    except Exception as e:
+        logger.warning(f"Failed to generate intensity ID rate plot: {e}")
+
+    # Peptide length breakdown
+    try:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        if hasattr(metrics, 'peptide_property_metrics') and metrics.peptide_property_metrics:
+            plot_peptide_length_breakdown(ax, metrics.peptide_property_metrics)
+        else:
+            ax.text(0.5, 0.5, "No peptide length data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Identification Rate by Peptide Length")
+        length_path = os.path.join(plots_dir, "peptide_length_breakdown.png")
+        plt.savefig(length_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.peptide_length_breakdown = length_path
+    except Exception as e:
+        logger.warning(f"Failed to generate peptide length breakdown plot: {e}")
+
+    # Missed cleavages breakdown
+    try:
+        fig, ax = plt.subplots(figsize=(6, 5))
+        if hasattr(metrics, 'peptide_property_metrics') and metrics.peptide_property_metrics:
+            plot_missed_cleavages_breakdown(ax, metrics.peptide_property_metrics)
+        else:
+            ax.text(0.5, 0.5, "No missed cleavages data", ha="center", va="center", transform=ax.transAxes)
+            ax.set_title("Identification Rate by Missed Cleavages")
+        mc_path = os.path.join(plots_dir, "missed_cleavages_breakdown.png")
+        plt.savefig(mc_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.missed_cleavages_breakdown = mc_path
+    except Exception as e:
+        logger.warning(f"Failed to generate missed cleavages breakdown plot: {e}")
+
+    # Mass accuracy
+    try:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        mass_metrics = getattr(metrics, 'mass_accuracy_metrics', {}) if metrics else {}
+        plot_mass_accuracy(ax, mass_metrics, matched_df)
+        mass_path = os.path.join(plots_dir, "mass_accuracy.png")
+        plt.savefig(mass_path, bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        paths.mass_accuracy = mass_path
+    except Exception as e:
+        logger.warning(f"Failed to generate mass accuracy plot: {e}")
 
     logger.info(f"Generated validation plots in {plots_dir}")
     return paths

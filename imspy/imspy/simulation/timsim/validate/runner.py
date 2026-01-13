@@ -8,10 +8,11 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Literal
 
 from .diann_executor import DiannExecutor, DiannError
-from .parsing import parse_diann_report
+from .fragpipe_executor import FragPipeExecutor, FragPipeError, FragPipeConfig
+from .parsing import parse_diann_report, parse_fragpipe_psm, parse_fragpipe_combined
 from .comparison import (
     load_ground_truth,
     create_peptide_sets,
@@ -31,6 +32,11 @@ from .report import (
     save_text_report,
 )
 from .plots import generate_all_plots, PlotPaths
+from .tool_comparison import (
+    run_comparison as run_tool_comparison,
+    generate_comparison_text_report,
+    generate_comparison_plots,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +98,15 @@ class ValidationRunner:
         output_dir: str,
         fasta_path: Optional[str] = None,
         diann_executor: Optional[DiannExecutor] = None,
+        fragpipe_executor: Optional[FragPipeExecutor] = None,
         thresholds: Optional[ValidationThresholds] = None,
         simulation_config: Optional[SimulationConfig] = None,
         keep_temp: bool = False,
         verbose: bool = False,
         existing_simulation: Optional[str] = None,
         database_path: Optional[str] = None,
+        analysis_tool: Literal["diann", "fragpipe", "both"] = "diann",
+        existing_fragpipe_output: Optional[str] = None,
     ):
         """
         Initialize validation runner.
@@ -107,28 +116,35 @@ class ValidationRunner:
             output_dir: Output directory for results.
             fasta_path: Path to FASTA file (None = use bundled test FASTA).
             diann_executor: DiaNN executor instance.
+            fragpipe_executor: FragPipe executor instance.
             thresholds: Validation thresholds.
             simulation_config: Simulation configuration.
             keep_temp: Keep temporary simulation files.
             verbose: Verbose output.
             existing_simulation: Path to existing .d folder to skip simulation.
             database_path: Explicit path to synthetic_data.db (required with existing_simulation).
+            analysis_tool: Which analysis tool to use ("diann" or "fragpipe").
+            existing_fragpipe_output: Path to existing FragPipe output directory (skip analysis).
         """
         self.reference_path = reference_path
         self.output_dir = output_dir
         self.fasta_path = fasta_path or self._get_bundled_fasta()
         self.diann_executor = diann_executor or DiannExecutor()
+        self.fragpipe_executor = fragpipe_executor
         self.thresholds = thresholds or ValidationThresholds()
         self.simulation_config = simulation_config or SimulationConfig()
         self.keep_temp = keep_temp
         self.verbose = verbose
         self.existing_simulation = existing_simulation
         self.database_path_override = database_path
+        self.analysis_tool = analysis_tool
+        self.existing_fragpipe_output = existing_fragpipe_output
 
         # Will be set during run
         self._simulation_path: Optional[str] = None
         self._database_path: Optional[str] = None
         self._diann_report_path: Optional[str] = None
+        self._fragpipe_result: Optional[Any] = None
 
     def _get_bundled_fasta(self) -> str:
         """Get path to bundled test FASTA."""
@@ -161,18 +177,40 @@ class ValidationRunner:
                 logger.info("Step 1/6: Running timsim simulation...")
                 self._run_simulation()
 
-            # Step 2: Execute DiaNN
-            logger.info("Step 2/6: Executing DiaNN analysis...")
-            self._run_diann()
+            # Step 2: Execute analysis tool (DiaNN, FragPipe, or both)
+            if self.analysis_tool == "both":
+                logger.info("Step 2/6: Executing DiaNN analysis...")
+                self._run_diann()
+                logger.info("Step 2.5/6: Executing FragPipe analysis...")
+                self._run_fragpipe()
+            elif self.analysis_tool == "fragpipe":
+                logger.info("Step 2/6: Executing FragPipe analysis...")
+                self._run_fragpipe()
+            else:
+                logger.info("Step 2/6: Executing DiaNN analysis...")
+                self._run_diann()
 
             # Step 3: Load ground truth
             logger.info("Step 3/6: Loading ground truth data...")
             ground_truth = load_ground_truth(self._database_path)
 
-            # Step 4: Parse DiaNN results and compare
+            # Step 4: Parse results and compare
             logger.info("Step 4/6: Comparing results...")
-            diann_results = parse_diann_report(self._diann_report_path)
-            metrics, matched_df = self._compute_metrics(ground_truth, diann_results)
+
+            # Handle "both" mode with multi-tool comparison
+            if self.analysis_tool == "both":
+                return self._run_both_tools_comparison(ground_truth)
+
+            if self.analysis_tool == "fragpipe":
+                analysis_results = parse_fragpipe_combined(
+                    psm_path=self._fragpipe_result.psm_path,
+                    peptide_path=self._fragpipe_result.peptide_path,
+                    protein_path=self._fragpipe_result.protein_path,
+                    ion_path=self._fragpipe_result.ion_path,
+                )
+            else:
+                analysis_results = parse_diann_report(self._diann_report_path)
+            metrics, matched_df = self._compute_metrics(ground_truth, analysis_results)
 
             # Step 5: Generate plots
             logger.info("Step 5/6: Generating plots...")
@@ -223,6 +261,9 @@ class ValidationRunner:
         except DiannError as e:
             logger.error(f"DiaNN error: {e}")
             return ValidationResult.from_error(str(e), exit_code=3)
+        except FragPipeError as e:
+            logger.error(f"FragPipe error: {e}")
+            return ValidationResult.from_error(str(e), exit_code=6)
         except SimulationError as e:
             logger.error(f"Simulation error: {e}")
             return ValidationResult.from_error(str(e), exit_code=2)
@@ -359,6 +400,52 @@ batch_size = {self.simulation_config.batch_size}
 
         self._diann_report_path = result.report_path
 
+    def _run_fragpipe(self) -> None:
+        """Execute FragPipe analysis."""
+        # Check if using existing FragPipe output
+        if self.existing_fragpipe_output:
+            logger.info(f"  Using existing FragPipe output: {self.existing_fragpipe_output}")
+            self._fragpipe_result = self.fragpipe_executor.execute_from_existing_output(
+                self.existing_fragpipe_output
+            )
+            return
+
+        # Ensure FragPipe executor is configured
+        if self.fragpipe_executor is None:
+            raise FragPipeError(
+                "FragPipe executor not configured. "
+                "Provide --fragpipe-path and --fragpipe-workflow options."
+            )
+
+        fragpipe_output_dir = os.path.join(self.output_dir, "fragpipe")
+
+        # Find the .d folder in simulation output
+        sim_d_folder = None
+        for item in os.listdir(self._simulation_path):
+            if item.endswith(".d"):
+                sim_d_folder = os.path.join(self._simulation_path, item)
+                break
+
+        if sim_d_folder is None:
+            # The simulation path might itself be the .d folder
+            if self._simulation_path.endswith(".d"):
+                sim_d_folder = self._simulation_path
+            else:
+                raise ComparisonError(
+                    f"No .d folder found in simulation output: {self._simulation_path}"
+                )
+
+        result = self.fragpipe_executor.execute(
+            data_path=sim_d_folder,
+            fasta_path=self.fasta_path,
+            output_dir=fragpipe_output_dir,
+        )
+
+        if not result.success:
+            raise FragPipeError(f"FragPipe analysis failed. Check log at {result.log_path}")
+
+        self._fragpipe_result = result
+
     def _compute_metrics(
         self,
         ground_truth,
@@ -414,6 +501,158 @@ batch_size = {self.simulation_config.batch_size}
         metrics = check_thresholds(metrics, self.thresholds)
 
         return metrics, matched
+
+    def _run_both_tools_comparison(self, ground_truth) -> ValidationResult:
+        """
+        Run multi-tool comparison when both DiaNN and FragPipe are used.
+
+        This generates a comprehensive comparison report showing how both tools
+        perform against the simulation ground truth.
+        """
+        import json
+        from datetime import datetime
+        from .tool_comparison import compare_tools, ComparisonResult
+
+        # Parse both tool results
+        tool_results = {}
+
+        if self._diann_report_path and os.path.exists(self._diann_report_path):
+            logger.info("  Loading DiaNN results...")
+            tool_results["DIA-NN"] = parse_diann_report(self._diann_report_path)
+
+        if self._fragpipe_result and self._fragpipe_result.psm_path:
+            logger.info("  Loading FragPipe results...")
+            tool_results["FragPipe"] = parse_fragpipe_combined(
+                psm_path=self._fragpipe_result.psm_path,
+                peptide_path=self._fragpipe_result.peptide_path,
+                protein_path=self._fragpipe_result.protein_path,
+                ion_path=self._fragpipe_result.ion_path,
+            )
+
+        if not tool_results:
+            raise ComparisonError("No tool results available for comparison")
+
+        # Run multi-tool comparison
+        logger.info("Step 4/6: Running multi-tool comparison...")
+        comparison_result = compare_tools(ground_truth, tool_results)
+
+        # Step 5: Generate comparison plots
+        logger.info("Step 5/6: Generating comparison plots...")
+        plot_dir = os.path.join(self.output_dir, "plots")
+        try:
+            comparison_plots = generate_comparison_plots(
+                comparison_result, ground_truth, plot_dir
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate comparison plots: {e}")
+            comparison_plots = {}
+
+        # Step 6: Generate reports
+        logger.info("Step 6/6: Generating comparison reports...")
+
+        # Generate text report
+        text_report = generate_comparison_text_report(comparison_result)
+        text_report_path = os.path.join(self.output_dir, "tool_comparison_report.txt")
+        with open(text_report_path, 'w') as f:
+            f.write(text_report)
+
+        # Generate JSON report
+        json_report = {
+            "metadata": {
+                "tool": "timsim-validate",
+                "mode": "multi-tool-comparison",
+                "version": "0.4.0",
+                "timestamp": datetime.now().isoformat(),
+                "paths": {
+                    "simulation": self._simulation_path,
+                    "database": self._database_path,
+                    "diann_report": self._diann_report_path,
+                    "fragpipe_output": self._fragpipe_result.output_dir if self._fragpipe_result else None,
+                    "fasta": self.fasta_path,
+                },
+                "plots": comparison_plots,
+            },
+            "ground_truth": {
+                "num_precursors": comparison_result.ground_truth_precursors,
+                "num_peptides": comparison_result.ground_truth_peptides,
+            },
+            "tool_results": {
+                name: {
+                    "num_psms": tool.num_psms,
+                    "num_peptides": tool.num_peptides,
+                    "num_precursors": tool.num_precursors,
+                    "identification_rate": comparison_result.gt_overlaps[name].identification_rate,
+                    "precision": comparison_result.gt_overlaps[name].precision,
+                    "true_positives": comparison_result.gt_overlaps[name].both,
+                    "false_positives": comparison_result.gt_overlaps[name].tool_only,
+                    "false_negatives": comparison_result.gt_overlaps[name].gt_only,
+                }
+                for name, tool in comparison_result.tool_results.items()
+            },
+            "pairwise_comparisons": {
+                key: {
+                    "tool1": comp.tool1_name,
+                    "tool2": comp.tool2_name,
+                    "common": comp.both,
+                    "tool1_only": comp.tool1_only,
+                    "tool2_only": comp.tool2_only,
+                    "jaccard_index": comp.jaccard_index,
+                }
+                for key, comp in comparison_result.pairwise.items()
+            },
+            "correlations": {
+                "rt": comparison_result.rt_correlations,
+                "im": comparison_result.im_correlations,
+            },
+            "coverage": {
+                "common_to_all_tools": comparison_result.common_to_all,
+                "unique_to_ground_truth": comparison_result.unique_to_gt,
+            },
+            "intensity_breakdown": [
+                {
+                    "bin": bin_m.bin_index,
+                    "intensity_range": bin_m.intensity_range,
+                    "log_range": bin_m.log_range,
+                    "ground_truth": bin_m.ground_truth_count,
+                    "per_tool": bin_m.metrics_per_tool,
+                }
+                for bin_m in (comparison_result.intensity_breakdown or [])
+            ],
+            "charge_breakdown": [
+                {
+                    "charge": charge_m.charge,
+                    "ground_truth": charge_m.ground_truth_count,
+                    "per_tool": charge_m.metrics_per_tool,
+                }
+                for charge_m in (comparison_result.charge_breakdown or [])
+            ],
+        }
+
+        json_report_path = os.path.join(self.output_dir, "tool_comparison_report.json")
+        with open(json_report_path, 'w') as f:
+            json.dump(json_report, f, indent=2)
+
+        if self.verbose:
+            print(text_report)
+
+        # Cleanup temp files if not keeping
+        if not self.keep_temp and self._simulation_path:
+            self._cleanup_simulation()
+
+        # Determine overall success based on both tools meeting thresholds
+        all_pass = all(
+            overlap.identification_rate >= self.thresholds.min_identification_rate
+            for overlap in comparison_result.gt_overlaps.values()
+        )
+
+        return ValidationResult(
+            success=all_pass,
+            metrics=None,  # Multi-tool mode doesn't use single metrics
+            report_path=json_report_path,
+            text_report_path=text_report_path,
+            plot_paths=None,
+            exit_code=0 if all_pass else 1,
+        )
 
     def _cleanup_simulation(self) -> None:
         """Clean up temporary simulation files."""

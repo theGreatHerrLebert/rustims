@@ -179,3 +179,224 @@ def create_precursor_id(sequence: str, charge: int) -> str:
         A unique precursor identifier string.
     """
     return f"{sequence}_{charge}"
+
+
+# =============================================================================
+# FragPipe parsing utilities
+# =============================================================================
+
+def mass_to_unimod(mass: float) -> str:
+    """
+    Convert a modification mass to UNIMOD annotation.
+
+    Args:
+        mass: The modification mass in Daltons.
+
+    Returns:
+        UNIMOD annotation string.
+    """
+    # Common modifications
+    mass_map = {
+        57: "[UNIMOD:4]",   # Carbamidomethyl (C)
+        16: "[UNIMOD:35]",  # Oxidation (M)
+        42: "[UNIMOD:1]",   # Acetyl (Protein N-term)
+        80: "[UNIMOD:21]",  # Phospho (STY)
+    }
+
+    rounded = int(round(mass))
+    return mass_map.get(rounded, f"[{mass:.4f}]")
+
+
+def parse_fragpipe_modification(mod_string: str, sequence: str) -> list:
+    """
+    Parse FragPipe modification string into position-modification pairs.
+
+    Args:
+        mod_string: The modification string from FragPipe (e.g., "2M(15.9949), 6C(57.0214)").
+        sequence: The peptide sequence.
+
+    Returns:
+        List of (position, modified_aa) tuples.
+    """
+    import numpy as np
+
+    modifications = []
+    if pd.isna(mod_string) or not mod_string:
+        return modifications
+
+    try:
+        mods_list = mod_string.split(", ")
+        for mod in mods_list:
+            # Handle N-terminal acetylation
+            if mod == 'N-term(42.0106)':
+                modifications.append((0, f"[UNIMOD:1]{sequence[0]}"))
+            else:
+                # Pattern: position + amino acid + mass in parentheses
+                # e.g., "2M(15.9949)" or "6C(57.0214)"
+                pattern = r"^(\d+)([A-Za-z])\(([\d.]+)\)$"
+                match = re.match(pattern, mod)
+                if match:
+                    index, aa, mass = match.groups()
+                    unimod = mass_to_unimod(float(mass))
+                    modifications.append((int(index) - 1, aa + unimod))
+    except Exception:
+        pass  # Handle malformed modification strings
+
+    return modifications
+
+
+def fragpipe_mods_to_unimod(sequence: str, mods: str) -> str:
+    """
+    Convert FragPipe modifications to UNIMOD-style sequence.
+
+    Args:
+        sequence: The plain peptide sequence.
+        mods: The FragPipe modifications string.
+
+    Returns:
+        Sequence with UNIMOD annotations.
+    """
+    r_dict = {index: aa for index, aa in enumerate(sequence)}
+    modifications = parse_fragpipe_modification(mods, sequence)
+    for index, mod in modifications:
+        r_dict[index] = mod
+    return "".join(r_dict.values())
+
+
+def parse_fragpipe_psm(
+    psm_path: str,
+    fdr_threshold: float = 0.01,
+) -> pd.DataFrame:
+    """
+    Parse FragPipe PSM.tsv file and extract relevant columns.
+
+    Args:
+        psm_path: Path to the FragPipe psm.tsv file.
+        fdr_threshold: Probability threshold for filtering (default: 0.01 = 99% probability).
+
+    Returns:
+        DataFrame with standardized columns matching DiaNN output format.
+    """
+    df = pd.read_csv(psm_path, sep='\t')
+
+    # Convert modifications to UNIMOD format (handle NaN values)
+    def safe_mods_to_unimod(row):
+        mods = row.get("Assigned Modifications", "")
+        if pd.isna(mods):
+            mods = ""
+        return fragpipe_mods_to_unimod(row["Peptide"], str(mods))
+
+    df["sequence_modified"] = df.apply(safe_mods_to_unimod, axis=1)
+    df["sequence"] = df["Peptide"]
+
+    # Rename columns to match standard format
+    column_mapping = {
+        "Charge": "charge",
+        "Retention": "rt",
+        "Ion Mobility": "inverse_mobility",
+        "Intensity": "intensity",
+        "Probability": "probability",
+        "Protein ID": "protein_id",
+        "Hyperscore": "hyperscore",
+    }
+
+    df = df.rename(columns=column_mapping)
+
+    # Convert retention time from seconds to minutes
+    if "rt" in df.columns:
+        df["rt"] = df["rt"] / 60.0
+
+    # Calculate q-value proxy from probability (1 - probability)
+    df["q_value"] = 1.0 - df["probability"]
+
+    # Filter by probability (equivalent to FDR filtering)
+    df = df[df["probability"] >= (1.0 - fdr_threshold)]
+
+    # Filter charge states
+    df = df[df["charge"] <= 4]
+
+    # Select output columns
+    output_columns = [
+        "sequence",
+        "sequence_modified",
+        "charge",
+        "rt",
+        "inverse_mobility",
+        "intensity",
+        "q_value",
+        "protein_id",
+    ]
+
+    # Keep only existing columns
+    output_columns = [col for col in output_columns if col in df.columns]
+
+    return df[output_columns].reset_index(drop=True)
+
+
+def parse_fragpipe_combined(
+    psm_path: str,
+    peptide_path: str = None,
+    protein_path: str = None,
+    ion_path: str = None,
+    fdr_threshold: float = 0.01,
+) -> pd.DataFrame:
+    """
+    Parse FragPipe output files and combine into a unified format.
+
+    This combines PSM, peptide, and protein level information similar to
+    the process_fragpipe_psm_table function from timsim_bench.
+
+    Args:
+        psm_path: Path to FragPipe psm.tsv file.
+        peptide_path: Path to FragPipe peptide.tsv file (optional).
+        protein_path: Path to FragPipe protein.tsv file (optional).
+        ion_path: Path to FragPipe ion.tsv file for intensities (optional).
+        fdr_threshold: FDR threshold for filtering.
+
+    Returns:
+        DataFrame with standardized columns and combined quality scores.
+    """
+    # Parse PSM table
+    psm_df = parse_fragpipe_psm(psm_path, fdr_threshold)
+
+    # Add peptide-level quality if available
+    if peptide_path and os.path.exists(peptide_path):
+        peptide_df = pd.read_csv(peptide_path, sep='\t')
+        peptide_quality = dict(zip(peptide_df["Peptide"], peptide_df.get("Probability", 0.99)))
+        psm_df["peptide_probability"] = psm_df["sequence"].map(peptide_quality).fillna(0.99)
+
+    # Add protein-level quality if available
+    if protein_path and os.path.exists(protein_path):
+        protein_df = pd.read_csv(protein_path, sep='\t')
+        protein_quality = dict(zip(protein_df["Protein ID"], protein_df.get("Protein Probability", 0.99)))
+        psm_df["protein_probability"] = psm_df["protein_id"].map(protein_quality).fillna(0.99)
+
+    # Add ion intensities if available
+    if ion_path and os.path.exists(ion_path):
+        ion_df = pd.read_csv(ion_path, sep='\t')
+        # Ion table has more detailed intensity information
+        # Merge on sequence and charge
+        if "Modified Sequence" in ion_df.columns:
+            def safe_format_sequence(s):
+                if pd.isna(s):
+                    return ""
+                return str(s).replace("(", "[").replace(")", "]").replace("UniMod", "UNIMOD")
+
+            ion_df["sequence_modified"] = ion_df["Modified Sequence"].apply(safe_format_sequence)
+            ion_intensity = ion_df.groupby(["sequence_modified", "Charge"])["Intensity"].max().reset_index()
+            ion_intensity = ion_intensity.rename(columns={"Charge": "charge", "Intensity": "ion_intensity"})
+            psm_df = psm_df.merge(
+                ion_intensity,
+                on=["sequence_modified", "charge"],
+                how="left"
+            )
+            # Use ion intensity if available and PSM intensity is missing/zero
+            if "ion_intensity" in psm_df.columns:
+                psm_df["intensity"] = psm_df["intensity"].fillna(psm_df["ion_intensity"])
+                psm_df = psm_df.drop(columns=["ion_intensity"])
+
+    return psm_df
+
+
+# Import os for file existence checks
+import os

@@ -11,6 +11,7 @@ import toml
 
 from .runner import ValidationRunner, SimulationConfig
 from .diann_executor import DiannExecutor, DiannConfig
+from .fragpipe_executor import FragPipeExecutor, FragPipeConfig
 from .metrics import ValidationThresholds
 
 
@@ -71,6 +72,17 @@ def get_default_config() -> dict:
         "keep_temp": False,
         "verbose": False,
         "quiet": False,
+
+        # Analysis tool selection
+        "analysis_tool": "diann",  # "diann" or "fragpipe"
+
+        # FragPipe settings
+        "fragpipe_path": None,  # Path to fragpipe executable
+        "fragpipe_workflow": None,  # Path to workflow file
+        "fragpipe_tools_folder": None,  # FragPipe tools folder
+        "fragpipe_python": None,  # Python executable for FragPipe
+        "fragpipe_timeout": 7200,  # 2 hours
+        "existing_fragpipe_output": None,  # Path to existing FragPipe output
     }
 
 
@@ -139,6 +151,20 @@ def load_toml_config(config_path: str) -> dict:
                 elif section_key == "thresholds":
                     # Thresholds section maps directly
                     flat_config[key] = value
+                elif section_key == "fragpipe":
+                    # Map fragpipe section keys to fragpipe_ prefixed config keys
+                    fragpipe_key_mapping = {
+                        "executable_path": "fragpipe_path",
+                        "workflow": "fragpipe_workflow",
+                        "tools_folder": "fragpipe_tools_folder",
+                        "python": "fragpipe_python",
+                        "timeout_seconds": "fragpipe_timeout",
+                        "existing_output": "existing_fragpipe_output",
+                    }
+                    if key in fragpipe_key_mapping:
+                        flat_config[fragpipe_key_mapping[key]] = value
+                    else:
+                        flat_config[f"fragpipe_{key}"] = value
                 else:
                     flat_config[key] = value
         else:
@@ -180,6 +206,14 @@ def merge_config_with_args(config: dict, args: argparse.Namespace) -> dict:
         "keep_temp": "keep_temp",
         "verbose": "verbose",
         "quiet": "quiet",
+        # FragPipe options
+        "analysis_tool": "analysis_tool",
+        "fragpipe_path": "fragpipe_path",
+        "fragpipe_workflow": "fragpipe_workflow",
+        "fragpipe_tools_folder": "fragpipe_tools_folder",
+        "fragpipe_python": "fragpipe_python",
+        "fragpipe_timeout": "fragpipe_timeout",
+        "existing_fragpipe_output": "existing_fragpipe_output",
     }
 
     for cli_key, config_key in cli_mapping.items():
@@ -291,13 +325,13 @@ Exit codes:
     path_group.add_argument(
         "--diann-path",
         type=str,
-        default="diann",
+        default=None,
         help="Path to DiaNN executable (default: 'diann' in PATH)",
     )
     path_group.add_argument(
         "--output-dir",
         type=str,
-        default="./timsim-validate-output",
+        default=None,
         help="Output directory for results (default: ./timsim-validate-output)",
     )
     path_group.add_argument(
@@ -361,6 +395,16 @@ Exit codes:
         help="Maximum IM mean absolute error in 1/K0 (default: 0.05)",
     )
 
+    # Analysis tool selection
+    tool_group = parser.add_argument_group("Analysis Tool")
+    tool_group.add_argument(
+        "--analysis-tool",
+        type=str,
+        choices=["diann", "fragpipe", "both"],
+        default=None,
+        help="Analysis tool to use: diann, fragpipe, or both (default: diann)",
+    )
+
     # DiaNN arguments
     diann_group = parser.add_argument_group("DiaNN Options")
     diann_group.add_argument(
@@ -374,6 +418,45 @@ Exit codes:
         type=int,
         default=3600,
         help="DiaNN timeout in seconds (default: 3600 = 1 hour)",
+    )
+
+    # FragPipe arguments
+    fragpipe_group = parser.add_argument_group("FragPipe Options")
+    fragpipe_group.add_argument(
+        "--fragpipe-path",
+        type=str,
+        default=None,
+        help="Path to FragPipe executable",
+    )
+    fragpipe_group.add_argument(
+        "--fragpipe-workflow",
+        type=str,
+        default=None,
+        help="Path to FragPipe workflow file (.workflow)",
+    )
+    fragpipe_group.add_argument(
+        "--fragpipe-tools-folder",
+        type=str,
+        default=None,
+        help="Path to FragPipe tools folder",
+    )
+    fragpipe_group.add_argument(
+        "--fragpipe-python",
+        type=str,
+        default=None,
+        help="Path to Python executable for FragPipe",
+    )
+    fragpipe_group.add_argument(
+        "--fragpipe-timeout",
+        type=int,
+        default=7200,
+        help="FragPipe timeout in seconds (default: 7200 = 2 hours)",
+    )
+    fragpipe_group.add_argument(
+        "--existing-fragpipe-output",
+        type=str,
+        default=None,
+        help="Path to existing FragPipe output directory (skip analysis)",
     )
 
     # Behavior arguments
@@ -489,18 +572,49 @@ def main() -> int:
         config=diann_config,
     )
 
+    # Create FragPipe executor if needed
+    fragpipe_executor = None
+    analysis_tool = config.get("analysis_tool", "diann")
+
+    if analysis_tool in ("fragpipe", "both") or config.get("existing_fragpipe_output"):
+        # Validate FragPipe requirements for "both" mode
+        if analysis_tool == "both":
+            if not config.get("fragpipe_path") and not config.get("existing_fragpipe_output"):
+                print("Error: --fragpipe-path is required when using --analysis-tool both", file=sys.stderr)
+                return 5
+            if not config.get("fragpipe_workflow") and not config.get("existing_fragpipe_output"):
+                print("Error: --fragpipe-workflow is required when using --analysis-tool both", file=sys.stderr)
+                return 5
+
+        fragpipe_config = FragPipeConfig(
+            workflow_path=config.get("fragpipe_workflow"),
+            tools_folder=config.get("fragpipe_tools_folder"),
+            diann_path=config.get("diann_path"),
+            python_path=config.get("fragpipe_python"),
+        )
+
+        fragpipe_executor = FragPipeExecutor(
+            executable_path=config.get("fragpipe_path") or "fragpipe",
+            threads=config.get("diann_threads", 8),  # Reuse thread count
+            timeout_seconds=config.get("fragpipe_timeout", 7200),
+            config=fragpipe_config,
+        )
+
     # Create and run validator
     runner = ValidationRunner(
         reference_path=reference_path,
         output_dir=config["output_dir"],
         fasta_path=config["fasta_path"],
         diann_executor=diann_executor,
+        fragpipe_executor=fragpipe_executor,
         thresholds=thresholds,
         simulation_config=simulation_config,
         keep_temp=config["keep_temp"],
         verbose=config["verbose"],
         existing_simulation=config.get("existing_simulation"),
         database_path=config.get("database_path"),
+        analysis_tool=analysis_tool,
+        existing_fragpipe_output=config.get("existing_fragpipe_output"),
     )
 
     result = runner.run()
@@ -535,6 +649,16 @@ def main() -> int:
                 print(f"  Intensity Histogram: {result.plot_paths.intensity_histogram}")
             if result.plot_paths.quant_correlation:
                 print(f"  Quant Correlation: {result.plot_paths.quant_correlation}")
+            if result.plot_paths.charge_state_breakdown:
+                print(f"  Charge State Breakdown: {result.plot_paths.charge_state_breakdown}")
+            if result.plot_paths.intensity_id_rate:
+                print(f"  Intensity ID Rate: {result.plot_paths.intensity_id_rate}")
+            if result.plot_paths.peptide_length_breakdown:
+                print(f"  Peptide Length: {result.plot_paths.peptide_length_breakdown}")
+            if result.plot_paths.missed_cleavages_breakdown:
+                print(f"  Missed Cleavages: {result.plot_paths.missed_cleavages_breakdown}")
+            if result.plot_paths.mass_accuracy:
+                print(f"  Mass Accuracy: {result.plot_paths.mass_accuracy}")
 
     return result.exit_code
 
