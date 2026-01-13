@@ -240,35 +240,6 @@ pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, i
     rustdf::data::utility::get_data_for_compression_par(tofs, scans, intensities, max_scans, num_threads)
 }
 
-/// Merge duplicate (scan, tof) pairs by summing intensities.
-/// Returns sorted (scan, tof, intensity) arrays, sorted by scan first, then tof.
-#[pyfunction]
-pub fn merge_and_sort_peaks(py: Python<'_>, scans: Vec<u32>, tofs: Vec<u32>, intensities: Vec<u32>) -> (Py<PyArray1<u32>>, Py<PyArray1<u32>>, Py<PyArray1<u32>>) {
-    let (sorted_scans, sorted_tofs, sorted_intensities) =
-        rustdf::data::utility::merge_and_sort_peaks(scans, tofs, intensities);
-    (
-        sorted_scans.into_pyarray(py).unbind(),
-        sorted_tofs.into_pyarray(py).unbind(),
-        sorted_intensities.into_pyarray(py).unbind(),
-    )
-}
-
-/// Compress multiple frames in parallel with duplicate merging.
-/// Each frame is (scans, tofs, intensities) tuple.
-/// Returns list of compressed byte arrays.
-#[pyfunction]
-#[pyo3(signature = (frames, total_scans, compression_level=0, num_threads=4))]
-pub fn compress_frames_with_merge(py: Python<'_>, frames: Vec<(Vec<u32>, Vec<u32>, Vec<u32>)>, total_scans: u32, compression_level: i32, num_threads: usize) -> PyResult<Py<PyList>> {
-    let compressed = rustdf::data::utility::compress_frames_with_merge(frames, total_scans, compression_level, num_threads);
-
-    let py_list = PyList::empty(py);
-    for frame_data in compressed {
-        let np_array = frame_data.into_pyarray(py).unbind();
-        py_list.append(np_array)?;
-    }
-    Ok(py_list.unbind())
-}
-
 #[pymodule]
 pub fn py_dataset(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDataset>()?;
@@ -278,7 +249,5 @@ pub fn py_dataset(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_realdata, m)?)?;
     m.add_function(wrap_pyfunction!(get_data_for_compression, m)?)?;
     m.add_function(wrap_pyfunction!(get_data_for_compression_par, m)?)?;
-    m.add_function(wrap_pyfunction!(merge_and_sort_peaks, m)?)?;
-    m.add_function(wrap_pyfunction!(compress_frames_with_merge, m)?)?;
     Ok(())
 }
