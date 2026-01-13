@@ -124,7 +124,8 @@ def create_results_bundle(
 
     output_path = Path(output_base)
     timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
-    zip_name = f"timsim_validation_{timestamp_str}.zip"
+    bundle_name = f"timsim_validation_{timestamp_str}"
+    zip_name = f"{bundle_name}.zip"
     zip_path = output_path / zip_name
 
     # Files to include at root level
@@ -133,24 +134,16 @@ def create_results_bundle(
         "evaluation_summary.json",
     ]
 
-    # Patterns to include from each test directory
-    validation_patterns = [
-        "validation/*.html",
-        "validation/*.txt",
-        "validation/*.json",
-        "validation/plots/*.png",
-        "validation/DIA-NN_plots/*.png",
-        "validation/FragPipe_plots/*.png",
-    ]
-
     try:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Add root files
+            # Add root files (inside the bundle folder)
             for filename in root_files:
                 file_path = output_path / filename
                 if file_path.exists():
-                    zf.write(file_path, filename)
-                    logger.debug(f"Added to bundle: {filename}")
+                    # Add with bundle folder prefix so unzip creates a folder
+                    arcname = f"{bundle_name}/{filename}"
+                    zf.write(file_path, arcname)
+                    logger.debug(f"Added to bundle: {arcname}")
 
             # Add validation results for each test
             for test_id in test_ids:
@@ -165,7 +158,9 @@ def create_results_bundle(
                         if item.is_file():
                             # Only include relevant files (HTML, plots, reports)
                             if item.suffix in [".html", ".png", ".txt", ".json"]:
-                                arcname = str(item.relative_to(output_path))
+                                # Add with bundle folder prefix
+                                rel_path = item.relative_to(output_path)
+                                arcname = f"{bundle_name}/{rel_path}"
                                 zf.write(item, arcname)
                                 logger.debug(f"Added to bundle: {arcname}")
 
