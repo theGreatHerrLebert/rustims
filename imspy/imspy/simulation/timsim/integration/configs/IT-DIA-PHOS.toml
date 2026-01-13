@@ -10,7 +10,8 @@ test_id = "IT-DIA-PHOS"
 description = "Phosphoproteomics DIA-PASEF PTM localization benchmark"
 acquisition_type = "DIA"
 sample_type = "phospho"
-analysis_tools = ["diann", "fragpipe"]
+# FragPipe's MSBooster requires more PSMs than this small benchmark produces
+analysis_tools = ["diann"]
 
 [thresholds]
 min_id_rate = 0.25

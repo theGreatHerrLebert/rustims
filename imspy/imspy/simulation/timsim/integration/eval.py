@@ -172,6 +172,7 @@ def run_diann_analysis(
     env_config: Dict,
     test_id: str,
     is_dda: bool = False,
+    is_phospho: bool = False,
 ) -> Optional[Path]:
     """
     Run DiaNN analysis on simulated data.
@@ -183,6 +184,7 @@ def run_diann_analysis(
         env_config: Environment configuration.
         test_id: Test identifier for logging.
         is_dda: Whether this is DDA data.
+        is_phospho: Whether this is phosphoproteomics data.
 
     Returns:
         Path to DiaNN report file, or None if failed.
@@ -201,6 +203,9 @@ def run_diann_analysis(
             min_pep_len=7,
             max_pep_len=30,
             missed_cleavages=2,
+            # Add phosphorylation as variable mod for phospho experiments
+            var_mod="UniMod:21,79.966331,STY" if is_phospho else None,
+            var_mods=3 if is_phospho else 2,  # Allow more var mods for phospho
         )
 
         executor = DiannExecutor(
@@ -550,10 +555,13 @@ def run_test_evaluation(
     diann_report = None
     fragpipe_output = None
 
+    # Detect if this is a phospho experiment
+    is_phospho = sample_type == "phospho"
+
     if not skip_analysis:
         if tool in ["diann", "both"]:
             diann_report = run_diann_analysis(
-                d_folder, fasta_path, test_dir, env_config, test_id, is_dda
+                d_folder, fasta_path, test_dir, env_config, test_id, is_dda, is_phospho
             )
 
         if tool in ["fragpipe", "both"]:

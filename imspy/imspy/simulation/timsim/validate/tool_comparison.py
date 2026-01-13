@@ -650,19 +650,42 @@ def calculate_ptm_localization(
     site_accuracy_per_tool: Dict[str, float] = {}
 
     for tool_name, tool in tool_results.items():
+        # Build precursor set from tool.df using sequence_modified column
+        # This is necessary because tool.precursors uses bare sequences (without mods)
+        tool_df = tool.df.copy()
+
+        # Ensure sequence_modified column exists
+        if "sequence_modified" not in tool_df.columns:
+            logger.warning(f"{tool_name} results missing sequence_modified column")
+            identified_per_tool[tool_name] = 0
+            correctly_localized_per_tool[tool_name] = 0
+            site_accuracy_per_tool[tool_name] = 0.0
+            continue
+
+        # Normalize tool sequences if needed
+        if normalize:
+            tool_df["sequence_modified_normalized"] = tool_df["sequence_modified"].apply(
+                normalize_sequence_for_matching
+            )
+            tool_seq_col = "sequence_modified_normalized"
+        else:
+            tool_seq_col = "sequence_modified"
+
+        # Build set of (modified_sequence, charge) tuples from tool results
+        tool_modified_precursors: Set[Tuple[str, int]] = set()
+        for _, row in tool_df.iterrows():
+            key = (row[tool_seq_col], int(row["charge"]))
+            tool_modified_precursors.add(key)
+
         # Get tool's identified phosphopeptides that match ground truth
         identified_count = 0
         correct_count = 0
 
-        for precursor in tool.precursors:
-            seq, charge = precursor
+        for precursor in tool_modified_precursors:
             if precursor in gt_phospho_lookup:
                 identified_count += 1
-
-                # Check if the tool correctly identified the phospho site
-                # The tool's sequence should have UNIMOD:21 at the correct position
-                # Since we matched on sequence_modified, if it matches, the site is correct
-                # (the modification position is encoded in the sequence)
+                # Since we matched on sequence_modified, the modification position
+                # is encoded in the sequence string - if it matches, site is correct
                 correct_count += 1
 
         identified_per_tool[tool_name] = identified_count
