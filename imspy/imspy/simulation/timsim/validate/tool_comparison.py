@@ -1233,7 +1233,9 @@ def generate_comparison_plots(
 
     ax.set_ylabel('Identification Rate (%)', fontsize=12)
     ax.set_title('Identification Rate vs Ground Truth', fontsize=14, fontweight='bold')
-    ax.set_ylim(0, 100)
+    # Scale y-axis to highest bar + 15% padding for labels
+    max_rate = max(rates) if rates else 100
+    ax.set_ylim(0, min(100, max_rate * 1.15))
 
     # Add value labels
     for bar, rate in zip(bars, rates):
@@ -1256,8 +1258,13 @@ def generate_comparison_plots(
     plot_paths['identification_rates'] = path
 
     # 3. Venn diagram: Tool overlap with ground truth
-    if len(tool_names) == 2:
-        # Get precursor sets
+    # Helper function to convert tuple precursor sets to string format
+    def precursor_set_to_strings(precursor_set: set) -> set:
+        """Convert (sequence, charge) tuples to 'sequence_charge' strings."""
+        return {f"{seq}_{charge}" for seq, charge in precursor_set}
+
+    if len(tool_names) >= 2:
+        # Get precursor sets - all as string format for consistency
         gt_set = set()
         for _, row in ground_truth_df.iterrows():
             key = create_precursor_id(
@@ -1266,47 +1273,112 @@ def generate_comparison_plots(
             )
             gt_set.add(key)
 
-        tool1_set = result.tool_results[tool_names[0]].precursors
-        tool2_set = result.tool_results[tool_names[1]].precursors
+        # Convert tool precursor sets from tuples to strings
+        tool_sets = {
+            name: precursor_set_to_strings(result.tool_results[name].precursors)
+            for name in tool_names
+        }
+        tool1_set = tool_sets[tool_names[0]]
+        tool2_set = tool_sets[tool_names[1]]
+        tool3_set = tool_sets[tool_names[2]] if len(tool_names) >= 3 else None
 
         if has_venn:
             # Use Venn diagrams
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+            if len(tool_names) == 2:
+                # 2-tool comparison: GT vs each tool + tools vs each other
+                fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-            # Venn: GT vs Tool 1
-            ax = axes[0]
-            venn2([gt_set, tool1_set], set_labels=('Ground Truth', tool_names[0]), ax=ax)
-            ax.set_title(f'Ground Truth vs {tool_names[0]}', fontsize=12, fontweight='bold')
+                # Venn: GT vs Tool 1
+                ax = axes[0]
+                venn2([gt_set, tool1_set], set_labels=('Ground Truth', tool_names[0]), ax=ax)
+                ax.set_title(f'Ground Truth vs {tool_names[0]}', fontsize=12, fontweight='bold')
 
-            # Venn: GT vs Tool 2
-            ax = axes[1]
-            venn2([gt_set, tool2_set], set_labels=('Ground Truth', tool_names[1]), ax=ax)
-            ax.set_title(f'Ground Truth vs {tool_names[1]}', fontsize=12, fontweight='bold')
+                # Venn: GT vs Tool 2
+                ax = axes[1]
+                venn2([gt_set, tool2_set], set_labels=('Ground Truth', tool_names[1]), ax=ax)
+                ax.set_title(f'Ground Truth vs {tool_names[1]}', fontsize=12, fontweight='bold')
 
-            # Venn: Tool 1 vs Tool 2
-            ax = axes[2]
-            venn2([tool1_set, tool2_set], set_labels=(tool_names[0], tool_names[1]), ax=ax)
-            ax.set_title(f'{tool_names[0]} vs {tool_names[1]}', fontsize=12, fontweight='bold')
+                # Venn: Tool 1 vs Tool 2
+                ax = axes[2]
+                venn2([tool1_set, tool2_set], set_labels=(tool_names[0], tool_names[1]), ax=ax)
+                ax.set_title(f'{tool_names[0]} vs {tool_names[1]}', fontsize=12, fontweight='bold')
 
-            plt.suptitle('Precursor Overlap Analysis', fontsize=14, fontweight='bold', y=1.02)
-            plt.tight_layout()
+                plt.suptitle('Precursor Overlap Analysis', fontsize=14, fontweight='bold', y=1.02)
+                plt.tight_layout()
 
-            path = os.path.join(output_dir, "venn_overlap.png")
-            plt.savefig(path, dpi=150, bbox_inches='tight')
-            plt.close()
-            plot_paths['venn_overlap'] = path
+                path = os.path.join(output_dir, "venn_overlap.png")
+                plt.savefig(path, dpi=150, bbox_inches='tight')
+                plt.close()
+                plot_paths['venn_overlap'] = path
 
-            # 3-way Venn: GT vs both tools
-            fig, ax = plt.subplots(figsize=(8, 8))
-            venn3([gt_set, tool1_set, tool2_set],
-                  set_labels=('Ground Truth', tool_names[0], tool_names[1]), ax=ax)
-            ax.set_title('Three-Way Precursor Overlap', fontsize=14, fontweight='bold')
-            plt.tight_layout()
+                # 3-way Venn: GT vs both tools
+                fig, ax = plt.subplots(figsize=(8, 8))
+                venn3([gt_set, tool1_set, tool2_set],
+                      set_labels=('Ground Truth', tool_names[0], tool_names[1]), ax=ax)
+                ax.set_title('Three-Way Precursor Overlap', fontsize=14, fontweight='bold')
+                plt.tight_layout()
 
-            path = os.path.join(output_dir, "venn_three_way.png")
-            plt.savefig(path, dpi=150, bbox_inches='tight')
-            plt.close()
-            plot_paths['venn_three_way'] = path
+                path = os.path.join(output_dir, "venn_three_way.png")
+                plt.savefig(path, dpi=150, bbox_inches='tight')
+                plt.close()
+                plot_paths['venn_three_way'] = path
+
+            else:
+                # 3+ tools comparison: show 3-way Venn for tools (no GT)
+                # and separate GT vs all-tools combined comparison
+                fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+                # 3-way Venn: Tools only (without GT for clarity)
+                ax = axes[0]
+                venn3([tool1_set, tool2_set, tool3_set],
+                      set_labels=(tool_names[0], tool_names[1], tool_names[2]), ax=ax)
+                ax.set_title('Tool Comparison (3-Way)', fontsize=12, fontweight='bold')
+
+                # Union of all tools vs GT
+                all_tools_union = tool1_set | tool2_set | tool3_set
+                ax = axes[1]
+                venn2([gt_set, all_tools_union], set_labels=('Ground Truth', 'All Tools'), ax=ax)
+                ax.set_title('Ground Truth vs All Tools Combined', fontsize=12, fontweight='bold')
+
+                plt.suptitle('Precursor Overlap Analysis', fontsize=14, fontweight='bold', y=1.02)
+                plt.tight_layout()
+
+                path = os.path.join(output_dir, "venn_overlap.png")
+                plt.savefig(path, dpi=150, bbox_inches='tight')
+                plt.close()
+                plot_paths['venn_overlap'] = path
+
+                # Individual GT vs each tool bar chart (since 4-way Venn isn't practical)
+                fig, axes = plt.subplots(1, len(tool_names), figsize=(5*len(tool_names), 5))
+                if len(tool_names) == 3:
+                    axes = axes  # Already array
+                else:
+                    axes = [axes]  # Make it iterable for single tool edge case
+
+                for idx, tool_name in enumerate(tool_names):
+                    ax = axes[idx]
+                    tool_set = tool_sets[tool_name]
+                    overlap = len(gt_set & tool_set)
+                    gt_only = len(gt_set - tool_set)
+                    tool_only = len(tool_set - gt_set)
+
+                    categories = ['GT Only', 'Both', f'{tool_name} Only']
+                    values = [gt_only, overlap, tool_only]
+                    bar_colors = ['#3498db', '#27ae60', colors.get(tool_name, '#e74c3c')]
+                    ax.bar(categories, values, color=bar_colors, edgecolor='black')
+                    ax.set_ylabel('Precursors')
+                    ax.set_title(f'GT vs {tool_name}', fontsize=11, fontweight='bold')
+                    for i, v in enumerate(values):
+                        ax.text(i, v + max(values)*0.02, f'{v:,}', ha='center', fontsize=9)
+
+                plt.suptitle('Ground Truth vs Individual Tools', fontsize=14, fontweight='bold', y=1.02)
+                plt.tight_layout()
+
+                path = os.path.join(output_dir, "gt_vs_tools.png")
+                plt.savefig(path, dpi=150, bbox_inches='tight')
+                plt.close()
+                plot_paths['gt_vs_tools'] = path
+
         else:
             # Fallback: Use grouped bar charts for overlap visualization
             fig, axes = plt.subplots(1, 3, figsize=(15, 5))
