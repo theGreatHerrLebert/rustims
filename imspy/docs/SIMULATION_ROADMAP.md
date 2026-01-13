@@ -76,13 +76,15 @@ The following comprehensive datasets have been generated for benchmarking studie
 | DDA-H01 | dda-PASEF | HeLa | 150k–300k | 12 | In silico | MBR benchmark |
 | DDA-HLA01 | thunder-PASEF | HLA1 | 10k, 100k | 3 | Experimental | ID + FDR |
 
-### Dataset Details
+### Dataset Locations
 
-- **DIA-H01**: Standard HeLa proteome at varying complexity levels for identification rate and FDR benchmarking
-- **DIA-M01**: HYE (Human-Yeast-Ecoli) mixed species for quantification accuracy testing with known ratios
-- **DIA-PH01**: Phosphoproteomics simulation for PTM site localization validation
-- **DDA-H01**: High-complexity DDA with many replicates for match-between-runs (MBR) algorithm testing
-- **DDA-HLA01**: Immunopeptidomics (HLA class I) with thunder-PASEF acquisition for short peptide identification
+| Dataset | Path |
+|---------|------|
+| DIA HeLa (plain) | `/scratch/timsim/submission/dia/hela/plain/` |
+| DIA HeLa (phospho) | `/scratch/timsim/submission/dia/hela/phospho/` |
+| DIA HYE | `/scratch/timsim/submission/dia/hye/` |
+| DDA HeLa | `/scratch/timsim/submission/dda/hela/` |
+| DDA HLA | `/scratch/timsim/submission/dda/hla/` |
 
 ### Acquisition Modes Covered
 
@@ -94,90 +96,171 @@ The following comprehensive datasets have been generated for benchmarking studie
 
 ---
 
-## What Comes Next
+## Integration Test Architecture
 
-### Phase 1: Validation Pipeline Execution
+### Design Principles
 
-Run the validation pipeline on all existing datasets:
+The integration test system is split into **two independent phases**:
+
+1. **Simulation Phase** (`timsim-integration-sim`): Generates synthetic datasets
+2. **Evaluation Phase** (`timsim-integration-eval`): Runs analysis tools and validates results
+
+This separation allows:
+- Running simulation on GPU machines, evaluation on CPU machines
+- Re-running evaluation with new tool versions without re-simulating
+- Parallel execution of independent test cases
+- Easier debugging and maintenance
+
+### Directory Structure
 
 ```
-validation-outputs/
-├── DIA-H01/
-│   ├── 5k/
-│   │   ├── rep1/
-│   │   │   ├── diann/
-│   │   │   ├── fragpipe/
-│   │   │   └── comparison_report.json
-│   │   └── rep2/
-│   ├── 25k/
-│   ├── 100k/
-│   └── 250k/
-├── DIA-M01/
-│   └── ...
-├── DIA-PH01/
-│   └── ...
-├── DDA-H01/
-│   └── ...
-└── DDA-HLA01/
-    └── ...
+imspy/simulation/timsim/integration/
+├── __init__.py
+├── configs/                    # Test-specific simulation configs
+│   ├── IT-DIA-HELA.toml
+│   ├── IT-DIA-HYE.toml
+│   ├── IT-DIA-PHOS.toml
+│   ├── IT-DDA-TOPN.toml
+│   └── IT-DDA-HLA.toml
+├── env.toml.template           # Machine-specific paths (copy and customize)
+├── sim.py                      # Simulation runner script
+└── eval.py                     # Evaluation runner script
 ```
 
-### Phase 2: Automation & Reporting
+### Environment Configuration
 
-#### Executor Script
-A master script (`timsim-validate-grid`) that:
-1. Iterates through all dataset directories
-2. Locates simulation databases and analysis outputs
-3. Runs `timsim_compare` for each complexity/replicate combination
-4. Aggregates results into a summary report
+Each machine requires an `env.toml` file with local paths:
 
-#### Report Aggregation
-- **Per-dataset reports**: Individual JSON/text reports per complexity level
-- **Summary dashboard**: Single markdown/HTML overview across all datasets
-- **Complexity curves**: ID rate vs. complexity plots per dataset
-- **Cross-dataset comparison**: Compare DIA vs DDA, standard vs phospho, etc.
+```toml
+[paths]
+# Base output directory for all integration tests
+output_base = "/path/to/integration-tests"
 
-### Phase 3: CI/CD Integration
+# Reference .d files (blank acquisitions)
+reference_dia = "/path/to/blanks/dia_blank.d"
+reference_dda = "/path/to/blanks/dda_blank.d"
+reference_thunder = "/path/to/blanks/thunder_blank.d"
 
-```yaml
-# Example GitHub Actions workflow
-validate-simulation-datasets:
-  runs-on: self-hosted
-  steps:
-    - name: Validate DIA-H01 (quick)
-      run: |
-        timsim_compare --database DIA-H01/5k/rep1/synthetic_data.db \
-                       --diann DIA-H01/5k/rep1/diann/report.parquet \
-                       --output validation/DIA-H01/5k/rep1
+# FASTA files
+fasta_hela = "/path/to/fasta/human.fasta"
+fasta_hye = "/path/to/fasta/hye_mixed.fasta"
+fasta_hla = "/path/to/fasta/hla_ligands.fasta"
 
-    - name: Check thresholds
-      run: |
-        python check_validation_thresholds.py --min-id-rate 0.30
+[tools]
+# Analysis tool paths
+diann_path = "/path/to/diann-1.9.2/diann"
+fragpipe_path = "/path/to/fragpipe-23.0/bin/fragpipe"
+fragpipe_tools = "/path/to/fragpipe-23.0/tools"
+
+[performance]
+num_threads = -1
+use_gpu = true
+gpu_memory_limit_gb = 4
 ```
 
 ---
 
 ## Integration Test Matrix
 
-For the integration test pipeline, we create **one dataset per configuration** (no complexity ramps):
+### Final Test Cases
 
-| Test ID | Acquisition | Sample | Complexity | Analysis Tools | Focus Metrics |
-|---------|-------------|--------|------------|----------------|---------------|
-| IT-DIA-HELA | dia-PASEF | HeLa | 25k | DiaNN, FragPipe | ID rate, RT/IM correlation |
-| IT-DIA-HYE | dia-PASEF | HYE | 25k | DiaNN, FragPipe | Quant correlation, species ratios |
-| IT-DIA-PHOS | dia-PASEF | HeLa-Phos | 25k | DiaNN, FragPipe | PTM localization |
-| IT-DDA-HELA | dda-PASEF | HeLa | 25k | DiaNN, FragPipe | ID rate, precursor selection |
-| IT-DDA-HLA | thunder-PASEF | HLA1 | 10k | DiaNN | Short peptide ID rate |
+| Test ID | Acquisition | Sample | Complexity | Analysis Tools | Focus |
+|---------|-------------|--------|------------|----------------|-------|
+| IT-DIA-HELA | DIA-PASEF | HeLa | 25k | DiaNN, FragPipe | Standard ID benchmark |
+| IT-DIA-HYE | DIA-PASEF | HYE | 25k | DiaNN, FragPipe | Quantification (species ratios) |
+| IT-DIA-PHOS | DIA-PASEF | HeLa+Phospho | 25k | DiaNN, FragPipe | PTM localization |
+| IT-DDA-TOPN | DDA-PASEF (TopN) | HeLa | 25k | DiaNN, FragPipe | DDA TopN selection |
+| IT-DDA-HLA | DDA thunder | HLA | 10k | DiaNN, FragPipe | Immunopeptidomics |
 
-### Pass/Fail Criteria per Test
+### Dimension Coverage
+
+| Dimension | Values Covered |
+|-----------|----------------|
+| Acquisition mode | DIA-PASEF, DDA-PASEF (TopN), DDA thunder |
+| Sample type | Standard proteome, Mixed species, Phospho, HLA |
+| Fragment model | Prosit (default) |
+| Noise | Real data noise injection enabled |
+| Analysis tools | DiaNN 2.0+, FragPipe 23+ |
+
+### Pass/Fail Criteria
 
 | Test ID | Min ID Rate | Min RT Corr | Min IM Corr | Additional |
 |---------|-------------|-------------|-------------|------------|
 | IT-DIA-HELA | 35% | 0.95 | 0.95 | - |
 | IT-DIA-HYE | 30% | 0.95 | 0.95 | Species ratio error <20% |
 | IT-DIA-PHOS | 25% | 0.95 | 0.95 | PTM site accuracy >80% |
-| IT-DDA-HELA | 30% | 0.95 | 0.95 | - |
+| IT-DDA-TOPN | 30% | 0.95 | 0.95 | - |
 | IT-DDA-HLA | 20% | 0.90 | 0.95 | 8-11mer coverage >50% |
+
+---
+
+## Workflow
+
+### Phase 1: Simulation
+
+```bash
+# Run all simulations
+timsim-integration-sim --env env.toml --all
+
+# Run specific test
+timsim-integration-sim --env env.toml --test IT-DIA-HELA
+
+# Run subset
+timsim-integration-sim --env env.toml --tests IT-DIA-HELA,IT-DIA-HYE
+```
+
+Output structure:
+```
+output_base/
+├── IT-DIA-HELA/
+│   ├── IT-DIA-HELA.d/           # Simulated .d folder
+│   ├── synthetic_data.db         # Ground truth database
+│   └── simulation.log
+├── IT-DIA-HYE/
+│   └── ...
+└── ...
+```
+
+### Phase 2: Evaluation
+
+```bash
+# Evaluate all simulations
+timsim-integration-eval --env env.toml --all
+
+# Evaluate specific test with specific tool
+timsim-integration-eval --env env.toml --test IT-DIA-HELA --tool diann
+
+# Evaluate with both tools
+timsim-integration-eval --env env.toml --test IT-DIA-HELA --tool both
+```
+
+Output structure:
+```
+output_base/
+├── IT-DIA-HELA/
+│   ├── IT-DIA-HELA.d/
+│   ├── synthetic_data.db
+│   ├── diann/
+│   │   ├── report.parquet
+│   │   └── ...
+│   ├── fragpipe/
+│   │   ├── psm.tsv
+│   │   └── ...
+│   ├── validation/
+│   │   ├── diann_validation.json
+│   │   ├── fragpipe_validation.json
+│   │   ├── comparison_report.json
+│   │   └── plots/
+│   └── PASS / FAIL              # Status file
+└── ...
+```
+
+### Phase 3: Reporting
+
+```bash
+# Generate summary report across all tests
+timsim-integration-report --env env.toml --output report.html
+```
 
 ---
 
@@ -198,25 +281,16 @@ For the integration test pipeline, we create **one dataset per configuration** (
 
 ---
 
-## Open Questions
-
-1. **Dataset locations**: Where are the simulation outputs stored? (paths needed for automation)
-2. **Tool versions**: Which DiaNN/FragPipe versions were used for analysis?
-3. **Quant metrics**: For DIA-M01, what species ratios should we validate?
-4. **PTM metrics**: For DIA-PH01, how do we score localization accuracy?
-5. **MBR metrics**: For DDA-H01, what defines successful MBR transfer?
-
----
-
-## Timeline
+## Status
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | Phase 0 | Validation infrastructure (`timsim_validate`, `timsim_compare`) | Complete |
-| Phase 1 | Dataset generation (DIA-H01, DIA-M01, DIA-PH01, DDA-H01, DDA-HLA01) | Complete |
-| Phase 2 | Validation pipeline execution on all datasets | Next |
-| Phase 3 | Report aggregation & summary dashboard | Planned |
-| Phase 4 | CI/CD integration | Planned |
+| Phase 1 | Benchmark dataset generation | Complete |
+| Phase 2 | Integration test configs | In Progress |
+| Phase 3 | Simulation script (`timsim-integration-sim`) | In Progress |
+| Phase 4 | Evaluation script (`timsim-integration-eval`) | In Progress |
+| Phase 5 | CI/CD integration | Planned |
 
 ---
 
@@ -226,3 +300,4 @@ For the integration test pipeline, we create **one dataset per configuration** (
 - Validation CLI: `imspy.simulation.timsim.validate.cli:main`
 - Comparison CLI: `imspy.simulation.timsim.validate.tool_comparison:main_compare`
 - Example configs: `imspy/simulation/timsim/configs/`
+- Integration tests: `imspy/simulation/timsim/integration/`
