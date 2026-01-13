@@ -110,6 +110,69 @@ def get_integration_dir() -> Path:
     return Path(__file__).parent
 
 
+def get_bundled_data_dir() -> Path:
+    """Get the bundled data directory containing FASTAs and configs."""
+    return get_integration_dir() / "data"
+
+
+def get_bundled_data_paths() -> Dict[str, str]:
+    """
+    Get paths to bundled data files (FASTAs, configs).
+
+    Returns:
+        Dictionary with keys for each data type and their absolute paths.
+    """
+    integration_dir = get_integration_dir()
+    data_dir = get_bundled_data_dir()
+    fasta_dir = data_dir / "fasta"
+    hye_dir = fasta_dir / "hye"
+    configs_dir = integration_dir / "configs"
+
+    return {
+        # HeLa proteome (small test set)
+        "fasta_hela": str(fasta_dir / "hela-small.fasta"),
+        "fasta_hela_decoys": str(fasta_dir / "hela-small-decoys.fasta"),
+        # HLA (uses HeLa for now)
+        "fasta_hla": str(fasta_dir / "hela-small.fasta"),
+        "fasta_hla_decoys": str(fasta_dir / "hela-small-decoys.fasta"),
+        # Phospho (uses HeLa)
+        "fasta_phospho": str(fasta_dir / "hela-small.fasta"),
+        "fasta_phospho_decoys": str(fasta_dir / "hela-small-decoys.fasta"),
+        # HYE mixed proteome
+        "fasta_hye_dir": str(hye_dir),
+        "fasta_hye": str(hye_dir / "HYE_small.fasta"),
+        "fasta_hye_decoys": str(hye_dir / "HYE_small_decoys.fasta"),
+        # Config files
+        "dilution_factors_hye": str(configs_dir / "dilution_factors_hye.csv"),
+    }
+
+
+# Backwards compatibility alias
+get_bundled_fasta_paths = get_bundled_data_paths
+
+
+def resolve_fasta_path(env_config: Dict, key: str) -> str:
+    """
+    Resolve a FASTA path from env_config, falling back to bundled data.
+
+    Args:
+        env_config: Environment configuration dictionary.
+        key: The data key to resolve (e.g., "fasta_hela", "fasta_hye_dir").
+
+    Returns:
+        Absolute path to the FASTA file or directory.
+    """
+    # Get configured path
+    path = env_config.get(key, "")
+
+    # If empty or not specified, use bundled data
+    if not path:
+        bundled = get_bundled_data_paths()
+        path = bundled.get(key, "")
+
+    return path
+
+
 def create_results_bundle(
     output_base: str,
     test_ids: List[str],
@@ -710,13 +773,14 @@ def run_test_evaluation(
 
     # Determine FASTA paths
     # DiaNN can use regular FASTA (generates decoys internally)
-    # FragPipe requires decoys in the FASTA file
+    # FragPipe/Sage require decoys in the FASTA file
+    # Use resolve_fasta_path to fall back to bundled FASTAs if not configured
     fasta_key = f"fasta_{sample_type}"
-    fasta_path = env_config.get(fasta_key, env_config.get("fasta_hela", ""))
+    fasta_path = resolve_fasta_path(env_config, fasta_key)
 
-    # Try to get decoy FASTA for FragPipe
+    # Try to get decoy FASTA for FragPipe/Sage
     fasta_key_decoys = f"fasta_{sample_type}_decoys"
-    fasta_path_decoys = env_config.get(fasta_key_decoys, env_config.get("fasta_hela_decoys", ""))
+    fasta_path_decoys = resolve_fasta_path(env_config, fasta_key_decoys)
 
     if not fasta_path:
         logger.error(f"[{test_id}] No FASTA path configured for {sample_type}")
