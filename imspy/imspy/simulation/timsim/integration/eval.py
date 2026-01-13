@@ -47,6 +47,7 @@ class TestThresholds:
     min_id_rate: float = 0.30
     min_rt_correlation: float = 0.90
     min_im_correlation: float = 0.90
+    max_species_ratio_error: float = 0.20  # For HYE experiments
 
 
 def get_tool_versions(env_config: Dict) -> Dict[str, str]:
@@ -135,6 +136,7 @@ def get_test_thresholds(test_id: str) -> TestThresholds:
             min_id_rate=thresholds.get("min_id_rate", 0.30),
             min_rt_correlation=thresholds.get("min_rt_correlation", 0.90),
             min_im_correlation=thresholds.get("min_im_correlation", 0.90),
+            max_species_ratio_error=thresholds.get("max_species_ratio_error", 0.20),
         )
     except Exception:
         return TestThresholds()
@@ -358,9 +360,13 @@ def run_validation(
                 "min_id_rate": thresholds.min_id_rate,
                 "min_rt_correlation": thresholds.min_rt_correlation,
                 "min_im_correlation": thresholds.min_im_correlation,
+                "max_species_ratio_error": thresholds.max_species_ratio_error,
             },
             "tool_results": {},
         }
+
+        # Check if this is an HYE experiment (species breakdown available)
+        has_species_breakdown = result.species_breakdown is not None
 
         for tool_name, tool_result in result.tool_results.items():
             # Get overlap stats for precision and ID rate
@@ -387,18 +393,39 @@ def run_validation(
                 tool_passed = False
                 failures.append(f"IM correlation {im_corr:.3f} < {thresholds.min_im_correlation:.3f}")
 
+            # Check species ratio error (for HYE experiments)
+            species_ratio_error = None
+            if has_species_breakdown:
+                species_ratio_error = result.species_breakdown.max_ratio_error_per_tool.get(tool_name, 0.0)
+                if species_ratio_error > thresholds.max_species_ratio_error:
+                    tool_passed = False
+                    failures.append(
+                        f"Species ratio error {species_ratio_error:.2%} > "
+                        f"{thresholds.max_species_ratio_error:.2%}"
+                    )
+
             metrics["tool_results"][tool_name] = {
                 "id_count": tool_result.num_precursors,
                 "precision": precision,
                 "id_rate": id_rate,
                 "rt_correlation": rt_corr,
                 "im_correlation": im_corr,
+                "species_ratio_error": species_ratio_error,
                 "passed": tool_passed,
                 "failures": failures,
             }
 
             if not tool_passed:
                 passed = False
+
+        # Add species breakdown summary to metrics if available
+        if has_species_breakdown:
+            metrics["species_breakdown"] = {
+                "expected_ratios": result.species_breakdown.expected_ratios,
+                "ground_truth_counts": result.species_breakdown.ground_truth_counts,
+                "observed_ratios_per_tool": result.species_breakdown.observed_ratios_per_tool,
+                "max_ratio_error_per_tool": result.species_breakdown.max_ratio_error_per_tool,
+            }
 
         # Save metrics
         metrics_file = validation_output / "validation_metrics.json"

@@ -60,9 +60,16 @@ def load_ground_truth(
             on=["peptide_id", "ion_id"],
         )
 
+    # Determine which columns to include from peptides
+    peptide_cols = ["peptide_id", "sequence", "retention_time_gru_predictor", "events", "protein"]
+
+    # Include 'fasta' column if present (for proteome_mix mode / HYE)
+    if "fasta" in peptides.columns:
+        peptide_cols.append("fasta")
+
     # Merge peptides and ions
     ground_truth = pd.merge(
-        peptides[["peptide_id", "sequence", "retention_time_gru_predictor", "events", "protein"]],
+        peptides[peptide_cols],
         ions[["peptide_id", "charge", "inv_mobility_gru_predictor", "relative_abundance"]],
         on="peptide_id",
     )

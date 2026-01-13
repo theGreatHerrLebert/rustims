@@ -58,6 +58,7 @@ Create a **comprehensive integration test pipeline** that:
 | Comparison plots | Complete | 9 plot types (Venn, correlations, breakdowns) |
 | Per-tool plots | Complete | Summary grids, RT/IM correlations per tool |
 | Tool version display | Complete | Versions shown in plots and reports |
+| Species ratio validation | Complete | HYE experiment species ratio error validation |
 
 ### Metrics Captured
 
@@ -67,6 +68,7 @@ Create a **comprehensive integration test pipeline** that:
 - **Charge state breakdown**: ID rates per charge state (2+, 3+, 4+)
 - **Pairwise tool comparisons**: Jaccard index, overlap counts
 - **Mass accuracy**: PPM error statistics
+- **Species ratio validation**: Expected vs observed species ratios for HYE experiments
 
 ---
 
@@ -149,8 +151,12 @@ reference_thunder = "/path/to/blanks/thunder_blank.d"
 
 # FASTA files
 fasta_hela = "/path/to/fasta/human.fasta"
-fasta_hye = "/path/to/fasta/hye_mixed.fasta"
 fasta_hla = "/path/to/fasta/hla_ligands.fasta"
+fasta_phospho = "/path/to/fasta/human.fasta"
+
+# HYE mixed proteome (Human-Yeast-E.coli)
+fasta_hye_dir = "/path/to/fasta/hye/"  # Contains HUMAN.fasta, YEAST.fasta, ECOLI.fasta
+dilution_factors_hye = "/path/to/configs/dilution_factors_hye.csv"
 
 [tools]
 # Analysis tool paths

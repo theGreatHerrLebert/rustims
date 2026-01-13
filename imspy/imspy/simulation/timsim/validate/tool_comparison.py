@@ -79,6 +79,26 @@ class ChargeStateMetrics:
 
 
 @dataclass
+class SpeciesRatioMetrics:
+    """Species ratio metrics for HYE-type experiments."""
+    # Expected ratios from dilution factors (ground truth)
+    expected_ratios: Dict[str, float]  # species name -> expected fraction
+
+    # Observed ratios per tool
+    observed_ratios_per_tool: Dict[str, Dict[str, float]]  # tool name -> {species: fraction}
+
+    # Per-species counts
+    ground_truth_counts: Dict[str, int]  # species -> peptide count in GT
+    identified_counts_per_tool: Dict[str, Dict[str, int]]  # tool -> {species -> count}
+
+    # Ratio errors per tool (absolute difference from expected)
+    ratio_errors_per_tool: Dict[str, Dict[str, float]]  # tool -> {species -> abs error}
+
+    # Max ratio error per tool (used for pass/fail)
+    max_ratio_error_per_tool: Dict[str, float]  # tool -> max error across species
+
+
+@dataclass
 class ComparisonResult:
     """Complete comparison results."""
     ground_truth_precursors: int
@@ -99,6 +119,9 @@ class ComparisonResult:
     # Extended breakdown metrics (optional)
     intensity_breakdown: Optional[List[IntensityBinMetrics]] = None
     charge_breakdown: Optional[List[ChargeStateMetrics]] = None
+
+    # Species ratio metrics (for HYE experiments)
+    species_breakdown: Optional[SpeciesRatioMetrics] = None
 
     # Tool version information
     tool_versions: Optional[Dict[str, str]] = None  # Tool name -> version string
@@ -443,6 +466,120 @@ def calculate_charge_breakdown(
     return results
 
 
+def calculate_species_breakdown(
+    ground_truth_df: pd.DataFrame,
+    tool_results: Dict[str, ToolResult],
+    normalize: bool = True,
+    dilution_factors: Optional[Dict[str, float]] = None,
+) -> Optional[SpeciesRatioMetrics]:
+    """
+    Calculate species ratio metrics for HYE-type experiments.
+
+    This function computes how well each tool identifies peptides from different
+    species (Human, Yeast, E.coli) compared to expected ratios from dilution factors.
+
+    Args:
+        ground_truth_df: Ground truth DataFrame with 'fasta' column indicating species.
+        tool_results: Dictionary of ToolResult objects.
+        normalize: Whether to normalize sequences.
+        dilution_factors: Optional expected dilution factors. If None, calculated from GT.
+
+    Returns:
+        SpeciesRatioMetrics if 'fasta' column exists, None otherwise.
+    """
+    # Check if fasta column exists (indicates proteome_mix mode)
+    if "fasta" not in ground_truth_df.columns:
+        return None
+
+    gt = ground_truth_df.copy()
+
+    # Determine sequence column based on normalization
+    if normalize:
+        if "sequence_normalized" not in gt.columns:
+            gt["sequence_normalized"] = gt["sequence"].apply(normalize_sequence_for_matching)
+        seq_col = "sequence_normalized"
+    else:
+        seq_col = "sequence"
+
+    # Get unique species from fasta column
+    species_list = gt["fasta"].dropna().unique().tolist()
+    if len(species_list) < 2:
+        return None  # Need at least 2 species for ratio comparison
+
+    # Count ground truth peptides per species
+    gt_counts: Dict[str, int] = {}
+    gt_precursors_by_species: Dict[str, Set[Tuple[str, int]]] = {}
+
+    for species in species_list:
+        species_data = gt[gt["fasta"] == species]
+        gt_counts[species] = len(species_data)
+        gt_precursors_by_species[species] = set(zip(species_data[seq_col], species_data["charge"]))
+
+    # Calculate expected ratios (from dilution factors or from ground truth counts)
+    total_gt = sum(gt_counts.values())
+    if dilution_factors:
+        expected_ratios = dilution_factors.copy()
+    else:
+        # Calculate from ground truth distribution
+        expected_ratios = {s: c / total_gt for s, c in gt_counts.items()}
+
+    # Normalize expected ratios to sum to 1
+    ratio_sum = sum(expected_ratios.values())
+    if ratio_sum > 0:
+        expected_ratios = {s: r / ratio_sum for s, r in expected_ratios.items()}
+
+    # Create a mapping from precursor (seq, charge) to species
+    precursor_to_species: Dict[Tuple[str, int], str] = {}
+    for species in species_list:
+        for precursor in gt_precursors_by_species[species]:
+            precursor_to_species[precursor] = species
+
+    # Calculate identified counts per species per tool
+    identified_counts_per_tool: Dict[str, Dict[str, int]] = {}
+    observed_ratios_per_tool: Dict[str, Dict[str, float]] = {}
+    ratio_errors_per_tool: Dict[str, Dict[str, float]] = {}
+    max_ratio_error_per_tool: Dict[str, float] = {}
+
+    for tool_name, tool in tool_results.items():
+        # Count identified precursors by species
+        species_counts: Dict[str, int] = {s: 0 for s in species_list}
+
+        for precursor in tool.precursors:
+            if precursor in precursor_to_species:
+                species = precursor_to_species[precursor]
+                species_counts[species] += 1
+
+        identified_counts_per_tool[tool_name] = species_counts
+
+        # Calculate observed ratios
+        total_identified = sum(species_counts.values())
+        if total_identified > 0:
+            observed_ratios = {s: c / total_identified for s, c in species_counts.items()}
+        else:
+            observed_ratios = {s: 0.0 for s in species_list}
+
+        observed_ratios_per_tool[tool_name] = observed_ratios
+
+        # Calculate ratio errors (absolute difference from expected)
+        ratio_errors = {}
+        for species in species_list:
+            expected = expected_ratios.get(species, 0.0)
+            observed = observed_ratios.get(species, 0.0)
+            ratio_errors[species] = abs(observed - expected)
+
+        ratio_errors_per_tool[tool_name] = ratio_errors
+        max_ratio_error_per_tool[tool_name] = max(ratio_errors.values()) if ratio_errors else 0.0
+
+    return SpeciesRatioMetrics(
+        expected_ratios=expected_ratios,
+        observed_ratios_per_tool=observed_ratios_per_tool,
+        ground_truth_counts=gt_counts,
+        identified_counts_per_tool=identified_counts_per_tool,
+        ratio_errors_per_tool=ratio_errors_per_tool,
+        max_ratio_error_per_tool=max_ratio_error_per_tool,
+    )
+
+
 def compare_tools(
     ground_truth_df: pd.DataFrame,
     tool_results: Dict[str, pd.DataFrame],
@@ -511,6 +648,9 @@ def compare_tools(
     intensity_breakdown = calculate_intensity_breakdown(ground_truth_df, tools, normalize)
     charge_breakdown = calculate_charge_breakdown(ground_truth_df, tools, normalize)
 
+    # Calculate species breakdown metrics (for HYE experiments)
+    species_breakdown = calculate_species_breakdown(ground_truth_df, tools, normalize)
+
     return ComparisonResult(
         ground_truth_precursors=len(gt_precursors),
         ground_truth_peptides=len(gt_peptides),
@@ -523,6 +663,7 @@ def compare_tools(
         im_correlations=im_correlations,
         intensity_breakdown=intensity_breakdown,
         charge_breakdown=charge_breakdown,
+        species_breakdown=species_breakdown,
     )
 
 
@@ -649,6 +790,64 @@ def generate_comparison_text_report(result: ComparisonResult) -> str:
                 id_rate = charge_metrics.metrics_per_tool.get(name, {}).get("id_rate", 0)
                 line += f" {id_rate:>9.1%}"
             lines.append(line)
+        lines.append("")
+
+    # Species breakdown (for HYE experiments)
+    if result.species_breakdown:
+        lines.append("SPECIES RATIO ANALYSIS (HYE)")
+        lines.append("-" * 80)
+        tool_names = list(result.tool_results.keys())
+        species_list = list(result.species_breakdown.expected_ratios.keys())
+
+        # Header
+        lines.append("  Expected Ratios (Ground Truth):")
+        for species in species_list:
+            expected = result.species_breakdown.expected_ratios[species]
+            gt_count = result.species_breakdown.ground_truth_counts.get(species, 0)
+            lines.append(f"    {species:<20} {expected:>6.1%} ({gt_count:,} precursors)")
+        lines.append("")
+
+        # Per-tool observed ratios
+        lines.append("  Observed Ratios by Tool:")
+        header = f"    {'Species':<20}"
+        for name in tool_names:
+            header += f" {name[:10]:>12}"
+        header += f" {'Expected':>12}"
+        lines.append(header)
+        lines.append("    " + "-" * (22 + 14 * (len(tool_names) + 1)))
+
+        for species in species_list:
+            line = f"    {species:<20}"
+            for name in tool_names:
+                observed = result.species_breakdown.observed_ratios_per_tool[name].get(species, 0)
+                line += f" {observed:>11.1%}"
+            expected = result.species_breakdown.expected_ratios[species]
+            line += f" {expected:>11.1%}"
+            lines.append(line)
+        lines.append("")
+
+        # Ratio errors
+        lines.append("  Ratio Errors by Tool:")
+        header = f"    {'Species':<20}"
+        for name in tool_names:
+            header += f" {name[:10]:>12}"
+        lines.append(header)
+        lines.append("    " + "-" * (22 + 14 * len(tool_names)))
+
+        for species in species_list:
+            line = f"    {species:<20}"
+            for name in tool_names:
+                error = result.species_breakdown.ratio_errors_per_tool[name].get(species, 0)
+                line += f" {error:>11.1%}"
+            lines.append(line)
+        lines.append("")
+
+        # Max errors summary
+        lines.append("  Max Ratio Error per Tool:")
+        for name in tool_names:
+            max_error = result.species_breakdown.max_ratio_error_per_tool[name]
+            status = "PASS" if max_error < 0.20 else "FAIL"
+            lines.append(f"    {name:<15} {max_error:>6.1%}  [{status}]")
         lines.append("")
 
     lines.append("=" * 80)
@@ -1282,6 +1481,14 @@ def run_comparison(
                 }
                 for charge_m in (result.charge_breakdown or [])
             ],
+            "species_breakdown": {
+                "expected_ratios": result.species_breakdown.expected_ratios,
+                "ground_truth_counts": result.species_breakdown.ground_truth_counts,
+                "observed_ratios_per_tool": result.species_breakdown.observed_ratios_per_tool,
+                "identified_counts_per_tool": result.species_breakdown.identified_counts_per_tool,
+                "ratio_errors_per_tool": result.species_breakdown.ratio_errors_per_tool,
+                "max_ratio_error_per_tool": result.species_breakdown.max_ratio_error_per_tool,
+            } if result.species_breakdown else None,
         }
 
         json_path = os.path.join(output_dir, "tool_comparison_report.json")
