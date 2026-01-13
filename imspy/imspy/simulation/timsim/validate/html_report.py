@@ -383,6 +383,7 @@ def generate_html_report(
     diann_report_path: Optional[str] = None,
     fragpipe_output_dir: Optional[str] = None,
     thresholds: Optional[Dict[str, float]] = None,
+    test_metadata: Optional[Dict[str, str]] = None,
 ) -> str:
     """
     Generate a self-contained HTML validation report.
@@ -395,6 +396,11 @@ def generate_html_report(
         diann_report_path: Path to DIA-NN report.
         fragpipe_output_dir: Path to FragPipe output.
         thresholds: Dictionary of pass/fail thresholds.
+        test_metadata: Dictionary with test metadata:
+            - test_id: Test identifier (e.g., "IT-DIA-HELA")
+            - acquisition_type: "DIA" or "DDA"
+            - sample_type: "hela", "hye", "phospho", etc.
+            - description: Human-readable description
 
     Returns:
         Path to the generated HTML file.
@@ -406,9 +412,27 @@ def generate_html_report(
             "min_im_correlation": 0.90,
         }
 
+    if test_metadata is None:
+        test_metadata = {}
+
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     tool_names = list(result.tool_results.keys())
     tool_versions = result.tool_versions or {}
+
+    # Extract benchmark metadata
+    test_id = test_metadata.get("test_id", test_name)
+    acquisition_type = test_metadata.get("acquisition_type", "DIA")
+    sample_type = test_metadata.get("sample_type", "unknown")
+    description = test_metadata.get("description", "")
+
+    # Create human-readable benchmark type string
+    sample_type_labels = {
+        "hela": "HeLa Proteome",
+        "hye": "HYE Mixed Species (Human/Yeast/E.coli)",
+        "phospho": "Phosphoproteomics (PTM Localization)",
+    }
+    sample_type_label = sample_type_labels.get(sample_type.lower(), sample_type.title())
+    benchmark_type_str = f"{acquisition_type}-PASEF {sample_type_label}"
 
     # Collect all plot paths
     plots_dir = os.path.join(output_dir, "plots")
@@ -454,9 +478,21 @@ def generate_html_report(
 
     # Header
     html_parts.append(f"""
-<h1>{test_name} - Validation Report</h1>
+<h1>{test_id} - Validation Report</h1>
+<p style="font-size: 1.1em; color: #666; margin-top: -10px; margin-bottom: 20px;">
+    <strong>{benchmark_type_str}</strong>
+    {f' - {description}' if description else ''}
+</p>
 
 <div class="header-info">
+    <div>
+        <div class="label">Test ID</div>
+        <div>{test_id}</div>
+    </div>
+    <div>
+        <div class="label">Benchmark Type</div>
+        <div>{benchmark_type_str}</div>
+    </div>
     <div>
         <div class="label">Generated</div>
         <div>{timestamp}</div>
@@ -684,6 +720,74 @@ def generate_html_report(
 </tr>
 """)
 
+        html_parts.append("</table>")
+
+    # Species breakdown (HYE benchmarks)
+    if result.species_breakdown:
+        html_parts.append("<h3>Species Ratio Analysis (HYE)</h3>")
+        html_parts.append("<p>Mixed species benchmark comparing observed vs expected species ratios.</p>")
+
+        species_list = list(result.species_breakdown.expected_ratios.keys())
+
+        # Expected vs Observed table
+        html_parts.append("<table>")
+        header_row = "<tr><th>Species</th><th>Expected</th><th>GT Count</th>"
+        for tool_name in tool_names:
+            header_row += f"<th>{tool_name} Observed</th><th>{tool_name} Error</th>"
+        header_row += "</tr>"
+        html_parts.append(header_row)
+
+        for species in species_list:
+            expected = result.species_breakdown.expected_ratios.get(species, 0)
+            gt_count = result.species_breakdown.ground_truth_counts.get(species, 0)
+            row = f"<tr><td>{species}</td><td>{expected:.1%}</td><td>{gt_count:,}</td>"
+
+            for tool_name in tool_names:
+                observed = result.species_breakdown.observed_ratios_per_tool.get(tool_name, {}).get(species, 0)
+                error = result.species_breakdown.ratio_errors_per_tool.get(tool_name, {}).get(species, 0)
+                error_class = "good" if error < 0.10 else "bad" if error > 0.20 else ""
+                row += f"<td>{observed:.1%}</td><td class='{error_class}'>{error:.1%}</td>"
+            row += "</tr>"
+            html_parts.append(row)
+
+        html_parts.append("</table>")
+
+        # Max error summary
+        html_parts.append("<h4>Species Ratio Accuracy Summary</h4>")
+        html_parts.append("<table>")
+        html_parts.append("<tr><th>Tool</th><th>Max Ratio Error</th><th>Status</th></tr>")
+        for tool_name in tool_names:
+            max_error = result.species_breakdown.max_ratio_error_per_tool.get(tool_name, 0)
+            status = "PASS" if max_error < 0.20 else "FAIL"
+            status_class = "good" if status == "PASS" else "bad"
+            html_parts.append(f"<tr><td>{tool_name}</td><td>{max_error:.1%}</td><td class='{status_class}'><strong>{status}</strong></td></tr>")
+        html_parts.append("</table>")
+
+    # PTM localization (Phospho benchmarks)
+    if result.ptm_metrics:
+        html_parts.append("<h3>PTM Site Localization (Phosphoproteomics)</h3>")
+        html_parts.append("<p>Phosphorylation site localization accuracy compared to ground truth.</p>")
+
+        html_parts.append("<table>")
+        html_parts.append("<tr><th>Tool</th><th>GT Phosphopeptides</th><th>Identified</th><th>Correct Site</th><th>Accuracy</th><th>Status</th></tr>")
+
+        for tool_name in tool_names:
+            gt_count = result.ptm_metrics.ground_truth_phosphopeptides
+            identified = result.ptm_metrics.identified_phosphopeptides_per_tool.get(tool_name, 0)
+            correct = result.ptm_metrics.correctly_localized_per_tool.get(tool_name, 0)
+            accuracy = result.ptm_metrics.site_accuracy_per_tool.get(tool_name, 0)
+            status = "PASS" if accuracy >= 0.80 else "FAIL"
+            status_class = "good" if status == "PASS" else "bad"
+            html_parts.append(f"""
+<tr>
+    <td>{tool_name}</td>
+    <td>{gt_count:,}</td>
+    <td>{identified:,}</td>
+    <td>{correct:,}</td>
+    <td class='{status_class}'>{accuracy:.1%}</td>
+    <td class='{status_class}'><strong>{status}</strong></td>
+</tr>
+""")
         html_parts.append("</table>")
 
     html_parts.append("</div>")

@@ -329,6 +329,7 @@ def run_validation(
     test_id: str,
     thresholds: TestThresholds,
     tool_versions: Optional[Dict[str, str]] = None,
+    test_metadata: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, Dict]:
     """
     Run validation comparison against ground truth.
@@ -341,6 +342,7 @@ def run_validation(
         test_id: Test identifier for logging.
         thresholds: Pass/fail thresholds.
         tool_versions: Dictionary mapping tool names to version strings.
+        test_metadata: Test metadata for HTML report (test_id, acquisition_type, sample_type, description).
 
     Returns:
         Tuple of (passed, metrics_dict).
@@ -360,6 +362,7 @@ def run_validation(
             output_dir=str(validation_output),
             generate_plots=True,
             tool_versions=tool_versions,
+            test_metadata=test_metadata,
         )
 
         # Check thresholds
@@ -501,15 +504,18 @@ def run_test_evaluation(
     logger.info(f"=" * 60)
 
     # Load test config for metadata
+    description = ""
     try:
         test_config = load_test_config(test_id)
         test_meta = test_config.get("test_metadata", {})
         acquisition_type = test_meta.get("acquisition_type", "DIA")
         sample_type = test_meta.get("sample_type", "hela")
+        description = test_meta.get("description", "")
         is_dda = acquisition_type.upper() == "DDA"
     except Exception:
         is_dda = "DDA" in test_id
         sample_type = "hela"
+        acquisition_type = "DDA" if is_dda else "DIA"
 
     # Get thresholds
     thresholds = get_test_thresholds(test_id)
@@ -597,9 +603,18 @@ def run_test_evaluation(
     # Get tool versions for reporting
     tool_versions = get_tool_versions(env_config)
 
+    # Build test metadata for HTML report
+    test_metadata = {
+        "test_id": test_id,
+        "acquisition_type": acquisition_type,
+        "sample_type": sample_type,
+        "description": description,
+    }
+
     passed, metrics = run_validation(
         db_path, diann_report, fragpipe_output, test_dir, test_id, thresholds,
-        tool_versions=tool_versions
+        tool_versions=tool_versions,
+        test_metadata=test_metadata,
     )
 
     # Write status file

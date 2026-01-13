@@ -1504,6 +1504,7 @@ def run_comparison(
     output_dir: Optional[str] = None,
     generate_plots: bool = True,
     tool_versions: Optional[Dict[str, str]] = None,
+    test_metadata: Optional[Dict[str, str]] = None,
 ) -> ComparisonResult:
     """
     Run a complete comparison between tools.
@@ -1516,6 +1517,11 @@ def run_comparison(
         generate_plots: Whether to generate comparison plots.
         tool_versions: Dictionary mapping tool names to version strings
             (e.g., {"DIA-NN": "2.3.1", "FragPipe": "24.0"}).
+        test_metadata: Dictionary with test metadata for HTML report:
+            - test_id: Test identifier (e.g., "IT-DIA-HELA")
+            - acquisition_type: "DIA" or "DDA"
+            - sample_type: "hela", "hye", "phospho", etc.
+            - description: Human-readable description
 
     Returns:
         ComparisonResult with all statistics.
@@ -1706,10 +1712,11 @@ def run_comparison(
                 html_path = generate_html_report(
                     result=result,
                     output_dir=output_dir,
-                    test_name="TIMSIM Validation",
+                    test_name=test_metadata.get("test_id", "TIMSIM Validation") if test_metadata else "TIMSIM Validation",
                     database_path=database_path,
                     diann_report_path=diann_report_path,
                     fragpipe_output_dir=fragpipe_output_dir,
+                    test_metadata=test_metadata,
                 )
                 logger.info(f"HTML report saved to {html_path}")
             except Exception as e:
