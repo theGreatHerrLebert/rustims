@@ -31,6 +31,7 @@ Create a **comprehensive integration test pipeline** that:
 |---------|--------|-------|
 | DIA-PASEF | Complete | Multiple window schemes supported |
 | DDA-PASEF | Complete | TopN and random selection modes |
+| Thunder-PASEF | Complete | Optimized for immunopeptidomics |
 | Retention time prediction | Complete | GRU model + Koina integration |
 | Ion mobility prediction | Complete | GRU-based prediction |
 | Fragment intensity | Complete | Prosit and PeptDeep models |
@@ -38,7 +39,9 @@ Create a **comprehensive integration test pipeline** that:
 | Quadrupole transmission | Complete | Three modes: none, precursor_scaling, per_fragment |
 | Noise modeling | Complete | m/z noise + real data noise injection |
 | Phosphoproteomics | Complete | Variable modification support |
+| Immunopeptidomics | Complete | HLA modifications config (no carbamidomethylation) |
 | Multi-proteome mixing | Complete | FASTA mixing with dilution factors |
+| Binomial charge model | Complete | Proper charge 1+ representation for short peptides |
 
 ### Validation Infrastructure
 
@@ -47,11 +50,14 @@ Create a **comprehensive integration test pipeline** that:
 | `timsim_validate` CLI | Complete | Single-tool validation (DiaNN or FragPipe) |
 | `timsim_compare` CLI | Complete | Multi-tool comparison reports |
 | `--analysis-tool both` | Complete | Run both tools in single workflow |
-| DiaNN executor | Complete | Automated DiaNN analysis |
-| FragPipe executor | Complete | Automated FragPipe analysis |
+| DiaNN executor | Complete | Automated DiaNN analysis (DIA + DDA modes) |
+| FragPipe executor | Complete | Automated FragPipe analysis (DIA + DDA modes) |
 | Text reports | Complete | Human-readable validation summaries |
-| JSON reports | Complete | Machine-parseable metrics |
-| Comparison plots | Complete | 7 plot types (Venn, correlations, breakdowns) |
+| JSON reports | Complete | Machine-parseable metrics with tool versions |
+| HTML reports | Complete | Self-contained reports with embedded plots |
+| Comparison plots | Complete | 9 plot types (Venn, correlations, breakdowns) |
+| Per-tool plots | Complete | Summary grids, RT/IM correlations per tool |
+| Tool version display | Complete | Versions shown in plots and reports |
 
 ### Metrics Captured
 
@@ -148,9 +154,11 @@ fasta_hla = "/path/to/fasta/hla_ligands.fasta"
 
 [tools]
 # Analysis tool paths
-diann_path = "/path/to/diann-1.9.2/diann"
-fragpipe_path = "/path/to/fragpipe-23.0/bin/fragpipe"
-fragpipe_tools = "/path/to/fragpipe-23.0/tools"
+diann_path = "/path/to/diann-2.3.1/diann-linux"
+fragpipe_path = "/path/to/fragpipe-24.0/bin/fragpipe"
+fragpipe_tools = "/path/to/fragpipe-24.0/tools"
+fragpipe_workflow_dia = "/path/to/fragpipe-24.0/workflows/DIA_SpecLib_Quant_diaPASEF.workflow"
+fragpipe_workflow_dda = "/path/to/fragpipe-24.0/workflows/LFQ-MBR.workflow"
 
 [performance]
 num_threads = -1
@@ -180,7 +188,7 @@ gpu_memory_limit_gb = 4
 | Sample type | Standard proteome, Mixed species, Phospho, HLA |
 | Fragment model | Prosit (default) |
 | Noise | Real data noise injection enabled |
-| Analysis tools | DiaNN 2.0+, FragPipe 23+ |
+| Analysis tools | DiaNN 2.3+, FragPipe 24+ |
 
 ### Pass/Fail Criteria
 
@@ -238,20 +246,30 @@ Output structure:
 ```
 output_base/
 ├── IT-DIA-HELA/
-│   ├── IT-DIA-HELA.d/
-│   ├── synthetic_data.db
+│   ├── IT-DIA-HELA/
+│   │   ├── IT-DIA-HELA.d/        # Simulated .d folder
+│   │   └── synthetic_data.db     # Ground truth database
 │   ├── diann/
 │   │   ├── report.parquet
-│   │   └── ...
+│   │   └── diann.log
 │   ├── fragpipe/
 │   │   ├── psm.tsv
+│   │   ├── peptide.tsv
 │   │   └── ...
 │   ├── validation/
-│   │   ├── diann_validation.json
-│   │   ├── fragpipe_validation.json
-│   │   ├── comparison_report.json
-│   │   └── plots/
-│   └── PASS / FAIL              # Status file
+│   │   ├── tool_comparison_report.txt
+│   │   ├── tool_comparison_report.json
+│   │   ├── validation_report.html    # Self-contained HTML report
+│   │   ├── plots/                    # Comparison plots
+│   │   │   ├── comparison_summary.png
+│   │   │   └── ...
+│   │   ├── DIA-NN_plots/             # Per-tool validation plots
+│   │   │   ├── summary_grid.png
+│   │   │   ├── rt_correlation.png
+│   │   │   └── ...
+│   │   └── FragPipe_plots/
+│   │       └── ...
+│   └── EVAL_PASS / EVAL_FAIL        # Status file
 └── ...
 ```
 
@@ -287,10 +305,17 @@ timsim-integration-report --env env.toml --output report.html
 |-------|-------------|--------|
 | Phase 0 | Validation infrastructure (`timsim_validate`, `timsim_compare`) | Complete |
 | Phase 1 | Benchmark dataset generation | Complete |
-| Phase 2 | Integration test configs | In Progress |
-| Phase 3 | Simulation script (`timsim-integration-sim`) | In Progress |
-| Phase 4 | Evaluation script (`timsim-integration-eval`) | In Progress |
+| Phase 2 | Integration test configs | Complete |
+| Phase 3 | Simulation script (`timsim-integration-sim`) | Complete |
+| Phase 4 | Evaluation script (`timsim-integration-eval`) | Complete |
 | Phase 5 | CI/CD integration | Planned |
+
+### Completed Test Results (IT-DDA-HLA Example)
+
+| Tool | Version | ID Rate | Precision | RT Corr | IM Corr | Status |
+|------|---------|---------|-----------|---------|---------|--------|
+| DIA-NN | 2.3.1 | 56.5% | 98.9% | 0.9999 | 1.0000 | PASS |
+| FragPipe | 24.0 | 64.4% | 99.9% | 0.9999 | 1.0000 | PASS |
 
 ---
 
@@ -299,5 +324,9 @@ timsim-integration-report --env env.toml --output report.html
 - Simulator entry point: `imspy.simulation.timsim.simulator:main`
 - Validation CLI: `imspy.simulation.timsim.validate.cli:main`
 - Comparison CLI: `imspy.simulation.timsim.validate.tool_comparison:main_compare`
+- HTML report generator: `imspy.simulation.timsim.validate.html_report`
 - Example configs: `imspy/simulation/timsim/configs/`
+- HLA modifications: `imspy/simulation/timsim/configs/modifications_hla.toml`
 - Integration tests: `imspy/simulation/timsim/integration/`
+- Integration sim: `imspy.simulation.timsim.integration.sim:main`
+- Integration eval: `imspy.simulation.timsim.integration.eval:main`
