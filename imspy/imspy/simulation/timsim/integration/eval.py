@@ -98,6 +98,92 @@ def get_integration_dir() -> Path:
     return Path(__file__).parent
 
 
+def create_results_bundle(
+    output_base: str,
+    test_ids: List[str],
+    timestamp: datetime,
+) -> Optional[str]:
+    """
+    Create a zip bundle of all validation results.
+
+    Includes:
+    - index.html (dashboard)
+    - evaluation_summary.json
+    - Per-test validation folders (HTML reports, plots, JSON reports)
+
+    Args:
+        output_base: Base output directory containing test results.
+        test_ids: List of test IDs that were evaluated.
+        timestamp: Timestamp of the evaluation run.
+
+    Returns:
+        Path to the created zip file, or None if creation failed.
+    """
+    import zipfile
+    import shutil
+
+    output_path = Path(output_base)
+    timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
+    zip_name = f"timsim_validation_{timestamp_str}.zip"
+    zip_path = output_path / zip_name
+
+    # Files to include at root level
+    root_files = [
+        "index.html",
+        "evaluation_summary.json",
+    ]
+
+    # Patterns to include from each test directory
+    validation_patterns = [
+        "validation/*.html",
+        "validation/*.txt",
+        "validation/*.json",
+        "validation/plots/*.png",
+        "validation/DIA-NN_plots/*.png",
+        "validation/FragPipe_plots/*.png",
+    ]
+
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Add root files
+            for filename in root_files:
+                file_path = output_path / filename
+                if file_path.exists():
+                    zf.write(file_path, filename)
+                    logger.debug(f"Added to bundle: {filename}")
+
+            # Add validation results for each test
+            for test_id in test_ids:
+                test_dir = output_path / test_id
+                if not test_dir.exists():
+                    continue
+
+                # Add validation folder contents
+                validation_dir = test_dir / "validation"
+                if validation_dir.exists():
+                    for item in validation_dir.rglob("*"):
+                        if item.is_file():
+                            # Only include relevant files (HTML, plots, reports)
+                            if item.suffix in [".html", ".png", ".txt", ".json"]:
+                                arcname = str(item.relative_to(output_path))
+                                zf.write(item, arcname)
+                                logger.debug(f"Added to bundle: {arcname}")
+
+        # Get bundle size
+        bundle_size = zip_path.stat().st_size
+        size_mb = bundle_size / (1024 * 1024)
+        logger.info(f"Created results bundle: {zip_path} ({size_mb:.1f} MB)")
+
+        return str(zip_path)
+
+    except Exception as e:
+        logger.warning(f"Failed to create results bundle: {e}")
+        # Clean up partial zip if it exists
+        if zip_path.exists():
+            zip_path.unlink()
+        return None
+
+
 def load_env_config(env_path: str) -> Dict:
     """Load environment configuration from TOML file."""
     if not os.path.exists(env_path):
@@ -849,6 +935,18 @@ Examples:
 
     except Exception as e:
         logger.warning(f"Failed to generate meta report: {e}")
+
+    # Create zip bundle of all validation results
+    try:
+        zip_path = create_results_bundle(
+            output_base=output_base,
+            test_ids=tests_to_run,
+            timestamp=start_time,
+        )
+        if zip_path:
+            logger.info(f"Results bundle: {zip_path}")
+    except Exception as e:
+        logger.warning(f"Failed to create results bundle: {e}")
 
     sys.exit(0 if failed_count == 0 else 1)
 
