@@ -411,9 +411,9 @@ def generate_preview_gif(
     data_path: str,
     output_path: str,
     mode: str = 'auto',
-    max_frames: int = 50,
-    fps: int = 5,
-    dpi: int = 60,
+    max_frames: int = 200,
+    fps: int = 10,
+    dpi: int = 100,
     annotate: bool = True,
     use_bruker_sdk: bool = False,
     show_progress: bool = True
@@ -421,16 +421,16 @@ def generate_preview_gif(
     """
     Generate a preview GIF from a TimsTOF dataset.
 
-    Creates a lightweight animated GIF suitable for embedding in HTML reports.
-    Lower default settings than video for smaller file size.
+    Creates an animated GIF suitable for embedding in HTML reports.
+    Default settings balance quality and file size for web viewing.
 
     Args:
         data_path: Path to .d folder
         output_path: Path for output GIF file (.gif)
         mode: 'dda', 'dia', or 'auto' (auto-detect from data)
-        max_frames: Maximum number of frames to include
-        fps: Frames per second (lower = smaller file)
-        dpi: Resolution (lower = smaller file, 60 is good for previews)
+        max_frames: Maximum number of frames to include (default 200)
+        fps: Frames per second (default 10)
+        dpi: Resolution (default 100, good balance of quality and size)
         annotate: Whether to overlay annotation boxes
         use_bruker_sdk: Use Bruker SDK for reading
         show_progress: Show progress bar

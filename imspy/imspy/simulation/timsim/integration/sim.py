@@ -277,7 +277,7 @@ def generate_simulation_preview(
     test_id: str,
     acquisition_type: str,
     use_bruker_sdk: bool = False,
-    max_frames: int = 50,
+    max_frames: int = 200,
 ) -> Optional[str]:
     """
     Generate a preview GIF of the simulated data.
@@ -309,8 +309,8 @@ def generate_simulation_preview(
             output_path=str(gif_path),
             mode=mode,
             max_frames=max_frames,
-            fps=5,
-            dpi=60,
+            fps=10,
+            dpi=100,
             annotate=True,
             use_bruker_sdk=use_bruker_sdk,
             show_progress=True,
