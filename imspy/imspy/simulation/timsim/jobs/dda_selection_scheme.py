@@ -1,7 +1,6 @@
 import json
 from typing import Tuple
 import logging
-from itertools import count
 
 import numpy as np
 import pandas as pd
@@ -97,7 +96,6 @@ def simulate_dda_pasef_selection_scheme(
 
     # {ion_id: last_frame_scheduled}
     global_scheduled_ion_tracker = {}
-    unique_id_generator = count(start=1)
 
     for frame in tqdm(np.sort(list(ms_1_frames)), ncols=80, desc="Selecting precursors"):
         X_tmp = X[X.frame_id == frame]
@@ -111,13 +109,27 @@ def simulate_dda_pasef_selection_scheme(
                 scan_max=scan_max,
                 scheduled_ion_tracker=global_scheduled_ion_tracker,
                 exclusion_frames=precursor_exclusion_width,
-                unique_id_generator=unique_id_generator
             )
             pasef_meta_list.append(pasef_meta)
             precursors_list.append(precursors)
 
     pasef_meta_df = pd.concat(pasef_meta_list)
     precursors_df = pd.concat(precursors_list)
+
+    # Create precursor ID mapping table (ion_id -> sequential TDF precursor ID)
+    # This is stored separately so internal simulation can use ion_id for fragment lookup
+    # while TDF output uses sequential IDs starting from 1 as required by the vendor format
+    old_ids = precursors_df['Id'].unique()
+    id_mapping_df = pd.DataFrame({
+        'ion_id': sorted(old_ids),
+        'tdf_precursor_id': range(1, len(old_ids) + 1)
+    })
+
+    # Store the mapping in the acquisition builder's synthetics handle
+    acquisition_builder.synthetics_handle.create_table(
+        table_name='precursor_id_mapping',
+        table=id_mapping_df
+    )
 
     # map column names to the inverse of the PASEF_META_COLUMNS_MAPPING and PRECURSOR_MAPPING
     pasef_meta_df = pasef_meta_df.rename(columns={v: k for k, v in PASEF_META_COLUMNS_MAPPING.items()})
@@ -175,14 +187,14 @@ def schedule_precursors(
         scan_max: int = 913,
         scheduled_ion_tracker: dict = None,
         exclusion_frames: int = 25,
-        unique_id_generator=None
 ):
     """
     Schedules precursors for a given MS1 frame.
 
     - scheduled_ion_tracker: a dict mapping ion_id -> last frame (from ions.frame_id) where it was scheduled.
       An ion is only eligible if (current_frame - last_scheduled_frame) >= exclusion_frames.
-    - unique_id_generator: a generator that yields unique IDs for precursors.
+
+    Note: Uses ion.ion_id as the precursor ID to enable downstream fragment ion lookup.
     """
     frame_id_precursor = ions.frame_id.values[0]
     current_frame = frame_id_precursor  # current MS1 frame id
@@ -244,8 +256,8 @@ def schedule_precursors(
                 mz_avg = (mz_mono + ion.mz_max) / 2.0
                 isolation_width = 3.0 if (ion.mz_max - mz_mono) > 2.0 else 2.0
 
-                # Get a new unique ID for this precursor
-                new_precursor_id = next(unique_id_generator) if unique_id_generator is not None else ion.ion_id
+                # Use ion_id as precursor ID for downstream fragment lookup
+                precursor_id = ion.ion_id
 
                 scheduled_rows.append({
                     "Frame": frame_id,
@@ -254,11 +266,11 @@ def schedule_precursors(
                     "IsolationMz": mz_max_contrib,
                     "IsolationWidth": isolation_width,
                     "CollisionEnergy": ce_bias + ce_slope * ion.scan_apex,
-                    "Precursor": new_precursor_id  # using new unique id instead of ion id
+                    "Precursor": precursor_id
                 })
 
                 precursor_rows.append({
-                    "Id": new_precursor_id,  # unique id replacing ion.ion_id
+                    "Id": precursor_id,
                     "LargestPeakMz": mz_max_contrib,
                     "AverageMz": mz_avg,
                     "MonoisotopicMz": mz_mono,

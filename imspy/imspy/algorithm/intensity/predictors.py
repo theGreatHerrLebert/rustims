@@ -187,8 +187,9 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         tables = []
 
         batch_counter = 0
-        for batch_indices in tqdm(np.array_split(data.index, np.ceil(len(data) / batch_size)),
-                                  total=int(np.ceil(len(data) / batch_size)),
+        num_batches = max(1, int(np.ceil(len(data) / batch_size))) if len(data) > 0 else 0
+        for batch_indices in tqdm(np.array_split(data.index, num_batches) if num_batches > 0 else [],
+                                  total=num_batches,
                                   desc='Simulating intensities', ncols=100, disable=not self.verbose):
 
             batch = data.loc[batch_indices].reset_index(drop=True)

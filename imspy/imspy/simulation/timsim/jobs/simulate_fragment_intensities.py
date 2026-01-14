@@ -154,9 +154,10 @@ def _simulate_fragment_intensities_standard(
     n = int(5e4)
     batch_counter = 0
 
+    num_batches = max(1, int(np.ceil(len(i_pred) / n))) if len(i_pred) > 0 else 0
     for batch_indices in tqdm(
-        np.array_split(i_pred.index, np.ceil(len(i_pred) / n)),
-        total=int(np.ceil(len(i_pred) / n)),
+        np.array_split(i_pred.index, num_batches) if num_batches > 0 else [],
+        total=num_batches,
         desc="flattening predicted intensities",
         ncols=100,
         disable=(not verbose),

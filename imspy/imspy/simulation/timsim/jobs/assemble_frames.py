@@ -185,9 +185,22 @@ def assemble_frames(
 
     elif acquisition_builder.acquisition_mode.mode == 'DDA':
         logger.info("Writing DDA specific meta data to database ...")
-        # write precursor table to database
-        acquisition_builder.tdf_writer.write_precursor_table(
-            acquisition_builder.synthetics_handle.get_table('precursors'))
-        # write pasef_meta table to database
+
+        # Load precursor ID mapping table (maps ion_id to sequential TDF precursor IDs)
+        try:
+            id_mapping_table = acquisition_builder.synthetics_handle.get_table('precursor_id_mapping')
+        except Exception:
+            id_mapping_table = None
+            logger.warning("No precursor_id_mapping table found, using original IDs")
+
+        # write precursor table to database with ID remapping
+        id_mapping = acquisition_builder.tdf_writer.write_precursor_table(
+            acquisition_builder.synthetics_handle.get_table('precursors'),
+            id_mapping_table=id_mapping_table
+        )
+
+        # write pasef_meta table to database with same ID remapping
         acquisition_builder.tdf_writer.write_pasef_meta_table(
-            acquisition_builder.synthetics_handle.get_table('pasef_meta'))
+            acquisition_builder.synthetics_handle.get_table('pasef_meta'),
+            id_mapping=id_mapping
+        )
