@@ -134,19 +134,44 @@ def get_sqrt_slopes_and_intercepts(
 
 @keras.saving.register_keras_serializable()
 class SquareRootProjectionLayer(tf.keras.layers.Layer):
-    def __init__(self, slopes, intercepts, trainable: bool = True, **kwargs):
+    def __init__(self, slopes, intercepts, trainable: bool = True, num_charges: int = None, **kwargs):
         super(SquareRootProjectionLayer, self).__init__(**kwargs)
         self.slopes_init = list(slopes)
         self.intercepts_init = list(intercepts)
-        self.trainable = trainable
-        self.slopes = None
-        self.intercepts = None
+        self._trainable_weights_flag = trainable
+        # num_charges can be passed explicitly (for loading) or inferred from slopes
+        # Default to 4 if slopes only has 1 value (legacy model config issue)
+        if num_charges is not None:
+            self._num_charges = num_charges
+        elif len(self.slopes_init) > 1:
+            self._num_charges = len(self.slopes_init)
+        else:
+            # Legacy models may have truncated slopes, default to 4 charge states
+            self._num_charges = 4
+
+        # Initialize weights immediately in __init__ for Keras 3.x compatibility
+        # Pad slopes/intercepts_init if needed to match num_charges
+        if len(self.slopes_init) < self._num_charges:
+            self.slopes_init = self.slopes_init + [0.0] * (self._num_charges - len(self.slopes_init))
+        if len(self.intercepts_init) < self._num_charges:
+            self.intercepts_init = self.intercepts_init + [0.0] * (self._num_charges - len(self.intercepts_init))
+
+        self.slopes = self.add_weight(
+            name='sqrt-coefficients',
+            shape=(self._num_charges,),
+            initializer=tf.constant_initializer(self.slopes_init[:self._num_charges]),
+            trainable=trainable
+        )
+        self.intercepts = self.add_weight(
+            name='intercepts',
+            shape=(self._num_charges,),
+            initializer=tf.constant_initializer(self.intercepts_init[:self._num_charges]),
+            trainable=trainable
+        )
 
     def build(self, input_shape):
-        num_charges = input_shape[1][-1]
-        self.slopes = self.add_weight(name='sqrt-coefficients',shape=(num_charges,), initializer=tf.constant_initializer(self.slopes_init),trainable=self.trainable)
-
-        self.intercepts = self.add_weight(name='intercepts',shape=(num_charges,),initializer=tf.constant_initializer(self.intercepts_init),trainable=self.trainable)
+        # Weights already created in __init__, just mark as built
+        super().build(input_shape)
 
     def call(self, inputs):
         mz, charge = inputs[0], inputs[1]
@@ -160,7 +185,8 @@ class SquareRootProjectionLayer(tf.keras.layers.Layer):
         config.update({
             'slopes': self.slopes_init,
             'intercepts': self.intercepts_init,
-            'trainable': self.trainable
+            'trainable': self._trainable_weights_flag,
+            'num_charges': self._num_charges
         })
         return config
 

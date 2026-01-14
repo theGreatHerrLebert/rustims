@@ -31,13 +31,14 @@ dependencies = [
     "qdarkstyle >=3.2.3",
     "pyqt5 >=5.15.11",
     "vtk >=9.5.0",
+    "nicegui >=2.0",
 ]
 
 [project.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
 imspy_ccs = "imspy.timstof.dbsearch.imspy_ccs:main"
 timsim = "imspy.simulation.timsim.simulator:main"
-timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
+timsim_gui = "imspy.simulation.timsim.gui.app:main"
 imspy_rescore_sage = "imspy.timstof.dbsearch.imspy_rescore_sage:main"
 timsim_validate = "imspy.simulation.timsim.validate.cli:main"
 timsim_compare = "imspy.simulation.timsim.validate.tool_comparison:main_compare"

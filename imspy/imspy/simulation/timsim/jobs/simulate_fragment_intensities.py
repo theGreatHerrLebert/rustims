@@ -112,7 +112,7 @@ def _simulate_fragment_intensities_standard(
     # ------------------------------------------------------------------
     intensity_already_flat = False
 
-    if model_name is None or model_name.lower() == "prosit":
+    if model_name is None or model_name == "" or model_name.lower() == "prosit":
         # default: Prosit wrapper (returns 3D tensors -> needs flattening)
         logger.info("Using Prosit2023 TIMS-TOF intensity model ...")
 
@@ -242,7 +242,7 @@ def _simulate_fragment_intensities_lazy(
     logger.info(f"Processing frames {min_frame} to {max_frame} in batches of {frame_batch_size}")
 
     # Initialize intensity predictor once
-    if model_name is None or model_name.lower() == "prosit":
+    if model_name is None or model_name == "" or model_name.lower() == "prosit":
         logger.info("Using Prosit2023 TIMS-TOF intensity model ...")
         IntensityPredictor = Prosit2023TimsTofWrapper()
         intensity_already_flat = False
@@ -285,7 +285,7 @@ def _simulate_fragment_intensities_lazy(
         )
 
         # Predict intensities for this batch
-        if model_name is None or model_name.lower() == "prosit":
+        if model_name is None or model_name == "" or model_name.lower() == "prosit":
             i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(
                 transmitted_fragment_ions,
                 batch_size_tf_ds=batch_size,
