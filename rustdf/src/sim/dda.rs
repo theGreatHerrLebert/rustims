@@ -493,149 +493,160 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         let mz_max_val = mz_max.unwrap_or(1700.0);
         let intensity_min_val = intensity_min.unwrap_or(1.0);
 
-        // Cache PASEF meta lookup for this frame
-        let pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
-
-        // If no PASEF meta or no abundances, return empty frame
-        let Some((peptide_ids, frame_abundances)) = self.precursor_frame_builder.frame_to_abundances.get(&frame_id) else {
+        // Get PASEF meta for this frame - these define which precursors were SELECTED
+        let Some(pasef_meta) = self.transmission_settings.pasef_meta.get(&(frame_id as i32)) else {
             return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
         };
 
-        if pasef_meta.is_none() {
-            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
-        }
-        let pasef_meta = pasef_meta.unwrap();
-
         // Preallocate with estimated capacity
-        let estimated_capacity = peptide_ids.len() * 4;
+        let estimated_capacity = pasef_meta.len() * 4;
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(estimated_capacity);
 
-        // Go over all peptides in the frame
-        for (peptide_id, frame_abundance) in peptide_ids.iter().zip(frame_abundances.iter()) {
-            // Single lookup instead of contains_key + get
+        // Iterate over PASEF meta entries - each represents a SELECTED precursor
+        for meta in pasef_meta.iter() {
+            // Get the selected ion_id from the PASEF precursor field
+            let ion_id = meta.precursor as u32;
+
+            // Look up peptide_id and charge from the ion_id
+            let Some(&(peptide_id, charge_state)) = self.precursor_frame_builder.ion_id_to_peptide_charge.get(&ion_id) else {
+                continue;
+            };
+
+            // Get peptide info
+            let Some(peptide) = self.precursor_frame_builder.peptides.get(&peptide_id) else {
+                continue;
+            };
+
+            // Check if this peptide is active in this frame
+            if frame_id < peptide.frame_start || frame_id > peptide.frame_end {
+                continue;
+            }
+
+            // Get ion info from peptide_to_ions
             let Some((ion_abundances, scan_occurrences, scan_abundances, charges, spectra)) = self
                 .precursor_frame_builder
                 .peptide_to_ions
-                .get(peptide_id)
+                .get(&peptide_id)
             else {
                 continue;
             };
 
-            // Cache peptide-level lookup
-            let total_events = *self.precursor_frame_builder.peptide_to_events.get(peptide_id).unwrap();
+            // Find the index of this specific charge state
+            let Some(ion_index) = charges.iter().position(|&c| c == charge_state) else {
+                continue;
+            };
 
-            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let all_scan_occurrence = &scan_occurrences[index];
-                let all_scan_abundance = &scan_abundances[index];
-                let spectrum = &spectra[index];
-                let charge_state = charges[index];
+            let ion_abundance = ion_abundances[ion_index];
+            let all_scan_occurrence = &scan_occurrences[ion_index];
+            let all_scan_abundance = &scan_abundances[ion_index];
+            let spectrum = &spectra[ion_index];
+            let total_events = *self.precursor_frame_builder.peptide_to_events.get(&peptide_id).unwrap();
 
-                for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
-                    // Get transmitted isotope indices based on config mode
-                    let (is_transmitted, transmitted_indices) = match self.isotope_transmission_config.mode {
-                        IsotopeTransmissionMode::None => {
-                            // Standard check without indices
-                            let any = self.transmission_settings.any_transmitted(
-                                frame_id as i32,
-                                *scan as i32,
-                                &spectrum.mz,
-                                None,
-                            );
-                            (any, HashSet::new())
-                        },
-                        IsotopeTransmissionMode::PrecursorScaling | IsotopeTransmissionMode::PerFragment => {
-                            let indices = self.transmission_settings.get_transmission_set(
-                                frame_id as i32,
-                                *scan as i32,
-                                &spectrum.mz,
-                                Some(self.isotope_transmission_config.min_probability),
-                            );
-                            (!indices.is_empty(), indices)
-                        },
-                    };
+            // Get frame abundance for this peptide
+            let frame_abundance = self.precursor_frame_builder.frame_to_abundances
+                .get(&frame_id)
+                .and_then(|(pep_ids, abundances)| {
+                    pep_ids.iter().position(|&p| p == peptide_id)
+                        .map(|idx| abundances[idx])
+                })
+                .unwrap_or(0.0);
 
-                    if !is_transmitted {
-                        continue;
-                    }
+            if frame_abundance == 0.0 {
+                continue;
+            }
 
-                    // Calculate abundance factor
-                    let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
+            // Collision energy from the PASEF meta
+            let collision_energy = meta.collision_energy;
+            let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
 
-                    // Get collision energy from cached PASEF meta
-                    let collision_energy: f64 = pasef_meta
-                        .iter()
-                        .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
-                        .map(|s| s.collision_energy)
-                        .unwrap_or(0.0);
-                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
+            // Look up fragment ions for this (peptide_id, charge, CE)
+            let Some((_, fragment_series_vec)) = fragment_ions.get(&(peptide_id, charge_state, collision_energy_quantized)) else {
+                continue;
+            };
 
-                    // Single lookup with let-else
-                    let Some((_, fragment_series_vec)) = fragment_ions.get(&(*peptide_id, charge_state, collision_energy_quantized)) else {
-                        continue;
-                    };
+            // Process scans within the PASEF selection window
+            for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
+                // Check if scan is within the PASEF selection window
+                let scan_i32 = *scan as i32;
+                if scan_i32 < meta.scan_start || scan_i32 > meta.scan_end {
+                    continue;
+                }
 
-                    // Cache scan mobility
-                    let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;
+                // Get transmitted isotope indices based on config mode
+                let transmitted_indices = match self.isotope_transmission_config.mode {
+                    IsotopeTransmissionMode::None => HashSet::new(),
+                    IsotopeTransmissionMode::PrecursorScaling | IsotopeTransmissionMode::PerFragment => {
+                        self.transmission_settings.get_transmission_set(
+                            frame_id as i32,
+                            scan_i32,
+                            &spectrum.mz,
+                            Some(self.isotope_transmission_config.min_probability),
+                        )
+                    },
+                };
 
-                    // Calculate transmission factor for PrecursorScaling mode
-                    let transmission_factor = if self.isotope_transmission_config.mode == IsotopeTransmissionMode::PrecursorScaling {
-                        if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
-                            if let Some(frag_data) = comp_data.get(&(*peptide_id, charge_state, collision_energy_quantized)) {
-                                calculate_precursor_transmission_factor(
-                                    &frag_data.precursor_isotope_distribution,
-                                    &transmitted_indices,
-                                )
-                            } else {
-                                1.0
-                            }
+                // Calculate abundance factor
+                let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
+
+                // Cache scan mobility
+                let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;
+
+                // Calculate transmission factor for PrecursorScaling mode
+                let transmission_factor = if self.isotope_transmission_config.mode == IsotopeTransmissionMode::PrecursorScaling {
+                    if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
+                        if let Some(frag_data) = comp_data.get(&(peptide_id, charge_state, collision_energy_quantized)) {
+                            calculate_precursor_transmission_factor(
+                                &frag_data.precursor_isotope_distribution,
+                                &transmitted_indices,
+                            )
                         } else {
                             1.0
                         }
                     } else {
                         1.0
-                    };
+                    }
+                } else {
+                    1.0
+                };
 
-                    for (series_idx, fragment_ion_series) in fragment_series_vec.iter().enumerate() {
-                        let final_spectrum = match self.isotope_transmission_config.mode {
-                            IsotopeTransmissionMode::None => {
-                                // Standard spectrum scaling
-                                fragment_ion_series.clone() * fraction_events as f64
-                            },
-                            IsotopeTransmissionMode::PrecursorScaling => {
-                                // Apply precursor-based transmission factor
-                                fragment_ion_series.clone() * (fraction_events as f64 * transmission_factor)
-                            },
-                            IsotopeTransmissionMode::PerFragment => {
-                                // Per-fragment transmission-dependent calculation
-                                if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
-                                    if let Some(frag_data) = comp_data.get(&(*peptide_id, charge_state, collision_energy_quantized)) {
-                                        if series_idx < frag_data.per_fragment_data.len() {
-                                            // Aggregate adjusted spectra from all fragment ions in this series
-                                            let series_data = &frag_data.per_fragment_data[series_idx];
-                                            let mut aggregated_mz: Vec<f64> = Vec::new();
-                                            let mut aggregated_intensity: Vec<f64> = Vec::new();
+                for (series_idx, fragment_ion_series) in fragment_series_vec.iter().enumerate() {
+                    let final_spectrum = match self.isotope_transmission_config.mode {
+                        IsotopeTransmissionMode::None => {
+                            // Standard spectrum scaling
+                            fragment_ion_series.clone() * fraction_events as f64
+                        },
+                        IsotopeTransmissionMode::PrecursorScaling => {
+                            // Apply precursor-based transmission factor
+                            fragment_ion_series.clone() * (fraction_events as f64 * transmission_factor)
+                        },
+                        IsotopeTransmissionMode::PerFragment => {
+                            // Per-fragment transmission-dependent calculation
+                            if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
+                                if let Some(frag_data) = comp_data.get(&(peptide_id, charge_state, collision_energy_quantized)) {
+                                    if series_idx < frag_data.per_fragment_data.len() {
+                                        // Aggregate adjusted spectra from all fragment ions in this series
+                                        let series_data = &frag_data.per_fragment_data[series_idx];
+                                        let mut aggregated_mz: Vec<f64> = Vec::new();
+                                        let mut aggregated_intensity: Vec<f64> = Vec::new();
 
-                                            for frag_ion_data in series_data {
-                                                // Apply transmission-dependent calculation for this fragment
-                                                let adjusted_dist = calculate_transmission_dependent_fragment_ion_isotope_distribution(
-                                                    &frag_ion_data.fragment_distribution,
-                                                    &frag_ion_data.complementary_distribution,
-                                                    &transmitted_indices,
-                                                    self.isotope_transmission_config.max_isotopes,
-                                                );
+                                        for frag_ion_data in series_data {
+                                            // Apply transmission-dependent calculation for this fragment
+                                            let adjusted_dist = calculate_transmission_dependent_fragment_ion_isotope_distribution(
+                                                &frag_ion_data.fragment_distribution,
+                                                &frag_ion_data.complementary_distribution,
+                                                &transmitted_indices,
+                                                self.isotope_transmission_config.max_isotopes,
+                                            );
 
-                                                // Scale by predicted intensity and fraction_events
-                                                for (mz, abundance) in adjusted_dist {
-                                                    aggregated_mz.push(mz);
-                                                    aggregated_intensity.push(abundance * frag_ion_data.predicted_intensity * fraction_events as f64);
-                                                }
+                                            // Scale by predicted intensity and fraction_events
+                                            for (mz, abundance) in adjusted_dist {
+                                                aggregated_mz.push(mz);
+                                                aggregated_intensity.push(abundance * frag_ion_data.predicted_intensity * fraction_events as f64);
                                             }
+                                        }
 
-                                            if !aggregated_mz.is_empty() {
-                                                MzSpectrum::new(aggregated_mz, aggregated_intensity)
-                                            } else {
-                                                fragment_ion_series.clone() * fraction_events as f64
-                                            }
+                                        if !aggregated_mz.is_empty() {
+                                            MzSpectrum::new(aggregated_mz, aggregated_intensity)
                                         } else {
                                             fragment_ion_series.clone() * fraction_events as f64
                                         }
@@ -645,32 +656,34 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                                 } else {
                                     fragment_ion_series.clone() * fraction_events as f64
                                 }
-                            },
-                        };
-
-                        let mz_spectrum = if mz_noise_fragment {
-                            if uniform {
-                                final_spectrum.add_mz_noise_uniform(fragment_ppm, right_drag_val)
                             } else {
-                                final_spectrum.add_mz_noise_normal(fragment_ppm)
+                                fragment_ion_series.clone() * fraction_events as f64
                             }
-                        } else {
-                            final_spectrum
-                        };
+                        },
+                    };
 
-                        let spectrum_len = mz_spectrum.mz.len();
-                        tims_spectra.push(TimsSpectrum::new(
-                            frame_id as i32,
-                            *scan as i32,
-                            rt,
-                            scan_mobility,
-                            ms_type.clone(),
-                            IndexedMzSpectrum::from_mz_spectrum(
-                                vec![0; spectrum_len],
-                                mz_spectrum,
-                            ).filter_ranged(100.0, 1700.0, 1.0, 1e9),
-                        ));
-                    }
+                    let mz_spectrum = if mz_noise_fragment {
+                        if uniform {
+                            final_spectrum.add_mz_noise_uniform(fragment_ppm, right_drag_val)
+                        } else {
+                            final_spectrum.add_mz_noise_normal(fragment_ppm)
+                        }
+                    } else {
+                        final_spectrum
+                    };
+
+                    let spectrum_len = mz_spectrum.mz.len();
+                    tims_spectra.push(TimsSpectrum::new(
+                        frame_id as i32,
+                        *scan as i32,
+                        rt,
+                        scan_mobility,
+                        ms_type.clone(),
+                        IndexedMzSpectrum::from_mz_spectrum(
+                            vec![0; spectrum_len],
+                            mz_spectrum,
+                        ).filter_ranged(100.0, 1700.0, 1.0, 1e9),
+                    ));
                 }
             }
         }
@@ -703,7 +716,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         let ms_type = if self.precursor_frame_builder.precursor_frame_id_set.contains(&frame_id) {
             MsType::Unknown
         } else {
-            MsType::FragmentDda  // Note: DDA, not DIA
+            MsType::FragmentDda
         };
 
         let rt = *self.precursor_frame_builder.frame_to_rt.get(&frame_id).unwrap() as f64;
@@ -712,104 +725,121 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         let mz_max_val = mz_max.unwrap_or(1700.0);
         let intensity_min_val = intensity_min.unwrap_or(1.0);
 
-        // Cache PASEF meta lookup
-        let pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
-
-        // Single lookup instead of contains_key + get
-        let Some((peptide_ids, frame_abundances)) = self
-            .precursor_frame_builder
-            .frame_to_abundances
-            .get(&frame_id)
-        else {
+        // Get PASEF meta for this frame - these define which precursors were SELECTED
+        let Some(pasef_meta) = self.transmission_settings.pasef_meta.get(&(frame_id as i32)) else {
             return TimsFrameAnnotated::new(frame_id as i32, rt, ms_type, vec![], vec![], vec![], vec![], vec![], vec![]);
         };
 
         // Preallocate with estimated capacity
-        let estimated_capacity = peptide_ids.len() * 4;
+        let estimated_capacity = pasef_meta.len() * 4;
         let mut tims_spectra: Vec<TimsSpectrumAnnotated> = Vec::with_capacity(estimated_capacity);
 
-        for (peptide_id, frame_abundance) in peptide_ids.iter().zip(frame_abundances.iter()) {
-            // Single lookup
+        // Iterate over PASEF meta entries - each represents a SELECTED precursor
+        for meta in pasef_meta.iter() {
+            // Get the selected ion_id from the PASEF precursor field
+            let ion_id = meta.precursor as u32;
+
+            // Look up peptide_id and charge from the ion_id
+            let Some(&(peptide_id, charge_state)) = self.precursor_frame_builder.ion_id_to_peptide_charge.get(&ion_id) else {
+                continue;
+            };
+
+            // Get peptide info
+            let Some(peptide) = self.precursor_frame_builder.peptides.get(&peptide_id) else {
+                continue;
+            };
+
+            // Check if this peptide is active in this frame
+            if frame_id < peptide.frame_start || frame_id > peptide.frame_end {
+                continue;
+            }
+
+            // Get ion info from peptide_to_ions
             let Some((ion_abundances, scan_occurrences, scan_abundances, charges, _)) = self
                 .precursor_frame_builder
                 .peptide_to_ions
-                .get(peptide_id)
+                .get(&peptide_id)
             else {
                 continue;
             };
 
-            // Cache peptide-level lookups
-            let total_events = *self.precursor_frame_builder.peptide_to_events.get(peptide_id).unwrap();
-            let peptide = self.precursor_frame_builder.peptides.get(peptide_id).unwrap();
+            // Find the index of this specific charge state
+            let Some(ion_index) = charges.iter().position(|&c| c == charge_state) else {
+                continue;
+            };
 
-            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let all_scan_occurrence = &scan_occurrences[index];
-                let all_scan_abundance = &scan_abundances[index];
-                let charge_state = charges[index];
+            let ion_abundance = ion_abundances[ion_index];
+            let all_scan_occurrence = &scan_occurrences[ion_index];
+            let all_scan_abundance = &scan_abundances[ion_index];
+            let total_events = *self.precursor_frame_builder.peptide_to_events.get(&peptide_id).unwrap();
 
-                let ion = PeptideIon::new(
-                    peptide.sequence.sequence.clone(),
-                    charge_state as i32,
-                    *ion_abundance as f64,
-                    Some(*peptide_id as i32),
-                );
-                // TODO: make this configurable
-                let spectrum = ion.calculate_isotopic_spectrum_annotated(1e-3, 1e-8, 200, 1e-4);
+            // Get frame abundance for this peptide
+            let frame_abundance = self.precursor_frame_builder.frame_to_abundances
+                .get(&frame_id)
+                .and_then(|(pep_ids, abundances)| {
+                    pep_ids.iter().position(|&p| p == peptide_id)
+                        .map(|idx| abundances[idx])
+                })
+                .unwrap_or(0.0);
 
-                for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
-                    if !self.transmission_settings.any_transmitted(
-                        frame_id as i32,
-                        *scan as i32,
-                        &spectrum.mz,
-                        None,
-                    ) {
-                        continue;
-                    }
+            if frame_abundance == 0.0 {
+                continue;
+            }
 
-                    let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
+            // Collision energy from the PASEF meta
+            let collision_energy = meta.collision_energy;
+            let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
 
-                    // Get collision energy from cached PASEF meta
-                    let collision_energy: f64 = match pasef_meta {
-                        Some(meta) => meta
-                            .iter()
-                            .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
-                            .map(|s| s.collision_energy)
-                            .unwrap_or(0.0),
-                        None => 0.0
-                    };
-                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
+            // Look up fragment ions for this (peptide_id, charge, CE)
+            let Some((_, fragment_series_vec)) = fragment_ions.get(&(peptide_id, charge_state, collision_energy_quantized)) else {
+                continue;
+            };
 
-                    let Some((_, fragment_series_vec)) = fragment_ions.get(&(*peptide_id, charge_state, collision_energy_quantized)) else {
-                        continue;
-                    };
+            // Create ion for annotation
+            let ion = PeptideIon::new(
+                peptide.sequence.sequence.clone(),
+                charge_state as i32,
+                ion_abundance as f64,
+                Some(peptide_id as i32),
+            );
 
-                    // Cache scan mobility
-                    let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;
+            // Process scans within the PASEF selection window
+            for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
+                // Check if scan is within the PASEF selection window
+                let scan_i32 = *scan as i32;
+                if scan_i32 < meta.scan_start || scan_i32 > meta.scan_end {
+                    continue;
+                }
 
-                    for fragment_ion_series in fragment_series_vec.iter() {
-                        let scaled_spec = fragment_ion_series.clone() * fraction_events as f64;
+                // Calculate abundance factor
+                let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
 
-                        let mz_spectrum = if mz_noise_fragment {
-                            if uniform {
-                                scaled_spec.add_mz_noise_uniform(fragment_ppm, right_drag_val)
-                            } else {
-                                scaled_spec.add_mz_noise_normal(fragment_ppm)
-                            }
+                // Cache scan mobility
+                let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;
+
+                for fragment_ion_series in fragment_series_vec.iter() {
+                    let scaled_spec = fragment_ion_series.clone() * fraction_events as f64;
+
+                    let mz_spectrum = if mz_noise_fragment {
+                        if uniform {
+                            scaled_spec.add_mz_noise_uniform(fragment_ppm, right_drag_val)
                         } else {
-                            scaled_spec
-                        };
+                            scaled_spec.add_mz_noise_normal(fragment_ppm)
+                        }
+                    } else {
+                        scaled_spec
+                    };
 
-                        let spectrum_len = mz_spectrum.mz.len();
-                        tims_spectra.push(TimsSpectrumAnnotated::new(
-                            frame_id as i32,
-                            *scan,
-                            rt,
-                            scan_mobility,
-                            ms_type.clone(),
-                            vec![0; spectrum_len],
-                            mz_spectrum,
-                        ));
-                    }
+                    let spectrum_len = mz_spectrum.mz.len();
+                    tims_spectra.push(TimsSpectrumAnnotated::new(
+                        frame_id as i32,
+                        *scan,
+                        rt,
+                        scan_mobility,
+                        ms_type.clone(),
+                        vec![0; spectrum_len],
+                        mz_spectrum,
+                    ));
                 }
             }
         }

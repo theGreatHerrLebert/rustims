@@ -555,44 +555,31 @@ impl TimsTofSyntheticsDataHandle {
     fn ion_map_fn_dda(
         ion: IonSim,
         peptide_map: &BTreeMap<u32, PeptidesSim>,
-        precursor_frames: &HashSet<u32>,
+        _precursor_frames: &HashSet<u32>,
         transmission: &TimsTransmissionDDA,
     ) -> BTreeSet<(u32, u32, String, i8, i32)> {
         let peptide = peptide_map.get(&ion.peptide_id).unwrap();
         let mut ret_tree: BTreeSet<(u32, u32, String, i8, i32)> = BTreeSet::new();
 
-        // go over all frames the ion occurs in
-        for frame in peptide.frame_distribution.occurrence.iter() {
-            // only consider fragment frames
-            if !precursor_frames.contains(frame) {
-                // go over all scans the ion occurs in
-                for scan in &ion.scan_distribution.occurrence {
-                    // check transmission for all precursor ion peaks of the isotopic envelope
+        // Get all frames where this ion was explicitly selected for fragmentation
+        // using the precursor ID from pasef_meta (instead of re-computing m/z transmission)
+        let selections = transmission.get_selections_for_precursor(ion.ion_id as i32);
 
-                    let precursor_spec = &ion.simulated_spectrum;
+        for (_, collision_energy) in selections {
+            // Convert raw CE to match fragment_ions key scale:
+            // fragment_ions stores CE/100 (Prosit scale), then keys with CE*1000
+            // So raw CE * 10 = (CE/100) * 1000
+            let quantized_energy = (collision_energy * 10.0).round() as i32;
 
-                    if transmission.any_transmitted(
-                        *frame as i32,
-                        *scan as i32,
-                        &precursor_spec.mz,
-                        Some(0.5),
-                    ) {
-                        let collision_energy =
-                            transmission.get_collision_energy(*frame as i32, *scan as i32).unwrap_or(0.0);
-
-                        let quantized_energy = (collision_energy * 100.0).round() as i32;
-
-                        ret_tree.insert((
-                            ion.peptide_id,
-                            ion.ion_id,
-                            peptide.sequence.sequence.clone(),
-                            ion.charge,
-                            quantized_energy,
-                        ));
-                    }
-                }
-            }
+            ret_tree.insert((
+                ion.peptide_id,
+                ion.ion_id,
+                peptide.sequence.sequence.clone(),
+                ion.charge,
+                quantized_energy,
+            ));
         }
+
         ret_tree
     }
 

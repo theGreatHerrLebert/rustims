@@ -41,6 +41,75 @@ from .tool_comparison import (
 logger = logging.getLogger(__name__)
 
 
+def detect_acquisition_type(reference_path: str) -> str:
+    """
+    Auto-detect whether a reference .d folder is DDA or DIA.
+
+    Checks for presence of DIA-specific tables (DiaFrameMsMsInfo, DiaFrameMsMsWindows)
+    vs DDA-specific tables (PasefFrameMsMsInfo).
+
+    Args:
+        reference_path: Path to reference .d folder
+
+    Returns:
+        "DDA" or "DIA"
+    """
+    import sqlite3
+
+    tdf_path = os.path.join(reference_path, "analysis.tdf")
+    if not os.path.exists(tdf_path):
+        logger.warning(f"Could not find analysis.tdf in {reference_path}, defaulting to DIA")
+        return "DIA"
+
+    try:
+        conn = sqlite3.connect(tdf_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        conn.close()
+
+        # Check for DIA-specific tables
+        has_dia_tables = "DiaFrameMsMsInfo" in tables or "DiaFrameMsMsWindows" in tables
+        # Check for DDA-specific tables
+        has_dda_tables = "PasefFrameMsMsInfo" in tables
+
+        if has_dia_tables and not has_dda_tables:
+            logger.info(f"Detected DIA acquisition type from reference")
+            return "DIA"
+        elif has_dda_tables and not has_dia_tables:
+            logger.info(f"Detected DDA acquisition type from reference")
+            return "DDA"
+        elif has_dia_tables and has_dda_tables:
+            # Both present - check which has data
+            conn = sqlite3.connect(tdf_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT COUNT(*) FROM DiaFrameMsMsInfo")
+                dia_count = cursor.fetchone()[0]
+            except:
+                dia_count = 0
+            try:
+                cursor.execute("SELECT COUNT(*) FROM PasefFrameMsMsInfo")
+                dda_count = cursor.fetchone()[0]
+            except:
+                dda_count = 0
+            conn.close()
+
+            if dda_count > dia_count:
+                logger.info(f"Detected DDA acquisition type from reference (DDA entries: {dda_count}, DIA entries: {dia_count})")
+                return "DDA"
+            else:
+                logger.info(f"Detected DIA acquisition type from reference (DIA entries: {dia_count}, DDA entries: {dda_count})")
+                return "DIA"
+        else:
+            logger.warning(f"Could not detect acquisition type from reference tables, defaulting to DIA")
+            return "DIA"
+
+    except Exception as e:
+        logger.warning(f"Error detecting acquisition type: {e}, defaulting to DIA")
+        return "DIA"
+
+
 class ValidationError(Exception):
     """Base exception for validation errors."""
     pass
@@ -139,6 +208,13 @@ class ValidationRunner:
         self.database_path_override = database_path
         self.analysis_tool = analysis_tool
         self.existing_fragpipe_output = existing_fragpipe_output
+
+        # Auto-detect acquisition type from reference if using default
+        if self.simulation_config.acquisition_type == "DIA":
+            detected_type = detect_acquisition_type(reference_path)
+            if detected_type != self.simulation_config.acquisition_type:
+                logger.info(f"Auto-detected acquisition type: {detected_type} (overriding default DIA)")
+                self.simulation_config.acquisition_type = detected_type
 
         # Will be set during run
         self._simulation_path: Optional[str] = None

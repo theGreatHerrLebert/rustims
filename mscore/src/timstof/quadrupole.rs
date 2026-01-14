@@ -524,6 +524,20 @@ impl TimsTransmissionDDA {
             None => None,
         }
     }
+
+    /// Get all (frame_id, collision_energy) pairs where a specific precursor (ion_id) was selected.
+    /// This uses the explicit precursor selection from pasef_meta rather than m/z matching.
+    pub fn get_selections_for_precursor(&self, precursor_id: i32) -> Vec<(i32, f64)> {
+        let mut selections = Vec::new();
+        for (frame_id, meta_list) in &self.pasef_meta {
+            for meta in meta_list {
+                if meta.precursor == precursor_id {
+                    selections.push((*frame_id, meta.collision_energy));
+                }
+            }
+        }
+        selections
+    }
 }
 
 impl IonTransmission for TimsTransmissionDDA {

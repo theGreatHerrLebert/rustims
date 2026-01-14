@@ -286,7 +286,17 @@ class TDFWriter:
 
         self._create_table(self.conn, out, "DiaFrameMsMsInfo")
 
-    def write_precursor_table(self, precursor_table: pd.DataFrame) -> None:
+    def write_precursor_table(self, precursor_table: pd.DataFrame, id_mapping_table: pd.DataFrame = None) -> dict:
+        """Write the Precursors table with proper vendor schema.
+
+        Args:
+            precursor_table: DataFrame with precursor data
+            id_mapping_table: Optional DataFrame with 'ion_id' and 'tdf_precursor_id' columns.
+                             If None, creates sequential mapping from existing IDs.
+
+        Returns:
+            dict: Mapping from old IDs to new sequential IDs (for use with pasef_meta table)
+        """
         out = precursor_table.rename(columns={
             'id': 'Id',
             'largest_peak_mz': 'LargestPeakMz',
@@ -297,9 +307,64 @@ class TDFWriter:
             'intensity': 'Intensity',
             'parent': 'Parent',
         })
-        self._create_table(self.conn, out, "Precursors")
 
-    def write_pasef_meta_table(self, pasef_meta_table: pd.DataFrame) -> None:
+        # Create ID mapping from table or generate new one
+        if id_mapping_table is not None:
+            id_mapping = dict(zip(id_mapping_table['ion_id'], id_mapping_table['tdf_precursor_id']))
+        else:
+            old_ids = out['Id'].unique()
+            id_mapping = {old_id: new_id for new_id, old_id in enumerate(sorted(old_ids), start=1)}
+
+        # Deduplicate: each precursor ID should only appear once in the Precursors table
+        # Keep the first occurrence (or could aggregate, but first is simpler)
+        out_unique = out.drop_duplicates(subset=['Id'], keep='first')
+
+        # Create table with proper vendor schema
+        cursor = self.conn.cursor()
+        cursor.execute("DROP TABLE IF EXISTS Precursors")
+        cursor.execute("""
+            CREATE TABLE Precursors (
+                Id INTEGER PRIMARY KEY,
+                LargestPeakMz REAL NOT NULL,
+                AverageMz REAL NOT NULL,
+                MonoisotopicMz REAL,
+                Charge INTEGER,
+                ScanNumber REAL NOT NULL,
+                Intensity REAL NOT NULL,
+                Parent INTEGER,
+                FOREIGN KEY(Parent) REFERENCES Frames(Id)
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS PrecursorsParentIndex ON Precursors (Parent)")
+
+        # Insert data with remapped IDs (only unique precursors)
+        for _, row in out_unique.iterrows():
+            new_id = id_mapping.get(int(row['Id']), int(row['Id']))
+            cursor.execute("""
+                INSERT INTO Precursors (Id, LargestPeakMz, AverageMz, MonoisotopicMz, Charge, ScanNumber, Intensity, Parent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_id,
+                float(row['LargestPeakMz']),
+                float(row['AverageMz']),
+                float(row['MonoisotopicMz']) if pd.notna(row['MonoisotopicMz']) else None,
+                int(row['Charge']) if pd.notna(row['Charge']) else None,
+                float(row['ScanNumber']),
+                float(row['Intensity']),
+                int(row['Parent']) if pd.notna(row['Parent']) else None
+            ))
+        self.conn.commit()
+
+        return id_mapping
+
+    def write_pasef_meta_table(self, pasef_meta_table: pd.DataFrame, id_mapping: dict = None) -> None:
+        """Write the PasefFrameMsMsInfo table with proper vendor schema.
+
+        Args:
+            pasef_meta_table: DataFrame with PASEF metadata
+            id_mapping: Optional dict mapping old precursor IDs to new sequential IDs.
+                        If None, uses IDs as-is.
+        """
         out = pasef_meta_table.rename(columns={
             'frame': 'Frame',
             'scan_start': 'ScanNumBegin',
@@ -309,7 +374,45 @@ class TDFWriter:
             'collision_energy': 'CollisionEnergy',
             'precursor': 'Precursor',
         })
-        self._create_table(self.conn, out, "PasefFrameMsMsInfo")
+
+        # Create table with proper vendor schema (WITHOUT ROWID for performance)
+        cursor = self.conn.cursor()
+        cursor.execute("DROP TABLE IF EXISTS PasefFrameMsMsInfo")
+        cursor.execute("""
+            CREATE TABLE PasefFrameMsMsInfo (
+                Frame INTEGER NOT NULL,
+                ScanNumBegin INTEGER NOT NULL,
+                ScanNumEnd INTEGER NOT NULL,
+                IsolationMz REAL NOT NULL,
+                IsolationWidth REAL NOT NULL,
+                CollisionEnergy REAL NOT NULL,
+                Precursor INTEGER,
+                PRIMARY KEY(Frame, ScanNumBegin),
+                FOREIGN KEY(Frame) REFERENCES Frames(Id),
+                FOREIGN KEY(Precursor) REFERENCES Precursors(Id)
+            ) WITHOUT ROWID
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS PasefFrameMsMsInfoPrecursorIndex ON PasefFrameMsMsInfo (Precursor)")
+
+        # Insert data with remapped precursor IDs if mapping provided
+        for _, row in out.iterrows():
+            precursor_id = int(row['Precursor']) if pd.notna(row['Precursor']) else None
+            if id_mapping is not None and precursor_id is not None:
+                precursor_id = id_mapping.get(precursor_id, precursor_id)
+
+            cursor.execute("""
+                INSERT INTO PasefFrameMsMsInfo (Frame, ScanNumBegin, ScanNumEnd, IsolationMz, IsolationWidth, CollisionEnergy, Precursor)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                int(row['Frame']),
+                int(row['ScanNumBegin']),
+                int(row['ScanNumEnd']),
+                float(row['IsolationMz']),
+                float(row['IsolationWidth']),
+                float(row['CollisionEnergy']),
+                precursor_id
+            ))
+        self.conn.commit()
 
     def write_dia_ms_ms_windows(self, dia_ms_ms_windows: pd.DataFrame) -> None:
         out = dia_ms_ms_windows.rename(columns={

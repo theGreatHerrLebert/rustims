@@ -33,6 +33,8 @@ pub struct TimsTofSyntheticsPrecursorFrameBuilder {
     pub frame_to_rt: BTreeMap<u32, f32>,
     pub scan_to_mobility: BTreeMap<u32, f32>,
     pub peptide_to_events: BTreeMap<u32, f32>,
+    /// Mapping from ion_id to (peptide_id, charge) for DDA precursor lookup
+    pub ion_id_to_peptide_charge: BTreeMap<u32, (u32, i8)>,
 }
 
 impl TimsTofSyntheticsPrecursorFrameBuilder {
@@ -52,6 +54,13 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         let peptides = handle.read_peptides()?;
         let scans = handle.read_scans()?;
         let frames = handle.read_frames()?;
+
+        // Build ion_id to (peptide_id, charge) mapping for DDA precursor lookup
+        let mut ion_id_to_peptide_charge: BTreeMap<u32, (u32, i8)> = BTreeMap::new();
+        for ion in &ions {
+            ion_id_to_peptide_charge.insert(ion.ion_id, (ion.peptide_id, ion.charge));
+        }
+
         Ok(Self {
             ions: TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions),
             peptides: TimsTofSyntheticsDataHandle::build_peptide_map(&peptides),
@@ -65,6 +74,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             frame_to_rt: TimsTofSyntheticsDataHandle::build_frame_to_rt(&frames),
             scan_to_mobility: TimsTofSyntheticsDataHandle::build_scan_to_mobility(&scans),
             peptide_to_events: TimsTofSyntheticsDataHandle::build_peptide_to_events(&peptides),
+            ion_id_to_peptide_charge,
         })
     }
 

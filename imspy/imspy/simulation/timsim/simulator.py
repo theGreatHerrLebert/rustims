@@ -97,6 +97,13 @@ from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
 
+# Optional video generation import
+try:
+    from imspy.vis.frame_rendering import generate_preview_video
+    VIDEO_GENERATION_AVAILABLE = True
+except ImportError:
+    VIDEO_GENERATION_AVAILABLE = False
+
 # ----------------------------------------------------------------------
 # Logging setup
 # ----------------------------------------------------------------------
@@ -348,6 +355,13 @@ def get_default_settings() -> dict:
         # Logging settings
         'log_level': 'INFO',
         'log_file': None,
+
+        # Video generation settings
+        'generate_preview_video': False,
+        'preview_video_max_frames': 100,
+        'preview_video_fps': 10,
+        'preview_video_dpi': 80,
+        'preview_video_annotate': True,
     }
 
 
@@ -1104,6 +1118,31 @@ def main():
     stats.acquisition_type = config.acquisition_type
     stats.experiment_name = name
     stats.output_path = str(save_path)
+
+    # Optional: Generate preview video for visual inspection
+    if config.generate_preview_video:
+        if VIDEO_GENERATION_AVAILABLE:
+            logger.info(section_header("Generating Preview Video", use_unicode))
+            data_path = os.path.join(save_path, name, f"{name}.d")
+            video_path = os.path.join(save_path, f"{name}_preview.mp4")
+            mode = 'dda' if config.acquisition_type == 'DDA' else 'dia'
+            try:
+                generate_preview_video(
+                    data_path=data_path,
+                    output_path=video_path,
+                    mode=mode,
+                    max_frames=config.preview_video_max_frames,
+                    fps=config.preview_video_fps,
+                    dpi=config.preview_video_dpi,
+                    annotate=config.preview_video_annotate,
+                    use_bruker_sdk=use_bruker_sdk,
+                    show_progress=not config.silent_mode,
+                )
+                logger.info(f"  Preview video saved to: {video_path}")
+            except Exception as e:
+                logger.warning(f"  Failed to generate preview video: {e}")
+        else:
+            logger.warning("  Video generation requested but imspy.vis.frame_rendering not available")
 
     # Print completion banner and summary
     print(simulation_complete_banner(use_unicode))
