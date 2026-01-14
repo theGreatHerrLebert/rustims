@@ -384,6 +384,7 @@ def generate_html_report(
     fragpipe_output_dir: Optional[str] = None,
     thresholds: Optional[Dict[str, float]] = None,
     test_metadata: Optional[Dict[str, str]] = None,
+    preview_gif_path: Optional[str] = None,
 ) -> str:
     """
     Generate a self-contained HTML validation report.
@@ -401,6 +402,8 @@ def generate_html_report(
             - acquisition_type: "DIA" or "DDA"
             - sample_type: "hela", "hye", "phospho", etc.
             - description: Human-readable description
+        preview_gif_path: Path to simulation preview GIF. If None, will try to
+            auto-detect from output_dir structure.
 
     Returns:
         Path to the generated HTML file.
@@ -434,6 +437,23 @@ def generate_html_report(
     }
     sample_type_label = sample_type_labels.get(sample_type.lower(), sample_type.title())
     benchmark_type_str = f"{acquisition_type}-PASEF {sample_type_label}"
+
+    # Auto-detect preview GIF if not provided
+    # Structure: output_dir is .../validation/, GIF is at ../{test_id}/simulation_preview.gif
+    preview_gif_b64 = None
+    if preview_gif_path and os.path.exists(preview_gif_path):
+        preview_gif_b64 = encode_image_base64(preview_gif_path)
+    elif test_id:
+        # Try to find GIF in expected location
+        candidate_paths = [
+            os.path.join(output_dir, "..", test_id, "simulation_preview.gif"),
+            os.path.join(output_dir, "..", "..", test_id, "simulation_preview.gif"),
+        ]
+        for candidate in candidate_paths:
+            if os.path.exists(candidate):
+                preview_gif_b64 = encode_image_base64(candidate)
+                logger.info(f"Found preview GIF at {candidate}")
+                break
 
     # Collect all plot paths
     plots_dir = os.path.join(output_dir, "plots")
@@ -510,6 +530,21 @@ def generate_html_report(
         <div class="label">Tools Compared</div>
         <div>{', '.join(f"{t} v{tool_versions.get(t, '?')}" if tool_versions.get(t) else t for t in tool_names)}</div>
     </div>
+</div>
+""")
+
+    # Simulation Preview GIF (if available)
+    if preview_gif_b64:
+        html_parts.append(f"""
+<h2>Simulation Preview</h2>
+<div style="text-align: center; margin: 20px 0; padding: 20px; background: #1a1a2e; border-radius: 8px;">
+    <img src="data:image/gif;base64,{preview_gif_b64}"
+         alt="Simulation Preview"
+         style="max-width: 100%; height: auto; border-radius: 4px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"
+         title="Animated preview of simulated frames (m/z vs scan number)">
+    <p style="color: #888; margin-top: 10px; font-size: 0.9em;">
+        Animated preview showing simulated frames with acquisition window overlays
+    </p>
 </div>
 """)
 

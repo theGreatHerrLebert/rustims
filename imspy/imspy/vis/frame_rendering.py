@@ -407,6 +407,83 @@ def generate_preview_video(
     )
 
 
+def generate_preview_gif(
+    data_path: str,
+    output_path: str,
+    mode: str = 'auto',
+    max_frames: int = 50,
+    fps: int = 5,
+    dpi: int = 60,
+    annotate: bool = True,
+    use_bruker_sdk: bool = False,
+    show_progress: bool = True
+) -> str:
+    """
+    Generate a preview GIF from a TimsTOF dataset.
+
+    Creates a lightweight animated GIF suitable for embedding in HTML reports.
+    Lower default settings than video for smaller file size.
+
+    Args:
+        data_path: Path to .d folder
+        output_path: Path for output GIF file (.gif)
+        mode: 'dda', 'dia', or 'auto' (auto-detect from data)
+        max_frames: Maximum number of frames to include
+        fps: Frames per second (lower = smaller file)
+        dpi: Resolution (lower = smaller file, 60 is good for previews)
+        annotate: Whether to overlay annotation boxes
+        use_bruker_sdk: Use Bruker SDK for reading
+        show_progress: Show progress bar
+
+    Returns:
+        Path to the created GIF file
+
+    Example:
+        >>> from imspy.vis.frame_rendering import generate_preview_gif
+        >>> generate_preview_gif(
+        ...     '/path/to/data.d',
+        ...     '/path/to/preview.gif',
+        ...     max_frames=30
+        ... )
+    """
+    # Auto-detect mode if not specified
+    if mode == 'auto':
+        try:
+            # Try DIA first (more common for integration tests)
+            _ = TimsDatasetDIA(data_path, use_bruker_sdk=use_bruker_sdk, in_memory=False)
+            mode = 'dia'
+        except Exception:
+            mode = 'dda'
+
+    if mode == 'dda':
+        renderer = DDAFrameRenderer(data_path, use_bruker_sdk=use_bruker_sdk)
+    elif mode == 'dia':
+        renderer = DIAFrameRenderer(data_path, use_bruker_sdk=use_bruker_sdk)
+    else:
+        raise ValueError(f"mode must be 'dda', 'dia', or 'auto', got '{mode}'")
+
+    # Get frame IDs
+    frame_ids = renderer._all_frame_ids
+    if max_frames is not None and len(frame_ids) > max_frames:
+        frame_ids = frame_ids[:max_frames]
+
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+
+    # Render frames and write to GIF
+    frames = []
+    iterator = tqdm(frame_ids, desc='Rendering GIF', ncols=80) if show_progress else frame_ids
+
+    for fid in iterator:
+        img_array = renderer._render_frame_to_array(fid, dpi=dpi, annotate=annotate)
+        frames.append(img_array)
+
+    # Write GIF with imageio
+    duration = 1000 / fps  # milliseconds per frame
+    imageio.mimsave(output_path, frames, duration=duration, loop=0)
+
+    return output_path
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(

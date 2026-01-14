@@ -25,6 +25,8 @@ from typing import Dict, List, Optional
 
 import toml
 
+from imspy.vis.frame_rendering import generate_preview_gif
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -270,6 +272,58 @@ def run_simulation(config_path: Path, test_id: str) -> bool:
         return False
 
 
+def generate_simulation_preview(
+    test_output_dir: Path,
+    test_id: str,
+    acquisition_type: str,
+    use_bruker_sdk: bool = False,
+    max_frames: int = 50,
+) -> Optional[str]:
+    """
+    Generate a preview GIF of the simulated data.
+
+    Args:
+        test_output_dir: Directory containing simulation output.
+        test_id: Test identifier (used as experiment name).
+        acquisition_type: 'DIA' or 'DDA'.
+        use_bruker_sdk: Whether to use Bruker SDK for reading.
+        max_frames: Maximum frames to include in GIF.
+
+    Returns:
+        Path to generated GIF, or None if generation failed.
+    """
+    # Find the .d folder
+    d_folder = test_output_dir / test_id / f"{test_id}.d"
+    if not d_folder.exists():
+        logger.warning(f"Cannot find .d folder at {d_folder}")
+        return None
+
+    gif_path = test_output_dir / test_id / "simulation_preview.gif"
+
+    try:
+        mode = 'dia' if acquisition_type.upper() == 'DIA' else 'dda'
+        logger.info(f"Generating preview GIF ({mode} mode, {max_frames} frames)...")
+
+        generate_preview_gif(
+            data_path=str(d_folder),
+            output_path=str(gif_path),
+            mode=mode,
+            max_frames=max_frames,
+            fps=5,
+            dpi=60,
+            annotate=True,
+            use_bruker_sdk=use_bruker_sdk,
+            show_progress=True,
+        )
+
+        logger.info(f"Preview GIF saved to: {gif_path}")
+        return str(gif_path)
+
+    except Exception as e:
+        logger.warning(f"Failed to generate preview GIF: {e}")
+        return None
+
+
 def run_test(test_id: str, env_config: Dict, dry_run: bool = False) -> bool:
     """
     Run a single integration test simulation.
@@ -314,6 +368,17 @@ def run_test(test_id: str, env_config: Dict, dry_run: bool = False) -> bool:
 
         # Run simulation
         success = run_simulation(config_path, test_id)
+
+        # Generate preview GIF if simulation succeeded
+        if success:
+            acquisition_type = test_config.get("test_metadata", {}).get("acquisition_type", "DIA")
+            use_bruker_sdk = env_config.get("use_bruker_sdk", False)
+            generate_simulation_preview(
+                test_output_dir=test_output_dir,
+                test_id=test_id,
+                acquisition_type=acquisition_type,
+                use_bruker_sdk=use_bruker_sdk,
+            )
 
         # Clean up old status files and write new one
         for old_status in ["SIM_SUCCESS", "SIM_FAILED"]:
