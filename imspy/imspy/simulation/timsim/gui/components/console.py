@@ -20,7 +20,7 @@ class LogConsole:
 
     def create(self) -> "LogConsole":
         """Create the console UI elements."""
-        with ui.card().classes("w-full") as self._container:
+        with ui.card().classes("w-full flex-grow flex flex-col") as self._container:
             with ui.row().classes("w-full items-center justify-between mb-2"):
                 ui.label("Console Output").classes("font-bold text-lg")
                 with ui.row().classes("gap-2"):
@@ -34,7 +34,8 @@ class LogConsole:
                     ).props("flat dense").tooltip("Copy to clipboard")
 
             # Use a simple label inside a scroll area with monospace styling
-            with ui.scroll_area().classes("w-full h-64 border rounded bg-gray-900") as self._scroll:
+            # flex-grow makes it fill remaining vertical space
+            with ui.scroll_area().classes("w-full flex-grow border rounded bg-gray-900 min-h-64") as self._scroll:
                 self._log_element = ui.label("").classes("text-green-400 font-mono text-xs whitespace-pre-wrap p-2")
 
         return self

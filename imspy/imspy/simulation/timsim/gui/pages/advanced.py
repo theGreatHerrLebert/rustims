@@ -136,11 +136,11 @@ def create_advanced_view(
 
             # Right: Console and Run
             with splitter.after:
-                with ui.column().classes("w-full h-full p-4"):
+                with ui.column().classes("w-full h-full p-4 flex flex-col"):
                     # Progress section
                     progress_bar, status_label = create_progress_section()
 
-                    # Console
+                    # Console (flex-grow fills remaining space)
                     console = LogConsole(max_lines=500)
                     console.create()
 
@@ -148,8 +148,6 @@ def create_advanced_view(
                     state._console = console
                     state._progress_bar = progress_bar
                     state._status_label = status_label
-
-                    ui.space()
 
                     # Run/Stop button with toggle functionality
                     def toggle_run_button():

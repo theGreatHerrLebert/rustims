@@ -224,12 +224,11 @@ class ValidationRunner:
 
     def _get_bundled_fasta(self) -> str:
         """Get path to bundled test FASTA."""
-        # Look for bundled FASTA in resources directory
-        resources_dir = Path(__file__).parent / "resources"
-        bundled_fasta = resources_dir / "test_proteome.fasta"
+        # Look for bundled FASTA in integration module
+        integration_fasta = Path(__file__).parent.parent / "integration" / "data" / "fasta" / "hela-small.fasta"
 
-        if bundled_fasta.exists():
-            return str(bundled_fasta)
+        if integration_fasta.exists():
+            return str(integration_fasta)
 
         raise FileNotFoundError(
             "Bundled test FASTA not found. Please provide a FASTA file with --fasta."
