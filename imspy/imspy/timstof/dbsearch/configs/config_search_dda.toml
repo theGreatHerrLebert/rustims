@@ -1,0 +1,169 @@
+# =============================================================================
+# IMSPY-SEARCH: DDA-PASEF Database Search Configuration
+# =============================================================================
+# Example configuration for searching DDA-PASEF timsTOF data.
+# Modify paths and parameters as needed for your experiment.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Paths (REQUIRED)
+# -----------------------------------------------------------------------------
+[paths]
+# Path to raw data - can be a single .d folder or directory containing .d folders
+data_path = "/path/to/raw_data"
+
+# Path to FASTA file or directory containing FASTA files
+fasta_path = "/path/to/proteome.fasta"
+
+# Output directory (optional - defaults to data_path parent)
+output_path = "/path/to/output"
+
+# -----------------------------------------------------------------------------
+# Experiment Settings
+# -----------------------------------------------------------------------------
+[experiment]
+experiment_name = "DDA-Search"
+
+# -----------------------------------------------------------------------------
+# Modifications
+# -----------------------------------------------------------------------------
+# Variable modifications - applied optionally to residues
+[variable_modifications]
+M = ["[UNIMOD:35]"]   # Oxidation of methionine
+"[" = ["[UNIMOD:1]"]  # Acetylation of peptide N-terminus
+
+# Static modifications - always applied to residues
+[static_modifications]
+C = "[UNIMOD:4]"      # Carbamidomethylation of cysteine
+
+# -----------------------------------------------------------------------------
+# Enzyme/Digest Settings
+# -----------------------------------------------------------------------------
+[enzyme]
+missed_cleavages = 2
+min_peptide_len = 7
+max_peptide_len = 30
+cleave_at = "KR"      # Trypsin cleavage sites
+restrict = "P"        # Don't cleave before proline
+c_terminal = true
+
+# -----------------------------------------------------------------------------
+# Database Settings
+# -----------------------------------------------------------------------------
+[database]
+generate_decoys = true
+shuffle_decoys = false
+keep_ends = true
+bucket_size = 16384
+
+# -----------------------------------------------------------------------------
+# Search Tolerances
+# -----------------------------------------------------------------------------
+[search]
+# Precursor mass tolerance (use ppm or da, not both)
+precursor_tolerance_ppm = 15.0
+# precursor_tolerance_da = 0.02  # Alternative: use Dalton
+
+# Fragment mass tolerance
+fragment_tolerance_ppm = 20.0
+# fragment_tolerance_da = 0.02  # Alternative: use Dalton
+
+# Isolation window for precursor selection
+isolation_window_lower = -3.0
+isolation_window_upper = 3.0
+
+# -----------------------------------------------------------------------------
+# Scoring Settings
+# -----------------------------------------------------------------------------
+[scoring]
+# Score type: "hyperscore", "openmshyperscore"
+score_type = "hyperscore"
+
+# Number of PSMs to report per spectrum
+report_psms = 5
+
+# Minimum matched fragment peaks required
+min_matched_peaks = 5
+
+# Maximum fragment ion charge state
+max_fragment_charge = 2
+
+# Isotope error range for precursor matching
+min_isotope_err = -1
+max_isotope_err = 3
+
+# -----------------------------------------------------------------------------
+# Spectrum Preprocessing
+# -----------------------------------------------------------------------------
+[preprocessing]
+# Keep top N peaks per spectrum
+take_top_n = 150
+
+# -----------------------------------------------------------------------------
+# FDR Settings
+# -----------------------------------------------------------------------------
+[fdr]
+# FDR threshold (1% = 0.01)
+fdr_threshold = 0.01
+
+# FDR calculation method: "psm", "peptide_psm_peptide"
+fdr_method = "psm"
+
+# Remove decoys from final output
+remove_decoys_output = true
+
+# -----------------------------------------------------------------------------
+# ML Prediction Settings
+# -----------------------------------------------------------------------------
+[prediction]
+# Enable/disable predictions (saves time if disabled)
+predict_intensities = true
+predict_rt = true
+predict_im = true
+
+# Fine-tune models on dataset (slower but more accurate)
+refine_rt = false
+refine_im = false
+
+# Sample size for collision energy calibration
+collision_energy_calibration_sample_size = 256
+
+# -----------------------------------------------------------------------------
+# Performance Settings
+# -----------------------------------------------------------------------------
+[performance]
+# Number of threads (-1 = auto-detect)
+num_threads = -1
+
+# Batch size for ML predictions
+batch_size = 2048
+
+# -----------------------------------------------------------------------------
+# GPU Settings
+# -----------------------------------------------------------------------------
+[gpu]
+use_gpu = true
+gpu_memory_limit_gb = 4
+
+# -----------------------------------------------------------------------------
+# Data Loading Settings
+# -----------------------------------------------------------------------------
+[data]
+# Load dataset into memory (faster but uses more RAM)
+in_memory = false
+
+# Use Bruker SDK for data access (more accurate but slower)
+use_bruker_sdk = true
+
+# -----------------------------------------------------------------------------
+# Logging Settings
+# -----------------------------------------------------------------------------
+[logging]
+# Log level: DEBUG, INFO, WARNING, ERROR
+log_level = "INFO"
+
+# Log file (optional - relative to output_path or absolute)
+# log_file = "search.log"
+
+# Verbose output
+verbose = true

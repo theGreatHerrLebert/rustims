@@ -35,6 +35,7 @@ dependencies = [
 
 [project.scripts]
 imspy_dda = "imspy.timstof.dbsearch.imspy_dda:main"
+imspy_search = "imspy.timstof.dbsearch.search_dda:main"
 imspy_ccs = "imspy.timstof.dbsearch.imspy_ccs:main"
 timsim = "imspy.simulation.timsim.simulator:main"
 timsim_gui = "imspy.simulation.timsim.timsim_gui:main"
