@@ -76,7 +76,8 @@ isolation_window_upper = 3.0
 # Scoring Settings
 # -----------------------------------------------------------------------------
 [scoring]
-# Score type: "hyperscore", "openmshyperscore"
+# Score type: "hyperscore", "openmshyperscore", "weightedhyperscore", "weightedopenmshyperscore"
+# Use weighted variants to incorporate predicted fragment ion intensities
 score_type = "hyperscore"
 
 # Number of PSMs to report per spectrum
@@ -91,6 +92,31 @@ max_fragment_charge = 2
 # Isotope error range for precursor matching
 min_isotope_err = -1
 max_isotope_err = 3
+
+# -----------------------------------------------------------------------------
+# Intensity Scoring Settings (for weighted score types)
+# -----------------------------------------------------------------------------
+# These settings are only used when score_type is "weightedhyperscore" or
+# "weightedopenmshyperscore". The pipeline will automatically generate intensity
+# predictions for all peptides (targets + decoys) and cache them for reuse.
+[intensity_scoring]
+# Path to existing .sagi intensity store file (optional)
+# If not provided and weighted scoring is enabled, predictions will be generated
+# intensity_store_path = "/path/to/predictions.sagi"
+
+# Charge states to predict intensities for
+intensity_prediction_charges = [2, 3]
+
+# CRITICAL: Must be false for production use!
+# Setting to true will inflate decoy scores and break FDR estimation.
+# See INTENSITY_PREDICTION.md for details.
+intensity_prediction_exclude_decoys = false
+
+# Cache directory for intensity store (defaults to output_path)
+# intensity_cache_dir = "/path/to/cache"
+
+# Force regeneration of intensity predictions (ignore cache)
+skip_intensity_cache = false
 
 # -----------------------------------------------------------------------------
 # Spectrum Preprocessing

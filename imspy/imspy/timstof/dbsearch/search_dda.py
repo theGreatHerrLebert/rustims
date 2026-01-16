@@ -24,13 +24,15 @@ import sys
 import time
 import logging
 import argparse
-from pathlib import Path
+import hashlib
+import json
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 
 import toml
 import numpy as np
-import pandas as pd
+
 from tabulate import tabulate
 
 # Suppress TensorFlow warnings before import
@@ -50,6 +52,8 @@ from sagepy.core import (
     Scorer,
     EnzymeBuilder,
     SageSearchConfiguration,
+    PredictedIntensityStore,
+    IndexedDatabase,
 )
 from sagepy.core.scoring import (
     associate_fragment_ions_with_prosit_predicted_intensities,
@@ -238,6 +242,7 @@ def get_default_settings() -> dict:
         'shuffle_decoys': False,
         'keep_ends': True,
         'bucket_size': 16384,
+        'database_path': None,  # Path to save/load indexed database (.sagdb)
 
         # Search tolerances
         'precursor_tolerance_ppm': 15.0,
@@ -247,7 +252,7 @@ def get_default_settings() -> dict:
         'isolation_window_lower': -3.0,
         'isolation_window_upper': 3.0,
 
-        # Scoring
+        # Scoring (hyperscore, openmshyperscore, weightedhyperscore, weightedopenmshyperscore, betascore)
         'score_type': 'hyperscore',
         'report_psms': 5,
         'min_matched_peaks': 5,
@@ -287,6 +292,14 @@ def get_default_settings() -> dict:
         'log_level': 'INFO',
         'log_file': None,
         'verbose': True,
+
+        # Intensity Store Settings (for weighted scoring)
+        'intensity_store_path': None,           # Path to existing .sagi file
+        'intensity_prediction_charges': [2, 3], # Charge states for prediction
+        'intensity_prediction_exclude_decoys': False,  # MUST be False for production!
+        'intensity_cache_dir': None,            # Cache directory (default: output_path)
+        'skip_intensity_cache': False,          # Force regeneration
+        'use_v1_format': False,                 # Use V1 positional format (legacy)
     }
 
 
@@ -399,8 +412,33 @@ def completion_banner() -> str:
 def create_indexed_database(
     fasta_content: str,
     config: SearchConfig,
-) -> Any:
-    """Create an indexed database from FASTA content."""
+) -> IndexedDatabase:
+    """Create an indexed database from FASTA content.
+
+    With V2 key-based intensity stores, database indices no longer need to be
+    stable between runs. The V2 format uses (raw_sequence, charge) as lookup keys
+    instead of peptide indices, enabling:
+    - Database regeneration each run (no need to save/load)
+    - Intensity store reuse across different database configurations
+    - Flexible parallel workflows
+
+    If config.database_path is specified (legacy V1 support):
+    - If the file exists, loads the database from disk
+    - If the file doesn't exist, builds from FASTA and saves to that path
+
+    Args:
+        fasta_content: The FASTA file content as a string.
+        config: Search configuration object.
+
+    Returns:
+        IndexedDatabase: The indexed database ready for searching.
+    """
+    # If database_path is provided and file exists, load from disk
+    if config.database_path is not None and os.path.exists(config.database_path):
+        logger.info(f"  Loading indexed database from: {config.database_path}")
+        return IndexedDatabase.load(config.database_path)
+
+    # Build database from FASTA
     enzyme_builder = EnzymeBuilder(
         missed_cleavages=config.missed_cleavages,
         min_len=config.min_peptide_len,
@@ -421,7 +459,14 @@ def create_indexed_database(
         keep_ends=config.keep_ends,
     )
 
-    return sage_config.generate_indexed_database()
+    indexed_db = sage_config.generate_indexed_database()
+
+    # Save to disk if database_path is provided
+    if config.database_path is not None:
+        logger.info(f"  Saving indexed database to: {config.database_path}")
+        indexed_db.save(config.database_path)
+
+    return indexed_db
 
 
 def create_scorer(config: SearchConfig) -> Scorer:
@@ -454,6 +499,226 @@ def create_scorer(config: SearchConfig) -> Scorer:
         min_isotope_err=config.min_isotope_err,
         max_isotope_err=config.max_isotope_err,
     )
+
+
+def compute_database_hash(fasta_content: str, config: SearchConfig) -> str:
+    """
+    Compute a deterministic hash for the database configuration.
+
+    This hash is used as a cache key for intensity store files, enabling
+    reuse of predictions across searches with the same database.
+
+    The hash includes:
+    - FASTA content
+    - Modification settings
+    - Enzyme/digest settings
+    - Decoy generation settings
+
+    Args:
+        fasta_content: The raw FASTA file content.
+        config: Search configuration object.
+
+    Returns:
+        A hex string hash representing the database configuration.
+    """
+    hash_input = {
+        'fasta_hash': hashlib.md5(fasta_content.encode()).hexdigest(),
+        'static_mods': config.static_modifications,
+        'variable_mods': config.variable_modifications,
+        'missed_cleavages': config.missed_cleavages,
+        'min_peptide_len': config.min_peptide_len,
+        'max_peptide_len': config.max_peptide_len,
+        'cleave_at': config.cleave_at,
+        'restrict': config.restrict,
+        'c_terminal': config.c_terminal,
+        'generate_decoys': config.generate_decoys,
+        'shuffle_decoys': config.shuffle_decoys,
+        'keep_ends': config.keep_ends,
+    }
+
+    # Create deterministic JSON string
+    json_str = json.dumps(hash_input, sort_keys=True)
+    return hashlib.sha256(json_str.encode()).hexdigest()[:16]
+
+
+def is_weighted_score_type(score_type: str) -> bool:
+    """Check if the score type requires intensity predictions."""
+    weighted_types = {'weightedhyperscore', 'weightedopenmshyperscore', 'betascore'}
+    return score_type.lower() in weighted_types
+
+
+def extract_expected_mods(config: SearchConfig) -> list:
+    """Extract list of UNIMOD strings from config modifications.
+
+    Args:
+        config: Search configuration containing static and variable modifications.
+
+    Returns:
+        List of UNIMOD strings, e.g., ["[UNIMOD:4]", "[UNIMOD:35]", "[UNIMOD:1]"]
+    """
+    expected_mods = set()
+
+    # Extract from static modifications (dict: residue -> unimod string)
+    if config.static_modifications:
+        for unimod in config.static_modifications.values():
+            if isinstance(unimod, str) and '[UNIMOD:' in unimod:
+                expected_mods.add(unimod)
+
+    # Extract from variable modifications (dict: residue -> list of unimod strings)
+    if config.variable_modifications:
+        for unimod_list in config.variable_modifications.values():
+            if isinstance(unimod_list, list):
+                for unimod in unimod_list:
+                    if isinstance(unimod, str) and '[UNIMOD:' in unimod:
+                        expected_mods.add(unimod)
+            elif isinstance(unimod_list, str) and '[UNIMOD:' in unimod_list:
+                expected_mods.add(unimod_list)
+
+    return list(expected_mods)
+
+
+def load_or_generate_intensity_store(
+    indexed_db: Any,
+    fasta_content: str,
+    config: SearchConfig,
+    timer: SearchTimer,
+) -> Optional[PredictedIntensityStore]:
+    """
+    Load an existing intensity store or generate a new one.
+
+    Supports both V1 (positional) and V2 (key-based) formats:
+    - V2 (default): Uses (modified_sequence, charge) as lookup keys, modification-aware
+    - V1 (legacy): Uses peptide index as lookup key, requires stable DB indices
+
+    Workflow:
+    1. If a store path is explicitly provided, load it (auto-detects V1 or V2)
+    2. If weighted scoring is enabled:
+       a. Check for a cached store matching the database hash
+       b. If cache exists and not skipped, load it
+       c. Otherwise, generate predictions and save to cache
+    3. If not using weighted scoring, return None
+
+    IMPORTANT: For production use, decoys MUST have real predictions (not uniform 1.0)
+    to ensure fair FDR estimation. See INTENSITY_PREDICTION.md for details.
+
+    Args:
+        indexed_db: The indexed database.
+        fasta_content: The raw FASTA content (for hash computation).
+        config: Search configuration.
+        timer: Timer for logging.
+
+    Returns:
+        PredictedIntensityStore if weighted scoring is enabled, None otherwise.
+    """
+    use_v1 = getattr(config, 'use_v1_format', False)
+    format_name = "V1 (positional)" if use_v1 else "V2 (key-based)"
+
+    # If explicit store path is provided, load it (auto-detects V1 or V2)
+    if config.intensity_store_path:
+        timer.start_step("Loading intensity store from file")
+        store = PredictedIntensityStore(config.intensity_store_path)
+        timer.end_step()
+        logger.info(f"  Loaded intensity store: {config.intensity_store_path}")
+        is_v2 = getattr(store, 'is_key_based', False)
+        logger.info(f"  Store format: {'V2 (key-based)' if is_v2 else 'V1 (positional)'}")
+        if is_v2:
+            logger.info(f"  Entries in store: {store.entry_count}")
+        else:
+            logger.info(f"  Peptides in store: {store.peptide_count}")
+        return store
+
+    # Check if weighted scoring is enabled
+    if not is_weighted_score_type(config.score_type):
+        return None
+
+    logger.info(f"  Weighted scoring enabled - {format_name} intensity store required")
+
+    # Compute database hash for caching
+    db_hash = compute_database_hash(fasta_content, config)
+    logger.info(f"  Database hash: {db_hash}")
+
+    # Determine cache directory
+    cache_dir = config.intensity_cache_dir or config.output_path
+    if cache_dir is None:
+        cache_dir = os.path.dirname(config.data_path)
+
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Cache path depends on format
+    if use_v1:
+        cache_path = os.path.join(cache_dir, f"intensity_store_v1_{db_hash}.sagi")
+    else:
+        cache_path = os.path.join(cache_dir, f"intensity_store_v2_{db_hash}.sagi")
+
+    # Check for cached store
+    if os.path.exists(cache_path) and not config.skip_intensity_cache:
+        timer.start_step(f"Loading cached {format_name} intensity store")
+        store = PredictedIntensityStore(cache_path)
+        timer.end_step()
+        logger.info(f"  Loaded cached store: {cache_path}")
+        is_v2 = getattr(store, 'is_key_based', False)
+        logger.info(f"  Store format: {'V2 (key-based)' if is_v2 else 'V1 (positional)'}")
+        if is_v2:
+            logger.info(f"  Entries in store: {store.entry_count}")
+        else:
+            logger.info(f"  Peptides in store: {store.peptide_count}")
+        return store
+
+    # Generate new intensity predictions
+    logger.info(f"  ========== STARTING {format_name.upper()} INTENSITY STORE GENERATION ==========")
+    logger.info(f"  Generating {format_name} intensity predictions...")
+    timer.start_step(f"Generating {format_name} intensity predictions")
+
+    # Get all peptide sequences (targets AND decoys)
+    peptide_sequences = indexed_db.peptides_as_string()
+    n_peptides = len(peptide_sequences)
+    n_decoys = sum(1 for i in range(n_peptides) if indexed_db[i].decoy)
+    n_targets = n_peptides - n_decoys
+
+    logger.info(f"  Total peptides: {n_peptides} ({n_targets} targets, {n_decoys} decoys)")
+
+    # Check decoy warning
+    if config.intensity_prediction_exclude_decoys:
+        logger.warning("  WARNING: exclude_decoys=True will produce UNFAIR FDR estimates!")
+        logger.warning("  Set intensity_prediction_exclude_decoys=False for production use.")
+
+    # Extract expected modifications for UNIMOD-annotated sequences
+    expected_mods = extract_expected_mods(config)
+    if expected_mods:
+        logger.info(f"  Expected modifications: {expected_mods}")
+
+    if use_v1:
+        # V1: Use positional pipeline
+        from imspy.algorithm.intensity.sage_interface import IntensityPredictionPipeline
+        pipeline = IntensityPredictionPipeline(indexed_db, expected_mods=expected_mods)
+    else:
+        # V2: Use key-based pipeline (modification-aware)
+        from imspy.algorithm.intensity.sage_interface import IntensityPredictionPipelineV2
+        pipeline = IntensityPredictionPipelineV2(indexed_db, expected_mods=expected_mods)
+
+    pipeline.predict_intensities(
+        charges=config.intensity_prediction_charges,
+        exclude_decoys=config.intensity_prediction_exclude_decoys,
+    )
+
+    # Get the intensity store
+    store = pipeline.get_intensity_store()
+    timer.end_step()
+
+    # Save to cache
+    timer.start_step(f"Saving {format_name} intensity store to cache")
+    pipeline.save_intensity_store(cache_path)
+    timer.end_step()
+    logger.info(f"  Saved {format_name} intensity store: {cache_path}")
+
+    if use_v1:
+        logger.info(f"  Peptides in store: {store.peptide_count}")
+    else:
+        logger.info(f"  Entries in store: {store.entry_count}")
+
+    logger.info(f"  ========== {format_name.upper()} INTENSITY STORE GENERATION COMPLETED ==========")
+
+    return store
 
 
 def load_predictors(config: SearchConfig):
@@ -490,8 +755,14 @@ def process_raw_file(
     rt_predictor: Optional[DeepChromatographyApex],
     config: SearchConfig,
     timer: SearchTimer,
-) -> List:
-    """Process a single raw file through the search pipeline."""
+    intensity_store: Optional[PredictedIntensityStore] = None,
+) -> tuple:
+    """Process a single raw file through the search pipeline.
+
+    Returns:
+        Tuple of (n_spectra, psm_list) where n_spectra is the number of
+        query spectra searched and psm_list is the list of PSMs found.
+    """
     ds_name = os.path.basename(raw_path).replace(".d", "")
     logger.info(f"  Processing: {ds_name}")
 
@@ -579,7 +850,8 @@ def process_raw_file(
     fragments['processed_spec'] = processed_spec
     timer.end_step()
 
-    logger.info(f"  Spectra to score: {len(fragments)}")
+    n_spectra = len(fragments)
+    logger.info(f"  Spectra to score: {n_spectra}")
 
     # Database search
     timer.start_step("Searching database")
@@ -587,6 +859,7 @@ def process_raw_file(
         db=indexed_db,
         spectrum_collection=fragments['processed_spec'].values,
         num_threads=num_threads,
+        intensity_store=intensity_store,
     )
     timer.end_step()
 
@@ -670,7 +943,7 @@ def process_raw_file(
     for p in psm:
         p.file_name = ds_name
 
-    return psm
+    return n_spectra, psm
 
 
 def run_search_pipeline(config: SearchConfig) -> None:
@@ -731,11 +1004,35 @@ def run_search_pipeline(config: SearchConfig) -> None:
 
     logger.info(f"  FASTA loaded from: {fasta_path}")
 
-    # Create indexed database
-    timer.start_step("Building indexed database")
+    # Create indexed database (or load from disk if database_path is provided)
+    if config.database_path and os.path.exists(config.database_path):
+        timer.start_step("Loading indexed database from disk")
+    else:
+        timer.start_step("Building indexed database")
     indexed_db = create_indexed_database(fasta_content, config)
     timer.end_step()
     logger.info(f"  Peptides in database: {len(indexed_db.peptides_as_string())}")
+    if config.database_path:
+        logger.info(f"  Database path: {config.database_path}")
+
+    # Load or generate intensity store (for weighted scoring)
+    # Only show section header if weighted scoring is used or explicit path is provided
+    if is_weighted_score_type(config.score_type) or config.intensity_store_path:
+        logger.info(section_header("Intensity Store (V2)"))
+        intensity_store = load_or_generate_intensity_store(
+            indexed_db=indexed_db,
+            fasta_content=fasta_content,
+            config=config,
+            timer=timer,
+        )
+        if intensity_store is not None:
+            is_v2 = getattr(intensity_store, 'is_key_based', False)
+            count = intensity_store.entry_count if is_v2 else intensity_store.peptide_count
+            format_str = "V2 key-based" if is_v2 else "V1 positional"
+            logger.info(f"  Intensity store: Active ({count} entries, {format_str})")
+    else:
+        intensity_store = None
+        logger.info(f"\n  Scoring mode: Standard ({config.score_type})")
 
     # Create scorer
     logger.info(section_header("Creating Scorer"))
@@ -766,7 +1063,7 @@ def run_search_pipeline(config: SearchConfig) -> None:
 
     for i, raw_path in enumerate(raw_paths):
         logger.info(f"\n  File {i+1}/{len(raw_paths)}: {os.path.basename(raw_path)}")
-        psms = process_raw_file(
+        n_spectra, psms = process_raw_file(
             raw_path=raw_path,
             indexed_db=indexed_db,
             scorer=scorer,
@@ -775,9 +1072,10 @@ def run_search_pipeline(config: SearchConfig) -> None:
             rt_predictor=rt_predictor,
             config=config,
             timer=timer,
+            intensity_store=intensity_store,
         )
         all_psms.extend(psms)
-        stats.n_spectra += len(psms)
+        stats.n_spectra += n_spectra
 
     stats.n_psms_total = len(all_psms)
     logger.info(f"\n  Total PSMs: {len(all_psms)}")
@@ -796,16 +1094,30 @@ def run_search_pipeline(config: SearchConfig) -> None:
 
     # Apply FDR filter
     timer.start_step("Filtering by FDR threshold")
-    psm_filtered = target_decoy_competition_pandas(
+    psm_fdr = target_decoy_competition_pandas(
         psm_df,
         method=config.fdr_method,
         score='hyperscore'
     )
 
     if config.remove_decoys_output:
-        psm_filtered = psm_filtered[psm_filtered.decoy == False]
+        psm_fdr = psm_fdr[psm_fdr.decoy == False]
 
-    psm_filtered = psm_filtered[psm_filtered.q_value <= config.fdr_threshold]
+    psm_fdr = psm_fdr[psm_fdr.q_value <= config.fdr_threshold]
+
+    # Merge filtered results back with full PSM dataframe to get sequence info
+    merge_cols = ['spec_idx', 'match_idx', 'decoy']
+    psm_filtered = psm_df.merge(
+        psm_fdr[merge_cols + ['q_value']],
+        on=merge_cols,
+        how='inner',
+        suffixes=('', '_fdr')
+    )
+    # Use q_value from FDR calculation
+    if 'q_value_fdr' in psm_filtered.columns:
+        psm_filtered['q_value'] = psm_filtered['q_value_fdr']
+        psm_filtered = psm_filtered.drop(columns=['q_value_fdr'])
+
     stats.n_psms_filtered = len(psm_filtered)
     stats.n_peptides = psm_filtered['sequence'].nunique() if 'sequence' in psm_filtered.columns else 0
     timer.end_step()
@@ -893,9 +1205,13 @@ via a TOML file.
     cleave_at        = "KR"
     restrict         = "P"
 
+  [database]
+    database_path = "/path/to/database.sagdb"  # optional: save/load database
+
   [search]
     precursor_tolerance_ppm = 15.0
     fragment_tolerance_ppm  = 20.0
+    # score_type options: hyperscore, openmshyperscore, weightedhyperscore, weightedopenmshyperscore, betascore
     score_type              = "hyperscore"
 
   [fdr]

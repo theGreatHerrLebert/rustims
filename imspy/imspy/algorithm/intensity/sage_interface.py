@@ -614,3 +614,519 @@ def write_predictions_for_database(
         max_charge=result.max_fragment_charge,
         ion_kinds=result.ion_kinds,
     )
+
+
+class IntensityPredictionPipeline:
+    """High-level pipeline for generating intensity predictions for Sage weighted scoring.
+
+    This class provides a simplified interface for:
+    1. Extracting peptide sequences from an IndexedDatabase
+    2. Predicting fragment ion intensities using Prosit
+    3. Creating a PredictedIntensityStore for weighted scoring
+    4. Saving/loading intensity predictions
+
+    Example:
+        >>> from sagepy.core import SageSearchConfiguration, EnzymeBuilder
+        >>> config = SageSearchConfiguration(fasta=fasta_str, ...)
+        >>> indexed_db = config.generate_indexed_database()
+        >>>
+        >>> pipeline = IntensityPredictionPipeline(indexed_db)
+        >>> pipeline.predict_intensities(charges=[2, 3])
+        >>> store = pipeline.get_intensity_store()
+        >>> pipeline.save_intensity_store("predictions.sagi")
+
+    IMPORTANT: For production use with FDR estimation, you MUST include decoys
+    in the predictions (exclude_decoys=False). Using uniform intensities for
+    decoys will inflate their scores and break FDR estimation.
+    """
+
+    def __init__(self, indexed_db, expected_mods: List[str] = None):
+        """Initialize pipeline with an indexed database.
+
+        Args:
+            indexed_db: Sage IndexedDatabase containing target and decoy peptides.
+            expected_mods: List of UNIMOD strings to include in peptide sequences,
+                e.g., ["[UNIMOD:4]", "[UNIMOD:35]"]. If None, uses plain sequences.
+        """
+        self._indexed_db = indexed_db
+        self._expected_mods = expected_mods
+        if expected_mods:
+            self._peptide_sequences = indexed_db.peptides_as_unimod_string(expected_mods)
+        else:
+            self._peptide_sequences = indexed_db.peptides_as_string()
+        self._peptide_lengths = [len(remove_unimod_annotation(seq)) for seq in self._peptide_sequences]
+        self._predictions = None
+        self._ion_kinds = DEFAULT_ION_KINDS.copy()
+        self._max_fragment_charge = 2
+        self._store = None
+
+    @property
+    def num_peptides(self) -> int:
+        """Total number of peptides in the database."""
+        return len(self._peptide_sequences)
+
+    @property
+    def num_targets(self) -> int:
+        """Number of target peptides."""
+        return sum(1 for i in range(self.num_peptides) if not self._indexed_db[i].decoy)
+
+    @property
+    def num_decoys(self) -> int:
+        """Number of decoy peptides."""
+        return sum(1 for i in range(self.num_peptides) if self._indexed_db[i].decoy)
+
+    def predict_intensities(
+        self,
+        charges: List[int] = [2, 3],
+        exclude_decoys: bool = False,
+        collision_energy: float = DEFAULT_COLLISION_ENERGY,
+        batch_size: int = 2048,
+        verbose: bool = True,
+    ) -> None:
+        """Predict fragment ion intensities for all peptides.
+
+        Args:
+            charges: Precursor charge states to predict for each peptide.
+            exclude_decoys: If True, decoys get uniform 1.0 intensities (NOT recommended
+                for production - breaks FDR estimation).
+            collision_energy: Normalized collision energy for predictions.
+            batch_size: Batch size for Prosit model.
+            verbose: Whether to show progress.
+        """
+        from tqdm import tqdm
+
+        if exclude_decoys:
+            import warnings
+            warnings.warn(
+                "exclude_decoys=True will produce unfair FDR estimates. "
+                "For production use, set exclude_decoys=False.",
+                UserWarning
+            )
+
+        # Collect peptides to predict with progress bar
+        sequences_to_predict = []
+        charges_to_predict = []
+        indices_to_predict = []
+
+        peptide_iter = enumerate(self._peptide_sequences)
+        if verbose:
+            peptide_iter = tqdm(
+                list(peptide_iter),
+                desc="Collecting peptides",
+                unit="peptides"
+            )
+
+        for idx, seq in peptide_iter:
+            is_decoy = self._indexed_db[idx].decoy
+
+            if exclude_decoys and is_decoy:
+                continue
+
+            for charge in charges:
+                sequences_to_predict.append(seq)
+                charges_to_predict.append(charge)
+                indices_to_predict.append(idx)
+
+        if verbose:
+            n_predictions = len(sequences_to_predict)
+            print(f"Predicting intensities for {n_predictions} peptide-charge combinations...")
+
+        # Run predictions
+        collision_energies = [collision_energy] * len(sequences_to_predict)
+
+        result = predict_intensities_for_sage(
+            sequences=sequences_to_predict,
+            charges=charges_to_predict,
+            peptide_indices=indices_to_predict,
+            collision_energies=collision_energies,
+            ion_kinds=self._ion_kinds,
+            max_fragment_charge=self._max_fragment_charge,
+            batch_size=batch_size,
+            verbose=verbose,
+        )
+
+        # Aggregate by peptide index
+        if verbose:
+            print("Aggregating predictions by peptide...")
+        aggregated = aggregate_predictions_by_peptide(result, aggregation='max_charge')
+
+        # Build complete prediction list with uniform fallback for missing peptides
+        self._predictions = []
+        peptide_range = range(self.num_peptides)
+        if verbose:
+            peptide_range = tqdm(
+                peptide_range,
+                desc="Building intensity store",
+                unit="peptides"
+            )
+
+        for idx in peptide_range:
+            pep_len = self._peptide_lengths[idx]
+            if idx in aggregated:
+                self._predictions.append(aggregated[idx])
+            else:
+                # Missing peptide - use uniform 1.0
+                pred = np.full(
+                    (len(self._ion_kinds), pep_len - 1, self._max_fragment_charge),
+                    1.0,
+                    dtype=np.float32
+                )
+                self._predictions.append(pred)
+
+        # Clear cached store
+        self._store = None
+
+    def get_intensity_store(self):
+        """Get a PredictedIntensityStore for use with Sage scoring.
+
+        Returns:
+            PredictedIntensityStore instance.
+
+        Raises:
+            ValueError: If predict_intensities() hasn't been called yet.
+        """
+        if self._predictions is None:
+            raise ValueError("No predictions available. Call predict_intensities() first.")
+
+        if self._store is not None:
+            return self._store
+
+        from sagepy.core import PredictedIntensityStore
+
+        # Create store using uniform method as base, then we'll need to write to file
+        # and reload since there's no direct constructor from arrays
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix='.sagi', delete=False) as tmp:
+            tmp_path = tmp.name
+
+        try:
+            write_intensity_file(
+                tmp_path,
+                self._predictions,
+                self._peptide_lengths,
+                max_charge=self._max_fragment_charge,
+                ion_kinds=self._ion_kinds,
+            )
+            self._store = PredictedIntensityStore(tmp_path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        return self._store
+
+    def save_intensity_store(self, path: str) -> None:
+        """Save predictions to a .sagi file.
+
+        Args:
+            path: Output file path.
+
+        Raises:
+            ValueError: If predict_intensities() hasn't been called yet.
+        """
+        if self._predictions is None:
+            raise ValueError("No predictions available. Call predict_intensities() first.")
+
+        write_intensity_file(
+            path,
+            self._predictions,
+            self._peptide_lengths,
+            max_charge=self._max_fragment_charge,
+            ion_kinds=self._ion_kinds,
+        )
+
+    @classmethod
+    def load_intensity_store(cls, path: str):
+        """Load a PredictedIntensityStore from a .sagi file.
+
+        Args:
+            path: Path to .sagi file.
+
+        Returns:
+            PredictedIntensityStore instance.
+        """
+        from sagepy.core import PredictedIntensityStore
+        return PredictedIntensityStore(path)
+
+
+# =============================================================================
+# V2 Key-Based Intensity Prediction Support
+# =============================================================================
+
+def predict_intensities_v2(
+    sequences: List[str],
+    charges: List[int],
+    collision_energies: Optional[List[float]] = None,
+    ion_kinds: List[int] = None,
+    max_fragment_charge: int = 2,
+    batch_size: int = 2048,
+    verbose: bool = True,
+) -> dict:
+    """Predict fragment ion intensities using Prosit, returning V2 key-based format.
+
+    This function generates predictions keyed by (raw_sequence, precursor_charge)
+    which is decoupled from database peptide indices. This enables:
+    - Database chunking for parallel processing
+    - Prediction reuse across different database configurations
+    - Flexible parallel workflows
+
+    Args:
+        sequences: Peptide sequences (may include UNIMOD modifications)
+        charges: Precursor charge states (parallel to sequences)
+        collision_energies: Collision energies per peptide (default: 35.0 NCE)
+        ion_kinds: Ion type codes (default: [1, 4] for B, Y ions)
+        max_fragment_charge: Maximum fragment charge to predict (1-3)
+        batch_size: Batch size for Prosit prediction
+        verbose: Whether to show progress
+
+    Returns:
+        dict[tuple[str, int], np.ndarray]: Map from (raw_sequence, precursor_charge)
+            to intensity tensor with shape [n_ion_kinds, seq_len-1, max_fragment_charge]
+
+    Example:
+        >>> predictions = predict_intensities_v2(
+        ...     sequences=["PEPTIDEK", "ANOTHERK"],
+        ...     charges=[2, 3],
+        ... )
+        >>> predictions[("PEPTIDEK", 2)].shape  # (2, 7, 2) for 8 AA peptide
+    """
+    from .predictors import Prosit2023TimsTofWrapper
+
+    if ion_kinds is None:
+        ion_kinds = DEFAULT_ION_KINDS.copy()
+
+    if collision_energies is None:
+        collision_energies = [DEFAULT_COLLISION_ENERGY] * len(sequences)
+
+    assert len(sequences) == len(charges), "sequences and charges must have same length"
+    assert 1 <= max_fragment_charge <= 3, "max_fragment_charge must be 1-3"
+
+    # Initialize Prosit model
+    prosit = Prosit2023TimsTofWrapper(verbose=verbose)
+
+    # Predict intensities
+    raw_predictions = prosit.predict_intensities(
+        sequences=sequences,
+        charges=np.array(charges, dtype=np.int32),
+        collision_energies=collision_energies,
+        batch_size=batch_size,
+        flatten=False,
+    )
+
+    # Transform to V2 format: (modified_sequence, charge) -> intensity array
+    # Key is the FULL sequence with UNIMOD annotations (mod-aware)
+    predictions = {}
+    for seq, charge, pred in zip(sequences, charges, raw_predictions):
+        # Use raw sequence length for array sizing, but keep full seq as key
+        raw_seq = remove_unimod_annotation(seq)
+        seq_len = len(raw_seq)
+        transformed = _prosit_to_sage_format(pred, seq_len, max_fragment_charge)
+        # Key is the ORIGINAL sequence with UNIMOD (modification-aware)
+        predictions[(seq, charge)] = transformed
+
+    return predictions
+
+
+class IntensityPredictionPipelineV2:
+    """V2 pipeline for generating key-based intensity predictions.
+
+    This class uses the V2 format where predictions are keyed by (modified_sequence, charge)
+    instead of peptide index. The key includes UNIMOD annotations for modification-aware
+    predictions. This decouples predictions from database order and enables:
+    - Database chunking for parallel processing
+    - Modification-aware intensity predictions
+    - Flexible parallel workflows
+
+    Example:
+        >>> from sagepy.core import SageSearchConfiguration, EnzymeBuilder
+        >>> config = SageSearchConfiguration(fasta=fasta_str, ...)
+        >>> indexed_db = config.generate_indexed_database()
+        >>>
+        >>> pipeline = IntensityPredictionPipelineV2(indexed_db)
+        >>> pipeline.predict_intensities(charges=[2, 3])
+        >>> store = pipeline.get_intensity_store()
+        >>> pipeline.save_intensity_store("predictions_v2.sagi")
+
+    IMPORTANT: For production use with FDR estimation, you MUST include decoys
+    in the predictions (exclude_decoys=False). Using uniform intensities for
+    decoys will inflate their scores and break FDR estimation.
+    """
+
+    def __init__(self, indexed_db, expected_mods: List[str] = None):
+        """Initialize pipeline with an indexed database.
+
+        Args:
+            indexed_db: Sage IndexedDatabase containing target and decoy peptides.
+            expected_mods: List of UNIMOD strings to include in peptide sequences,
+                e.g., ["[UNIMOD:4]", "[UNIMOD:35]"]. If None, uses plain sequences.
+                For V2 modification-aware predictions, this should include all
+                static and variable modifications.
+        """
+        self._indexed_db = indexed_db
+        self._expected_mods = expected_mods
+        if expected_mods:
+            self._peptide_sequences = indexed_db.peptides_as_unimod_string(expected_mods)
+        else:
+            self._peptide_sequences = indexed_db.peptides_as_string()
+        self._predictions = None
+        self._ion_kinds = DEFAULT_ION_KINDS.copy()
+        self._max_fragment_charge = 2
+        self._store = None
+
+    @property
+    def num_peptides(self) -> int:
+        """Total number of peptides in the database."""
+        return len(self._peptide_sequences)
+
+    @property
+    def num_targets(self) -> int:
+        """Number of target peptides."""
+        return sum(1 for i in range(self.num_peptides) if not self._indexed_db[i].decoy)
+
+    @property
+    def num_decoys(self) -> int:
+        """Number of decoy peptides."""
+        return sum(1 for i in range(self.num_peptides) if self._indexed_db[i].decoy)
+
+    def predict_intensities(
+        self,
+        charges: List[int] = [2, 3],
+        exclude_decoys: bool = False,
+        collision_energy: float = DEFAULT_COLLISION_ENERGY,
+        batch_size: int = 2048,
+        verbose: bool = True,
+    ) -> None:
+        """Predict fragment ion intensities for all unique (sequence, charge) pairs.
+
+        Args:
+            charges: Precursor charge states to predict for each unique sequence.
+            exclude_decoys: If True, decoys get uniform 1.0 intensities (NOT recommended
+                for production - breaks FDR estimation).
+            collision_energy: Normalized collision energy for predictions.
+            batch_size: Batch size for Prosit model.
+            verbose: Whether to show progress.
+        """
+        from tqdm import tqdm
+
+        if exclude_decoys:
+            import warnings
+            warnings.warn(
+                "exclude_decoys=True will produce unfair FDR estimates. "
+                "For production use, set exclude_decoys=False.",
+                UserWarning
+            )
+
+        # Collect unique (modified_sequence, charge) pairs
+        # Key is the FULL sequence with UNIMOD annotations (mod-aware)
+        unique_pairs = set()
+        decoy_sequences = set()
+
+        peptide_iter = enumerate(self._peptide_sequences)
+        if verbose:
+            peptide_iter = tqdm(
+                list(peptide_iter),
+                desc="Collecting unique sequences",
+                unit="peptides"
+            )
+
+        for idx, seq in peptide_iter:
+            is_decoy = self._indexed_db[idx].decoy
+
+            if is_decoy:
+                decoy_sequences.add(seq)
+
+            if exclude_decoys and is_decoy:
+                continue
+
+            # Use FULL modified sequence as key (mod-aware)
+            for charge in charges:
+                unique_pairs.add((seq, charge))
+
+        # Convert to lists for prediction
+        sequences_to_predict = []
+        charges_to_predict = []
+
+        for mod_seq, charge in unique_pairs:
+            sequences_to_predict.append(mod_seq)
+            charges_to_predict.append(charge)
+
+        if verbose:
+            n_unique = len(unique_pairs)
+            print(f"Unique (sequence, charge) pairs to predict: {n_unique}")
+
+        # Run predictions
+        collision_energies = [collision_energy] * len(sequences_to_predict)
+
+        self._predictions = predict_intensities_v2(
+            sequences=sequences_to_predict,
+            charges=charges_to_predict,
+            collision_energies=collision_energies,
+            ion_kinds=self._ion_kinds,
+            max_fragment_charge=self._max_fragment_charge,
+            batch_size=batch_size,
+            verbose=verbose,
+        )
+
+        # Clear cached store
+        self._store = None
+
+        if verbose:
+            print(f"Generated {len(self._predictions)} V2 predictions")
+
+    def get_intensity_store(self):
+        """Get a V2 PredictedIntensityStore for use with Sage scoring.
+
+        Returns:
+            PredictedIntensityStore instance (V2 key-based format).
+
+        Raises:
+            ValueError: If predict_intensities() hasn't been called yet.
+        """
+        if self._predictions is None:
+            raise ValueError("No predictions available. Call predict_intensities() first.")
+
+        if self._store is not None:
+            return self._store
+
+        from sagepy.core import PredictedIntensityStore
+
+        # Create V2 store directly from predictions dict
+        self._store = PredictedIntensityStore.from_predictions_v2(
+            predictions=self._predictions,
+            max_charge=self._max_fragment_charge,
+            ion_kinds=self._ion_kinds,
+        )
+
+        return self._store
+
+    def save_intensity_store(self, path: str) -> None:
+        """Save V2 predictions to a .sagi file.
+
+        Args:
+            path: Output file path.
+
+        Raises:
+            ValueError: If predict_intensities() hasn't been called yet.
+        """
+        if self._predictions is None:
+            raise ValueError("No predictions available. Call predict_intensities() first.")
+
+        # Get the store and save it
+        store = self.get_intensity_store()
+        store.write(path)
+
+    @classmethod
+    def load_intensity_store(cls, path: str):
+        """Load a PredictedIntensityStore from a .sagi file.
+
+        The loaded store can be either V1 or V2 format - it auto-detects.
+
+        Args:
+            path: Path to .sagi file.
+
+        Returns:
+            PredictedIntensityStore instance.
+        """
+        from sagepy.core import PredictedIntensityStore
+        return PredictedIntensityStore(path)
