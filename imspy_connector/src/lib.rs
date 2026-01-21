@@ -13,6 +13,7 @@ pub mod py_mz_spectrum;
 pub mod py_quadrupole;
 pub mod py_peptide;
 pub mod py_simulation;
+pub mod py_spectrum_processing;
 pub mod py_tims_frame;
 pub mod py_tims_slice;
 pub mod py_unimod;
@@ -34,6 +35,7 @@ fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pymodule!(py_quadrupole::py_quadrupole))?;
     m.add_wrapped(wrap_pymodule!(py_peptide::py_peptide))?;
     m.add_wrapped(wrap_pymodule!(py_simulation::py_simulation))?;
+    m.add_wrapped(wrap_pymodule!(py_spectrum_processing::py_spectrum_processing))?;
     m.add_wrapped(wrap_pymodule!(py_tims_frame::py_tims_frame))?;
     m.add_wrapped(wrap_pymodule!(py_tims_slice::py_tims_slice))?;
     m.add_wrapped(wrap_pymodule!(py_unimod::py_unimod))?;
