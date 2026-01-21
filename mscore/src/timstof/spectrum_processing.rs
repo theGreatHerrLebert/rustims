@@ -46,7 +46,8 @@ pub struct PreprocessedSpectrum {
     pub scan_start_time: f64,
     /// Total ion current of the spectrum
     pub total_ion_current: f64,
-    /// Fragment m/z values (as f32 for Sage compatibility)
+    /// Fragment neutral mass values (as f32 for Sage compatibility)
+    /// Note: These are neutral masses (m/z - proton mass), matching Sage's Peak representation
     pub mz: Vec<f32>,
     /// Fragment intensity values (as f32 for Sage compatibility)
     pub intensity: Vec<f32>,
@@ -90,6 +91,10 @@ impl PreprocessedSpectrum {
 
 /// Calculate the isotope mass difference (~1.003 Da for most elements)
 const ISOTOPE_MASS_DIFF: f64 = 1.00335;
+
+/// Proton mass in Daltons - used for converting m/z to neutral mass
+/// Sage stores fragment peaks as neutral mass, not m/z
+const PROTON_MASS: f64 = 1.007276466812;
 
 /// Deisotope a spectrum by removing peaks that are likely isotopes of more intense peaks.
 ///
@@ -288,7 +293,9 @@ pub fn get_inverse_mobility_along_scan_marginal(
 /// * `config` - processing configuration
 ///
 /// # Returns
-/// Tuple of (processed_mz, processed_intensity) as f32 vectors for Sage compatibility
+/// Tuple of (processed_mass, processed_intensity) as f32 vectors for Sage compatibility.
+/// Note: m/z values are converted to neutral mass by subtracting the proton mass,
+/// matching Sage's Peak representation which stores neutral mass.
 pub fn process_spectrum(
     tof: &[i32],
     mz: &[f64],
@@ -308,11 +315,12 @@ pub fn process_spectrum(
     // Step 3: Filter to top N peaks
     let (final_mz, final_intensity) = filter_top_n(&deiso_mz, &deiso_intensity, config.take_top_n);
 
-    // Convert to f32 for Sage compatibility
-    let mz_f32: Vec<f32> = final_mz.iter().map(|&x| x as f32).collect();
+    // Convert m/z to neutral mass by subtracting proton mass (assumes singly charged fragments)
+    // This matches Sage's SpectrumProcessor behavior which stores neutral mass in Peak objects
+    let mass_f32: Vec<f32> = final_mz.iter().map(|&x| (x - PROTON_MASS) as f32).collect();
     let intensity_f32: Vec<f32> = final_intensity.iter().map(|&x| x as f32).collect();
 
-    (mz_f32, intensity_f32)
+    (mass_f32, intensity_f32)
 }
 
 /// Metadata required for processing a single PASEF fragment

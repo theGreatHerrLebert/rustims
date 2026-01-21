@@ -213,7 +213,7 @@ impl TimsDatasetDDA {
         config: SpectrumProcessingConfig,
         num_threads: usize,
     ) -> Vec<PreprocessedSpectrum> {
-        // Step 1: Get raw PASEF fragments (this is already parallel in Rust)
+        // Step 1: Get raw PASEF fragments info
         let pasef_info = self.get_pasef_frame_ms_ms_info();
 
         // Step 2: Get precursor metadata
@@ -231,7 +231,8 @@ impl TimsDatasetDDA {
             .map(|f| (f.id, f.time / 60.0))  // Convert to minutes
             .collect();
 
-        // Group PASEF info by precursor_id to aggregate re-fragmented precursors
+        // Step 3: Group PASEF info by precursor_id to aggregate re-fragmented precursors
+        // This matches Python's groupby('precursor_id').agg({'raw_data': 'sum', ...})
         let mut pasef_by_precursor: BTreeMap<i64, Vec<&PasefMsMsMeta>> = BTreeMap::new();
         for info in &pasef_info {
             pasef_by_precursor
@@ -240,7 +241,7 @@ impl TimsDatasetDDA {
                 .push(info);
         }
 
-        // Step 3: Build fragment data (sequential because Bruker SDK access must be single-threaded)
+        // Step 4: Build fragment data with aggregation (merge frames for same precursor)
         let pool = ThreadPoolBuilder::new()
             .num_threads(num_threads)
             .build()
@@ -253,13 +254,13 @@ impl TimsDatasetDDA {
                     // Get precursor metadata
                     let precursor = precursor_map.get(precursor_id)?;
 
-                    // Get the first PASEF info for frame_id and collision_energy
+                    // Use first PASEF info for metadata (matches Python's 'first')
                     let first_pasef = pasef_infos.first()?;
 
-                    // Get retention time from frame metadata
+                    // Get retention time from first frame
                     let scan_start_time = frame_time_map.get(&first_pasef.frame_id).copied().unwrap_or(0.0);
 
-                    // Collect and merge all frames for this precursor
+                    // Collect and merge all frames for this precursor (matches Python's 'sum')
                     let mut combined_scan = Vec::new();
                     let mut combined_mobility = Vec::new();
                     let mut combined_tof = Vec::new();
@@ -267,6 +268,7 @@ impl TimsDatasetDDA {
                     let mut combined_intensity = Vec::new();
 
                     for pasef_info in pasef_infos {
+                        // Get the frame and filter by scan range
                         let frame = self.loader.get_frame(pasef_info.frame_id as u32);
 
                         // Get five percent of the scan range for margin
@@ -284,7 +286,7 @@ impl TimsDatasetDDA {
                             1e9,
                         );
 
-                        // Append data
+                        // Append data from this frame (merge/sum behavior)
                         combined_scan.extend(filtered_frame.scan.iter());
                         combined_mobility.extend(filtered_frame.ims_frame.mobility.iter());
                         combined_tof.extend(filtered_frame.tof.iter());
@@ -320,7 +322,7 @@ impl TimsDatasetDDA {
                 .collect()
         });
 
-        // Step 4: Process all fragments in parallel using the batch processor
+        // Step 5: Process all fragments in parallel using the batch processor
         process_pasef_fragments_batch(fragment_data, dataset_name, &config, num_threads)
     }
 
