@@ -77,6 +77,7 @@ from imspy.timstof.dbsearch.utility import (
     sanitize_mz,
     sanitize_charge,
     get_searchable_spec,
+    get_searchable_specs_batch,
     linear_map,
     check_memory,
 )
@@ -300,6 +301,15 @@ def get_default_settings() -> dict:
         'intensity_cache_dir': None,            # Cache directory (default: output_path)
         'skip_intensity_cache': False,          # Force regeneration
         'use_v1_format': False,                 # Use V1 positional format (legacy)
+
+        # Linear CE Model Settings (CE = intercept + slope * m/z)
+        'use_linear_ce_model': False,           # Use linear CE model instead of constant CE
+        'ce_intercept': 20.0,                   # CE intercept (NCE at m/z=0)
+        'ce_slope': 0.015,                      # CE slope (NCE per Da)
+        'extract_ce_from_data': False,          # Extract CE model from first raw file
+
+        # Batch Processing (Rust parallel preprocessing)
+        'use_batch_preprocessing': True,        # Use Rust parallel preprocessing (faster)
     }
 
 
@@ -687,19 +697,33 @@ def load_or_generate_intensity_store(
     if expected_mods:
         logger.info(f"  Expected modifications: {expected_mods}")
 
+    # Build CE model if using linear CE
+    ce_model = None
+    if getattr(config, 'use_linear_ce_model', False):
+        from imspy.algorithm.intensity.collision_energy import CollisionEnergyModel
+        ce_model = CollisionEnergyModel(
+            intercept=config.ce_intercept,
+            slope=config.ce_slope
+        )
+        logger.info(f"  Using linear CE model: {ce_model}")
+
     if use_v1:
         # V1: Use positional pipeline
         from imspy.algorithm.intensity.sage_interface import IntensityPredictionPipeline
         pipeline = IntensityPredictionPipeline(indexed_db, expected_mods=expected_mods)
+        pipeline.predict_intensities(
+            charges=config.intensity_prediction_charges,
+            exclude_decoys=config.intensity_prediction_exclude_decoys,
+        )
     else:
         # V2: Use key-based pipeline (modification-aware)
         from imspy.algorithm.intensity.sage_interface import IntensityPredictionPipelineV2
         pipeline = IntensityPredictionPipelineV2(indexed_db, expected_mods=expected_mods)
-
-    pipeline.predict_intensities(
-        charges=config.intensity_prediction_charges,
-        exclude_decoys=config.intensity_prediction_exclude_decoys,
-    )
+        pipeline.predict_intensities(
+            charges=config.intensity_prediction_charges,
+            exclude_decoys=config.intensity_prediction_exclude_decoys,
+            collision_energy_model=ce_model,
+        )
 
     # Get the intensity store
     store = pipeline.get_intensity_store()
@@ -778,86 +802,106 @@ def process_raw_file(
     rt_min = dataset.meta_data.Time.min() / 60.0
     rt_max = dataset.meta_data.Time.max() / 60.0
 
-    # Load PASEF fragments
-    timer.start_step("Loading PASEF fragments")
+    # Preprocessing spectra
     num_threads = config.num_threads if config.num_threads > 0 else os.cpu_count()
-    # Bruker SDK requires single thread
-    load_threads = 1 if config.use_bruker_sdk else num_threads
 
-    fragments = dataset.get_pasef_fragments(num_threads=load_threads)
+    if config.use_batch_preprocessing:
+        # Use Rust parallel batch processing (faster)
+        timer.start_step("Loading and preprocessing spectra (batch mode)")
+        processed_specs = get_searchable_specs_batch(
+            dataset=dataset,
+            ds_name=ds_name,
+            take_top_n=config.take_top_n,
+            deisotope=True,
+            isolation_window_lower=config.isolation_window_lower,
+            isolation_window_upper=config.isolation_window_upper,
+            num_threads=num_threads,
+        )
+        timer.end_step()
+        n_spectra = len(processed_specs)
+        logger.info(f"  Spectra to score: {n_spectra}")
+    else:
+        # Sequential Python processing (original code path)
+        timer.start_step("Loading PASEF fragments")
+        # Bruker SDK requires single thread
+        load_threads = 1 if config.use_bruker_sdk else num_threads
 
-    # Aggregate re-fragmented PASEF frames
-    fragments = fragments.groupby('precursor_id').agg({
-        'frame_id': 'first',
-        'time': 'first',
-        'precursor_id': 'first',
-        'raw_data': 'sum',
-        'scan_begin': 'first',
-        'scan_end': 'first',
-        'isolation_mz': 'first',
-        'isolation_width': 'first',
-        'collision_energy': 'first',
-        'largest_peak_mz': 'first',
-        'average_mz': 'first',
-        'monoisotopic_mz': 'first',
-        'charge': 'first',
-        'average_scan': 'first',
-        'intensity': 'first',
-        'parent_id': 'first',
-    })
+        fragments = dataset.get_pasef_fragments(num_threads=load_threads)
 
-    # Calculate mobility
-    mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
-    fragments['mobility'] = mobility
+        # Aggregate re-fragmented PASEF frames
+        fragments = fragments.groupby('precursor_id').agg({
+            'frame_id': 'first',
+            'time': 'first',
+            'precursor_id': 'first',
+            'raw_data': 'sum',
+            'scan_begin': 'first',
+            'scan_end': 'first',
+            'isolation_mz': 'first',
+            'isolation_width': 'first',
+            'collision_energy': 'first',
+            'largest_peak_mz': 'first',
+            'average_mz': 'first',
+            'monoisotopic_mz': 'first',
+            'charge': 'first',
+            'average_scan': 'first',
+            'intensity': 'first',
+            'parent_id': 'first',
+        })
 
-    # Generate spec_id
-    spec_id = fragments.apply(
-        lambda r: f"{np.random.randint(int(1e6))}-{r['frame_id']}-{r['precursor_id']}-{ds_name}",
-        axis=1
-    )
-    fragments['spec_id'] = spec_id
-    timer.end_step()
+        # Calculate mobility
+        mobility = fragments.apply(lambda r: r.raw_data.get_inverse_mobility_along_scan_marginal(), axis=1)
+        fragments['mobility'] = mobility
 
-    # Create Sage precursors
-    timer.start_step("Creating precursor objects")
-    iso_tol = Tolerance(da=(config.isolation_window_lower, config.isolation_window_upper))
+        # Generate spec_id
+        spec_id = fragments.apply(
+            lambda r: f"{np.random.randint(int(1e6))}-{r['frame_id']}-{r['precursor_id']}-{ds_name}",
+            axis=1
+        )
+        fragments['spec_id'] = spec_id
+        timer.end_step()
 
-    sage_precursor = fragments.apply(lambda r: Precursor(
-        mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
-        intensity=r['intensity'],
-        charge=sanitize_charge(r['charge']),
-        isolation_window=iso_tol,
-        collision_energy=r.collision_energy,
-        inverse_ion_mobility=r.mobility,
-    ), axis=1)
-    fragments['sage_precursor'] = sage_precursor
-    timer.end_step()
+        # Create Sage precursors
+        timer.start_step("Creating precursor objects")
+        iso_tol = Tolerance(da=(config.isolation_window_lower, config.isolation_window_upper))
 
-    # Preprocess spectra
-    timer.start_step("Preprocessing spectra")
-    spec_processor = SpectrumProcessor(take_top_n=config.take_top_n, deisotope=True)
+        sage_precursor = fragments.apply(lambda r: Precursor(
+            mz=sanitize_mz(r['monoisotopic_mz'], r['largest_peak_mz']),
+            intensity=r['intensity'],
+            charge=sanitize_charge(r['charge']),
+            isolation_window=iso_tol,
+            collision_energy=r.collision_energy,
+            inverse_ion_mobility=r.mobility,
+        ), axis=1)
+        fragments['sage_precursor'] = sage_precursor
+        timer.end_step()
 
-    processed_spec = fragments.apply(
-        lambda r: get_searchable_spec(
-            precursor=r.sage_precursor,
-            raw_fragment_data=r.raw_data,
-            spec_processor=spec_processor,
-            spec_id=r.spec_id,
-            time=r['time'],
-        ),
-        axis=1
-    )
-    fragments['processed_spec'] = processed_spec
-    timer.end_step()
+        # Preprocess spectra
+        timer.start_step("Preprocessing spectra")
+        spec_processor = SpectrumProcessor(take_top_n=config.take_top_n, deisotope=True)
 
-    n_spectra = len(fragments)
-    logger.info(f"  Spectra to score: {n_spectra}")
+        processed_spec = fragments.apply(
+            lambda r: get_searchable_spec(
+                precursor=r.sage_precursor,
+                raw_fragment_data=r.raw_data,
+                spec_processor=spec_processor,
+                spec_id=r.spec_id,
+                time=r['time'],
+            ),
+            axis=1
+        )
+        fragments['processed_spec'] = processed_spec
+        timer.end_step()
+
+        # Convert to list for consistent API
+        processed_specs = list(fragments['processed_spec'].values)
+        n_spectra = len(processed_specs)
+        logger.info(f"  Spectra to score: {n_spectra}")
 
     # Database search
     timer.start_step("Searching database")
     psm_dict = scorer.score_collection_psm(
         db=indexed_db,
-        spectrum_collection=fragments['processed_spec'].values,
+        spectrum_collection=processed_specs,
         num_threads=num_threads,
         intensity_store=intensity_store,
     )
@@ -874,26 +918,54 @@ def process_raw_file(
 
     logger.info(f"  PSMs found: {len(psm)}")
 
-    # Intensity prediction with collision energy calibration
+    # Intensity prediction with collision energy
     if prosit_model is not None and len(psm) > 0:
         timer.start_step("Predicting fragment intensities")
 
-        # Calibrate collision energy
-        sample_size = min(config.collision_energy_calibration_sample_size, len(psm))
-        sample = list(sorted(psm, key=lambda x: x.hyperscore, reverse=True))[:sample_size]
+        if config.use_linear_ce_model:
+            # Use linear CE model: CE = intercept + slope * m/z (no calibration)
+            ce_intercept = config.ce_intercept
+            ce_slope = config.ce_slope
 
-        ce_calibration_factor, _ = get_collision_energy_calibration_factor(
-            list(filter(lambda m: m.decoy is not True, sample)),
-            prosit_model,
-            verbose=config.verbose,
-        )
+            if ce_intercept == 0.0 and ce_slope == 0.0:
+                # Special case: use raw CE values without modification
+                logger.info("  Using raw CE values (no calibration)")
+                for ps in psm:
+                    ps.collision_energy_calibrated = ps.collision_energy
+                logger.info(f"  CE range: {min(p.collision_energy for p in psm):.1f} - {max(p.collision_energy for p in psm):.1f}")
+            else:
+                # Apply linear model
+                for ps in psm:
+                    ps.collision_energy_calibrated = ce_intercept + ce_slope * ps.mono_mz_calculated
+                logger.info(f"  Using linear CE model: CE = {ce_intercept} + {ce_slope} * m/z")
+        else:
+            # Calibrate collision energy with constant offset (original behavior)
+            sample_size = min(config.collision_energy_calibration_sample_size, len(psm))
+            sample = list(sorted(psm, key=lambda x: x.hyperscore, reverse=True))[:sample_size]
 
-        for ps in psm:
-            ps.collision_energy_calibrated = ps.collision_energy + ce_calibration_factor
+            ce_calibration_factor, ce_similarities = get_collision_energy_calibration_factor(
+                list(filter(lambda m: m.decoy is not True, sample)),
+                prosit_model,
+                verbose=config.verbose,
+            )
+
+            # Log CE calibration results
+            logger.info(f"  CE calibration offset: {ce_calibration_factor}")
+            logger.info(f"  Best SA at calibration: {max(ce_similarities):.4f}")
+            logger.info(f"  Raw CE range: {min(p.collision_energy for p in psm):.1f} - {max(p.collision_energy for p in psm):.1f}")
+            logger.info(f"  Calibrated CE range: {min(p.collision_energy for p in psm) + ce_calibration_factor:.1f} - {max(p.collision_energy for p in psm) + ce_calibration_factor:.1f}")
+
+            for ps in psm:
+                ps.collision_energy_calibrated = ps.collision_energy + ce_calibration_factor
 
         # Predict intensities
+        # NOTE: Use raw sequence (without UNIMOD) for ALL PSMs (targets AND decoys).
+        # The Prosit model uses ALPHABET_UNMOD which doesn't support modified tokens
+        # like C[UNIMOD:4]. Using sequence_modified would cause modified residues to
+        # be encoded as index 0, corrupting predictions.
+        # For decoys, p.sequence is the reversed sequence that matched (correct).
         intensity_pred = prosit_model.predict_intensities(
-            [p.sequence_modified if not p.decoy else p.sequence_decoy_modified for p in psm],
+            [p.sequence for p in psm],
             np.array([p.charge for p in psm]),
             [p.collision_energy_calibrated for p in psm],
             batch_size=config.batch_size,
@@ -1014,6 +1086,32 @@ def run_search_pipeline(config: SearchConfig) -> None:
     logger.info(f"  Peptides in database: {len(indexed_db.peptides_as_string())}")
     if config.database_path:
         logger.info(f"  Database path: {config.database_path}")
+
+    # Extract CE model from data if requested
+    if config.use_linear_ce_model and config.extract_ce_from_data:
+        logger.info(section_header("Extracting CE Model from Data"))
+        timer.start_step("Extracting CE model")
+        try:
+            first_dataset = TimsDatasetDDA(
+                raw_paths[0],
+                in_memory=False,
+                use_bruker_sdk=config.use_bruker_sdk
+            )
+            meta = first_dataset.pasef_meta_data
+            if meta is not None and len(meta) > 0:
+                mz = meta['isolation_mz'].values
+                ce = meta['collision_energy'].values
+                valid = (mz > 0) & (ce > 0) & np.isfinite(mz) & np.isfinite(ce)
+                mz, ce = mz[valid], ce[valid]
+                if len(mz) >= 2:
+                    coeffs = np.polyfit(mz, ce, 1)
+                    config._config['ce_slope'] = float(coeffs[0])
+                    config._config['ce_intercept'] = float(coeffs[1])
+                    logger.info(f"  Extracted CE model: CE = {config.ce_intercept:.2f} + {config.ce_slope:.5f} * m/z")
+        except Exception as e:
+            logger.warning(f"  Failed to extract CE model: {e}")
+            logger.warning(f"  Using default: CE = {config.ce_intercept:.2f} + {config.ce_slope:.5f} * m/z")
+        timer.end_step()
 
     # Load or generate intensity store (for weighted scoring)
     # Only show section header if weighted scoring is used or explicit path is provided

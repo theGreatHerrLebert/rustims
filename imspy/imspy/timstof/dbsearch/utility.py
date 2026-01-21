@@ -634,3 +634,191 @@ def get_ms1_ims_spectrum(
         mobility=raw_spectrum.mobility.astype(np.float32),
     )
     return spec_processor.process_with_mobility(spec)
+
+
+def get_searchable_specs_batch(
+    dataset: TimsDatasetDDA,
+    ds_name: str,
+    take_top_n: int = 150,
+    deisotope: bool = True,
+    deisotope_tolerance_ppm: float = 10.0,
+    isolation_window_lower: float = -3.0,
+    isolation_window_upper: float = 3.0,
+    num_threads: int = 16,
+) -> List[ProcessedSpectrum]:
+    """
+    Batch process all PASEF fragments using Rust parallel processing.
+
+    This function replaces the sequential apply() calls in the search pipeline with
+    a single parallelized Rust call, providing significant performance improvements
+    for datasets with many spectra.
+
+    Args:
+        dataset: TimsDatasetDDA object
+        ds_name: Dataset name for generating spec_ids
+        take_top_n: Maximum number of peaks to keep per spectrum
+        deisotope: Whether to perform deisotoping
+        deisotope_tolerance_ppm: PPM tolerance for deisotoping
+        isolation_window_lower: Lower bound of isolation window (Da)
+        isolation_window_upper: Upper bound of isolation window (Da)
+        num_threads: Number of threads for parallel processing
+
+    Returns:
+        List[ProcessedSpectrum]: List of Sage ProcessedSpectrum objects ready for search
+    """
+    import imspy_connector
+    from sagepy.core.spectrum import Peak
+
+    ims_proc = imspy_connector.py_spectrum_processing
+
+    # Create processing config
+    config = ims_proc.PySpectrumProcessingConfig(
+        take_top_n=take_top_n,
+        deisotope=deisotope,
+        deisotope_tolerance_ppm=deisotope_tolerance_ppm,
+    )
+
+    # Get the underlying Rust dataset pointer
+    py_dataset = dataset.get_py_ptr()
+
+    # Call the Rust batch processing function
+    preprocessed_specs = py_dataset.get_preprocessed_pasef_fragments(
+        ds_name,
+        config,
+        num_threads,
+    )
+
+    # Convert to Sage ProcessedSpectrum objects
+    isolation_window = Tolerance(da=(isolation_window_lower, isolation_window_upper))
+    processed_specs = []
+
+    for spec in preprocessed_specs:
+        # Create Sage Precursor
+        precursor = Precursor(
+            mz=spec.precursor_mz,
+            intensity=spec.precursor_intensity,
+            charge=spec.precursor_charge,
+            isolation_window=isolation_window,
+            collision_energy=spec.collision_energy,
+            inverse_ion_mobility=spec.inverse_ion_mobility,
+        )
+
+        # Convert mz/intensity arrays to Peak objects
+        peaks = [Peak(mass=float(m), intensity=float(i))
+                 for m, i in zip(spec.mz, spec.intensity)]
+
+        # Create Sage ProcessedSpectrum directly (already preprocessed)
+        processed = ProcessedSpectrum(
+            id=spec.spec_id,
+            level=2,  # MS2 spectrum
+            file_id=0,
+            scan_start_time=spec.scan_start_time,
+            ion_injection_time=spec.scan_start_time,
+            precursors=[precursor],
+            peaks=peaks,
+            total_ion_current=spec.total_ion_current,
+        )
+        processed_specs.append(processed)
+
+    return processed_specs
+
+
+def get_searchable_specs_batch_with_metadata(
+    dataset: TimsDatasetDDA,
+    ds_name: str,
+    take_top_n: int = 150,
+    deisotope: bool = True,
+    deisotope_tolerance_ppm: float = 10.0,
+    isolation_window_lower: float = -3.0,
+    isolation_window_upper: float = 3.0,
+    num_threads: int = 16,
+) -> Tuple[List[ProcessedSpectrum], pd.DataFrame]:
+    """
+    Batch process all PASEF fragments with metadata for downstream processing.
+
+    Returns both ProcessedSpectrum objects and a DataFrame with precursor metadata
+    that can be used for feature extraction and scoring.
+
+    Args:
+        dataset: TimsDatasetDDA object
+        ds_name: Dataset name for generating spec_ids
+        take_top_n: Maximum number of peaks to keep per spectrum
+        deisotope: Whether to perform deisotoping
+        deisotope_tolerance_ppm: PPM tolerance for deisotoping
+        isolation_window_lower: Lower bound of isolation window (Da)
+        isolation_window_upper: Upper bound of isolation window (Da)
+        num_threads: Number of threads for parallel processing
+
+    Returns:
+        Tuple of (List[ProcessedSpectrum], pd.DataFrame) with spectra and metadata
+    """
+    import imspy_connector
+    from sagepy.core.spectrum import Peak
+
+    ims_proc = imspy_connector.py_spectrum_processing
+
+    # Create processing config
+    config = ims_proc.PySpectrumProcessingConfig(
+        take_top_n=take_top_n,
+        deisotope=deisotope,
+        deisotope_tolerance_ppm=deisotope_tolerance_ppm,
+    )
+
+    # Get the underlying Rust dataset pointer
+    py_dataset = dataset.get_py_ptr()
+
+    # Call the Rust batch processing function
+    preprocessed_specs = py_dataset.get_preprocessed_pasef_fragments(
+        ds_name,
+        config,
+        num_threads,
+    )
+
+    # Build metadata DataFrame
+    metadata = []
+    isolation_window = Tolerance(da=(isolation_window_lower, isolation_window_upper))
+    processed_specs = []
+
+    for spec in preprocessed_specs:
+        # Store metadata
+        metadata.append({
+            'spec_id': spec.spec_id,
+            'precursor_mz': spec.precursor_mz,
+            'charge': spec.precursor_charge,
+            'intensity': spec.precursor_intensity,
+            'mobility': spec.inverse_ion_mobility,
+            'collision_energy': spec.collision_energy,
+            'time': spec.scan_start_time,
+            'isolation_mz': spec.isolation_mz,
+            'isolation_width': spec.isolation_width,
+        })
+
+        # Create Sage Precursor
+        precursor = Precursor(
+            mz=spec.precursor_mz,
+            intensity=spec.precursor_intensity,
+            charge=spec.precursor_charge,
+            isolation_window=isolation_window,
+            collision_energy=spec.collision_energy,
+            inverse_ion_mobility=spec.inverse_ion_mobility,
+        )
+
+        # Convert mz/intensity arrays to Peak objects
+        peaks = [Peak(mass=float(m), intensity=float(i))
+                 for m, i in zip(spec.mz, spec.intensity)]
+
+        # Create Sage ProcessedSpectrum directly (already preprocessed)
+        processed = ProcessedSpectrum(
+            id=spec.spec_id,
+            level=2,  # MS2 spectrum
+            file_id=0,
+            scan_start_time=spec.scan_start_time,
+            ion_injection_time=spec.scan_start_time,
+            precursors=[precursor],
+            peaks=peaks,
+            total_ion_current=spec.total_ion_current,
+        )
+        processed_specs.append(processed)
+
+    metadata_df = pd.DataFrame(metadata)
+    return processed_specs, metadata_df

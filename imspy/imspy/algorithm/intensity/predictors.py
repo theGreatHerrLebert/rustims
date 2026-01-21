@@ -58,8 +58,10 @@ def predict_intensities_prosit(
     for ps in psm_collection:
         ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
 
+    # Use raw sequence (without UNIMOD) - the Prosit model uses ALPHABET_UNMOD
+    # which doesn't support modified tokens like C[UNIMOD:4].
     intensity_pred = prosit_model.predict_intensities(
-        [p.sequence_modified for p in psm_collection],
+        [p.sequence for p in psm_collection],
         np.array([p.charge for p in psm_collection]),
         [p.collision_energy_calibrated for p in psm_collection],
         batch_size=2048,
@@ -101,6 +103,9 @@ def get_collision_energy_calibration_factor(
         print(f"Searching for collision energy calibration factor between {lower} and {upper} ...")
 
     for i in tqdm(range(lower, upper), disable=not verbose, desc='calibrating CE', ncols=100):
+        # Use raw sequence (without UNIMOD) - the Prosit model uses ALPHABET_UNMOD
+        # which doesn't support modified tokens like C[UNIMOD:4]. Using sequence_modified
+        # would cause modified residues to be encoded as index 0, corrupting predictions.
         I = model.predict_intensities(
             [p.sequence for p in sample],
             np.array([p.charge for p in sample]),
@@ -138,13 +143,36 @@ def remove_unimod_annotation(sequence: str) -> str:
     return re.sub(pattern, '', sequence)
 
 
+def _disable_gpu_for_prosit():
+    """Disable GPU for Prosit predictions.
+
+    TensorFlow Metal (Apple Silicon GPU) produces numerically different results
+    compared to CPU execution for this model. To ensure consistent and correct
+    predictions across all platforms, we force CPU-only execution.
+
+    This is a known issue with TensorFlow Metal and certain SavedModel formats.
+    """
+    try:
+        tf.config.set_visible_devices([], 'GPU')
+    except RuntimeError:
+        # GPU visibility must be set before GPUs are initialized
+        # If we're here, GPUs were already initialized - this is fine if
+        # we already disabled them in a previous call
+        pass
+
+
 def load_prosit_2023_timsTOF_predictor():
     """ Get a pretrained deep predictor model
     This model was downloaded from ZENODO: https://zenodo.org/records/8211811
     PAPER : https://doi.org/10.1101/2023.07.17.549401
+
+    Note: GPU is disabled for this model because TensorFlow Metal produces
+    numerically different (incorrect) results. See _disable_gpu_for_prosit().
+
     Returns:
         The pretrained deep predictor model
     """
+    _disable_gpu_for_prosit()
     return tf.saved_model.load(get_model_path('intensity/Prosit2023TimsTOFPredictor'))
 
 
@@ -216,9 +244,11 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
         data['collision_energy'] = data.apply(lambda r: r.collision_energy / divide_collision_energy_by, axis=1)
         data['sequence_length'] = data.apply(lambda r: len(remove_unimod_annotation(r.sequence)), axis=1)
+        # Strip UNIMOD annotations for Prosit - ALPHABET_UNMOD doesn't support modified tokens
+        data['sequence_unmod'] = data.sequence.apply(remove_unimod_annotation)
 
         tf_ds = (generate_prosit_intensity_prediction_dataset(
-            data.sequence,
+            data.sequence_unmod,  # Use unmodified sequences for Prosit
             data.charge,
             np.expand_dims(data.collision_energy, 1)).batch(batch_size))
 
@@ -255,12 +285,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             batch_size: int = 512,
             flatten: bool = False,
     ) -> List[NDArray]:
+        # Strip UNIMOD annotations - the Prosit model uses ALPHABET_UNMOD which
+        # doesn't support modified tokens like C[UNIMOD:4]. Using sequences with
+        # UNIMOD would cause modified residues to be encoded as index 0.
         sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]
         collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
 
         tf_ds = generate_prosit_intensity_prediction_dataset(
-            sequences,
+            sequences_unmod,  # Use unmodified sequences for Prosit
             charges,
             np.expand_dims(collision_energies_norm, 1)).batch(batch_size)
 

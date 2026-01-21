@@ -1,8 +1,12 @@
 use crate::data::acquisition::AcquisitionMode;
 use crate::data::handle::{IndexConverter, TimsData, TimsDataLoader};
-use crate::data::meta::{read_dda_precursor_meta, read_global_meta_sql, read_meta_data_sql, read_pasef_frame_ms_ms_info, DDAPrecursor, PasefMsMsMeta};
+use crate::data::meta::{read_dda_precursor_meta, read_global_meta_sql, read_meta_data_sql, read_pasef_frame_ms_ms_info, DDAPrecursor, DDAPrecursorMeta, PasefMsMsMeta};
 use mscore::timstof::frame::{ImsFrame, RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
+use mscore::timstof::spectrum_processing::{
+    PASEFFragmentData, PreprocessedSpectrum, SpectrumProcessingConfig,
+    process_pasef_fragments_batch,
+};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::collections::BTreeMap;
@@ -188,7 +192,138 @@ impl TimsDatasetDDA {
 
         filtered_frames
     }
-    
+
+    /// Get preprocessed PASEF fragments ready for database search.
+    /// This method performs parallel processing of all fragment spectra, including:
+    /// - Flattening frames across ion mobility dimension
+    /// - Deisotoping (optional)
+    /// - Filtering to top N peaks
+    /// - Computing inverse mobility along scan marginal
+    ///
+    /// # Arguments
+    /// * `dataset_name` - Name of the dataset for generating spec_ids
+    /// * `config` - Spectrum processing configuration
+    /// * `num_threads` - Number of threads to use for parallel processing
+    ///
+    /// # Returns
+    /// Vector of preprocessed spectra ready for Sage search
+    pub fn get_preprocessed_pasef_fragments(
+        &self,
+        dataset_name: &str,
+        config: SpectrumProcessingConfig,
+        num_threads: usize,
+    ) -> Vec<PreprocessedSpectrum> {
+        // Step 1: Get raw PASEF fragments (this is already parallel in Rust)
+        let pasef_info = self.get_pasef_frame_ms_ms_info();
+
+        // Step 2: Get precursor metadata
+        let precursor_meta = read_dda_precursor_meta(&self.loader.get_data_path()).unwrap_or_default();
+        let frame_meta = read_meta_data_sql(&self.loader.get_data_path()).unwrap_or_default();
+
+        // Create lookup maps
+        let precursor_map: BTreeMap<i64, &DDAPrecursorMeta> = precursor_meta
+            .iter()
+            .map(|p| (p.precursor_id, p))
+            .collect();
+
+        let frame_time_map: BTreeMap<i64, f64> = frame_meta
+            .iter()
+            .map(|f| (f.id, f.time / 60.0))  // Convert to minutes
+            .collect();
+
+        // Group PASEF info by precursor_id to aggregate re-fragmented precursors
+        let mut pasef_by_precursor: BTreeMap<i64, Vec<&PasefMsMsMeta>> = BTreeMap::new();
+        for info in &pasef_info {
+            pasef_by_precursor
+                .entry(info.precursor_id)
+                .or_insert_with(Vec::new)
+                .push(info);
+        }
+
+        // Step 3: Build fragment data (sequential because Bruker SDK access must be single-threaded)
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
+
+        let fragment_data: Vec<PASEFFragmentData> = pool.install(|| {
+            pasef_by_precursor
+                .par_iter()
+                .filter_map(|(precursor_id, pasef_infos)| {
+                    // Get precursor metadata
+                    let precursor = precursor_map.get(precursor_id)?;
+
+                    // Get the first PASEF info for frame_id and collision_energy
+                    let first_pasef = pasef_infos.first()?;
+
+                    // Get retention time from frame metadata
+                    let scan_start_time = frame_time_map.get(&first_pasef.frame_id).copied().unwrap_or(0.0);
+
+                    // Collect and merge all frames for this precursor
+                    let mut combined_scan = Vec::new();
+                    let mut combined_mobility = Vec::new();
+                    let mut combined_tof = Vec::new();
+                    let mut combined_mz = Vec::new();
+                    let mut combined_intensity = Vec::new();
+
+                    for pasef_info in pasef_infos {
+                        let frame = self.loader.get_frame(pasef_info.frame_id as u32);
+
+                        // Get five percent of the scan range for margin
+                        let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
+
+                        // Filter frame by scan range
+                        let filtered_frame = frame.filter_ranged(
+                            0.0,
+                            2000.0,
+                            (pasef_info.scan_num_begin - scan_margin) as i32,
+                            (pasef_info.scan_num_end + scan_margin) as i32,
+                            0.0,
+                            5.0,
+                            0.0,
+                            1e9,
+                        );
+
+                        // Append data
+                        combined_scan.extend(filtered_frame.scan.iter());
+                        combined_mobility.extend(filtered_frame.ims_frame.mobility.iter());
+                        combined_tof.extend(filtered_frame.tof.iter());
+                        combined_mz.extend(filtered_frame.ims_frame.mz.iter());
+                        combined_intensity.extend(filtered_frame.ims_frame.intensity.iter());
+                    }
+
+                    if combined_mz.is_empty() {
+                        return None;
+                    }
+
+                    // Determine precursor m/z (prefer monoisotopic, fallback to highest intensity)
+                    let precursor_mz = precursor.precursor_mz_monoisotopic
+                        .unwrap_or(precursor.precursor_mz_highest_intensity);
+
+                    Some(PASEFFragmentData {
+                        frame_id: first_pasef.frame_id as u32,
+                        precursor_id: *precursor_id as u32,
+                        collision_energy: first_pasef.collision_energy,
+                        scan_start_time,
+                        scan: combined_scan,
+                        mobility: combined_mobility,
+                        tof: combined_tof,
+                        mz: combined_mz,
+                        intensity: combined_intensity,
+                        precursor_mz,
+                        precursor_charge: precursor.precursor_charge.map(|c| c as i32),
+                        precursor_intensity: precursor.precursor_total_intensity,
+                        isolation_mz: first_pasef.isolation_mz,
+                        isolation_width: first_pasef.isolation_width,
+                    })
+                })
+                .collect()
+        });
+
+        // Step 4: Process all fragments in parallel using the batch processor
+        process_pasef_fragments_batch(fragment_data, dataset_name, &config, num_threads)
+    }
+
     pub fn sample_pasef_fragment_random(
         &self,
         target_scan_apex: i32,

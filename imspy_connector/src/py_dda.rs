@@ -2,9 +2,10 @@ use pyo3::prelude::*;
 
 use rustdf::data::dda::{PASEFDDAFragment, TimsDatasetDDA};
 use rustdf::data::handle::TimsData;
-use rustdf::data::meta::{DDAPrecursor};
+use rustdf::data::meta::DDAPrecursor;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+use crate::py_spectrum_processing::{PyPreprocessedSpectrum, PySpectrumProcessingConfig};
 
 #[pyclass]
 pub struct PyDDAPrecursor {
@@ -135,6 +136,34 @@ impl PyTimsDatasetDDA {
 
     pub fn sample_precursor_signal(&self, num_frames: usize, max_intensity: f64, take_probability: f64) -> PyTimsFrame {
         PyTimsFrame::from_inner(self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability))
+    }
+
+    /// Get preprocessed PASEF fragments ready for database search.
+    /// This method performs parallel processing of all fragment spectra.
+    ///
+    /// # Arguments
+    /// * `dataset_name` - Name of the dataset for generating spec_ids
+    /// * `config` - Spectrum processing configuration
+    /// * `num_threads` - Number of threads for parallel processing
+    ///
+    /// # Returns
+    /// List of preprocessed spectra ready for Sage search
+    #[pyo3(signature = (dataset_name, config, num_threads=16))]
+    pub fn get_preprocessed_pasef_fragments(
+        &self,
+        dataset_name: &str,
+        config: &PySpectrumProcessingConfig,
+        num_threads: usize,
+    ) -> Vec<PyPreprocessedSpectrum> {
+        let preprocessed = self.inner.get_preprocessed_pasef_fragments(
+            dataset_name,
+            config.inner.clone(),
+            num_threads,
+        );
+        preprocessed
+            .into_iter()
+            .map(|spec| PyPreprocessedSpectrum::from_inner(spec))
+            .collect()
     }
 }
 

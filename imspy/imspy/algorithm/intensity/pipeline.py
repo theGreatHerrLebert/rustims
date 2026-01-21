@@ -28,7 +28,7 @@ Example usage:
 
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 from dataclasses import dataclass, field
 import logging
 
@@ -42,6 +42,9 @@ from sagepy.core import (
     IndexedDatabase,
     PredictedIntensityStore,
 )
+
+if TYPE_CHECKING:
+    from .collision_energy import CollisionEnergyModel
 
 # Local imports
 from .sage_interface import (
@@ -79,7 +82,12 @@ class PipelineConfig:
         charges: Precursor charge states to predict
         max_fragment_charge: Maximum fragment charge for predictions
         ion_kinds: Ion types to predict (default: B and Y)
-        collision_energy: Default collision energy (NCE)
+        collision_energy: Default constant collision energy (NCE), used when
+            collision_energy_model is None
+        collision_energy_model: Optional m/z-dependent CE model. When set,
+            collision_energy is ignored and CE is computed from precursor m/z.
+        calibrate_collision_energy: Whether to calibrate CE model intercept
+            using top PSM hits after initial search
         aggregation: How to aggregate multi-charge predictions
     """
     static_mods: dict = field(default_factory=lambda: {"C": "[UNIMOD:4]"})
@@ -94,6 +102,8 @@ class PipelineConfig:
     max_fragment_charge: int = 2
     ion_kinds: List[int] = field(default_factory=lambda: [ION_KIND_B, ION_KIND_Y])
     collision_energy: float = DEFAULT_COLLISION_ENERGY
+    collision_energy_model: Optional['CollisionEnergyModel'] = None
+    calibrate_collision_energy: bool = False
     aggregation: str = "max_charge"
 
 
@@ -260,6 +270,8 @@ class IntensityPredictionPipeline:
         self,
         charges: Optional[List[int]] = None,
         collision_energy: Optional[float] = None,
+        collision_energy_model: Optional['CollisionEnergyModel'] = None,
+        precursor_mz: Optional[List[float]] = None,
         batch_size: int = 2048,
         max_peptide_length: int = 30,
         exclude_decoys: bool = True,
@@ -267,9 +279,16 @@ class IntensityPredictionPipeline:
     ) -> PredictionResult:
         """Predict fragment intensities using Prosit.
 
+        Collision energy can be specified in three ways (in order of priority):
+        1. Explicit `collision_energy` (constant for all peptides)
+        2. `collision_energy_model` from config or parameter (m/z-dependent)
+        3. Default from config.collision_energy
+
         Args:
             charges: Precursor charge states to predict (default from config)
-            collision_energy: Collision energy to use (default from config)
+            collision_energy: Constant collision energy (overrides config)
+            collision_energy_model: m/z-dependent CE model (overrides config)
+            precursor_mz: Precursor m/z values for CE model (auto-computed if None)
             batch_size: Batch size for Prosit prediction
             max_peptide_length: Maximum peptide length for prediction
             exclude_decoys: Whether to exclude decoys from prediction
@@ -279,7 +298,9 @@ class IntensityPredictionPipeline:
             PredictionResult with all predictions
         """
         charges = charges or self.config.charges
-        collision_energy = collision_energy or self.config.collision_energy
+
+        # Determine which CE approach to use
+        ce_model = collision_energy_model or self.config.collision_energy_model
 
         # Get target peptides
         indices, sequences = self.get_target_peptides(
@@ -301,14 +322,38 @@ class IntensityPredictionPipeline:
                 all_sequences.append(seq)
                 all_charges.append(charge)
 
-        # Predict
-        collision_energies = [collision_energy] * len(all_sequences)
+        # Determine collision energies
+        if collision_energy is not None:
+            # Explicit constant CE provided
+            collision_energies = [collision_energy] * len(all_sequences)
+            ce_model_for_predict = None
+            mz_for_predict = None
+        elif ce_model is not None:
+            # Use m/z-dependent model
+            collision_energies = None
+            ce_model_for_predict = ce_model
+            # Compute precursor m/z if not provided
+            if precursor_mz is None:
+                from imspy.data.peptide import PeptideSequence
+                mz_for_predict = []
+                for seq, charge in zip(all_sequences, all_charges):
+                    pep = PeptideSequence(seq)
+                    mz_for_predict.append(pep.mono_isotopic_mass / charge + 1.007276)
+            else:
+                mz_for_predict = precursor_mz
+        else:
+            # Fall back to config constant
+            collision_energies = [self.config.collision_energy] * len(all_sequences)
+            ce_model_for_predict = None
+            mz_for_predict = None
 
         self._prediction_result = predict_intensities_for_sage(
             sequences=all_sequences,
             charges=all_charges,
             peptide_indices=all_indices,
             collision_energies=collision_energies,
+            collision_energy_model=ce_model_for_predict,
+            precursor_mz=mz_for_predict,
             ion_kinds=self.config.ion_kinds,
             max_fragment_charge=self.config.max_fragment_charge,
             batch_size=batch_size,
@@ -446,7 +491,8 @@ def create_intensity_store_from_database(
     output_path: str,
     charges: List[int] = [2, 3],
     max_fragment_charge: int = 2,
-    collision_energy: float = DEFAULT_COLLISION_ENERGY,
+    collision_energy: Optional[float] = None,
+    collision_energy_model: Optional['CollisionEnergyModel'] = None,
     batch_size: int = 2048,
     verbose: bool = True,
 ) -> PredictedIntensityStore:
@@ -455,12 +501,17 @@ def create_intensity_store_from_database(
     This is a simplified interface for the common use case of predicting
     intensities for an already-built database.
 
+    Collision energy can be specified in two ways:
+    1. `collision_energy`: Constant CE for all peptides (default: 35.0 NCE)
+    2. `collision_energy_model`: m/z-dependent CE model
+
     Args:
         indexed_database: Pre-built IndexedDatabase
         output_path: Path for the output .sagi file
         charges: Precursor charge states to predict
         max_fragment_charge: Maximum fragment charge
-        collision_energy: Collision energy for prediction
+        collision_energy: Constant collision energy for prediction (default: 35.0)
+        collision_energy_model: Optional m/z-dependent CE model
         batch_size: Batch size for Prosit
         verbose: Whether to show progress
 
@@ -473,11 +524,19 @@ def create_intensity_store_from_database(
         >>> db = config.generate_indexed_database()
         >>> store = create_intensity_store_from_database(db, "predictions.sagi")
         >>> features = scorer.score(db, spectrum, intensity_store=store)
+
+        >>> # With m/z-dependent CE
+        >>> from imspy.algorithm.intensity.collision_energy import CollisionEnergyModel
+        >>> ce_model = CollisionEnergyModel.from_tdf_dataset(dataset)
+        >>> store = create_intensity_store_from_database(
+        ...     db, "predictions.sagi", collision_energy_model=ce_model
+        ... )
     """
     config = PipelineConfig(
         charges=charges,
         max_fragment_charge=max_fragment_charge,
-        collision_energy=collision_energy,
+        collision_energy=collision_energy or DEFAULT_COLLISION_ENERGY,
+        collision_energy_model=collision_energy_model,
     )
 
     pipeline = IntensityPredictionPipeline(
@@ -488,6 +547,7 @@ def create_intensity_store_from_database(
 
     pipeline.predict_intensities(
         charges=charges,
+        collision_energy_model=collision_energy_model,
         batch_size=batch_size,
         verbose=verbose,
     )
