@@ -309,7 +309,7 @@ def get_default_settings() -> dict:
         'extract_ce_from_data': False,          # Extract CE model from first raw file
 
         # Batch Processing (Rust parallel preprocessing)
-        'use_batch_preprocessing': False,       # Use Rust parallel preprocessing (experimental, disabled by default)
+        'use_batch_preprocessing': True,        # Use Rust parallel preprocessing (faster, ~24% speedup)
     }
 
 
