@@ -783,6 +783,16 @@ impl TimsDataLoader {
             TimsDataLoader::Lazy(loader) => &loader.index_converter,
         }
     }
+
+    /// Check if the Bruker SDK is being used for index conversion.
+    /// The Bruker SDK is NOT thread-safe, so parallel operations that call
+    /// the index converter must be disabled when using the SDK.
+    pub fn uses_bruker_sdk(&self) -> bool {
+        match self {
+            TimsDataLoader::InMemory(loader) => matches!(&loader.index_converter, TimsIndexConverter::BrukerLib(_)),
+            TimsDataLoader::Lazy(loader) => matches!(&loader.index_converter, TimsIndexConverter::BrukerLib(_)),
+        }
+    }
 }
 
 impl TimsData for TimsDataLoader {

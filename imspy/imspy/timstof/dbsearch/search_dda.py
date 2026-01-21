@@ -71,6 +71,7 @@ from imspy.algorithm.rt.predictors import DeepChromatographyApex, load_deep_rete
 from imspy.algorithm.intensity.predictors import (
     Prosit2023TimsTofWrapper,
     get_collision_energy_calibration_factor,
+    get_calibrated_ce_model,
 )
 
 from imspy.timstof.dbsearch.utility import (
@@ -308,6 +309,10 @@ def get_default_settings() -> dict:
         'ce_slope': 0.015,                      # CE slope (NCE per Da)
         'extract_ce_from_data': False,          # Extract CE model from first raw file
 
+        # Two-Pass Calibrated Search (for weighted scoring)
+        'two_pass_search': False,               # Enable two-pass search with CE calibration
+        'ce_calibration_sample_size': 2048,     # Number of top PSMs to use for CE calibration
+
         # Batch Processing (Rust parallel preprocessing)
         'use_batch_preprocessing': True,        # Use Rust parallel preprocessing (faster, ~24% speedup)
     }
@@ -511,7 +516,7 @@ def create_scorer(config: SearchConfig) -> Scorer:
     )
 
 
-def compute_database_hash(fasta_content: str, config: SearchConfig) -> str:
+def compute_database_hash(fasta_content: str, config: SearchConfig, ce_intercept: float = None, ce_slope: float = None) -> str:
     """
     Compute a deterministic hash for the database configuration.
 
@@ -523,10 +528,13 @@ def compute_database_hash(fasta_content: str, config: SearchConfig) -> str:
     - Modification settings
     - Enzyme/digest settings
     - Decoy generation settings
+    - CE model parameters (if using linear CE model)
 
     Args:
         fasta_content: The raw FASTA file content.
         config: Search configuration object.
+        ce_intercept: CE model intercept (optional, for calibrated stores).
+        ce_slope: CE model slope (optional, for calibrated stores).
 
     Returns:
         A hex string hash representing the database configuration.
@@ -545,6 +553,12 @@ def compute_database_hash(fasta_content: str, config: SearchConfig) -> str:
         'shuffle_decoys': config.shuffle_decoys,
         'keep_ends': config.keep_ends,
     }
+
+    # Include CE model parameters if provided (for calibrated intensity stores)
+    if ce_intercept is not None and ce_slope is not None:
+        # Round to avoid floating point precision issues in hash
+        hash_input['ce_intercept'] = round(ce_intercept, 4)
+        hash_input['ce_slope'] = round(ce_slope, 6)
 
     # Create deterministic JSON string
     json_str = json.dumps(hash_input, sort_keys=True)
@@ -592,6 +606,8 @@ def load_or_generate_intensity_store(
     fasta_content: str,
     config: SearchConfig,
     timer: SearchTimer,
+    ce_intercept: float = None,
+    ce_slope: float = None,
 ) -> Optional[PredictedIntensityStore]:
     """
     Load an existing intensity store or generate a new one.
@@ -616,10 +632,22 @@ def load_or_generate_intensity_store(
         fasta_content: The raw FASTA content (for hash computation).
         config: Search configuration.
         timer: Timer for logging.
+        ce_intercept: Calibrated CE model intercept (optional, overrides config).
+        ce_slope: Calibrated CE model slope (optional, overrides config).
 
     Returns:
         PredictedIntensityStore if weighted scoring is enabled, None otherwise.
     """
+    # Use provided CE parameters or fall back to config
+    if ce_intercept is not None and ce_slope is not None:
+        effective_ce_intercept = ce_intercept
+        effective_ce_slope = ce_slope
+    elif getattr(config, 'use_linear_ce_model', False):
+        effective_ce_intercept = config.ce_intercept
+        effective_ce_slope = config.ce_slope
+    else:
+        effective_ce_intercept = None
+        effective_ce_slope = None
     use_v1 = getattr(config, 'use_v1_format', False)
     format_name = "V1 (positional)" if use_v1 else "V2 (key-based)"
 
@@ -643,8 +671,8 @@ def load_or_generate_intensity_store(
 
     logger.info(f"  Weighted scoring enabled - {format_name} intensity store required")
 
-    # Compute database hash for caching
-    db_hash = compute_database_hash(fasta_content, config)
+    # Compute database hash for caching (includes CE params if using calibrated CE)
+    db_hash = compute_database_hash(fasta_content, config, effective_ce_intercept, effective_ce_slope)
     logger.info(f"  Database hash: {db_hash}")
 
     # Determine cache directory
@@ -697,13 +725,13 @@ def load_or_generate_intensity_store(
     if expected_mods:
         logger.info(f"  Expected modifications: {expected_mods}")
 
-    # Build CE model if using linear CE
+    # Build CE model if using linear CE (use effective params which may be calibrated)
     ce_model = None
-    if getattr(config, 'use_linear_ce_model', False):
+    if effective_ce_intercept is not None and effective_ce_slope is not None:
         from imspy.algorithm.intensity.collision_energy import CollisionEnergyModel
         ce_model = CollisionEnergyModel(
-            intercept=config.ce_intercept,
-            slope=config.ce_slope
+            intercept=effective_ce_intercept,
+            slope=effective_ce_slope
         )
         logger.info(f"  Using linear CE model: {ce_model}")
 
@@ -1113,6 +1141,120 @@ def run_search_pipeline(config: SearchConfig) -> None:
             logger.warning(f"  Using default: CE = {config.ce_intercept:.2f} + {config.ce_slope:.5f} * m/z")
         timer.end_step()
 
+    # Two-pass search: calibrate CE model before generating intensity store
+    calibrated_ce_intercept = None
+    calibrated_ce_slope = None
+
+    if getattr(config, 'two_pass_search', False) and is_weighted_score_type(config.score_type):
+        logger.info(section_header("Two-Pass Search: CE Calibration"))
+        logger.info("  Pass 1: Running quick unweighted search for CE calibration...")
+
+        timer.start_step("Pass 1: Unweighted search")
+
+        # Create unweighted scorer (same tolerances, but hyperscore instead of weighted)
+        # Precursor tolerance
+        if config.precursor_tolerance_da is not None:
+            prec_tol = Tolerance(da=(-abs(config.precursor_tolerance_da), abs(config.precursor_tolerance_da)))
+        else:
+            ppm = config.precursor_tolerance_ppm
+            prec_tol = Tolerance(ppm=(-abs(ppm), abs(ppm)))
+
+        # Fragment tolerance
+        if config.fragment_tolerance_da is not None:
+            frag_tol = Tolerance(da=(-abs(config.fragment_tolerance_da), abs(config.fragment_tolerance_da)))
+        else:
+            ppm = config.fragment_tolerance_ppm
+            frag_tol = Tolerance(ppm=(-abs(ppm), abs(ppm)))
+
+        pass1_scorer = Scorer(
+            precursor_tolerance=prec_tol,
+            fragment_tolerance=frag_tol,
+            report_psms=config.report_psms,
+            min_matched_peaks=config.min_matched_peaks,
+            max_fragment_charge=config.max_fragment_charge,
+            score_type=ScoreType('hyperscore'),  # Unweighted for Pass 1
+            variable_mods=config.variable_modifications,
+            static_mods=config.static_modifications,
+            min_isotope_err=config.min_isotope_err,
+            max_isotope_err=config.max_isotope_err,
+        )
+
+        # Process first raw file for calibration
+        first_raw = raw_paths[0]
+        logger.info(f"  Processing: {os.path.basename(first_raw)}")
+
+        dataset = TimsDatasetDDA(
+            first_raw,
+            in_memory=False,
+            use_bruker_sdk=config.use_bruker_sdk
+        )
+
+        ds_name = os.path.splitext(os.path.basename(first_raw))[0]
+        num_threads = config.num_threads if config.num_threads > 0 else os.cpu_count()
+
+        # Load and preprocess spectra
+        if config.use_batch_preprocessing:
+            processed_specs = get_searchable_specs_batch(
+                dataset=dataset,
+                ds_name=ds_name,
+                take_top_n=config.take_top_n,
+                deisotope=True,
+                isolation_window_lower=config.isolation_window_lower,
+                isolation_window_upper=config.isolation_window_upper,
+                num_threads=num_threads,
+            )
+        else:
+            from tqdm import tqdm
+            processed_specs = [get_searchable_spec(dataset, spec_id, ds_name, config.take_top_n)
+                              for spec_id in tqdm(range(len(dataset)), desc="Loading spectra", ncols=100)]
+
+        logger.info(f"  Spectra loaded: {len(processed_specs)}")
+
+        # Run unweighted search
+        psm_dict = pass1_scorer.score_collection_psm(
+            db=indexed_db,
+            spectrum_collection=processed_specs,
+            num_threads=num_threads,
+        )
+        timer.end_step()
+
+        # Flatten the dictionary of PSMs into a single list
+        psm = []
+        for spec_id, psm_list in psm_dict.items():
+            psm.extend(psm_list)
+
+        logger.info(f"  Pass 1 PSMs: {len(psm)}")
+
+        # Get top target PSMs for calibration
+        sample_size = min(getattr(config, 'ce_calibration_sample_size', 2048), len(psm))
+        sample = list(sorted(psm, key=lambda x: x.hyperscore, reverse=True))[:sample_size]
+        targets = [p for p in sample if not p.decoy]
+
+        logger.info(f"  Calibration sample: {len(targets)} top target PSMs")
+
+        # Calibrate CE model
+        timer.start_step("CE model calibration")
+        try:
+            calibrated_ce_intercept, calibrated_ce_slope, offset, best_sa = get_calibrated_ce_model(
+                targets,
+                model=None,  # Will create Prosit model internally
+                verbose=config.verbose,
+            )
+            logger.info(f"  Calibrated CE model: CE = {calibrated_ce_intercept:.4f} + {calibrated_ce_slope:.6f} * m/z")
+            logger.info(f"  CE offset: {offset}, Best spectral angle: {best_sa:.4f}")
+
+            # Store calibrated values in config for later use
+            config._config['ce_intercept'] = calibrated_ce_intercept
+            config._config['ce_slope'] = calibrated_ce_slope
+            config._config['use_linear_ce_model'] = True
+
+        except Exception as e:
+            logger.warning(f"  CE calibration failed: {e}")
+            logger.warning("  Falling back to default CE model")
+        timer.end_step()
+
+        logger.info("  Pass 2: Generating calibrated intensity store and running weighted search...")
+
     # Load or generate intensity store (for weighted scoring)
     # Only show section header if weighted scoring is used or explicit path is provided
     if is_weighted_score_type(config.score_type) or config.intensity_store_path:
@@ -1122,6 +1264,8 @@ def run_search_pipeline(config: SearchConfig) -> None:
             fasta_content=fasta_content,
             config=config,
             timer=timer,
+            ce_intercept=calibrated_ce_intercept,
+            ce_slope=calibrated_ce_slope,
         )
         if intensity_store is not None:
             is_v2 = getattr(intensity_store, 'is_key_based', False)

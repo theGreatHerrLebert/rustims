@@ -150,47 +150,53 @@ impl TimsDatasetDDA {
         // extract fragment spectra information
         let pasef_info = self.get_pasef_frame_ms_ms_info();
 
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
+        // Note: The Bruker SDK is NOT thread-safe, so we must use sequential iteration
+        // when the SDK is being used for index conversion.
+        let uses_bruker_sdk = self.loader.uses_bruker_sdk();
 
-        let filtered_frames = pool.install(|| {
-            let result: Vec<_> = pasef_info
-                .par_iter()
-                .map(|pasef_info| {
-                    // get the frame
-                    let frame = self.loader.get_frame(pasef_info.frame_id as u32);
+        // Helper closure to process a single PASEF fragment
+        let process_fragment = |pasef_info: &PasefMsMsMeta| -> PASEFDDAFragment {
+            // get the frame
+            let frame = self.loader.get_frame(pasef_info.frame_id as u32);
 
-                    // get five percent of the scan range
-                    let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
+            // get five percent of the scan range
+            let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
 
-                    // get the fragment spectrum by scan range
-                    let filtered_frame = frame.filter_ranged(
-                        0.0,
-                        2000.0,
-                        (pasef_info.scan_num_begin - scan_margin) as i32,
-                        (pasef_info.scan_num_end + scan_margin) as i32,
-                        0.0,
-                        5.0,
-                        0.0,
-                        1e9,
-                    );
+            // get the fragment spectrum by scan range
+            let filtered_frame = frame.filter_ranged(
+                0.0,
+                2000.0,
+                (pasef_info.scan_num_begin - scan_margin) as i32,
+                (pasef_info.scan_num_end + scan_margin) as i32,
+                0.0,
+                5.0,
+                0.0,
+                1e9,
+            );
 
-                    PASEFDDAFragment {
-                        frame_id: pasef_info.frame_id as u32,
-                        precursor_id: pasef_info.precursor_id as u32,
-                        collision_energy: pasef_info.collision_energy,
-                        // flatten the spectrum
-                        selected_fragment: filtered_frame,
-                    }
-                })
-                .collect();
+            PASEFDDAFragment {
+                frame_id: pasef_info.frame_id as u32,
+                precursor_id: pasef_info.precursor_id as u32,
+                collision_energy: pasef_info.collision_energy,
+                // flatten the spectrum
+                selected_fragment: filtered_frame,
+            }
+        };
 
-            result
-        });
+        if uses_bruker_sdk {
+            // Sequential processing when using Bruker SDK (not thread-safe)
+            pasef_info.iter().map(process_fragment).collect()
+        } else {
+            // Parallel processing when using simple index converter (thread-safe)
+            let pool = ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .unwrap();
 
-        filtered_frames
+            pool.install(|| {
+                pasef_info.par_iter().map(|item| process_fragment(item)).collect()
+            })
+        }
     }
 
     /// Get preprocessed PASEF fragments ready for database search.
@@ -242,85 +248,101 @@ impl TimsDatasetDDA {
         }
 
         // Step 4: Build fragment data with aggregation (merge frames for same precursor)
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .unwrap();
+        // Note: The Bruker SDK is NOT thread-safe, so we must use sequential iteration
+        // when the SDK is being used for index conversion.
+        let uses_bruker_sdk = self.loader.uses_bruker_sdk();
 
-        let fragment_data: Vec<PASEFFragmentData> = pool.install(|| {
+        // Helper closure to process a single precursor
+        let process_precursor = |(precursor_id, pasef_infos): (&i64, &Vec<&PasefMsMsMeta>)| -> Option<PASEFFragmentData> {
+            // Get precursor metadata
+            let precursor = precursor_map.get(precursor_id)?;
+
+            // Use first PASEF info for metadata (matches Python's 'first')
+            let first_pasef = pasef_infos.first()?;
+
+            // Get retention time from first frame
+            let scan_start_time = frame_time_map.get(&first_pasef.frame_id).copied().unwrap_or(0.0);
+
+            // Collect and merge all frames for this precursor (matches Python's 'sum')
+            let mut combined_scan = Vec::new();
+            let mut combined_mobility = Vec::new();
+            let mut combined_tof = Vec::new();
+            let mut combined_mz = Vec::new();
+            let mut combined_intensity = Vec::new();
+
+            for pasef_info in pasef_infos {
+                // Get the frame and filter by scan range
+                let frame = self.loader.get_frame(pasef_info.frame_id as u32);
+
+                // Get five percent of the scan range for margin
+                let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
+
+                // Filter frame by scan range
+                let filtered_frame = frame.filter_ranged(
+                    0.0,
+                    2000.0,
+                    (pasef_info.scan_num_begin - scan_margin) as i32,
+                    (pasef_info.scan_num_end + scan_margin) as i32,
+                    0.0,
+                    5.0,
+                    0.0,
+                    1e9,
+                );
+
+                // Append data from this frame (merge/sum behavior)
+                combined_scan.extend(filtered_frame.scan.iter());
+                combined_mobility.extend(filtered_frame.ims_frame.mobility.iter());
+                combined_tof.extend(filtered_frame.tof.iter());
+                combined_mz.extend(filtered_frame.ims_frame.mz.iter());
+                combined_intensity.extend(filtered_frame.ims_frame.intensity.iter());
+            }
+
+            if combined_mz.is_empty() {
+                return None;
+            }
+
+            // Determine precursor m/z (prefer monoisotopic, fallback to highest intensity)
+            let precursor_mz = precursor.precursor_mz_monoisotopic
+                .unwrap_or(precursor.precursor_mz_highest_intensity);
+
+            Some(PASEFFragmentData {
+                frame_id: first_pasef.frame_id as u32,
+                precursor_id: *precursor_id as u32,
+                collision_energy: first_pasef.collision_energy,
+                scan_start_time,
+                scan: combined_scan,
+                mobility: combined_mobility,
+                tof: combined_tof,
+                mz: combined_mz,
+                intensity: combined_intensity,
+                precursor_mz,
+                precursor_charge: precursor.precursor_charge.map(|c| c as i32),
+                precursor_intensity: precursor.precursor_total_intensity,
+                isolation_mz: first_pasef.isolation_mz,
+                isolation_width: first_pasef.isolation_width,
+            })
+        };
+
+        let fragment_data: Vec<PASEFFragmentData> = if uses_bruker_sdk {
+            // Sequential processing when using Bruker SDK (not thread-safe)
             pasef_by_precursor
-                .par_iter()
-                .filter_map(|(precursor_id, pasef_infos)| {
-                    // Get precursor metadata
-                    let precursor = precursor_map.get(precursor_id)?;
-
-                    // Use first PASEF info for metadata (matches Python's 'first')
-                    let first_pasef = pasef_infos.first()?;
-
-                    // Get retention time from first frame
-                    let scan_start_time = frame_time_map.get(&first_pasef.frame_id).copied().unwrap_or(0.0);
-
-                    // Collect and merge all frames for this precursor (matches Python's 'sum')
-                    let mut combined_scan = Vec::new();
-                    let mut combined_mobility = Vec::new();
-                    let mut combined_tof = Vec::new();
-                    let mut combined_mz = Vec::new();
-                    let mut combined_intensity = Vec::new();
-
-                    for pasef_info in pasef_infos {
-                        // Get the frame and filter by scan range
-                        let frame = self.loader.get_frame(pasef_info.frame_id as u32);
-
-                        // Get five percent of the scan range for margin
-                        let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
-
-                        // Filter frame by scan range
-                        let filtered_frame = frame.filter_ranged(
-                            0.0,
-                            2000.0,
-                            (pasef_info.scan_num_begin - scan_margin) as i32,
-                            (pasef_info.scan_num_end + scan_margin) as i32,
-                            0.0,
-                            5.0,
-                            0.0,
-                            1e9,
-                        );
-
-                        // Append data from this frame (merge/sum behavior)
-                        combined_scan.extend(filtered_frame.scan.iter());
-                        combined_mobility.extend(filtered_frame.ims_frame.mobility.iter());
-                        combined_tof.extend(filtered_frame.tof.iter());
-                        combined_mz.extend(filtered_frame.ims_frame.mz.iter());
-                        combined_intensity.extend(filtered_frame.ims_frame.intensity.iter());
-                    }
-
-                    if combined_mz.is_empty() {
-                        return None;
-                    }
-
-                    // Determine precursor m/z (prefer monoisotopic, fallback to highest intensity)
-                    let precursor_mz = precursor.precursor_mz_monoisotopic
-                        .unwrap_or(precursor.precursor_mz_highest_intensity);
-
-                    Some(PASEFFragmentData {
-                        frame_id: first_pasef.frame_id as u32,
-                        precursor_id: *precursor_id as u32,
-                        collision_energy: first_pasef.collision_energy,
-                        scan_start_time,
-                        scan: combined_scan,
-                        mobility: combined_mobility,
-                        tof: combined_tof,
-                        mz: combined_mz,
-                        intensity: combined_intensity,
-                        precursor_mz,
-                        precursor_charge: precursor.precursor_charge.map(|c| c as i32),
-                        precursor_intensity: precursor.precursor_total_intensity,
-                        isolation_mz: first_pasef.isolation_mz,
-                        isolation_width: first_pasef.isolation_width,
-                    })
-                })
+                .iter()
+                .filter_map(process_precursor)
                 .collect()
-        });
+        } else {
+            // Parallel processing when using simple index converter (thread-safe)
+            let pool = ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .unwrap();
+
+            pool.install(|| {
+                pasef_by_precursor
+                    .par_iter()
+                    .filter_map(|item| process_precursor(item))
+                    .collect()
+            })
+        };
 
         // Step 5: Process all fragments in parallel using the batch processor
         process_pasef_fragments_batch(fragment_data, dataset_name, &config, num_threads)
