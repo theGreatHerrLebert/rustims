@@ -37,7 +37,7 @@ from imspy.timstof.dia import (
 )
 
 # --------------------------- logging ------------------------------------------
-_LOGGER_NAME = "t-tracer"
+_LOGGER_NAME = "open-tracer"
 _logger = logging.getLogger(_LOGGER_NAME)
 
 import time

@@ -1,0 +1,46 @@
+[tool.poetry]
+name = "imspy-dia"
+version = "0.4.0"
+description = "DIA processing and clustering for timsTOF IMS data"
+authors = ["David Teschner <david.teschner@uni-tuebingen.de>"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "imspy_dia", from = "src" }]
+keywords = [
+    "mass-spectrometry",
+    "proteomics",
+    "ion-mobility",
+    "timstof",
+    "dia",
+    "clustering",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+imspy-core = ">=0.4.0"
+imspy-connector = ">=0.4.0"
+pandas = ">=2.0.0"
+numpy = ">=1.24.0"
+
+[tool.poetry.extras]
+reporting = ["matplotlib"]
+torch = ["torch"]
+full = ["matplotlib", "torch"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+
+[tool.poetry.scripts]
+imspy-cluster = "imspy_dia.pipeline.cluster_pipeline:main"
+imspy-cluster-report = "imspy_dia.pipeline.cluster_report:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

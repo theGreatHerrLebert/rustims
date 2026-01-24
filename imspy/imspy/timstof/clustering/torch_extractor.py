@@ -23,8 +23,8 @@ import logging
 import time
 from contextlib import contextmanager
 
-# Use a child logger of "t-tracer" so it inherits handlers from your CLI script.
-_detect_logger = logging.getLogger("t-tracer.detect")
+# Use a child logger of "open-tracer" so it inherits handlers from your CLI script.
+_detect_logger = logging.getLogger("open-tracer.detect")
 
 # disable info logging by default
 _detect_logger.setLevel(logging.WARNING)
