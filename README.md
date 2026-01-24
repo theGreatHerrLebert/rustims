@@ -131,6 +131,15 @@ ccs = predictor.predict("PEPTIDEK", charge=2)
   <img src="rustims_layout.png" alt="Architecture" width="700"/>
 </p>
 
+### Repository Layout
+
+```
+rust:     mscore/, rustdf/, rustms/
+pyo3:     imspy_connector/
+python:   imspy/, packages/
+julia:    imsjl_connector/, IMSJL/ (experimental)
+```
+
 ### Rust Layer
 
 | Crate | Description |
