@@ -129,6 +129,80 @@ def get_collision_energy_calibration_factor(
     return calibration_factor, similarities
 
 
+def get_calibrated_ce_model(
+        sample: List[Psm],
+        model: 'Prosit2023TimsTofWrapper' = None,
+        lower: int = -30,
+        upper: int = 30,
+        verbose: bool = False,
+) -> Tuple[float, float, float, float]:
+    """
+    Get a calibrated CE model by:
+    1. Finding the optimal CE offset that maximizes spectral angle similarity
+    2. Fitting a linear model on (CE_actual + offset) vs m/z
+
+    This provides the best CE model for intensity prediction since it:
+    - Corrects for systematic bias between instrument CE and Prosit's expected CE
+    - Captures the m/z-dependent relationship after correction
+
+    Args:
+        sample: a list of PeptideSpectrumMatch objects (targets only recommended)
+        model: a Prosit2023TimsTofWrapper object (optional, will create if not provided)
+        lower: lower bound for offset search
+        upper: upper bound for offset search
+        verbose: whether to print progress
+
+    Returns:
+        Tuple[float, float, float, float]: (intercept, slope, optimal_offset, best_similarity)
+            - intercept: CE model intercept
+            - slope: CE model slope (CE per m/z unit)
+            - optimal_offset: the calibration offset found
+            - best_similarity: the spectral angle similarity at optimal offset
+    """
+    if len(sample) == 0:
+        raise ValueError("Sample cannot be empty")
+
+    # Filter to targets only
+    targets = [p for p in sample if not getattr(p, 'decoy', False)]
+    if len(targets) == 0:
+        raise ValueError("No target PSMs in sample")
+
+    if verbose:
+        print(f"Calibrating CE model with {len(targets)} target PSMs...")
+
+    # Create model if not provided
+    if model is None:
+        model = Prosit2023TimsTofWrapper(verbose=False)
+
+    # Step 1: Find optimal CE offset
+    optimal_offset, similarities = get_collision_energy_calibration_factor(
+        targets, model, lower=lower, upper=upper, verbose=verbose
+    )
+    best_similarity = max(similarities)
+
+    # Step 2: Fit linear model on (CE_actual + offset) vs m/z
+    mz_values = np.array([p.mono_mz_calculated for p in targets])
+    ce_corrected = np.array([p.collision_energy + optimal_offset for p in targets])
+
+    # Linear fit: ce_corrected = intercept + slope * mz
+    coeffs = np.polyfit(mz_values, ce_corrected, 1)
+    slope = coeffs[0]
+    intercept = coeffs[1]
+
+    if verbose:
+        print(f"Calibrated CE model: CE = {intercept:.4f} + {slope:.6f} * m/z")
+        print(f"  Optimal offset: {optimal_offset}")
+        print(f"  Best spectral angle similarity: {best_similarity:.4f}")
+
+        # Show fit quality
+        ce_predicted = intercept + slope * mz_values
+        residuals = ce_corrected - ce_predicted
+        print(f"  Linear fit R²: {1 - np.var(residuals) / np.var(ce_corrected):.4f}")
+        print(f"  Residual std: {np.std(residuals):.4f}")
+
+    return intercept, slope, optimal_offset, best_similarity
+
+
 def remove_unimod_annotation(sequence: str) -> str:
     """
     Remove the unimod annotation from a peptide sequence.
@@ -144,21 +218,22 @@ def remove_unimod_annotation(sequence: str) -> str:
 
 
 def _disable_gpu_for_prosit():
-    """Disable GPU for Prosit predictions.
+    """Disable GPU for Prosit predictions on macOS only.
 
     TensorFlow Metal (Apple Silicon GPU) produces numerically different results
-    compared to CPU execution for this model. To ensure consistent and correct
-    predictions across all platforms, we force CPU-only execution.
+    compared to CPU execution for this model. On macOS, we force CPU-only execution.
 
-    This is a known issue with TensorFlow Metal and certain SavedModel formats.
+    On Linux with CUDA, GPU execution works correctly and provides significant speedup.
     """
-    try:
-        tf.config.set_visible_devices([], 'GPU')
-    except RuntimeError:
-        # GPU visibility must be set before GPUs are initialized
-        # If we're here, GPUs were already initialized - this is fine if
-        # we already disabled them in a previous call
-        pass
+    import platform
+    if platform.system() == 'Darwin':  # macOS only
+        try:
+            tf.config.set_visible_devices([], 'GPU')
+        except RuntimeError:
+            # GPU visibility must be set before GPUs are initialized
+            # If we're here, GPUs were already initialized - this is fine if
+            # we already disabled them in a previous call
+            pass
 
 
 def load_prosit_2023_timsTOF_predictor():

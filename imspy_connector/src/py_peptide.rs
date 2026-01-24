@@ -1,9 +1,73 @@
 use std::collections::{HashMap};
+use std::sync::LazyLock;
 use pyo3::prelude::*;
+use rayon::prelude::*;
+use regex::Regex;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon,
                             PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
+use mscore::chemistry::formulas::calculate_mz;
+use mscore::chemistry::constants::MASS_WATER;
+use mscore::chemistry::amino_acid::amino_acid_masses;
+use mscore::chemistry::unimod::unimod_modifications_mass_numerical;
 use crate::py_annotation::PyMzSpectrumAnnotated;
+
+// Pre-compiled regex for UNIMOD patterns (compiled once, used many times)
+static UNIMOD_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[UNIMOD:(\d+)]").unwrap()
+});
+
+// Pre-computed lookup tables (initialized once)
+static AA_MASSES: LazyLock<HashMap<char, f64>> = LazyLock::new(|| {
+    let aa_map = amino_acid_masses();
+    aa_map.into_iter()
+        .filter_map(|(k, v)| k.chars().next().map(|c| (c, v)))
+        .collect()
+});
+
+static UNIMOD_MASSES: LazyLock<HashMap<u32, f64>> = LazyLock::new(|| {
+    unimod_modifications_mass_numerical()
+});
+
+/// Fast monoisotopic mass calculation using pre-compiled regex and static lookup tables
+#[inline]
+fn fast_mono_isotopic_mass(sequence: &str) -> f64 {
+    let mut mass = MASS_WATER;
+    let mut i = 0;
+    let bytes = sequence.as_bytes();
+    let len = bytes.len();
+
+    while i < len {
+        if bytes[i] == b'[' {
+            // Parse UNIMOD modification: [UNIMOD:123]
+            if i + 8 < len && &bytes[i..i+8] == b"[UNIMOD:" {
+                let start = i + 8;
+                let mut end = start;
+                while end < len && bytes[end] != b']' {
+                    end += 1;
+                }
+                if end < len {
+                    if let Ok(mod_id) = std::str::from_utf8(&bytes[start..end])
+                        .unwrap_or("")
+                        .parse::<u32>()
+                    {
+                        mass += UNIMOD_MASSES.get(&mod_id).unwrap_or(&0.0);
+                    }
+                    i = end + 1;
+                    continue;
+                }
+            }
+            i += 1;
+        } else {
+            // Regular amino acid
+            let c = bytes[i] as char;
+            mass += AA_MASSES.get(&c).unwrap_or(&0.0);
+            i += 1;
+        }
+    }
+
+    mass
+}
 
 use crate::py_mz_spectrum::PyMzSpectrum;
 
@@ -345,6 +409,62 @@ impl PyPeptideProductIon {
     }
 }
 
+/// Calculate collision energies for multiple peptides in parallel.
+///
+/// Uses rayon for parallel processing of peptide m/z calculations,
+/// then applies a linear CE model: CE = intercept + slope * m/z
+///
+/// # Arguments
+/// * `sequences` - Vector of peptide sequences (with UNIMOD modifications)
+/// * `charges` - Vector of charge states (same length as sequences)
+/// * `ce_intercept` - Intercept of the linear CE model
+/// * `ce_slope` - Slope of the linear CE model
+///
+/// # Returns
+/// Vector of collision energies (same length as input)
+#[pyfunction]
+pub fn calculate_collision_energies_parallel(
+    sequences: Vec<String>,
+    charges: Vec<i32>,
+    ce_intercept: f64,
+    ce_slope: f64,
+) -> Vec<f64> {
+    // Process in parallel using rayon with optimized mass calculation
+    sequences.par_iter()
+        .zip(charges.par_iter())
+        .map(|(seq, &charge)| {
+            // Fast mass calculation using pre-compiled regex
+            let mono_mass = fast_mono_isotopic_mass(seq);
+            let mz = calculate_mz(mono_mass, charge);
+
+            // Apply linear CE model
+            ce_intercept + ce_slope * mz
+        })
+        .collect()
+}
+
+/// Calculate m/z values for multiple peptides in parallel.
+///
+/// # Arguments
+/// * `sequences` - Vector of peptide sequences (with UNIMOD modifications)
+/// * `charges` - Vector of charge states (same length as sequences)
+///
+/// # Returns
+/// Vector of m/z values (same length as input)
+#[pyfunction]
+pub fn calculate_mz_parallel(
+    sequences: Vec<String>,
+    charges: Vec<i32>,
+) -> Vec<f64> {
+    sequences.par_iter()
+        .zip(charges.par_iter())
+        .map(|(seq, &charge)| {
+            let mono_mass = fast_mono_isotopic_mass(seq);
+            calculate_mz(mono_mass, charge)
+        })
+        .collect()
+}
+
 #[pymodule]
 pub fn py_peptide(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
@@ -352,5 +472,7 @@ pub fn py_peptide(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeptideProductIon>()?;
     m.add_class::<PyPeptideProductIonSeries>()?;
     m.add_class::<PyPeptideProductIonSeriesCollection>()?;
+    m.add_function(wrap_pyfunction!(calculate_collision_energies_parallel, m)?)?;
+    m.add_function(wrap_pyfunction!(calculate_mz_parallel, m)?)?;
     Ok(())
 }

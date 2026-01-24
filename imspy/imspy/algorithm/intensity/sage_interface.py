@@ -1139,21 +1139,16 @@ class IntensityPredictionPipelineV2:
 
         # Determine collision energies
         if collision_energy_model is not None:
-            # Compute m/z for each (sequence, charge) pair and apply CE model
+            # Use fast Rust parallel computation for m/z-dependent CE
             if verbose:
                 print(f"Using m/z-dependent CE model: {collision_energy_model}")
-            precursor_mz = []
-            for seq, charge in zip(sequences_to_predict, charges_to_predict):
-                try:
-                    pep = PeptideSequence(seq)
-                    mz = pep.mono_isotopic_mass / charge + 1.007276
-                except Exception:
-                    # Fallback for sequences that can't be parsed
-                    mz = 800.0  # reasonable default
-                precursor_mz.append(mz)
-            collision_energies = collision_energy_model.predict_batch(
-                np.array(precursor_mz)
-            ).tolist()
+            from imspy_connector import py_peptide
+            collision_energies = py_peptide.calculate_collision_energies_parallel(
+                sequences_to_predict,
+                charges_to_predict,
+                collision_energy_model.intercept,
+                collision_energy_model.slope
+            )
         else:
             # Use constant CE
             ce = collision_energy if collision_energy is not None else DEFAULT_COLLISION_ENERGY
