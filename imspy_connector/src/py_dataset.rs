@@ -126,7 +126,7 @@ impl PyTimsDataset {
             total_scans, compression_level).unwrap();
 
         let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray(py);
-        Ok(py_array.unbind().into())
+        Ok(py_array.unbind().into_any())
     }
 
     #[pyo3(signature = (frames, total_scans, num_threads, use_frame_id=None, compression_level=None))]

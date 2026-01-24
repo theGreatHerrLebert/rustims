@@ -680,8 +680,18 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
         }
 
-        TimsFrame::from_tims_spectra_filtered(
-            tims_spectra, mz_min_val, mz_max_val, 0, 1000, 0.0, 10.0, intensity_min_val, 1e9,
+        let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
+        tims_frame.filter_ranged(
+            mz_min_val,
+            mz_max_val,
+            0,
+            1000,
+            0.0,
+            10.0,
+            intensity_min_val,
+            1e9,
+            0,
+            i32::MAX,
         )
     }
 

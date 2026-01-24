@@ -43,6 +43,8 @@ timsim_validate = "imspy.simulation.timsim.validate.cli:main"
 timsim_compare = "imspy.simulation.timsim.validate.tool_comparison:main_compare"
 timsim_integration_sim = "imspy.simulation.timsim.integration.sim:main"
 timsim_integration_eval = "imspy.simulation.timsim.integration.eval:main"
+teschner_tracer = "imspy.timstof.clustering.cluster_pipeline:main"
+cluster_report = "imspy.timstof.clustering.cluster_report:main"
 
 [build-system]
 requires = ["poetry-core"]

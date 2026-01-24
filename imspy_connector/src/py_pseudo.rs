@@ -1,0 +1,383 @@
+use pyo3::prelude::*;
+use rustdf::cluster::candidates::fragment_from_cluster;
+use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpectrum};
+use crate::py_dia::PyClusterResult1D;
+use crate::py_feature::PySimpleFeature;
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyPseudoFragment {
+    mz: f32,
+    intensity: f32,
+    ms2_cluster_id: u64,
+    window_group: u32,
+}
+
+#[pymethods]
+impl PyPseudoFragment {
+    #[getter]
+    pub fn mz(&self) -> f32 { self.mz }
+
+    #[getter]
+    pub fn intensity(&self) -> f32 { self.intensity }
+
+    #[getter]
+    pub fn ms2_cluster_id(&self) -> u64 { self.ms2_cluster_id }
+
+    #[getter]
+    pub fn window_group(&self) -> u32 {
+        self.window_group
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PseudoFragment(mz={:.4}, intensity={:.1}, ms2_id={})",
+            self.mz, self.intensity, self.ms2_cluster_id
+        )
+    }
+}
+
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyPseudoSpectrum {
+    pub inner: PseudoSpectrum,
+}
+
+#[pymethods]
+impl PyPseudoSpectrum {
+    #[new]
+    #[pyo3(signature = (fragments, precursor=None, feature=None))]
+    pub fn new(
+        py: Python<'_>,
+        fragments: Vec<Py<PyClusterResult1D>>,
+        precursor: Option<Py<PyClusterResult1D>>,
+        feature:   Option<Py<PySimpleFeature>>,
+    ) -> PyResult<Self> {
+        use pyo3::exceptions::PyValueError;
+        use std::cmp::Ordering;
+
+        let have_prec = precursor.is_some();
+        let have_feat = feature.is_some();
+        if have_prec == have_feat {
+            return Err(PyValueError::new_err(
+                "PseudoSpectrum: exactly one of `precursor` or `feature` must be provided",
+            ));
+        }
+
+        // ---- Build fragments + window_groups (shared for both modes) ----
+        let mut window_groups: Vec<u32> = Vec::new();
+        let mut frags: Vec<PseudoFragment> = Vec::new();
+
+        for f_py in fragments {
+            let f_ref = f_py.borrow(py);
+            let c = f_ref.inner.clone();
+
+            // only accept MS2 clusters as fragments
+            if c.ms_level != 2 {
+                continue;
+            }
+
+            // track window_group only for actual fragment clusters
+            if let Some(wg) = c.window_group {
+                if !window_groups.contains(&wg) {
+                    window_groups.push(wg);
+                }
+            }
+
+            if let Some(pf) = fragment_from_cluster(&c) {
+                frags.push(pf);
+            }
+        }
+
+        // sort WGs for determinism
+        window_groups.sort_unstable();
+        // sort fragments by m/z ascending (good to keep invariant here)
+        frags.sort_by(|a, b| {
+            a.mz.partial_cmp(&b.mz).unwrap_or(Ordering::Equal)
+        });
+
+        if frags.is_empty() {
+            return Err(PyValueError::new_err(
+                "PseudoSpectrum: no usable fragment clusters provided",
+            ));
+        }
+
+        // ---- Mode 1: from precursor cluster ------------------------------
+        let inner = if let Some(p) = precursor {
+            let prec_ref = p.borrow(py);
+            let prec = prec_ref.inner.clone();
+
+            if prec.ms_level != 1 {
+                return Err(PyValueError::new_err(
+                    "PseudoSpectrum: precursor must be MS1 (ms_level=1)",
+                ));
+            }
+
+            // Precursor m/z: prefer mz_fit, fallback to window midpoint
+            let precursor_mz = if let Some(fit) = &prec.mz_fit {
+                fit.mu
+            } else if let Some((lo, hi)) = prec.mz_window {
+                0.5 * (lo + hi)
+            } else {
+                return Err(PyValueError::new_err(
+                    "Precursor cluster has no m/z fit and no m/z window.",
+                ));
+            };
+
+            PseudoSpectrum {
+                precursor_mz,
+                precursor_charge: 0, // we don't know charge from the cluster
+                rt_apex: prec.rt_fit.mu,
+                im_apex: prec.im_fit.mu,
+                feature_id: None,
+                window_groups,
+                precursor_cluster_ids: vec![prec.cluster_id],
+                fragments: frags,
+                precursor_cluster_indices: vec![],
+            }
+        } else {
+            // ---- Mode 2: from SimpleFeature ------------------------------
+            let feat = feature.unwrap().borrow(py).inner.clone();
+
+            // Use feature’s own mono m/z and charge
+            let precursor_mz = feat.mz_mono;
+            let precursor_charge = feat.charge;
+            let feature_id = Some(feat.feature_id);
+
+            // Derive RT / IM apex + cluster IDs from the top-intensity member
+            let mut _rt_apex = 0.0f32;
+            let mut _im_apex = 0.0f32;
+            let mut precursor_cluster_ids: Vec<u64> = Vec::new();
+
+            if let Some(top) = feat
+                .member_clusters
+                .iter()
+                .max_by(|a, b| {
+                    a.raw_sum
+                        .partial_cmp(&b.raw_sum)
+                        .unwrap_or(Ordering::Equal)
+                })
+            {
+                _rt_apex = top.rt_fit.mu;
+                _im_apex = top.im_fit.mu;
+                precursor_cluster_ids.push(top.cluster_id);
+            } else {
+                // Worst case: feature has no backing clusters (should not happen)
+                // fall back to rough midpoints of RT / IM bounds
+                let (rt_lo, rt_hi) = feat.rt_bounds;
+                let (im_lo, im_hi) = feat.im_bounds;
+                _rt_apex = 0.5 * (rt_lo as f32 + rt_hi as f32);
+                _im_apex = 0.5 * (im_lo as f32 + im_hi as f32);
+            }
+
+            PseudoSpectrum {
+                precursor_mz,
+                precursor_charge,
+                rt_apex: _rt_apex,
+                im_apex: _im_apex,
+                feature_id,
+                // IMPORTANT: use the same window_groups derived from the **fragments**
+                window_groups,
+                precursor_cluster_ids,
+                fragments: frags,
+                // This is meaningful for features
+                precursor_cluster_indices: feat.member_cluster_indices.clone(),
+            }
+        };
+
+        Ok(PyPseudoSpectrum { inner })
+    }
+
+    // --- simple getters ---------------------------------------------------
+    #[getter]
+    pub fn precursor_mz(&self) -> f32 {
+        self.inner.precursor_mz
+    }
+
+    #[getter]
+    pub fn precursor_charge(&self) -> u8 {
+        self.inner.precursor_charge
+    }
+
+    #[getter]
+    pub fn rt_apex(&self) -> f32 {
+        self.inner.rt_apex
+    }
+
+    #[getter]
+    pub fn im_apex(&self) -> f32 {
+        self.inner.im_apex
+    }
+
+    #[getter]
+    pub fn feature_id(&self) -> Option<usize> {
+        self.inner.feature_id
+    }
+
+    #[getter]
+    pub fn window_groups(&self) -> Vec<u32> {
+        self.inner.window_groups.clone()
+    }
+
+    #[getter]
+    pub fn precursor_cluster_ids(&self) -> Vec<u64> {
+        self.inner.precursor_cluster_ids.clone()
+    }
+
+    #[getter]
+    pub fn fragments(&self) -> Vec<PyPseudoFragment> {
+        self.inner.fragments
+            .iter()
+            .map(|f| PyPseudoFragment {
+                mz: f.mz,
+                intensity: f.intensity,
+                ms2_cluster_id: f.ms2_cluster_id,
+                window_group: f.window_group,
+            })
+            .collect()
+    }
+
+    /// Vector of fragment m/z values (unmerged)
+    #[getter]
+    pub fn fragment_mz_array(&self) -> Vec<f32> {
+        self.inner.fragments.iter().map(|f| f.mz).collect()
+    }
+
+    /// Vector of fragment intensities (unmerged)
+    #[getter]
+    pub fn fragment_intensity_array(&self) -> Vec<f32> {
+        self.inner.fragments.iter().map(|f| f.intensity).collect()
+    }
+
+    /// Number of fragments (unmerged)
+    #[getter]
+    pub fn n_fragments(&self) -> usize {
+        self.inner.fragments.len()
+    }
+
+    /// Return merged (mz, intensity) arrays.
+    ///
+    /// - `max_ppm <= 0` => no merging, just sorted copy.
+    /// - If `allow_cross_window_group` is false, only merge fragments
+    ///   that come from the *same* window_group.
+    #[pyo3(signature = (max_ppm, allow_cross_window_group=false))]
+    pub fn merged_peaks(
+        &self,
+        max_ppm: f32,
+        allow_cross_window_group: bool,
+    ) -> (Vec<f32>, Vec<f32>) {
+        merge_fragments_by_mz(
+            &self.inner.fragments,
+            max_ppm,
+            allow_cross_window_group,
+        )
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PseudoSpectrum(mz={:.4}, z={}, n_frags={})",
+            self.inner.precursor_mz,
+            self.inner.precursor_charge,
+            self.inner.fragments.len(),
+        )
+    }
+}
+
+/// Merge PseudoFragment peaks by m/z with a ppm tolerance.
+///
+/// If `allow_cross_window_group` is false, only fragments from the same
+/// window_group are merged together.
+fn merge_fragments_by_mz(
+    frags: &[PseudoFragment],
+    max_ppm: f32,
+    allow_cross_window_group: bool,
+) -> (Vec<f32>, Vec<f32>) {
+    use std::cmp::Ordering;
+
+    if frags.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    // If no merging requested, just return the raw arrays (still sorted).
+    if max_ppm <= 0.0 {
+        let mut idx: Vec<usize> = (0..frags.len()).collect();
+        idx.sort_unstable_by(|&i, &j| {
+            frags[i]
+                .mz
+                .partial_cmp(&frags[j].mz)
+                .unwrap_or(Ordering::Equal)
+        });
+
+        let mut mz_out = Vec::with_capacity(frags.len());
+        let mut int_out = Vec::with_capacity(frags.len());
+        for k in idx {
+            mz_out.push(frags[k].mz);
+            int_out.push(frags[k].intensity);
+        }
+        return (mz_out, int_out);
+    }
+
+    // Sort by m/z to make grouping in m/z space trivial.
+    let mut idx: Vec<usize> = (0..frags.len()).collect();
+    idx.sort_unstable_by(|&i, &j| {
+        frags[i]
+            .mz
+            .partial_cmp(&frags[j].mz)
+            .unwrap_or(Ordering::Equal)
+    });
+
+    let mut mz_out: Vec<f32> = Vec::new();
+    let mut int_out: Vec<f32> = Vec::new();
+
+    // Initialize first group from the first valid fragment
+    let first = &frags[idx[0]];
+    let mut current_mz = first.mz;
+    let mut current_int = first.intensity;
+    let mut weighted_mz_sum = first.mz * first.intensity;
+    let mut current_wg = first.window_group;
+
+    for &k in &idx[1..] {
+        let f = &frags[k];
+        if !f.mz.is_finite() || f.intensity <= 0.0 {
+            continue;
+        }
+
+        let same_wg = allow_cross_window_group || f.window_group == current_wg;
+
+        // Guard against division by zero
+        let denom = current_mz.abs().max(1.0e-6);
+        let ppm_diff = ((f.mz - current_mz).abs() / denom) * 1.0e6;
+
+        if same_wg && ppm_diff <= max_ppm {
+            // Merge into current group
+            weighted_mz_sum += f.mz * f.intensity;
+            current_int += f.intensity;
+            current_mz = weighted_mz_sum / current_int;
+            // current_wg unchanged (if cross-merge, we ignore wg anyway)
+        } else {
+            // Flush previous group
+            mz_out.push(current_mz);
+            int_out.push(current_int);
+
+            // Start new group
+            current_mz = f.mz;
+            current_int = f.intensity;
+            weighted_mz_sum = f.mz * f.intensity;
+            current_wg = f.window_group;
+        }
+    }
+
+    // Flush final group
+    mz_out.push(current_mz);
+    int_out.push(current_int);
+
+    (mz_out, int_out)
+}
+
+/// Module init for this submodule.
+#[pymodule]
+pub fn py_pseudo(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyPseudoFragment>()?;
+    m.add_class::<PyPseudoSpectrum>()?;
+    Ok(())
+}

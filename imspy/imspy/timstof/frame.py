@@ -182,6 +182,8 @@ class TimsFrame(RustWrapperObject):
                mobility_max: float = 2.0,
                intensity_min: float = 0.0,
                intensity_max: float = 1e9,
+               tof_min: int = 0,
+               tof_max: int = int(1e9),
                ) -> 'TimsFrame':
         """Filter the frame for a given m/z range, scan range and intensity range.
 
@@ -194,13 +196,15 @@ class TimsFrame(RustWrapperObject):
             mobility_max (float, optional): Maximum inverse mobility value. Defaults to 2.0.
             intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
             intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
+            tof_min (int, optional): Minimum tof value. Defaults to 0.
+            tof_max (int, optional): Maximum tof value. Defaults to 1e6.
 
         Returns:
             TimsFrame: Filtered frame.
         """
 
         return TimsFrame.from_py_ptr(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
-                                                                    intensity_min, intensity_max))
+                                                                    intensity_min, intensity_max, tof_min, tof_max))
 
     def to_indexed_mz_spectrum(self) -> 'IndexedMzSpectrum':
         """Convert the frame to an IndexedMzSpectrum.

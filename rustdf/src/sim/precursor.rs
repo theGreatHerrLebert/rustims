@@ -162,7 +162,8 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             }
         }
 
-        TimsFrame::from_tims_spectra_filtered(tims_spectra, 0.0, 10000.0, 0, 2000, 0.0, 10.0, 1.0, 1e9)
+        let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
+        tims_frame.filter_ranged(0.0, 10000.0, 0, 2000, 0.0, 10.0, 1.0, 1e9, 0, i32::MAX)
     }
 
     /// Build a collection of precursor frames in parallel
