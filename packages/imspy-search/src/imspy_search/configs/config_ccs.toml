@@ -1,0 +1,15 @@
+raw_data_path = "/media/hd02/data/raw/dda/ccs/Raw_Yeast_Trp/"
+fasta_path = "/media/hd02/data/fasta/yeast/yeast_proteome.fasta"
+num_threads = -1
+cleave_at = "KR"
+restrict = "P"
+n_terminal = false
+verbose = true
+fasta_batch_size = 1
+
+[static_modifications]
+C = "[UNIMOD:4]"
+
+[variable_modifications]
+M = ["[UNIMOD:35]"]
+"[" = ["[UNIMOD:1]"]

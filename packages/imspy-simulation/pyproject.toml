@@ -1,0 +1,43 @@
+[project]
+name = "imspy-simulation"
+version = "0.4.0"
+description = "TimsTOF data simulation tools for proteomics."
+authors = [
+    { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
+]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "imspy-core>=0.4.0",
+    "imspy-predictors>=0.4.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "numba>=0.53",
+    "scipy>=1.7.1",
+    "toml>=0.10",
+    "tqdm>=4.66",
+    "zstd>=1.5",
+    "matplotlib>=3.5",
+]
+
+[project.optional-dependencies]
+search = ["imspy-search>=0.4.0"]
+
+[project.scripts]
+timsim = "imspy_simulation.timsim.simulator:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

@@ -1,0 +1,140 @@
+# =============================================================================
+# TIMSIM Configuration - HeLa 25K (CPU-only mode)
+# =============================================================================
+
+[main_settings]
+save_path = "/home/dateschn/validate-sim/sim/"
+reference_path = "/home/dateschn/validate-sim/sim/G241217_011_Slot2-2_1_16312.d"
+fasta_path = "/home/dateschn/validate-sim/sim/hela.fasta"
+experiment_name = "TIMSIM-HeLa25K-001"
+acquisition_type = "DIA"
+use_reference_layout = true
+reference_in_memory = false
+sample_peptides = true
+sample_seed = 41
+add_decoys = false
+proteome_mix = false
+silent_mode = false
+from_existing = false
+existing_path = ""
+apply_fragmentation = true
+use_bruker_sdk = true
+
+# Fragment intensity model: "prosit", "peptdeep", or "" (empty for none)
+fragment_intensity_model = "prosit"
+
+# Path to custom modifications TOML (empty = use default)
+modifications = ""
+
+[peptide_digestion]
+num_sample_peptides = 25000
+num_peptides_total = 250000
+n_proteins = 20000
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
+digest_proteins = true
+remove_degenerate_peptides = false
+upscale_factor = 100000
+min_rt_percent = 2.0
+exclude_accumulated_gradient_start = true
+
+[peptide_intensity]
+intensity_mean = 5
+intensity_min = 4
+intensity_max = 8
+sample_occurrences = true
+intensity_value = 6
+
+[isotopic_pattern]
+isotope_k = 8
+isotope_min_intensity = 1
+isotope_centroid = true
+
+[distribution_settings]
+gradient_length = 900.0
+
+# Koina RT model (empty = use local GRU model)
+# Options: "", "Deeplc_hela_hf"
+koina_rt_model = ""
+
+# RT distribution parameters
+mean_std_rt = 0.9
+variance_std_rt = 0.2
+mean_skewness = 1.5
+variance_skewness = 0.01
+z_score = 0.99
+target_p = 0.999
+sampling_step_size = 0.0001
+n_steps = 1000
+remove_epsilon = 0.0001
+
+# Ion mobility settings
+use_inverse_mobility_std_mean = true
+inverse_mobility_std_mean = 0.009
+
+[acquisition_settings]
+round_collision_energy = true
+collision_energy_decimals = 0
+
+[variation_settings]
+re_scale_rt = false
+# Uncomment to add variation (set to desired std value)
+# rt_variation_std = 0.1
+# ion_mobility_variation_std = 0.01
+# intensity_variation_std = 0.1
+
+[charge_state_probabilities]
+p_charge = 0.5
+min_charge_contrib = 0.25
+max_charge = 4
+binomial_charge_model = false
+normalize_charge_states = true
+charge_state_one_probability = 0.0
+
+[noise_settings]
+noise_frame_abundance = false
+noise_scan_abundance = false
+mz_noise_precursor = true
+precursor_noise_ppm = 6.5
+mz_noise_fragment = true
+fragment_noise_ppm = 6.5
+mz_noise_uniform = false
+add_real_data_noise = true
+reference_noise_intensity_max = 150000
+down_sample_factor = 0.5
+
+# Real data noise sampling settings
+precursor_sample_fraction = 0.2
+fragment_sample_fraction = 0.2
+num_precursor_noise_frames = 5
+num_fragment_noise_frames = 5
+
+[phosphorylation_settings]
+phospho_mode = false
+
+[quad_transmission]
+# Quad-dependent isotope transmission mode
+# Options: "none", "precursor_scaling", "per_fragment"
+#   - "none": Standard isotope patterns (default)
+#   - "precursor_scaling": Fast mode - uniform scaling based on precursor transmission
+#   - "per_fragment": Accurate mode - individual fragment ion recalculation
+quad_isotope_transmission_mode = "none"
+quad_transmission_min_probability = 0.5
+quad_transmission_max_isotopes = 10
+
+[performance_settings]
+num_threads = -1
+batch_size = 256
+frame_batch_size = 500
+lazy_frame_assembly = true
+
+# GPU settings
+use_gpu = false
+gpu_memory_limit_gb = 4
+
+[logging_settings]
+log_level = "INFO"
+log_file = ""

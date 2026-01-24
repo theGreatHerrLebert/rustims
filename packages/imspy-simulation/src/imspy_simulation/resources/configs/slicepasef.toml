@@ -1,0 +1,5 @@
+[acquisition]
+name = "SlicePASEF"
+precursor_every = 8
+gradient_length = 3600.0 # 60 minutes
+rt_cycle_length = 0.1054

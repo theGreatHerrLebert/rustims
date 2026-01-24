@@ -1,0 +1,39 @@
+[project]
+name = "imspy-predictors"
+version = "0.4.0"
+description = "ML-based predictors for CCS, retention time, and fragment intensity in mass spectrometry."
+authors = [
+    { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
+]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "imspy-core>=0.4.0",
+    "tensorflow==2.20.*",
+    "dlomix>=0.0.6",
+    "wandb>=0.12.1",
+    "scikit-learn>=1.0",
+    "transformers>=4.0",
+    "tqdm>=4.66",
+    "numba>=0.53",
+    "scipy>=1.7.1",
+]
+
+[project.optional-dependencies]
+koina = ["koinapy>=0.0.10"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

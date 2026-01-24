@@ -18,8 +18,22 @@ __pycache__/
 # Poetrys lock file
 *.lock
 
-# vscode developing
+# IDE files
 .vscode/
+.idea/
+
+# Python build artifacts
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test/example data (large files)
+imspy/examples/T*/
+*.db
 
 # generated documentation
 imspy/docs/build

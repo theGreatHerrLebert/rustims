@@ -1,0 +1,44 @@
+[project]
+name = "imspy-search"
+version = "0.4.0"
+description = "Database search functionality for timsTOF proteomics data using sagepy."
+authors = [
+    { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
+]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "imspy-core>=0.4.0",
+    "imspy-predictors>=0.4.0",
+    "sagepy>=0.4.0",
+    "mokapot>=0.9.0",
+    "scikit-learn>=1.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "numba>=0.53",
+    "toml>=0.10",
+    "tqdm>=4.66",
+    "matplotlib>=3.5",
+    "scipy>=1.7.1",
+]
+
+[project.scripts]
+imspy-dda = "imspy_search.cli.imspy_dda:main"
+imspy-ccs = "imspy_search.cli.imspy_ccs:main"
+imspy-rescore-sage = "imspy_search.cli.imspy_rescore_sage:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
