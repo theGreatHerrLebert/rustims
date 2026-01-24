@@ -1,3 +1,14 @@
+//! Utility functions for DIA clustering.
+//!
+//! This module provides various utility functions organized into logical sections:
+//!
+//! - **TOF Scale** - TOF axis binning and scaling
+//! - **Smoothing** - Gaussian smoothing and blur functions
+//! - **Marginal Building** - Build RT/IM marginals from frame data
+//! - **Peak Detection** - Find peaks in 1D traces
+//! - **Fitting** - Fit1D struct and moment-based fitting
+//! - **Stitching** - Stitch overlapping peaks across windows
+
 use mscore::timstof::frame::TimsFrame;
 use crate::cluster::peak::{FrameBinView, ImPeak1D, PeakId, RtPeak1D, RtTraceCtx};
 use std::hash::{Hash, Hasher};
@@ -8,6 +19,10 @@ use rustc_hash::FxHashMap;
 
 /// Optional mobility callback: scan -> 1/K0
 pub type MobilityFn = Option<fn(scan: usize) -> f32>;
+
+// ==========================================================
+// Section 1: TOF Scale - TOF axis binning and scaling
+// ==========================================================
 
 #[derive(Clone, Debug)]
 pub struct TofScale {
@@ -155,7 +170,11 @@ impl TofScale {
     }
 }
 
-/// light 1D Gaussian smoothing on a vector (along scans)
+// ==========================================================
+// Section 2: Smoothing - Gaussian smoothing and blur functions
+// ==========================================================
+
+/// Light 1D Gaussian smoothing on a vector (along scans).
 pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
     if v.is_empty() || sigma <= 0.0 { return; }
     let radius = (truncate * sigma).ceil() as i32;
@@ -184,6 +203,10 @@ pub fn smooth_vector_gaussian(v: &mut [f32], sigma: f32, truncate: f32) {
     }
     v.copy_from_slice(&out);
 }
+
+// ==========================================================
+// Section 3: Marginal Building - Build RT/IM marginals
+// ==========================================================
 
 /// Build IM marginal (absolute scan axis). We have to touch selected entries:
 pub fn build_im_marginal(
@@ -333,6 +356,10 @@ pub fn build_rt_marginal(
     }
     out
 }
+
+// ==========================================================
+// Section 4: Peak Detection - Find peaks in 1D traces
+// ==========================================================
 
 pub fn find_im_peaks_row(
     y_smoothed: &[f32],
@@ -723,6 +750,10 @@ pub fn build_tof_hist(
     (hist, centers)
 }
 
+// ==========================================================
+// Section 5: Fitting - Fit1D and moment-based fitting
+// ==========================================================
+
 #[inline]
 pub fn quantile(values: &[f32], q: f32) -> f32 {
     // Drop non-finite values to avoid NaN poisoning the order
@@ -748,6 +779,55 @@ pub fn quantile_mut(v: &mut [f32], q: f32) -> f32 {
     let idx = (q.clamp(0.0, 1.0) * (v.len().saturating_sub(1) as f32)).round() as usize;
     let (_l, nth, _r) = v.select_nth_unstable_by(idx, |a, b| a.total_cmp(b));
     *nth
+}
+
+// --- Robust noise estimation for adaptive thresholds ---
+
+/// Compute robust noise estimate using MAD (Median Absolute Deviation).
+/// Returns noise in the same units as the input signal.
+///
+/// MAD is more robust to outliers (peaks) than standard deviation,
+/// making it suitable for estimating baseline noise in signals with peaks.
+#[inline]
+pub fn robust_noise_mad(signal: &[f32]) -> f32 {
+    if signal.len() < 3 {
+        return 0.0;
+    }
+
+    // Compute median
+    let mut sorted: Vec<f32> = signal.iter().copied().filter(|x| x.is_finite()).collect();
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sorted[sorted.len() / 2];
+
+    // Compute MAD (Median Absolute Deviation)
+    let mut deviations: Vec<f32> = sorted.iter().map(|&x| (x - median).abs()).collect();
+    deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mad = deviations[deviations.len() / 2];
+
+    // Convert MAD to standard deviation estimate (1.4826 for normal distribution)
+    mad * 1.4826
+}
+
+/// Compute noise from neighbor differences.
+/// Uses the median of absolute neighbor differences, which is robust to peaks.
+#[inline]
+pub fn robust_noise_neighbor_diff(y: &[f32]) -> f32 {
+    if y.len() < 2 {
+        return 0.0;
+    }
+    let mut diffs: Vec<f32> = y.windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .filter(|&d| d.is_finite())
+        .collect();
+    if diffs.is_empty() {
+        return 0.0;
+    }
+    diffs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // Median of diffs, scaled to approximate standard deviation
+    diffs[diffs.len() / 2] / 1.4826
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1178,6 +1258,10 @@ fn merge_group(peaks: &[&ImPeak1D]) -> ImPeak1D {
         id: id_min,
     }
 }
+
+// ==========================================================
+// Section 6: Stitching - Stitch overlapping peaks across windows
+// ==========================================================
 
 pub struct StitchParams {
     pub min_overlap_frames: usize,

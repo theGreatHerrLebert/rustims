@@ -7,6 +7,7 @@ use crate::cluster::candidates::{CandidateOpts, PairFeatures, ScoreOpts};
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::pseudo::cluster_mz_mu;
+use crate::cluster::utility::robust_noise_mad;
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
 
 #[derive(Clone, Copy, Debug)]
@@ -453,7 +454,16 @@ impl PrecursorSearchIndex {
             })
             .collect();
 
-        // 2) Keep mask for MS1
+        // 2) Compute adaptive threshold for min_raw_sum (from MS1 raw_sum distribution)
+        let ms1_raw_sums: Vec<f32> = ms1
+            .iter()
+            .filter(|c| c.ms_level == 1)
+            .map(|c| c.raw_sum)
+            .collect();
+        let ms1_noise = robust_noise_mad(&ms1_raw_sums);
+        let effective_min_raw_sum = opts.min_raw_sum.effective(ms1_noise);
+
+        // 3) Keep mask for MS1
         let ms1_keep: Vec<bool> = ms1
             .par_iter()
             .enumerate()
@@ -461,7 +471,7 @@ impl PrecursorSearchIndex {
                 if c.ms_level != 1 {
                     return false;
                 }
-                if c.raw_sum < opts.min_raw_sum {
+                if c.raw_sum < effective_min_raw_sum {
                     return false;
                 }
                 let (t0, t1) = ms1_time_bounds[i];
@@ -601,6 +611,15 @@ impl PrecursorSearchIndex {
 
         let ms2_time_bounds = Arc::new(ms2_time_bounds);
 
+        // Compute adaptive threshold for min_raw_sum (from MS2 raw_sum distribution)
+        let ms2_raw_sums: Vec<f32> = ms2
+            .iter()
+            .filter(|c| c.ms_level == 2)
+            .map(|c| c.raw_sum)
+            .collect();
+        let ms2_noise = robust_noise_mad(&ms2_raw_sums);
+        let effective_min_raw_sum = opts.min_raw_sum.effective(ms2_noise);
+
         // Keep MS2s
         let ms2_keep: Vec<bool> = ms2
             .par_iter()
@@ -612,7 +631,7 @@ impl PrecursorSearchIndex {
                 if c.window_group.is_none() {
                     return false;
                 }
-                if c.raw_sum < opts.min_raw_sum {
+                if c.raw_sum < effective_min_raw_sum {
                     return false;
                 }
                 let (mut t0, mut t1) = ms2_time_bounds[i];

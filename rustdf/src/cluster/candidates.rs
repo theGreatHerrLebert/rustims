@@ -6,8 +6,10 @@ use rayon::prelude::*;
 use crate::cluster::cluster::ClusterResult1D;
 use crate::cluster::feature::SimpleFeature;
 use crate::cluster::io::load_parquet;
+use crate::cluster::peak::ThresholdMode;
 use crate::cluster::pseudo::{PseudoSpecOpts, PseudoSpectrum, build_pseudo_spectra_from_pairs, cluster_mz_mu, PseudoFragment};
 use crate::cluster::scoring::{assign_ms2_to_best_ms1_by_xic, jaccard_time, ms1_to_ms2_map, query_precursor_scored, query_precursors_scored_par, MatchScoreMode, PrecursorLike, PrecursorSearchIndex, ScoredHit, XicScoreOpts};
+use crate::cluster::utility::robust_noise_mad;
 use crate::data::dia::{DiaIndex, TimsDatasetDIA};
 // ---------------------------------------------------------------------------
 // Assignment mode abstraction (geom vs XIC)
@@ -70,11 +72,9 @@ pub fn best_ms1_for_each_ms2_any(
 
 /// Options for the simple candidate enumeration.
 /// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
-/// Options for the simple candidate enumeration.
-/// Rule = RT overlap (seconds) AND group eligibility (mz ∩ isolation AND scans ∩ program).
 #[derive(Clone, Debug)]
 pub struct CandidateOpts {
-    /// Require at least this Jaccard in RT (set 0.0 for “any overlap”).
+    /// Require at least this Jaccard in RT (set 0.0 for "any overlap").
     pub min_rt_jaccard: f32,
     /// Guard pad on MS2 time bounds (applied symmetrically), in seconds.
     pub ms2_rt_guard_sec: f64,
@@ -83,7 +83,10 @@ pub struct CandidateOpts {
     /// Pre-filters to drop weird clusters.
     pub max_ms1_rt_span_sec: Option<f64>,
     pub max_ms2_rt_span_sec: Option<f64>,
-    pub min_raw_sum: f32,
+    /// Minimum intensity sum for a cluster to be considered.
+    /// Use ThresholdMode::AdaptiveNoise(N) for N × noise (recommended),
+    /// or ThresholdMode::Fixed(val) for a hard threshold.
+    pub min_raw_sum: ThresholdMode,
 
     // ---- tight guards ----
     /// Maximum allowed |rt_apex_MS1 - rt_apex_MS2| in seconds (None disables).
@@ -108,13 +111,35 @@ impl Default for CandidateOpts {
             rt_bucket_width: 1.0,
             max_ms1_rt_span_sec: Some(60.0),
             max_ms2_rt_span_sec: Some(60.0),
-            min_raw_sum: 1.0,
+            min_raw_sum: ThresholdMode::AdaptiveNoise(3.0),
 
             max_rt_apex_delta_sec: Some(2.0),
             max_scan_apex_delta: Some(6),
             min_im_overlap_scans: 1,
 
             reject_frag_inside_precursor_tile: false,
+        }
+    }
+}
+
+impl CandidateOpts {
+    /// Create with a fixed raw_sum threshold (legacy behavior).
+    pub fn with_fixed_raw_sum(mut self, val: f32) -> Self {
+        self.min_raw_sum = ThresholdMode::Fixed(val);
+        self
+    }
+
+    /// Create with adaptive noise-based raw_sum threshold.
+    pub fn with_adaptive_raw_sum(mut self, sigma_multiplier: f32) -> Self {
+        self.min_raw_sum = ThresholdMode::AdaptiveNoise(sigma_multiplier);
+        self
+    }
+
+    /// Legacy defaults (exact old behavior with min_raw_sum: 1.0).
+    pub fn legacy_defaults() -> Self {
+        Self {
+            min_raw_sum: ThresholdMode::Fixed(1.0),
+            ..Default::default()
         }
     }
 }
@@ -331,7 +356,7 @@ pub fn build_pseudo_spectra_all_pairs(
         rt_bucket_width: 1.0,
         max_ms1_rt_span_sec: None,
         max_ms2_rt_span_sec: None,
-        min_raw_sum: 1.0,
+        min_raw_sum: ThresholdMode::Fixed(1.0), // Fixed threshold for debugging/exploration
 
         max_rt_apex_delta_sec: None,
         max_scan_apex_delta:   None,
@@ -574,6 +599,130 @@ pub fn build_pseudo_spectra_end_to_end_xic(
     }
 }
 
+// ==========================================================
+// FragmentIndex sub-structs (Phase 2 refactoring)
+// ==========================================================
+
+/// Pre-computed per-MS2 metadata for fast filtering and lookup.
+#[derive(Clone, Debug, Default)]
+pub struct FragmentMetadata {
+    /// IM apex (scan space) - from im_fit.mu or midpoint fallback.
+    pub im_mu: Vec<f32>,
+    /// IM window bounds in scan space.
+    pub im_windows: Vec<(usize, usize)>,
+    /// Keep mask - indicates valid MS2 clusters.
+    pub keep: Vec<bool>,
+    /// Stable cluster IDs.
+    pub cluster_ids: Vec<u64>,
+    /// Representative m/z per cluster.
+    pub mz_mu: Vec<f32>,
+}
+
+impl FragmentMetadata {
+    /// Get the number of MS2 clusters.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.cluster_ids.len()
+    }
+
+    /// Check if empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.cluster_ids.is_empty()
+    }
+
+    /// Count valid (kept) MS2 clusters.
+    #[inline]
+    pub fn count_valid(&self) -> usize {
+        self.keep.iter().filter(|&&k| k).count()
+    }
+
+    /// Get metadata for a single MS2 cluster by index.
+    #[inline]
+    pub fn get(&self, idx: usize) -> Option<FragmentMetadataEntry> {
+        if idx >= self.len() {
+            return None;
+        }
+        Some(FragmentMetadataEntry {
+            im_mu: self.im_mu[idx],
+            im_window: self.im_windows[idx],
+            keep: self.keep[idx],
+            cluster_id: self.cluster_ids[idx],
+            mz_mu: self.mz_mu[idx],
+        })
+    }
+}
+
+/// A single entry from FragmentMetadata.
+#[derive(Clone, Copy, Debug)]
+pub struct FragmentMetadataEntry {
+    pub im_mu: f32,
+    pub im_window: (usize, usize),
+    pub keep: bool,
+    pub cluster_id: u64,
+    pub mz_mu: f32,
+}
+
+/// Storage for MS2 clusters with ID-based lookup.
+#[derive(Clone, Debug)]
+pub struct FragmentStorage {
+    /// Owned MS2 clusters.
+    pub clusters: Arc<[ClusterResult1D]>,
+    /// Fast lookup: cluster_id -> index.
+    pub id_to_idx: HashMap<u64, usize>,
+}
+
+impl FragmentStorage {
+    /// Create from a Vec of clusters.
+    pub fn from_vec(clusters: Vec<ClusterResult1D>) -> Self {
+        let id_to_idx: HashMap<u64, usize> = clusters
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.cluster_id, i))
+            .collect();
+        Self {
+            clusters: clusters.into(),
+            id_to_idx,
+        }
+    }
+
+    /// Get cluster by index.
+    #[inline]
+    pub fn get(&self, idx: usize) -> Option<&ClusterResult1D> {
+        self.clusters.get(idx)
+    }
+
+    /// Get cluster by ID.
+    #[inline]
+    pub fn get_by_id(&self, id: u64) -> Option<&ClusterResult1D> {
+        self.id_to_idx.get(&id).and_then(|&i| self.clusters.get(i))
+    }
+
+    /// Get index by ID.
+    #[inline]
+    pub fn index_of(&self, id: u64) -> Option<usize> {
+        self.id_to_idx.get(&id).copied()
+    }
+
+    /// Number of clusters.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.clusters.len()
+    }
+
+    /// Check if empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.clusters.is_empty()
+    }
+
+    /// Iterate over clusters.
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = &ClusterResult1D> {
+        self.clusters.iter()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FragmentGroupIndex {
     /// MS2 indices belonging to this WG, sorted by rt_apex.
@@ -650,6 +799,65 @@ impl FragmentIndex {
         self.id_to_idx.get(&cid).and_then(|&i| self.ms2_storage.get(i))
     }
 
+    // --- Grouped accessors (Phase 2 refactoring) ---
+
+    /// Get pre-computed MS2 metadata.
+    #[inline]
+    pub fn metadata(&self) -> FragmentMetadata {
+        FragmentMetadata {
+            im_mu: self.ms2_im_mu.clone(),
+            im_windows: self.ms2_im_windows.clone(),
+            keep: self.ms2_keep.clone(),
+            cluster_ids: self.ms2_cluster_ids.clone(),
+            mz_mu: self.ms2_mz_mu.clone(),
+        }
+    }
+
+    /// Get storage wrapper for cluster access.
+    #[inline]
+    pub fn storage(&self) -> FragmentStorage {
+        FragmentStorage {
+            clusters: Arc::clone(&self.ms2_storage),
+            id_to_idx: self.id_to_idx.clone(),
+        }
+    }
+
+    /// Get the DIA index reference.
+    #[inline]
+    pub fn dia_index(&self) -> &Arc<DiaIndex> {
+        &self.dia_index
+    }
+
+    /// Get group index for a specific window group.
+    #[inline]
+    pub fn group_index(&self, group: u32) -> Option<&FragmentGroupIndex> {
+        self.by_group.get(&group)
+    }
+
+    /// Get all window groups.
+    #[inline]
+    pub fn groups(&self) -> Vec<u32> {
+        self.by_group.keys().copied().collect()
+    }
+
+    /// Count valid (kept) MS2 clusters.
+    #[inline]
+    pub fn count_valid(&self) -> usize {
+        self.ms2_keep.iter().filter(|&&k| k).count()
+    }
+
+    /// Count total MS2 clusters.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.ms2_storage.len()
+    }
+
+    /// Check if empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.ms2_storage.is_empty()
+    }
+
     /// Core builder: takes *owned* storage (Arc<[ClusterResult1D]>)
     /// and uses your existing logic.
     fn build_with_storage(
@@ -701,7 +909,17 @@ impl FragmentIndex {
             })
             .collect();
 
-        // 2) Keep mask – unchanged
+        // 2) Compute adaptive threshold for min_raw_sum
+        // Collect raw_sum values from MS2 clusters to estimate noise
+        let raw_sums: Vec<f32> = ms2
+            .iter()
+            .filter(|c| c.ms_level == 2)
+            .map(|c| c.raw_sum)
+            .collect();
+        let raw_sum_noise = robust_noise_mad(&raw_sums);
+        let effective_min_raw_sum = opts.min_raw_sum.effective(raw_sum_noise);
+
+        // 3) Keep mask
         let ms2_keep: Vec<bool> = ms2
             .par_iter()
             .enumerate()
@@ -712,7 +930,7 @@ impl FragmentIndex {
                 if c.window_group.is_none() {
                     return false;
                 }
-                if c.raw_sum < opts.min_raw_sum {
+                if c.raw_sum < effective_min_raw_sum {
                     return false;
                 }
 

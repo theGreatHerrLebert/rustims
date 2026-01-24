@@ -11,10 +11,163 @@ use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, Buil
 use rustdf::cluster::feature::SimpleFeature;
 use rustdf::data::dia::{DiaIndex, TimsDatasetDIA};
 use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid};
+use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid, ThresholdMode};
 use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+
+// ==========================================================
+// Macros for reducing PyO3 getter boilerplate (Phase 3)
+// ==========================================================
+
+/// Helper trait for converting optional wrapped types to Option<PyWrapper>.
+/// This reduces boilerplate in optional field getters.
+pub trait IntoOptionalPy<T> {
+    fn into_optional_py(self) -> Option<T>;
+}
+
+impl<T, U> IntoOptionalPy<U> for Option<T>
+where
+    T: Into<U>,
+{
+    fn into_optional_py(self) -> Option<U> {
+        self.map(|v| v.into())
+    }
+}
+
+/// Macro for generating simple field accessors on inner structs.
+/// Usage: impl_inner_accessors!(StructName, inner_field, { field: Type, ... })
+macro_rules! impl_inner_accessors {
+    ($struct:ident, $inner:ident, { $($field:ident : $ty:ty),* $(,)? }) => {
+        impl $struct {
+            $(
+                #[inline]
+                pub fn $field(&self) -> $ty {
+                    self.$inner.$field.clone()
+                }
+            )*
+        }
+    };
+}
+
+/// Macro for generating accessors to nested fields (e.g., fit.mu).
+/// Usage: impl_nested_accessors!(StructName, inner, nested_field, { field: Type, ... })
+macro_rules! impl_nested_accessors {
+    ($struct:ident, $inner:ident, $nested:ident, { $($field:ident : $ty:ty),* $(,)? }) => {
+        impl $struct {
+            $(
+                #[inline]
+                pub fn $field(&self) -> $ty {
+                    self.$inner.$nested.$field
+                }
+            )*
+        }
+    };
+}
+
+// Export macros for use in this module
+pub(crate) use impl_inner_accessors;
+pub(crate) use impl_nested_accessors;
+
+// ==========================================================
+// PyThresholdMode - Adaptive vs Fixed intensity thresholds
+// ==========================================================
+
+/// Python wrapper for ThresholdMode.
+///
+/// Use `PyThresholdMode.fixed(value)` for a fixed threshold (legacy behavior),
+/// or `PyThresholdMode.adaptive(sigma)` for N × local noise (recommended).
+///
+/// Example usage from Python:
+/// ```python
+/// # Fixed threshold of 100.0 (legacy)
+/// mode = PyThresholdMode.fixed(100.0)
+///
+/// # Adaptive: 3× local noise estimate (recommended)
+/// mode = PyThresholdMode.adaptive(3.0)
+///
+/// # Default: adaptive with 3× noise
+/// mode = PyThresholdMode.default()
+/// ```
+#[pyclass]
+#[derive(Clone)]
+pub struct PyThresholdMode {
+    pub inner: ThresholdMode,
+}
+
+#[pymethods]
+impl PyThresholdMode {
+    /// Create a fixed threshold (legacy behavior).
+    ///
+    /// Args:
+    ///     value: The fixed threshold value
+    ///
+    /// Returns:
+    ///     A PyThresholdMode with fixed threshold
+    #[staticmethod]
+    pub fn fixed(value: f32) -> Self {
+        Self { inner: ThresholdMode::Fixed(value) }
+    }
+
+    /// Create an adaptive threshold based on local noise estimate.
+    ///
+    /// Args:
+    ///     sigma_multiplier: Multiply noise estimate by this value (e.g., 3.0 means 3× noise)
+    ///
+    /// Returns:
+    ///     A PyThresholdMode with adaptive threshold
+    #[staticmethod]
+    pub fn adaptive(sigma_multiplier: f32) -> Self {
+        Self { inner: ThresholdMode::AdaptiveNoise(sigma_multiplier) }
+    }
+
+    /// Create default threshold mode (adaptive with 3× noise multiplier).
+    #[staticmethod]
+    #[pyo3(name = "default")]
+    pub fn default_mode() -> Self {
+        Self { inner: ThresholdMode::default() }
+    }
+
+    /// Check if this is a fixed threshold mode.
+    #[getter]
+    pub fn is_fixed(&self) -> bool {
+        matches!(self.inner, ThresholdMode::Fixed(_))
+    }
+
+    /// Check if this is an adaptive threshold mode.
+    #[getter]
+    pub fn is_adaptive(&self) -> bool {
+        matches!(self.inner, ThresholdMode::AdaptiveNoise(_))
+    }
+
+    /// Get the value (threshold or sigma multiplier) from this mode.
+    #[getter]
+    pub fn value(&self) -> f32 {
+        match self.inner {
+            ThresholdMode::Fixed(v) => v,
+            ThresholdMode::AdaptiveNoise(v) => v,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        match self.inner {
+            ThresholdMode::Fixed(v) => format!("PyThresholdMode.fixed({})", v),
+            ThresholdMode::AdaptiveNoise(v) => format!("PyThresholdMode.adaptive({})", v),
+        }
+    }
+}
+
+impl From<ThresholdMode> for PyThresholdMode {
+    fn from(inner: ThresholdMode) -> Self {
+        Self { inner }
+    }
+}
+
+impl From<PyThresholdMode> for ThresholdMode {
+    fn from(py: PyThresholdMode) -> Self {
+        py.inner
+    }
+}
 
 #[pyclass]
 #[derive(Clone)]
@@ -2233,7 +2386,7 @@ impl PyTimsDatasetDIA {
                 bin_pad,
                 smooth_sigma_sec,
                 smooth_trunc_k,
-                min_prom,
+                min_prom: ThresholdMode::Fixed(min_prom), // Backward compat; use PyThresholdMode for adaptive
                 min_sep_sec,
                 min_width_sec,
                 fallback_if_frames_lt,
@@ -2384,7 +2537,7 @@ impl PyTimsDatasetDIA {
                 bin_pad,
                 smooth_sigma_sec,
                 smooth_trunc_k,
-                min_prom,
+                min_prom: ThresholdMode::Fixed(min_prom), // Backward compat; use PyThresholdMode for adaptive
                 min_sep_sec,
                 min_width_sec,
                 fallback_if_frames_lt,
@@ -2544,7 +2697,7 @@ impl PyTimsDatasetDIA {
             rt_bucket_width,
             max_ms1_rt_span_sec,
             max_ms2_rt_span_sec,
-            min_raw_sum,
+            min_raw_sum: ThresholdMode::Fixed(min_raw_sum),
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
             min_im_overlap_scans,
@@ -2673,7 +2826,7 @@ impl PyTimsDatasetDIA {
             rt_bucket_width,
             max_ms1_rt_span_sec,
             max_ms2_rt_span_sec,
-            min_raw_sum,
+            min_raw_sum: ThresholdMode::Fixed(min_raw_sum),
             max_rt_apex_delta_sec,
             max_scan_apex_delta,
             min_im_overlap_scans,
@@ -3379,7 +3532,7 @@ impl PyCandidateOpts {
         rt_bucket_width: f64,
         max_ms1_rt_span_sec: Option<f64>,
         max_ms2_rt_span_sec: Option<f64>,
-        min_raw_sum: f32,
+        min_raw_sum: f32, // Backward compat: wrapped as ThresholdMode::Fixed
         max_rt_apex_delta_sec: Option<f32>,
         max_scan_apex_delta: Option<usize>,
         min_im_overlap_scans: usize,
@@ -3392,7 +3545,7 @@ impl PyCandidateOpts {
                 rt_bucket_width,
                 max_ms1_rt_span_sec,
                 max_ms2_rt_span_sec,
-                min_raw_sum,
+                min_raw_sum: ThresholdMode::Fixed(min_raw_sum),
                 max_rt_apex_delta_sec,
                 max_scan_apex_delta,
                 min_im_overlap_scans,
@@ -3401,7 +3554,57 @@ impl PyCandidateOpts {
         }
     }
 
-    // You can add getters here later if you want Python-side introspection.
+    /// Create with adaptive noise-based min_raw_sum threshold (recommended).
+    ///
+    /// Args:
+    ///     sigma_multiplier: Multiply noise estimate by this value (e.g., 3.0 means 3× noise)
+    ///     Other parameters as in __init__
+    #[staticmethod]
+    #[pyo3(signature = (
+        sigma_multiplier = 3.0,
+        min_rt_jaccard = 0.0,
+        ms2_rt_guard_sec = 1.0,
+        rt_bucket_width = 0.5,
+        max_ms1_rt_span_sec = None,
+        max_ms2_rt_span_sec = None,
+        max_rt_apex_delta_sec = None,
+        max_scan_apex_delta = None,
+        min_im_overlap_scans = 1,
+        reject_frag_inside_precursor_tile = true,
+    ))]
+    pub fn with_adaptive_threshold(
+        sigma_multiplier: f32,
+        min_rt_jaccard: f32,
+        ms2_rt_guard_sec: f64,
+        rt_bucket_width: f64,
+        max_ms1_rt_span_sec: Option<f64>,
+        max_ms2_rt_span_sec: Option<f64>,
+        max_rt_apex_delta_sec: Option<f32>,
+        max_scan_apex_delta: Option<usize>,
+        min_im_overlap_scans: usize,
+        reject_frag_inside_precursor_tile: bool,
+    ) -> Self {
+        PyCandidateOpts {
+            inner: CandidateOpts {
+                min_rt_jaccard,
+                ms2_rt_guard_sec,
+                rt_bucket_width,
+                max_ms1_rt_span_sec,
+                max_ms2_rt_span_sec,
+                min_raw_sum: ThresholdMode::AdaptiveNoise(sigma_multiplier),
+                max_rt_apex_delta_sec,
+                max_scan_apex_delta,
+                min_im_overlap_scans,
+                reject_frag_inside_precursor_tile,
+            },
+        }
+    }
+
+    /// Get the min_raw_sum threshold mode.
+    #[getter]
+    pub fn min_raw_sum(&self) -> PyThresholdMode {
+        PyThresholdMode { inner: self.inner.min_raw_sum }
+    }
 }
 #[pyclass]
 #[allow(dead_code)]
@@ -4143,6 +4346,7 @@ pub fn pseudospectrum_from_feature_and_hits(
 
 #[pymodule]
 pub fn py_dia(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyThresholdMode>()?;
     m.add_class::<PyTimsDatasetDIA>()?;
     m.add_class::<PyTofScanPlan>()?;
     m.add_class::<PyTofScanPlanGroup>()?;

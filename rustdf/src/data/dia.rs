@@ -23,6 +23,83 @@ use crate::cluster::pseudo::{PseudoSpecOpts};
 use crate::cluster::candidates::CandidateOpts;
 use crate::cluster::scoring::XicScoreOpts;
 
+// ==========================================================
+// Options structs for reducing parameter explosion (Phase 5)
+// ==========================================================
+
+/// Options for cluster extraction from IM peaks.
+#[derive(Clone, Debug)]
+pub struct ClusterExtractionOpts {
+    /// TOF step for grid binning (typically 1, 2, 4, 8).
+    pub tof_step: i32,
+    /// RT expansion parameters.
+    pub rt_params: RtExpandParams,
+    /// Spec building options (window padding, ms_level).
+    pub build_opts: BuildSpecOpts,
+    /// Evaluation options (refine, attach axes/traces).
+    pub eval_opts: Eval1DOpts,
+    /// Whether to require RT overlap for spec generation.
+    pub require_rt_overlap: bool,
+    /// Number of threads for parallel processing.
+    pub num_threads: usize,
+}
+
+impl Default for ClusterExtractionOpts {
+    fn default() -> Self {
+        Self {
+            tof_step: 8,
+            rt_params: RtExpandParams::default(),
+            build_opts: BuildSpecOpts::ms1_defaults(),
+            eval_opts: Eval1DOpts::default(),
+            require_rt_overlap: true,
+            num_threads: 4,
+        }
+    }
+}
+
+impl ClusterExtractionOpts {
+    /// Create options for MS1 (precursor) extraction.
+    pub fn for_ms1() -> Self {
+        Self {
+            build_opts: BuildSpecOpts::ms1_defaults(),
+            ..Self::default()
+        }
+    }
+
+    /// Create options for MS2 (fragment) extraction.
+    pub fn for_ms2() -> Self {
+        Self {
+            build_opts: BuildSpecOpts::ms2_defaults(),
+            ..Self::default()
+        }
+    }
+
+    /// Set the TOF step.
+    pub fn with_tof_step(mut self, step: i32) -> Self {
+        self.tof_step = step;
+        self
+    }
+
+    /// Set the number of threads.
+    pub fn with_threads(mut self, n: usize) -> Self {
+        self.num_threads = n;
+        self
+    }
+}
+
+/// Options for building pseudo spectra from clusters.
+#[derive(Clone, Debug)]
+pub struct PseudoSpectrumBuildOpts<'a> {
+    /// Candidate enumeration options.
+    pub cand_opts: &'a CandidateOpts,
+    /// Geometric scoring options.
+    pub score_opts: &'a ScoreOpts,
+    /// Pseudo spectrum construction options.
+    pub pseudo_opts: &'a PseudoSpecOpts,
+    /// Optional features for grouping.
+    pub features: Option<&'a [SimpleFeature]>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ProgramSlice {
     pub mz_lo: f64,
@@ -942,6 +1019,46 @@ impl TimsDatasetDIA {
         pseudo_opts: &PseudoSpecOpts,
     ) -> PseudoBuildResult {
         build_pseudo_spectra_all_pairs(self, ms1, ms2, features, pseudo_opts)
+    }
+
+    // ==========================================================
+    // Convenience methods using ClusterExtractionOpts (Phase 5)
+    // ==========================================================
+
+    /// Extract clusters for a DIA window group using options struct.
+    pub fn clusters_for_group_opts(
+        &self,
+        window_group: u32,
+        im_peaks: &[ImPeak1D],
+        opts: &ClusterExtractionOpts,
+    ) -> Vec<ClusterResult1D> {
+        self.clusters_for_group(
+            window_group,
+            opts.tof_step,
+            im_peaks,
+            opts.rt_params.clone(),
+            &opts.build_opts,
+            &opts.eval_opts,
+            opts.require_rt_overlap,
+            opts.num_threads,
+        )
+    }
+
+    /// Extract clusters for precursor (MS1) frames using options struct.
+    pub fn clusters_for_precursor_opts(
+        &self,
+        im_peaks: &[ImPeak1D],
+        opts: &ClusterExtractionOpts,
+    ) -> Vec<ClusterResult1D> {
+        self.clusters_for_precursor(
+            opts.tof_step,
+            im_peaks,
+            opts.rt_params.clone(),
+            &opts.build_opts,
+            &opts.eval_opts,
+            opts.require_rt_overlap,
+            opts.num_threads,
+        )
     }
 
     /// Dense TOF×RT grid for all PRECURSOR (MS1) frames.

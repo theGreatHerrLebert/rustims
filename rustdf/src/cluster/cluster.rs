@@ -160,6 +160,61 @@ pub struct RawPoints {
     pub frame: Vec<u32>,
 }
 
+// ==========================================================
+// ClusterResult1D sub-structs (Phase 1 refactoring)
+// ==========================================================
+
+/// Window boundaries for each axis (RT in frame indices, IM in scan indices, TOF in bin indices).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Windows1D {
+    pub rt: (usize, usize),
+    pub im: (usize, usize),
+    pub tof: (usize, usize),
+    /// TOF index window (raw instrument indices, not bin indices).
+    pub tof_index: (i32, i32),
+    /// Optional m/z window (Da).
+    pub mz: Option<(f32, f32)>,
+}
+
+/// Gaussian fits for each axis.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AxisFits {
+    pub rt: Fit1D,
+    pub im: Fit1D,
+    pub tof: Fit1D,
+    /// Optional m/z-domain fit (derived from TOF fit).
+    pub mz: Option<Fit1D>,
+}
+
+/// Heavy optional data (raw points, axes, traces).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ClusterRawData {
+    pub raw_points: Option<RawPoints>,
+    pub rt_axis_sec: Option<Vec<f32>>,
+    pub im_axis_scans: Option<Vec<usize>>,
+    pub mz_axis_da: Option<Vec<f32>>,
+    #[serde(default)]
+    pub rt_trace: Option<Vec<f32>>,
+    #[serde(default)]
+    pub im_trace: Option<Vec<f32>>,
+}
+
+/// Cluster provenance/metadata.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ClusterProvenance {
+    pub window_group: Option<u32>,
+    pub parent_im_id: Option<i64>,
+    pub parent_rt_id: Option<i64>,
+    pub ms_level: u8,
+}
+
+/// Intensity metrics for a cluster.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct IntensityMetrics {
+    pub raw_sum: f32,
+    pub volume_proxy: f32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterResult1D {
     pub cluster_id: u64,
@@ -212,6 +267,135 @@ impl ClusterResult1D {
         policy: &ClusterMergePolicy,
     ) -> Self {
         merge_clusters(self, other, new_id, policy)
+    }
+
+    // --- Grouped accessors (Phase 1 refactoring) ---
+
+    /// Get all windows as a grouped struct.
+    #[inline]
+    pub fn windows(&self) -> Windows1D {
+        Windows1D {
+            rt: self.rt_window,
+            im: self.im_window,
+            tof: self.tof_window,
+            tof_index: self.tof_index_window,
+            mz: self.mz_window,
+        }
+    }
+
+    /// Get all axis fits as a grouped struct.
+    #[inline]
+    pub fn fits(&self) -> AxisFits {
+        AxisFits {
+            rt: self.rt_fit.clone(),
+            im: self.im_fit.clone(),
+            tof: self.tof_fit.clone(),
+            mz: self.mz_fit.clone(),
+        }
+    }
+
+    /// Get raw data (axes, traces, raw points) as a grouped struct.
+    #[inline]
+    pub fn raw_data(&self) -> ClusterRawData {
+        ClusterRawData {
+            raw_points: self.raw_points.clone(),
+            rt_axis_sec: self.rt_axis_sec.clone(),
+            im_axis_scans: self.im_axis_scans.clone(),
+            mz_axis_da: self.mz_axis_da.clone(),
+            rt_trace: self.rt_trace.clone(),
+            im_trace: self.im_trace.clone(),
+        }
+    }
+
+    /// Get provenance/metadata as a grouped struct.
+    #[inline]
+    pub fn provenance(&self) -> ClusterProvenance {
+        ClusterProvenance {
+            window_group: self.window_group,
+            parent_im_id: self.parent_im_id,
+            parent_rt_id: self.parent_rt_id,
+            ms_level: self.ms_level,
+        }
+    }
+
+    /// Get intensity metrics as a grouped struct.
+    #[inline]
+    pub fn intensity(&self) -> IntensityMetrics {
+        IntensityMetrics {
+            raw_sum: self.raw_sum,
+            volume_proxy: self.volume_proxy,
+        }
+    }
+
+    /// Check if any raw data is attached (traces, axes, or raw points).
+    #[inline]
+    pub fn has_raw_data(&self) -> bool {
+        self.raw_points.is_some()
+            || self.rt_axis_sec.is_some()
+            || self.im_axis_scans.is_some()
+            || self.mz_axis_da.is_some()
+            || self.rt_trace.is_some()
+            || self.im_trace.is_some()
+    }
+
+    /// Check if this cluster has valid fits on all three main axes.
+    #[inline]
+    pub fn has_valid_fits(&self) -> bool {
+        self.rt_fit.sigma > 0.0 && self.im_fit.sigma > 0.0 && self.tof_fit.sigma > 0.0
+    }
+}
+
+// --- Sub-struct impl blocks ---
+
+impl Windows1D {
+    /// Check if two window sets overlap in all dimensions.
+    #[inline]
+    pub fn overlaps(&self, other: &Self) -> bool {
+        let rt_overlaps = self.rt.1 >= other.rt.0 && other.rt.1 >= self.rt.0;
+        let im_overlaps = self.im.1 >= other.im.0 && other.im.1 >= self.im.0;
+        let tof_overlaps = self.tof.1 >= other.tof.0 && other.tof.1 >= self.tof.0;
+        rt_overlaps && im_overlaps && tof_overlaps
+    }
+
+    /// Merge two window sets (union).
+    #[inline]
+    pub fn merge(&self, other: &Self) -> Self {
+        Self {
+            rt: (self.rt.0.min(other.rt.0), self.rt.1.max(other.rt.1)),
+            im: (self.im.0.min(other.im.0), self.im.1.max(other.im.1)),
+            tof: (self.tof.0.min(other.tof.0), self.tof.1.max(other.tof.1)),
+            tof_index: (
+                self.tof_index.0.min(other.tof_index.0),
+                self.tof_index.1.max(other.tof_index.1),
+            ),
+            mz: match (self.mz, other.mz) {
+                (Some((a, b)), Some((c, d))) => Some((a.min(c), b.max(d))),
+                (Some(x), None) | (None, Some(x)) => Some(x),
+                (None, None) => None,
+            },
+        }
+    }
+}
+
+impl AxisFits {
+    /// Check if the distance between two fit sets is within tolerances.
+    #[inline]
+    pub fn within_distance(&self, other: &Self, rt_tol: f32, im_tol: f32, tof_tol: f32) -> bool {
+        let drt = (self.rt.mu - other.rt.mu).abs();
+        let dim = (self.im.mu - other.im.mu).abs();
+        let dtof = (self.tof.mu - other.tof.mu).abs();
+        drt <= rt_tol && dim <= im_tol && dtof <= tof_tol
+    }
+}
+
+impl IntensityMetrics {
+    /// Create from raw sum, using raw_sum as volume_proxy.
+    #[inline]
+    pub fn from_raw_sum(raw_sum: f32) -> Self {
+        Self {
+            raw_sum,
+            volume_proxy: raw_sum,
+        }
     }
 }
 

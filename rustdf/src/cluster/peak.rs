@@ -1,7 +1,62 @@
 use rayon::prelude::*;
 use std::sync::Arc;
 use mscore::timstof::frame::TimsFrame;
-use crate::cluster::utility::{fallback_rt_peak_from_trace, find_im_peaks_row, quad_subsample, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MobilityFn, TofScale};
+use serde::{Deserialize, Serialize};
+use crate::cluster::utility::{fallback_rt_peak_from_trace, find_im_peaks_row, quad_subsample, robust_noise_mad, rt_peak_id, smooth_vector_gaussian, trapezoid_area_fractional, MobilityFn, TofScale};
+
+// ==========================================================
+// ThresholdMode - Adaptive vs Fixed intensity thresholds
+// ==========================================================
+
+/// Mode for computing intensity/prominence thresholds.
+///
+/// Global fixed thresholds are problematic because signal levels vary across
+/// the LC gradient, different m/z regions have different noise characteristics,
+/// and different samples have vastly different intensity scales.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ThresholdMode {
+    /// Fixed global threshold value (legacy behavior).
+    Fixed(f32),
+    /// N × local noise estimate (computed from trace).
+    /// The f32 is the sigma multiplier (e.g., 3.0 means 3× noise).
+    AdaptiveNoise(f32),
+}
+
+impl Default for ThresholdMode {
+    fn default() -> Self {
+        // Default to adaptive with 3× noise multiplier
+        Self::AdaptiveNoise(3.0)
+    }
+}
+
+impl ThresholdMode {
+    /// Create a fixed threshold (for legacy compatibility).
+    #[inline]
+    pub fn fixed(value: f32) -> Self {
+        Self::Fixed(value)
+    }
+
+    /// Create an adaptive threshold with the given sigma multiplier.
+    #[inline]
+    pub fn adaptive(sigma_multiplier: f32) -> Self {
+        Self::AdaptiveNoise(sigma_multiplier)
+    }
+
+    /// Compute the effective threshold given a noise estimate.
+    #[inline]
+    pub fn effective(&self, noise: f32) -> f32 {
+        match self {
+            Self::Fixed(val) => {
+                // Legacy behavior: use fixed, but floor at 3× noise
+                if noise > 0.0 { val.max(3.0 * noise) } else { *val }
+            }
+            Self::AdaptiveNoise(sigma) => {
+                // Pure adaptive: sigma × noise
+                if noise > 0.0 { sigma * noise } else { 1.0 }
+            }
+        }
+    }
+}
 
 // Stable 64-bit id for peaks
 pub type PeakId = i64;
@@ -297,19 +352,60 @@ pub struct RtLocalPeak {
     pub width_sec: Option<f32>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RtExpandParams {
     pub bin_pad: usize,
     pub smooth_sigma_sec: f32,
     pub smooth_trunc_k: f32,
-    pub min_prom: f32,
+    /// Prominence threshold for RT peak detection.
+    /// Use ThresholdMode::AdaptiveNoise(N) for N × local noise (recommended),
+    /// or ThresholdMode::Fixed(val) for legacy behavior with a hard threshold.
+    pub min_prom: ThresholdMode,
     pub min_sep_sec: f32,
     pub min_width_sec: f32,
     pub fallback_if_frames_lt: usize,
     pub fallback_frac_width: f32,
-    /// NEW: symmetric padding in *frame indices* around the IM peak’s frame_id_bounds
+    /// Symmetric padding in *frame indices* around the IM peak's frame_id_bounds
     /// when building the RT trace, to avoid cutting off partially overlapping peaks.
     pub rt_pad_frames: usize,
+}
+
+impl Default for RtExpandParams {
+    fn default() -> Self {
+        Self {
+            bin_pad: 2,
+            smooth_sigma_sec: 0.5,
+            smooth_trunc_k: 3.0,
+            min_prom: ThresholdMode::default(), // AdaptiveNoise(3.0)
+            min_sep_sec: 1.0,
+            min_width_sec: 0.5,
+            fallback_if_frames_lt: 3,
+            fallback_frac_width: 0.25,
+            rt_pad_frames: 2,
+        }
+    }
+}
+
+impl RtExpandParams {
+    /// Create with fixed prominence threshold (legacy behavior).
+    pub fn with_fixed_prom(mut self, prom: f32) -> Self {
+        self.min_prom = ThresholdMode::Fixed(prom);
+        self
+    }
+
+    /// Create with adaptive noise-based threshold.
+    pub fn with_adaptive_prom(mut self, sigma_multiplier: f32) -> Self {
+        self.min_prom = ThresholdMode::AdaptiveNoise(sigma_multiplier);
+        self
+    }
+
+    /// Legacy defaults (exact old behavior with min_prom: 100.0).
+    pub fn legacy_defaults() -> Self {
+        Self {
+            min_prom: ThresholdMode::Fixed(100.0),
+            ..Default::default()
+        }
+    }
 }
 
 #[inline]
@@ -571,32 +667,6 @@ pub fn expand_many_im_peaks_along_rt_flat(
 
 // =================== RT peak detection helpers ===================
 
-use std::cmp::Ordering;
-
-fn robust_noise_level(y: &[f32]) -> f32 {
-    let n = y.len();
-    if n < 3 {
-        return 0.0;
-    }
-
-    // |Δy| between neighbouring points
-    let mut diffs = Vec::with_capacity(n.saturating_sub(1));
-    for w in y.windows(2) {
-        diffs.push((w[1] - w[0]).abs());
-    }
-    if diffs.is_empty() {
-        return 0.0;
-    }
-
-    // median of diffs via selection, not full sort
-    let mid = diffs.len() / 2;
-    diffs.select_nth_unstable_by(mid, |a, b| {
-        a.partial_cmp(b).unwrap_or(Ordering::Equal)
-    });
-
-    diffs[mid]
-}
-
 fn nms_by_time(mut peaks: Vec<RtLocalPeak>, min_sep_sec: f32) -> Vec<RtLocalPeak> {
     if peaks.is_empty() { return peaks; }
 
@@ -635,23 +705,20 @@ pub fn find_rt_peaks(
     y_smoothed: &[f32],
     y_raw: &[f32],
     rt_times: &[f32],
-    min_prom: f32,
+    min_prom: ThresholdMode,
     min_sep_sec: f32,
     min_width_sec: f32,
 ) -> Vec<RtLocalPeak> {
     let n = y_smoothed.len();
     if n < 3 || y_raw.len() != n || rt_times.len() != n { return Vec::new(); }
 
-    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
-    if row_max < min_prom { return Vec::new(); }
+    // Compute noise estimate using robust MAD method
+    let noise = robust_noise_mad(y_smoothed);
+    let min_prom_eff = min_prom.effective(noise);
 
-    // noise-adaptive prominence threshold
-    let noise = robust_noise_level(y_smoothed);
-    let min_prom_eff = if noise > 0.0 {
-        min_prom.max(3.0 * noise)
-    } else {
-        min_prom
-    };
+    // Early exit if max signal is below threshold
+    let row_max = y_raw.iter().copied().fold(0.0f32, f32::max);
+    if row_max < min_prom_eff { return Vec::new(); }
 
     // 1) candidates
     let mut cands = Vec::with_capacity(n / 4);
