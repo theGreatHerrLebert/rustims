@@ -23,9 +23,8 @@
 ## Highlights
 
 - **DDA & DIA Support** — Full pipelines for both Data-Dependent and Data-Independent Acquisition
-- **Adaptive Signal Processing** — Noise-aware thresholding that adapts to local signal characteristics
 - **TimSim** — Generate synthetic PASEF-like datasets for method development and benchmarking
-- **Deep Learning Integration** — TensorFlow models for CCS and retention time prediction
+- **Deep Learning Integration** — CCS and retention time prediction models
 - **Rust Performance** — Core algorithms implemented in Rust for maximum throughput
 - **Python API** — Easy integration with existing scientific Python workflows
 
@@ -117,7 +116,7 @@ timsim_gui
 Built-in models for predicting:
 - **Collisional Cross Section (CCS)** from peptide sequence
 - **Retention Time (RT)** prediction
-- **Fragment Ion Intensities**
+- **Fragment Ion Intensities** via [Prosit](https://www.proteomicsdb.org/prosit/) (Wilhelm et al.)
 
 ```python
 from imspy.algorithm.ccs import DeepCCSPredictor
@@ -232,15 +231,18 @@ Pre-built images available for reproducible environments:
 
 If you use rustims in your research, please cite:
 
-> Teschner, D. et al. "Rustims: An Open-Source Framework for Rapid Development and Processing of timsTOF Data-Dependent Acquisition Data." *Journal of Proteome Research* (2025). [DOI: 10.1021/acs.jproteome.4c00966](https://pubs.acs.org/doi/full/10.1021/acs.jproteome.4c00966)
+> Teschner, D., Gomez-Zepeda, D., Łącki, M.K., Kemmer, T., Busch, A., Tenzer, S., and Hildebrandt, A. "Rustims: An Open-Source Framework for Rapid Development and Processing of timsTOF Data-Dependent Acquisition Data." *Journal of Proteome Research* 24(5), 2358-2368 (2025). [DOI: 10.1021/acs.jproteome.4c00966](https://pubs.acs.org/doi/full/10.1021/acs.jproteome.4c00966)
 
 ```bibtex
 @article{teschner2025rustims,
   title={Rustims: An Open-Source Framework for Rapid Development and Processing of timsTOF Data-Dependent Acquisition Data},
-  author={Teschner, David and others},
+  author={Teschner, David and Gomez-Zepeda, David and {\L}{\k{a}}cki, Mateusz K. and Kemmer, Thomas and Busch, Anne and Tenzer, Stefan and Hildebrandt, Andreas},
   journal={Journal of Proteome Research},
+  volume={24},
+  number={5},
+  pages={2358--2368},
   year={2025},
-  publisher={ACS Publications},
+  publisher={American Chemical Society},
   doi={10.1021/acs.jproteome.4c00966}
 }
 ```
