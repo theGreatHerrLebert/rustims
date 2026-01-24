@@ -116,7 +116,7 @@ timsim_gui
 Built-in models for predicting:
 - **Collisional Cross Section (CCS)** from peptide sequence
 - **Retention Time (RT)** prediction
-- **Fragment Ion Intensities** via [Prosit](https://www.proteomicsdb.org/prosit/) (Wilhelm et al.)
+- **Fragment Ion Intensities** via [Prosit](https://www.nature.com/articles/s41467-024-48322-0) (Adams et al.)
 
 ```python
 from imspy.algorithm.ccs import DeepCCSPredictor
