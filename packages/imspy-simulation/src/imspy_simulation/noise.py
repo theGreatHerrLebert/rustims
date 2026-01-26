@@ -6,7 +6,7 @@ import numba
 from typing import Callable, Optional
 from numpy.typing import ArrayLike
 from imspy_core.data.spectrum import MzSpectrum
-from imspy.utility.utilities import normal_pdf
+from imspy_simulation.math_utils import normal_pdf
 
 
 @numba.jit(nopython=True)

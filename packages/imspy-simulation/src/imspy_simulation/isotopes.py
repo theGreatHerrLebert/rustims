@@ -6,7 +6,7 @@ from numpy.typing import ArrayLike
 from abc import ABC, abstractmethod
 
 from imspy_core.data.spectrum import MzSpectrum
-from imspy.utility.utilities import gaussian, exp_gaussian, normal_pdf
+from imspy_simulation.math_utils import gaussian, exp_gaussian, normal_pdf
 import numba
 
 from imspy_simulation.noise import detection_noise

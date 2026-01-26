@@ -6,7 +6,7 @@ import json
 
 from imspy_core.timstof.frame import TimsFrame
 from imspy_core.timstof.slice import TimsSlice
-from imspy.utility.utilities import gaussian, exp_gaussian
+from imspy_simulation.math_utils import gaussian, exp_gaussian
 from imspy_simulation.isotopes import IsotopePatternGenerator, create_initial_feature_distribution
 from abc import ABC, abstractmethod
 from typing import Optional, Dict

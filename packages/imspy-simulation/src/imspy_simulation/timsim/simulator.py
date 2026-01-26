@@ -3,7 +3,6 @@ import sys
 
 # Silence verbose package outputs before importing them
 os.environ["WANDB_SILENT"] = "true"
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import platform
 import argparse
@@ -19,9 +18,9 @@ from tabulate import tabulate
 
 try:
     from importlib.metadata import version as get_version
-    __version__ = get_version("imspy")
+    __version__ = get_version("imspy-simulation")
 except Exception:
-    __version__ = "0.3.23"  # Fallback
+    __version__ = "0.4.0"  # Fallback
 
 
 @dataclass
@@ -97,9 +96,9 @@ from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
 
-# Optional video generation import
+# Optional video generation import (requires imspy-gui)
 try:
-    from imspy.vis.frame_rendering import generate_preview_video
+    from imspy_gui.frame_rendering import generate_preview_video
     VIDEO_GENERATION_AVAILABLE = True
 except ImportError:
     VIDEO_GENERATION_AVAILABLE = False
