@@ -7,7 +7,7 @@ with DiaNN identification results.
 
 import os
 import logging
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 import numpy as np
@@ -1130,7 +1130,7 @@ def generate_tool_validation_plots(
     """
     # Create display name with version
     display_name = f"{tool_name} v{tool_version}" if tool_version else tool_name
-    from .comparison import match_results, calculate_correlation_metrics
+    from .comparison import match_results
 
     _setup_style()
 

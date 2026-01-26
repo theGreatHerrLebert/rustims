@@ -1,6 +1,5 @@
 """File input components for TimSim GUI."""
 
-import os
 from pathlib import Path
 from typing import Callable, Optional, List
 from nicegui import ui

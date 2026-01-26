@@ -2,7 +2,7 @@ import sqlite3
 import os
 import warnings
 from abc import ABC
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 
 import numpy as np
 from numpy.typing import NDArray

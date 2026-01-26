@@ -3,7 +3,7 @@ Validation metrics and thresholds for timsim-validate.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import numpy as np
 
 

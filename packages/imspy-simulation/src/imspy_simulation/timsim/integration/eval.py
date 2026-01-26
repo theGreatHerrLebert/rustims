@@ -195,7 +195,6 @@ def create_results_bundle(
         Path to the created zip file, or None if creation failed.
     """
     import zipfile
-    import shutil
 
     output_path = Path(output_base)
     timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")

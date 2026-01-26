@@ -6,7 +6,7 @@ pattern used throughout the codebase.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, TypeVar, Generic
+from typing import TypeVar, Generic
 
 T = TypeVar("T")
 

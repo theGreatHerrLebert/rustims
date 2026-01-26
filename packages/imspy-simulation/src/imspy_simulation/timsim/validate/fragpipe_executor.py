@@ -5,8 +5,7 @@ FragPipe subprocess execution wrapper for timsim-validate.
 import os
 import subprocess
 import logging
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 from pathlib import Path
 

@@ -5,14 +5,13 @@ Main orchestration logic for timsim-validate.
 import os
 import logging
 import shutil
-import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, Literal
+from typing import Optional, Any, Tuple, Literal
 
 from .diann_executor import DiannExecutor, DiannError
-from .fragpipe_executor import FragPipeExecutor, FragPipeError, FragPipeConfig
-from .parsing import parse_diann_report, parse_fragpipe_psm, parse_fragpipe_combined
+from .fragpipe_executor import FragPipeExecutor, FragPipeError
+from .parsing import parse_diann_report, parse_fragpipe_combined
 from .comparison import (
     load_ground_truth,
     create_peptide_sets,
@@ -33,7 +32,6 @@ from .report import (
 )
 from .plots import generate_all_plots, PlotPaths
 from .tool_comparison import (
-    run_comparison as run_tool_comparison,
     generate_comparison_text_report,
     generate_comparison_plots,
 )
@@ -387,7 +385,7 @@ batch_size = {self.simulation_config.batch_size}
 
         # Run timsim simulation
         try:
-            from imspy_simulation.timsim.simulator import SimulationConfig, main as run_simulation
+            from imspy_simulation.timsim.simulator import main as run_simulation
             import sys
 
             # Temporarily replace sys.argv to run the simulator
@@ -587,7 +585,6 @@ batch_size = {self.simulation_config.batch_size}
         """
         import json
         from datetime import datetime
-        from .tool_comparison import compare_tools, ComparisonResult
 
         # Parse both tool results
         tool_results = {}

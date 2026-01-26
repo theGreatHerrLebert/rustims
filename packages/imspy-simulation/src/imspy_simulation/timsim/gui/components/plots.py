@@ -411,7 +411,6 @@ def create_acquisition_mode_plot(
         matplotlib.use('agg')
         import matplotlib.pyplot as plt
         from matplotlib.patches import Rectangle, FancyBboxPatch
-        from matplotlib.collections import PatchCollection
     except ImportError:
         ui.label("Matplotlib not available for plotting")
         return {}

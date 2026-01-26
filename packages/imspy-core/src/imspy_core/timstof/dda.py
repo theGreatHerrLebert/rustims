@@ -1,7 +1,6 @@
 import sqlite3
 from typing import List, Optional
 
-import numpy as np
 import pandas as pd
 
 from imspy_core.core.base import RustWrapperObject

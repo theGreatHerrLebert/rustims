@@ -1,6 +1,6 @@
 """Configuration section components for TimSim GUI."""
 
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 from nicegui import ui
 
 

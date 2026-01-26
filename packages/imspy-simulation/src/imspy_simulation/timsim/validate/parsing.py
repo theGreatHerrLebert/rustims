@@ -6,7 +6,6 @@ Adapted from timsim_bench/benchmark/table_processing.py
 
 import re
 import pandas as pd
-from typing import Optional
 
 from imspy_core.utility import remove_unimod_annotation
 
@@ -206,8 +205,6 @@ def parse_fragpipe_modification(mod_string: str, sequence: str) -> list:
     Returns:
         List of (position, modified_aa) tuples.
     """
-    import numpy as np
-
     modifications = []
     if pd.isna(mod_string) or not mod_string:
         return modifications

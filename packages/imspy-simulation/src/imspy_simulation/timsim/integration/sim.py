@@ -17,11 +17,9 @@ import logging
 import os
 import subprocess
 import sys
-import tempfile
-import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import toml
 

@@ -6,9 +6,7 @@ from nicegui import ui
 
 from ..components.file_inputs import fasta_picker, reference_picker, output_picker, path_input, FileBrowser
 from ..components.config_sections import (
-    ConfigSection,
     number_field,
-    slider_field,
     toggle_field,
     select_field,
     text_field,
@@ -62,7 +60,6 @@ def create_advanced_view(
                 def download_config():
                     """Download config as TOML file."""
                     import tempfile
-                    from pathlib import Path
 
                     # Generate filename
                     name = state.config.experiment.experiment_name.replace(

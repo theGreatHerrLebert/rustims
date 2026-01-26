@@ -5,7 +5,7 @@ mode frame building.
 """
 
 import os
-from typing import List, Optional
+from typing import List
 
 import imspy_connector
 

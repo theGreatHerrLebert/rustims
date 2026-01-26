@@ -9,7 +9,6 @@ from tqdm import tqdm
 from imspy_predictors.intensity.predictors import (
     Prosit2023TimsTofWrapper,
     DeepPeptideIntensityPredictor,
-    load_deep_intensity_predictor,
 )
 from imspy_simulation.acquisition import TimsTofAcquisitionBuilder
 from imspy_simulation.data import TransmissionHandle

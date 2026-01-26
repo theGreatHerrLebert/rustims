@@ -4,7 +4,6 @@ Ground truth loading and comparison utilities for timsim-validate.
 Adapted from timsim_bench/benchmark/table_concat.py and utility.py
 """
 
-import re
 import pandas as pd
 import numpy as np
 from typing import Tuple, Set, Optional

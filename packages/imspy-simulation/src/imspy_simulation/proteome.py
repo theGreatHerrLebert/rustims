@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from sagepy.core.database import PeptideIx
-from sagepy.core import EnzymeBuilder, SAGE_KNOWN_MODS, validate_mods, validate_var_mods, SageSearchConfiguration
+from sagepy.core import EnzymeBuilder, SageSearchConfiguration
 from tqdm import tqdm
 
 

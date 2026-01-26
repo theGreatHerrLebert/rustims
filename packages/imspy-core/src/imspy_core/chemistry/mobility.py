@@ -1,5 +1,4 @@
 import os
-import numpy as np
 from numpy.typing import NDArray
 import imspy_connector
 ims = imspy_connector.py_chemistry

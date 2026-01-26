@@ -7,8 +7,8 @@ Compares simulation ground truth with results from multiple analysis tools
 
 import os
 import logging
-from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Set, Tuple, Any, Union
+from dataclasses import dataclass
+from typing import Optional, Dict, List, Set, Tuple, Any
 import pandas as pd
 import numpy as np
 

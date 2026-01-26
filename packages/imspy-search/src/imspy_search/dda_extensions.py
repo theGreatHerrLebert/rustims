@@ -5,7 +5,6 @@ to eliminate the sagepy dependency from the core package.
 """
 
 from typing import List, Optional
-import numpy as np
 import pandas as pd
 
 from sagepy.core import (
@@ -13,7 +12,6 @@ from sagepy.core import (
 )
 
 from imspy_core.timstof import TimsDatasetDDA
-from imspy_core.timstof.frame import TimsFrame
 
 from imspy_search.utility import sanitize_mz, sanitize_charge, get_searchable_spec
 

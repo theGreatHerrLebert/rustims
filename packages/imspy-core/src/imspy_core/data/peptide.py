@@ -1,4 +1,3 @@
-from abc import ABC, abstractmethod
 from typing import List, Tuple, Union, TYPE_CHECKING
 
 import imspy_connector
