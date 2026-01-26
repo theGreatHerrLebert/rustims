@@ -14,7 +14,7 @@ Based on implementations from dlomix (wilhelm-lab/dlomix):
 https://github.com/wilhelm-lab/dlomix/blob/main/src/dlomix/losses/intensity_torch.py
 """
 
-from typing import Optional, Dict, Literal, Union
+from typing import Dict, Literal
 import numpy as np
 import torch
 import torch.nn as nn

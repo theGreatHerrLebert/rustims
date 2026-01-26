@@ -22,7 +22,6 @@ from tqdm import tqdm
 from imspy_predictors.intensity.utility import (
     post_process_predicted_fragment_spectra,
     reshape_dims,
-    seq_to_index,
 )
 
 from imspy_core.data import PeptideProductIonSeriesCollection, PeptideSequence

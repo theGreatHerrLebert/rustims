@@ -24,7 +24,7 @@ import torch.nn.functional as F
 from imspy_predictors.models.transformer import PeptideTransformer, PeptideTransformerConfig
 from imspy_predictors.models.heads import (
     CCSHead, RTHead, ChargeHead, IntensityHead,
-    INSTRUMENT_TYPES, INSTRUMENT_TO_ID, get_instrument_id, NUM_INSTRUMENT_TYPES,
+    INSTRUMENT_TYPES, INSTRUMENT_TO_ID, get_instrument_id,
 )
 
 

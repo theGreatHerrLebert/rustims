@@ -19,8 +19,8 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
-from dataclasses import dataclass, field, asdict
+from typing import Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass, asdict
 
 import numpy as np
 import torch

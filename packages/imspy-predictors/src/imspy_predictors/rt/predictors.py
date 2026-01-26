@@ -9,9 +9,8 @@ Classes:
     - PyTorchRTPredictor: PyTorch transformer/GRU-based model
 """
 
-from typing import List, Union, Optional
+from typing import List, Optional
 from abc import ABC, abstractmethod
-import logging
 
 import numpy as np
 import pandas as pd

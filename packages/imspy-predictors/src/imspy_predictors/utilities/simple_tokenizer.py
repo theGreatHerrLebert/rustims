@@ -10,7 +10,6 @@ Based on the ProformaTokenizer design but implemented in pure Python.
 import re
 from typing import List, Dict, Optional, Tuple, Union
 import json
-from pathlib import Path
 
 
 # Standard amino acids

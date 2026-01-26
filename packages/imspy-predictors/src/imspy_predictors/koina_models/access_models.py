@@ -1,6 +1,5 @@
 # If you get a ModuleNotFound error install koinapy with `pip install koinapy`.
 from koinapy import Koina
-import numpy as np
 import pandas as pd
 from .input_filters import filter_input_by_model
 

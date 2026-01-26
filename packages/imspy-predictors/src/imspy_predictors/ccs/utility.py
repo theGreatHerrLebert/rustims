@@ -8,8 +8,6 @@ import json
 import importlib.resources as resources
 from typing import List, Dict
 
-from imspy_core.utility import remove_unimod_annotation
-
 
 def load_tokenizer_from_resources(tokenizer_name: str = "unimod-vocab") -> Dict[str, int]:
     """Load a tokenizer from resources.

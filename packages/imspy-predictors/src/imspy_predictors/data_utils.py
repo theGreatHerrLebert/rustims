@@ -8,14 +8,12 @@ Includes support for instrument type encoding to enable instrument-specific
 predictions.
 """
 
-from typing import Dict, List, Optional, Tuple, Union, Callable
+from typing import Dict, List, Optional, Union
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-from imspy_predictors.models.heads import (
-    INSTRUMENT_TYPES, INSTRUMENT_TO_ID, get_instrument_id
-)
+from imspy_predictors.models.heads import get_instrument_id
 
 
 class PeptideDataset(Dataset):

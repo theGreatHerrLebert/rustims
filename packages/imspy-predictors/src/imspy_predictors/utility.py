@@ -10,9 +10,7 @@ Uses PyTorch as the deep learning backend.
 """
 
 import copy
-import json
 from typing import Optional, Dict, Any
-import numpy as np
 import importlib.resources as resources
 from importlib.abc import Traversable
 
