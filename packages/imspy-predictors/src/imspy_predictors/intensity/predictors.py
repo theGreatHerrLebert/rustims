@@ -695,6 +695,8 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
 
         # Post-process to Prosit format (seq_len-1, 2, 3)
         data = data.copy()
+        # Normalize collision_energy like old Prosit code - required for Rust frame builder key matching
+        data['collision_energy'] = data['collision_energy'] / divide_collision_energy_by
         data['sequence_length'] = data['sequence'].apply(lambda s: len(remove_unimod_annotation(s)))
         data['intensity_raw'] = list(intensities)
 

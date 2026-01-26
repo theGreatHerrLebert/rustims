@@ -161,7 +161,7 @@ phospho_mode = false
 num_threads = -1
 batch_size = 256
 frame_batch_size = 500
-lazy_frame_assembly = true
+lazy_frame_assembly = false
 use_gpu = false
 gpu_memory_limit_gb = 4
 
