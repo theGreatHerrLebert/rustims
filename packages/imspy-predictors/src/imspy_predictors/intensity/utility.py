@@ -1,14 +1,19 @@
+"""
+Utility functions for fragment intensity prediction.
+
+This module provides utilities for:
+- Sequence tokenization for Prosit-style models
+- Postprocessing of predicted fragment spectra
+- Fragment ion label generation
+"""
+
 from numpy.typing import NDArray
-from typing import List
+from typing import List, Dict
 import numba
 import numpy as np
 import pandas as pd
 
 from imspy_core.utility import tokenize_unimod_sequence
-
-
-# Cache for lazy-loaded dlomix modules
-_dlomix_cache = {}
 
 
 # Lazy import for sagepy IonType (optional, requires imspy-search)
@@ -66,12 +71,32 @@ def beta_score(fragments_observed, fragments_predicted) -> float:
     return np.log1p(intensity) + 2.0 * _log_factorial(int(i_min), 2) + _log_factorial(int(i_max), int(i_min) + 1)
 
 
-def _get_alphabet_unmod():
-    """Lazy load ALPHABET_UNMOD from dlomix."""
-    if 'ALPHABET_UNMOD' not in _dlomix_cache:
-        from dlomix.constants import ALPHABET_UNMOD
-        _dlomix_cache['ALPHABET_UNMOD'] = ALPHABET_UNMOD
-    return _dlomix_cache['ALPHABET_UNMOD']
+# Prosit alphabet mapping (standard amino acids with common modifications)
+ALPHABET_UNMOD: Dict[str, int] = {
+    '': 0,
+    'A': 1,
+    'C': 2,
+    '[UNIMOD:4]': 3,  # Carbamidomethyl
+    'D': 4,
+    'E': 5,
+    'F': 6,
+    'G': 7,
+    'H': 8,
+    'I': 9,
+    'K': 10,
+    'L': 11,
+    'M': 12,
+    '[UNIMOD:35]': 13,  # Oxidation
+    'N': 14,
+    'P': 15,
+    'Q': 16,
+    'R': 17,
+    'S': 18,
+    'T': 19,
+    'V': 20,
+    'W': 21,
+    'Y': 22,
+}
 
 
 def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
@@ -84,8 +109,6 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     Returns:
         A list of integers, each representing an index into the alphabet.
     """
-    ALPHABET_UNMOD = _get_alphabet_unmod()
-
     ret_arr = np.zeros(max_length, dtype=np.int32)
     tokenized_seq = tokenize_unimod_sequence(seq)[1:-1]
     assert len(tokenized_seq) <= max_length, f"Allowed sequence length is {max_length}, but got {len(tokenized_seq)}"
@@ -102,131 +125,153 @@ def seq_to_index(seq: str, max_length: int = 30) -> NDArray:
     return ret_arr
 
 
-# Your existing code for data preparation, with modifications to name the inputs
-def generate_prosit_intensity_prediction_dataset(
-        sequences: List[str],
-        charges: NDArray,
-        collision_energies: NDArray | None = None,
-        remove_mods: bool = False,
-):
-    """
-    Generate a dataset for predicting fragment intensities using Prosit.
-    Args:
-        sequences: A list of peptide sequences.
-        charges: A numpy array of precursor charges.
-        collision_energies: A numpy array of collision energies.
-        remove_mods: Whether to remove modifications from the sequences.
-
-    Returns:
-        A tf.data.Dataset object that yields batches of data in the format expected by the model.
-    """
-    import tensorflow as tf
-
-    # set default for unprovided collision_energies
-    if collision_energies is None:
-        collision_energies = np.expand_dims(np.repeat([0.35], len(charges)), 1)
-
-    # check for 1D collision_energies, need to be expanded to 2D
-    elif len(collision_energies.shape) == 1:
-        collision_energies = np.expand_dims(collision_energies, 1)
-
-    charges = tf.one_hot(charges - 1, depth=6)
-    sequences = tf.cast([seq_to_index(s) for s in sequences], dtype=tf.int32)
-
-    # Create a dataset that yields batches in the format expected by the model??
-    dataset = tf.data.Dataset.from_tensor_slices((
-        {"peptides_in": sequences,
-         "precursor_charge_in": charges,
-         "collision_energy_in": tf.cast(collision_energies, dtype=tf.float32)}
-    ))
-
-    return dataset
-
-
-def unpack_dict(features):
-    """Unpack the dictionary of features into the expected inputs for the model.
+def reshape_dims(intensities: NDArray) -> NDArray:
+    """Reshape flat intensities to 3D (batch, seq_len, ion_types).
 
     Args:
-        features: A dictionary of features, with keys 'peptides_in', 'precursor_charge_in', and 'collision_energy_in'
+        intensities: Flat array of shape (batch, 174) where 174 = 29 * 6
 
     Returns:
-        A tuple of the expected inputs for the model: (peptides, precursor_charge, collision_energy)
+        Reshaped array of shape (batch, 29, 6)
     """
-    return features['peptides_in'], features['precursor_charge_in'], features['collision_energy_in']
+    if len(intensities.shape) == 1:
+        # Single sample
+        return intensities.reshape(29, 6)
+    else:
+        # Batch
+        return intensities.reshape(-1, 29, 6)
 
 
-def _get_dlomix_postprocessing():
-    """Lazy load postprocessing functions from dlomix."""
-    if 'postprocessing' not in _dlomix_cache:
-        from dlomix.reports.postprocessing import (
-            reshape_flat, reshape_dims, normalize_base_peak,
-            mask_outofcharge, mask_outofrange
-        )
-        _dlomix_cache['postprocessing'] = {
-            'reshape_flat': reshape_flat,
-            'reshape_dims': reshape_dims,
-            'normalize_base_peak': normalize_base_peak,
-            'mask_outofcharge': mask_outofcharge,
-            'mask_outofrange': mask_outofrange,
-        }
-    return _dlomix_cache['postprocessing']
+def reshape_flat(intensities: NDArray) -> NDArray:
+    """Reshape 3D intensities back to flat format.
+
+    Args:
+        intensities: Array of shape (batch, 29, 6) or (29, 6)
+
+    Returns:
+        Flat array of shape (batch, 174) or (174,)
+    """
+    if len(intensities.shape) == 2:
+        return intensities.reshape(174)
+    else:
+        return intensities.reshape(-1, 174)
 
 
-def reshape_dims(intensities):
-    """Reshape flat intensities to 3D (wrapper for lazy-loaded dlomix function)."""
-    return _get_dlomix_postprocessing()['reshape_dims'](intensities)
+def normalize_base_peak(intensities: NDArray) -> NDArray:
+    """Normalize intensities by base peak (max value).
+
+    Args:
+        intensities: Intensity array
+
+    Returns:
+        Normalized intensities (max = 1.0)
+    """
+    if len(intensities.shape) == 1:
+        max_val = np.max(intensities[intensities >= 0])
+        if max_val > 0:
+            intensities = np.where(intensities >= 0, intensities / max_val, intensities)
+    else:
+        # Batch processing
+        for i in range(len(intensities)):
+            valid = intensities[i] >= 0
+            max_val = np.max(intensities[i][valid]) if np.any(valid) else 0
+            if max_val > 0:
+                intensities[i] = np.where(valid, intensities[i] / max_val, intensities[i])
+    return intensities
+
+
+def mask_outofrange(intensities: NDArray, sequence_lengths: NDArray) -> NDArray:
+    """Mask fragment ions that are out of sequence range.
+
+    Args:
+        intensities: 3D array of shape (batch, 29, 6)
+        sequence_lengths: Array of sequence lengths
+
+    Returns:
+        Masked intensities with -1.0 for out-of-range positions
+    """
+    for i, seq_len in enumerate(sequence_lengths):
+        # Fragment positions start at 1, max position is seq_len - 1
+        max_frag_pos = seq_len - 1
+        if max_frag_pos < 29:
+            intensities[i, max_frag_pos:, :] = -1.0
+    return intensities
+
+
+def mask_outofcharge(intensities: NDArray, charges: NDArray) -> NDArray:
+    """Mask fragment ions that exceed precursor charge.
+
+    Args:
+        intensities: 3D array of shape (batch, 29, 6)
+        charges: Array of precursor charges
+
+    Returns:
+        Masked intensities with -1.0 for out-of-charge fragments
+    """
+    # Ion types in order: y+1, y+2, y+3, b+1, b+2, b+3
+    for i, charge in enumerate(charges):
+        # y ions: indices 0, 1, 2 (charges 1, 2, 3)
+        # b ions: indices 3, 4, 5 (charges 1, 2, 3)
+        for ion_charge in range(1, 4):
+            if ion_charge > charge:
+                # y ion index
+                intensities[i, :, ion_charge - 1] = -1.0
+                # b ion index
+                intensities[i, :, ion_charge + 2] = -1.0
+    return intensities
 
 
 def post_process_predicted_fragment_spectra(data_pred: pd.DataFrame) -> NDArray:
     """
-    post process the predicted fragment intensities
+    Post process the predicted fragment intensities using pure NumPy.
+
     Args:
-        data_pred: dataframe containing the predicted fragment intensities
+        data_pred: DataFrame containing the predicted fragment intensities
+            Required columns: sequence_length, intensity_raw, charge
 
     Returns:
         numpy array of fragment intensities
     """
-    pp = _get_dlomix_postprocessing()
-    reshape_dims = pp['reshape_dims']
-    mask_outofrange = pp['mask_outofrange']
-    mask_outofcharge = pp['mask_outofcharge']
-    reshape_flat = pp['reshape_flat']
-    normalize_base_peak = pp['normalize_base_peak']
+    # Get sequence length for masking out of sequence
+    sequence_lengths = data_pred["sequence_length"].values
 
-    # get sequence length for masking out of sequence
-    sequence_lengths = data_pred["sequence_length"]
-
-    # get data
+    # Get data
     intensities = np.stack(data_pred["intensity_raw"].to_numpy()).astype(np.float32)
-    # set negative intensity values to 0
+
+    # Set negative intensity values to 0
     intensities[intensities < 0] = 0
+
+    # Reshape to 3D
     intensities = reshape_dims(intensities)
 
-    # mask out of sequence and out of charge
+    # Mask out of sequence and out of charge
     intensities = mask_outofrange(intensities, sequence_lengths)
-    intensities = mask_outofcharge(intensities, data_pred.charge)
+    intensities = mask_outofcharge(intensities, data_pred.charge.values)
+
+    # Reshape back to flat
     intensities = reshape_flat(intensities)
 
-    # save indices of -1.0 values, will be altered by intensity normalization
+    # Save indices of -1.0 values, will be altered by intensity normalization
     m_idx = intensities == -1.0
-    # normalize to base peak
+
+    # Normalize to base peak
     intensities = normalize_base_peak(intensities)
     intensities[m_idx] = -1.0
 
     return intensities
 
 
-def to_prosit_tensor(sequences: List):
+def to_prosit_tensor(sequences: List) -> NDArray:
     """
-    translate a list of fixed length numpy arrays into a tensorflow tensor
+    Translate a list of sequences to a numpy array of indices.
+
     Args:
-        sequences: list of numpy arrays, representing peptide sequences
+        sequences: List of peptide sequences
 
     Returns:
-        tensorflow tensor
+        numpy array of shape (n_sequences, max_length)
     """
-    import tensorflow as tf
-    return tf.convert_to_tensor(sequences, dtype=tf.string)
+    return np.array([seq_to_index(s) for s in sequences], dtype=np.int32)
 
 
 def get_prosit_intensity_flat_labels() -> List[str]:

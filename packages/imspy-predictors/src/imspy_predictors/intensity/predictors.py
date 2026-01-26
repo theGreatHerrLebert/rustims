@@ -1,19 +1,29 @@
+"""
+Fragment Ion Intensity Predictors.
+
+This module provides predictors for fragment ion intensities using Koina
+(remote Prosit models) as the primary prediction method.
+
+Classes:
+    - Prosit2023TimsTofWrapper: Wrapper for Prosit intensity prediction via Koina
+    - IonIntensityPredictor: Abstract base class for intensity predictors
+"""
+
 import os
 import re
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from numpy.typing import NDArray
 import pandas as pd
 import numpy as np
-import tensorflow as tf
 from abc import ABC, abstractmethod
 
 from tqdm import tqdm
 
-from imspy_predictors.utility import get_model_path
 from imspy_predictors.intensity.utility import (
-    generate_prosit_intensity_prediction_dataset, unpack_dict,
-    post_process_predicted_fragment_spectra, reshape_dims
+    post_process_predicted_fragment_spectra,
+    reshape_dims,
+    seq_to_index,
 )
 
 from imspy_core.data import PeptideProductIonSeriesCollection, PeptideSequence
@@ -51,7 +61,7 @@ def predict_intensities_prosit(
         num_threads: int = -1,
 ) -> None:
     """
-    Predict the fragment ion intensities using Prosit.
+    Predict the fragment ion intensities using Prosit via Koina.
 
     Note: This function requires sagepy (via imspy-search package).
 
@@ -174,19 +184,9 @@ def remove_unimod_annotation(sequence: str) -> str:
     return re.sub(pattern, '', sequence)
 
 
-def load_prosit_2023_timsTOF_predictor():
-    """ Get a pretrained deep predictor model
-    This model was downloaded from ZENODO: https://zenodo.org/records/8211811
-    PAPER : https://doi.org/10.1101/2023.07.17.549401
-    Returns:
-        The pretrained deep predictor model
-    """
-    return tf.saved_model.load(get_model_path('intensity/Prosit2023TimsTOFPredictor'))
-
-
 class IonIntensityPredictor(ABC):
     """
-    ABSTRACT INTERFACE for simulation of ion-mobility apex value
+    Abstract interface for simulation of fragment ion intensities.
     """
 
     def __init__(self):
@@ -203,14 +203,38 @@ class IonIntensityPredictor(ABC):
 
 class Prosit2023TimsTofWrapper(IonIntensityPredictor):
     """
-    Wrapper for the Prosit 2023 TIMS-TOF predictor
+    Wrapper for the Prosit 2023 TIMS-TOF predictor using Koina.
+
+    This wrapper uses the Koina API to access Prosit models remotely,
+    eliminating the need for local TensorFlow installation.
+
+    Args:
+        verbose: Whether to print progress during prediction
+        model_name: Name identifier for the predictor
+        use_koina: If True (default), use Koina API. If False, try local model.
     """
-    def __init__(self, verbose: bool = True, model_name: str = 'deep_ion_intensity_predictor'):
+
+    KOINA_MODEL_NAME = "Prosit_2023_intensity_timsTOF"
+
+    def __init__(
+        self,
+        verbose: bool = True,
+        model_name: str = 'deep_ion_intensity_predictor',
+        use_koina: bool = True,
+    ):
         super().__init__()
 
         self.verbose = verbose
         self.model_name = model_name
-        self.model = load_prosit_2023_timsTOF_predictor()
+        self.use_koina = use_koina
+        self._koina_model = None
+
+    def _get_koina_model(self):
+        """Lazy load Koina model."""
+        if self._koina_model is None:
+            from imspy_predictors.koina_models import ModelFromKoina
+            self._koina_model = ModelFromKoina(model_name=self.KOINA_MODEL_NAME)
+        return self._koina_model
 
     def simulate_ion_intensities_pandas_batched(
             self,
@@ -237,9 +261,14 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
         return pd.concat(tables)
 
-    def simulate_ion_intensities_pandas(self, data: pd.DataFrame, batch_size: int = 512,
-                                        divide_collision_energy_by: float = 1e2,
-                                        verbose: bool = False, flatten: bool = False) -> pd.DataFrame:
+    def simulate_ion_intensities_pandas(
+            self,
+            data: pd.DataFrame,
+            batch_size: int = 512,
+            divide_collision_energy_by: float = 1e2,
+            verbose: bool = False,
+            flatten: bool = False,
+    ) -> pd.DataFrame:
         flatten_prosit_array = _get_flatten_prosit_array()
 
         if verbose:
@@ -248,26 +277,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         data['collision_energy'] = data.apply(lambda r: r.collision_energy / divide_collision_energy_by, axis=1)
         data['sequence_length'] = data.apply(lambda r: len(remove_unimod_annotation(r.sequence)), axis=1)
 
-        tf_ds = (generate_prosit_intensity_prediction_dataset(
-            data.sequence,
-            data.charge,
-            np.expand_dims(data.collision_energy, 1)).batch(batch_size))
+        # Use Koina for prediction
+        I_pred = self._predict_with_koina(
+            data.sequence.tolist(),
+            data.charge.tolist(),
+            data.collision_energy.tolist(),
+            batch_size=batch_size,
+        )
 
-        # Map the unpacking function over the dataset
-        ds_unpacked = tf_ds.map(unpack_dict)
-
-        intensity_predictions = []
-
-        # Iterate over the dataset and call the model with unpacked inputs
-        for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
-                                                                          total=len(data) // batch_size + 1, ncols=100,
-                                                                          disable=not verbose):
-            model_input = [peptides_in, precursor_charge_in, collision_energy_in]
-            model_output = self.model(model_input).numpy()
-            intensity_predictions.append(model_output)
-
-        I_pred = list(np.vstack(intensity_predictions))
-        data['intensity_raw'] = I_pred
+        data['intensity_raw'] = list(I_pred)
         I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(data)))
 
         if flatten:
@@ -276,6 +294,41 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         data['intensity'] = list(I_pred)
 
         return data
+
+    def _predict_with_koina(
+            self,
+            sequences: List[str],
+            charges: List[int],
+            collision_energies: List[float],
+            batch_size: int = 512,
+    ) -> NDArray:
+        """Predict intensities using Koina API."""
+        koina_model = self._get_koina_model()
+
+        # Prepare input DataFrame for Koina
+        input_df = pd.DataFrame({
+            'peptide_sequences': sequences,
+            'precursor_charges': charges,
+            'collision_energies': collision_energies,
+            'instrument_types': ['TIMSTOF'] * len(sequences),
+        })
+
+        # Get predictions from Koina
+        result = koina_model.predict(input_df)
+
+        # Extract intensities from result
+        # Koina returns a DataFrame with intensities column
+        if 'intensities' in result.columns:
+            intensities = np.vstack(result['intensities'].values)
+        else:
+            # Fallback: try to extract from first numeric column
+            numeric_cols = result.select_dtypes(include=[np.number]).columns
+            if len(numeric_cols) > 0:
+                intensities = result[numeric_cols].values
+            else:
+                raise ValueError("Could not extract intensities from Koina response")
+
+        return intensities
 
     def predict_intensities(
             self,
@@ -292,23 +345,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         sequence_length = [len(s) for s in sequences_unmod]
         collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
 
-        tf_ds = generate_prosit_intensity_prediction_dataset(
+        # Use Koina for prediction
+        I_pred = self._predict_with_koina(
             sequences,
-            charges,
-            np.expand_dims(collision_energies_norm, 1)).batch(batch_size)
+            list(charges) if isinstance(charges, np.ndarray) else charges,
+            collision_energies_norm,
+            batch_size=batch_size,
+        )
 
-        ds_unpacked = tf_ds.map(unpack_dict)
-
-        intensity_predictions = []
-        for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
-                                                                          total=len(sequences) // batch_size + 1,
-                                                                          ncols=100,
-                                                                          disable=not self.verbose):
-            model_input = [peptides_in, precursor_charge_in, collision_energy_in]
-            model_output = self.model(model_input).numpy()
-            intensity_predictions.append(model_output)
-
-        I_pred = list(np.vstack(intensity_predictions))
+        I_pred = list(I_pred)
         I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
             'sequence': sequences,
             'charge': charges,
@@ -336,22 +381,15 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         sequence_length = [len(s) for s in sequences_unmod]
         collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
 
-        tf_ds = generate_prosit_intensity_prediction_dataset(
+        # Use Koina for prediction
+        I_pred = self._predict_with_koina(
             sequences_unmod,
-            charges,
-            np.expand_dims(collision_energies_norm, 1)).batch(batch_size)
+            list(charges) if isinstance(charges, np.ndarray) else charges,
+            collision_energies_norm,
+            batch_size=batch_size,
+        )
 
-        ds_unpacked = tf_ds.map(unpack_dict)
-
-        intensity_predictions = []
-        for peptides_in, precursor_charge_in, collision_energy_in in tqdm(ds_unpacked, desc='Predicting intensities',
-                                                                          total=len(sequences) // batch_size + 1, ncols=100,
-                                                                          disable=not self.verbose):
-            model_input = [peptides_in, precursor_charge_in, collision_energy_in]
-            model_output = self.model(model_input).numpy()
-            intensity_predictions.append(model_output)
-
-        I_pred = list(np.vstack(intensity_predictions))
+        I_pred = list(I_pred)
         I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
             'sequence': sequences,
             'charge': charges,
@@ -372,6 +410,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             ion_collections.append(series)
 
         return ion_collections
+
 
 def predict_fragment_intensities_with_koina(
         model_name: str,
