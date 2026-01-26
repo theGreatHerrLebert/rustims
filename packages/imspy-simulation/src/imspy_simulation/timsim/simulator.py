@@ -96,9 +96,9 @@ from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
 
-# Optional video generation import (requires imspy-gui)
+# Optional video generation import (requires imspy-vis)
 try:
-    from imspy_gui.frame_rendering import generate_preview_video
+    from imspy_vis.frame_rendering import generate_preview_video
     VIDEO_GENERATION_AVAILABLE = True
 except ImportError:
     VIDEO_GENERATION_AVAILABLE = False

@@ -157,7 +157,7 @@ julia:    imsjl_connector/, IMSJL/ (experimental)
 | **imspy-dia** | DIA-PASEF clustering and feature extraction |
 | **imspy-search** | Database search integration (sagepy, mokapot) |
 | **imspy-simulation** | TimSim synthetic data generation |
-| **imspy-gui** | Interactive visualization tools |
+| **imspy-vis** | Interactive visualization tools |
 
 The Rust core provides:
 - Memory-efficient data structures for large datasets
@@ -187,7 +187,7 @@ For more control over dependencies, install only the modules you need:
 | **imspy-dia** | DIA-PASEF feature extraction and clustering | `pip install imspy-dia` |
 | **imspy-search** | Database search via sagepy + rescoring | `pip install imspy-search` |
 | **imspy-simulation** | TimSim synthetic data generation | `pip install imspy-simulation` |
-| **imspy-gui** | Visualization and plotting tools | `pip install imspy-gui` |
+| **imspy-vis** | Visualization and plotting tools | `pip install imspy-vis` |
 
 **Dependency tree:**
 ```
@@ -196,7 +196,7 @@ imspy-core          (base - required by all)
 │   ├── imspy-search      (adds sagepy database search)
 │   └── imspy-simulation  (adds TimSim)
 ├── imspy-dia          (adds DIA clustering pipeline)
-└── imspy-gui          (adds visualization)
+└── imspy-vis          (adds visualization)
 ```
 
 Example: For DDA analysis with search, install `imspy-search` which pulls in predictors and core automatically:

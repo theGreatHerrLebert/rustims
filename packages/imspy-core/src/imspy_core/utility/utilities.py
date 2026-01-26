@@ -72,6 +72,26 @@ def exp_gaussian(x, μ: float = -3, σ: float = 1, λ: float = .25):
     return A * B
 
 
+@numba.jit(nopython=True)
+def linear_map(value, old_min, old_max, new_min=0.0, new_max=60.0):
+    """
+    Linear mapping from one domain to another.
+
+    Args:
+        value: The value to map.
+        old_min: Minimum of the original range.
+        old_max: Maximum of the original range.
+        new_min: Minimum of the target range (default 0.0).
+        new_max: Maximum of the target range (default 60.0).
+
+    Returns:
+        The mapped value in the new range.
+    """
+    scale = (new_max - new_min) / (old_max - old_min)
+    offset = new_min - old_min * scale
+    return value * scale + offset
+
+
 class NormalDistribution:
     def __init__(self, μ: float, σ: float):
         self.μ = μ

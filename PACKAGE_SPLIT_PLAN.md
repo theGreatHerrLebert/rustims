@@ -23,7 +23,7 @@ Users who just want to read timsTOF data must install the entire dependency tree
                              |
           +------------------+------------------+
           |                  |                  |
-    imspy-search      imspy-simulation    imspy-gui
+    imspy-search      imspy-simulation    imspy-vis
           |                  |                  |
           +--------+---------+                  |
                    |                            |
@@ -87,7 +87,7 @@ Users who just want to read timsTOF data must install the entire dependency tree
 
 **Entry points:** timsim, timsim_validate, timsim_compare, timsim_integration_*
 
-### Package 5: imspy-gui (~2,000 lines)
+### Package 5: imspy-vis (~2,000 lines)
 
 **Contents:**
 - `simulation/timsim/timsim_gui.py`
@@ -112,8 +112,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["imspy-gui"]
-all = ["imspy-gui"]
+gui = ["imspy-vis"]
+all = ["imspy-vis"]
 ```
 
 Users who want everything can `pip install imspy[all]`, but must use new import paths.
@@ -158,7 +158,7 @@ Move pretrained weights from `algorithm/pretrained/` to package resources using 
 | + ML predictions | `pip install imspy-predictors` | ~2.2GB |
 | + Database search | `pip install imspy-search` | ~2.5GB |
 | + Simulation | `pip install imspy-simulation` | ~2.5GB |
-| + GUI | `pip install imspy-gui` | ~3GB |
+| + GUI | `pip install imspy-vis` | ~3GB |
 | Everything (legacy) | `pip install imspy[all]` | ~3GB |
 
 ## Repository Structure (Monorepo)
@@ -202,10 +202,10 @@ rustims/
 │   │           ├── builders/
 │   │           ├── timsim/
 │   │           └── ...
-│   ├── imspy-gui/
+│   ├── imspy-vis/
 │   │   ├── pyproject.toml
 │   │   └── src/
-│   │       └── imspy_gui/
+│   │       └── imspy_vis/
 │   │           ├── __init__.py
 │   │           ├── timsim_gui.py
 │   │           └── vis/
@@ -244,7 +244,7 @@ Benefits of this structure:
 1. Extract simulation modules
 2. Publish to PyPI
 
-### Phase 5: Create imspy-gui
+### Phase 5: Create imspy-vis
 1. Extract GUI module
 2. Publish to PyPI
 
@@ -274,7 +274,7 @@ Benefits of this structure:
 All CLI entry points keep their names but are installed by different packages:
 - `imspy_dda`, `imspy_ccs`, `imspy_search`, `imspy_rescore_sage` → imspy-search
 - `timsim`, `timsim_validate`, `timsim_compare` → imspy-simulation
-- `timsim_gui` → imspy-gui
+- `timsim_gui` → imspy-vis
 
 ### Migration guide for users
 Users will need to:
@@ -311,16 +311,16 @@ pip install -e .
 timsim --help
 timsim_validate --help
 
-# imspy-gui
-cd packages/imspy-gui
+# imspy-vis
+cd packages/imspy-vis
 pip install -e .
-python -c "from imspy_gui.timsim_gui import main; print('OK')"
+python -c "from imspy_vis.timsim_gui import main; print('OK')"
 ```
 
 ### Integration test:
 ```bash
 # Install all packages together
-pip install packages/imspy-core packages/imspy-predictors packages/imspy-search packages/imspy-simulation packages/imspy-gui
+pip install packages/imspy-core packages/imspy-predictors packages/imspy-search packages/imspy-simulation packages/imspy-vis
 
 # Run existing integration tests
 pytest imspy/tests/  # Original test suite should pass with new imports
@@ -340,7 +340,7 @@ pip list | grep -i tensorflow  # Should show nothing
 
 ### Step 1: Create packages/ directory structure
 ```bash
-mkdir -p packages/{imspy-core,imspy-predictors,imspy-search,imspy-simulation,imspy-gui}
+mkdir -p packages/{imspy-core,imspy-predictors,imspy-search,imspy-simulation,imspy-vis}
 ```
 
 ### Step 2: Create imspy-core package
@@ -383,8 +383,8 @@ mkdir -p packages/{imspy-core,imspy-predictors,imspy-search,imspy-simulation,ims
 4. Add CLI entry points
 5. Handle `data/peptide.py` → `simulation/annotation.py` circular import (already solved with lazy import)
 
-### Step 6: Create imspy-gui package
-1. Create `packages/imspy-gui/pyproject.toml` with PyQt5, VTK
+### Step 6: Create imspy-vis package
+1. Create `packages/imspy-vis/pyproject.toml` with PyQt5, VTK
 2. Move: `simulation/timsim/timsim_gui.py`, `vis/`
 3. Add CLI entry point for `timsim_gui`
 

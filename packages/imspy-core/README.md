@@ -36,7 +36,7 @@ print(f"Mass: {peptide.mono_isotopic_mass}")
 - **imspy-predictors**: ML-based predictions (CCS, RT, intensity) - requires TensorFlow
 - **imspy-search**: Database search functionality - requires sagepy, mokapot
 - **imspy-simulation**: Simulation tools for timsTOF data
-- **imspy-gui**: GUI visualization tools - requires PyQt5, VTK
+- **imspy-vis**: Visualization tools - requires Plotly, Matplotlib
 
 ## License
 

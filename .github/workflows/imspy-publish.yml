@@ -85,7 +85,7 @@ jobs:
     needs: publish-predictors
     strategy:
       matrix:
-        package: [imspy-search, imspy-simulation, imspy-gui]
+        package: [imspy-search, imspy-simulation, imspy-vis]
     steps:
       - uses: actions/checkout@v4
 

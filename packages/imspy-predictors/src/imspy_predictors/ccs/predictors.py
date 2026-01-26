@@ -37,31 +37,11 @@ from imspy_predictors.utility import (
 from imspy_core.chemistry import ccs_to_one_over_k0, one_over_k0_to_ccs, calculate_mz
 from imspy_core.utility import tokenize_unimod_sequence
 
-
-# Lazy import for sagepy (optional dependency, requires imspy-search)
-def _get_sagepy_utils():
-    """Lazy import of sagepy utilities. Requires imspy-search package."""
-    try:
-        from sagepy.core.scoring import Psm
-        from sagepy.utility import psm_collection_to_pandas
-        return Psm, psm_collection_to_pandas
-    except ImportError:
-        raise ImportError(
-            "sagepy is required for PSM-based predictions. "
-            "Install imspy-search package for this functionality."
-        )
-
-
-# Lazy import for dbsearch utility (optional, requires imspy-search)
-def _get_dbsearch_utils():
-    """Lazy import of dbsearch utilities. Requires imspy-search package."""
-    try:
-        from imspy_search.utility import generate_balanced_im_dataset
-        return generate_balanced_im_dataset
-    except ImportError:
-        raise ImportError(
-            "generate_balanced_im_dataset requires imspy-search package."
-        )
+# Lazy imports for optional dependencies
+from imspy_predictors.lazy_imports import (
+    get_sagepy_psm_utils,
+    get_search_im_utils,
+)
 
 
 def predict_inverse_ion_mobility(
@@ -82,8 +62,8 @@ def predict_inverse_ion_mobility(
     Returns:
         None, the inverse ion mobility is set in the peptide spectrum matches in place.
     """
-    Psm, psm_collection_to_pandas = _get_sagepy_utils()
-    generate_balanced_im_dataset = _get_dbsearch_utils()
+    Psm, psm_collection_to_pandas = get_sagepy_psm_utils()
+    generate_balanced_im_dataset = get_search_im_utils()
 
     im_predictor = DeepPeptideIonMobilityApex(verbose=verbose)
 

@@ -382,7 +382,7 @@ def generate_preview_video(
         Path to the created video file
 
     Example:
-        >>> from imspy_gui.frame_rendering import generate_preview_video
+        >>> from imspy_vis.frame_rendering import generate_preview_video
         >>> generate_preview_video(
         ...     '/path/to/data.d',
         ...     '/path/to/preview.mp4',

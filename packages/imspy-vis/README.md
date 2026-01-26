@@ -1,17 +1,17 @@
-# imspy-gui
+# imspy-vis
 
 Lightweight visualization tools for timsTOF proteomics data.
 
 ## Installation
 
 ```bash
-pip install imspy-gui
+pip install imspy-vis
 ```
 
 For Jupyter notebook support:
 
 ```bash
-pip install imspy-gui[notebook]
+pip install imspy-vis[notebook]
 ```
 
 ## Features
@@ -26,7 +26,7 @@ pip install imspy-gui[notebook]
 ### Frame Rendering
 
 ```python
-from imspy_gui import DDAFrameRenderer, DIAFrameRenderer, generate_preview_video
+from imspy_vis import DDAFrameRenderer, DIAFrameRenderer, generate_preview_video
 
 # Generate a quick preview video
 generate_preview_video(
@@ -45,7 +45,7 @@ renderer.render_to_video('/path/to/output.mp4', max_frames=50)
 ### Point Cloud Visualization (Jupyter)
 
 ```python
-from imspy_gui import DDAPrecursorPointCloudVis
+from imspy_vis import DDAPrecursorPointCloudVis
 
 # In a Jupyter notebook
 visualizer = DDAPrecursorPointCloudVis(precursor_data)

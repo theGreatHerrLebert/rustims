@@ -36,35 +36,14 @@ from imspy_predictors.utility import (
 )
 
 
-# Lazy import for sagepy (optional dependency, requires imspy-search)
-def _get_sagepy_utils():
-    """Lazy import of sagepy utilities. Requires imspy-search package."""
-    try:
-        from sagepy.core.scoring import Psm
-        from sagepy.utility import psm_collection_to_pandas
-        return Psm, psm_collection_to_pandas
-    except ImportError:
-        raise ImportError(
-            "sagepy is required for PSM-based predictions. "
-            "Install imspy-search package for this functionality."
-        )
+# Import linear_map from imspy-core
+from imspy_core.utility import linear_map
 
-
-# Lazy import for dbsearch utility (optional, requires imspy-search)
-def _get_dbsearch_utils():
-    """Lazy import of dbsearch utilities. Requires imspy-search package."""
-    try:
-        from imspy_search.utility import linear_map, generate_balanced_rt_dataset
-        return linear_map, generate_balanced_rt_dataset
-    except ImportError:
-        raise ImportError(
-            "dbsearch utilities require imspy-search package."
-        )
-
-
-def linear_map(x, old_min, old_max, new_min, new_max):
-    """Map values from one range to another linearly."""
-    return (x - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
+# Lazy imports for optional dependencies
+from imspy_predictors.lazy_imports import (
+    get_sagepy_psm_utils,
+    get_search_rt_utils,
+)
 
 
 def predict_retention_time(
@@ -85,8 +64,8 @@ def predict_retention_time(
     Returns:
         None, retention times are set in the peptide-spectrum matches
     """
-    Psm, psm_collection_to_pandas = _get_sagepy_utils()
-    _linear_map, generate_balanced_rt_dataset = _get_dbsearch_utils()
+    Psm, psm_collection_to_pandas = get_sagepy_psm_utils()
+    generate_balanced_rt_dataset = get_search_rt_utils()
 
     rt_predictor = DeepChromatographyApex(verbose=verbose)
 
@@ -94,8 +73,8 @@ def predict_retention_time(
     rt_max = np.max([x.retention_time for x in psm_collection])
 
     for psm in psm_collection:
-        psm.retention_time_projected = _linear_map(
-            psm.retention_time, old_min=rt_min, old_max=rt_max, new_min=0, new_max=60
+        psm.retention_time_projected = linear_map(
+            psm.retention_time, rt_min, rt_max, 0, 60
         )
 
     if refine_model:

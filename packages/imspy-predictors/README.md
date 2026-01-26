@@ -69,7 +69,7 @@ Some functionality requires additional packages:
 - **imspy-core**: Core data structures and timsTOF readers
 - **imspy-search**: Database search functionality
 - **imspy-simulation**: Simulation tools for timsTOF data
-- **imspy-gui**: GUI visualization tools
+- **imspy-vis**: Visualization tools
 
 ## License
 

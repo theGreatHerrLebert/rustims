@@ -74,7 +74,7 @@ imspy-rescore-sage results.tsv fragments.tsv /output/path
 - **imspy-core**: Core data structures and timsTOF readers
 - **imspy-predictors**: ML-based predictors
 - **imspy-simulation**: Simulation tools for timsTOF data
-- **imspy-gui**: GUI visualization tools
+- **imspy-vis**: Visualization tools
 
 ## License
 

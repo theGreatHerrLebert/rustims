@@ -28,30 +28,11 @@ from imspy_predictors.intensity.utility import (
 
 from imspy_core.data import PeptideProductIonSeriesCollection, PeptideSequence
 
-
-# Lazy import for sagepy (optional dependency, requires imspy-search)
-def _get_sagepy_utils():
-    """Lazy import of sagepy utilities. Requires imspy-search package."""
-    try:
-        from sagepy.core.scoring import associate_fragment_ions_with_prosit_predicted_intensities, Psm
-        return associate_fragment_ions_with_prosit_predicted_intensities, Psm
-    except ImportError:
-        raise ImportError(
-            "sagepy is required for PSM-based predictions. "
-            "Install imspy-search package for this functionality."
-        )
-
-
-# Lazy import for simulation utility (optional, requires imspy-simulation)
-def _get_flatten_prosit_array():
-    """Lazy import of flatten_prosit_array. Requires imspy-simulation package."""
-    try:
-        from imspy_simulation.utility import flatten_prosit_array
-        return flatten_prosit_array
-    except ImportError:
-        raise ImportError(
-            "flatten_prosit_array requires imspy-simulation package."
-        )
+# Lazy imports for optional dependencies
+from imspy_predictors.lazy_imports import (
+    get_sagepy_fragment_utils,
+    get_simulation_flatten_prosit,
+)
 
 
 def predict_intensities_prosit(
@@ -74,7 +55,7 @@ def predict_intensities_prosit(
     Returns:
         None, the fragment ion intensities are stored in the PeptideSpectrumMatch objects
     """
-    associate_fragment_ions_with_prosit_predicted_intensities, Psm = _get_sagepy_utils()
+    associate_fragment_ions_with_prosit_predicted_intensities, Psm = get_sagepy_fragment_utils()
 
     # check if num_threads is -1, if so, use all available threads
     if num_threads == -1:
@@ -139,7 +120,7 @@ def get_collision_energy_calibration_factor(
     Returns:
         Tuple[float, List[float]]: the collision energy calibration factor and the angle similarities
     """
-    associate_fragment_ions_with_prosit_predicted_intensities, Psm = _get_sagepy_utils()
+    associate_fragment_ions_with_prosit_predicted_intensities, Psm = get_sagepy_fragment_utils()
 
     cos_target, cos_decoy = [], []
 
@@ -269,7 +250,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             verbose: bool = False,
             flatten: bool = False,
     ) -> pd.DataFrame:
-        flatten_prosit_array = _get_flatten_prosit_array()
+        flatten_prosit_array = get_simulation_flatten_prosit()
 
         if verbose:
             print("Generating Prosit compatible input data...")
@@ -339,7 +320,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             batch_size: int = 512,
             flatten: bool = False,
     ) -> List[NDArray]:
-        flatten_prosit_array = _get_flatten_prosit_array()
+        flatten_prosit_array = get_simulation_flatten_prosit()
 
         sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]
@@ -375,7 +356,7 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             divide_collision_energy_by: float = 1e2,
             batch_size: int = 512,
     ) -> List[PeptideProductIonSeriesCollection]:
-        flatten_prosit_array = _get_flatten_prosit_array()
+        flatten_prosit_array = get_simulation_flatten_prosit()
 
         sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]
@@ -729,7 +710,7 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
             I_pred = [arr.reshape(29, 2, 3) for arr in I_pred]
 
         if flatten:
-            flatten_prosit_array = _get_flatten_prosit_array()
+            flatten_prosit_array = get_simulation_flatten_prosit()
             # Convert to list of 1D arrays for DataFrame compatibility
             I_pred = [flatten_prosit_array(r) for r in I_pred]
 
@@ -801,7 +782,7 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
         Returns:
             List of intensity arrays
         """
-        flatten_prosit_array = _get_flatten_prosit_array()
+        flatten_prosit_array = get_simulation_flatten_prosit()
 
         sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]
@@ -858,7 +839,7 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
         Returns:
             List of PeptideProductIonSeriesCollection objects
         """
-        flatten_prosit_array = _get_flatten_prosit_array()
+        flatten_prosit_array = get_simulation_flatten_prosit()
 
         sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
         sequence_length = [len(s) for s in sequences_unmod]

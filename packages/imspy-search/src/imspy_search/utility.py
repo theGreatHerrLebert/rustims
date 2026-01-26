@@ -18,8 +18,8 @@ from sagepy.qfdr.tdc import target_decoy_competition_pandas
 
 from imspy_core.timstof import TimsDatasetDDA
 from imspy_core.timstof.frame import TimsFrame
+from imspy_core.utility import linear_map
 
-from numba import jit
 import ast
 import re
 
@@ -70,15 +70,6 @@ def parse_string_list(input_str: str) -> List[str]:
         return ast.literal_eval(input_str)
     except (SyntaxError, ValueError):
         raise ValueError("Invalid list format")
-
-
-@jit(nopython=True)
-def linear_map(value, old_min, old_max, new_min=0.0, new_max=60.0):
-    """Linear mapping from one domain to another."""
-    scale = (new_max - new_min) / (old_max - old_min)
-    offset = new_min - old_min * scale
-    new_value = value * scale + offset
-    return new_value
 
 
 def merge_dicts_with_merge_dict(dicts):

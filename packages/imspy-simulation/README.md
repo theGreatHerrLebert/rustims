@@ -73,7 +73,7 @@ timsim --config config.toml --output /path/to/output
 - **imspy-core**: Core data structures and timsTOF readers
 - **imspy-predictors**: ML-based predictors
 - **imspy-search**: Database search functionality
-- **imspy-gui**: GUI visualization tools
+- **imspy-vis**: Visualization tools
 
 ## License
 
