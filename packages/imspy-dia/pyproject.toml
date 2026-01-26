@@ -28,17 +28,18 @@ imspy-core = ">=0.4.0"
 imspy-connector = ">=0.4.0"
 pandas = ">=2.0.0"
 numpy = ">=1.24.0"
+torch = ">=2.0.0"
+tqdm = ">=4.66.0"
 
 [tool.poetry.extras]
 reporting = ["matplotlib"]
-torch = ["torch"]
-full = ["matplotlib", "torch"]
+full = ["matplotlib"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
 
 [tool.poetry.scripts]
-imspy-cluster = "imspy_dia.pipeline.cluster_pipeline:main"
+open_tracer = "imspy_dia.pipeline.cluster_pipeline:main"
 imspy-cluster-report = "imspy_dia.pipeline.cluster_report:main"
 
 [build-system]
