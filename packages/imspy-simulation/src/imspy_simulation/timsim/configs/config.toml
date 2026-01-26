@@ -104,11 +104,34 @@ decoys = false
 upscale_factor = 100000
 
 # -----------------------------------------------------------------------------
+# PREDICTION MODELS - Model selection for various predictions
+# -----------------------------------------------------------------------------
+# Each setting can be "" or "local" for the default PyTorch model,
+# or a Koina model name for online prediction via koina.wilhelmlab.org
+[models]
+# Retention time prediction model
+# Options: "" (local PyTorch), "Deeplc_hela_hf", "Chronologer_RT",
+#          "AlphaPeptDeep_rt_generic", "Prosit_2019_irt"
+rt_model = ""
+
+# CCS / Ion mobility prediction model
+# Options: "" (local PyTorch), "AlphaPeptDeep_ccs_generic", "IM2Deep"
+ccs_model = ""
+
+# Fragment intensity prediction model
+# Options: "" or "local" (local PyTorch PROSPECT fine-tuned model, default),
+#          "prosit" (Prosit_2023_intensity_timsTOF via Koina),
+#          "alphapeptdeep" (AlphaPeptDeep_ms2_generic via Koina - supports phospho!),
+#          "ms2pip" (ms2pip_timsTOF2024 via Koina)
+# Note: For phosphorylated peptides, use "alphapeptdeep" as Prosit doesn't support phospho
+intensity_model = ""
+
+# -----------------------------------------------------------------------------
 # RETENTION TIME - Chromatographic peak settings
 # -----------------------------------------------------------------------------
 [retention_time]
-# Use Koina model for RT prediction (leave empty for default GRU model)
-# Options: "" (default), "Deeplc_hela_hf"
+# Deprecated: Use [models] rt_model instead
+# Kept for backwards compatibility
 koina_rt_model = ""
 
 # Minimum RT as percentage of gradient (exclude early eluting peptides)
@@ -191,8 +214,10 @@ isotope_centroid = true
 # FRAGMENT INTENSITY - Fragment ion intensity prediction
 # -----------------------------------------------------------------------------
 [fragment_intensity]
-# Model for fragment intensity prediction
-# Options: "" (default/prosit), "prosit", "peptdeep"
+# Deprecated: Use [models] intensity_model instead
+# Kept for backwards compatibility
+# Options: "" or "prosit" (Prosit via Koina), "alphapeptdeep" (phospho-compatible),
+#          "ms2pip" (ms2pip_timsTOF2024)
 fragment_intensity_model = ""
 
 # Downsampling factor for fragment spectra (0.0-1.0)

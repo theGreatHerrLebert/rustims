@@ -11,7 +11,7 @@ requires-python = ">=3.11,<3.14"
 
 dependencies = [
     "imspy-core>=0.4.0",
-    "imspy-predictors>=0.4.0",
+    "imspy-predictors[koina]>=0.4.0",  # Include Koina support for intensity prediction
     "pandas>=2.0",
     "numpy>=1.24",
     "numba>=0.53",
@@ -24,9 +24,15 @@ dependencies = [
 
 [project.optional-dependencies]
 search = ["imspy-search>=0.4.0"]
+gui = [
+    "nicegui>=1.4.0",
+    "qdarkstyle>=3.0",
+    "markdown>=3.5",
+]
 
 [project.scripts]
 timsim = "imspy_simulation.timsim.simulator:main"
+timsim-gui = "imspy_simulation.timsim.gui:main"
 
 [build-system]
 requires = ["poetry-core"]

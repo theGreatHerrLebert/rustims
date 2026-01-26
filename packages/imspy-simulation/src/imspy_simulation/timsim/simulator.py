@@ -261,7 +261,16 @@ def get_default_settings() -> dict:
 
         # Distribution settings
         'gradient_length': 3600,
-        'koina_rt_model': None,
+
+        # Model selection (None/"local" = PyTorch, or Koina model name)
+        # RT models: "local", "Deeplc_hela_hf", "Chronologer_RT", "AlphaPeptDeep_rt_generic", "Prosit_2019_irt"
+        'rt_model': None,
+        'koina_rt_model': None,  # Deprecated alias for rt_model
+        # CCS models: "local", "AlphaPeptDeep_ccs_generic", "IM2Deep"
+        'ccs_model': None,
+        # Intensity models: "local"/"prosit", "alphapeptdeep", "ms2pip", or full Koina name
+        'intensity_model': None,
+
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
         'sigma_alpha_rt': 4,
@@ -756,12 +765,14 @@ def main():
             if not config.silent_mode:
                 logger.info(f"Re-scaling retention times to gradient length of {config.gradient_length} seconds")
 
+            # Support both rt_model and deprecated koina_rt_model
+            rt_model = config.rt_model or config.koina_rt_model
             # re-scale retention times by running rt simulation again
             peptides = simulate_retention_times(
                 peptides=peptides,
                 verbose=not config.silent_mode,
                 gradient_length=config.gradient_length,
-                use_koina_model=config.koina_rt_model,
+                use_koina_model=rt_model,
             )
 
         if config.rt_variation_std is not None:
@@ -925,11 +936,15 @@ def main():
 
         # JOB 3: Simulate retention times
         logger.info(section_header("Simulating Retention Times", use_unicode))
+        # Support both rt_model and deprecated koina_rt_model
+        rt_model = config.rt_model or config.koina_rt_model
+        if rt_model:
+            logger.info(f"  Using RT model: {rt_model}")
         peptides = simulate_retention_times(
             peptides=peptides,
             verbose=not config.silent_mode,
             gradient_length=acquisition_builder.gradient_length,
-            use_koina_model=config.koina_rt_model,
+            use_koina_model=rt_model,
         )
 
         # Workaround for the correct column ordering
@@ -1011,6 +1026,8 @@ def main():
             ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
         # JOB 6: Ion mobilities
+        if config.ccs_model:
+            logger.info(f"  Using CCS model: {config.ccs_model}")
         ions = simulate_ion_mobilities_and_variance(
             ions=ions,
             im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
@@ -1019,6 +1036,7 @@ def main():
             remove_mods=True,
             use_target_mean_std=config.use_inverse_mobility_std_mean,
             target_std_mean=config.inverse_mobility_std_mean,
+            use_koina_model=config.ccs_model,
         )
 
         # JOB 7: Precursor isotopic distributions
@@ -1063,8 +1081,10 @@ def main():
 
     # JOB 9: Simulate fragment intensities
     logger.info(section_header("Simulating Fragment Intensities", use_unicode))
-    if config.fragment_intensity_model:
-        logger.info(f"  Using intensity model: {config.fragment_intensity_model}")
+    # Support both intensity_model and deprecated fragment_intensity_model
+    intensity_model = config.intensity_model or config.fragment_intensity_model
+    if intensity_model:
+        logger.info(f"  Using intensity model: {intensity_model}")
     if config.lazy_frame_assembly:
         logger.info("  Using lazy loading for fragment intensity simulation")
     simulate_fragment_intensities(
@@ -1076,9 +1096,10 @@ def main():
         num_threads=num_threads,
         down_sample_factor=config.down_sample_factor,
         dda=config.acquisition_type == 'DDA',
-        model_name=config.fragment_intensity_model,
+        model_name=intensity_model,
         lazy_loading=config.lazy_frame_assembly,
         frame_batch_size=config.frame_batch_size,
+        phospho_mode=config.phospho_mode,
     )
 
     # JOB 10: Assemble frames

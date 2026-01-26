@@ -451,3 +451,440 @@ def predict_fragment_intensities_with_koina(
         print(f"[DEBUG] Koina model {model_name} predicted fragment intensity for {len(intensity)} peptides. Columns: {intensity.columns}")
 
     return intensity
+
+
+# =============================================================================
+# Local PyTorch Intensity Predictor (PROSPECT fine-tuned)
+# =============================================================================
+
+def get_model_path(relative_path: str):
+    """Get path to model file in checkpoints directory."""
+    from pathlib import Path
+    # Try package directory (src/imspy_predictors/checkpoints)
+    package_dir = Path(__file__).parent.parent
+    model_path = package_dir / 'checkpoints' / relative_path
+    if model_path.exists():
+        return model_path
+    # Try package root checkpoints (packages/imspy-predictors/checkpoints)
+    package_root = package_dir.parent.parent
+    root_path = package_root / 'checkpoints' / relative_path
+    if root_path.exists():
+        return root_path
+    # Try development checkpoints directory (one more level up)
+    dev_path = package_root.parent / 'checkpoints' / relative_path
+    if dev_path.exists():
+        return dev_path
+    return model_path  # Return package path even if not found
+
+
+def load_deep_intensity_predictor(map_location: Optional[str] = None):
+    """
+    Load a pretrained intensity predictor model.
+
+    This loads the PROSPECT fine-tuned transformer model trained on
+    timsTOF MS2 data.
+
+    Args:
+        map_location: Device to load model to ('cpu', 'cuda', etc.)
+
+    Returns:
+        Loaded UnifiedPeptideModel with intensity head
+    """
+    try:
+        import torch
+    except ImportError:
+        raise ImportError("PyTorch is required for local intensity prediction. Install with: pip install torch")
+
+    from imspy_predictors.models import UnifiedPeptideModel
+
+    model_path = get_model_path('timstof_intensity/best_model.pt')
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Intensity model not found at {model_path}. "
+            "Please ensure the model checkpoint is installed."
+        )
+
+    model = UnifiedPeptideModel.from_pretrained(
+        str(model_path),
+        tasks=['intensity'],
+        map_location=map_location
+    )
+    model.eval()
+    return model
+
+
+class DeepPeptideIntensityPredictor(IonIntensityPredictor):
+    """
+    High-level wrapper for local intensity prediction using PyTorch.
+
+    Uses the PROSPECT fine-tuned transformer model for timsTOF MS2 prediction.
+
+    Args:
+        model: Pre-loaded model (optional, will load default if None)
+        tokenizer: Tokenizer for sequences (optional, will load default if None)
+        verbose: Whether to print progress
+        device: Device to run on ('cpu', 'cuda', 'mps', or None for auto)
+
+    Example:
+        >>> predictor = DeepPeptideIntensityPredictor()
+        >>> intensities = predictor.predict_intensities(
+        ...     sequences=["PEPTIDE", "SEQUENCE"],
+        ...     charges=[2, 3],
+        ...     collision_energies=[30.0, 30.0]
+        ... )
+    """
+
+    def __init__(
+        self,
+        model=None,
+        tokenizer=None,
+        verbose: bool = True,
+        device: Optional[str] = None,
+    ):
+        try:
+            import torch
+            self._torch = torch
+        except ImportError:
+            raise ImportError(
+                "PyTorch is required for DeepPeptideIntensityPredictor. "
+                "Install with: pip install torch"
+            )
+
+        super().__init__()
+
+        # Load tokenizer
+        if tokenizer is None:
+            from imspy_predictors.utilities.tokenizers import ProformaTokenizer
+            self.tokenizer = ProformaTokenizer.with_defaults()
+        else:
+            self.tokenizer = tokenizer
+
+        # Load model
+        if model is None:
+            self.model = load_deep_intensity_predictor()
+        else:
+            self.model = model
+
+        self.verbose = verbose
+
+        # Set device
+        if device is None:
+            if self._torch.cuda.is_available():
+                self._device = 'cuda'
+            elif hasattr(self._torch.backends, 'mps') and self._torch.backends.mps.is_available():
+                self._device = 'mps'
+            else:
+                self._device = 'cpu'
+        else:
+            self._device = device
+
+        self.model = self.model.to(self._device)
+        self.model.eval()
+
+    def _preprocess(
+        self,
+        sequences: List[str],
+        charges: List[int],
+        collision_energies: List[float],
+    ):
+        """Prepare inputs for the model."""
+        # Get max_seq_len from model
+        max_seq_len = getattr(self.model, 'max_seq_len', 50)
+        if hasattr(self.model, 'encoder') and hasattr(self.model.encoder, 'max_seq_len'):
+            max_seq_len = self.model.encoder.max_seq_len
+
+        # Tokenize sequences
+        result = self.tokenizer(sequences, padding=True, return_tensors='pt')
+        tokens = result['input_ids']
+
+        # Pad to max length
+        if tokens.shape[1] < max_seq_len:
+            padding = self._torch.zeros(
+                tokens.shape[0], max_seq_len - tokens.shape[1], dtype=self._torch.long
+            )
+            tokens = self._torch.cat([tokens, padding], dim=1)
+        elif tokens.shape[1] > max_seq_len:
+            tokens = tokens[:, :max_seq_len]
+
+        # Charge as integer tensor (model handles one-hot internally)
+        charge_tensor = self._torch.tensor(charges, dtype=self._torch.long)
+
+        # Collision energies (already normalized in calling function)
+        ce_tensor = self._torch.tensor(collision_energies, dtype=self._torch.float32)
+
+        return tokens, charge_tensor, ce_tensor
+
+    def simulate_ion_intensities_pandas_batched(
+        self,
+        data: pd.DataFrame,
+        batch_size_tf_ds: int = 1024,
+        batch_size: int = int(4e5),
+        divide_collision_energy_by: float = 1e2,
+    ) -> pd.DataFrame:
+        """
+        Predict intensities for a DataFrame in batches.
+
+        Args:
+            data: DataFrame with 'sequence', 'charge', 'collision_energy' columns
+            batch_size_tf_ds: Batch size for model inference
+            batch_size: Batch size for data chunking
+            divide_collision_energy_by: CE normalization factor (default 100)
+
+        Returns:
+            DataFrame with 'intensity' column containing (seq_len-1, 2, 3) arrays
+        """
+        tables = []
+
+        num_batches = max(1, int(np.ceil(len(data) / batch_size))) if len(data) > 0 else 0
+        for batch_indices in tqdm(
+            np.array_split(data.index, num_batches) if num_batches > 0 else [],
+            total=num_batches,
+            desc='Simulating intensities (local)',
+            ncols=100,
+            disable=not self.verbose
+        ):
+            batch = data.loc[batch_indices].reset_index(drop=True)
+            data_pred = self.simulate_ion_intensities_pandas(
+                batch,
+                batch_size=batch_size_tf_ds,
+                divide_collision_energy_by=divide_collision_energy_by
+            )
+            tables.append(data_pred)
+
+        return pd.concat(tables)
+
+    def simulate_ion_intensities_pandas(
+        self,
+        data: pd.DataFrame,
+        batch_size: int = 512,
+        divide_collision_energy_by: float = 1e2,
+        verbose: bool = False,
+        flatten: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Predict intensities for a DataFrame.
+
+        Args:
+            data: DataFrame with 'sequence', 'charge', 'collision_energy' columns
+            batch_size: Batch size for model inference
+            divide_collision_energy_by: CE normalization factor
+            verbose: Print progress
+            flatten: Flatten output to 174-dim vectors
+
+        Returns:
+            DataFrame with 'intensity' column
+        """
+        sequences = data['sequence'].tolist()
+        charges = data['charge'].tolist()
+        collision_energies = (data['collision_energy'] / divide_collision_energy_by).tolist()
+
+        intensities = self._predict_batch(
+            sequences, charges, collision_energies, batch_size=batch_size
+        )
+
+        # Post-process to Prosit format (seq_len-1, 2, 3)
+        data = data.copy()
+        data['sequence_length'] = data['sequence'].apply(lambda s: len(remove_unimod_annotation(s)))
+        data['intensity_raw'] = list(intensities)
+
+        # Process through Prosit post-processing pipeline
+        processed = post_process_predicted_fragment_spectra(data)
+
+        # Reshape from flat (174,) to (29, 6) then to (29, 2, 3)
+        # Layout: (29, 6) where 6 = [y+1, y+2, y+3, b+1, b+2, b+3]
+        # Target: (29, 2, 3) where dim1 = [y, b] and dim2 = [+1, +2, +3]
+        #
+        # Prosit flat format groups by position:
+        #   [y1+1, y1+2, y1+3, b1+1, b1+2, b1+3, y2+1, y2+2, ...]
+        #
+        # After reshape_dims to (29, 6), each row is:
+        #   [y+1, y+2, y+3, b+1, b+2, b+3] for that position
+        #
+        # We need (29, 2, 3) where:
+        #   arr[pos, 0, :] = [y+1, y+2, y+3]  (y ions)
+        #   arr[pos, 1, :] = [b+1, b+2, b+3]  (b ions)
+        #
+        # C-order (default) reshape achieves this:
+        #   6 values -> arr[0,:] gets first 3, arr[1,:] gets next 3
+        I_pred = reshape_dims(processed)  # (batch, 29, 6)
+        if I_pred.ndim == 2:
+            # Single sample: (29, 6) -> (29, 2, 3)
+            I_pred = I_pred.reshape(29, 2, 3)  # C-order (default)
+            I_pred = [I_pred]
+        else:
+            # Batch: (batch, 29, 6) -> list of (29, 2, 3)
+            I_pred = [arr.reshape(29, 2, 3) for arr in I_pred]
+
+        if flatten:
+            flatten_prosit_array = _get_flatten_prosit_array()
+            # Convert to list of 1D arrays for DataFrame compatibility
+            I_pred = [flatten_prosit_array(r) for r in I_pred]
+
+        data['intensity'] = I_pred
+
+        return data
+
+    def _predict_batch(
+        self,
+        sequences: List[str],
+        charges: List[int],
+        collision_energies: List[float],
+        batch_size: int = 512,
+    ) -> np.ndarray:
+        """Run batched prediction."""
+        all_intensities = []
+
+        for i in range(0, len(sequences), batch_size):
+            batch_seqs = sequences[i:i + batch_size]
+            batch_charges = charges[i:i + batch_size]
+            batch_ces = collision_energies[i:i + batch_size]
+
+            tokens, charge_onehot, ce_tensor = self._preprocess(
+                batch_seqs, batch_charges, batch_ces
+            )
+
+            tokens = tokens.to(self._device)
+            charge_onehot = charge_onehot.to(self._device)
+            ce_tensor = ce_tensor.to(self._device)
+
+            with self._torch.no_grad():
+                outputs = self.model(
+                    tokens,
+                    charge=charge_onehot,
+                    collision_energy=ce_tensor,
+                )
+
+            # Extract intensity output
+            if 'intensity' in outputs:
+                intensities = outputs['intensity'].cpu().numpy()
+            else:
+                # Fallback: use first output
+                intensities = list(outputs.values())[0].cpu().numpy()
+
+            all_intensities.append(intensities)
+
+        return np.vstack(all_intensities)
+
+    def predict_intensities(
+        self,
+        sequences: List[str],
+        charges: List[int],
+        collision_energies: List[float],
+        divide_collision_energy_by: float = 1e2,
+        batch_size: int = 512,
+        flatten: bool = False,
+    ) -> List[NDArray]:
+        """
+        Predict fragment intensities.
+
+        Args:
+            sequences: Peptide sequences (with UNIMOD modifications)
+            charges: Precursor charges
+            collision_energies: Collision energies
+            divide_collision_energy_by: CE normalization factor
+            batch_size: Batch size
+            flatten: Flatten to 174-dim vectors
+
+        Returns:
+            List of intensity arrays
+        """
+        flatten_prosit_array = _get_flatten_prosit_array()
+
+        sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
+        sequence_length = [len(s) for s in sequences_unmod]
+        collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
+
+        I_pred = self._predict_batch(
+            sequences,
+            list(charges) if isinstance(charges, np.ndarray) else charges,
+            collision_energies_norm,
+            batch_size=batch_size,
+        )
+
+        I_pred = list(I_pred)
+        processed = post_process_predicted_fragment_spectra(pd.DataFrame({
+            'sequence': sequences,
+            'charge': charges,
+            'collision_energy': collision_energies,
+            'sequence_length': sequence_length,
+            'intensity_raw': I_pred,
+        }))
+
+        # Reshape to (batch, 29, 6) then to (29, 2, 3) per sample
+        I_pred = reshape_dims(processed)  # (batch, 29, 6) or (29, 6)
+        if I_pred.ndim == 2:
+            # Single sample: (29, 6) -> (29, 2, 3)
+            I_pred = [I_pred.reshape(29, 2, 3)]
+        else:
+            # Batch: (batch, 29, 6) -> list of (29, 2, 3)
+            I_pred = [arr.reshape(29, 2, 3) for arr in I_pred]
+
+        if flatten:
+            I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
+
+        return I_pred
+
+    def simulate_ion_intensities(
+        self,
+        sequences: List[str],
+        charges: List[int],
+        collision_energies: List[float],
+        divide_collision_energy_by: float = 1e2,
+        batch_size: int = 512,
+    ) -> List:
+        """
+        Predict fragment intensities and return as PeptideProductIonSeriesCollection.
+
+        Args:
+            sequences: Peptide sequences (with UNIMOD modifications)
+            charges: Precursor charges
+            collision_energies: Collision energies
+            divide_collision_energy_by: CE normalization factor
+            batch_size: Batch size
+
+        Returns:
+            List of PeptideProductIonSeriesCollection objects
+        """
+        flatten_prosit_array = _get_flatten_prosit_array()
+
+        sequences_unmod = [remove_unimod_annotation(s) for s in sequences]
+        sequence_length = [len(s) for s in sequences_unmod]
+        collision_energies_norm = [ce / divide_collision_energy_by for ce in collision_energies]
+
+        I_pred = self._predict_batch(
+            sequences,
+            list(charges) if isinstance(charges, np.ndarray) else charges,
+            collision_energies_norm,
+            batch_size=batch_size,
+        )
+
+        I_pred = list(I_pred)
+        processed = post_process_predicted_fragment_spectra(pd.DataFrame({
+            'sequence': sequences,
+            'charge': charges,
+            'collision_energy': collision_energies,
+            'sequence_length': sequence_length,
+            'intensity_raw': I_pred,
+        }))
+
+        # Reshape to (batch, 29, 6) then to (29, 2, 3) per sample
+        I_pred = reshape_dims(processed)  # (batch, 29, 6) or (29, 6)
+        if I_pred.ndim == 2:
+            # Single sample: (29, 6) -> (29, 2, 3)
+            I_pred = [I_pred.reshape(29, 2, 3)]
+        else:
+            # Batch: (batch, 29, 6) -> list of (29, 2, 3)
+            I_pred = [arr.reshape(29, 2, 3) for arr in I_pred]
+
+        intensities = np.vstack([flatten_prosit_array(r) for r in I_pred])
+        peptide_sequences = [PeptideSequence(s) for s in sequences]
+        ion_collections = []
+
+        for peptide, charge, intensity in zip(peptide_sequences, charges, intensities):
+            series = peptide.associate_fragment_ion_series_with_prosit_intensities(
+                intensity,
+                charge
+            )
+            ion_collections.append(series)
+
+        return ion_collections
