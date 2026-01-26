@@ -21,10 +21,12 @@ This plan addresses code bloat identified after the package split refactor. The 
 - `packages/imspy-search/src/imspy_search/utility.py`
 - `packages/imspy-predictors/src/imspy_predictors/rt/predictors.py`
 
-### 1.2 `remove_unimod_annotation` function
-- [ ] Ensure single source in `imspy-predictors/utility.py`
-- [ ] Remove from `imspy-predictors/ccs/utility.py` if duplicated
-- [ ] Update imports across predictor modules
+### 1.2 `remove_unimod_annotation` function - COMPLETED
+- [x] Added to `imspy-core/utility/sequence.py` (single source)
+- [x] Removed from `imspy-predictors/ccs/utility.py`
+- [x] Removed from `imspy-predictors/intensity/predictors.py`
+- [x] Removed from `imspy-simulation/timsim/validate/parsing.py`
+- [x] Updated all imports to use imspy-core
 
 ---
 

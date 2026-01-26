@@ -8,19 +8,7 @@ import re
 import pandas as pd
 from typing import Optional
 
-
-def remove_unimod_annotation(sequence: str) -> str:
-    """
-    Remove UNIMOD annotations from a peptide sequence.
-
-    Args:
-        sequence: A peptide sequence with UNIMOD annotations.
-
-    Returns:
-        The peptide sequence without UNIMOD annotations.
-    """
-    pattern = r'\[UNIMOD:\d+\]'
-    return re.sub(pattern, '', sequence)
+from imspy_core.utility import remove_unimod_annotation
 
 
 def format_diann_sequence(modified_sequence: str) -> str:

@@ -10,7 +10,6 @@ Classes:
 """
 
 import os
-import re
 from typing import List, Tuple, Optional
 
 from numpy.typing import NDArray
@@ -27,6 +26,7 @@ from imspy_predictors.intensity.utility import (
 )
 
 from imspy_core.data import PeptideProductIonSeriesCollection, PeptideSequence
+from imspy_core.utility import remove_unimod_annotation
 
 # Lazy imports for optional dependencies
 from imspy_predictors.lazy_imports import (
@@ -149,20 +149,6 @@ def get_collision_energy_calibration_factor(
         print(f"Best calibration factor: {calibration_factor}, with similarity: {np.max(np.round(similarities, 2))}")
 
     return calibration_factor, similarities
-
-
-def remove_unimod_annotation(sequence: str) -> str:
-    """
-    Remove the unimod annotation from a peptide sequence.
-    Args:
-        sequence: a peptide sequence
-
-    Returns:
-        str: the peptide sequence without unimod annotation
-    """
-
-    pattern = r'\[UNIMOD:\d+\]'
-    return re.sub(pattern, '', sequence)
 
 
 class IonIntensityPredictor(ABC):

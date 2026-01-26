@@ -5,23 +5,10 @@ This module provides tokenization and data preparation utilities for CCS models.
 """
 
 import json
-import re
 import importlib.resources as resources
 from typing import List, Dict
 
-
-def remove_unimod_annotation(sequence: str) -> str:
-    """
-    Remove the unimod annotation from a peptide sequence.
-
-    Args:
-        sequence: a peptide sequence
-
-    Returns:
-        str: the peptide sequence without unimod annotation
-    """
-    pattern = r'\[UNIMOD:\d+\]'
-    return re.sub(pattern, '', sequence)
+from imspy_core.utility import remove_unimod_annotation
 
 
 def load_tokenizer_from_resources(tokenizer_name: str = "unimod-vocab") -> Dict[str, int]:

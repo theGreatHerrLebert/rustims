@@ -2,6 +2,20 @@ import re
 from typing import List
 
 
+def remove_unimod_annotation(sequence: str) -> str:
+    """
+    Remove UNIMOD annotations from a peptide sequence.
+
+    Args:
+        sequence: A peptide sequence with UNIMOD annotations (e.g., "PEPTM[UNIMOD:35]IDE").
+
+    Returns:
+        The peptide sequence without UNIMOD annotations (e.g., "PEPTMIDE").
+    """
+    pattern = r'\[UNIMOD:\d+\]'
+    return re.sub(pattern, '', sequence)
+
+
 def tokenize_unimod_sequence(unimod_sequence: str) -> List[str]:
     """
     Tokenizes a sequence of modified amino acids.
