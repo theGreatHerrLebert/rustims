@@ -426,28 +426,97 @@ class UnifiedPeptideModel(nn.Module):
         Returns:
             Loaded model
         """
+        # Default to CPU to avoid CUDA issues when loading models saved on GPU
+        if map_location is None:
+            map_location = 'cpu'
         checkpoint = torch.load(path, map_location=map_location)
 
-        # Use saved tasks if not overriding
-        enabled_tasks = tasks or checkpoint.get("enabled_tasks", ["ccs", "rt", "charge", "intensity"])
+        # Handle both old format (encoder_config) and new training format (model_state_dict)
+        if "encoder_config" in checkpoint:
+            # Old format with separate encoder_config
+            encoder_config = checkpoint["encoder_config"]
+            encoder_state_dict = checkpoint["encoder_state_dict"]
+            heads_state_dict = checkpoint.get("heads_state_dict", {})
+            enabled_tasks = tasks or checkpoint.get("enabled_tasks", ["ccs", "rt", "charge", "intensity"])
+            max_charge = checkpoint.get("max_charge", 6)
+            max_seq_len = checkpoint.get("max_seq_len", 100)
+        elif "model_state_dict" in checkpoint:
+            # New training format with combined model_state_dict
+            model_state_dict = checkpoint["model_state_dict"]
+
+            # Infer encoder config from state dict
+            d_model = model_state_dict["encoder.embedding.weight"].shape[1]
+            vocab_size = model_state_dict["encoder.embedding.weight"].shape[0]
+
+            # Count transformer layers
+            num_layers = sum(1 for k in model_state_dict if ".self_attn.in_proj_weight" in k and k.startswith("encoder.transformer"))
+
+            # Get feedforward dim from linear1
+            dim_feedforward = model_state_dict["encoder.transformer.layers.0.linear1.weight"].shape[0]
+
+            # Get number of attention heads from in_proj shape
+            in_proj_shape = model_state_dict["encoder.transformer.layers.0.self_attn.in_proj_weight"].shape[0]
+            nhead = 8  # Default, hard to infer exactly
+
+            # Get max_seq_len from positional encoding shape
+            pos_pe_key = "encoder.pos_pe" if "encoder.pos_pe" in model_state_dict else "encoder.pos_encoder.pe"
+            max_seq_len_inferred = model_state_dict[pos_pe_key].shape[1]
+
+            encoder_config = {
+                "d_model": d_model,
+                "nhead": nhead,
+                "num_layers": num_layers,
+                "dim_feedforward": dim_feedforward,
+                "dropout": 0.1,
+                "vocab_size": vocab_size,
+                "max_seq_len": max_seq_len_inferred,
+            }
+
+            # Split state dict into encoder and heads
+            encoder_state_dict = {k.replace("encoder.", ""): v for k, v in model_state_dict.items() if k.startswith("encoder.")}
+
+            # Handle key name variations between model versions
+            # New models may use 'pos_pe' instead of 'pos_encoder.pe'
+            if "pos_pe" in encoder_state_dict and "pos_encoder.pe" not in encoder_state_dict:
+                encoder_state_dict["pos_encoder.pe"] = encoder_state_dict.pop("pos_pe")
+
+            # Extract heads state dict grouped by head name
+            heads_state_dict = {}
+            head_keys = [k for k in model_state_dict if k.startswith("heads.")]
+            for k in head_keys:
+                # Format: heads.<head_name>.<layer_name>
+                parts = k.split(".", 2)
+                if len(parts) >= 3:
+                    head_name = parts[1]
+                    layer_key = parts[2]
+                    if head_name not in heads_state_dict:
+                        heads_state_dict[head_name] = {}
+                    heads_state_dict[head_name][layer_key] = model_state_dict[k]
+
+            # Determine task from checkpoint or default
+            task = checkpoint.get("task", "ccs")
+            enabled_tasks = tasks or [task]
+            max_charge = 6
+            max_seq_len = max_seq_len_inferred
+        else:
+            raise ValueError(f"Unknown checkpoint format. Keys: {list(checkpoint.keys())}")
 
         # Create model
         model = cls(
-            vocab_size=checkpoint["encoder_config"]["vocab_size"],
-            encoder_config=checkpoint["encoder_config"],
+            vocab_size=encoder_config["vocab_size"],
+            encoder_config=encoder_config,
             tasks=enabled_tasks,
-            max_charge=checkpoint.get("max_charge", 6),
-            max_seq_len=checkpoint.get("max_seq_len", 100),
+            max_charge=max_charge,
+            max_seq_len=max_seq_len,
         )
 
         # Load encoder weights
-        model.encoder.load_state_dict(checkpoint["encoder_state_dict"])
+        model.encoder.load_state_dict(encoder_state_dict)
 
         # Load head weights if available and tasks match
-        if "heads_state_dict" in checkpoint:
-            for name, state_dict in checkpoint["heads_state_dict"].items():
-                if name in model.heads:
-                    model.heads[name].load_state_dict(state_dict)
+        for name, state_dict in heads_state_dict.items():
+            if name in model.heads:
+                model.heads[name].load_state_dict(state_dict)
 
         return model
 

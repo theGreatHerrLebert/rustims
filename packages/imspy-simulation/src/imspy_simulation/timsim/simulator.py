@@ -152,33 +152,27 @@ def setup_logging(log_level: str = "INFO", log_file: str = None) -> None:
 
 def configure_gpu_memory(memory_limit_gb: int = 4, use_gpu: bool = True) -> None:
     """
-    Configures GPU usage for TensorFlow.
+    Configures GPU usage for PyTorch.
 
     Args:
-        memory_limit_gb: Memory limit in gigabytes per GPU.
+        memory_limit_gb: Memory limit in gigabytes per GPU (used for logging only,
+                        PyTorch manages memory dynamically).
         use_gpu: If False, disables GPU and forces CPU-only mode.
     """
-    # Must set CUDA_VISIBLE_DEVICES before importing TensorFlow
     if not use_gpu:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
         logger.info("  GPU disabled via config, using CPU only")
-
-    import tensorflow as tf
-
-    if not use_gpu:
         return
 
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if gpus:
-        try:
-            for i, _ in enumerate(gpus):
-                tf.config.experimental.set_virtual_device_configuration(
-                    gpus[i],
-                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * memory_limit_gb)]
-                )
-                logger.info(f"  GPU {i}: memory restricted to {memory_limit_gb}GB")
-        except RuntimeError as e:
-            logger.error(f"  GPU configuration error: {e}")
+    import torch
+
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        for i in range(num_gpus):
+            gpu_name = torch.cuda.get_device_name(i)
+            gpu_mem = torch.cuda.get_device_properties(i).total_memory / (1024**3)
+            logger.info(f"  GPU {i}: {gpu_name} ({gpu_mem:.1f}GB total)")
+        logger.info(f"  PyTorch will manage GPU memory dynamically")
     else:
         logger.info("  No GPU detected, using CPU")
 

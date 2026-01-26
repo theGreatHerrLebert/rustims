@@ -467,7 +467,8 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         charges: List[int],
         mz: List[float],
         batch_size: int = 1024,
-    ) -> NDArray:
+        return_uncertainty: bool = False,
+    ) -> Union[NDArray, Tuple[NDArray, NDArray]]:
         """
         Predict inverse ion mobilities for peptide sequences.
 
@@ -476,9 +477,10 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             charges: List of charge states
             mz: List of m/z values
             batch_size: Batch size for prediction
+            return_uncertainty: If True, also return predicted uncertainty (std)
 
         Returns:
-            Inverse ion mobilities (1/K0)
+            Inverse ion mobilities (1/K0), or tuple of (1/K0, std) if return_uncertainty=True
         """
         self.model.eval()
 
@@ -491,6 +493,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         # Predict in batches
         all_ccs = []
+        all_ccs_std = []
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
@@ -500,26 +503,40 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                 # Handle different model types
                 if hasattr(self.model, 'predict_ccs'):
                     # UnifiedPeptideModel
-                    ccs, _ = self.model.predict_ccs(
+                    ccs, ccs_std = self.model.predict_ccs(
                         batch_tokens,
                         batch_mz,
                         torch.argmax(batch_charges, dim=1) + 1,
                     )
                 else:
                     # Legacy PyTorchCCSPredictor
-                    ccs, _ = self.model(batch_mz, batch_charges, batch_tokens)
-                    if isinstance(ccs, tuple):
-                        ccs = ccs[0]  # Handle std output
+                    result = self.model(batch_mz, batch_charges, batch_tokens)
+                    if isinstance(result, tuple):
+                        ccs, ccs_std = result[0], result[1] if len(result) > 1 else None
+                    else:
+                        ccs, ccs_std = result, None
 
                 all_ccs.append(ccs.cpu().numpy())
+                if ccs_std is not None:
+                    all_ccs_std.append(ccs_std.cpu().numpy())
 
         ccs = np.concatenate(all_ccs, axis=0).flatten()
 
         # Convert CCS to inverse mobility
-        return np.array([
+        inverse_mobility = np.array([
             ccs_to_one_over_k0(c, m, z)
             for c, m, z in zip(ccs, mz, charges)
         ])
+
+        if return_uncertainty and all_ccs_std:
+            ccs_std = np.concatenate(all_ccs_std, axis=0).flatten()
+            inverse_mobility_std = np.array([
+                ccs_to_one_over_k0(s, m, z)
+                for s, m, z in zip(ccs_std, mz, charges)
+            ])
+            return inverse_mobility, inverse_mobility_std
+
+        return inverse_mobility
 
     def fine_tune_model(
         self,

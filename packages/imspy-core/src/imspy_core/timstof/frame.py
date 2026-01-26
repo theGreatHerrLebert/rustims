@@ -191,6 +191,8 @@ class TimsFrame(RustWrapperObject):
                mobility_max: float = 2.0,
                intensity_min: float = 0.0,
                intensity_max: float = 1e9,
+               tof_min: int = 0,
+               tof_max: int = 400000,
                ) -> 'TimsFrame':
         """Filter the frame for a given m/z range, scan range and intensity range.
 
@@ -203,13 +205,15 @@ class TimsFrame(RustWrapperObject):
             mobility_max (float, optional): Maximum inverse mobility value. Defaults to 2.0.
             intensity_min (float, optional): Minimum intensity value. Defaults to 0.0.
             intensity_max (float, optional): Maximum intensity value. Defaults to 1e9.
+            tof_min (int, optional): Minimum TOF value. Defaults to 0.
+            tof_max (int, optional): Maximum TOF value. Defaults to 400000.
 
         Returns:
             TimsFrame: Filtered frame.
         """
 
         return TimsFrame.from_py_ptr(self.__frame_ptr.filter_ranged(mz_min, mz_max, scan_min, scan_max, mobility_min, mobility_max,
-                                                                    intensity_min, intensity_max))
+                                                                    intensity_min, intensity_max, tof_min, tof_max))
 
     def to_indexed_mz_spectrum(self) -> 'IndexedMzSpectrum':
         """Convert the frame to an IndexedMzSpectrum.
@@ -513,42 +517,46 @@ class TimsFrameVectorized(RustWrapperObject):
     def get_tensor_repr(self, dense=True, zero_indexed=True, re_index=True, scan_max=None, index_max=None):
         """Get a tensor representation of the frame.
 
-        Note:
-            Requires tensorflow to be installed.
-        """
-        try:
-            from tensorflow import sparse as sp
-        except ImportError:
-            raise ImportError(
-                "get_tensor_repr requires tensorflow. "
-                "Install it with: pip install tensorflow"
-            )
+        Args:
+            dense: If True, return dense numpy array. If False, return scipy sparse matrix.
+            zero_indexed: If True, shift indices to start from 0.
+            re_index: If True, re-index the indices.
+            scan_max: Maximum scan value for matrix shape.
+            index_max: Maximum index value for matrix shape.
 
-        s = self.scan
-        f = self.indices
-        i = self.intensity
+        Returns:
+            numpy array (if dense=True) or scipy sparse matrix (if dense=False)
+        """
+        from scipy import sparse as sp
+
+        s = self.scan.copy()
+        f = self.indices.copy()
+        i = self.intensity.copy()
 
         if zero_indexed:
-            s = s - np.min(s)
-            f = f - np.min(f)
+            if len(s) > 0:
+                s = s - np.min(s)
+            if len(f) > 0:
+                f = f - np.min(f)
 
         if re_index:
             f = re_index_indices(f)
 
         if scan_max is None:
-            m_s = np.max(s) + 1
+            m_s = int(np.max(s) + 1) if len(s) > 0 else 1
         else:
-            m_s = scan_max + 1
+            m_s = int(scan_max + 1)
 
         if index_max is None:
-            m_f = np.max(f) + 1
+            m_f = int(np.max(f) + 1) if len(f) > 0 else 1
         else:
-            m_f = index_max + 1
+            m_f = int(index_max + 1)
 
-        sv = sp.reorder(sp.SparseTensor(indices=np.c_[s, f], values=i, dense_shape=(m_s, m_f)))
+        # Create scipy sparse COO matrix
+        sv = sp.coo_matrix((i, (s, f)), shape=(m_s, m_f))
 
         if dense:
-            return sp.to_dense(sv)
+            return sv.toarray()
         else:
             return sv
 

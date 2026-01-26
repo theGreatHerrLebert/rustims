@@ -4,8 +4,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from imspy_predictors.ccs.utility import load_deep_ccs_std_predictor, to_tf_dataset_with_variance
-from imspy_core.chemistry.mobility import ccs_to_one_over_k0
+from imspy_predictors.ccs import DeepPeptideIonMobilityApex
 
 logger = logging.getLogger(__name__)
 
@@ -63,23 +62,23 @@ def simulate_ion_mobilities_and_variance(
         if verbose:
             print("Using local PyTorch CCS predictor ...")
 
-        model = load_deep_ccs_std_predictor()
+        predictor = DeepPeptideIonMobilityApex(verbose=verbose)
 
-        tf_ds = to_tf_dataset_with_variance(
-            mz=ions.mz.values,
-            charge=ions.charge.values,
-            sequences=ions.sequence.values,
-            batch=True,
-            shuffle=False,
-            remove_unimod=remove_mods,
+        result = predictor.simulate_ion_mobilities(
+            sequences=ions.sequence.tolist(),
+            charges=ions.charge.tolist(),
+            mz=ions.mz.tolist(),
+            return_uncertainty=True,
         )
 
-        ccs, ccs_std, _ = model.predict(tf_ds)
-
-        inverse_mobility = np.array([ccs_to_one_over_k0(c, mz, charge) for c, mz, charge
-                                     in zip(ccs, ions.mz.values, ions.charge.values)]).astype(np.float32)
-        inverse_mobility_std = np.array([ccs_to_one_over_k0(std, mz, charge) for std, mz, charge
-                                         in zip(ccs_std, ions.mz.values, ions.charge.values)]).astype(np.float32)
+        if isinstance(result, tuple):
+            inverse_mobility, inverse_mobility_std = result
+            inverse_mobility = inverse_mobility.astype(np.float32)
+            inverse_mobility_std = inverse_mobility_std.astype(np.float32)
+        else:
+            inverse_mobility = result.astype(np.float32)
+            # Fallback: estimate std as ~2% relative std
+            inverse_mobility_std = (inverse_mobility * 0.02).astype(np.float32)
 
     else:
         # Use Koina CCS predictor
@@ -98,37 +97,40 @@ def simulate_ion_mobilities_and_variance(
             if verbose:
                 print(f"Koina CCS prediction failed: {e}. Falling back to local model.")
 
-            model = load_deep_ccs_std_predictor()
+            predictor = DeepPeptideIonMobilityApex(verbose=verbose)
 
-            tf_ds = to_tf_dataset_with_variance(
-                mz=ions.mz.values,
-                charge=ions.charge.values,
-                sequences=ions.sequence.values,
-                batch=True,
-                shuffle=False,
-                remove_unimod=remove_mods,
+            result = predictor.simulate_ion_mobilities(
+                sequences=ions.sequence.tolist(),
+                charges=ions.charge.tolist(),
+                mz=ions.mz.tolist(),
+                return_uncertainty=True,
             )
 
-            ccs, ccs_std, _ = model.predict(tf_ds)
-
-            inverse_mobility = np.array([ccs_to_one_over_k0(c, mz, charge) for c, mz, charge
-                                         in zip(ccs, ions.mz.values, ions.charge.values)]).astype(np.float32)
-            inverse_mobility_std = np.array([ccs_to_one_over_k0(std, mz, charge) for std, mz, charge
-                                             in zip(ccs_std, ions.mz.values, ions.charge.values)]).astype(np.float32)
+            if isinstance(result, tuple):
+                inverse_mobility, inverse_mobility_std = result
+                inverse_mobility = inverse_mobility.astype(np.float32)
+                inverse_mobility_std = inverse_mobility_std.astype(np.float32)
+            else:
+                inverse_mobility = result.astype(np.float32)
+                # Fallback: estimate std as ~2% relative std
+                inverse_mobility_std = (inverse_mobility * 0.02).astype(np.float32)
 
     if use_target_mean_std:
         # calculate the current mean standard deviation
         current_mean_std = np.mean(inverse_mobility_std)
-        # shift the standard deviation to the target mean
-        difference = current_mean_std - target_std_mean
-        inverse_mobility_std -= difference
+        # scale the standard deviation to match target mean (not shift, to avoid negative values)
+        if current_mean_std > 0:
+            scale_factor = target_std_mean / current_mean_std
+            inverse_mobility_std = inverse_mobility_std * scale_factor
 
         if verbose:
-            print(f"Standard deviation distribution apex was shifted from {current_mean_std:.4f} to {target_std_mean:.4f}")
+            print(f"Standard deviation distribution scaled from mean {current_mean_std:.4f} to {target_std_mean:.4f}")
 
     dp = ions.copy()
     dp["inv_mobility_gru_predictor"] = inverse_mobility
-    dp["inv_mobility_gru_predictor_std"] = inverse_mobility_std + epsilon
+    # Ensure std is always positive (clip to epsilon minimum)
+    inverse_mobility_std = np.maximum(inverse_mobility_std, epsilon)
+    dp["inv_mobility_gru_predictor_std"] = inverse_mobility_std
 
     # filter by mobility range
     ions = dp[

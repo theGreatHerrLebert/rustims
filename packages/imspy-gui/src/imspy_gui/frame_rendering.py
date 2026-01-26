@@ -21,14 +21,14 @@ COLORS = list(mcolors.TABLEAU_COLORS.values()) + [
 ]
 
 def configure_gpu_memory(limit_gb: float = 4.0):
-    import tensorflow as tf
-
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if not gpus:
-        return
-    cfg = tf.config.experimental.VirtualDeviceConfiguration(memory_limit=int(limit_gb * 1024))
-    for gpu in gpus:
-        tf.config.experimental.set_virtual_device_configuration(gpu, [cfg])
+    """Configure GPU memory for PyTorch (no-op, PyTorch manages memory dynamically)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            # PyTorch manages GPU memory dynamically, no explicit configuration needed
+            pass
+    except ImportError:
+        pass
 
 
 def get_frame_matrix(handle, frame_id: int,

@@ -194,7 +194,12 @@ def simulate_peptides(
         bins_covered = int(min_rt / bin_size)
         rt_count = bins_covered * median_rt_count
 
-        random_indices = np.random.choice(false_indices, size=int(rt_count), replace=False)
+        # Ensure we don't try to sample more than available
+        sample_size = min(int(rt_count), len(false_indices))
+        if sample_size > 0:
+            random_indices = np.random.choice(false_indices, size=sample_size, replace=False)
+        else:
+            random_indices = np.array([], dtype=int)
         rt_filter[random_indices] = True
 
         peptide_table = peptide_table[rt_filter]

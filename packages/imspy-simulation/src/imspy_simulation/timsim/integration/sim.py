@@ -247,7 +247,7 @@ def run_simulation(config_path: Path, test_id: str) -> bool:
 
     try:
         # Run timsim via subprocess using the CLI entry point
-        cmd = [sys.executable, "-m", "imspy.simulation.timsim.simulator", str(config_path)]
+        cmd = [sys.executable, "-m", "imspy_simulation.timsim.simulator", str(config_path)]
         logger.info(f"[{test_id}] Command: {' '.join(cmd)}")
 
         result = subprocess.run(

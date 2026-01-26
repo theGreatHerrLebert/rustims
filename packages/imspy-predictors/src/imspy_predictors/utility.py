@@ -71,7 +71,17 @@ def load_tokenizer_from_resources(tokenizer_name: str = "tokenizer"):
         from imspy_predictors.utilities.tokenizers import ProformaTokenizer
         tokenizer_path = get_tokenizer_path(tokenizer_name)
         if tokenizer_path.is_file():
-            return ProformaTokenizer.load_vocab(str(tokenizer_path))
+            try:
+                return ProformaTokenizer.load_vocab(str(tokenizer_path))
+            except ValueError:
+                # File exists but is in old Keras format - use default tokenizer
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Tokenizer file '{tokenizer_name}.json' exists but is in incompatible format. "
+                    "Using default ProformaTokenizer."
+                )
+                return ProformaTokenizer.with_defaults()
         else:
             # Return default tokenizer if file doesn't exist
             return ProformaTokenizer.with_defaults()

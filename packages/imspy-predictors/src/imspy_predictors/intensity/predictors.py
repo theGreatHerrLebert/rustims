@@ -458,23 +458,34 @@ def predict_fragment_intensities_with_koina(
 # =============================================================================
 
 def get_model_path(relative_path: str):
-    """Get path to model file in checkpoints directory."""
+    """Get path to model file in pretrained or checkpoints directory."""
     from pathlib import Path
-    # Try package directory (src/imspy_predictors/checkpoints)
     package_dir = Path(__file__).parent.parent
+
+    # Try pretrained directory first (src/imspy_predictors/pretrained)
+    pretrained_path = package_dir / 'pretrained' / relative_path
+    if pretrained_path.exists():
+        return pretrained_path
+
+    # Also try without subdirectory prefix (e.g., 'intensity/best_model.pt' instead of 'timstof_intensity/best_model.pt')
+    simple_name = relative_path.replace('timstof_', '')
+    pretrained_simple = package_dir / 'pretrained' / simple_name
+    if pretrained_simple.exists():
+        return pretrained_simple
+
+    # Try checkpoints directory (legacy)
     model_path = package_dir / 'checkpoints' / relative_path
     if model_path.exists():
         return model_path
+
     # Try package root checkpoints (packages/imspy-predictors/checkpoints)
     package_root = package_dir.parent.parent
     root_path = package_root / 'checkpoints' / relative_path
     if root_path.exists():
         return root_path
-    # Try development checkpoints directory (one more level up)
-    dev_path = package_root.parent / 'checkpoints' / relative_path
-    if dev_path.exists():
-        return dev_path
-    return model_path  # Return package path even if not found
+
+    # Return pretrained path (preferred) even if not found
+    return pretrained_path
 
 
 def load_deep_intensity_predictor(map_location: Optional[str] = None):
