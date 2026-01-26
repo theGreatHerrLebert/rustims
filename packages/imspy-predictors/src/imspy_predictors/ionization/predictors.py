@@ -368,7 +368,7 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
-                probs = self.model(batch_tokens)
+                probs = self.model.predict_charge(batch_tokens)
                 all_probs.append(probs.cpu().numpy())
 
         probabilities = np.concatenate(all_probs, axis=0)
@@ -402,7 +402,7 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
-                probs = self.model(batch_tokens)
+                probs = self.model.predict_charge(batch_tokens)
                 all_probs.append(probs.cpu().numpy())
 
         return np.concatenate(all_probs, axis=0)

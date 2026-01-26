@@ -365,7 +365,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
-                rt = self.model(batch_tokens)
+                rt = self.model.predict_rt(batch_tokens)
                 all_rt.append(rt.cpu().numpy())
 
         return np.concatenate(all_rt, axis=0).flatten()
