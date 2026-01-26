@@ -325,13 +325,25 @@ def main():
     return 0
 
 
-def _ccs_loss(model, batch):
-    """Compute CCS loss for a batch."""
+def _ccs_loss(model, batch, std_loss_weight: float = 1.0):
+    """Compute CCS loss for a batch with supervised mean and std training.
+
+    Uses L1 loss for CCS mean prediction and masked L1 loss for std prediction.
+    Samples without ground truth std (marked as -1) are excluded from std loss.
+
+    Args:
+        model: The model to compute loss for
+        batch: Batch dictionary containing input data and targets
+        std_loss_weight: Weight for the supervised std loss term (default: 1.0)
+
+    Returns:
+        Combined loss value
+    """
     input_ids = batch["input_ids"]
     padding_mask = (batch["attention_mask"] == 0)
     mz = batch["mz"]
     charge = batch["charge"]
-    target = batch["ccs"].view(-1, 1)
+    target_ccs = batch["ccs"].view(-1, 1)
     instrument = batch.get("instrument")
 
     mean, std = model.predict_ccs(
@@ -340,8 +352,22 @@ def _ccs_loss(model, batch):
         instrument=instrument,
     )
 
-    # Gaussian NLL loss for uncertainty-aware prediction
-    loss = torch.nn.functional.gaussian_nll_loss(mean, target, std ** 2)
+    # L1 loss for CCS mean prediction
+    loss = torch.nn.functional.l1_loss(mean, target_ccs)
+
+    # Supervised std loss if ground truth ccs_std is available
+    if "ccs_std" in batch:
+        target_std = batch["ccs_std"].view(-1, 1)
+        # Mask where target_std == -1 (missing values)
+        valid_mask = (target_std >= 0).squeeze()
+
+        if valid_mask.any():
+            # L1 loss on std for samples with valid ground truth
+            std_loss = torch.nn.functional.l1_loss(
+                std[valid_mask], target_std[valid_mask]
+            )
+            loss = loss + std_loss_weight * std_loss
+
     return loss
 
 
