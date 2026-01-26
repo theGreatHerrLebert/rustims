@@ -35,7 +35,6 @@ from imspy_predictors.utility import (
     get_device,
 )
 from imspy_core.chemistry import ccs_to_one_over_k0, one_over_k0_to_ccs, calculate_mz
-from imspy_core.utility import tokenize_unimod_sequence
 
 # Lazy imports for optional dependencies
 from imspy_predictors.lazy_imports import (
