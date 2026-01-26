@@ -35,40 +35,6 @@ where
     }
 }
 
-/// Macro for generating simple field accessors on inner structs.
-/// Usage: impl_inner_accessors!(StructName, inner_field, { field: Type, ... })
-macro_rules! impl_inner_accessors {
-    ($struct:ident, $inner:ident, { $($field:ident : $ty:ty),* $(,)? }) => {
-        impl $struct {
-            $(
-                #[inline]
-                pub fn $field(&self) -> $ty {
-                    self.$inner.$field.clone()
-                }
-            )*
-        }
-    };
-}
-
-/// Macro for generating accessors to nested fields (e.g., fit.mu).
-/// Usage: impl_nested_accessors!(StructName, inner, nested_field, { field: Type, ... })
-macro_rules! impl_nested_accessors {
-    ($struct:ident, $inner:ident, $nested:ident, { $($field:ident : $ty:ty),* $(,)? }) => {
-        impl $struct {
-            $(
-                #[inline]
-                pub fn $field(&self) -> $ty {
-                    self.$inner.$nested.$field
-                }
-            )*
-        }
-    };
-}
-
-// Export macros for use in this module
-pub(crate) use impl_inner_accessors;
-pub(crate) use impl_nested_accessors;
-
 // ==========================================================
 // PyThresholdMode - Adaptive vs Fixed intensity thresholds
 // ==========================================================
@@ -621,17 +587,17 @@ impl PyTofScanPlanGroup {
 
     #[getter]
     fn frame_times<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.frame_times.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.frame_times.clone()).unbind())
     }
 
     #[getter]
     fn frame_ids<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.frame_ids_sorted.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.frame_ids_sorted.clone()).unbind())
     }
 
     #[getter]
     fn tof_centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.scale.centers.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.scale.centers.clone()).unbind())
     }
 
     pub fn bounds(&self, i: usize) -> Option<(usize, usize)> {
@@ -689,14 +655,14 @@ impl PyTofScanPlanGroup {
             }
             let grid = self.build_window(py, j as usize)?;
             let obj = Py::new(py, PyTofScanWindowGrid { inner: grid })?;
-            return Ok(obj.into_py(py));
+            return Ok(obj.into_any());
         }
 
         // slice
         if let Ok(slice) = idx.downcast::<PySlice>() {
             let indices = slice.indices(self.windows_idx.len() as isize)?;
             let (start, stop, step) = (indices.start, indices.stop, indices.step);
-            let out = PyList::empty_bound(py);
+            let out = PyList::empty(py);
             let mut i = start;
             if step > 0 {
                 while i < stop {
@@ -711,7 +677,7 @@ impl PyTofScanPlanGroup {
                     i += step;
                 }
             }
-            return Ok(out.into_py(py));
+            return Ok(out.unbind().into_any());
         }
 
         Err(exceptions::PyTypeError::new_err("indices must be int or slice"))
@@ -1090,17 +1056,17 @@ impl PyTofScanPlan {
 
     #[getter]
     fn frame_times<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.frame_times.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.frame_times.clone()).unbind())
     }
 
     #[getter]
     fn frame_ids<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.frame_ids_sorted.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.frame_ids_sorted.clone()).unbind())
     }
 
     #[getter]
     fn tof_centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.scale.centers.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.scale.centers.clone()).unbind())
     }
 
     pub fn bounds(&self, i: usize) -> Option<(usize, usize)> {
@@ -1193,14 +1159,14 @@ impl PyTofScanPlan {
             }
             let grid = self.build_window(py, j as usize)?;  // <-- `?`
             let obj = Py::new(py, PyTofScanWindowGrid { inner: grid })?;
-            return Ok(obj.into_py(py));
+            return Ok(obj.into_any());
         }
 
         // slice
         if let Ok(slice) = idx.downcast::<PySlice>() {
             let indices = slice.indices(self.windows_idx.len() as isize)?;
             let (start, stop, step) = (indices.start, indices.stop, indices.step);
-            let out = PyList::empty_bound(py);
+            let out = PyList::empty(py);
 
             let mut i = start;
             if step > 0 {
@@ -1216,7 +1182,7 @@ impl PyTofScanPlan {
                     i += step;
                 }
             }
-            return Ok(out.into_py(py));
+            return Ok(out.unbind().into_any());
         }
 
         Err(exceptions::PyTypeError::new_err("indices must be int or slice"))
@@ -2159,7 +2125,7 @@ impl PyTofScanWindowGrid {
     #[getter]
     fn scans<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<u32>>> {
         let v: Vec<u32> = self.inner.scans.iter().map(|&s| s as u32).collect();
-        Ok(PyArray1::from_vec_bound(py, v).unbind())
+        Ok(PyArray1::from_vec(py, v).unbind())
     }
 
     /// Dense window matrix (smoothed if smoothing was applied), Fortran order (rows, cols).
@@ -2168,7 +2134,7 @@ impl PyTofScanWindowGrid {
         let v = self.inner.data
             .take()
             .ok_or_else(|| exceptions::PyRuntimeError::new_err("data already moved"))?;
-        let arr = PyArray2::from_owned_array_bound(
+        let arr = PyArray2::from_owned_array(
             py,
             Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), v)
                 .map_err(|e| exceptions::PyValueError::new_err(format!("shape error: {e}")))?,
@@ -2181,7 +2147,7 @@ impl PyTofScanWindowGrid {
     fn data_raw<'py>(&self, py: Python<'py>) -> Option<Py<PyArray2<f32>>> {
         self.inner.data_raw.as_ref().map(|raw| {
             let arr_f = Array2::from_shape_vec((self.inner.rows, self.inner.cols).f(), raw.clone()).unwrap();
-            PyArray2::from_owned_array_bound(py, arr_f).unbind()
+            PyArray2::from_owned_array(py, arr_f).unbind()
         })
     }
 
@@ -2196,12 +2162,12 @@ impl PyTofScanWindowGrid {
 
     #[getter]
     fn tof_centers<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.inner.scale.centers.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.inner.scale.centers.clone()).unbind())
     }
 
     #[getter]
     fn tof_edges<'py>(&self, py: Python<'py>) -> PyResult<Py<PyArray1<f32>>> {
-        Ok(PyArray1::from_vec_bound(py, self.inner.scale.edges.clone()).unbind())
+        Ok(PyArray1::from_vec(py, self.inner.scale.edges.clone()).unbind())
     }
 }
 
@@ -3307,23 +3273,23 @@ impl PyTofRtGrid {
             self.inner.data.clone(),
         )
             .expect("TofRtGrid: shape mismatch");
-        PyArray2::from_array_bound(py, &a)
+        PyArray2::from_array(py, &a)
     }
 
     /// RT axis (seconds), length = cols.
     pub fn rt_times<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<f32, Ix1>> {
-        PyArray1::from_iter_bound(py, self.inner.rt_times.clone().into_iter())
+        PyArray1::from_iter(py, self.inner.rt_times.clone().into_iter())
     }
 
     /// Frame IDs for each RT column, length = cols.
     pub fn frame_ids<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<u32, Ix1>> {
-        PyArray1::from_iter_bound(py, self.inner.frame_ids.clone().into_iter())
+        PyArray1::from_iter(py, self.inner.frame_ids.clone().into_iter())
     }
 
     /// TOF centers for each row; convert to m/z on Python side if desired.
     pub fn tof_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray<f32, Ix1>> {
         let v = (0..self.inner.rows).map(|r| self.inner.scale.center(r));
-        PyArray1::from_iter_bound(py, v)
+        PyArray1::from_iter(py, v)
     }
 }
 

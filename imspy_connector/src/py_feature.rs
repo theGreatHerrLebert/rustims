@@ -87,7 +87,7 @@ impl PyAveragineLut {
     #[pyo3(signature = (neutral_mass, z))]
     pub fn lookup(&self, neutral_mass: f32, z: u8, py: Python<'_>) -> Py<PyArray1<f32>> {
         let v = self.inner.lookup(neutral_mass, z);
-        v.to_vec().into_pyarray_bound(py).unbind()
+        v.to_vec().into_pyarray(py).unbind()
     }
 
     fn __repr__(&self) -> String {

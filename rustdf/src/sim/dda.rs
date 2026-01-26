@@ -806,7 +806,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             };
 
             // Create ion for annotation
-            let ion = PeptideIon::new(
+            let _ion = PeptideIon::new(
                 peptide.sequence.sequence.clone(),
                 charge_state as i32,
                 ion_abundance as f64,
