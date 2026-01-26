@@ -271,6 +271,11 @@ class HuggingFaceDatasetWrapper(Dataset):
         if "ccs" in item:
             result["ccs"] = torch.tensor(item["ccs"], dtype=torch.float32)
 
+        # CCS standard deviation (for supervised uncertainty training)
+        # -1 indicates missing values that should be masked during training
+        if "ccs_std" in item:
+            result["ccs_std"] = torch.tensor(item["ccs_std"], dtype=torch.float32)
+
         if "indexed_retention_time" in item:
             result["rt"] = torch.tensor(item["indexed_retention_time"], dtype=torch.float32)
         elif "retention_time" in item:

@@ -718,9 +718,21 @@ class Trainer:
 
         if "ccs" in batch and "ccs" in outputs:
             mean, std = outputs["ccs"]
-            target = batch["ccs"].view(-1, 1)
-            # Gaussian NLL loss
-            loss = torch.nn.functional.gaussian_nll_loss(mean, target, std ** 2)
+            target_ccs = batch["ccs"].view(-1, 1)
+            # L1 loss for CCS mean prediction
+            loss = torch.nn.functional.l1_loss(mean, target_ccs)
+
+            # Supervised std loss if ground truth ccs_std is available
+            if "ccs_std" in batch:
+                target_std = batch["ccs_std"].view(-1, 1)
+                # Mask where target_std == -1 (missing values)
+                valid_mask = (target_std >= 0).squeeze()
+                if valid_mask.any():
+                    std_loss = torch.nn.functional.l1_loss(
+                        std[valid_mask], target_std[valid_mask]
+                    )
+                    loss = loss + std_loss  # Equal weight for std loss
+
             total_loss += loss
             num_tasks += 1
 
