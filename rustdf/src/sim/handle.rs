@@ -566,10 +566,9 @@ impl TimsTofSyntheticsDataHandle {
         let selections = transmission.get_selections_for_precursor(ion.ion_id as i32);
 
         for (_, collision_energy) in selections {
-            // Convert raw CE to match fragment_ions key scale:
-            // fragment_ions stores CE/100 (Prosit scale), then keys with CE*1000
-            // So raw CE * 10 = (CE/100) * 1000
-            let quantized_energy = (collision_energy * 10.0).round() as i32;
+            // Quantize with same factor as DIA (line 614) so return conversion (line 702)
+            // divides by 100 to recover raw CE, matching the Python normalization flow
+            let quantized_energy = (collision_energy * 100.0).round() as i32;
 
             ret_tree.insert((
                 ion.peptide_id,
