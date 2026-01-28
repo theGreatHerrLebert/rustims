@@ -43,6 +43,12 @@ from imspy_predictors.koina_models.input_filters import (
     validate_model_compatibility,
     MODEL_FILTERS,
     MODEL_DESCRIPTIONS,
+    # Format conversion for AlphaPeptDeep
+    convert_unimod_to_alphabase_sequence,
+    convert_unimod_to_named_mods,
+    convert_sequences_for_model,
+    convert_dataframe_for_model,
+    UNIMOD_TO_ALPHABASE,
 )
 
 __all__ = [
@@ -77,4 +83,10 @@ __all__ = [
     'validate_model_compatibility',
     'MODEL_FILTERS',
     'MODEL_DESCRIPTIONS',
+    # Format conversion for AlphaPeptDeep
+    'convert_unimod_to_alphabase_sequence',
+    'convert_unimod_to_named_mods',
+    'convert_sequences_for_model',
+    'convert_dataframe_for_model',
+    'UNIMOD_TO_ALPHABASE',
 ]

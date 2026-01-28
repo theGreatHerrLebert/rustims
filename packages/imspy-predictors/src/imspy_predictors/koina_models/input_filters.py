@@ -1,12 +1,166 @@
 """Input filtering for Koina models based on model-specific requirements."""
 
 import logging
+import re
 from typing import List, Optional, Dict, Any
 
 import pandas as pd
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Format Conversion for AlphaPeptDeep/AlphaBase
+# =============================================================================
+
+# UNIMOD ID to AlphaBase modification name mapping
+# Based on common modifications supported by AlphaPeptDeep
+UNIMOD_TO_ALPHABASE: Dict[int, str] = {
+    4: "Carbamidomethyl",      # C carbamidomethylation
+    21: "Phospho",             # S/T/Y phosphorylation
+    35: "Oxidation",           # M oxidation
+    1: "Acetyl",               # Protein N-term acetylation
+    7: "Deamidated",           # N/Q deamidation
+    312: "TMT6plex",           # TMT labeling
+    737: "TMT6plex",           # TMT at N-term (same as 312)
+    259: "Label:13C(6)15N(2)", # Heavy Lys (SILAC)
+    267: "Label:13C(6)15N(4)", # Heavy Arg (SILAC)
+    27: "Gln->pyro-Glu",       # Q->pyroGlu
+    28: "Glu->pyro-Glu",       # E->pyroGlu
+    122: "Formyl",             # Formylation
+    385: "Ammonia-loss",       # Loss of ammonia
+    2016: "GlyGly",            # Ubiquitination remnant
+}
+
+
+def convert_unimod_to_alphabase_sequence(sequence: str) -> str:
+    """
+    Convert a peptide sequence from UNIMOD bracket notation to AlphaBase format.
+
+    Converts:
+        S[UNIMOD:21] → S(UniMod:21)
+        M[UNIMOD:35] → M(UniMod:35)
+
+    AlphaBase recognizes the format X(UniMod:id) directly.
+
+    Args:
+        sequence: Peptide sequence with [UNIMOD:X] annotations
+
+    Returns:
+        Sequence with (UniMod:X) annotations
+    """
+    # Pattern: matches X[UNIMOD:123] where X is any character
+    # Replace brackets with parentheses and fix case
+    pattern = r'\[UNIMOD:(\d+)\]'
+    converted = re.sub(pattern, r'(UniMod:\1)', sequence)
+
+    if converted != sequence:
+        logger.debug(f"Converted sequence format: {sequence} → {converted}")
+
+    return converted
+
+
+def convert_unimod_to_named_mods(sequence: str) -> tuple[str, str, str]:
+    """
+    Convert a peptide sequence from UNIMOD notation to AlphaBase named format.
+
+    For AlphaPeptDeep, converts:
+        AS[UNIMOD:21]DFK → (sequence="ASDFK", mods="Phospho@S", mod_sites="2")
+
+    Args:
+        sequence: Peptide sequence with [UNIMOD:X] annotations
+
+    Returns:
+        Tuple of (bare_sequence, mods_string, mod_sites_string)
+        mods_string: semicolon-separated modification names (e.g., "Phospho@S;Oxidation@M")
+        mod_sites_string: semicolon-separated positions (1-indexed)
+    """
+    pattern = r'([A-Z])\[UNIMOD:(\d+)\]'
+    matches = list(re.finditer(pattern, sequence))
+
+    if not matches:
+        # No modifications - return bare sequence
+        bare = re.sub(r'\[[^\]]*\]', '', sequence)
+        return bare, '', ''
+
+    mods = []
+    mod_sites = []
+    position_offset = 0
+
+    for match in matches:
+        aa = match.group(1)
+        unimod_id = int(match.group(2))
+
+        # Get modification name
+        mod_name = UNIMOD_TO_ALPHABASE.get(unimod_id, f"UNIMOD:{unimod_id}")
+
+        # Calculate position (1-indexed, accounting for removed annotations)
+        start_pos = match.start() - position_offset
+        position = start_pos + 1  # 1-indexed
+
+        mods.append(f"{mod_name}@{aa}")
+        mod_sites.append(str(position))
+
+        # Update offset for next match
+        position_offset += len(match.group(0)) - 1  # -1 because AA stays
+
+    bare_sequence = re.sub(r'\[[^\]]*\]', '', sequence)
+
+    return bare_sequence, ';'.join(mods), ';'.join(mod_sites)
+
+
+def convert_sequences_for_model(
+    sequences: List[str],
+    model_name: str,
+) -> List[str]:
+    """
+    Convert peptide sequences to the format expected by a specific model.
+
+    Args:
+        sequences: List of peptide sequences with [UNIMOD:X] annotations
+        model_name: Koina model name
+
+    Returns:
+        List of sequences in the format expected by the model
+    """
+    model_type = get_model_type(model_name)
+
+    if model_type == "alphapeptdeep":
+        # AlphaPeptDeep/AlphaBase expects (UniMod:X) format
+        return [convert_unimod_to_alphabase_sequence(s) for s in sequences]
+
+    # Other models use [UNIMOD:X] format as-is
+    return sequences
+
+
+def convert_dataframe_for_model(
+    df: pd.DataFrame,
+    model_name: str,
+    sequence_col: str = "peptide_sequences",
+) -> pd.DataFrame:
+    """
+    Convert DataFrame sequences to the format expected by a specific model.
+
+    Args:
+        df: DataFrame with peptide sequences
+        model_name: Koina model name
+        sequence_col: Column name containing peptide sequences
+
+    Returns:
+        DataFrame with converted sequences
+    """
+    if sequence_col not in df.columns:
+        return df
+
+    model_type = get_model_type(model_name)
+
+    if model_type == "alphapeptdeep":
+        df = df.copy()
+        df[sequence_col] = df[sequence_col].apply(convert_unimod_to_alphabase_sequence)
+        logger.debug(f"Converted {len(df)} sequences to AlphaBase format for {model_name}")
+
+    return df
 
 # Eligible models and their restrictions:
 # Intensity: Prosit_2023_intensity_timsTOF, AlphaPeptDeep_ms2_generic, ms2pip_timsTOF2023, ms2pip_timsTOF2024

@@ -314,6 +314,11 @@ class ModelFromKoina:
                 f"for model {self.model_name}"
             )
 
+        # Convert sequence format for AlphaPeptDeep models
+        # AlphaBase expects (UniMod:X) format, not [UNIMOD:X]
+        from .input_filters import convert_dataframe_for_model
+        inputs = convert_dataframe_for_model(inputs, self.model_name)
+
         # Perform prediction with retry logic
         return self._predict_with_retry(inputs)
 
