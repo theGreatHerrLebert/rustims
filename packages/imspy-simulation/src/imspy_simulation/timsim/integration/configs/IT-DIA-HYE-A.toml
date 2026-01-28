@@ -63,7 +63,7 @@ from_existing = false
 existing_path = ""
 apply_fragmentation = true
 use_bruker_sdk = true
-fragment_intensity_model = "prosit"
+fragment_intensity_model = "local"
 modifications = ""
 
 [peptide_digestion]

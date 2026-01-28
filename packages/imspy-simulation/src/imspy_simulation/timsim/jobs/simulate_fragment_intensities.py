@@ -207,16 +207,23 @@ def simulate_fragment_intensities(
 
     assert 0 <= down_sample_factor < 1, "down_sample_factor must be in the range [0, 1)"
 
-    # Handle phospho mode - auto-switch to AlphaPeptDeep if needed
+    # Handle phospho mode - warn if model might not support phospho, but respect user choice
     effective_model_name = model_name
     if phospho_mode:
-        model_key = (model_name or "prosit").lower()
-        if model_key not in PHOSPHO_COMPATIBLE_MODELS and model_key not in ["alphapeptdeep"]:
+        model_key = (model_name or "local").lower()
+        if model_key not in PHOSPHO_COMPATIBLE_MODELS and model_key not in ["alphapeptdeep", "local"]:
+            # Only auto-switch for non-explicit model choices (e.g., prosit via Koina)
             logger.warning(
-                f"Phospho mode enabled but model '{model_name or 'prosit'}' may not support phosphorylation. "
+                f"Phospho mode enabled but model '{model_name}' may not support phosphorylation. "
                 "Switching to 'alphapeptdeep' (AlphaPeptDeep_ms2_generic) which supports all modifications."
             )
             effective_model_name = "alphapeptdeep"
+        elif model_key == "local":
+            # User explicitly chose local model - respect the choice
+            logger.info(
+                "Phospho mode enabled with local intensity model. "
+                "Note: Local model may have limited support for modified peptides."
+            )
 
     native_path = Path(path) / name / "synthetic_data.db"
     native_handle = TransmissionHandle(str(native_path))

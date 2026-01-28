@@ -320,6 +320,58 @@ def find_simulation_outputs(test_dir: Path) -> Tuple[Optional[Path], Optional[Pa
     return d_folder, db_path
 
 
+# Paired tests that require A/B conditions to be analyzed together
+PAIRED_TESTS = {
+    "IT-DIA-HYE": {
+        "condition_a": "IT-DIA-HYE-A",
+        "condition_b": "IT-DIA-HYE-B",
+        "expected_fold_changes": {
+            "HUMAN": 1.0,      # 65%/65% = 1x
+            "YEAST": 0.667,    # 20%/30% = 0.67x
+            "ECOLI": 3.0,      # 15%/5% = 3x
+        },
+    },
+    "IT-DIA-PHOS": {
+        "condition_a": "IT-DIA-PHOS-A",
+        "condition_b": "IT-DIA-PHOS-B",
+        "expected_fold_changes": None,  # Phospho doesn't have fold-change validation
+    },
+}
+
+
+def is_paired_test(test_id: str) -> bool:
+    """Check if a test requires paired A/B conditions."""
+    return test_id in PAIRED_TESTS
+
+
+def find_paired_simulation_outputs(
+    output_base: Path, test_id: str
+) -> Tuple[Optional[Path], Optional[Path], Optional[Path], Optional[Path]]:
+    """
+    Find simulation outputs for paired A/B tests.
+
+    Args:
+        output_base: Base output directory.
+        test_id: Test identifier (e.g., IT-DIA-HYE).
+
+    Returns:
+        Tuple of (d_folder_a, db_path_a, d_folder_b, db_path_b).
+    """
+    paired_config = PAIRED_TESTS.get(test_id)
+    if not paired_config:
+        return None, None, None, None
+
+    # Find condition A outputs
+    test_dir_a = output_base / paired_config["condition_a"]
+    d_folder_a, db_path_a = find_simulation_outputs(test_dir_a)
+
+    # Find condition B outputs
+    test_dir_b = output_base / paired_config["condition_b"]
+    d_folder_b, db_path_b = find_simulation_outputs(test_dir_b)
+
+    return d_folder_a, db_path_a, d_folder_b, db_path_b
+
+
 def run_diann_analysis(
     d_folder: Path,
     fasta_path: str,
@@ -328,6 +380,7 @@ def run_diann_analysis(
     test_id: str,
     is_dda: bool = False,
     is_phospho: bool = False,
+    additional_d_folders: Optional[List[Path]] = None,
 ) -> Optional[Path]:
     """
     Run DiaNN analysis on simulated data.
@@ -340,11 +393,16 @@ def run_diann_analysis(
         test_id: Test identifier for logging.
         is_dda: Whether this is DDA data.
         is_phospho: Whether this is phosphoproteomics data.
+        additional_d_folders: Additional .d folders for multi-sample analysis
+            (e.g., condition B for A/B fold-change experiments).
 
     Returns:
         Path to DiaNN report file, or None if failed.
     """
-    logger.info(f"[{test_id}] Running DiaNN analysis...")
+    if additional_d_folders:
+        logger.info(f"[{test_id}] Running DiaNN analysis on {1 + len(additional_d_folders)} samples...")
+    else:
+        logger.info(f"[{test_id}] Running DiaNN analysis...")
 
     try:
         from imspy_simulation.timsim.validate.diann_executor import DiannExecutor, DiannConfig
@@ -373,10 +431,16 @@ def run_diann_analysis(
         diann_output = output_dir / "diann"
         diann_output.mkdir(parents=True, exist_ok=True)
 
+        # Convert additional paths to strings
+        additional_paths = None
+        if additional_d_folders:
+            additional_paths = [str(p) for p in additional_d_folders]
+
         result = executor.execute(
             data_path=str(d_folder),
             fasta_path=fasta_path,
             output_dir=str(diann_output),
+            additional_data_paths=additional_paths,
         )
 
         if result.success:
@@ -402,6 +466,8 @@ def run_fragpipe_analysis(
     env_config: Dict,
     test_id: str,
     is_dda: bool = False,
+    additional_d_folders: Optional[List[Path]] = None,
+    is_phospho: bool = False,
 ) -> Optional[Path]:
     """
     Run FragPipe analysis on simulated data.
@@ -413,20 +479,34 @@ def run_fragpipe_analysis(
         env_config: Environment configuration.
         test_id: Test identifier for logging.
         is_dda: Whether this is DDA data.
+        additional_d_folders: Additional .d folders for multi-sample analysis.
+        is_phospho: Whether this is a phosphoproteomics experiment.
 
     Returns:
         Path to FragPipe output directory, or None if failed.
     """
-    logger.info(f"[{test_id}] Running FragPipe analysis...")
+    if additional_d_folders:
+        logger.info(f"[{test_id}] Running FragPipe analysis on {1 + len(additional_d_folders)} samples...")
+    else:
+        logger.info(f"[{test_id}] Running FragPipe analysis...")
 
     try:
         from imspy_simulation.timsim.validate.fragpipe_executor import FragPipeExecutor, FragPipeConfig
 
-        # Select appropriate workflow
+        # Select appropriate workflow (phospho-specific if available)
         if is_dda:
-            workflow = env_config.get("fragpipe_workflow_dda")
+            if is_phospho:
+                workflow = env_config.get("fragpipe_workflow_dda_phospho") or env_config.get("fragpipe_workflow_dda")
+            else:
+                workflow = env_config.get("fragpipe_workflow_dda")
         else:
-            workflow = env_config.get("fragpipe_workflow_dia")
+            if is_phospho:
+                workflow = env_config.get("fragpipe_workflow_dia_phospho") or env_config.get("fragpipe_workflow_dia")
+            else:
+                workflow = env_config.get("fragpipe_workflow_dia")
+
+        if is_phospho:
+            logger.info(f"[{test_id}] Using phospho-specific workflow: {workflow}")
 
         if not workflow:
             logger.error(f"[{test_id}] No FragPipe workflow configured")
@@ -450,12 +530,18 @@ def run_fragpipe_analysis(
         fragpipe_output = output_dir / "fragpipe"
         fragpipe_output.mkdir(parents=True, exist_ok=True)
 
+        # Convert additional paths to strings
+        additional_paths = None
+        if additional_d_folders:
+            additional_paths = [str(p) for p in additional_d_folders]
+
         result = executor.execute(
             data_path=str(d_folder),
             fasta_path=fasta_path,
             output_dir=str(fragpipe_output),
             workflow_path=workflow,
             is_dda=is_dda,
+            additional_data_paths=additional_paths,
         )
 
         if result.success:
@@ -708,6 +794,190 @@ def run_validation(
         return False, {"error": str(e)}
 
 
+def run_paired_test_evaluation(
+    test_id: str,
+    env_config: Dict,
+    tool: str = "both",
+    skip_analysis: bool = False,
+) -> Tuple[bool, Dict]:
+    """
+    Run evaluation for a paired A/B test (e.g., HYE fold-change experiment).
+
+    Args:
+        test_id: Test identifier (e.g., IT-DIA-HYE).
+        env_config: Environment configuration.
+        tool: Which tool(s) to run ("diann", "fragpipe", or "both").
+        skip_analysis: Skip analysis, only run validation on existing outputs.
+
+    Returns:
+        Tuple of (passed, metrics).
+    """
+    logger.info(f"=" * 60)
+    logger.info(f"Evaluating paired test: {test_id}")
+    logger.info(f"=" * 60)
+
+    paired_config = PAIRED_TESTS.get(test_id)
+    if not paired_config:
+        logger.error(f"[{test_id}] Not a paired test")
+        return False, {"error": "Not a paired test"}
+
+    condition_a = paired_config["condition_a"]
+    condition_b = paired_config["condition_b"]
+
+    # Load test config for metadata
+    description = ""
+    try:
+        test_config = load_test_config(test_id)
+        test_meta = test_config.get("test_metadata", {})
+        acquisition_type = test_meta.get("acquisition_type", "DIA")
+        sample_type = test_meta.get("sample_type", "hela")
+        description = test_meta.get("description", "")
+        is_dda = acquisition_type.upper() == "DDA"
+    except Exception:
+        is_dda = "DDA" in test_id
+        sample_type = "hye" if "HYE" in test_id else "hela"
+        acquisition_type = "DDA" if is_dda else "DIA"
+
+    # Get thresholds
+    thresholds = get_test_thresholds(test_id)
+
+    # Find test output directories for both conditions
+    output_base = Path(env_config.get("output_base", "."))
+
+    # Find outputs for condition A
+    test_dir_a = output_base / condition_a
+    d_folder_a, db_path_a = find_simulation_outputs(test_dir_a)
+
+    # Find outputs for condition B
+    test_dir_b = output_base / condition_b
+    d_folder_b, db_path_b = find_simulation_outputs(test_dir_b)
+
+    # Check all required outputs exist
+    if not d_folder_a:
+        logger.error(f"[{test_id}] No .d folder found for {condition_a}")
+        logger.error(f"[{test_id}] Run simulation with: --test {condition_a}")
+        return False, {"error": f"No .d folder for {condition_a}"}
+
+    if not d_folder_b:
+        logger.error(f"[{test_id}] No .d folder found for {condition_b}")
+        logger.error(f"[{test_id}] Run simulation with: --test {condition_b}")
+        return False, {"error": f"No .d folder for {condition_b}"}
+
+    if not db_path_a:
+        logger.error(f"[{test_id}] No synthetic_data.db found for {condition_a}")
+        return False, {"error": f"No database for {condition_a}"}
+
+    logger.info(f"[{test_id}] Found condition A: {d_folder_a}")
+    logger.info(f"[{test_id}] Found condition B: {d_folder_b}")
+    logger.info(f"[{test_id}] Using database from condition A: {db_path_a}")
+
+    # Create combined output directory
+    test_dir = output_base / test_id
+    test_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine FASTA paths
+    fasta_key = f"fasta_{sample_type}"
+    fasta_path = resolve_fasta_path(env_config, fasta_key)
+
+    fasta_key_decoys = f"fasta_{sample_type}_decoys"
+    fasta_path_decoys = resolve_fasta_path(env_config, fasta_key_decoys)
+
+    if not fasta_path:
+        logger.error(f"[{test_id}] No FASTA path configured for {sample_type}")
+        return False, {"error": f"No FASTA for {sample_type}"}
+
+    # Run analysis tools with both samples
+    diann_report = None
+    fragpipe_output = None
+    sage_results = None
+
+    is_phospho = sample_type == "phospho"
+
+    if not skip_analysis:
+        if tool in ["diann", "both"]:
+            # Run DiaNN with both conditions for proper MBR and quantification
+            diann_report = run_diann_analysis(
+                d_folder_a,
+                fasta_path,
+                test_dir,
+                env_config,
+                test_id,
+                is_dda,
+                is_phospho,
+                additional_d_folders=[d_folder_b],
+            )
+
+        if tool in ["fragpipe", "both"]:
+            # Run FragPipe with both conditions
+            # FragPipe requires decoy FASTA for Philosopher steps (both DDA and DIA)
+            # Note: diaTracer converts DIA to pseudo-DDA but doesn't add decoys to FASTA
+            fragpipe_fasta = fasta_path_decoys if fasta_path_decoys else fasta_path
+            if fragpipe_fasta != fasta_path:
+                logger.info(f"[{test_id}] Using decoy FASTA for FragPipe: {fragpipe_fasta}")
+            fragpipe_output = run_fragpipe_analysis(
+                d_folder_a,
+                fragpipe_fasta,
+                test_dir,
+                env_config,
+                test_id,
+                is_dda,
+                additional_d_folders=[d_folder_b],
+                is_phospho=is_phospho,
+            )
+
+    else:
+        # Look for existing analysis outputs in combined directory
+        diann_parquet = test_dir / "diann" / "report.parquet"
+        diann_tsv = test_dir / "diann" / "report.tsv"
+        if diann_parquet.exists():
+            diann_report = diann_parquet
+            logger.info(f"[{test_id}] Using existing DiaNN output: {diann_report}")
+        elif diann_tsv.exists():
+            diann_report = diann_tsv
+            logger.info(f"[{test_id}] Using existing DiaNN output: {diann_report}")
+
+        existing_fragpipe = test_dir / "fragpipe"
+        if existing_fragpipe.exists():
+            fragpipe_output = existing_fragpipe
+            logger.info(f"[{test_id}] Using existing FragPipe output: {fragpipe_output}")
+
+    # Run validation
+    if not diann_report and not fragpipe_output and not sage_results:
+        logger.error(f"[{test_id}] No analysis results to validate")
+        return False, {"error": "No analysis results"}
+
+    # Get tool versions for reporting
+    tool_versions = get_tool_versions(env_config)
+
+    # Build test metadata for HTML report
+    test_metadata = {
+        "test_id": test_id,
+        "acquisition_type": acquisition_type,
+        "sample_type": sample_type,
+        "description": f"{description} (Paired A/B evaluation)",
+        "condition_a": condition_a,
+        "condition_b": condition_b,
+    }
+
+    passed, metrics = run_validation(
+        db_path_a, diann_report, fragpipe_output, sage_results, test_dir, test_id, thresholds,
+        tool_versions=tool_versions,
+        test_metadata=test_metadata,
+    )
+
+    # Write status file
+    status_file = test_dir / ("EVAL_PASS" if passed else "EVAL_FAIL")
+    status_file.touch()
+
+    # Clean up old status files
+    for old_status in ["EVAL_PASS", "EVAL_FAIL"]:
+        old_file = test_dir / old_status
+        if old_file.exists() and old_file != status_file:
+            old_file.unlink()
+
+    return passed, metrics
+
+
 def run_test_evaluation(
     test_id: str,
     env_config: Dict,
@@ -726,6 +996,10 @@ def run_test_evaluation(
     Returns:
         Tuple of (passed, metrics).
     """
+    # Check if this is a paired test that requires A/B conditions
+    if is_paired_test(test_id):
+        return run_paired_test_evaluation(test_id, env_config, tool, skip_analysis)
+
     logger.info(f"=" * 60)
     logger.info(f"Evaluating test: {test_id}")
     logger.info(f"=" * 60)
@@ -805,7 +1079,8 @@ def run_test_evaluation(
             if fragpipe_fasta != fasta_path:
                 logger.info(f"[{test_id}] Using decoy FASTA for FragPipe: {fragpipe_fasta}")
             fragpipe_output = run_fragpipe_analysis(
-                d_folder, fragpipe_fasta, test_dir, env_config, test_id, is_dda
+                d_folder, fragpipe_fasta, test_dir, env_config, test_id, is_dda,
+                is_phospho=is_phospho,
             )
 
         # Run Sage for DDA tests (Sage is DDA-only)

@@ -167,6 +167,7 @@ class DiannExecutor:
         data_path: str,
         fasta_path: str,
         output_path: str,
+        additional_data_paths: Optional[List[str]] = None,
     ) -> List[str]:
         """
         Build DiaNN command line.
@@ -175,6 +176,8 @@ class DiannExecutor:
             data_path: Path to the .d folder to analyze.
             fasta_path: Path to the FASTA file.
             output_path: Path for the output report.tsv.
+            additional_data_paths: Additional .d folders for multi-sample analysis
+                (e.g., A/B fold-change experiments).
 
         Returns:
             List of command-line arguments.
@@ -184,11 +187,19 @@ class DiannExecutor:
         cmd = [
             self.executable_path,
             "--f", data_path,
+        ]
+
+        # Add additional data paths for multi-sample analysis
+        if additional_data_paths:
+            for path in additional_data_paths:
+                cmd.extend(["--f", path])
+
+        cmd.extend([
             "--fasta", fasta_path,
             "--out", output_path,
             "--threads", str(self.threads),
             "--qvalue", str(cfg.qvalue),
-        ]
+        ])
 
         # Library-free mode uses --fasta-search instead of --lib
         if cfg.library_free:
@@ -245,6 +256,7 @@ class DiannExecutor:
         fasta_path: str,
         output_dir: str,
         report_name: str = "report.tsv",
+        additional_data_paths: Optional[List[str]] = None,
     ) -> DiannResult:
         """
         Execute DiaNN analysis.
@@ -254,6 +266,8 @@ class DiannExecutor:
             fasta_path: Path to the FASTA file.
             output_dir: Directory for output files.
             report_name: Name of the output report file.
+            additional_data_paths: Additional .d folders for multi-sample analysis
+                (e.g., A/B fold-change experiments).
 
         Returns:
             DiannResult containing paths and execution status.
@@ -282,6 +296,7 @@ class DiannExecutor:
             data_path=data_path,
             fasta_path=fasta_path,
             output_path=output_path,
+            additional_data_paths=additional_data_paths,
         )
 
         logger.info(f"Executing DiaNN: {' '.join(cmd)}")

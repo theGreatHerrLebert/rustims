@@ -179,6 +179,7 @@ class FragPipeExecutor:
         data_path: str,
         manifest_path: str,
         is_dda: bool = False,
+        additional_data_paths: Optional[List[str]] = None,
     ) -> None:
         """
         Create a FragPipe manifest file for the input data.
@@ -187,20 +188,28 @@ class FragPipeExecutor:
             data_path: Path to the .d folder to analyze.
             manifest_path: Path to write the manifest file.
             is_dda: If True, mark as DDA data type; otherwise DIA.
+            additional_data_paths: Additional .d folders for multi-sample analysis.
         """
         data_type = "DDA" if is_dda else "DIA"
-        # Extract experiment name from .d folder
-        exp_name = os.path.basename(data_path).replace(".d", "")
 
-        if is_dda:
-            # DDA with LFQ-MBR requires experiment annotation
-            # Format: path\texperiment\tbiorep\ttechrep\tdata_type
-            with open(manifest_path, 'w') as f:
-                f.write(f"{data_path}\t{exp_name}\t1\t1\t{data_type}\n")
-        else:
-            # DIA format: path\t\t\tdata_type (empty experiment fields for diaTracer)
-            with open(manifest_path, 'w') as f:
-                f.write(f"{data_path}\t\t\t{data_type}\n")
+        # Collect all data paths
+        all_paths = [data_path]
+        if additional_data_paths:
+            all_paths.extend(additional_data_paths)
+
+        with open(manifest_path, 'w') as f:
+            for i, path in enumerate(all_paths):
+                # Extract experiment name from .d folder
+                exp_name = os.path.basename(path).replace(".d", "")
+
+                if is_dda:
+                    # DDA with LFQ-MBR requires experiment annotation
+                    # Format: path\texperiment\tbiorep\ttechrep\tdata_type
+                    f.write(f"{path}\t{exp_name}\t{i+1}\t1\t{data_type}\n")
+                else:
+                    # DIA format: empty experiment fields for diaTracer pipeline
+                    # Format: path\t\t\tdata_type (no experiment annotation)
+                    f.write(f"{path}\t\t\t{data_type}\n")
 
     def _update_workflow(
         self,
@@ -341,6 +350,7 @@ class FragPipeExecutor:
         output_dir: str,
         workflow_path: Optional[str] = None,
         is_dda: bool = False,
+        additional_data_paths: Optional[List[str]] = None,
     ) -> FragPipeResult:
         """
         Execute FragPipe analysis.
@@ -351,6 +361,7 @@ class FragPipeExecutor:
             output_dir: Directory for output files.
             workflow_path: Path to workflow file (uses config if not specified).
             is_dda: If True, configure for DDA data; otherwise DIA.
+            additional_data_paths: Additional .d folders for multi-sample analysis.
 
         Returns:
             FragPipeResult containing paths and execution status.
@@ -382,7 +393,7 @@ class FragPipeExecutor:
 
         # Create manifest
         manifest_path = os.path.join(output_dir, "manifest.fp-manifest")
-        self._create_manifest(data_path, manifest_path, is_dda=is_dda)
+        self._create_manifest(data_path, manifest_path, is_dda=is_dda, additional_data_paths=additional_data_paths)
 
         # Create updated workflow with correct FASTA path
         updated_workflow_path = os.path.join(output_dir, "workflow.workflow")

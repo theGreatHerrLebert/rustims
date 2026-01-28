@@ -35,7 +35,11 @@ logger = logging.getLogger(__name__)
 AVAILABLE_TESTS = [
     "IT-DIA-HELA",
     "IT-DIA-HYE",
+    "IT-DIA-HYE-A",
+    "IT-DIA-HYE-B",
     "IT-DIA-PHOS",
+    "IT-DIA-PHOS-A",
+    "IT-DIA-PHOS-B",
     "IT-DDA-TOPN",
     "IT-DDA-HLA",
 ]

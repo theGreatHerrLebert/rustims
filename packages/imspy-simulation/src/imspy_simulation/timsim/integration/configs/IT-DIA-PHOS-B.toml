@@ -57,7 +57,7 @@ from_existing = true
 existing_path = "${output_base}/IT-DIA-PHOS-A/IT-DIA-PHOS-A"
 apply_fragmentation = true
 use_bruker_sdk = true
-fragment_intensity_model = "prosit"
+fragment_intensity_model = "local"
 modifications = ""
 
 [peptide_digestion]
