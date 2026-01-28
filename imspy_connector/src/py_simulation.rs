@@ -34,15 +34,27 @@ pub struct PyIsotopeTransmissionConfig {
 #[pymethods]
 impl PyIsotopeTransmissionConfig {
     #[new]
-    #[pyo3(signature = (mode="none", min_probability=0.5, max_isotopes=10))]
-    pub fn new(mode: &str, min_probability: f64, max_isotopes: usize) -> Self {
+    #[pyo3(signature = (mode="none", min_probability=0.5, max_isotopes=10, precursor_survival_min=0.0, precursor_survival_max=0.0))]
+    pub fn new(
+        mode: &str,
+        min_probability: f64,
+        max_isotopes: usize,
+        precursor_survival_min: f64,
+        precursor_survival_max: f64,
+    ) -> Self {
         let transmission_mode = match mode.to_lowercase().as_str() {
             "precursor_scaling" | "precursor" => IsotopeTransmissionMode::PrecursorScaling,
             "per_fragment" | "fragment" => IsotopeTransmissionMode::PerFragment,
             _ => IsotopeTransmissionMode::None,
         };
         PyIsotopeTransmissionConfig {
-            inner: IsotopeTransmissionConfig::new(transmission_mode, min_probability, max_isotopes),
+            inner: IsotopeTransmissionConfig::new(
+                transmission_mode,
+                min_probability,
+                max_isotopes,
+                precursor_survival_min,
+                precursor_survival_max,
+            ),
         }
     }
 
@@ -86,6 +98,16 @@ impl PyIsotopeTransmissionConfig {
     #[getter]
     pub fn max_isotopes(&self) -> usize {
         self.inner.max_isotopes
+    }
+
+    #[getter]
+    pub fn precursor_survival_min(&self) -> f64 {
+        self.inner.precursor_survival_min
+    }
+
+    #[getter]
+    pub fn precursor_survival_max(&self) -> f64 {
+        self.inner.precursor_survival_max
     }
 }
 

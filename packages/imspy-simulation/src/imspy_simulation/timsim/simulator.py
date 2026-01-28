@@ -354,6 +354,12 @@ def get_default_settings() -> dict:
         'quad_transmission_min_probability': 0.5,
         'quad_transmission_max_isotopes': 10,
 
+        # Precursor survival settings - fraction of precursor ions that survive fragmentation intact
+        # When both are 0.0, no unfragmented precursors are added (backward compatible)
+        # For realistic simulation, try min=0.05, max=0.15
+        'precursor_survival_min': 0.0,
+        'precursor_survival_max': 0.0,
+
         # Logging settings
         'log_level': 'INFO',
         'log_file': None,

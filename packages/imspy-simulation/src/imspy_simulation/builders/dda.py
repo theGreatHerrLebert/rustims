@@ -36,6 +36,8 @@ class DDAFrameBuilder:
         quad_isotope_transmission_mode: str = 'none',
         quad_transmission_min_probability: float = 0.5,
         quad_transmission_max_isotopes: int = 10,
+        precursor_survival_min: float = 0.0,
+        precursor_survival_max: float = 0.0,
     ):
         """Initialize the DDA frame builder.
 
@@ -52,20 +54,24 @@ class DDAFrameBuilder:
                 isotope transmission (default 0.5).
             quad_transmission_max_isotopes: Maximum number of isotope peaks to
                 consider for transmission (default 10).
+            precursor_survival_min: Minimum fraction of precursor ions that survive
+                fragmentation intact (0.0-1.0, default 0.0).
+            precursor_survival_max: Maximum fraction of precursor ions that survive
+                fragmentation intact (0.0-1.0, default 0.0).
         """
         self.path = db_path
 
         if num_threads == -1:
             num_threads = os.cpu_count() or 4
 
-        # Create isotope transmission config if mode is not 'none'
-        isotope_config = None
-        if quad_isotope_transmission_mode != 'none':
-            isotope_config = ims.PyIsotopeTransmissionConfig(
-                mode=quad_isotope_transmission_mode,
-                min_probability=quad_transmission_min_probability,
-                max_isotopes=quad_transmission_max_isotopes,
-            )
+        # Create isotope transmission config
+        isotope_config = ims.PyIsotopeTransmissionConfig(
+            mode=quad_isotope_transmission_mode,
+            min_probability=quad_transmission_min_probability,
+            max_isotopes=quad_transmission_max_isotopes,
+            precursor_survival_min=precursor_survival_min,
+            precursor_survival_max=precursor_survival_max,
+        )
 
         self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(
             db_path, with_annotations, num_threads, isotope_config

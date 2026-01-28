@@ -319,6 +319,10 @@ pub struct IsotopeTransmissionConfig {
     pub min_probability: f64,
     /// Maximum number of isotope peaks to consider
     pub max_isotopes: usize,
+    /// Minimum fraction of precursor ions that survive fragmentation intact (0.0-1.0)
+    pub precursor_survival_min: f64,
+    /// Maximum fraction of precursor ions that survive fragmentation intact (0.0-1.0)
+    pub precursor_survival_max: f64,
 }
 
 impl Default for IsotopeTransmissionConfig {
@@ -327,16 +331,26 @@ impl Default for IsotopeTransmissionConfig {
             mode: IsotopeTransmissionMode::None,
             min_probability: 0.5,
             max_isotopes: 10,
+            precursor_survival_min: 0.0,
+            precursor_survival_max: 0.0,
         }
     }
 }
 
 impl IsotopeTransmissionConfig {
-    pub fn new(mode: IsotopeTransmissionMode, min_probability: f64, max_isotopes: usize) -> Self {
+    pub fn new(
+        mode: IsotopeTransmissionMode,
+        min_probability: f64,
+        max_isotopes: usize,
+        precursor_survival_min: f64,
+        precursor_survival_max: f64,
+    ) -> Self {
         Self {
             mode,
             min_probability,
             max_isotopes,
+            precursor_survival_min,
+            precursor_survival_max,
         }
     }
 
@@ -346,6 +360,8 @@ impl IsotopeTransmissionConfig {
             mode: IsotopeTransmissionMode::PrecursorScaling,
             min_probability,
             max_isotopes: 10,
+            precursor_survival_min: 0.0,
+            precursor_survival_max: 0.0,
         }
     }
 
@@ -355,7 +371,14 @@ impl IsotopeTransmissionConfig {
             mode: IsotopeTransmissionMode::PerFragment,
             min_probability,
             max_isotopes,
+            precursor_survival_min: 0.0,
+            precursor_survival_max: 0.0,
         }
+    }
+
+    /// Check if precursor survival is enabled
+    pub fn has_precursor_survival(&self) -> bool {
+        self.precursor_survival_max > 0.0
     }
 
     /// Check if any transmission mode is enabled

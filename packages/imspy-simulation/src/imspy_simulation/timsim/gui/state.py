@@ -132,6 +132,8 @@ class QuadTransmissionConfig:
     quad_isotope_transmission_mode: str = "none"
     quad_transmission_min_probability: float = 0.5
     quad_transmission_max_isotopes: int = 10
+    precursor_survival_min: float = 0.0
+    precursor_survival_max: float = 0.0
 
 
 @dataclass

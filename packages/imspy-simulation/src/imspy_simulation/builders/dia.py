@@ -51,6 +51,8 @@ class DIAFrameBuilder:
         quad_isotope_transmission_mode: str = 'none',
         quad_transmission_min_probability: float = 0.5,
         quad_transmission_max_isotopes: int = 10,
+        precursor_survival_min: float = 0.0,
+        precursor_survival_max: float = 0.0,
     ):
         """Initialize the DIA frame builder.
 
@@ -70,6 +72,10 @@ class DIAFrameBuilder:
                 isotope transmission (default 0.5).
             quad_transmission_max_isotopes: Maximum number of isotope peaks to
                 consider for transmission (default 10).
+            precursor_survival_min: Minimum fraction of precursor ions that survive
+                fragmentation intact (0.0-1.0, default 0.0).
+            precursor_survival_max: Maximum fraction of precursor ions that survive
+                fragmentation intact (0.0-1.0, default 0.0).
 
         Raises:
             ValueError: If annotations requested with lazy loading.
@@ -92,14 +98,14 @@ class DIAFrameBuilder:
             self._py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(db_path, num_threads)
             self._with_annotations = False
         else:
-            # Create isotope transmission config if mode is not 'none'
-            isotope_config = None
-            if quad_isotope_transmission_mode != 'none':
-                isotope_config = ims.PyIsotopeTransmissionConfig(
-                    mode=quad_isotope_transmission_mode,
-                    min_probability=quad_transmission_min_probability,
-                    max_isotopes=quad_transmission_max_isotopes,
-                )
+            # Create isotope transmission config
+            isotope_config = ims.PyIsotopeTransmissionConfig(
+                mode=quad_isotope_transmission_mode,
+                min_probability=quad_transmission_min_probability,
+                max_isotopes=quad_transmission_max_isotopes,
+                precursor_survival_min=precursor_survival_min,
+                precursor_survival_max=precursor_survival_max,
+            )
 
             self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(
                 db_path, with_annotations, num_threads, isotope_config

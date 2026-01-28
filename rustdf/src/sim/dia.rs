@@ -5,7 +5,7 @@ use mscore::algorithm::isotope::{
 use mscore::data::peptide::{PeptideIon, PeptideProductIonSeriesCollection};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::simulation::annotation::{
-    MzSpectrumAnnotated, TimsFrameAnnotated, TimsSpectrumAnnotated,
+    MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated, TimsSpectrumAnnotated,
 };
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::frame::TimsFrame;
@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
+use rand::Rng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
@@ -672,6 +673,53 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                             ).filter_ranged(100.0, 1700.0, 1.0, 1e9),
                         ));
                     }
+
+                    // Add unfragmented precursor ions (survival) if configured
+                    if self.isotope_config.has_precursor_survival() {
+                        let mut rng = rand::thread_rng();
+                        let survival_fraction = rng.gen_range(
+                            self.isotope_config.precursor_survival_min
+                            ..=self.isotope_config.precursor_survival_max
+                        );
+
+                        if survival_fraction > 0.0 {
+                            // Transmit the precursor spectrum through the quadrupole
+                            let precursor_transmitted = self.transmission_settings.transmit_spectrum(
+                                frame_id as i32,
+                                *scan as i32,
+                                spectrum.clone(),
+                                Some(self.isotope_config.min_probability),
+                            );
+
+                            if !precursor_transmitted.mz.is_empty() {
+                                // Scale by survival fraction and event count
+                                let precursor_scaled = precursor_transmitted * (fraction_events as f64 * survival_fraction);
+
+                                let precursor_mz_spectrum = if mz_noise_fragment {
+                                    if uniform {
+                                        precursor_scaled.add_mz_noise_uniform(fragment_ppm, right_drag_val)
+                                    } else {
+                                        precursor_scaled.add_mz_noise_normal(fragment_ppm)
+                                    }
+                                } else {
+                                    precursor_scaled
+                                };
+
+                                let precursor_len = precursor_mz_spectrum.mz.len();
+                                tims_spectra.push(TimsSpectrum::new(
+                                    frame_id as i32,
+                                    *scan as i32,
+                                    rt,
+                                    scan_mobility,
+                                    ms_type.clone(),
+                                    IndexedMzSpectrum::from_mz_spectrum(
+                                        vec![0; precursor_len],
+                                        precursor_mz_spectrum,
+                                    ).filter_ranged(100.0, 1700.0, 1.0, 1e9),
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -809,6 +857,64 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                             vec![0; spectrum_len],
                             mz_spectrum,
                         ));
+                    }
+
+                    // Add unfragmented precursor ions (survival) if configured
+                    if self.isotope_config.has_precursor_survival() {
+                        let mut rng = rand::thread_rng();
+                        let survival_fraction = rng.gen_range(
+                            self.isotope_config.precursor_survival_min
+                            ..=self.isotope_config.precursor_survival_max
+                        );
+
+                        if survival_fraction > 0.0 {
+                            // Create a non-annotated spectrum for transmission
+                            let precursor_mz_spectrum = MzSpectrum::new(spectrum.mz.clone(), spectrum.intensity.clone());
+
+                            // Transmit through the quadrupole
+                            let precursor_transmitted = self.transmission_settings.transmit_spectrum(
+                                frame_id as i32,
+                                *scan as i32,
+                                precursor_mz_spectrum,
+                                Some(self.isotope_config.min_probability),
+                            );
+
+                            if !precursor_transmitted.mz.is_empty() {
+                                // Scale by survival fraction and event count
+                                let precursor_scaled = precursor_transmitted * (fraction_events as f64 * survival_fraction);
+
+                                let precursor_final = if mz_noise_fragment {
+                                    if uniform {
+                                        precursor_scaled.add_mz_noise_uniform(fragment_ppm, right_drag_val)
+                                    } else {
+                                        precursor_scaled.add_mz_noise_normal(fragment_ppm)
+                                    }
+                                } else {
+                                    precursor_scaled
+                                };
+
+                                // Convert to annotated spectrum (with precursor annotations)
+                                let annotations: Vec<PeakAnnotation> = precursor_final.mz.iter()
+                                    .map(|_| PeakAnnotation { contributions: vec![] })
+                                    .collect();
+                                let precursor_annotated = MzSpectrumAnnotated::new(
+                                    precursor_final.mz.to_vec(),
+                                    precursor_final.intensity.to_vec(),
+                                    annotations,
+                                );
+
+                                let precursor_len = precursor_annotated.mz.len();
+                                tims_spectra.push(TimsSpectrumAnnotated::new(
+                                    frame_id as i32,
+                                    *scan,
+                                    rt,
+                                    scan_mobility,
+                                    ms_type.clone(),
+                                    vec![0; precursor_len],
+                                    precursor_annotated,
+                                ));
+                            }
+                        }
                     }
                 }
             }

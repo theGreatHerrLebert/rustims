@@ -866,6 +866,40 @@ def create_ions_panel(state: "SimulationState") -> None:
             tooltip="Maximum number of isotope peaks to consider for transmission",
         )
 
+        ui.separator()
+
+        ui.label("Precursor Survival").classes("text-lg font-bold mt-4")
+        ui.label(
+            "Fraction of precursor ions that survive fragmentation and appear intact in MS2 spectra."
+        ).classes("text-xs text-gray-500 dark:text-gray-400")
+
+        with ui.row().classes("w-full gap-4"):
+            number_field(
+                label="Survival Min",
+                value=state.config.quad_transmission.precursor_survival_min,
+                on_change=lambda v: setattr(
+                    state.config.quad_transmission, "precursor_survival_min", v
+                ),
+                min_val=0,
+                max_val=1,
+                step=0.01,
+                tooltip="Minimum fraction of precursor ions surviving fragmentation (0.0-1.0). "
+                        "Try 0.05 for realistic simulations.",
+            )
+
+            number_field(
+                label="Survival Max",
+                value=state.config.quad_transmission.precursor_survival_max,
+                on_change=lambda v: setattr(
+                    state.config.quad_transmission, "precursor_survival_max", v
+                ),
+                min_val=0,
+                max_val=1,
+                step=0.01,
+                tooltip="Maximum fraction of precursor ions surviving fragmentation (0.0-1.0). "
+                        "Try 0.15 for realistic simulations. Set both to 0.0 to disable.",
+            )
+
 
 def create_noise_panel(state: "SimulationState") -> None:
     """Create the Noise configuration panel."""

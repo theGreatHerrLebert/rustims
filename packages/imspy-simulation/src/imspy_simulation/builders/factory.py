@@ -43,6 +43,8 @@ def create_frame_builder(
     quad_isotope_transmission_mode: str = 'none',
     quad_transmission_min_probability: float = 0.5,
     quad_transmission_max_isotopes: int = 10,
+    precursor_survival_min: float = 0.0,
+    precursor_survival_max: float = 0.0,
 ) -> FrameBuilder:
     """Create a frame builder based on acquisition mode and loading strategy.
 
@@ -66,6 +68,10 @@ def create_frame_builder(
             isotope transmission (default 0.5).
         quad_transmission_max_isotopes: Maximum number of isotope peaks to
             consider for transmission (default 10).
+        precursor_survival_min: Minimum fraction of precursor ions that survive
+            fragmentation intact (0.0-1.0, default 0.0).
+        precursor_survival_max: Maximum fraction of precursor ions that survive
+            fragmentation intact (0.0-1.0, default 0.0).
 
     Returns:
         A FrameBuilder implementation appropriate for the given parameters.
@@ -99,6 +105,8 @@ def create_frame_builder(
         logger.info("Creating DDA frame builder with standard loading.")
         if quad_isotope_transmission_mode != 'none':
             logger.info(f"Quad-dependent isotope transmission enabled: {quad_isotope_transmission_mode}")
+        if precursor_survival_max > 0.0:
+            logger.info(f"Precursor survival enabled: {precursor_survival_min:.2f}-{precursor_survival_max:.2f}")
         return DDAFrameBuilder(
             db_path=db_path,
             num_threads=num_threads,
@@ -106,6 +114,8 @@ def create_frame_builder(
             quad_isotope_transmission_mode=quad_isotope_transmission_mode,
             quad_transmission_min_probability=quad_transmission_min_probability,
             quad_transmission_max_isotopes=quad_transmission_max_isotopes,
+            precursor_survival_min=precursor_survival_min,
+            precursor_survival_max=precursor_survival_max,
         )
 
     elif acquisition_mode == AcquisitionMode.DIA:
@@ -114,6 +124,8 @@ def create_frame_builder(
             logger.info("Creating DIA frame builder with lazy loading.")
             if quad_isotope_transmission_mode != 'none':
                 logger.warning("Quad-dependent isotope transmission is not supported with lazy loading, ignoring.")
+            if precursor_survival_max > 0.0:
+                logger.warning("Precursor survival is not supported with lazy loading, ignoring.")
             return DIAFrameBuilder(
                 db_path=db_path,
                 num_threads=num_threads,
@@ -124,6 +136,8 @@ def create_frame_builder(
             logger.info("Creating DIA frame builder with standard loading.")
             if quad_isotope_transmission_mode != 'none':
                 logger.info(f"Quad-dependent isotope transmission enabled: {quad_isotope_transmission_mode}")
+            if precursor_survival_max > 0.0:
+                logger.info(f"Precursor survival enabled: {precursor_survival_min:.2f}-{precursor_survival_max:.2f}")
             return DIAFrameBuilder(
                 db_path=db_path,
                 num_threads=num_threads,
@@ -132,6 +146,8 @@ def create_frame_builder(
                 quad_isotope_transmission_mode=quad_isotope_transmission_mode,
                 quad_transmission_min_probability=quad_transmission_min_probability,
                 quad_transmission_max_isotopes=quad_transmission_max_isotopes,
+                precursor_survival_min=precursor_survival_min,
+                precursor_survival_max=precursor_survival_max,
             )
 
     raise ValueError(f"Unknown acquisition mode: {acquisition_mode}")
