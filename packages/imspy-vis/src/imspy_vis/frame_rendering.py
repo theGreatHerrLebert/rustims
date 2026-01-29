@@ -179,8 +179,10 @@ class BaseFrameRenderer:
             frame_ids = self._all_frame_ids
 
         if max_frames is not None and len(frame_ids) > max_frames:
-            # Take first N frames for sequential viewing (better for debugging)
-            frame_ids = frame_ids[:max_frames]
+            # Take frames from the middle of the experiment where peptides are eluting
+            total = len(frame_ids)
+            start = (total - max_frames) // 2
+            frame_ids = frame_ids[start:start + max_frames]
 
         os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
 
