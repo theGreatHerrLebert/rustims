@@ -10,7 +10,7 @@ Classes:
     - BinomialChargeStateDistributionModel: Simple binomial-based model
 """
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -333,18 +333,29 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
 
     def _preprocess_sequences(
         self, sequences: List[str], pad_len: int = 50
-    ) -> torch.Tensor:
-        """Tokenize and pad sequences."""
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Tokenize and pad sequences.
+
+        Returns:
+            Tuple of (tokens, padding_mask) where padding_mask is True for padding positions.
+        """
         result = self.tokenizer(sequences, padding=True, return_tensors='pt')
         tokens = result['input_ids']
+        attention_mask = result['attention_mask']
 
         if tokens.shape[1] < pad_len:
             padding = torch.zeros(tokens.shape[0], pad_len - tokens.shape[1], dtype=torch.long)
             tokens = torch.cat([tokens, padding], dim=1)
+            attn_padding = torch.zeros(attention_mask.shape[0], pad_len - attention_mask.shape[1], dtype=torch.long)
+            attention_mask = torch.cat([attention_mask, attn_padding], dim=1)
         elif tokens.shape[1] > pad_len:
             tokens = tokens[:, :pad_len]
+            attention_mask = attention_mask[:, :pad_len]
 
-        return tokens.to(self._device)
+        # padding_mask is True where attention_mask is 0 (i.e., padding positions)
+        padding_mask = (attention_mask == 0)
+
+        return tokens.to(self._device), padding_mask.to(self._device)
 
     def simulate_ionizations(
         self,
@@ -362,13 +373,14 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
             Most likely charge state for each peptide
         """
         self.model.eval()
-        tokens = self._preprocess_sequences(sequences)
+        tokens, padding_mask = self._preprocess_sequences(sequences)
 
         all_probs = []
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
-                probs = self.model.predict_charge(batch_tokens)
+                batch_mask = padding_mask[i:i + batch_size]
+                probs = self.model.predict_charge(batch_tokens, padding_mask=batch_mask)
                 all_probs.append(probs.cpu().numpy())
 
         probabilities = np.concatenate(all_probs, axis=0)
@@ -396,13 +408,14 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
             Probability distributions of shape (n_samples, max_charge)
         """
         self.model.eval()
-        tokens = self._preprocess_sequences(sequences)
+        tokens, padding_mask = self._preprocess_sequences(sequences)
 
         all_probs = []
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
-                probs = self.model.predict_charge(batch_tokens)
+                batch_mask = padding_mask[i:i + batch_size]
+                probs = self.model.predict_charge(batch_tokens, padding_mask=batch_mask)
                 all_probs.append(probs.cpu().numpy())
 
         return np.concatenate(all_probs, axis=0)

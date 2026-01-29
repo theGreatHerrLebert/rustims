@@ -1249,8 +1249,14 @@ def train_charge_model(
         padding_mask = (batch["attention_mask"] == 0)
         target = batch["charge_dist"]
 
-        pred = model.predict_charge(input_ids, padding_mask)
-        return torch.nn.functional.cross_entropy(pred, target)
+        # Use logits for cross_entropy (not probabilities!)
+        # cross_entropy expects raw logits and applies log_softmax internally
+        if hasattr(model, 'predict_charge_logits'):
+            logits = model.predict_charge_logits(input_ids, padding_mask)
+        else:
+            # Fallback for legacy models - get logits from charge head directly
+            logits = model.heads["charge"](model.encoder(input_ids, padding_mask), return_logits=True)
+        return torch.nn.functional.cross_entropy(logits, target)
 
     trainer = Trainer(
         model=model,

@@ -172,3 +172,13 @@ gpu_memory_limit_gb = 4
 [logging]
 log_level = "INFO"
 log_file = ""
+
+# -----------------------------------------------------------------------------
+# Video settings - Generate preview video for visual inspection
+# -----------------------------------------------------------------------------
+[video_settings]
+generate_preview_video = true
+preview_video_max_frames = 100
+preview_video_fps = 10
+preview_video_dpi = 80
+preview_video_annotate = true

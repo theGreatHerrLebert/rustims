@@ -256,13 +256,14 @@ def main():
 
 
 def _charge_loss(model, batch):
-    """Compute charge loss."""
+    """Compute charge loss using logits (not probabilities) for cross_entropy."""
     input_ids = batch["input_ids"]
     padding_mask = (batch["attention_mask"] == 0)
     target = batch["charge_dist"]
 
-    pred = model.predict_charge(input_ids, padding_mask=padding_mask)
-    return torch.nn.functional.cross_entropy(pred, target)
+    # Use logits for cross_entropy - it expects raw scores, not probabilities!
+    logits = model.predict_charge_logits(input_ids, padding_mask=padding_mask)
+    return torch.nn.functional.cross_entropy(logits, target)
 
 
 if __name__ == "__main__":

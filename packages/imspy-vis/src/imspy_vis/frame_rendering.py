@@ -226,8 +226,9 @@ class DDAFrameRenderer(BaseFrameRenderer):
                                 cmap: str = 'inferno', annotate: bool = True) -> np.ndarray:
         """Render frame directly to numpy array without saving to disk."""
         F = get_frame_matrix(self.handle, frame_id, scan_max=self.handle.num_scans)
-        fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
-        ax.imshow(np.cbrt(F), cmap=cmap, origin='upper')
+        # Use fixed 16:9 aspect ratio for consistent video frames
+        fig, ax = plt.subplots(figsize=(16, 9), dpi=dpi)
+        ax.imshow(np.cbrt(F), cmap=cmap, origin='upper', aspect='auto')
         ax.set(xlabel='m/z (1 Th bins)', ylabel='Scan Num',
                title=(f"Frame {frame_id}"
                       f"{' [Precursor]' if frame_id in self.precursor_frames else ''}"
@@ -252,8 +253,9 @@ class DDAFrameRenderer(BaseFrameRenderer):
                       dpi: int = 150, cmap: str = 'inferno',
                       annotate: bool = True):
         F = get_frame_matrix(self.handle, frame_id, scan_max=self.handle.num_scans)
-        fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
-        ax.imshow(np.cbrt(F), cmap=cmap, origin='upper')
+        # Use fixed 16:9 aspect ratio for consistent video frames
+        fig, ax = plt.subplots(figsize=(16, 9), dpi=dpi)
+        ax.imshow(np.cbrt(F), cmap=cmap, origin='upper', aspect='auto')
         ax.set(xlabel='m/z (1 Th bins)', ylabel='Scan Num',
                title=(f"Frame {frame_id}"
                       f"{' [Precursor]' if frame_id in self.precursor_frames else ''}"
@@ -301,8 +303,9 @@ class DIAFrameRenderer(BaseFrameRenderer):
                                 cmap: str = 'inferno', annotate: bool = True) -> np.ndarray:
         """Render frame directly to numpy array without saving to disk."""
         F = get_frame_matrix(self.handle, frame_id, scan_max=self.handle.num_scans)
-        fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
-        ax.imshow(np.sqrt(F), cmap=cmap, origin='upper')
+        # Use fixed 16:9 aspect ratio for consistent video frames
+        fig, ax = plt.subplots(figsize=(16, 9), dpi=dpi)
+        ax.imshow(np.sqrt(F), cmap=cmap, origin='upper', aspect='auto')
         ax.set(xlabel='m/z (1 Th bins)', ylabel='Scan Num',
                title=(f"Frame {frame_id}"
                       f"{' [Precursor]' if frame_id in self.precursor_frames else ''}"
@@ -328,8 +331,9 @@ class DIAFrameRenderer(BaseFrameRenderer):
                       dpi: int = 150, cmap: str = 'inferno',
                       annotate: bool = True):
         F = get_frame_matrix(self.handle, frame_id, scan_max=self.handle.num_scans)
-        fig, ax = plt.subplots(figsize=(10 * F.shape[1]/F.shape[0], 10), dpi=dpi)
-        ax.imshow(np.sqrt(F), cmap=cmap, origin='upper')
+        # Use fixed 16:9 aspect ratio for consistent video frames
+        fig, ax = plt.subplots(figsize=(16, 9), dpi=dpi)
+        ax.imshow(np.sqrt(F), cmap=cmap, origin='upper', aspect='auto')
         ax.set(xlabel='m/z (1 Th bins)', ylabel='Scan Num',
                title=(f"Frame {frame_id}"
                       f"{' [Precursor]' if frame_id in self.precursor_frames else ''}"

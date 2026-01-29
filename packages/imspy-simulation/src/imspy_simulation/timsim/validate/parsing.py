@@ -230,21 +230,37 @@ def parse_fragpipe_modification(mod_string: str, sequence: str) -> list:
     return modifications
 
 
-def fragpipe_mods_to_unimod(sequence: str, mods: str) -> str:
+def fragpipe_mods_to_unimod(
+    sequence: str,
+    mods: str,
+    add_carbamidomethyl: bool = True,
+) -> str:
     """
     Convert FragPipe modifications to UNIMOD-style sequence.
 
     Args:
         sequence: The plain peptide sequence.
         mods: The FragPipe modifications string.
+        add_carbamidomethyl: Whether to add carbamidomethylation [UNIMOD:4] to all
+            cysteines. FragPipe treats this as a fixed modification and doesn't
+            list it in the Assigned Modifications column.
 
     Returns:
         Sequence with UNIMOD annotations.
     """
     r_dict = {index: aa for index, aa in enumerate(sequence)}
+
+    # Add carbamidomethylation to all cysteines (fixed modification)
+    if add_carbamidomethyl:
+        for index, aa in enumerate(sequence):
+            if aa == "C":
+                r_dict[index] = "C[UNIMOD:4]"
+
+    # Apply variable modifications from the mods string
     modifications = parse_fragpipe_modification(mods, sequence)
     for index, mod in modifications:
         r_dict[index] = mod
+
     return "".join(r_dict.values())
 
 

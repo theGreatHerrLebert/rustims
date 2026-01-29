@@ -1543,7 +1543,9 @@ def generate_comparison_plots(
     ax2.bar(tool_names, rates, color=bar_colors, edgecolor='black', linewidth=0.5)
     ax2.axhline(y=30, color='red', linestyle='--', linewidth=1)
     ax2.set_title('ID Rate (%)', fontsize=11, fontweight='bold')
-    ax2.set_ylim(0, 50)
+    # Scale y-axis to highest bar + 10% padding
+    max_rate = max(rates) if rates else 100
+    ax2.set_ylim(0, min(100, max_rate * 1.1))
 
     # Correlations
     ax3 = fig.add_subplot(gs[0, 2])

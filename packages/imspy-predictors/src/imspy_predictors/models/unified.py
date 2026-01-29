@@ -140,6 +140,7 @@ class UnifiedPeptideModel(nn.Module):
         collision_energy: Optional[torch.Tensor] = None,
         instrument: Optional[torch.Tensor] = None,
         tasks: Optional[List[str]] = None,
+        return_logits: bool = False,
     ) -> Dict[str, Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         """
         Forward pass for specified tasks.
@@ -153,12 +154,14 @@ class UnifiedPeptideModel(nn.Module):
             instrument: Optional instrument type IDs of shape (batch,).
                        Use UnifiedPeptideModel.get_instrument_id("timstof") to get IDs.
             tasks: List of tasks to compute. If None, computes all enabled tasks.
+            return_logits: If True, return raw logits for charge head instead of
+                          probabilities. Use this during training with cross_entropy loss.
 
         Returns:
             Dictionary mapping task names to outputs:
                 - "ccs": Tuple of (mean, std) tensors
                 - "rt": Single tensor
-                - "charge": Probability distribution tensor
+                - "charge": Probability distribution tensor (or logits if return_logits=True)
                 - "intensity": Fragment intensity tensor
         """
         # Encode sequence
@@ -187,7 +190,7 @@ class UnifiedPeptideModel(nn.Module):
                 )
 
             elif task == "charge":
-                outputs["charge"] = self.heads["charge"](encoder_out, padding_mask)
+                outputs["charge"] = self.heads["charge"](encoder_out, padding_mask, return_logits=return_logits)
 
             elif task == "intensity":
                 if charge is None or collision_energy is None:
@@ -263,6 +266,23 @@ class UnifiedPeptideModel(nn.Module):
             Charge state probabilities
         """
         outputs = self.forward(tokens, padding_mask=padding_mask, tasks=["charge"])
+        return outputs["charge"]
+
+    def predict_charge_logits(
+        self,
+        tokens: torch.Tensor,
+        padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Return raw logits for charge state prediction (for training with cross_entropy).
+
+        Use this method during training instead of predict_charge, since
+        cross_entropy loss expects raw logits, not probabilities.
+
+        Returns:
+            Charge state logits (before softmax)
+        """
+        outputs = self.forward(tokens, padding_mask=padding_mask, tasks=["charge"], return_logits=True)
         return outputs["charge"]
 
     def predict_intensity(

@@ -353,6 +353,9 @@ class ChargeHead(nn.Module):
         max_charge: Maximum charge state (default: 6)
         hidden_dim: Hidden layer dimension (default: 128)
         dropout: Dropout probability (default: 0.1)
+        temperature: Temperature for softmax scaling (default: 1.0).
+            Higher values produce softer probability distributions.
+            Recommended range: 1.0-5.0 for calibrated predictions.
 
     Returns:
         Charge state probabilities of shape (batch, max_charge)
@@ -365,10 +368,12 @@ class ChargeHead(nn.Module):
         max_charge: int = 6,
         hidden_dim: int = 128,
         dropout: float = 0.1,
+        temperature: float = 1.0,
     ):
         super().__init__()
 
         self.max_charge = max_charge
+        self.temperature = temperature
 
         self.fc = nn.Sequential(
             nn.Linear(d_model, hidden_dim),
@@ -387,6 +392,7 @@ class ChargeHead(nn.Module):
         encoder_out: torch.Tensor,
         padding_mask: Optional[torch.Tensor] = None,
         return_logits: bool = False,
+        temperature: Optional[float] = None,
     ) -> torch.Tensor:
         """
         Predict charge state distribution.
@@ -395,6 +401,7 @@ class ChargeHead(nn.Module):
             encoder_out: Encoder output of shape (batch, seq_len, d_model)
             padding_mask: Optional padding mask (unused)
             return_logits: If True, return raw logits instead of probabilities
+            temperature: Override default temperature for this call
 
         Returns:
             Charge state probabilities/logits of shape (batch, max_charge)
@@ -404,7 +411,10 @@ class ChargeHead(nn.Module):
 
         if return_logits:
             return logits
-        return F.softmax(logits, dim=-1)
+
+        # Apply temperature scaling
+        temp = temperature if temperature is not None else self.temperature
+        return F.softmax(logits / temp, dim=-1)
 
 
 class IntensityHead(nn.Module):

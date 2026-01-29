@@ -40,8 +40,10 @@ AVAILABLE_TESTS = [
     "IT-DIA-PHOS",
     "IT-DIA-PHOS-A",
     "IT-DIA-PHOS-B",
+    "IT-DIA-PARTIAL-FRAG",
     "IT-DDA-TOPN",
     "IT-DDA-HLA",
+    "IT-DDA-PARTIAL-FRAG",
 ]
 
 
