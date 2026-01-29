@@ -97,7 +97,7 @@ inverse_mobility_std_mean = 0.009
 p_charge = 0.5
 max_charge = 4
 min_charge_contrib = 0.25
-binomial_charge_model = false
+binomial_charge_model = true
 normalize_charge_states = true
 charge_state_one_probability = 0.0
 

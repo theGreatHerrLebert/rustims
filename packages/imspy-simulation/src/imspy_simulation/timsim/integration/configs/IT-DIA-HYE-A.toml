@@ -121,7 +121,7 @@ re_scale_rt = false
 p_charge = 0.5
 min_charge_contrib = 0.25
 max_charge = 4
-binomial_charge_model = false
+binomial_charge_model = true
 normalize_charge_states = true
 charge_state_one_probability = 0.0
 

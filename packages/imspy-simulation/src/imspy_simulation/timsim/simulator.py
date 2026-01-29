@@ -298,7 +298,7 @@ def get_default_settings() -> dict:
         'p_charge': 0.8,
         'min_charge_contrib': 0.005,
         'max_charge': 4,
-        'binomial_charge_model': False,
+        'binomial_charge_model': True,
         'normalize_charge_states': True,
         'charge_state_one_probability': 0.0,
 
