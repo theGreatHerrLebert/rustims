@@ -1,7 +1,35 @@
 # =============================================================================
 # IT-DDA-PARTIAL-FRAG-BINOM: DDA with Partial Fragmentation + Binomial Charge
 # =============================================================================
+# Uses binomial charge state model instead of neural network for better
+# calibrated probability distributions.
+# =============================================================================
 
+[test_metadata]
+test_id = "IT-DDA-PARTIAL-FRAG-BINOM"
+description = "DDA-PASEF with partial fragmentation and binomial charge model"
+acquisition_type = "DDA"
+sample_type = "hela"
+analysis_tools = ["diann", "fragpipe", "sage"]
+
+[thresholds]
+min_id_rate = 0.25
+min_rt_correlation = 0.95
+min_im_correlation = 0.95
+
+# -----------------------------------------------------------------------------
+# Paths - Resolved from env.toml at runtime
+# -----------------------------------------------------------------------------
+[paths]
+save_path = "${output_base}/IT-DDA-PARTIAL-FRAG-BINOM"
+reference_path = "${reference_dda}"
+fasta_path = "${fasta_hela}"
+modifications = ""
+existing_path = ""
+
+# -----------------------------------------------------------------------------
+# Experiment settings
+# -----------------------------------------------------------------------------
 [experiment]
 experiment_name = "IT-DDA-PARTIAL-FRAG-BINOM"
 acquisition_type = "DDA"
@@ -13,6 +41,9 @@ apply_fragmentation = true
 from_existing = false
 silent_mode = false
 
+# -----------------------------------------------------------------------------
+# Digestion settings
+# -----------------------------------------------------------------------------
 [digestion]
 n_proteins = 20000
 num_peptides_total = 750000
@@ -29,11 +60,17 @@ max_len = 30
 decoys = false
 upscale_factor = 100000
 
+# -----------------------------------------------------------------------------
+# Prediction models
+# -----------------------------------------------------------------------------
 [models]
 rt_model = ""
 ccs_model = ""
 intensity_model = ""
 
+# -----------------------------------------------------------------------------
+# Retention time settings
+# -----------------------------------------------------------------------------
 [retention_time]
 min_rt_percent = 2.0
 exclude_accumulated_gradient_start = true
@@ -42,27 +79,41 @@ sampling_step_size = 0.0001
 n_steps = 1000
 remove_epsilon = 0.0001
 
+# -----------------------------------------------------------------------------
+# Ion mobility settings
+# -----------------------------------------------------------------------------
 [ion_mobility]
 use_inverse_mobility_std_mean = true
 inverse_mobility_std_mean = 0.009
 
+# -----------------------------------------------------------------------------
+# Charge states - BINOMIAL MODEL
+# -----------------------------------------------------------------------------
 [charge_states]
 p_charge = 0.5
 max_charge = 4
 min_charge_contrib = 0.25
-# Using binomial charge model
 binomial_charge_model = true
 normalize_charge_states = true
 charge_state_one_probability = 0.0
 
+# -----------------------------------------------------------------------------
+# Isotopic pattern
+# -----------------------------------------------------------------------------
 [isotopic_pattern]
 isotope_k = 8
 isotope_min_intensity = 1
 isotope_centroid = true
 
+# -----------------------------------------------------------------------------
+# Fragment intensity
+# -----------------------------------------------------------------------------
 [fragment_intensity]
 down_sample_factor = 0.5
 
+# -----------------------------------------------------------------------------
+# Noise settings
+# -----------------------------------------------------------------------------
 [noise]
 noise_frame_abundance = false
 noise_scan_abundance = false
@@ -78,13 +129,22 @@ fragment_sample_fraction = 0.2
 num_precursor_noise_frames = 5
 num_fragment_noise_frames = 5
 
+# -----------------------------------------------------------------------------
+# Variation settings
+# -----------------------------------------------------------------------------
 [variation]
 re_scale_rt = false
 
+# -----------------------------------------------------------------------------
+# Acquisition settings
+# -----------------------------------------------------------------------------
 [acquisition]
 round_collision_energy = true
 collision_energy_decimals = 0
 
+# -----------------------------------------------------------------------------
+# DDA settings
+# -----------------------------------------------------------------------------
 [dda]
 precursors_every = 10
 precursor_intensity_threshold = 500
@@ -92,12 +152,21 @@ max_precursors = 25
 exclusion_width = 25
 selection_mode = "topN"
 
+# -----------------------------------------------------------------------------
+# Proteome mix settings
+# -----------------------------------------------------------------------------
 [proteome_mix]
 proteome_mix = false
 
+# -----------------------------------------------------------------------------
+# Phosphorylation settings
+# -----------------------------------------------------------------------------
 [phosphorylation]
 phospho_mode = false
 
+# -----------------------------------------------------------------------------
+# Quad transmission settings - partial fragmentation
+# -----------------------------------------------------------------------------
 [quad_transmission]
 quad_isotope_transmission_mode = "none"
 quad_transmission_min_probability = 0.5
@@ -105,6 +174,9 @@ quad_transmission_max_isotopes = 10
 precursor_survival_min = 0.0
 precursor_survival_max = 0.3
 
+# -----------------------------------------------------------------------------
+# Performance settings
+# -----------------------------------------------------------------------------
 [performance]
 num_threads = -1
 batch_size = 256
@@ -113,26 +185,19 @@ lazy_frame_assembly = true
 use_gpu = false
 gpu_memory_limit_gb = 4
 
+# -----------------------------------------------------------------------------
+# Logging settings
+# -----------------------------------------------------------------------------
 [logging]
 log_level = "INFO"
 log_file = ""
 
+# -----------------------------------------------------------------------------
+# Video settings - Generate preview video for visual inspection
+# -----------------------------------------------------------------------------
 [video_settings]
 generate_preview_video = true
 preview_video_max_frames = 100
 preview_video_fps = 10
 preview_video_dpi = 80
 preview_video_annotate = true
-
-[main_settings]
-save_path = "/home/dateschn/validate-sim/timsim-integration-test-final-3/output/IT-DDA-PARTIAL-FRAG-BINOM"
-reference_path = "/home/dateschn/validate-sim/sim/blanks/ref-dda/G230913_002_Slot2-2_1_11392.d"
-fasta_path = "/home/dateschn/validate-sim/sim/hela.fasta"
-use_bruker_sdk = true
-
-[performance_settings]
-num_threads = -1
-batch_size = 256
-frame_batch_size = 500
-use_gpu = true
-gpu_memory_limit_gb = 4

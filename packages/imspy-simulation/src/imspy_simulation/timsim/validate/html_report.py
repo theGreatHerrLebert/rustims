@@ -21,6 +21,42 @@ def encode_image_base64(image_path: str) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
+def encode_video_base64(video_path: str) -> str:
+    """Encode a video file to base64 string."""
+    if not os.path.exists(video_path):
+        return ""
+    with open(video_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
+
+
+def find_preview_videos(output_dir: str, test_id: str) -> List[str]:
+    """Find preview video files for a test."""
+    videos = []
+    # Check in the test output directory (for single tests)
+    parent_dir = os.path.dirname(output_dir)
+
+    # Look for videos in parent directory structure
+    for pattern in [
+        os.path.join(parent_dir, f"{test_id}", f"{test_id}_preview.mp4"),
+        os.path.join(parent_dir, f"{test_id}-A", f"{test_id}-A_preview.mp4"),
+        os.path.join(parent_dir, f"{test_id}-B", f"{test_id}-B_preview.mp4"),
+        os.path.join(parent_dir, f"../{test_id}-A/{test_id}-A/{test_id}-A_preview.mp4"),
+        os.path.join(parent_dir, f"../{test_id}-B/{test_id}-B/{test_id}-B_preview.mp4"),
+    ]:
+        if os.path.exists(pattern):
+            videos.append(pattern)
+
+    # Also check directly in parent for simulation output structure
+    grandparent = os.path.dirname(parent_dir)
+    for suffix in ["", "-A", "-B"]:
+        test_name = f"{test_id}{suffix}" if suffix else test_id
+        video_path = os.path.join(grandparent, test_name, f"{test_name}_preview.mp4")
+        if os.path.exists(video_path) and video_path not in videos:
+            videos.append(video_path)
+
+    return videos
+
+
 def get_status_badge(passed: bool) -> str:
     """Generate HTML for a pass/fail status badge."""
     if passed:
@@ -249,6 +285,43 @@ tr:hover {
     max-width: 100%;
     height: auto;
     border-radius: 10px;
+}
+
+.video-section {
+    margin: 20px 0;
+    padding: 20px;
+    background: var(--bg-light);
+    border-radius: 10px;
+}
+
+.video-section h2 {
+    margin-top: 0;
+    border-bottom: none;
+}
+
+.video-grid {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.video-container {
+    text-align: center;
+}
+
+.video-container video {
+    max-width: 100%;
+    max-height: 400px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.video-container .video-label {
+    margin-top: 10px;
+    font-size: 0.9em;
+    color: #666;
+    font-weight: 500;
 }
 
 .collapsible {
@@ -509,6 +582,41 @@ def generate_html_report(
     <div>
         <div class="label">Tools Compared</div>
         <div>{', '.join(f"{t} v{tool_versions.get(t, '?')}" if tool_versions.get(t) else t for t in tool_names)}</div>
+    </div>
+</div>
+""")
+
+    # Preview videos section
+    preview_videos = find_preview_videos(output_dir, test_id)
+    if preview_videos:
+        html_parts.append("""
+<div class="video-section">
+    <h2>Simulation Preview</h2>
+    <div class="video-grid">
+""")
+        for video_path in preview_videos:
+            video_name = os.path.basename(video_path)
+            # Determine label from filename
+            if "-A_" in video_name:
+                label = "Condition A"
+            elif "-B_" in video_name:
+                label = "Condition B"
+            else:
+                label = "Preview"
+
+            # Encode video as base64 for self-contained HTML
+            video_data = encode_video_base64(video_path)
+            if video_data:
+                html_parts.append(f"""
+        <div class="video-container">
+            <video controls preload="metadata">
+                <source src="data:video/mp4;base64,{video_data}" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+            <div class="video-label">{label}</div>
+        </div>
+""")
+        html_parts.append("""
     </div>
 </div>
 """)
