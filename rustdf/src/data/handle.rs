@@ -254,6 +254,7 @@ impl IndexConverter for BrukerLibTimsDataConverter {
 pub enum TimsIndexConverter {
     Simple(SimpleIndexConverter),
     BrukerLib(BrukerLibTimsDataConverter),
+    Lookup(LookupIndexConverter),
 }
 
 impl IndexConverter for TimsIndexConverter {
@@ -261,6 +262,7 @@ impl IndexConverter for TimsIndexConverter {
         match self {
             TimsIndexConverter::Simple(converter) => converter.tof_to_mz(frame_id, tof_values),
             TimsIndexConverter::BrukerLib(converter) => converter.tof_to_mz(frame_id, tof_values),
+            TimsIndexConverter::Lookup(converter) => converter.tof_to_mz(frame_id, tof_values),
         }
     }
 
@@ -268,6 +270,7 @@ impl IndexConverter for TimsIndexConverter {
         match self {
             TimsIndexConverter::Simple(converter) => converter.mz_to_tof(frame_id, mz_values),
             TimsIndexConverter::BrukerLib(converter) => converter.mz_to_tof(frame_id, mz_values),
+            TimsIndexConverter::Lookup(converter) => converter.mz_to_tof(frame_id, mz_values),
         }
     }
 
@@ -277,6 +280,9 @@ impl IndexConverter for TimsIndexConverter {
                 converter.scan_to_inverse_mobility(frame_id, scan_values)
             }
             TimsIndexConverter::BrukerLib(converter) => {
+                converter.scan_to_inverse_mobility(frame_id, scan_values)
+            }
+            TimsIndexConverter::Lookup(converter) => {
                 converter.scan_to_inverse_mobility(frame_id, scan_values)
             }
         }
@@ -292,6 +298,9 @@ impl IndexConverter for TimsIndexConverter {
                 converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
             }
             TimsIndexConverter::BrukerLib(converter) => {
+                converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+            }
+            TimsIndexConverter::Lookup(converter) => {
                 converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
             }
         }
@@ -777,6 +786,86 @@ impl TimsDataLoader {
             compressed_data: data,
         })
     }
+
+    /// Create a lazy loader with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This method enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup table should be pre-computed using the Bruker SDK.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `tof_max_index` - Maximum TOF index (from GlobalMetaData)
+    /// * `mz_lower` - Minimum m/z value (from GlobalMetaData)
+    /// * `mz_upper` - Maximum m/z value (from GlobalMetaData)
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table
+    ///
+    /// # Returns
+    /// A new TimsDataLoader with LookupIndexConverter
+    pub fn new_lazy_with_calibration(
+        data_path: &str,
+        tof_max_index: u32,
+        mz_lower: f64,
+        mz_upper: f64,
+        im_lookup: Vec<f64>,
+    ) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+
+        let index_converter = TimsIndexConverter::Lookup(LookupIndexConverter::new(
+            mz_lower,
+            mz_upper,
+            tof_max_index,
+            im_lookup,
+        ));
+
+        TimsDataLoader::Lazy(TimsLazyLoder {
+            raw_data_layout,
+            index_converter,
+        })
+    }
+
+    /// Create an in-memory loader with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This method enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup table should be pre-computed using the Bruker SDK.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `tof_max_index` - Maximum TOF index (from GlobalMetaData)
+    /// * `mz_lower` - Minimum m/z value (from GlobalMetaData)
+    /// * `mz_upper` - Maximum m/z value (from GlobalMetaData)
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table
+    ///
+    /// # Returns
+    /// A new TimsDataLoader with LookupIndexConverter
+    pub fn new_in_memory_with_calibration(
+        data_path: &str,
+        tof_max_index: u32,
+        mz_lower: f64,
+        mz_upper: f64,
+        im_lookup: Vec<f64>,
+    ) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+
+        let index_converter = TimsIndexConverter::Lookup(LookupIndexConverter::new(
+            mz_lower,
+            mz_upper,
+            tof_max_index,
+            im_lookup,
+        ));
+
+        let mut file_path = PathBuf::from(data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(file_path).unwrap();
+        let mut data = Vec::new();
+        infile.read_to_end(&mut data).unwrap();
+
+        TimsDataLoader::InMemory(TimsInMemoryLoader {
+            raw_data_layout,
+            index_converter,
+            compressed_data: data,
+        })
+    }
+
     pub fn get_index_converter(&self) -> &dyn IndexConverter {
         match self {
             TimsDataLoader::InMemory(loader) => &loader.index_converter,
@@ -915,5 +1004,135 @@ impl IndexConverter for SimpleIndexConverter {
         }
 
         scan_values
+    }
+}
+
+/// Ion mobility index converter using pre-computed lookup table.
+///
+/// This converter uses a pre-computed scan→1/K0 lookup table extracted from the Bruker SDK.
+/// It enables accurate ion mobility calibration with fast parallel extraction.
+///
+/// Background:
+/// - The Bruker calibration formula is patented and proprietary
+/// - Using the Bruker SDK gives accurate values but is slow (not thread-safe)
+/// - Linear interpolation is fast but inaccurate
+/// - This converter uses SDK-probed lookup for accuracy with O(1) thread-safe lookups
+///
+/// The lookup table is typically small (~8KB for 1000 scans) and constant across all frames.
+pub struct LookupIndexConverter {
+    // m/z conversion uses simple linear model (accurate enough for most purposes)
+    pub tof_intercept: f64,
+    pub tof_slope: f64,
+
+    // Ion mobility: pre-computed lookup table from Bruker SDK
+    // scan_index → 1/K0 value
+    pub im_lookup: Vec<f64>,
+
+    // Fallback for inverse conversion (1/K0 → scan)
+    // We store the min/max for binary search bounds
+    pub im_min: f64,
+    pub im_max: f64,
+}
+
+impl LookupIndexConverter {
+    /// Create a new LookupIndexConverter with pre-computed ion mobility lookup.
+    ///
+    /// # Arguments
+    /// * `mz_min` - Minimum m/z value for TOF conversion
+    /// * `mz_max` - Maximum m/z value for TOF conversion
+    /// * `tof_max_index` - Maximum TOF index
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table from Bruker SDK
+    ///
+    /// # Returns
+    /// A new LookupIndexConverter instance
+    pub fn new(
+        mz_min: f64,
+        mz_max: f64,
+        tof_max_index: u32,
+        im_lookup: Vec<f64>,
+    ) -> Self {
+        let tof_intercept: f64 = mz_min.sqrt();
+        let tof_slope: f64 = (mz_max.sqrt() - tof_intercept) / tof_max_index as f64;
+
+        // Get IM bounds for inverse conversion
+        let im_min = im_lookup.iter().cloned().fold(f64::INFINITY, f64::min);
+        let im_max = im_lookup.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        Self {
+            tof_intercept,
+            tof_slope,
+            im_lookup,
+            im_min,
+            im_max,
+        }
+    }
+}
+
+impl IndexConverter for LookupIndexConverter {
+    fn tof_to_mz(&self, _frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        let mut mz_values: Vec<f64> = Vec::new();
+        mz_values.resize(tof_values.len(), 0.0);
+
+        for (i, &val) in tof_values.iter().enumerate() {
+            mz_values[i] = (self.tof_intercept + self.tof_slope * val as f64).powi(2);
+        }
+
+        mz_values
+    }
+
+    fn mz_to_tof(&self, _frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        let mut tof_values: Vec<u32> = Vec::new();
+        tof_values.resize(mz_values.len(), 0);
+
+        for (i, &val) in mz_values.iter().enumerate() {
+            tof_values[i] = ((val.sqrt() - self.tof_intercept) / self.tof_slope) as u32;
+        }
+
+        tof_values
+    }
+
+    fn scan_to_inverse_mobility(&self, _frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+        // Use the pre-computed lookup table for O(1) conversion
+        scan_values
+            .iter()
+            .map(|&s| {
+                self.im_lookup
+                    .get(s as usize)
+                    .copied()
+                    .unwrap_or(f64::NAN)
+            })
+            .collect()
+    }
+
+    fn inverse_mobility_to_scan(
+        &self,
+        _frame_id: u32,
+        inverse_mobility_values: &Vec<f64>,
+    ) -> Vec<u32> {
+        // Use binary search to find the closest scan index for each 1/K0 value
+        // The lookup table is monotonically decreasing (higher scan = lower 1/K0)
+        inverse_mobility_values
+            .iter()
+            .map(|&im| {
+                if im.is_nan() || self.im_lookup.is_empty() {
+                    return 0;
+                }
+
+                // Binary search for the closest value
+                // Note: im_lookup is typically monotonically decreasing
+                let mut best_scan = 0usize;
+                let mut best_diff = f64::INFINITY;
+
+                for (scan, &lookup_im) in self.im_lookup.iter().enumerate() {
+                    let diff = (lookup_im - im).abs();
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best_scan = scan;
+                    }
+                }
+
+                best_scan as u32
+            })
+            .collect()
     }
 }

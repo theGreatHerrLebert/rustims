@@ -24,6 +24,45 @@ impl PyTimsDataset {
         PyTimsDataset { inner: dataset }
     }
 
+    /// Create a dataset with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup array should be pre-computed using the Bruker SDK via
+    /// extract_calibration.py or by opening a dataset with use_bruker_sdk=True
+    /// and calling scan_to_inverse_mobility for all scan indices.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table (list or numpy array)
+    ///
+    /// # Returns
+    /// A new PyTimsDataset with accurate IM calibration and thread-safe parallel access
+    ///
+    /// # Example
+    /// ```python
+    /// import numpy as np
+    /// from imspy_connector import PyTimsDataset
+    ///
+    /// # Load pre-computed calibration
+    /// im_lookup = np.load("sample.im_calibration.npy")
+    ///
+    /// # Create dataset with calibration (fast + accurate)
+    /// dataset = PyTimsDataset.with_calibration("sample.d", False, im_lookup.tolist())
+    /// ```
+    #[staticmethod]
+    pub fn with_calibration(data_path: &str, in_memory: bool, im_lookup: Vec<f64>) -> Self {
+        let dataset = TimsDataset::new_with_calibration(data_path, in_memory, im_lookup);
+        PyTimsDataset { inner: dataset }
+    }
+
+    /// Check if the Bruker SDK is being used for index conversion.
+    /// Returns false for Simple and Lookup converters (thread-safe).
+    /// Returns true only for BrukerLib converter (NOT thread-safe).
+    pub fn uses_bruker_sdk(&self) -> bool {
+        self.inner.uses_bruker_sdk()
+    }
+
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
         PyTimsFrame::from_inner(self.inner.get_frame(frame_id))
     }

@@ -12,6 +12,7 @@ use rayon::ThreadPoolBuilder;
 use std::collections::BTreeMap;
 use rand::prelude::IteratorRandom;
 use mscore::data::spectrum::MsType;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct PASEFDDAFragment {
@@ -19,6 +20,114 @@ pub struct PASEFDDAFragment {
     pub precursor_id: u32,
     pub collision_energy: f64,
     pub selected_fragment: TimsFrame,
+}
+
+/// Statistical moments of a 1D signal distribution
+#[derive(Clone, Debug, Default)]
+pub struct SignalMoments {
+    pub mean: f64,
+    pub variance: f64,
+    pub skewness: f64,
+    pub apex: f64,
+    pub fwhm: f64,
+    pub total_intensity: f64,
+}
+
+impl SignalMoments {
+    /// Calculate moments from coordinate and intensity arrays
+    pub fn from_signal(coords: &[f64], intensities: &[f64]) -> Self {
+        if coords.is_empty() || intensities.iter().sum::<f64>() == 0.0 {
+            return Self::default();
+        }
+
+        let total: f64 = intensities.iter().sum();
+
+        // First moment (weighted mean)
+        let mean: f64 = coords.iter()
+            .zip(intensities.iter())
+            .map(|(c, i)| c * i / total)
+            .sum();
+
+        // Second moment (weighted variance)
+        let variance: f64 = coords.iter()
+            .zip(intensities.iter())
+            .map(|(c, i)| i / total * (c - mean).powi(2))
+            .sum();
+
+        // Third moment (weighted skewness)
+        let std = variance.sqrt().max(1e-10);
+        let skewness: f64 = coords.iter()
+            .zip(intensities.iter())
+            .map(|(c, i)| i / total * ((c - mean) / std).powi(3))
+            .sum();
+
+        // Apex (position of maximum)
+        let apex_idx = intensities.iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let apex = coords.get(apex_idx).copied().unwrap_or(0.0);
+
+        // FWHM estimation
+        let half_max = intensities.get(apex_idx).copied().unwrap_or(0.0) / 2.0;
+        let above_half: Vec<f64> = coords.iter()
+            .zip(intensities.iter())
+            .filter(|(_, i)| **i >= half_max)
+            .map(|(c, _)| *c)
+            .collect();
+        let fwhm = if above_half.len() >= 2 {
+            above_half.last().unwrap_or(&0.0) - above_half.first().unwrap_or(&0.0)
+        } else {
+            2.355 * std  // Gaussian approximation
+        };
+
+        SignalMoments {
+            mean,
+            variance,
+            skewness,
+            apex,
+            fwhm,
+            total_intensity: total,
+        }
+    }
+}
+
+/// MS1 precursor signal extracted from surrounding frames
+#[derive(Clone, Debug)]
+pub struct PrecursorMS1Signal {
+    pub precursor_id: u32,
+
+    // XIC (chromatographic profile) - 1D projection
+    pub rt_coords: Vec<f64>,           // RT in seconds
+    pub rt_intensities: Vec<f64>,
+    pub rt_moments: SignalMoments,
+
+    // Mobilogram (IM profile) - 1D projection
+    pub im_coords: Vec<f64>,           // 1/K0
+    pub im_intensities: Vec<f64>,
+    pub im_moments: SignalMoments,
+
+    // Isotope envelope - 1D projection
+    pub isotope_mz: Vec<f64>,
+    pub isotope_intensity: Vec<f64>,
+    pub mz_moments: SignalMoments,
+
+    // Raw 2D data (all peaks from filtered MS1 frames in RT window, merged)
+    pub raw_rt: Vec<f64>,              // RT per peak (seconds)
+    pub raw_mz: Vec<f64>,              // m/z per peak
+    pub raw_mobility: Vec<f64>,        // 1/K0 per peak
+    pub raw_intensity: Vec<f64>,       // intensity per peak
+}
+
+/// Input for MS1 extraction - precursor coordinates
+#[derive(Clone, Debug)]
+pub struct PrecursorCoord {
+    pub precursor_id: u32,
+    pub mz: f64,
+    pub rt_seconds: f64,
+    pub mobility: f64,
+    pub charge: i32,
 }
 
 pub struct TimsDatasetDDA {
@@ -71,8 +180,59 @@ impl TimsDatasetDDA {
         };
         
         let pasef_meta = read_pasef_frame_ms_ms_info(data_path).unwrap();
-        
+
         TimsDatasetDDA { loader, pasef_meta }
+    }
+
+    /// Create a new DDA dataset with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup table should be pre-computed using the Bruker SDK.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table from Bruker SDK
+    ///
+    /// # Returns
+    /// A new TimsDatasetDDA with LookupIndexConverter (thread-safe, accurate)
+    pub fn new_with_calibration(
+        data_path: &str,
+        in_memory: bool,
+        im_lookup: Vec<f64>,
+    ) -> Self {
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+
+        let tof_max_index = global_meta_data.tof_max_index;
+        let mz_lower = global_meta_data.mz_acquisition_range_lower;
+        let mz_upper = global_meta_data.mz_acquisition_range_upper;
+
+        let loader = match in_memory {
+            true => TimsDataLoader::new_in_memory_with_calibration(
+                data_path,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+                im_lookup,
+            ),
+            false => TimsDataLoader::new_lazy_with_calibration(
+                data_path,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+                im_lookup,
+            ),
+        };
+
+        let pasef_meta = read_pasef_frame_ms_ms_info(data_path).unwrap();
+
+        TimsDatasetDDA { loader, pasef_meta }
+    }
+
+    /// Check if the Bruker SDK is being used for index conversion.
+    /// Returns false for both Simple and Lookup converters (which are thread-safe).
+    pub fn uses_bruker_sdk(&self) -> bool {
+        self.loader.uses_bruker_sdk()
     }
 
     pub fn get_selected_precursors(&self) -> Vec<DDAPrecursor> {
@@ -141,14 +301,279 @@ impl TimsDatasetDDA {
         result
     }
 
+    /// Extract MS1 precursor signals for a batch of precursors in parallel.
+    ///
+    /// For each precursor, extracts:
+    /// - XIC (chromatographic profile) from MS1 frames in RT window
+    /// - Mobilogram (IM profile)
+    /// - Isotope envelope
+    /// - Statistical moments (mean, variance, skewness, apex, FWHM) for each dimension
+    ///
+    /// Uses batched processing to avoid loading all MS1 frames at once.
+    ///
+    /// # Arguments
+    /// * `precursor_coords` - Vector of precursor coordinates (id, mz, rt_sec, mobility, charge)
+    /// * `rt_window_sec` - RT window in seconds (total width)
+    /// * `mz_tol_ppm` - m/z tolerance in ppm
+    /// * `im_window` - IM window in 1/K0 units (total width)
+    /// * `n_isotopes` - Number of isotope peaks to extract
+    /// * `num_threads` - Number of threads for parallel processing
+    ///
+    /// # Returns
+    /// Vector of PrecursorMS1Signal, one per input precursor
+    pub fn extract_precursor_ms1_signals(
+        &self,
+        precursor_coords: Vec<PrecursorCoord>,
+        rt_window_sec: f64,
+        mz_tol_ppm: f64,
+        im_window: f64,
+        n_isotopes: usize,
+        num_threads: usize,
+    ) -> Vec<PrecursorMS1Signal> {
+        if precursor_coords.is_empty() {
+            return Vec::new();
+        }
+
+        // Get frame metadata
+        let meta_data = read_meta_data_sql(&self.loader.get_data_path()).unwrap();
+
+        // Get all MS1 frame info sorted by time
+        let mut ms1_frame_info: Vec<(u32, f64)> = meta_data
+            .iter()
+            .filter(|f| f.ms_ms_type == 0)
+            .map(|f| (f.id as u32, f.time))
+            .collect();
+        ms1_frame_info.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+        let ms1_times: Vec<f64> = ms1_frame_info.iter().map(|(_, t)| *t).collect();
+
+        // Sort precursors by RT for batched processing
+        let mut sorted_coords: Vec<(usize, &PrecursorCoord)> = precursor_coords
+            .iter()
+            .enumerate()
+            .collect();
+        sorted_coords.sort_by(|a, b| a.1.rt_seconds.partial_cmp(&b.1.rt_seconds).unwrap());
+
+        // Process in RT batches (5 minute chunks = 300 sec)
+        let batch_size_sec = 300.0;
+        let mut results: Vec<(usize, PrecursorMS1Signal)> = Vec::with_capacity(precursor_coords.len());
+
+        let mut batch_start = 0;
+        while batch_start < sorted_coords.len() {
+            // Find batch end (all precursors within batch_size_sec of first)
+            let batch_rt_start = sorted_coords[batch_start].1.rt_seconds;
+            let batch_rt_end = batch_rt_start + batch_size_sec;
+
+            let mut batch_end = batch_start;
+            while batch_end < sorted_coords.len() && sorted_coords[batch_end].1.rt_seconds < batch_rt_end {
+                batch_end += 1;
+            }
+
+            // Determine MS1 frames needed for this batch (with RT window margin)
+            let frame_rt_min = batch_rt_start - rt_window_sec;
+            let frame_rt_max = batch_rt_end + rt_window_sec;
+
+            let frame_start_idx = ms1_times.partition_point(|t| *t < frame_rt_min);
+            let frame_end_idx = ms1_times.partition_point(|t| *t <= frame_rt_max);
+
+            // Load frames for this batch
+            let batch_frame_ids: Vec<u32> = ms1_frame_info[frame_start_idx..frame_end_idx]
+                .iter()
+                .map(|(id, _)| *id)
+                .collect();
+
+            let batch_frames = if !batch_frame_ids.is_empty() {
+                self.loader.get_slice(batch_frame_ids, num_threads)
+            } else {
+                TimsSlice { frames: Vec::new() }
+            };
+
+            let batch_times: Vec<f64> = ms1_times[frame_start_idx..frame_end_idx].to_vec();
+
+            // Process precursors in this batch in parallel
+            let batch_coords = &sorted_coords[batch_start..batch_end];
+
+            let pool = ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .unwrap();
+
+            let batch_results: Vec<(usize, PrecursorMS1Signal)> = pool.install(|| {
+                batch_coords.par_iter().map(|(orig_idx, coord)| {
+                    let signal = Self::extract_single_precursor(
+                        coord,
+                        &batch_frames.frames,
+                        &batch_times,
+                        rt_window_sec,
+                        mz_tol_ppm,
+                        im_window,
+                        n_isotopes,
+                    );
+                    (*orig_idx, signal)
+                }).collect()
+            });
+
+            results.extend(batch_results);
+            batch_start = batch_end;
+        }
+
+        // Restore original order
+        results.sort_by_key(|(idx, _)| *idx);
+        results.into_iter().map(|(_, signal)| signal).collect()
+    }
+
+    /// Extract MS1 signal for a single precursor from pre-loaded frames
+    fn extract_single_precursor(
+        coord: &PrecursorCoord,
+        frames: &[TimsFrame],
+        frame_times: &[f64],
+        rt_window_sec: f64,
+        mz_tol_ppm: f64,
+        im_window: f64,
+        n_isotopes: usize,
+    ) -> PrecursorMS1Signal {
+        let rt_sec = coord.rt_seconds;
+        let mz_tol = coord.mz * mz_tol_ppm / 1e6;
+
+        // Binary search to find RT window bounds within batch frames
+        let rt_min = rt_sec - rt_window_sec / 2.0;
+        let rt_max = rt_sec + rt_window_sec / 2.0;
+
+        let start_idx = frame_times.partition_point(|t| *t < rt_min);
+        let end_idx = frame_times.partition_point(|t| *t <= rt_max);
+
+        // Calculate isotope m/z values
+        let isotope_spacing = 1.003355 / (coord.charge.max(1) as f64);
+        let isotope_mz_values: Vec<f64> = (0..n_isotopes)
+            .map(|i| coord.mz + (i as f64) * isotope_spacing)
+            .collect();
+
+        // m/z range for extraction
+        let mz_min = coord.mz - mz_tol;
+        let mz_max = coord.mz + ((n_isotopes - 1) as f64) * isotope_spacing + mz_tol;
+
+        // IM range
+        let im_min = coord.mobility - im_window / 2.0;
+        let im_max = coord.mobility + im_window / 2.0;
+
+        // Accumulators for 1D projections
+        let mut rt_coords = Vec::with_capacity(end_idx.saturating_sub(start_idx));
+        let mut rt_intensities = Vec::with_capacity(end_idx.saturating_sub(start_idx));
+        let mut im_dict: HashMap<i64, f64> = HashMap::new();
+        let mut isotope_intensity = vec![0.0f64; n_isotopes];
+
+        // Accumulators for raw 2D data (merged from all frames)
+        let mut raw_rt = Vec::new();
+        let mut raw_mz = Vec::new();
+        let mut raw_mobility = Vec::new();
+        let mut raw_intensity = Vec::new();
+
+        // Extract from each MS1 frame in the RT window
+        for idx in start_idx..end_idx.min(frames.len()) {
+            let frame_time = frame_times[idx];
+            let frame = &frames[idx];
+
+            // Filter frame to our region
+            let filtered = frame.filter_ranged(
+                mz_min, mz_max,
+                0, 1000,
+                im_min, im_max,
+                0.0, 1e9,
+                0, i32::MAX,
+            );
+
+            // XIC: total intensity at this RT
+            let total_intensity: f64 = filtered.ims_frame.intensity.iter().sum();
+            rt_coords.push(frame_time);
+            rt_intensities.push(total_intensity);
+
+            // Mobilogram: accumulate by binned mobility
+            for (mob, inten) in filtered.ims_frame.mobility.iter().zip(filtered.ims_frame.intensity.iter()) {
+                let mob_bin = (*mob * 1000.0).round() as i64;
+                *im_dict.entry(mob_bin).or_insert(0.0) += *inten;
+            }
+
+            // Isotope envelope: accumulate per isotope peak
+            for (iso_idx, iso_mz) in isotope_mz_values.iter().enumerate() {
+                let iso_intensity_sum: f64 = filtered.ims_frame.mz.iter()
+                    .zip(filtered.ims_frame.intensity.iter())
+                    .filter(|(mz, _)| **mz >= iso_mz - mz_tol && **mz <= iso_mz + mz_tol)
+                    .map(|(_, i)| *i)
+                    .sum();
+                isotope_intensity[iso_idx] += iso_intensity_sum;
+            }
+
+            // Raw 2D data: store all peaks with their RT
+            let n_peaks = filtered.ims_frame.mz.len();
+            for i in 0..n_peaks {
+                raw_rt.push(frame_time);
+                raw_mz.push(filtered.ims_frame.mz[i]);
+                raw_mobility.push(filtered.ims_frame.mobility[i]);
+                raw_intensity.push(filtered.ims_frame.intensity[i]);
+            }
+        }
+
+        // Convert mobilogram accumulator to sorted arrays
+        let mut im_entries: Vec<(i64, f64)> = im_dict.into_iter().collect();
+        im_entries.sort_by_key(|(k, _)| *k);
+        let im_coords: Vec<f64> = im_entries.iter().map(|(k, _)| *k as f64 / 1000.0).collect();
+        let im_intensities: Vec<f64> = im_entries.iter().map(|(_, v)| *v).collect();
+
+        // Calculate moments
+        let rt_moments = SignalMoments::from_signal(&rt_coords, &rt_intensities);
+        let im_moments = SignalMoments::from_signal(&im_coords, &im_intensities);
+        let mz_moments = SignalMoments::from_signal(&isotope_mz_values, &isotope_intensity);
+
+        PrecursorMS1Signal {
+            precursor_id: coord.precursor_id,
+            rt_coords,
+            rt_intensities,
+            rt_moments,
+            im_coords,
+            im_intensities,
+            im_moments,
+            isotope_mz: isotope_mz_values,
+            isotope_intensity,
+            mz_moments,
+            raw_rt,
+            raw_mz,
+            raw_mobility,
+            raw_intensity,
+        }
+    }
+
     pub fn get_pasef_frame_ms_ms_info(&self) -> Vec<PasefMsMsMeta> {
         read_pasef_frame_ms_ms_info(&self.loader.get_data_path()).unwrap()
     }
 
     /// Get the fragment spectra for all PASEF selected precursors
     pub fn get_pasef_fragments(&self, num_threads: usize) -> Vec<PASEFDDAFragment> {
+        // Delegate to the filtered version with no filter (all precursors)
+        self.get_pasef_fragments_for_precursors(None, num_threads)
+    }
+
+    /// Get fragment spectra for specific precursor IDs only.
+    /// If precursor_ids is None, returns all fragments (same as get_pasef_fragments).
+    /// This is more memory-efficient for batched processing.
+    pub fn get_pasef_fragments_for_precursors(
+        &self,
+        precursor_ids: Option<&[u32]>,
+        num_threads: usize,
+    ) -> Vec<PASEFDDAFragment> {
         // extract fragment spectra information
         let pasef_info = self.get_pasef_frame_ms_ms_info();
+
+        // Filter to requested precursor IDs if specified
+        let filtered_pasef_info: Vec<&PasefMsMsMeta> = match precursor_ids {
+            Some(ids) => {
+                // Create a HashSet for O(1) lookup
+                let id_set: std::collections::HashSet<u32> = ids.iter().copied().collect();
+                pasef_info.iter()
+                    .filter(|info| id_set.contains(&(info.precursor_id as u32)))
+                    .collect()
+            }
+            None => pasef_info.iter().collect(),
+        };
 
         // Note: The Bruker SDK is NOT thread-safe, so we must use sequential iteration
         // when the SDK is being used for index conversion.
@@ -187,7 +612,7 @@ impl TimsDatasetDDA {
 
         if uses_bruker_sdk {
             // Sequential processing when using Bruker SDK (not thread-safe)
-            pasef_info.iter().map(process_fragment).collect()
+            filtered_pasef_info.iter().map(|info| process_fragment(info)).collect()
         } else {
             // Parallel processing when using simple index converter (thread-safe)
             let pool = ThreadPoolBuilder::new()
@@ -196,7 +621,7 @@ impl TimsDatasetDDA {
                 .unwrap();
 
             pool.install(|| {
-                pasef_info.par_iter().map(|item| process_fragment(item)).collect()
+                filtered_pasef_info.par_iter().map(|info| process_fragment(info)).collect()
             })
         }
     }
