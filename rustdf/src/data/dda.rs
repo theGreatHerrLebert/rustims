@@ -124,10 +124,12 @@ pub struct PrecursorMS1Signal {
 #[derive(Clone, Debug)]
 pub struct PrecursorCoord {
     pub precursor_id: u32,
-    pub mz: f64,           // m/z for XIC/mobilogram extraction (use largest_peak_mz for best signal)
-    pub mono_mz: f64,      // Monoisotopic m/z for isotope envelope extraction (M+0 starting point)
+    pub mz: f64,           // largest_peak_mz - used as fallback if mono_mz is 0
+    pub mono_mz: f64,      // Monoisotopic m/z for isotope envelope (M+0 starting point), 0 if unknown
     pub rt_seconds: f64,
-    pub mobility: f64,
+    pub mobility: f64,     // Center mobility from fragment
+    pub im_start: f64,     // Fragment selection IM start (for plotting)
+    pub im_end: f64,       // Fragment selection IM end (for plotting)
     pub charge: i32,
 }
 
@@ -222,6 +224,56 @@ impl TimsDatasetDDA {
                 mz_lower,
                 mz_upper,
                 im_lookup,
+            ),
+        };
+
+        let pasef_meta = read_pasef_frame_ms_ms_info(data_path).unwrap();
+
+        TimsDatasetDDA { loader, pasef_meta }
+    }
+
+    /// Create a DDA dataset with regression-derived m/z calibration.
+    ///
+    /// This method uses externally-provided m/z calibration coefficients (e.g., from
+    /// linear regression on precursor data) instead of the simple boundary model.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `tof_intercept` - Intercept for sqrt(mz) = intercept + slope * tof
+    /// * `tof_slope` - Slope for sqrt(mz) = intercept + slope * tof
+    ///
+    /// # Returns
+    /// A new TimsDatasetDDA with CalibratedIndexConverter (thread-safe, accurate)
+    pub fn new_with_mz_calibration(
+        data_path: &str,
+        in_memory: bool,
+        tof_intercept: f64,
+        tof_slope: f64,
+    ) -> Self {
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+        let frame_meta = read_meta_data_sql(data_path).unwrap();
+
+        let scan_max_index = frame_meta.iter().map(|x| x.num_scans).max().unwrap() as u32;
+        let im_lower = global_meta_data.one_over_k0_range_lower;
+        let im_upper = global_meta_data.one_over_k0_range_upper;
+
+        let loader = match in_memory {
+            true => TimsDataLoader::new_in_memory_with_mz_calibration(
+                data_path,
+                tof_intercept,
+                tof_slope,
+                im_lower,
+                im_upper,
+                scan_max_index,
+            ),
+            false => TimsDataLoader::new_lazy_with_mz_calibration(
+                data_path,
+                tof_intercept,
+                tof_slope,
+                im_lower,
+                im_upper,
+                scan_max_index,
             ),
         };
 
@@ -434,7 +486,6 @@ impl TimsDatasetDDA {
         n_isotopes: usize,
     ) -> PrecursorMS1Signal {
         let rt_sec = coord.rt_seconds;
-        let mz_tol = coord.mz * mz_tol_ppm / 1e6;
 
         // Binary search to find RT window bounds within batch frames
         let rt_min = rt_sec - rt_window_sec / 2.0;
@@ -443,22 +494,38 @@ impl TimsDatasetDDA {
         let start_idx = frame_times.partition_point(|t| *t < rt_min);
         let end_idx = frame_times.partition_point(|t| *t <= rt_max);
 
-        // Calculate isotope m/z values starting from MONOISOTOPIC (M+0 through M+3)
+        // Calculate isotope spacing
         let isotope_spacing = 1.003355 / (coord.charge.max(1) as f64);
         let n_isotopes_to_extract = 4.min(n_isotopes); // M+0 to M+3 only
+
+        // Determine base m/z for extraction:
+        // - If mono_mz > 0: use it as starting point for isotope range
+        // - Otherwise: fall back to largest_peak_mz (single peak extraction)
+        let has_mono_mz = coord.mono_mz > 0.0;
+        let base_mz = if has_mono_mz { coord.mono_mz } else { coord.mz };
+        let mz_tol = base_mz * mz_tol_ppm / 1e6;
+
+        // Calculate isotope m/z values (M+0 through M+3)
         let isotope_mz_values: Vec<f64> = (0..n_isotopes_to_extract)
-            .map(|i| coord.mono_mz + (i as f64) * isotope_spacing)
+            .map(|i| base_mz + (i as f64) * isotope_spacing)
             .collect();
 
-        // m/z ranges:
-        // - XIC/mobilogram: use coord.mz (largest_peak_mz) ± tolerance (single peak, no isotope summing)
-        // - Isotopes: use mono_mz-based isotope positions
-        let xic_mz_min = coord.mz - mz_tol;
-        let xic_mz_max = coord.mz + mz_tol;
-        let iso_mz_min = coord.mono_mz - mz_tol;
-        let iso_mz_max = coord.mono_mz + ((n_isotopes_to_extract - 1) as f64) * isotope_spacing + mz_tol;
+        // m/z range for XIC/mobilogram:
+        // - If mono_mz available: use full isotope range (M+0 to M+3) for better S/N
+        // - Otherwise: use single m/z (largest_peak_mz)
+        let (xic_mz_min, xic_mz_max) = if has_mono_mz {
+            // Full isotope range: M+0 - tolerance to M+3 + tolerance
+            (base_mz - mz_tol, base_mz + ((n_isotopes_to_extract - 1) as f64) * isotope_spacing + mz_tol)
+        } else {
+            // Single peak: largest_peak_mz ± tolerance
+            (coord.mz - mz_tol, coord.mz + mz_tol)
+        };
 
-        // IM range
+        // Isotope envelope range (same as XIC when mono_mz present)
+        let iso_mz_min = base_mz - mz_tol;
+        let iso_mz_max = base_mz + ((n_isotopes_to_extract - 1) as f64) * isotope_spacing + mz_tol;
+
+        // IM range (uses im_window parameter, doubled from default for better coverage)
         let im_min = coord.mobility - im_window / 2.0;
         let im_max = coord.mobility + im_window / 2.0;
 
@@ -480,7 +547,7 @@ impl TimsDatasetDDA {
             let frame_time = frame_times[idx];
             let frame = &frames[idx];
 
-            // === XIC and Mobilogram: Extract from SINGLE m/z (largest_peak_mz) only ===
+            // === XIC and Mobilogram: Extract from isotope range (or single m/z if no mono_mz) ===
             let xic_filtered = frame.filter_ranged(
                 xic_mz_min, xic_mz_max,
                 0, 1000,
@@ -489,44 +556,37 @@ impl TimsDatasetDDA {
                 0, i32::MAX,
             );
 
-            // XIC: intensity at this RT from the targeted m/z only
+            // XIC: sum intensity at this RT from all isotopes
             let xic_intensity: f64 = xic_filtered.ims_frame.intensity.iter().sum();
             rt_coords.push(frame_time);
             rt_intensities.push(xic_intensity);
 
-            // Mobilogram: accumulate from targeted m/z only
+            // Mobilogram: accumulate from all isotopes in m/z range
             for (mob, inten) in xic_filtered.ims_frame.mobility.iter().zip(xic_filtered.ims_frame.intensity.iter()) {
                 let mob_bin = (*mob * 1000.0).round() as i64;
                 *im_dict.entry(mob_bin).or_insert(0.0) += *inten;
             }
 
-            // === Isotope envelope: Extract M+0 through M+3 from mono_mz ===
-            let iso_filtered = frame.filter_ranged(
-                iso_mz_min, iso_mz_max,
-                0, 1000,
-                im_min, im_max,
-                0.0, 1e9,
-                0, i32::MAX,
-            );
-
+            // === Isotope envelope: Extract M+0 through M+3 individually ===
+            // Use same filtered data (already in isotope range)
             for (iso_idx, iso_mz) in isotope_mz_values.iter().enumerate() {
                 let iso_peak_min = iso_mz - mz_tol;
                 let iso_peak_max = iso_mz + mz_tol;
-                let iso_intensity_sum: f64 = iso_filtered.ims_frame.mz.iter()
-                    .zip(iso_filtered.ims_frame.intensity.iter())
+                let iso_intensity_sum: f64 = xic_filtered.ims_frame.mz.iter()
+                    .zip(xic_filtered.ims_frame.intensity.iter())
                     .filter(|(mz, _)| **mz >= iso_peak_min && **mz <= iso_peak_max)
                     .map(|(_, i)| *i)
                     .sum();
                 isotope_intensity[iso_idx] += iso_intensity_sum;
             }
 
-            // Raw 2D data: store all peaks from isotope range
-            let n_peaks = iso_filtered.ims_frame.mz.len();
+            // Raw 2D data: store all peaks from filtered range
+            let n_peaks = xic_filtered.ims_frame.mz.len();
             for i in 0..n_peaks {
                 raw_rt.push(frame_time);
-                raw_mz.push(iso_filtered.ims_frame.mz[i]);
-                raw_mobility.push(iso_filtered.ims_frame.mobility[i]);
-                raw_intensity.push(iso_filtered.ims_frame.intensity[i]);
+                raw_mz.push(xic_filtered.ims_frame.mz[i]);
+                raw_mobility.push(xic_filtered.ims_frame.mobility[i]);
+                raw_intensity.push(xic_filtered.ims_frame.intensity[i]);
             }
         }
 

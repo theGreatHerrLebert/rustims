@@ -125,6 +125,42 @@ impl PyTimsDatasetDDA {
         PyTimsDatasetDDA { inner: dataset }
     }
 
+    /// Create a DDA dataset with regression-derived m/z calibration.
+    ///
+    /// This method uses externally-provided m/z calibration coefficients instead of
+    /// the simple boundary model, providing more accurate m/z conversion.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `tof_intercept` - Intercept for sqrt(mz) = intercept + slope * tof
+    /// * `tof_slope` - Slope for sqrt(mz) = intercept + slope * tof
+    ///
+    /// # Example
+    /// ```python
+    /// # Derive calibration from SDK data
+    /// import numpy as np
+    /// from imspy_connector import py_dda
+    ///
+    /// # First, load with SDK to get accurate m/z values
+    /// sdk_data = py_dda.PyTimsDatasetDDA(path, lib_path, False, True)
+    /// frame = sdk_data.get_frame(1)
+    /// sqrt_mz = np.sqrt(frame.mz)
+    /// tof = frame.tof
+    ///
+    /// # Fit linear regression: sqrt(mz) = intercept + slope * tof
+    /// coeffs = np.polyfit(tof, sqrt_mz, 1)
+    /// slope, intercept = coeffs[0], coeffs[1]
+    ///
+    /// # Create dataset with calibration (fast + accurate)
+    /// dataset = py_dda.PyTimsDatasetDDA.with_mz_calibration(path, False, intercept, slope)
+    /// ```
+    #[staticmethod]
+    pub fn with_mz_calibration(data_path: &str, in_memory: bool, tof_intercept: f64, tof_slope: f64) -> Self {
+        let dataset = TimsDatasetDDA::new_with_mz_calibration(data_path, in_memory, tof_intercept, tof_slope);
+        PyTimsDatasetDDA { inner: dataset }
+    }
+
     /// Check if the Bruker SDK is being used for index conversion.
     /// Returns false for Simple and Lookup converters (thread-safe).
     /// Returns true only for BrukerLib converter (NOT thread-safe).
@@ -451,14 +487,16 @@ impl PyPrecursorCoord {
     ///
     /// # Arguments
     /// * `precursor_id` - Unique precursor identifier
-    /// * `mz` - m/z for XIC/mobilogram extraction (use largest_peak_mz for best signal)
-    /// * `mono_mz` - Monoisotopic m/z for isotope envelope extraction (M+0 starting point)
+    /// * `mz` - largest_peak_mz (fallback if mono_mz is 0)
+    /// * `mono_mz` - Monoisotopic m/z for isotope envelope (0 if unknown)
     /// * `rt_seconds` - Retention time in seconds
-    /// * `mobility` - Ion mobility (1/K0)
+    /// * `mobility` - Center ion mobility (1/K0)
+    /// * `im_start` - Fragment selection IM start (for plotting)
+    /// * `im_end` - Fragment selection IM end (for plotting)
     /// * `charge` - Charge state
     #[new]
-    #[pyo3(signature = (precursor_id, mz, mono_mz, rt_seconds, mobility, charge))]
-    pub fn new(precursor_id: u32, mz: f64, mono_mz: f64, rt_seconds: f64, mobility: f64, charge: i32) -> Self {
+    #[pyo3(signature = (precursor_id, mz, mono_mz, rt_seconds, mobility, im_start, im_end, charge))]
+    pub fn new(precursor_id: u32, mz: f64, mono_mz: f64, rt_seconds: f64, mobility: f64, im_start: f64, im_end: f64, charge: i32) -> Self {
         PyPrecursorCoord {
             inner: PrecursorCoord {
                 precursor_id,
@@ -466,6 +504,8 @@ impl PyPrecursorCoord {
                 mono_mz,
                 rt_seconds,
                 mobility,
+                im_start,
+                im_end,
                 charge,
             }
         }
@@ -478,10 +518,19 @@ impl PyPrecursorCoord {
     pub fn mz(&self) -> f64 { self.inner.mz }
 
     #[getter]
+    pub fn mono_mz(&self) -> f64 { self.inner.mono_mz }
+
+    #[getter]
     pub fn rt_seconds(&self) -> f64 { self.inner.rt_seconds }
 
     #[getter]
     pub fn mobility(&self) -> f64 { self.inner.mobility }
+
+    #[getter]
+    pub fn im_start(&self) -> f64 { self.inner.im_start }
+
+    #[getter]
+    pub fn im_end(&self) -> f64 { self.inner.im_end }
 
     #[getter]
     pub fn charge(&self) -> i32 { self.inner.charge }

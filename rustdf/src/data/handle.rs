@@ -17,6 +17,63 @@ use rayon::ThreadPoolBuilder;
 
 use std::error::Error;
 
+/// Derive m/z calibration coefficients by using the Bruker SDK.
+///
+/// This function temporarily loads the SDK to convert a range of TOF indices to m/z,
+/// then fits a linear regression to derive accurate calibration coefficients.
+///
+/// Returns `Some((intercept, slope))` for the formula: `sqrt(mz) = intercept + slope * tof`
+/// Returns `None` if SDK is not available (e.g., on macOS).
+fn derive_mz_calibration(
+    bruker_lib_path: &str,
+    data_path: &str,
+    tof_max_index: u32,
+) -> Option<(f64, f64)> {
+    // Try to create a BrukerLib converter
+    let sdk_converter = match std::panic::catch_unwind(|| {
+        BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)
+    }) {
+        Ok(converter) => converter,
+        Err(_) => return None,
+    };
+
+    // Generate a range of TOF indices across the spectrum
+    let n_points = 1000;
+    let step = tof_max_index / n_points;
+    let tof_indices: Vec<u32> = (0..n_points).map(|i| i * step + step / 2).collect();
+
+    // Convert to m/z using SDK
+    let mz_values = sdk_converter.tof_to_mz(1, &tof_indices);
+
+    // Filter out any invalid values (zero or negative)
+    let valid_pairs: Vec<(f64, f64)> = tof_indices
+        .iter()
+        .zip(mz_values.iter())
+        .filter(|(_, mz)| **mz > 0.0)
+        .map(|(tof, mz)| (*tof as f64, mz.sqrt()))
+        .collect();
+
+    if valid_pairs.len() < 10 {
+        return None;
+    }
+
+    // Linear regression: sqrt(mz) = intercept + slope * tof
+    // Using simple least squares: slope = Cov(x,y) / Var(x), intercept = mean_y - slope * mean_x
+    let n = valid_pairs.len() as f64;
+    let sum_x: f64 = valid_pairs.iter().map(|(x, _)| x).sum();
+    let sum_y: f64 = valid_pairs.iter().map(|(_, y)| y).sum();
+    let sum_xy: f64 = valid_pairs.iter().map(|(x, y)| x * y).sum();
+    let sum_xx: f64 = valid_pairs.iter().map(|(x, _)| x * x).sum();
+
+    let mean_x = sum_x / n;
+    let mean_y = sum_y / n;
+
+    let slope = (sum_xy - n * mean_x * mean_y) / (sum_xx - n * mean_x * mean_x);
+    let intercept = mean_y - slope * mean_x;
+
+    Some((intercept, slope))
+}
+
 fn lzf_decompress(data: &[u8], max_output_size: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let decompressed_data = lzf::decompress(data, max_output_size)
         .map_err(|e| format!("LZF decompression failed: {}", e))?;
@@ -253,6 +310,7 @@ impl IndexConverter for BrukerLibTimsDataConverter {
 
 pub enum TimsIndexConverter {
     Simple(SimpleIndexConverter),
+    Calibrated(CalibratedIndexConverter),
     BrukerLib(BrukerLibTimsDataConverter),
     Lookup(LookupIndexConverter),
 }
@@ -261,6 +319,7 @@ impl IndexConverter for TimsIndexConverter {
     fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
         match self {
             TimsIndexConverter::Simple(converter) => converter.tof_to_mz(frame_id, tof_values),
+            TimsIndexConverter::Calibrated(converter) => converter.tof_to_mz(frame_id, tof_values),
             TimsIndexConverter::BrukerLib(converter) => converter.tof_to_mz(frame_id, tof_values),
             TimsIndexConverter::Lookup(converter) => converter.tof_to_mz(frame_id, tof_values),
         }
@@ -269,6 +328,7 @@ impl IndexConverter for TimsIndexConverter {
     fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
         match self {
             TimsIndexConverter::Simple(converter) => converter.mz_to_tof(frame_id, mz_values),
+            TimsIndexConverter::Calibrated(converter) => converter.mz_to_tof(frame_id, mz_values),
             TimsIndexConverter::BrukerLib(converter) => converter.mz_to_tof(frame_id, mz_values),
             TimsIndexConverter::Lookup(converter) => converter.mz_to_tof(frame_id, mz_values),
         }
@@ -277,6 +337,9 @@ impl IndexConverter for TimsIndexConverter {
     fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
         match self {
             TimsIndexConverter::Simple(converter) => {
+                converter.scan_to_inverse_mobility(frame_id, scan_values)
+            }
+            TimsIndexConverter::Calibrated(converter) => {
                 converter.scan_to_inverse_mobility(frame_id, scan_values)
             }
             TimsIndexConverter::BrukerLib(converter) => {
@@ -295,6 +358,9 @@ impl IndexConverter for TimsIndexConverter {
     ) -> Vec<u32> {
         match self {
             TimsIndexConverter::Simple(converter) => {
+                converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+            }
+            TimsIndexConverter::Calibrated(converter) => {
                 converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
             }
             TimsIndexConverter::BrukerLib(converter) => {
@@ -730,14 +796,35 @@ impl TimsDataLoader {
                 bruker_lib_path,
                 data_path,
             )),
-            false => TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
-                mz_lower,
-                mz_upper,
-                tof_max_index,
-                im_lower,
-                im_upper,
-                scan_max_index,
-            )),
+            false => {
+                // Try to derive accurate calibration using SDK, fall back to simple model
+                match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
+                    Some((intercept, slope)) => {
+                        TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
+                            intercept,
+                            slope,
+                            im_lower,
+                            im_upper,
+                            scan_max_index,
+                        ))
+                    }
+                    None => {
+                        eprintln!(
+                            "Warning: Could not derive m/z calibration from SDK. \
+                            Using simple boundary model which may have ~5 Da error on some datasets. \
+                            This typically happens on macOS where Bruker SDK is not available."
+                        );
+                        TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
+                            mz_lower,
+                            mz_upper,
+                            tof_max_index,
+                            im_lower,
+                            im_upper,
+                            scan_max_index,
+                        ))
+                    }
+                }
+            }
         };
 
         TimsDataLoader::Lazy(TimsLazyLoder {
@@ -764,14 +851,35 @@ impl TimsDataLoader {
                 bruker_lib_path,
                 data_path,
             )),
-            false => TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
-                mz_lower,
-                mz_upper,
-                tof_max_index,
-                im_lower,
-                im_upper,
-                scan_max_index,
-            )),
+            false => {
+                // Try to derive accurate calibration using SDK, fall back to simple model
+                match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
+                    Some((intercept, slope)) => {
+                        TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
+                            intercept,
+                            slope,
+                            im_lower,
+                            im_upper,
+                            scan_max_index,
+                        ))
+                    }
+                    None => {
+                        eprintln!(
+                            "Warning: Could not derive m/z calibration from SDK. \
+                            Using simple boundary model which may have ~5 Da error on some datasets. \
+                            This typically happens on macOS where Bruker SDK is not available."
+                        );
+                        TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
+                            mz_lower,
+                            mz_upper,
+                            tof_max_index,
+                            im_lower,
+                            im_upper,
+                            scan_max_index,
+                        ))
+                    }
+                }
+            }
         };
 
         let mut file_path = PathBuf::from(data_path);
@@ -851,6 +959,77 @@ impl TimsDataLoader {
             mz_upper,
             tof_max_index,
             im_lookup,
+        ));
+
+        let mut file_path = PathBuf::from(data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(file_path).unwrap();
+        let mut data = Vec::new();
+        infile.read_to_end(&mut data).unwrap();
+
+        TimsDataLoader::InMemory(TimsInMemoryLoader {
+            raw_data_layout,
+            index_converter,
+            compressed_data: data,
+        })
+    }
+
+    /// Create a lazy loader with full calibration (both m/z and IM).
+    ///
+    /// This method uses regression-derived m/z calibration coefficients instead of
+    /// the simple boundary model, providing more accurate m/z conversion.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `tof_intercept` - Intercept for sqrt(mz) = intercept + slope * tof
+    /// * `tof_slope` - Slope for sqrt(mz) = intercept + slope * tof
+    /// * `im_min` - Minimum 1/K0 value
+    /// * `im_max` - Maximum 1/K0 value
+    /// * `scan_max_index` - Maximum scan index
+    pub fn new_lazy_with_mz_calibration(
+        data_path: &str,
+        tof_intercept: f64,
+        tof_slope: f64,
+        im_min: f64,
+        im_max: f64,
+        scan_max_index: u32,
+    ) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+
+        let index_converter = TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
+            tof_intercept,
+            tof_slope,
+            im_min,
+            im_max,
+            scan_max_index,
+        ));
+
+        TimsDataLoader::Lazy(TimsLazyLoder {
+            raw_data_layout,
+            index_converter,
+        })
+    }
+
+    /// Create an in-memory loader with full calibration (both m/z and IM).
+    ///
+    /// This method uses regression-derived m/z calibration coefficients instead of
+    /// the simple boundary model, providing more accurate m/z conversion.
+    pub fn new_in_memory_with_mz_calibration(
+        data_path: &str,
+        tof_intercept: f64,
+        tof_slope: f64,
+        im_min: f64,
+        im_max: f64,
+        scan_max_index: u32,
+    ) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+
+        let index_converter = TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
+            tof_intercept,
+            tof_slope,
+            im_min,
+            im_max,
+            scan_max_index,
         ));
 
         let mut file_path = PathBuf::from(data_path);
@@ -1001,6 +1180,100 @@ impl IndexConverter for SimpleIndexConverter {
 
         for (i, &val) in _inverse_mobility_values.iter().enumerate() {
             scan_values[i] = ((val - self.scan_intercept) / self.scan_slope) as u32;
+        }
+
+        scan_values
+    }
+}
+
+/// M/z calibrated index converter using regression-derived coefficients.
+///
+/// This provides accurate TOF to m/z conversion without requiring the Bruker SDK
+/// by using linear regression coefficients derived from known precursor m/z values.
+///
+/// The calibration formula is:
+///   sqrt(mz) = tof_intercept + tof_slope * tof_index
+///
+/// This is similar to SimpleIndexConverter but uses externally-provided coefficients
+/// (e.g., from regression on precursor data) rather than boundary-derived values.
+pub struct CalibratedIndexConverter {
+    pub tof_intercept: f64,
+    pub tof_slope: f64,
+    pub scan_intercept: f64,
+    pub scan_slope: f64,
+}
+
+impl CalibratedIndexConverter {
+    /// Create a new calibrated converter with regression-derived coefficients.
+    ///
+    /// # Arguments
+    /// * `tof_intercept` - Intercept for sqrt(mz) = intercept + slope * tof
+    /// * `tof_slope` - Slope for sqrt(mz) = intercept + slope * tof
+    /// * `im_min` - Minimum 1/K0 value
+    /// * `im_max` - Maximum 1/K0 value
+    /// * `scan_max_index` - Maximum scan index
+    pub fn new(
+        tof_intercept: f64,
+        tof_slope: f64,
+        im_min: f64,
+        im_max: f64,
+        scan_max_index: u32,
+    ) -> Self {
+        let scan_intercept = im_max;
+        let scan_slope = (im_min - scan_intercept) / scan_max_index as f64;
+        Self {
+            tof_intercept,
+            tof_slope,
+            scan_intercept,
+            scan_slope,
+        }
+    }
+}
+
+impl IndexConverter for CalibratedIndexConverter {
+    fn tof_to_mz(&self, _frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        let mut mz_values: Vec<f64> = Vec::with_capacity(tof_values.len());
+
+        for &tof_index in tof_values.iter() {
+            // sqrt(mz) = tof_intercept + tof_slope * tof_index
+            let sqrt_mz = self.tof_intercept + self.tof_slope * tof_index as f64;
+            mz_values.push(sqrt_mz * sqrt_mz);
+        }
+
+        mz_values
+    }
+
+    fn mz_to_tof(&self, _frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        let mut tof_values: Vec<u32> = Vec::with_capacity(mz_values.len());
+
+        for &mz in mz_values.iter() {
+            let sqrt_mz = mz.sqrt();
+            // tof_index = (sqrt(mz) - tof_intercept) / tof_slope
+            tof_values.push(((sqrt_mz - self.tof_intercept) / self.tof_slope) as u32);
+        }
+
+        tof_values
+    }
+
+    fn scan_to_inverse_mobility(&self, _frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+        let mut inv_mobility_values: Vec<f64> = Vec::with_capacity(scan_values.len());
+
+        for &val in scan_values.iter() {
+            inv_mobility_values.push(self.scan_intercept + self.scan_slope * val as f64);
+        }
+
+        inv_mobility_values
+    }
+
+    fn inverse_mobility_to_scan(
+        &self,
+        _frame_id: u32,
+        inverse_mobility_values: &Vec<f64>,
+    ) -> Vec<u32> {
+        let mut scan_values: Vec<u32> = Vec::with_capacity(inverse_mobility_values.len());
+
+        for &val in inverse_mobility_values.iter() {
+            scan_values.push(((val - self.scan_intercept) / self.scan_slope) as u32);
         }
 
         scan_values

@@ -72,6 +72,23 @@ pub struct DIAFragmentFrameInfo {}
 
 pub struct DIAWindowGroupInfo {}
 
+/// M/z calibration data from the MzCalibration table.
+/// Used for accurate TOF to m/z conversion without Bruker SDK.
+#[derive(Debug, Clone)]
+pub struct MzCalibration {
+    pub id: i64,
+    pub model_type: i64,
+    pub digitizer_timebase: f64,
+    pub digitizer_delay: f64,
+    pub t1: f64,
+    pub t2: f64,
+    pub c0: f64,
+    pub c1: f64,
+    pub c2: f64,
+    pub c3: f64,
+    pub c4: f64,
+}
+
 #[derive(Debug)]
 pub struct GlobalMetaData {
     pub schema_type: String,
@@ -392,4 +409,45 @@ pub fn read_dia_ms_ms_windows(
 
     // return the frames
     Ok(frames_rows?)
+}
+
+/// Read m/z calibration data from the MzCalibration table.
+/// This provides the coefficients needed for accurate TOF to m/z conversion
+/// without requiring the Bruker SDK.
+///
+/// The calibration formula is:
+///   tof_time = (tof_index + 0.5) * digitizer_timebase + digitizer_delay
+///   sqrt(mz) = c0 + c1*tof_time + c2*tof_time^2 + ...
+///
+/// For model_type 2 (most common), the formula simplifies to:
+///   sqrt(mz) = (tof_time - c1) / c0
+pub fn read_mz_calibration(
+    bruker_d_folder_name: &str,
+) -> Result<Vec<MzCalibration>, Box<dyn std::error::Error>> {
+    let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
+    let conn = Connection::open(db_path)?;
+
+    // Query MzCalibration table
+    let query = "SELECT Id, ModelType, DigitizerTimebase, DigitizerDelay, T1, T2, C0, C1, C2, C3, C4 FROM MzCalibration";
+
+    let calibrations: Result<Vec<MzCalibration>, _> = conn
+        .prepare(query)?
+        .query_map([], |row| {
+            Ok(MzCalibration {
+                id: row.get(0)?,
+                model_type: row.get(1)?,
+                digitizer_timebase: row.get(2)?,
+                digitizer_delay: row.get(3)?,
+                t1: row.get(4)?,
+                t2: row.get(5)?,
+                c0: row.get(6)?,
+                c1: row.get(7)?,
+                c2: row.get(8)?,
+                c3: row.get(9)?,
+                c4: row.get(10)?,
+            })
+        })?
+        .collect();
+
+    Ok(calibrations?)
 }

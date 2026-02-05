@@ -486,6 +486,56 @@ impl TimsDatasetDIA {
         }
     }
 
+    /// Create a DIA dataset with regression-derived m/z calibration.
+    ///
+    /// This method uses externally-provided m/z calibration coefficients (e.g., from
+    /// linear regression on SDK data) instead of the simple boundary model.
+    pub fn new_with_mz_calibration(
+        data_path: &str,
+        in_memory: bool,
+        tof_intercept: f64,
+        tof_slope: f64,
+    ) -> Self {
+        let meta_data = read_meta_data_sql(data_path).unwrap();
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+        let dia_ms_mis_info = read_dia_ms_ms_info(data_path).unwrap();
+        let dia_ms_ms_windows = read_dia_ms_ms_windows(data_path).unwrap();
+
+        let scan_max_index = meta_data.iter().map(|x| x.num_scans).max().unwrap() as u32;
+        let im_lower = global_meta_data.one_over_k0_range_lower;
+        let im_upper = global_meta_data.one_over_k0_range_upper;
+
+        let loader = match in_memory {
+            true => TimsDataLoader::new_in_memory_with_mz_calibration(
+                data_path,
+                tof_intercept,
+                tof_slope,
+                im_lower,
+                im_upper,
+                scan_max_index,
+            ),
+            false => TimsDataLoader::new_lazy_with_mz_calibration(
+                data_path,
+                tof_intercept,
+                tof_slope,
+                im_lower,
+                im_upper,
+                scan_max_index,
+            ),
+        };
+
+        let dia_index = DiaIndex::new(&meta_data, &dia_ms_mis_info, &dia_ms_ms_windows);
+
+        TimsDatasetDIA {
+            loader,
+            global_meta_data,
+            meta_data,
+            dia_ms_ms_info: dia_ms_mis_info,
+            dia_ms_ms_windows,
+            dia_index,
+        }
+    }
+
     pub fn program_for_group(&self, g: u32) -> Ms2GroupProgram {
         self.dia_index.program_for_group(g)
     }

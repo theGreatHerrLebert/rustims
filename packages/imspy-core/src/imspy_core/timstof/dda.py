@@ -256,6 +256,78 @@ class TimsDatasetDDA(TimsDataset, RustWrapperObject):
         instance.__dataset = ptr
         return instance
 
+    @classmethod
+    def with_mz_calibration(cls, data_path: str, in_memory: bool, tof_intercept: float, tof_slope: float):
+        """Create a DDA dataset with custom m/z calibration coefficients.
+
+        This method allows providing externally-derived m/z calibration coefficients
+        (e.g., from linear regression on SDK data) for accurate m/z conversion without
+        requiring the Bruker SDK at runtime.
+
+        The calibration formula is: sqrt(mz) = tof_intercept + tof_slope * tof_index
+
+        Args:
+            data_path: Path to the .d folder
+            in_memory: Whether to load all data into memory
+            tof_intercept: Intercept for sqrt(mz) = intercept + slope * tof
+            tof_slope: Slope for sqrt(mz) = intercept + slope * tof
+
+        Returns:
+            TimsDatasetDDA with custom m/z calibration
+
+        Example:
+            # Derive calibration from SDK (e.g., on Linux)
+            sdk_data = TimsDatasetDDA(path, use_bruker_sdk=True)
+            frame = sdk_data.get_tims_frame(1)
+            coeffs = np.polyfit(frame.tof, np.sqrt(frame.mz), 1)
+            slope, intercept = coeffs[0], coeffs[1]
+
+            # Use calibration on macOS (or for parallel processing)
+            dataset = TimsDatasetDDA.with_mz_calibration(path, False, intercept, slope)
+        """
+        instance = cls.__new__(cls)
+        instance.data_path = data_path
+        instance.binary_path = "CALIBRATED"
+        instance.use_bruker_sdk = False
+        instance._TimsDatasetDDA__dataset = ims.PyTimsDatasetDDA.with_mz_calibration(
+            data_path, in_memory, tof_intercept, tof_slope
+        )
+
+        # Load metadata
+        instance.meta_data = pd.read_sql_query(
+            "SELECT * from Frames",
+            sqlite3.connect(data_path + "/analysis.tdf")
+        ).rename(columns={"Id": "frame_id"})
+
+        instance.fragmented_precursors = pd.read_sql_query(
+            "SELECT * from Precursors",
+            sqlite3.connect(data_path + "/analysis.tdf")
+        ).rename(columns={
+            'Id': 'precursor_id',
+            'LargestPeakMz': 'largest_peak_mz',
+            'AverageMz': 'average_mz',
+            'MonoisotopicMz': 'monoisotopic_mz',
+            'Charge': 'charge',
+            'ScanNumber': 'average_scan',
+            'Intensity': 'intensity',
+            'Parent': 'parent_id',
+        })
+
+        instance.pasef_meta_data = pd.read_sql_query(
+            "SELECT * from PasefFrameMsMsInfo",
+            sqlite3.connect(data_path + "/analysis.tdf")
+        ).rename(columns={
+            'Frame': 'frame_id',
+            'ScanNumBegin': 'scan_begin',
+            'ScanNumEnd': 'scan_end',
+            'IsolationMz': 'isolation_mz',
+            'IsolationWidth': 'isolation_width',
+            'CollisionEnergy': 'collision_energy',
+            'Precursor': 'precursor_id'
+        })
+
+        return instance
+
 
 class FragmentDDA(RustWrapperObject):
     def __init__(self, frame_id: int, precursor_id: int, collision_energy: float, selected_fragment: TimsFrame):

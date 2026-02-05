@@ -2184,6 +2184,22 @@ impl PyTimsDatasetDIA {
         PyTimsDatasetDIA { inner: dataset }
     }
 
+    /// Create a DIA dataset with regression-derived m/z calibration.
+    ///
+    /// This method uses externally-provided m/z calibration coefficients instead of
+    /// the simple boundary model, providing more accurate m/z conversion.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `tof_intercept` - Intercept for sqrt(mz) = intercept + slope * tof
+    /// * `tof_slope` - Slope for sqrt(mz) = intercept + slope * tof
+    #[staticmethod]
+    pub fn with_mz_calibration(data_path: &str, in_memory: bool, tof_intercept: f64, tof_slope: f64) -> Self {
+        let dataset = TimsDatasetDIA::new_with_mz_calibration(data_path, in_memory, tof_intercept, tof_slope);
+        PyTimsDatasetDIA { inner: dataset }
+    }
+
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
         PyTimsFrame::from_inner(self.inner.get_frame(frame_id))
     }

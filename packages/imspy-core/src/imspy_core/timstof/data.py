@@ -79,8 +79,10 @@ class TimsDataset(ABC):
         self.use_bruker_sdk = use_bruker_sdk
 
         if not self.use_bruker_sdk:
-            warnings.warn("Warning: SDK free data read is still experimental, expect higher mass errors and inverse "
-                          "mobility errors.")
+            warnings.warn(
+                "Warning: SDK-free mode requested. On Linux, calibration will be derived from SDK automatically. "
+                "On macOS (no SDK), a simple boundary model is used which may have ~5 Da m/z error on some datasets."
+            )
 
         self.data_path = data_path
         if data_path[-1] == "/":

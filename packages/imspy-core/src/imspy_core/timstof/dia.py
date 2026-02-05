@@ -86,5 +86,46 @@ class TimsDatasetDIA(TimsDataset, RustWrapperObject):
         instance.__dataset = obj
         return instance
 
+    @classmethod
+    def with_mz_calibration(cls, data_path: str, in_memory: bool, tof_intercept: float, tof_slope: float):
+        """Create a DIA dataset with custom m/z calibration coefficients.
+
+        This method allows providing externally-derived m/z calibration coefficients
+        (e.g., from linear regression on SDK data) for accurate m/z conversion without
+        requiring the Bruker SDK at runtime.
+
+        The calibration formula is: sqrt(mz) = tof_intercept + tof_slope * tof_index
+
+        Args:
+            data_path: Path to the .d folder
+            in_memory: Whether to load all data into memory
+            tof_intercept: Intercept for sqrt(mz) = intercept + slope * tof
+            tof_slope: Slope for sqrt(mz) = intercept + slope * tof
+
+        Returns:
+            TimsDatasetDIA with custom m/z calibration
+        """
+        instance = cls.__new__(cls)
+        instance.data_path = data_path
+        instance.binary_path = "CALIBRATED"
+        instance.use_bruker_sdk = False
+        instance._TimsDatasetDIA__dataset = ims.PyTimsDatasetDIA.with_mz_calibration(
+            data_path, in_memory, tof_intercept, tof_slope
+        )
+
+        # Load metadata (needed for some properties)
+        instance.meta_data = pd.read_sql_query(
+            "SELECT * from Frames",
+            sqlite3.connect(data_path + "/analysis.tdf")
+        )
+        instance.global_meta_data = dict(zip(
+            *pd.read_sql_query(
+                "SELECT * from GlobalMetadata",
+                sqlite3.connect(data_path + "/analysis.tdf")
+            ).values.T
+        ))
+
+        return instance
+
     def get_py_ptr(self):
         return self.__dataset
