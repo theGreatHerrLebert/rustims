@@ -124,7 +124,8 @@ pub struct PrecursorMS1Signal {
 #[derive(Clone, Debug)]
 pub struct PrecursorCoord {
     pub precursor_id: u32,
-    pub mz: f64,
+    pub mz: f64,           // m/z for XIC/mobilogram extraction (use largest_peak_mz for best signal)
+    pub mono_mz: f64,      // Monoisotopic m/z for isotope envelope extraction (M+0 starting point)
     pub rt_seconds: f64,
     pub mobility: f64,
     pub charge: i32,
@@ -442,26 +443,31 @@ impl TimsDatasetDDA {
         let start_idx = frame_times.partition_point(|t| *t < rt_min);
         let end_idx = frame_times.partition_point(|t| *t <= rt_max);
 
-        // Calculate isotope m/z values (starting from coord.mz which should be monoisotopic)
+        // Calculate isotope m/z values starting from MONOISOTOPIC (M+0 through M+3)
         let isotope_spacing = 1.003355 / (coord.charge.max(1) as f64);
-        let isotope_mz_values: Vec<f64> = (0..n_isotopes)
-            .map(|i| coord.mz + (i as f64) * isotope_spacing)
+        let n_isotopes_to_extract = 4.min(n_isotopes); // M+0 to M+3 only
+        let isotope_mz_values: Vec<f64> = (0..n_isotopes_to_extract)
+            .map(|i| coord.mono_mz + (i as f64) * isotope_spacing)
             .collect();
 
-        // Full isotope range for extraction
-        let iso_mz_min = coord.mz - mz_tol;
-        let iso_mz_max = coord.mz + ((n_isotopes - 1) as f64) * isotope_spacing + mz_tol;
+        // m/z ranges:
+        // - XIC/mobilogram: use coord.mz (largest_peak_mz) ± tolerance (single peak, no isotope summing)
+        // - Isotopes: use mono_mz-based isotope positions
+        let xic_mz_min = coord.mz - mz_tol;
+        let xic_mz_max = coord.mz + mz_tol;
+        let iso_mz_min = coord.mono_mz - mz_tol;
+        let iso_mz_max = coord.mono_mz + ((n_isotopes_to_extract - 1) as f64) * isotope_spacing + mz_tol;
 
         // IM range
         let im_min = coord.mobility - im_window / 2.0;
         let im_max = coord.mobility + im_window / 2.0;
 
-        // Accumulators for per-isotope signals (to find largest peak)
+        // Accumulators
         let n_frames = end_idx.saturating_sub(start_idx);
         let mut rt_coords = Vec::with_capacity(n_frames);
-        let mut per_isotope_rt_intensities: Vec<Vec<f64>> = vec![Vec::with_capacity(n_frames); n_isotopes];
-        let mut per_isotope_im_dict: Vec<HashMap<i64, f64>> = vec![HashMap::new(); n_isotopes];
-        let mut isotope_intensity = vec![0.0f64; n_isotopes];
+        let mut rt_intensities = Vec::with_capacity(n_frames);
+        let mut im_dict: HashMap<i64, f64> = HashMap::new();
+        let mut isotope_intensity = vec![0.0f64; n_isotopes];  // Keep original size for output
 
         // Accumulators for raw 2D data (merged from all frames)
         let mut raw_rt = Vec::new();
@@ -474,8 +480,28 @@ impl TimsDatasetDDA {
             let frame_time = frame_times[idx];
             let frame = &frames[idx];
 
-            // Filter frame to full isotope range
-            let filtered = frame.filter_ranged(
+            // === XIC and Mobilogram: Extract from SINGLE m/z (largest_peak_mz) only ===
+            let xic_filtered = frame.filter_ranged(
+                xic_mz_min, xic_mz_max,
+                0, 1000,
+                im_min, im_max,
+                0.0, 1e9,
+                0, i32::MAX,
+            );
+
+            // XIC: intensity at this RT from the targeted m/z only
+            let xic_intensity: f64 = xic_filtered.ims_frame.intensity.iter().sum();
+            rt_coords.push(frame_time);
+            rt_intensities.push(xic_intensity);
+
+            // Mobilogram: accumulate from targeted m/z only
+            for (mob, inten) in xic_filtered.ims_frame.mobility.iter().zip(xic_filtered.ims_frame.intensity.iter()) {
+                let mob_bin = (*mob * 1000.0).round() as i64;
+                *im_dict.entry(mob_bin).or_insert(0.0) += *inten;
+            }
+
+            // === Isotope envelope: Extract M+0 through M+3 from mono_mz ===
+            let iso_filtered = frame.filter_ranged(
                 iso_mz_min, iso_mz_max,
                 0, 1000,
                 im_min, im_max,
@@ -483,59 +509,29 @@ impl TimsDatasetDDA {
                 0, i32::MAX,
             );
 
-            rt_coords.push(frame_time);
-
-            // Extract per-isotope signals
             for (iso_idx, iso_mz) in isotope_mz_values.iter().enumerate() {
-                let iso_mz_min = iso_mz - mz_tol;
-                let iso_mz_max = iso_mz + mz_tol;
-
-                // XIC for this isotope
-                let iso_frame_intensity: f64 = filtered.ims_frame.mz.iter()
-                    .zip(filtered.ims_frame.intensity.iter())
-                    .filter(|(mz, _)| **mz >= iso_mz_min && **mz <= iso_mz_max)
+                let iso_peak_min = iso_mz - mz_tol;
+                let iso_peak_max = iso_mz + mz_tol;
+                let iso_intensity_sum: f64 = iso_filtered.ims_frame.mz.iter()
+                    .zip(iso_filtered.ims_frame.intensity.iter())
+                    .filter(|(mz, _)| **mz >= iso_peak_min && **mz <= iso_peak_max)
                     .map(|(_, i)| *i)
                     .sum();
-                per_isotope_rt_intensities[iso_idx].push(iso_frame_intensity);
-                isotope_intensity[iso_idx] += iso_frame_intensity;
-
-                // Mobilogram for this isotope
-                for i in 0..filtered.ims_frame.mz.len() {
-                    let mz = filtered.ims_frame.mz[i];
-                    if mz >= iso_mz_min && mz <= iso_mz_max {
-                        let mob = filtered.ims_frame.mobility[i];
-                        let inten = filtered.ims_frame.intensity[i];
-                        let mob_bin = (mob * 1000.0).round() as i64;
-                        *per_isotope_im_dict[iso_idx].entry(mob_bin).or_insert(0.0) += inten;
-                    }
-                }
+                isotope_intensity[iso_idx] += iso_intensity_sum;
             }
 
-            // Raw 2D data: store all peaks from full isotope range
-            let n_peaks = filtered.ims_frame.mz.len();
+            // Raw 2D data: store all peaks from isotope range
+            let n_peaks = iso_filtered.ims_frame.mz.len();
             for i in 0..n_peaks {
                 raw_rt.push(frame_time);
-                raw_mz.push(filtered.ims_frame.mz[i]);
-                raw_mobility.push(filtered.ims_frame.mobility[i]);
-                raw_intensity.push(filtered.ims_frame.intensity[i]);
+                raw_mz.push(iso_filtered.ims_frame.mz[i]);
+                raw_mobility.push(iso_filtered.ims_frame.mobility[i]);
+                raw_intensity.push(iso_filtered.ims_frame.intensity[i]);
             }
         }
 
-        // Find the isotope with highest total intensity (largest peak)
-        // Only consider M+0 through M+3 (first 4 isotopes) - M+4 is too far and may have interference
-        let max_iso_for_projection = 4.min(n_isotopes);
-        let largest_iso_idx = isotope_intensity[..max_iso_for_projection]
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx)
-            .unwrap_or(0);
-
-        // Use the largest isotope's signals for XIC and mobilogram
-        let rt_intensities = per_isotope_rt_intensities[largest_iso_idx].clone();
-
-        // Convert mobilogram accumulator for largest isotope to sorted arrays
-        let mut im_entries: Vec<(i64, f64)> = per_isotope_im_dict[largest_iso_idx].clone().into_iter().collect();
+        // Convert mobilogram accumulator to sorted arrays
+        let mut im_entries: Vec<(i64, f64)> = im_dict.into_iter().collect();
         im_entries.sort_by_key(|(k, _)| *k);
         let im_coords: Vec<f64> = im_entries.iter().map(|(k, _)| *k as f64 / 1000.0).collect();
         let im_intensities: Vec<f64> = im_entries.iter().map(|(_, v)| *v).collect();

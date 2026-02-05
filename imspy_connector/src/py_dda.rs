@@ -447,12 +447,23 @@ pub struct PyPrecursorCoord {
 
 #[pymethods]
 impl PyPrecursorCoord {
+    /// Create a new precursor coordinate for MS1 extraction.
+    ///
+    /// # Arguments
+    /// * `precursor_id` - Unique precursor identifier
+    /// * `mz` - m/z for XIC/mobilogram extraction (use largest_peak_mz for best signal)
+    /// * `mono_mz` - Monoisotopic m/z for isotope envelope extraction (M+0 starting point)
+    /// * `rt_seconds` - Retention time in seconds
+    /// * `mobility` - Ion mobility (1/K0)
+    /// * `charge` - Charge state
     #[new]
-    pub fn new(precursor_id: u32, mz: f64, rt_seconds: f64, mobility: f64, charge: i32) -> Self {
+    #[pyo3(signature = (precursor_id, mz, mono_mz, rt_seconds, mobility, charge))]
+    pub fn new(precursor_id: u32, mz: f64, mono_mz: f64, rt_seconds: f64, mobility: f64, charge: i32) -> Self {
         PyPrecursorCoord {
             inner: PrecursorCoord {
                 precursor_id,
                 mz,
+                mono_mz,
                 rt_seconds,
                 mobility,
                 charge,
