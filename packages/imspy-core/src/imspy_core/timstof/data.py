@@ -1,4 +1,5 @@
 import platform
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -119,9 +120,20 @@ class TimsDataset(ABC):
                 warnings.warn("Warning: Only x86_64 architecture is supported by bruker SDK, setting use_bruker_sdk to False.")
                 self.use_bruker_sdk = False
 
+        # Try to find SDK path (needed for calibration even when use_bruker_sdk=False)
+        sdk_path = "NO_SDK"
+        try:
+            for so_path in obb.get_so_paths():
+                if Path(so_path).exists():
+                    sdk_path = so_path
+                    break
+        except Exception:
+            pass
+
         if not self.use_bruker_sdk:
-            self.__dataset = ims.PyTimsDataset(self.data_path, "NO_SDK", in_memory, self.use_bruker_sdk)
-            self.binary_path = "NO_SDK"
+            # Pass SDK path for calibration derivation, but use_bruker_sdk=False for fast parallel access
+            self.__dataset = ims.PyTimsDataset(self.data_path, sdk_path, in_memory, self.use_bruker_sdk)
+            self.binary_path = sdk_path
 
         else:
             # Try to load the data with the first binary found

@@ -29,6 +29,16 @@ fn derive_mz_calibration(
     data_path: &str,
     tof_max_index: u32,
 ) -> Option<(f64, f64)> {
+    // Check if SDK path is valid before trying to load
+    // Common invalid values: "NO_SDK", empty string, or non-existent paths
+    if bruker_lib_path.is_empty()
+        || bruker_lib_path == "NO_SDK"
+        || bruker_lib_path == "CALIBRATED"
+        || !std::path::Path::new(bruker_lib_path).exists()
+    {
+        return None;
+    }
+
     // Try to create a BrukerLib converter
     let sdk_converter = match std::panic::catch_unwind(|| {
         BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)
