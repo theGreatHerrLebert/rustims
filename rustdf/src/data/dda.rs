@@ -442,24 +442,25 @@ impl TimsDatasetDDA {
         let start_idx = frame_times.partition_point(|t| *t < rt_min);
         let end_idx = frame_times.partition_point(|t| *t <= rt_max);
 
-        // Calculate isotope m/z values
+        // Calculate isotope m/z values (starting from coord.mz which should be monoisotopic)
         let isotope_spacing = 1.003355 / (coord.charge.max(1) as f64);
         let isotope_mz_values: Vec<f64> = (0..n_isotopes)
             .map(|i| coord.mz + (i as f64) * isotope_spacing)
             .collect();
 
-        // m/z range for extraction
-        let mz_min = coord.mz - mz_tol;
-        let mz_max = coord.mz + ((n_isotopes - 1) as f64) * isotope_spacing + mz_tol;
+        // Full isotope range for extraction
+        let iso_mz_min = coord.mz - mz_tol;
+        let iso_mz_max = coord.mz + ((n_isotopes - 1) as f64) * isotope_spacing + mz_tol;
 
         // IM range
         let im_min = coord.mobility - im_window / 2.0;
         let im_max = coord.mobility + im_window / 2.0;
 
-        // Accumulators for 1D projections
-        let mut rt_coords = Vec::with_capacity(end_idx.saturating_sub(start_idx));
-        let mut rt_intensities = Vec::with_capacity(end_idx.saturating_sub(start_idx));
-        let mut im_dict: HashMap<i64, f64> = HashMap::new();
+        // Accumulators for per-isotope signals (to find largest peak)
+        let n_frames = end_idx.saturating_sub(start_idx);
+        let mut rt_coords = Vec::with_capacity(n_frames);
+        let mut per_isotope_rt_intensities: Vec<Vec<f64>> = vec![Vec::with_capacity(n_frames); n_isotopes];
+        let mut per_isotope_im_dict: Vec<HashMap<i64, f64>> = vec![HashMap::new(); n_isotopes];
         let mut isotope_intensity = vec![0.0f64; n_isotopes];
 
         // Accumulators for raw 2D data (merged from all frames)
@@ -473,37 +474,44 @@ impl TimsDatasetDDA {
             let frame_time = frame_times[idx];
             let frame = &frames[idx];
 
-            // Filter frame to our region
+            // Filter frame to full isotope range
             let filtered = frame.filter_ranged(
-                mz_min, mz_max,
+                iso_mz_min, iso_mz_max,
                 0, 1000,
                 im_min, im_max,
                 0.0, 1e9,
                 0, i32::MAX,
             );
 
-            // XIC: total intensity at this RT
-            let total_intensity: f64 = filtered.ims_frame.intensity.iter().sum();
             rt_coords.push(frame_time);
-            rt_intensities.push(total_intensity);
 
-            // Mobilogram: accumulate by binned mobility
-            for (mob, inten) in filtered.ims_frame.mobility.iter().zip(filtered.ims_frame.intensity.iter()) {
-                let mob_bin = (*mob * 1000.0).round() as i64;
-                *im_dict.entry(mob_bin).or_insert(0.0) += *inten;
-            }
-
-            // Isotope envelope: accumulate per isotope peak
+            // Extract per-isotope signals
             for (iso_idx, iso_mz) in isotope_mz_values.iter().enumerate() {
-                let iso_intensity_sum: f64 = filtered.ims_frame.mz.iter()
+                let iso_mz_min = iso_mz - mz_tol;
+                let iso_mz_max = iso_mz + mz_tol;
+
+                // XIC for this isotope
+                let iso_frame_intensity: f64 = filtered.ims_frame.mz.iter()
                     .zip(filtered.ims_frame.intensity.iter())
-                    .filter(|(mz, _)| **mz >= iso_mz - mz_tol && **mz <= iso_mz + mz_tol)
+                    .filter(|(mz, _)| **mz >= iso_mz_min && **mz <= iso_mz_max)
                     .map(|(_, i)| *i)
                     .sum();
-                isotope_intensity[iso_idx] += iso_intensity_sum;
+                per_isotope_rt_intensities[iso_idx].push(iso_frame_intensity);
+                isotope_intensity[iso_idx] += iso_frame_intensity;
+
+                // Mobilogram for this isotope
+                for i in 0..filtered.ims_frame.mz.len() {
+                    let mz = filtered.ims_frame.mz[i];
+                    if mz >= iso_mz_min && mz <= iso_mz_max {
+                        let mob = filtered.ims_frame.mobility[i];
+                        let inten = filtered.ims_frame.intensity[i];
+                        let mob_bin = (mob * 1000.0).round() as i64;
+                        *per_isotope_im_dict[iso_idx].entry(mob_bin).or_insert(0.0) += inten;
+                    }
+                }
             }
 
-            // Raw 2D data: store all peaks with their RT
+            // Raw 2D data: store all peaks from full isotope range
             let n_peaks = filtered.ims_frame.mz.len();
             for i in 0..n_peaks {
                 raw_rt.push(frame_time);
@@ -513,8 +521,21 @@ impl TimsDatasetDDA {
             }
         }
 
-        // Convert mobilogram accumulator to sorted arrays
-        let mut im_entries: Vec<(i64, f64)> = im_dict.into_iter().collect();
+        // Find the isotope with highest total intensity (largest peak)
+        // Only consider M+0 through M+3 (first 4 isotopes) - M+4 is too far and may have interference
+        let max_iso_for_projection = 4.min(n_isotopes);
+        let largest_iso_idx = isotope_intensity[..max_iso_for_projection]
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
+
+        // Use the largest isotope's signals for XIC and mobilogram
+        let rt_intensities = per_isotope_rt_intensities[largest_iso_idx].clone();
+
+        // Convert mobilogram accumulator for largest isotope to sorted arrays
+        let mut im_entries: Vec<(i64, f64)> = per_isotope_im_dict[largest_iso_idx].clone().into_iter().collect();
         im_entries.sort_by_key(|(k, _)| *k);
         let im_coords: Vec<f64> = im_entries.iter().map(|(k, _)| *k as f64 / 1000.0).collect();
         let im_intensities: Vec<f64> = im_entries.iter().map(|(_, v)| *v).collect();
