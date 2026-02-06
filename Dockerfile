@@ -40,7 +40,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir "maturin>=1.2,<2.0"
 
 # Copy the full repo (need workspace Cargo.toml + crate sources)
-COPY Cargo.toml Cargo.lock /src/
+COPY Cargo.toml /src/
 COPY mscore /src/mscore
 COPY rustdf /src/rustdf
 COPY rustms /src/rustms
