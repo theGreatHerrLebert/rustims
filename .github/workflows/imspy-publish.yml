@@ -81,7 +81,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/imspy-core
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
   # Build and publish imspy-predictors (depends on imspy-core)
   publish-predictors:
@@ -112,7 +112,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/imspy-predictors
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
   # Build and publish remaining packages (depend on imspy-core and imspy-predictors)
   publish-remaining:
@@ -146,4 +146,4 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/${{ matrix.package }}
-          twine upload dist/*
+          twine upload --skip-existing dist/*
