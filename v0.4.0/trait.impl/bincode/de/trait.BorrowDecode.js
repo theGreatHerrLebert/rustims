@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["mscore",[["impl&lt;'__de, __Context&gt; <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.1/bincode/de/trait.BorrowDecode.html\" title=\"trait bincode::de::BorrowDecode\">BorrowDecode</a>&lt;'__de, __Context&gt; for <a class=\"enum\" href=\"mscore/data/spectrum/enum.MsType.html\" title=\"enum mscore::data::spectrum::MsType\">MsType</a>"],["impl&lt;'__de, __Context&gt; <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.1/bincode/de/trait.BorrowDecode.html\" title=\"trait bincode::de::BorrowDecode\">BorrowDecode</a>&lt;'__de, __Context&gt; for <a class=\"struct\" href=\"mscore/data/peptide/struct.PeptideSequence.html\" title=\"struct mscore::data::peptide::PeptideSequence\">PeptideSequence</a>"],["impl&lt;'de, Context&gt; <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.1/bincode/de/trait.BorrowDecode.html\" title=\"trait bincode::de::BorrowDecode\">BorrowDecode</a>&lt;'de, Context&gt; for <a class=\"struct\" href=\"mscore/data/spectrum/struct.MzSpectrum.html\" title=\"struct mscore::data::spectrum::MzSpectrum\">MzSpectrum</a>"]]],["rustms",[["impl&lt;'__de, __Context&gt; <a class=\"trait\" href=\"https://docs.rs/bincode/2.0.1/bincode/de/trait.BorrowDecode.html\" title=\"trait bincode::de::BorrowDecode\">BorrowDecode</a>&lt;'__de, __Context&gt; for <a class=\"struct\" href=\"rustms/proteomics/peptide/struct.PeptideSequence.html\" title=\"struct rustms::proteomics::peptide::PeptideSequence\">PeptideSequence</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[1058,391]}
