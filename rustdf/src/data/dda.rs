@@ -521,10 +521,6 @@ impl TimsDatasetDDA {
             (coord.mz - mz_tol, coord.mz + mz_tol)
         };
 
-        // Isotope envelope range (same as XIC when mono_mz present)
-        let iso_mz_min = base_mz - mz_tol;
-        let iso_mz_max = base_mz + ((n_isotopes_to_extract - 1) as f64) * isotope_spacing + mz_tol;
-
         // IM range (uses im_window parameter, doubled from default for better coverage)
         let im_min = coord.mobility - im_window / 2.0;
         let im_max = coord.mobility + im_window / 2.0;

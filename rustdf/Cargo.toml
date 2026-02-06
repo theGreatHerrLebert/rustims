@@ -41,11 +41,5 @@ rustc-hash = "2.1.0"
 bincode = "1.3.3"
 polars = { version = "0.43.1", features = ["ndarray", "parquet", "dtype-u8"] }
 
-[profile.release]
-debug = true
-overflow-checks = true
-lto = "thin" 
-panic = "abort" 
-
 [package.metadata.docs.rs]
 features = ["all"] 

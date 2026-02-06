@@ -6,18 +6,6 @@ use std::env;
 
 use serde::{Deserialize, Serialize};
 
-/// Standard amino acids (20)
-const STANDARD_AA: &str = "ACDEFGHIKLMNPQRSTVWY";
-
-/// Extended amino acids:
-/// - U: Selenocysteine
-/// - O: Pyrrolysine
-/// - B: Asparagine or Aspartic acid (ambiguous)
-/// - Z: Glutamine or Glutamic acid (ambiguous)
-/// - X: Unknown amino acid
-/// - J: Leucine or Isoleucine (ambiguous)
-const EXTENDED_AA: &str = "UOBZXJ";
-
 /// All supported amino acids (standard + extended)
 const ALL_AA: &str = "ACDEFGHIKLMNPQRSTVWYUOBZXJ";
 
@@ -108,7 +96,6 @@ pub struct PyProformaTokenizer {
     terminal_mods: HashSet<String>,
     special_tokens: HashSet<String>,
     unimod_tokens: HashSet<String>,
-    aa_tokens: HashSet<String>,
     token_to_id: HashMap<String, usize>,
     id_to_token: Vec<String>,
     unk_token: String,
@@ -170,10 +157,10 @@ impl PyProformaTokenizer {
         });
 
         // All amino acids (standard + extended)
-        let aa_tokens = ALL_AA
+        let aa_tokens: HashSet<String> = ALL_AA
             .chars()
             .map(|c| c.to_string())
-            .collect::<HashSet<_>>();
+            .collect();
 
         // Build complete vocabulary
         let mut all_tokens = special_tokens
@@ -200,7 +187,6 @@ impl PyProformaTokenizer {
             terminal_mods: terminal_mods.into_iter().collect(),
             special_tokens: special_tokens.into_iter().collect(),
             unimod_tokens: unimod_tokens.into_iter().collect(),
-            aa_tokens,
             token_to_id,
             id_to_token: all_tokens,
             unk_token: "[UNK]".to_string(),
@@ -329,12 +315,6 @@ impl PyProformaTokenizer {
         let state: TokenizerState = serde_json::from_str(&json)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-        // All amino acids (standard + extended)
-        let aa_tokens = ALL_AA
-            .chars()
-            .map(|c| c.to_string())
-            .collect::<HashSet<_>>();
-
         let token_to_id = state
             .vocab
             .iter()
@@ -347,7 +327,6 @@ impl PyProformaTokenizer {
             terminal_mods: state.terminal_mods.into_iter().collect(),
             special_tokens: state.special_tokens.into_iter().collect(),
             unimod_tokens: state.unimod_tokens.into_iter().collect(),
-            aa_tokens,
             token_to_id,
             id_to_token: state.vocab,
             unk_token: "[UNK]".to_string(),

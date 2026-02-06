@@ -36,11 +36,5 @@ ordered-float = "4.6.0"
 # Binary serialization
 bincode = "2.0.0-rc.3"
 
-[profile.release]
-debug = true
-overflow-checks = true
-lto = "thin"
-panic = "abort"
-
 [package.metadata.docs.rs]
 features = ["all"]

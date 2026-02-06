@@ -8,3 +8,9 @@ members = [
 ]
 
 resolver = "2"
+
+[profile.release]
+debug = true
+overflow-checks = true
+lto = "thin"
+panic = "abort"
