@@ -420,7 +420,7 @@ mod tests {
         let mz = vec![500.0, 501.003, 502.006, 600.0];
         let intensity = vec![1000.0, 500.0, 250.0, 800.0];
 
-        let (filtered_mz, filtered_intensity) = deisotope_spectrum(&mz, &intensity, 10.0);
+        let (filtered_mz, _filtered_intensity) = deisotope_spectrum(&mz, &intensity, 10.0);
 
         // Should keep monoisotopic (500.0) and remove isotopes, keep 600.0
         assert_eq!(filtered_mz.len(), 2);
@@ -433,7 +433,7 @@ mod tests {
         let mz = vec![100.0, 200.0, 300.0, 400.0, 500.0];
         let intensity = vec![10.0, 50.0, 30.0, 100.0, 20.0];
 
-        let (filtered_mz, filtered_intensity) = filter_top_n(&mz, &intensity, 3);
+        let (filtered_mz, _filtered_intensity) = filter_top_n(&mz, &intensity, 3);
 
         // Should keep top 3 by intensity: 400 (100), 200 (50), 300 (30)
         assert_eq!(filtered_mz.len(), 3);

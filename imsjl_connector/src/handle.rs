@@ -52,5 +52,5 @@ pub extern "C" fn tims_data_handle_destroy(handle: *mut CTimsDataHandle) {
 pub extern "C" fn tims_data_handle_get_frame(handle: *mut CTimsDataHandle, frame_id: i32) -> CTimsFrame {
     let handle = unsafe { &*handle };
     let frame = handle.inner.get_frame(frame_id as u32);
-    convert_to_ctims_frame(frame)
+    convert_to_ctims_frame(&frame)
 }

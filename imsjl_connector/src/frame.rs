@@ -24,7 +24,7 @@ pub struct CTimsFrame {
 }
 
 #[no_mangle]
-pub extern "C" fn convert_to_ctims_frame(frame: TimsFrame) -> CTimsFrame {
+pub extern "C" fn convert_to_ctims_frame(frame: &TimsFrame) -> CTimsFrame {
     // Clone the vectors and convert them to boxed slices
     // Note: ImsFrame fields are Arc<Vec<T>>, so we need to dereference them
     let scan_boxed = frame.scan.clone().into_boxed_slice();
