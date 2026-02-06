@@ -13,7 +13,7 @@ class TestCCSPredictor:
     def ccs_model(self):
         """Create a PyTorch CCS model for testing."""
         from imspy_predictors.ccs.predictors import PyTorchCCSPredictor
-        return PyTorchCCSPredictor(vocab_size=2200, architecture='gru')
+        return PyTorchCCSPredictor(vocab_size=2200, architecture='gru', max_charge=5)
 
     def test_pytorch_ccs_predictor_creation(self, ccs_model):
         """Test PyTorch CCS predictor can be created."""
@@ -25,8 +25,8 @@ class TestCCSPredictor:
         seq_len = 20
 
         mz = torch.rand(batch_size) * 1000 + 400
-        charge_onehot = torch.zeros(batch_size, 4)
-        charge_onehot[:, 1] = 1  # Charge 2
+        charge_onehot = torch.zeros(batch_size, 5)
+        charge_onehot[:, 2] = 1  # Charge 2
         sequences = torch.randint(0, 100, (batch_size, seq_len))
 
         ccs, residual = ccs_model(mz, charge_onehot, sequences)

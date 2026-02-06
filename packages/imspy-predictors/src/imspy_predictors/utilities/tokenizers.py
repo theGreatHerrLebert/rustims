@@ -204,6 +204,8 @@ class ProformaTokenizer:
             sequences = [sequences]
         tokens = self.tokenize_batch(sequences)
         input_ids, attention_mask = self.encode_batch(tokens, pad=padding)
+        # PyO3 converts Vec<u8> to bytes; normalize to list of ints
+        attention_mask = [list(mask) for mask in attention_mask]
 
         if return_tensors == "pt":
             import torch

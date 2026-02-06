@@ -92,10 +92,9 @@ class TestCCSHead:
 
         encoder_out = torch.randn(batch_size, 10, 64)
         mz = torch.rand(batch_size) * 1000 + 400
-        charge_onehot = torch.zeros(batch_size, 4)
-        charge_onehot[:, 1] = 1  # Charge 2
+        charge = torch.full((batch_size,), 2, dtype=torch.long)
 
-        ccs, std = ccs_head(encoder_out, mz, charge_onehot)
+        ccs, std = ccs_head(encoder_out, mz, charge)
 
         assert ccs.shape == (batch_size, 1)
         assert std.shape == (batch_size, 1)
@@ -157,7 +156,7 @@ class TestIntensityHead:
     def intensity_head(self):
         """Create an intensity head for testing."""
         from imspy_predictors.models.heads import IntensityHead
-        return IntensityHead(d_model=64, num_outputs=174, max_charge=6)
+        return IntensityHead(d_model=64, max_seq_len=30, num_ion_types=6, use_instrument=False)
 
     def test_intensity_head_creation(self, intensity_head):
         """Test intensity head can be created."""
@@ -169,11 +168,10 @@ class TestIntensityHead:
         seq_len = 20
 
         encoder_out = torch.randn(batch_size, seq_len, 64)
-        charge_onehot = torch.zeros(batch_size, 6)
-        charge_onehot[:, 1] = 1  # Charge 2
+        charge = torch.full((batch_size,), 2, dtype=torch.long)
         collision_energy = torch.rand(batch_size, 1) * 0.3 + 0.2
 
-        intensities = intensity_head(encoder_out, charge_onehot, collision_energy)
+        intensities = intensity_head(encoder_out, charge, collision_energy)
 
         assert intensities.shape == (batch_size, 174)
 
@@ -197,9 +195,9 @@ class TestUnifiedModel:
         """Test unified model can be created."""
         assert unified_model is not None
         assert hasattr(unified_model, "encoder")
-        assert hasattr(unified_model, "ccs_head")
-        assert hasattr(unified_model, "rt_head")
-        assert hasattr(unified_model, "charge_head")
+        assert "ccs" in unified_model.heads
+        assert "rt" in unified_model.heads
+        assert "charge" in unified_model.heads
 
     def test_forward_ccs(self, unified_model):
         """Test CCS prediction."""
@@ -210,11 +208,11 @@ class TestUnifiedModel:
         mz = torch.rand(batch_size) * 1000 + 400
         charge = torch.randint(1, 5, (batch_size,))
 
-        outputs = unified_model(tokens, mz=mz, charge=charge, task="ccs")
+        outputs = unified_model(tokens, mz=mz, charge=charge, tasks=["ccs"])
 
         assert "ccs" in outputs
-        assert "ccs_std" in outputs
-        assert outputs["ccs"].shape == (batch_size, 1)
+        ccs_mean, ccs_std = outputs["ccs"]
+        assert ccs_mean.shape == (batch_size, 1)
 
     def test_forward_rt(self, unified_model):
         """Test RT prediction."""
@@ -222,7 +220,7 @@ class TestUnifiedModel:
         seq_len = 20
 
         tokens = torch.randint(0, 100, (batch_size, seq_len))
-        outputs = unified_model(tokens, task="rt")
+        outputs = unified_model(tokens, tasks=["rt"])
 
         assert "rt" in outputs
         assert outputs["rt"].shape == (batch_size, 1)
@@ -233,10 +231,10 @@ class TestUnifiedModel:
         seq_len = 20
 
         tokens = torch.randint(0, 100, (batch_size, seq_len))
-        outputs = unified_model(tokens, task="charge")
+        outputs = unified_model(tokens, tasks=["charge"])
 
-        assert "charge_probs" in outputs
-        assert outputs["charge_probs"].shape == (batch_size, 4)
+        assert "charge" in outputs
+        assert outputs["charge"].shape == (batch_size, 4)
 
     def test_forward_all_tasks(self, unified_model):
         """Test predicting all tasks at once."""
@@ -247,11 +245,11 @@ class TestUnifiedModel:
         mz = torch.rand(batch_size) * 1000 + 400
         charge = torch.randint(1, 5, (batch_size,))
 
-        outputs = unified_model(tokens, mz=mz, charge=charge, task="all")
+        outputs = unified_model(tokens, mz=mz, charge=charge)
 
         assert "ccs" in outputs
         assert "rt" in outputs
-        assert "charge_probs" in outputs
+        assert "charge" in outputs
 
 
 class TestSquareRootProjectionLayer:

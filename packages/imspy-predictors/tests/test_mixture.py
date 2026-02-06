@@ -199,7 +199,6 @@ class TestGaussianMixtureModel:
         assert "GaussianMixtureModel" in repr_str
         assert "num_components=3" in repr_str
         assert "data_dim=2" in repr_str
-        assert "torch" in repr_str
 
     def test_to_device(self, gmm):
         """Test moving model to device."""
@@ -311,16 +310,17 @@ class TestGMMBackendSelection:
         )
         assert gmm.backend == 'torch'
 
-    def test_invalid_backend(self):
-        """Test that invalid backend raises error."""
+    def test_invalid_backend_ignored(self):
+        """Test that backend parameter is accepted but ignored (always torch)."""
         from imspy_predictors.mixture import GaussianMixtureModel, TORCH_AVAILABLE
 
-        with pytest.raises(ImportError):
-            GaussianMixtureModel(
-                num_components=2,
-                data_dim=2,
-                backend='invalid_backend',
-            )
+        # backend parameter is kept for backward compatibility but ignored
+        gmm = GaussianMixtureModel(
+            num_components=2,
+            data_dim=2,
+            backend='invalid_backend',
+        )
+        assert gmm.backend == 'torch'
 
     def test_init_means_shape_validation(self):
         """Test that init_means shape is validated."""
