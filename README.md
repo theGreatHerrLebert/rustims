@@ -31,11 +31,11 @@
 ## Quick Start
 
 ```bash
-# Install imspy (Python 3.11 required)
+# Install imspy (Python >=3.11)
 pip install imspy
 
-# Optional: GPU support for deep learning
-pip install tensorflow[and-cuda]==2.15.*
+# Optional: GPU support for deep learning (PyTorch ships with CUDA support)
+pip install torch
 ```
 
 ### Analyze DDA Data
@@ -51,7 +51,7 @@ imspy_dda --help
 ### Work with timsTOF Data in Python
 
 ```python
-from imspy.timstof import TimsDatasetDDA
+from imspy_core.timstof import TimsDatasetDDA
 
 # Load a dataset
 ds = TimsDatasetDDA("path/to/data.d")
@@ -70,8 +70,16 @@ spectra = ds.get_pasef_fragments(precursor_id=42)
 
 The DIA module provides hierarchical feature extraction with adaptive thresholding:
 
+```bash
+# Run the DIA clustering pipeline
+open_tracer path/to/dia_data.d
+
+# Generate a cluster report
+imspy-cluster-report path/to/results/
+```
+
 ```python
-from imspy.timstof.dia import TimsDatasetDIA
+from imspy_core.timstof import TimsDatasetDIA
 
 # Load DIA dataset
 ds = TimsDatasetDIA("path/to/dia_data.d")
@@ -95,11 +103,12 @@ clusters = ds.extract_features(
 Generate realistic PASEF-like datasets for benchmarking and method development:
 
 ```bash
-# Command line
-timsim output.d reference.d proteome.fasta --config config.toml
+# Command line (all paths configured in TOML, with optional overrides)
+timsim config.toml
+timsim config.toml --save-path output.d --reference-path reference.d --fasta-path proteome.fasta
 
 # Or use the GUI
-timsim_gui
+timsim-gui
 ```
 
 <p align="center">
@@ -119,9 +128,9 @@ Built-in models for predicting:
 - **Fragment Ion Intensities** via [Prosit](https://www.nature.com/articles/s41467-024-48322-0) (Adams et al.)
 
 ```python
-from imspy.algorithm.ccs import DeepCCSPredictor
+from imspy_predictors.ccs.predictors import PyTorchCCSPredictor
 
-predictor = DeepCCSPredictor()
+predictor = PyTorchCCSPredictor()
 ccs = predictor.predict("PEPTIDEK", charge=2)
 ```
 
@@ -136,7 +145,7 @@ ccs = predictor.predict("PEPTIDEK", charge=2)
 ```
 rust:     mscore/, rustdf/, rustms/
 pyo3:     imspy_connector/
-python:   imspy/, packages/
+python:   packages/ (imspy-core, imspy-predictors, imspy-dia, imspy-search, imspy-simulation, imspy-vis)
 julia:    imsjl_connector/, IMSJL/ (experimental)
 ```
 
@@ -146,6 +155,7 @@ julia:    imsjl_connector/, IMSJL/ (experimental)
 |-------|-------------|
 | **mscore** | Core data structures (spectra, frames, peptides) and algorithms |
 | **rustdf** | TDF file I/O, DIA clustering, peak detection |
+| **rustms** | Additional MS utilities (chemistry, proteomics, isotopes) |
 | **imspy_connector** | PyO3 bindings exposing Rust to Python |
 
 ### Python Layer (Modular)
@@ -153,7 +163,7 @@ julia:    imsjl_connector/, IMSJL/ (experimental)
 | Package | Description |
 |---------|-------------|
 | **imspy-core** | Base data structures, timsTOF dataset access |
-| **imspy-predictors** | TensorFlow models for CCS, RT, fragment intensities |
+| **imspy-predictors** | PyTorch models for CCS, RT, fragment intensities |
 | **imspy-dia** | DIA-PASEF clustering and feature extraction |
 | **imspy-search** | Database search integration (sagepy, mokapot) |
 | **imspy-simulation** | TimSim synthetic data generation |
@@ -172,8 +182,8 @@ The Rust core provides:
 # Full installation - includes all modules
 pip install imspy
 
-# With GPU support
-pip install imspy tensorflow[and-cuda]==2.15.*
+# With GPU support (PyTorch ships with CUDA support)
+pip install imspy torch
 ```
 
 ### Modular Installation
@@ -192,7 +202,7 @@ For more control over dependencies, install only the modules you need:
 **Dependency tree:**
 ```
 imspy-core          (base - required by all)
-├── imspy-predictors   (adds TensorFlow ML models)
+├── imspy-predictors   (adds PyTorch ML models)
 │   ├── imspy-search      (adds sagepy database search)
 │   └── imspy-simulation  (adds TimSim)
 ├── imspy-dia          (adds DIA clustering pipeline)
@@ -220,8 +230,14 @@ pip install maturin[patchelf]
 cd ../imspy_connector && maturin build --release
 pip install target/wheels/*.whl
 
-# Install Python package
-cd ../imspy && pip install poetry && poetry install
+# Install Python packages (from packages/ directory)
+cd ../packages
+pip install -e ./imspy-core
+pip install -e ./imspy-predictors
+pip install -e ./imspy-dia
+pip install -e ./imspy-search
+pip install -e ./imspy-simulation
+pip install -e ./imspy-vis
 ```
 
 ### Docker
