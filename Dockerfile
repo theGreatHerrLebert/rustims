@@ -87,7 +87,7 @@ RUN pip install --no-cache-dir /tmp/packages/imspy-core && \
     pip install --no-cache-dir "/tmp/packages/imspy-predictors[koina]" && \
     pip install --no-cache-dir /tmp/packages/imspy-dia && \
     pip install --no-cache-dir /tmp/packages/imspy-search && \
-    pip install --no-cache-dir "/tmp/packages/imspy-simulation[search,gui]" && \
+    pip install --no-cache-dir "/tmp/packages/imspy-simulation[gui]" && \
     pip install --no-cache-dir /tmp/packages/imspy-vis && \
     rm -rf /tmp/packages
 

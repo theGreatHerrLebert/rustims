@@ -20,10 +20,10 @@ dependencies = [
     "tqdm>=4.66",
     "zstd>=1.5",
     "matplotlib>=3.5",
+    "imspy-search>=0.4.0",
 ]
 
 [project.optional-dependencies]
-search = ["imspy-search>=0.4.0"]
 gui = [
     "nicegui>=1.4.0",
     "qdarkstyle>=3.0",
