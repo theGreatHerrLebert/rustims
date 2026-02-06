@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
+        os: [ubuntu-latest, windows-latest, macos-14, macos-15]
         python-version: ['3.11', '3.12', '3.13']
 
     steps:
@@ -31,7 +31,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.os == 'macos-14' && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ (matrix.os == 'macos-14' || matrix.os == 'macos-15') && 'aarch64-apple-darwin' || '' }}
 
       - name: Clean Cargo Artifacts
         run: |
@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           cd imspy_connector
-          if [ "${{ matrix.os }}" = "macos-14" ]; then
+          if [ "${{ matrix.os }}" = "macos-14" ] || [ "${{ matrix.os }}" = "macos-15" ]; then
             maturin build --release --target aarch64-apple-darwin
           else
             maturin build --release

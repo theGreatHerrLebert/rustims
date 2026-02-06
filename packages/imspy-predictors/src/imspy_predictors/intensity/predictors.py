@@ -424,7 +424,12 @@ def predict_fragment_intensities_with_koina(
 # =============================================================================
 
 def get_model_path(relative_path: str):
-    """Get path to model file in pretrained or checkpoints directory."""
+    """Get path to model file in pretrained or checkpoints directory.
+
+    Falls back to downloading from GitHub Releases via
+    :func:`imspy_predictors.pretrained.hub.ensure_model` when no local
+    copy is found.
+    """
     from pathlib import Path
     package_dir = Path(__file__).parent.parent
 
@@ -449,6 +454,14 @@ def get_model_path(relative_path: str):
     root_path = package_root / 'checkpoints' / relative_path
     if root_path.exists():
         return root_path
+
+    # Fall back to downloading & caching via hub
+    from imspy_predictors.pretrained.hub import ensure_model, MODELS
+    # Try the path as-is first (e.g. "intensity/best_model.pt")
+    if simple_name in MODELS:
+        return ensure_model(simple_name)
+    if relative_path in MODELS:
+        return ensure_model(relative_path)
 
     # Return pretrained path (preferred) even if not found
     return pretrained_path

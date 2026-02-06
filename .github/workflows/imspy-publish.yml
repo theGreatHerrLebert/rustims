@@ -12,12 +12,47 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   PYTHON_VERSION: '3.11'
 
 jobs:
+  # Upload pretrained model files as GitHub Release assets
+  upload-models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload model assets to models release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="models-v0.5.0"
+          MODELS_DIR="packages/imspy-predictors/src/imspy_predictors/pretrained"
+
+          # Create the models release if it doesn't exist yet
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "Pretrained models $TAG" \
+              --notes "Pretrained .pt model files for imspy-predictors v0.5.0. These are downloaded automatically on first use."
+          fi
+
+          # Upload each .pt file (flat names, skip if already present)
+          for src in \
+            "$MODELS_DIR/ccs/best_model.pt" \
+            "$MODELS_DIR/rt/best_model.pt" \
+            "$MODELS_DIR/charge/best_model.pt" \
+            "$MODELS_DIR/intensity/best_model.pt" \
+            "$MODELS_DIR/pretrained_encoder.pt"; do
+
+            # Derive flat asset name: ccs/best_model.pt -> ccs-best_model.pt
+            rel="${src#$MODELS_DIR/}"
+            asset_name="${rel//\//-}"
+
+            gh release upload "$TAG" "$src#$asset_name" --clobber
+          done
+
   # Build and publish imspy-core first (no dependencies)
   publish-core:
     runs-on: ubuntu-latest
@@ -46,7 +81,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/imspy-core
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
   # Build and publish imspy-predictors (depends on imspy-core)
   publish-predictors:
@@ -77,7 +112,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/imspy-predictors
-          twine upload dist/*
+          twine upload --skip-existing dist/*
 
   # Build and publish remaining packages (depend on imspy-core and imspy-predictors)
   publish-remaining:
@@ -111,4 +146,4 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/${{ matrix.package }}
-          twine upload dist/*
+          twine upload --skip-existing dist/*

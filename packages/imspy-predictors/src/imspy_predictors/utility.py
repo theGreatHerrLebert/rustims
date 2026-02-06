@@ -25,17 +25,31 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 
-def get_model_path(model_name: str) -> Traversable:
+def get_model_path(model_name: str):
     """
     Get the path to a pretrained model.
 
+    Checks for a locally-bundled copy first (editable / source installs).
+    If the file is not present locally, it is downloaded from GitHub Releases
+    and cached under ``~/.cache/imspy/models/`` (see :mod:`imspy_predictors.pretrained.hub`).
+
     Args:
-        model_name: The name of the model to load
+        model_name: The name of the model to load (e.g. ``"ccs/best_model.pt"``)
 
     Returns:
-        The path to the pretrained model
+        A path-like object pointing to the model file
     """
-    return resources.files('imspy_predictors.pretrained').joinpath(model_name)
+    # 1. Try the bundled package resource (works for editable / source installs)
+    resource_path = resources.files('imspy_predictors.pretrained').joinpath(model_name)
+    try:
+        if resource_path.is_file():
+            return resource_path
+    except (TypeError, FileNotFoundError):
+        pass
+
+    # 2. Download & cache via hub
+    from imspy_predictors.pretrained.hub import ensure_model
+    return ensure_model(model_name)
 
 
 def get_tokenizer_path(tokenizer_name: str = "tokenizer") -> Traversable:
