@@ -8,7 +8,7 @@ This document provides guidance for AI assistants working with the rustims codeb
 
 - **License**: MIT
 - **Author**: David Teschner
-- **Python Version**: 3.11 (required due to TensorFlow compatibility)
+- **Python Version**: >=3.11, <3.14
 - **Rust Version**: 1.84+
 
 ## Repository Structure
@@ -19,7 +19,13 @@ rustims/
 ├── rustdf/              # Rust TDF file reader/writer (Bruker timsTOF format)
 ├── rustms/              # Additional Rust MS utilities (chemistry, proteomics)
 ├── imspy_connector/     # PyO3 Python bindings (compiles to wheel)
-├── imspy/               # High-level Python package for end-users
+├── packages/            # Modular Python packages
+│   ├── imspy-core/          # Base data structures, timsTOF dataset access
+│   ├── imspy-predictors/    # PyTorch models for CCS, RT, fragment intensities
+│   ├── imspy-dia/           # DIA-PASEF clustering and feature extraction
+│   ├── imspy-search/        # Database search integration (sagepy, mokapot)
+│   ├── imspy-simulation/    # TimSim synthetic data generation
+│   └── imspy-vis/           # Visualization tools
 ├── imsjl_connector/     # Julia bindings via FFI (experimental)
 ├── IMSJL/               # Julia code (experimental)
 └── .github/workflows/   # CI/CD pipelines
@@ -31,11 +37,11 @@ The project follows a layered architecture:
 
 1. **Rust Core Layer** (`mscore`, `rustdf`, `rustms`): Low-level, high-performance implementations
 2. **Binding Layer** (`imspy_connector`): PyO3 bindings exposing Rust to Python
-3. **Python API Layer** (`imspy`): User-friendly Python package with additional ML/DL features
+3. **Python API Layer** (`packages/`): Modular Python packages with ML/DL features
 
 ## Key Crates and Packages
 
-### mscore (Rust)
+### mscore (Rust) — v0.4.1
 Core library containing:
 - `data/` - Spectrum, peptide, SMILES data structures
 - `chemistry/` - Elements, amino acids, UNIMOD, sum formulas
@@ -45,34 +51,88 @@ Core library containing:
 
 Key types: `MzSpectrum`, `MsType`, `PeptideSequence`, `ImsFrame`, `TimsFrame`
 
-### rustdf (Rust)
+### rustdf (Rust) — v0.4.1
 TDF file I/O library:
 - `data/` - Dataset reading, DDA/DIA handling, raw data access
 - `sim/` - Simulation containers, precursor handling, synthetic data generation
 
-### rustms (Rust)
+### rustms (Rust) — v0.1.0
 Additional MS utilities:
 - `chemistry/` - Chemical formulas, elements, UNIMOD
 - `proteomics/` - Amino acids, peptides
 - `algorithm/` - Isotope and peptide algorithms
 - `ms/` - Spectrum utilities
 
-### imspy_connector (Rust/PyO3)
-Python bindings organized as submodules:
-- `py_mz_spectrum`, `py_peptide`, `py_tims_frame`, etc.
+### imspy_connector (Rust/PyO3) — v0.4.1
+Python bindings organized as 21 submodules:
+- `py_mz_spectrum`, `py_peptide`, `py_tims_frame`, `py_tims_slice`, `py_dataset`
+- `py_dda`, `py_dia`, `py_quadrupole`, `py_feature`, `py_pseudo`
+- `py_chemistry`, `py_elements`, `py_sumformula`, `py_amino_acids`, `py_unimod`, `py_constants`
+- `py_annotation`, `py_simulation`, `py_ml_utility`, `py_spectrum_processing`, `py_utility`
 - Each `py_*.rs` file wraps corresponding Rust types
 - Uses `#[pyclass]` and `#[pymethods]` attributes
 
-### imspy (Python)
-High-level Python package:
-- `timstof/` - TimsDataset, TimsDatasetDDA, TimsDatasetDIA
-- `data/` - Python wrappers for Rust data structures
-- `chemistry/` - Elements, sum formulas
-- `algorithm/` - ML models, prediction algorithms
-- `simulation/` - TimSim simulation tools
-- `vis/` - Visualization utilities
+### Python Packages (under `packages/`)
 
-CLI tools: `imspy_dda`, `timsim`, `timsim_gui`, `imspy_ccs`, `imspy_rescore_sage`
+| Package | Version | Module | Description |
+|---------|---------|--------|-------------|
+| **imspy-core** | 0.4.0 | `imspy_core` | Base data structures, timsTOF dataset access |
+| **imspy-predictors** | 0.5.0 | `imspy_predictors` | PyTorch models for CCS, RT, fragment intensities |
+| **imspy-dia** | 0.4.0 | `imspy_dia` | DIA-PASEF clustering and feature extraction |
+| **imspy-search** | 0.4.0 | `imspy_search` | Database search integration (sagepy, mokapot) |
+| **imspy-simulation** | 0.4.0 | `imspy_simulation` | TimSim synthetic data generation & EVAL pipeline |
+| **imspy-vis** | 0.4.0 | `imspy_vis` | Visualization and plotting tools |
+
+#### imspy-core
+- `core/` - RustWrapperObject base class
+- `data/` - MzSpectrum, PeptideSequence wrappers
+- `chemistry/` - Elements, amino acids, UNIMOD, mobility, constants
+- `timstof/` - TimsDataset, TimsDatasetDDA, TimsDatasetDIA, TimsFrame, TimsSlice
+- `utility/` - General helpers, sequence processing
+
+#### imspy-predictors
+- `ccs/` - Collisional cross-section predictors (`PyTorchCCSPredictor`)
+- `rt/` - Retention time predictors (`PyTorchRTPredictor`)
+- `intensity/` - Ion intensity predictors (`Prosit2023TimsTofWrapper`, `DeepPeptideIntensityPredictor`)
+- `ionization/` - Charge state predictors
+- `koina_models/` - Koina remote prediction service
+- `models/` - Neural network model definitions
+- `pretrained/` - Pretrained model management
+- `utilities/` - Tokenizers and utilities
+
+#### imspy-dia
+- `clustering/` - DIA clustering utilities
+- `pipeline/` - DIA processing pipeline (cluster_pipeline, cluster_report)
+
+#### imspy-search
+- `cli/` - Command-line interfaces (imspy_dda, imspy_ccs, imspy_rescore_sage)
+- `configs/` - Configuration files
+- `dda_extensions.py` - Sage extension methods for PrecursorDDA/TimsDatasetDDA
+- `rescoring.py` - PSM rescoring
+- `utility.py`, `mgf.py`, `sage_output_utility.py`
+
+#### imspy-simulation
+- `timsim/` - TimSim simulator, GUI, jobs, validation, integration tests (EVAL pipeline)
+- `builders/` - Simulation builders
+- `core/` - Core simulation logic
+- `data/` - Simulation data structures
+- `annotation.py`, `experiment.py`, `acquisition.py`, `tdf.py`
+
+#### imspy-vis
+- `frame_rendering.py` - Frame rendering
+- `pointcloud.py` - Point cloud visualization
+
+### CLI Tools
+
+| Entry Point | Package | Function |
+|-------------|---------|----------|
+| `imspy-dda` | imspy-search | `imspy_search.cli.imspy_dda:main` |
+| `imspy-ccs` | imspy-search | `imspy_search.cli.imspy_ccs:main` |
+| `imspy-rescore-sage` | imspy-search | `imspy_search.cli.imspy_rescore_sage:main` |
+| `open_tracer` | imspy-dia | `imspy_dia.pipeline.cluster_pipeline:main` |
+| `imspy-cluster-report` | imspy-dia | `imspy_dia.pipeline.cluster_report:main` |
+| `timsim` | imspy-simulation | `imspy_simulation.timsim.simulator:main` |
+| `timsim-gui` | imspy-simulation | `imspy_simulation.timsim.gui:main` |
 
 ## Development Workflows
 
@@ -101,15 +161,17 @@ maturin build --release
 pip install --force-reinstall ./target/wheels/<filename>.whl
 ```
 
-### Building Python Package
+### Installing Python Packages
 
 ```bash
-# Install poetry
-pip install poetry
-
-# Install imspy
-cd imspy
-poetry install
+# Install from packages/ directory
+cd packages
+pip install -e ./imspy-core
+pip install -e ./imspy-predictors
+pip install -e ./imspy-dia
+pip install -e ./imspy-search
+pip install -e ./imspy-simulation
+pip install -e ./imspy-vis
 ```
 
 ### Running Tests
@@ -119,15 +181,15 @@ poetry install
 cd mscore && cargo test --verbose
 cd rustdf && cargo test --verbose
 
-# Python tests (limited)
-cd imspy && pytest tests/
+# Python tests
+cd packages/imspy-predictors && pytest tests/
 ```
 
 ## CI/CD Pipelines
 
 - **rust.yml**: Builds and tests `mscore` and `rustdf` on push/PR to main
 - **imspy-connector-publish.yml**: Builds wheels for multiple platforms on release
-- **imspy-publish.yml**: Publishes Python package via Poetry on release
+- **imspy-publish.yml**: Publishes Python packages on release
 - **docs.yml**: Builds Rust docs (cargo doc) and Python docs (Sphinx)
 
 ## Code Conventions
@@ -226,39 +288,46 @@ class PythonWrapper(RustWrapperObject):
 
 ### Adding a New Rust Function
 
-1. Implement in appropriate `mscore` or `rustdf` module
+1. Implement in appropriate `mscore`, `rustdf`, or `rustms` module
 2. Add Python binding in `imspy_connector/src/py_<module>.rs`
 3. Register in module's `#[pymodule]` function
-4. Create Python wrapper in `imspy/<subpackage>/`
+4. Create Python wrapper in the appropriate package under `packages/`
 
 ### Modifying Data Structures
 
 1. Update Rust struct in `mscore` or `rustdf`
 2. Update PyO3 wrapper in `imspy_connector`
-3. Update Python wrapper in `imspy`
+3. Update Python wrapper in the appropriate package under `packages/`
 4. Run tests: `cargo test` and `pytest`
 
 ### Version Updates
 
 Versions are maintained in:
-- `mscore/Cargo.toml`
-- `rustdf/Cargo.toml`
-- `imspy_connector/Cargo.toml`
-- `imspy/pyproject.toml`
+- `mscore/Cargo.toml` (0.4.1)
+- `rustdf/Cargo.toml` (0.4.1)
+- `rustms/Cargo.toml` (0.1.0)
+- `imspy_connector/Cargo.toml` (0.4.1)
+- `packages/imspy-core/pyproject.toml` (0.4.0)
+- `packages/imspy-predictors/pyproject.toml` (0.5.0)
+- `packages/imspy-dia/pyproject.toml` (0.4.0)
+- `packages/imspy-search/pyproject.toml` (0.4.0)
+- `packages/imspy-simulation/pyproject.toml` (0.4.0)
+- `packages/imspy-vis/pyproject.toml` (0.4.0)
 
-Dependencies between crates reference specific versions (e.g., `mscore = { version = "0.3.3" }`).
+Dependencies between Rust crates reference specific versions (e.g., `mscore = { version = "0.4.1" }`).
 
 ## Documentation
 
 - Rust docs: https://thegreatherrlebert.github.io/rustims/main/mscore/
 - Python docs: https://thegreatherrlebert.github.io/rustims/main/imspy/
-- Examples: `imspy/examples/` (Jupyter notebooks)
+- TimSim docs: `packages/imspy-simulation/SIMULATOR_README.md`
+- EVAL pipeline: `packages/imspy-simulation/src/imspy_simulation/timsim/integration/VALIDATION_README.md`
 
 ## Important Notes
 
-1. **Python 3.11 Required**: Due to TensorFlow 2.15 dependency
+1. **Python >=3.11**: Required by all packages (upper bound <3.14)
 2. **Bruker SDK**: Optional but recommended for accurate mass/mobility calibration
-3. **GPU Support**: Install `tensorflow[and-cuda]==2.15.*` for CUDA support
+3. **GPU Support**: PyTorch ships with CUDA support (`pip install torch`)
 4. **Local Development**: Use `path = "../mscore"` in Cargo.toml for local development (commented out in production)
 
 ## Dependencies
@@ -272,17 +341,17 @@ Dependencies between crates reference specific versions (e.g., `mscore = { versi
 - `zstd`/`lzf`: Compression
 
 ### Key Python Dependencies
-- `tensorflow`: Deep learning models
-- `sagepy`: Peptide search
+- `torch`: Deep learning models (PyTorch)
+- `sagepy`: Peptide search (imspy-search)
+- `mokapot`: Statistical validation (imspy-search)
 - `numba`: JIT compilation
 - `pandas`/`numpy`: Data handling
-- `mokapot`: Statistical validation
+- `koinapy`: Remote prediction service (optional, imspy-predictors)
 
 ## File Patterns
 
 - Rust source: `<crate>/src/**/*.rs`
-- Python source: `imspy/imspy/**/*.py`
+- Python source: `packages/<package>/src/<module>/**/*.py`
 - Tests (Rust): Inline in source files
-- Tests (Python): `imspy/tests/`
-- Examples: `imspy/examples/*.ipynb`
+- Tests (Python): `packages/<package>/tests/`
 - CI: `.github/workflows/*.yml`
