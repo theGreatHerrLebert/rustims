@@ -134,6 +134,31 @@ predictor = PyTorchCCSPredictor()
 ccs = predictor.predict("PEPTIDEK", charge=2)
 ```
 
+### Validation & Benchmarking (EVAL Pipeline)
+
+The integration test framework validates simulated datasets against real proteomics analysis tools — ensuring TimSim produces data that behaves like real experiments.
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│  Simulate   │ ──▶ │   Analyze   │ ──▶ │  Validate   │ ──▶ │   Report    │
+│  (timsim)   │     │ (DiaNN/FP)  │     │ (vs truth)  │     │  (HTML/JSON)│
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+```
+
+Run a simulation, then evaluate it with production search engines:
+
+```bash
+# Generate a synthetic DIA-PASEF dataset
+python -m imspy_simulation.timsim.integration.sim --env env.toml --test IT-DIA-HELA
+
+# Analyze with DiaNN/FragPipe and validate against ground truth
+python -m imspy_simulation.timsim.integration.eval --env env.toml --test IT-DIA-HELA
+```
+
+The pipeline produces HTML reports with pass/fail metrics for identification rate, RT correlation, and ion mobility correlation. Available test scenarios include standard DIA/DDA, multi-species quantification (HYE), phosphoproteomics, and immunopeptidomics.
+
+See the full [Validation README](packages/imspy-simulation/src/imspy_simulation/timsim/integration/VALIDATION_README.md) for setup, configuration, and adding custom tests.
+
 ## Architecture
 
 <p align="center">
