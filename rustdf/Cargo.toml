@@ -1,6 +1,6 @@
 [package]
 name = "rustdf"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 authors = ["David Teschner <davidteschner@googlemail.com>"] # Add your name and email
 description = "A Rust library for interacting with Bruker TDF formatted Raw Data."
@@ -28,8 +28,7 @@ zstd = "0.13.3"
 # Byte order utilities
 byteorder = "1.5.0"
 # Core library for computational proteomics
-# mscore = { version = "0.4.0" }
-mscore = { path = "../mscore" }
+mscore = { path = "../mscore", version = "0.4.1" }
 # Parallelism
 rayon = "1.10.0"
 # Serialization
