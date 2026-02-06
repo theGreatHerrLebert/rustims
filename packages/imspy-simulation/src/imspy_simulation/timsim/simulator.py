@@ -202,6 +202,67 @@ def load_toml_config(config_path: str) -> dict:
         return toml.load(config_file)
 
 
+_LEGACY_SECTION_NAMES = frozenset({
+    'main_settings', 'peptide_digestion', 'peptide_intensity',
+    'charge_state_probabilities', 'distribution_settings',
+    'noise_settings', 'phosphorylation_settings', 'dda_settings',
+    'performance_settings', 'property_variation_settings',
+})
+
+_LEGACY_IGNORED_KEYS = frozenset({
+    'intensity_mean', 'intensity_min', 'intensity_max', 'intensity_value',
+    'mean_std_rt', 'variance_std_rt', 'mean_skewness', 'variance_skewness',
+    'z_score', 'add_noise_to_signals',
+})
+
+
+def translate_legacy_config(raw_config: dict) -> tuple[dict, bool]:
+    """Detect and translate old-format timsim configs to the current format.
+
+    Legacy configs use section names like ``[main_settings]``,
+    ``[peptide_digestion]``, etc. and have a few renamed / removed keys.
+
+    Args:
+        raw_config: The raw dict returned by ``toml.load``.
+
+    Returns:
+        A tuple of (flat_config_dict, is_legacy).  ``is_legacy`` is True when
+        old-format markers were detected so that callers can log accordingly.
+    """
+    is_legacy = bool(_LEGACY_SECTION_NAMES & set(raw_config.keys()))
+
+    # Flatten sections (same logic as before – section names are irrelevant)
+    flat: dict = {}
+    for key, value in raw_config.items():
+        if isinstance(value, dict):
+            flat.update(value)
+        else:
+            flat[key] = value
+
+    if not is_legacy:
+        return flat, False
+
+    logger.info("Detected legacy config format, translating...")
+
+    # Key rename: add_decoys → decoys
+    if 'add_decoys' in flat:
+        flat['decoys'] = flat.pop('add_decoys')
+        logger.info("  Renamed key: add_decoys -> decoys")
+
+    # binomial_charge_model: keep new default True even for legacy configs
+    # (the old non-binomial charge model is broken)
+    if 'binomial_charge_model' not in flat:
+        logger.info("  Note: binomial_charge_model not set in legacy config, "
+                     "keeping new default (True)")
+
+    # Warn about ignored deprecated keys
+    for key in sorted(_LEGACY_IGNORED_KEYS & set(flat.keys())):
+        logger.info(f"  Ignoring deprecated key: {key}")
+        del flat[key]
+
+    return flat, True
+
+
 def get_default_settings() -> dict:
     """
     Returns a dictionary of default values for all configuration options.
@@ -381,12 +442,14 @@ class SimulationConfig:
     to all settings with defaults applied.
     """
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, overrides: dict | None = None):
         """
         Initialize configuration from a TOML file.
 
         Args:
             config_path: Path to the TOML configuration file.
+            overrides: Optional dict of key→value pairs that take precedence
+                over values loaded from the TOML file (e.g. CLI path overrides).
 
         Raises:
             FileNotFoundError: If config file doesn't exist.
@@ -394,13 +457,14 @@ class SimulationConfig:
         """
         self._config = get_default_settings()
 
-        # Load TOML config and flatten sections
+        # Load TOML config, detect/translate legacy format, then flatten
         raw_config = load_toml_config(config_path)
-        for section_key, section_value in raw_config.items():
-            if isinstance(section_value, dict):
-                self._config.update(section_value)
-            else:
-                self._config[section_key] = section_value
+        flat_config, is_legacy = translate_legacy_config(raw_config)
+        self._config.update(flat_config)
+
+        # Apply CLI overrides (take precedence over config file)
+        if overrides:
+            self._config.update(overrides)
 
         # Validate required settings
         self._validate()
@@ -610,6 +674,24 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         metavar="CONFIG_FILE",
         help="Path to the TOML configuration file"
     )
+    parser.add_argument(
+        "--save-path", "-s",
+        type=str,
+        default=None,
+        help="Override save_path from config"
+    )
+    parser.add_argument(
+        "--reference-path", "-r",
+        type=str,
+        default=None,
+        help="Override reference_path from config"
+    )
+    parser.add_argument(
+        "--fasta-path", "-f",
+        type=str,
+        default=None,
+        help="Override fasta_path from config"
+    )
     return parser
 
 
@@ -627,9 +709,18 @@ def main():
     parser = build_arg_parser()
     cli_args = parser.parse_args()
 
+    # Build path overrides from CLI arguments
+    overrides = {}
+    if cli_args.save_path:
+        overrides['save_path'] = cli_args.save_path
+    if cli_args.reference_path:
+        overrides['reference_path'] = cli_args.reference_path
+    if cli_args.fasta_path:
+        overrides['fasta_path'] = cli_args.fasta_path
+
     # Load configuration from TOML file
     try:
-        config = SimulationConfig(cli_args.config)
+        config = SimulationConfig(cli_args.config, overrides=overrides)
     except (FileNotFoundError, ValueError) as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
