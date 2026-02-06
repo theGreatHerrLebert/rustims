@@ -14,56 +14,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13, macos-14]
         python-version: ['3.11', '3.12', '3.13']
-        include:
-          # Ubuntu builds
-          - os: ubuntu-latest
-            python-version: '3.11'
-            publish: true
-          - os: ubuntu-latest
-            python-version: '3.12'
-            publish: true
-          - os: ubuntu-latest
-            python-version: '3.13'
-            publish: true
-          # Windows builds
-          - os: windows-latest
-            python-version: '3.11'
-            publish: true
-          - os: windows-latest
-            python-version: '3.12'
-            publish: true
-          - os: windows-latest
-            python-version: '3.13'
-            publish: true
-          # macOS Intel builds
-          - os: macos-13
-            python-version: '3.11'
-            publish: true
-          - os: macos-13
-            python-version: '3.12'
-            publish: true
-          - os: macos-13
-            python-version: '3.13'
-            publish: true
-          # macOS ARM builds
-          - os: macos-14
-            python-version: '3.11'
-            publish: true
-            target: aarch64-apple-darwin
-          - os: macos-14
-            python-version: '3.12'
-            publish: true
-            target: aarch64-apple-darwin
-          - os: macos-14
-            python-version: '3.13'
-            publish: true
-            target: aarch64-apple-darwin
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -73,15 +29,9 @@ jobs:
           pip install maturin
 
       - name: Set up Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: ${{ matrix.target || '' }}
-
-      - name: Change to imspy-connector directory
-        run: cd imspy_connector
+          targets: ${{ matrix.os == 'macos-14' && 'aarch64-apple-darwin' || '' }}
 
       - name: Clean Cargo Artifacts
         run: |
@@ -92,14 +42,13 @@ jobs:
         shell: bash
         run: |
           cd imspy_connector
-          if [ -n "${{ matrix.target }}" ]; then
-            maturin build --release --target ${{ matrix.target }}
+          if [ "${{ matrix.os }}" = "macos-14" ]; then
+            maturin build --release --target aarch64-apple-darwin
           else
             maturin build --release
           fi
 
       - name: Publish
-        if: matrix.publish
         env:
           MATURIN_PYPI_TOKEN: ${{ secrets.IMSPY_CONNECTOR_PYPI_API_TOKEN }}
         run: |

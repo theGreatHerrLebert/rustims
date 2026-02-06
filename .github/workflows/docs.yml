@@ -12,49 +12,50 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-python-docs:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: 'latest'
-
-      - name: Install Dependencies
-        run: |
-          cd imspy
-          poetry install
-
-      - name: Build Documentation
-        run: |
-          cd imspy
-          mkdir -p docs/source/_static  # Create the static folder if it doesn't exist
-          poetry run sphinx-build docs/source/ docs/build/html
-
-      - name: Deploy to GitHub Pages (dev documentation)
-        if: github.ref == 'refs/heads/main'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: imspy/docs/build/html
-          destination_dir: main/imspy
-
-      - name: Deploy to GitHub Pages (release documentation)
-        if: startswith(github.ref, 'refs/tags/')
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: imspy/docs/build/html
-          destination_dir: '${{ github.ref_name }}/imspy'
+  # TODO: Python docs need a Sphinx config for the new packages/ layout.
+  # The old imspy/ monolith directory no longer exists. Re-enable this job
+  # once a docs/conf.py is set up that covers the split packages.
+  #
+  # build-python-docs:
+  #   runs-on: ubuntu-latest
+  #
+  #   steps:
+  #     - name: Checkout Repository
+  #       uses: actions/checkout@v4
+  #
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Install Dependencies
+  #       run: |
+  #         pip install build
+  #         for pkg in packages/imspy-core packages/imspy-predictors packages/imspy-dia packages/imspy-search packages/imspy-simulation packages/imspy-vis; do
+  #           pip install "$pkg"
+  #         done
+  #         pip install sphinx sphinx-rtd-theme
+  #
+  #     - name: Build Documentation
+  #       run: |
+  #         mkdir -p docs/build/html
+  #         sphinx-build docs/source/ docs/build/html
+  #
+  #     - name: Deploy to GitHub Pages (dev documentation)
+  #       if: github.ref == 'refs/heads/main'
+  #       uses: peaceiris/actions-gh-pages@v4
+  #       with:
+  #         github_token: ${{ secrets.GITHUB_TOKEN }}
+  #         publish_dir: docs/build/html
+  #         destination_dir: main/imspy
+  #
+  #     - name: Deploy to GitHub Pages (release documentation)
+  #       if: startswith(github.ref, 'refs/tags/')
+  #       uses: peaceiris/actions-gh-pages@v4
+  #       with:
+  #         github_token: ${{ secrets.GITHUB_TOKEN }}
+  #         publish_dir: docs/build/html
+  #         destination_dir: '${{ github.ref_name }}/imspy'
 
   build-rust-docs:
     runs-on: ubuntu-latest

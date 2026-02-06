@@ -29,24 +29,24 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Poetry
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install poetry
+          pip install build twine
 
       - name: Build imspy-core
         run: |
           cd packages/imspy-core
-          poetry build
+          python -m build
 
       - name: Publish imspy-core
-        if: ${{ github.event_name == 'release' || inputs.dry_run != 'true' }}
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
         env:
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.IMSPY_PYPI_TOKEN }}
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/imspy-core
-          poetry config pypi-token.pypi $POETRY_PYPI_TOKEN_PYPI
-          poetry publish
+          twine upload dist/*
 
   # Build and publish imspy-predictors (depends on imspy-core)
   publish-predictors:
@@ -60,24 +60,24 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Poetry
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install poetry
+          pip install build twine
 
       - name: Build imspy-predictors
         run: |
           cd packages/imspy-predictors
-          poetry build
+          python -m build
 
       - name: Publish imspy-predictors
-        if: ${{ github.event_name == 'release' || inputs.dry_run != 'true' }}
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
         env:
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.IMSPY_PYPI_TOKEN }}
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/imspy-predictors
-          poetry config pypi-token.pypi $POETRY_PYPI_TOKEN_PYPI
-          poetry publish
+          twine upload dist/*
 
   # Build and publish remaining packages (depend on imspy-core and imspy-predictors)
   publish-remaining:
@@ -85,7 +85,7 @@ jobs:
     needs: publish-predictors
     strategy:
       matrix:
-        package: [imspy-search, imspy-simulation, imspy-vis]
+        package: [imspy-dia, imspy-search, imspy-simulation, imspy-vis]
     steps:
       - uses: actions/checkout@v4
 
@@ -94,21 +94,21 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Poetry
+      - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install poetry
+          pip install build twine
 
       - name: Build ${{ matrix.package }}
         run: |
           cd packages/${{ matrix.package }}
-          poetry build
+          python -m build
 
       - name: Publish ${{ matrix.package }}
-        if: ${{ github.event_name == 'release' || inputs.dry_run != 'true' }}
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
         env:
-          POETRY_PYPI_TOKEN_PYPI: ${{ secrets.IMSPY_PYPI_TOKEN }}
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.IMSPY_PYPI_TOKEN }}
         run: |
           cd packages/${{ matrix.package }}
-          poetry config pypi-token.pypi $POETRY_PYPI_TOKEN_PYPI
-          poetry publish
+          twine upload dist/*
