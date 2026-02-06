@@ -43,25 +43,6 @@ from sagepy.rescore.utility import transform_psm_to_mokapot_pin
 from sagepy.utility import psm_collection_to_pandas, apply_mz_calibration
 from sagepy.utility import decompress_psms, compress_psms
 
-# Suppress tensorflow warnings
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
-
-def configure_gpu_memory(memory_limit_gb: int = 4) -> None:
-    """Configure TensorFlow to limit GPU memory usage."""
-    import tensorflow as tf
-
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if gpus:
-        try:
-            for i, _ in enumerate(gpus):
-                tf.config.experimental.set_virtual_device_configuration(
-                    gpus[i],
-                    [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024 * memory_limit_gb)]
-                )
-                print(f"GPU: {i} memory restricted to {memory_limit_gb}GB.")
-        except RuntimeError as e:
-            print(e)
 
 
 def create_database(fasta, static, variab, enzyme_builder, generate_decoys, bucket_size,
@@ -89,9 +70,6 @@ def load_config(config_path):
 
 def main():
     """Main entry point for imspy-dda CLI."""
-    # Configure GPU memory before TensorFlow is used
-    configure_gpu_memory(memory_limit_gb=4)
-
     # Check memory
     check_memory(limit_in_gb=16)
 
