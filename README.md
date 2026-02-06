@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/imspy/"><img src="https://img.shields.io/pypi/v/imspy?color=blue&label=PyPI" alt="PyPI"></a>
-  <a href="https://pypi.org/project/imspy/"><img src="https://img.shields.io/pypi/pyversions/imspy" alt="Python"></a>
+  <a href="https://pypi.org/project/imspy-core/"><img src="https://img.shields.io/pypi/v/imspy-core?color=blue&label=PyPI" alt="PyPI"></a>
+  <a href="https://pypi.org/project/imspy-core/"><img src="https://img.shields.io/pypi/pyversions/imspy-core" alt="Python"></a>
   <a href="https://github.com/theGreatHerrLebert/rustims/blob/main/LICENSE"><img src="https://img.shields.io/github/license/theGreatHerrLebert/rustims" alt="License"></a>
   <a href="https://thegreatherrlebert.github.io/rustims/main/imspy/"><img src="https://img.shields.io/badge/docs-imspy-blue" alt="Docs"></a>
   <a href="https://pubs.acs.org/doi/full/10.1021/acs.jproteome.4c00966"><img src="https://img.shields.io/badge/DOI-10.1021%2Facs.jproteome.4c00966-blue" alt="Paper"></a>
@@ -31,11 +31,11 @@
 ## Quick Start
 
 ```bash
-# Install imspy (Python >=3.11)
-pip install imspy
-
-# Optional: GPU support for deep learning (PyTorch ships with CUDA support)
-pip install torch
+# Install what you need — dependencies are pulled in automatically (Python >=3.11)
+pip install imspy-search        # DDA/DIA database search (includes core + predictors)
+pip install imspy-simulation    # TimSim synthetic data generation
+pip install imspy-dia           # DIA-PASEF clustering
+pip install imspy-core          # Just the base data structures and timsTOF I/O
 ```
 
 ### Analyze DDA Data
@@ -203,17 +203,7 @@ The Rust core provides:
 
 ### From PyPI (Recommended)
 
-```bash
-# Full installation - includes all modules
-pip install imspy
-
-# With GPU support (PyTorch ships with CUDA support)
-pip install imspy torch
-```
-
-### Modular Installation
-
-For more control over dependencies, install only the modules you need:
+Install only the packages you need — each one pulls in its dependencies automatically:
 
 | Package | Description | Install |
 |---------|-------------|---------|
@@ -274,7 +264,7 @@ Pre-built images available for reproducible environments:
 ## Documentation
 
 - **API Reference**: [imspy](https://thegreatherrlebert.github.io/rustims/main/imspy/) | [mscore](https://thegreatherrlebert.github.io/rustims/main/mscore/) | [rustdf](https://thegreatherrlebert.github.io/rustims/main/rustdf/)
-- **Examples**: [Jupyter notebooks](https://github.com/theGreatHerrLebert/rustims/tree/main/imspy/examples)
+- **Examples**: [Python packages](https://github.com/theGreatHerrLebert/rustims/tree/main/packages)
 - **sagepy**: [Database search examples](https://github.com/theGreatHerrLebert/sagepy/tree/main/sagepy/examples)
 
 ## Citation
