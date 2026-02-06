@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["TimsTofSyntheticsDataHandle"]};
+window.SIDEBAR_ITEMS = {"struct":["FragmentIonTransmissionData","FragmentIonsWithComplementary","TimsTofSyntheticsDataHandle"]};

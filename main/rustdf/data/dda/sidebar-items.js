@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["PASEFDDAFragment","TimsDatasetDDA"]};
+window.SIDEBAR_ITEMS = {"struct":["PASEFDDAFragment","PrecursorCoord","PrecursorMS1Signal","SignalMoments","TimsDatasetDDA"]};

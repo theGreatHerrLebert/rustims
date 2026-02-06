@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["data","sim"]};
+window.SIDEBAR_ITEMS = {"mod":["cluster","data","sim"]};

@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `mscore/src/algorithm/peptide.rs`."><title>peptide.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-84e720fa.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.89.0 (29483883e 2025-08-04)" data-channel="1.89.0" data-search-js="search-92309212.js" data-settings-js="settings-5514c975.js" ><script src="../../../static.files/storage-4e99c027.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-fd3af306.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-32bb7600.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">mscore/algorithm/</div>peptide.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span><span class="kw">crate</span>::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `mscore/src/algorithm/peptide.rs`."><title>peptide.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="mscore" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">mscore/algorithm/</div>peptide.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span><span class="kw">crate</span>::chemistry::amino_acid::{amino_acid_composition, amino_acid_masses};
 <a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span><span class="kw">crate</span>::chemistry::constants::{MASS_CO, MASS_NH3, MASS_PROTON, MASS_WATER};
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span><span class="kw">crate</span>::chemistry::formulas::calculate_mz;
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span><span class="kw">crate</span>::chemistry::unimod::{
@@ -264,143 +264,209 @@
 <a href=#264 id=264 data-nosnippet>264</a>    composition.iter().map(|(k, v)| (<span class="kw-2">*</span>k, <span class="kw-2">*</span>v)).collect()
 <a href=#265 id=265 data-nosnippet>265</a>}
 <a href=#266 id=266 data-nosnippet>266</a>
-<a href=#267 id=267 data-nosnippet>267</a><span class="doccomment">/// calculate the atomic composition of a peptide product ion series
-<a href=#268 id=268 data-nosnippet>268</a>/// Arguments:
-<a href=#269 id=269 data-nosnippet>269</a>///
-<a href=#270 id=270 data-nosnippet>270</a>/// * `product_ions` - a vector of PeptideProductIon instances
-<a href=#271 id=271 data-nosnippet>271</a>/// * `num_threads` - an usize representing the number of threads to use
-<a href=#272 id=272 data-nosnippet>272</a>/// Returns:
+<a href=#267 id=267 data-nosnippet>267</a><span class="doccomment">/// Calculate the atomic composition of the complementary fragment.
+<a href=#268 id=268 data-nosnippet>268</a>///
+<a href=#269 id=269 data-nosnippet>269</a>/// When a peptide is fragmented, the resulting fragment ion has a complementary
+<a href=#270 id=270 data-nosnippet>270</a>/// portion (the rest of the precursor). This function calculates the atomic
+<a href=#271 id=271 data-nosnippet>271</a>/// composition of that complementary fragment, which is needed for quad-selection
+<a href=#272 id=272 data-nosnippet>272</a>/// dependent isotope distribution calculations.
 <a href=#273 id=273 data-nosnippet>273</a>///
-<a href=#274 id=274 data-nosnippet>274</a>/// * `Vec&lt;Vec&lt;(String, i32)&gt;&gt;` - a vector of vectors of tuples representing the atomic composition of each product ion
+<a href=#274 id=274 data-nosnippet>274</a>/// # Arguments
 <a href=#275 id=275 data-nosnippet>275</a>///
-<a href=#276 id=276 data-nosnippet>276</a></span><span class="kw">pub fn </span>fragments_to_composition(
-<a href=#277 id=277 data-nosnippet>277</a>    product_ions: Vec&lt;PeptideProductIon&gt;,
-<a href=#278 id=278 data-nosnippet>278</a>    num_threads: usize,
-<a href=#279 id=279 data-nosnippet>279</a>) -&gt; Vec&lt;Vec&lt;(String, i32)&gt;&gt; {
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
-<a href=#281 id=281 data-nosnippet>281</a>        .num_threads(num_threads)
-<a href=#282 id=282 data-nosnippet>282</a>        .build()
-<a href=#283 id=283 data-nosnippet>283</a>        .unwrap();
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>result = thread_pool.install(|| {
-<a href=#285 id=285 data-nosnippet>285</a>        product_ions
-<a href=#286 id=286 data-nosnippet>286</a>            .par_iter()
-<a href=#287 id=287 data-nosnippet>287</a>            .map(|ion| atomic_product_ion_composition(ion))
-<a href=#288 id=288 data-nosnippet>288</a>            .map(|composition| {
-<a href=#289 id=289 data-nosnippet>289</a>                composition
-<a href=#290 id=290 data-nosnippet>290</a>                    .iter()
-<a href=#291 id=291 data-nosnippet>291</a>                    .map(|(k, v)| (k.to_string(), <span class="kw-2">*</span>v))
-<a href=#292 id=292 data-nosnippet>292</a>                    .collect()
-<a href=#293 id=293 data-nosnippet>293</a>            })
-<a href=#294 id=294 data-nosnippet>294</a>            .collect()
-<a href=#295 id=295 data-nosnippet>295</a>    });
-<a href=#296 id=296 data-nosnippet>296</a>    result
-<a href=#297 id=297 data-nosnippet>297</a>}
-<a href=#298 id=298 data-nosnippet>298</a>
-<a href=#299 id=299 data-nosnippet>299</a><span class="doccomment">/// count the number of protonizable sites in a peptide sequence
-<a href=#300 id=300 data-nosnippet>300</a>///
-<a href=#301 id=301 data-nosnippet>301</a>/// # Arguments
-<a href=#302 id=302 data-nosnippet>302</a>///
-<a href=#303 id=303 data-nosnippet>303</a>/// * `sequence` - a string representing the peptide sequence
-<a href=#304 id=304 data-nosnippet>304</a>///
-<a href=#305 id=305 data-nosnippet>305</a>/// # Returns
-<a href=#306 id=306 data-nosnippet>306</a>///
-<a href=#307 id=307 data-nosnippet>307</a>/// * `usize` - the number of protonizable sites in the peptide sequence
-<a href=#308 id=308 data-nosnippet>308</a>///
-<a href=#309 id=309 data-nosnippet>309</a>/// # Example
-<a href=#310 id=310 data-nosnippet>310</a>///
-<a href=#311 id=311 data-nosnippet>311</a>/// ```
-<a href=#312 id=312 data-nosnippet>312</a>/// use mscore::algorithm::peptide::get_num_protonizable_sites;
-<a href=#313 id=313 data-nosnippet>313</a>///
-<a href=#314 id=314 data-nosnippet>314</a>/// let sequence = "PEPTIDEH";
-<a href=#315 id=315 data-nosnippet>315</a>/// let num_protonizable_sites = get_num_protonizable_sites(sequence);
-<a href=#316 id=316 data-nosnippet>316</a>/// assert_eq!(num_protonizable_sites, 2);
-<a href=#317 id=317 data-nosnippet>317</a>/// ```
-<a href=#318 id=318 data-nosnippet>318</a></span><span class="kw">pub fn </span>get_num_protonizable_sites(sequence: <span class="kw-2">&amp;</span>str) -&gt; usize {
-<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">let </span><span class="kw-2">mut </span>sites = <span class="number">1</span>; <span class="comment">// n-terminus
-<a href=#320 id=320 data-nosnippet>320</a>    </span><span class="kw">for </span>s <span class="kw">in </span>sequence.chars() {
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">match </span>s {
-<a href=#322 id=322 data-nosnippet>322</a>            <span class="string">'H' </span>| <span class="string">'R' </span>| <span class="string">'K' </span>=&gt; sites += <span class="number">1</span>,
-<a href=#323 id=323 data-nosnippet>323</a>            <span class="kw">_ </span>=&gt; {}
-<a href=#324 id=324 data-nosnippet>324</a>        }
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>    sites
-<a href=#327 id=327 data-nosnippet>327</a>}
+<a href=#276 id=276 data-nosnippet>276</a>/// * `precursor_composition` - atomic composition of the full precursor
+<a href=#277 id=277 data-nosnippet>277</a>/// * `fragment_composition` - atomic composition of the fragment ion (from atomic_product_ion_composition)
+<a href=#278 id=278 data-nosnippet>278</a>///
+<a href=#279 id=279 data-nosnippet>279</a>/// # Returns
+<a href=#280 id=280 data-nosnippet>280</a>///
+<a href=#281 id=281 data-nosnippet>281</a>/// * `HashMap&lt;String, i32&gt;` - atomic composition of the complementary fragment
+<a href=#282 id=282 data-nosnippet>282</a>///
+<a href=#283 id=283 data-nosnippet>283</a>/// # Examples
+<a href=#284 id=284 data-nosnippet>284</a>///
+<a href=#285 id=285 data-nosnippet>285</a>/// ```
+<a href=#286 id=286 data-nosnippet>286</a>/// use mscore::algorithm::peptide::{peptide_sequence_to_atomic_composition, atomic_product_ion_composition, calculate_complementary_fragment_composition};
+<a href=#287 id=287 data-nosnippet>287</a>/// use mscore::data::peptide::{PeptideSequence, PeptideProductIon, PeptideIon, FragmentType};
+<a href=#288 id=288 data-nosnippet>288</a>///
+<a href=#289 id=289 data-nosnippet>289</a>/// let precursor = PeptideSequence::new("PEPTIDE".to_string(), Some(1));
+<a href=#290 id=290 data-nosnippet>290</a>/// let precursor_comp = peptide_sequence_to_atomic_composition(&amp;precursor);
+<a href=#291 id=291 data-nosnippet>291</a>///
+<a href=#292 id=292 data-nosnippet>292</a>/// // Create a b3 ion (PEP)
+<a href=#293 id=293 data-nosnippet>293</a>/// let b3_ion = PeptideProductIon {
+<a href=#294 id=294 data-nosnippet>294</a>///     kind: FragmentType::B,
+<a href=#295 id=295 data-nosnippet>295</a>///     ion: PeptideIon {
+<a href=#296 id=296 data-nosnippet>296</a>///         sequence: PeptideSequence::new("PEP".to_string(), Some(1)),
+<a href=#297 id=297 data-nosnippet>297</a>///         charge: 1,
+<a href=#298 id=298 data-nosnippet>298</a>///         intensity: 1.0,
+<a href=#299 id=299 data-nosnippet>299</a>///     },
+<a href=#300 id=300 data-nosnippet>300</a>/// };
+<a href=#301 id=301 data-nosnippet>301</a>/// let fragment_comp: Vec&lt;(&amp;str, i32)&gt; = atomic_product_ion_composition(&amp;b3_ion);
+<a href=#302 id=302 data-nosnippet>302</a>/// let fragment_map: std::collections::HashMap&lt;&amp;str, i32&gt; = fragment_comp.into_iter().collect();
+<a href=#303 id=303 data-nosnippet>303</a>///
+<a href=#304 id=304 data-nosnippet>304</a>/// let complementary = calculate_complementary_fragment_composition(&amp;precursor_comp, &amp;fragment_map);
+<a href=#305 id=305 data-nosnippet>305</a>/// // Complementary should be TIDE as y-ion (precursor - b-ion)
+<a href=#306 id=306 data-nosnippet>306</a>/// ```
+<a href=#307 id=307 data-nosnippet>307</a></span><span class="kw">pub fn </span>calculate_complementary_fragment_composition(
+<a href=#308 id=308 data-nosnippet>308</a>    precursor_composition: <span class="kw-2">&amp;</span>HashMap&lt;<span class="kw-2">&amp;</span>str, i32&gt;,
+<a href=#309 id=309 data-nosnippet>309</a>    fragment_composition: <span class="kw-2">&amp;</span>HashMap&lt;<span class="kw-2">&amp;</span>str, i32&gt;,
+<a href=#310 id=310 data-nosnippet>310</a>) -&gt; HashMap&lt;String, i32&gt; {
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span><span class="kw-2">mut </span>complementary: HashMap&lt;String, i32&gt; = HashMap::new();
+<a href=#312 id=312 data-nosnippet>312</a>
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="comment">// Start with precursor - fragment
+<a href=#314 id=314 data-nosnippet>314</a>    </span><span class="kw">for </span>(element, <span class="kw-2">&amp;</span>prec_count) <span class="kw">in </span>precursor_composition.iter() {
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>frag_count = fragment_composition.get(element).copied().unwrap_or(<span class="number">0</span>);
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>diff = prec_count - frag_count;
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">if </span><span class="macro">diff !</span>= <span class="number">0 </span>{
+<a href=#318 id=318 data-nosnippet>318</a>            complementary.insert(element.to_string(), diff);
+<a href=#319 id=319 data-nosnippet>319</a>        }
+<a href=#320 id=320 data-nosnippet>320</a>    }
+<a href=#321 id=321 data-nosnippet>321</a>
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="comment">// Check for any elements in fragment that might not be in precursor (edge case)
+<a href=#323 id=323 data-nosnippet>323</a>    </span><span class="kw">for </span>(element, <span class="kw-2">&amp;</span>frag_count) <span class="kw">in </span>fragment_composition.iter() {
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">if </span>!precursor_composition.contains_key(element) {
+<a href=#325 id=325 data-nosnippet>325</a>            complementary.insert(element.to_string(), -frag_count);
+<a href=#326 id=326 data-nosnippet>326</a>        }
+<a href=#327 id=327 data-nosnippet>327</a>    }
 <a href=#328 id=328 data-nosnippet>328</a>
-<a href=#329 id=329 data-nosnippet>329</a><span class="doccomment">/// simulate the charge state distribution for a peptide sequence
-<a href=#330 id=330 data-nosnippet>330</a>///
-<a href=#331 id=331 data-nosnippet>331</a>/// # Arguments
-<a href=#332 id=332 data-nosnippet>332</a>///
-<a href=#333 id=333 data-nosnippet>333</a>/// * `sequence` - a string representing the peptide sequence
-<a href=#334 id=334 data-nosnippet>334</a>/// * `max_charge` - an optional usize representing the maximum charge state to simulate
-<a href=#335 id=335 data-nosnippet>335</a>/// * `charged_probability` - an optional f64 representing the probability of a site being charged
-<a href=#336 id=336 data-nosnippet>336</a>///
-<a href=#337 id=337 data-nosnippet>337</a>/// # Returns
+<a href=#329 id=329 data-nosnippet>329</a>    complementary
+<a href=#330 id=330 data-nosnippet>330</a>}
+<a href=#331 id=331 data-nosnippet>331</a>
+<a href=#332 id=332 data-nosnippet>332</a><span class="doccomment">/// calculate the atomic composition of a peptide product ion series
+<a href=#333 id=333 data-nosnippet>333</a>/// Arguments:
+<a href=#334 id=334 data-nosnippet>334</a>///
+<a href=#335 id=335 data-nosnippet>335</a>/// * `product_ions` - a vector of PeptideProductIon instances
+<a href=#336 id=336 data-nosnippet>336</a>/// * `num_threads` - an usize representing the number of threads to use
+<a href=#337 id=337 data-nosnippet>337</a>/// Returns:
 <a href=#338 id=338 data-nosnippet>338</a>///
-<a href=#339 id=339 data-nosnippet>339</a>/// * `Vec&lt;f64&gt;` - a vector of f64 representing the probability of each charge state
+<a href=#339 id=339 data-nosnippet>339</a>/// * `Vec&lt;Vec&lt;(String, i32)&gt;&gt;` - a vector of vectors of tuples representing the atomic composition of each product ion
 <a href=#340 id=340 data-nosnippet>340</a>///
-<a href=#341 id=341 data-nosnippet>341</a>/// # Example
-<a href=#342 id=342 data-nosnippet>342</a>///
-<a href=#343 id=343 data-nosnippet>343</a>/// ```
-<a href=#344 id=344 data-nosnippet>344</a>/// use mscore::algorithm::peptide::simulate_charge_state_for_sequence;
-<a href=#345 id=345 data-nosnippet>345</a>///
-<a href=#346 id=346 data-nosnippet>346</a>/// let sequence = "PEPTIDEH";
-<a href=#347 id=347 data-nosnippet>347</a>/// let charge_state_probs = simulate_charge_state_for_sequence(sequence, None, None);
-<a href=#348 id=348 data-nosnippet>348</a>/// assert_eq!(charge_state_probs, vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0]);
-<a href=#349 id=349 data-nosnippet>349</a></span><span class="kw">pub fn </span>simulate_charge_state_for_sequence(
-<a href=#350 id=350 data-nosnippet>350</a>    sequence: <span class="kw-2">&amp;</span>str,
-<a href=#351 id=351 data-nosnippet>351</a>    max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#352 id=352 data-nosnippet>352</a>    charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#353 id=353 data-nosnippet>353</a>) -&gt; Vec&lt;f64&gt; {
-<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">let </span>charged_prob = charged_probability.unwrap_or(<span class="number">0.8</span>);
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">let </span>max_charge = max_charge.unwrap_or(<span class="number">4</span>)+<span class="number">1</span>;
-<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">let </span>num_protonizable_sites = get_num_protonizable_sites(sequence);
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">let </span><span class="kw-2">mut </span>charge_state_probs = <span class="macro">vec!</span>[<span class="number">0.0</span>; max_charge];
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">let </span>binom = Binomial::new(charged_prob, num_protonizable_sites <span class="kw">as </span>u64).unwrap();
-<a href=#359 id=359 data-nosnippet>359</a>    
-<a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">for </span>charge <span class="kw">in </span><span class="number">0</span>..max_charge {
-<a href=#361 id=361 data-nosnippet>361</a>        charge_state_probs[charge] = binom.pmf(charge <span class="kw">as </span>u64);
-<a href=#362 id=362 data-nosnippet>362</a>    }
-<a href=#363 id=363 data-nosnippet>363</a>    charge_state_probs
-<a href=#364 id=364 data-nosnippet>364</a>}
-<a href=#365 id=365 data-nosnippet>365</a>
-<a href=#366 id=366 data-nosnippet>366</a><span class="doccomment">/// simulate the charge state distribution for a list of peptide sequences
+<a href=#341 id=341 data-nosnippet>341</a></span><span class="kw">pub fn </span>fragments_to_composition(
+<a href=#342 id=342 data-nosnippet>342</a>    product_ions: Vec&lt;PeptideProductIon&gt;,
+<a href=#343 id=343 data-nosnippet>343</a>    num_threads: usize,
+<a href=#344 id=344 data-nosnippet>344</a>) -&gt; Vec&lt;Vec&lt;(String, i32)&gt;&gt; {
+<a href=#345 id=345 data-nosnippet>345</a>    <span class="kw">let </span>thread_pool = ThreadPoolBuilder::new()
+<a href=#346 id=346 data-nosnippet>346</a>        .num_threads(num_threads)
+<a href=#347 id=347 data-nosnippet>347</a>        .build()
+<a href=#348 id=348 data-nosnippet>348</a>        .unwrap();
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">let </span>result = thread_pool.install(|| {
+<a href=#350 id=350 data-nosnippet>350</a>        product_ions
+<a href=#351 id=351 data-nosnippet>351</a>            .par_iter()
+<a href=#352 id=352 data-nosnippet>352</a>            .map(|ion| atomic_product_ion_composition(ion))
+<a href=#353 id=353 data-nosnippet>353</a>            .map(|composition| {
+<a href=#354 id=354 data-nosnippet>354</a>                composition
+<a href=#355 id=355 data-nosnippet>355</a>                    .iter()
+<a href=#356 id=356 data-nosnippet>356</a>                    .map(|(k, v)| (k.to_string(), <span class="kw-2">*</span>v))
+<a href=#357 id=357 data-nosnippet>357</a>                    .collect()
+<a href=#358 id=358 data-nosnippet>358</a>            })
+<a href=#359 id=359 data-nosnippet>359</a>            .collect()
+<a href=#360 id=360 data-nosnippet>360</a>    });
+<a href=#361 id=361 data-nosnippet>361</a>    result
+<a href=#362 id=362 data-nosnippet>362</a>}
+<a href=#363 id=363 data-nosnippet>363</a>
+<a href=#364 id=364 data-nosnippet>364</a><span class="doccomment">/// count the number of protonizable sites in a peptide sequence
+<a href=#365 id=365 data-nosnippet>365</a>///
+<a href=#366 id=366 data-nosnippet>366</a>/// # Arguments
 <a href=#367 id=367 data-nosnippet>367</a>///
-<a href=#368 id=368 data-nosnippet>368</a>/// # Arguments
+<a href=#368 id=368 data-nosnippet>368</a>/// * `sequence` - a string representing the peptide sequence
 <a href=#369 id=369 data-nosnippet>369</a>///
-<a href=#370 id=370 data-nosnippet>370</a>/// * `sequences` - a vector of strings representing the peptide sequences
-<a href=#371 id=371 data-nosnippet>371</a>/// * `num_threads` - an usize representing the number of threads to use
-<a href=#372 id=372 data-nosnippet>372</a>/// * `max_charge` - an optional usize representing the maximum charge state to simulate
-<a href=#373 id=373 data-nosnippet>373</a>/// * `charged_probability` - an optional f64 representing the probability of a site being charged
-<a href=#374 id=374 data-nosnippet>374</a>///
-<a href=#375 id=375 data-nosnippet>375</a>/// # Returns
-<a href=#376 id=376 data-nosnippet>376</a>///
-<a href=#377 id=377 data-nosnippet>377</a>/// * `Vec&lt;Vec&lt;f64&gt;&gt;` - a vector of vectors of f64 representing the probability of each charge state for each sequence
+<a href=#370 id=370 data-nosnippet>370</a>/// # Returns
+<a href=#371 id=371 data-nosnippet>371</a>///
+<a href=#372 id=372 data-nosnippet>372</a>/// * `usize` - the number of protonizable sites in the peptide sequence
+<a href=#373 id=373 data-nosnippet>373</a>///
+<a href=#374 id=374 data-nosnippet>374</a>/// # Example
+<a href=#375 id=375 data-nosnippet>375</a>///
+<a href=#376 id=376 data-nosnippet>376</a>/// ```
+<a href=#377 id=377 data-nosnippet>377</a>/// use mscore::algorithm::peptide::get_num_protonizable_sites;
 <a href=#378 id=378 data-nosnippet>378</a>///
-<a href=#379 id=379 data-nosnippet>379</a>/// # Example
-<a href=#380 id=380 data-nosnippet>380</a>///
-<a href=#381 id=381 data-nosnippet>381</a>/// ```
-<a href=#382 id=382 data-nosnippet>382</a>/// use mscore::algorithm::peptide::simulate_charge_states_for_sequences;
-<a href=#383 id=383 data-nosnippet>383</a>///
-<a href=#384 id=384 data-nosnippet>384</a>/// let sequences = vec!["PEPTIDEH", "PEPTIDEH", "PEPTIDEH"];
-<a href=#385 id=385 data-nosnippet>385</a>/// let charge_state_probs = simulate_charge_states_for_sequences(sequences, 4, None, None);
-<a href=#386 id=386 data-nosnippet>386</a>/// assert_eq!(charge_state_probs, vec![vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0], vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0], vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0]]);
-<a href=#387 id=387 data-nosnippet>387</a>/// ```
-<a href=#388 id=388 data-nosnippet>388</a></span><span class="kw">pub fn </span>simulate_charge_states_for_sequences(
-<a href=#389 id=389 data-nosnippet>389</a>    sequences: Vec&lt;<span class="kw-2">&amp;</span>str&gt;,
-<a href=#390 id=390 data-nosnippet>390</a>    num_threads: usize,
-<a href=#391 id=391 data-nosnippet>391</a>    max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#392 id=392 data-nosnippet>392</a>    charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;,
-<a href=#393 id=393 data-nosnippet>393</a>) -&gt; Vec&lt;Vec&lt;f64&gt;&gt; {
-<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">let </span>pool = ThreadPoolBuilder::new()
-<a href=#395 id=395 data-nosnippet>395</a>        .num_threads(num_threads)
-<a href=#396 id=396 data-nosnippet>396</a>        .build()
-<a href=#397 id=397 data-nosnippet>397</a>        .unwrap();
-<a href=#398 id=398 data-nosnippet>398</a>    pool.install(|| {
-<a href=#399 id=399 data-nosnippet>399</a>        sequences
-<a href=#400 id=400 data-nosnippet>400</a>            .par_iter()
-<a href=#401 id=401 data-nosnippet>401</a>            .map(|sequence| {
-<a href=#402 id=402 data-nosnippet>402</a>                simulate_charge_state_for_sequence(sequence, max_charge, charged_probability)
-<a href=#403 id=403 data-nosnippet>403</a>            })
-<a href=#404 id=404 data-nosnippet>404</a>            .collect()
-<a href=#405 id=405 data-nosnippet>405</a>    })
-<a href=#406 id=406 data-nosnippet>406</a>}</code></pre></div></section></main></body></html>
+<a href=#379 id=379 data-nosnippet>379</a>/// let sequence = "PEPTIDEH";
+<a href=#380 id=380 data-nosnippet>380</a>/// let num_protonizable_sites = get_num_protonizable_sites(sequence);
+<a href=#381 id=381 data-nosnippet>381</a>/// assert_eq!(num_protonizable_sites, 2);
+<a href=#382 id=382 data-nosnippet>382</a>/// ```
+<a href=#383 id=383 data-nosnippet>383</a></span><span class="kw">pub fn </span>get_num_protonizable_sites(sequence: <span class="kw-2">&amp;</span>str) -&gt; usize {
+<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">let </span><span class="kw-2">mut </span>sites = <span class="number">1</span>; <span class="comment">// n-terminus
+<a href=#385 id=385 data-nosnippet>385</a>    </span><span class="kw">for </span>s <span class="kw">in </span>sequence.chars() {
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">match </span>s {
+<a href=#387 id=387 data-nosnippet>387</a>            <span class="string">'H' </span>| <span class="string">'R' </span>| <span class="string">'K' </span>=&gt; sites += <span class="number">1</span>,
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="kw">_ </span>=&gt; {}
+<a href=#389 id=389 data-nosnippet>389</a>        }
+<a href=#390 id=390 data-nosnippet>390</a>    }
+<a href=#391 id=391 data-nosnippet>391</a>    sites
+<a href=#392 id=392 data-nosnippet>392</a>}
+<a href=#393 id=393 data-nosnippet>393</a>
+<a href=#394 id=394 data-nosnippet>394</a><span class="doccomment">/// simulate the charge state distribution for a peptide sequence
+<a href=#395 id=395 data-nosnippet>395</a>///
+<a href=#396 id=396 data-nosnippet>396</a>/// # Arguments
+<a href=#397 id=397 data-nosnippet>397</a>///
+<a href=#398 id=398 data-nosnippet>398</a>/// * `sequence` - a string representing the peptide sequence
+<a href=#399 id=399 data-nosnippet>399</a>/// * `max_charge` - an optional usize representing the maximum charge state to simulate
+<a href=#400 id=400 data-nosnippet>400</a>/// * `charged_probability` - an optional f64 representing the probability of a site being charged
+<a href=#401 id=401 data-nosnippet>401</a>///
+<a href=#402 id=402 data-nosnippet>402</a>/// # Returns
+<a href=#403 id=403 data-nosnippet>403</a>///
+<a href=#404 id=404 data-nosnippet>404</a>/// * `Vec&lt;f64&gt;` - a vector of f64 representing the probability of each charge state
+<a href=#405 id=405 data-nosnippet>405</a>///
+<a href=#406 id=406 data-nosnippet>406</a>/// # Example
+<a href=#407 id=407 data-nosnippet>407</a>///
+<a href=#408 id=408 data-nosnippet>408</a>/// ```
+<a href=#409 id=409 data-nosnippet>409</a>/// use mscore::algorithm::peptide::simulate_charge_state_for_sequence;
+<a href=#410 id=410 data-nosnippet>410</a>///
+<a href=#411 id=411 data-nosnippet>411</a>/// let sequence = "PEPTIDEH";
+<a href=#412 id=412 data-nosnippet>412</a>/// let charge_state_probs = simulate_charge_state_for_sequence(sequence, None, None);
+<a href=#413 id=413 data-nosnippet>413</a>/// assert_eq!(charge_state_probs, vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0]);
+<a href=#414 id=414 data-nosnippet>414</a></span><span class="kw">pub fn </span>simulate_charge_state_for_sequence(
+<a href=#415 id=415 data-nosnippet>415</a>    sequence: <span class="kw-2">&amp;</span>str,
+<a href=#416 id=416 data-nosnippet>416</a>    max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#417 id=417 data-nosnippet>417</a>    charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#418 id=418 data-nosnippet>418</a>) -&gt; Vec&lt;f64&gt; {
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">let </span>charged_prob = charged_probability.unwrap_or(<span class="number">0.8</span>);
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span>max_charge = max_charge.unwrap_or(<span class="number">4</span>)+<span class="number">1</span>;
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">let </span>num_protonizable_sites = get_num_protonizable_sites(sequence);
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">let </span><span class="kw-2">mut </span>charge_state_probs = <span class="macro">vec!</span>[<span class="number">0.0</span>; max_charge];
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span>binom = Binomial::new(charged_prob, num_protonizable_sites <span class="kw">as </span>u64).unwrap();
+<a href=#424 id=424 data-nosnippet>424</a>    
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="kw">for </span>charge <span class="kw">in </span><span class="number">0</span>..max_charge {
+<a href=#426 id=426 data-nosnippet>426</a>        charge_state_probs[charge] = binom.pmf(charge <span class="kw">as </span>u64);
+<a href=#427 id=427 data-nosnippet>427</a>    }
+<a href=#428 id=428 data-nosnippet>428</a>    charge_state_probs
+<a href=#429 id=429 data-nosnippet>429</a>}
+<a href=#430 id=430 data-nosnippet>430</a>
+<a href=#431 id=431 data-nosnippet>431</a><span class="doccomment">/// simulate the charge state distribution for a list of peptide sequences
+<a href=#432 id=432 data-nosnippet>432</a>///
+<a href=#433 id=433 data-nosnippet>433</a>/// # Arguments
+<a href=#434 id=434 data-nosnippet>434</a>///
+<a href=#435 id=435 data-nosnippet>435</a>/// * `sequences` - a vector of strings representing the peptide sequences
+<a href=#436 id=436 data-nosnippet>436</a>/// * `num_threads` - an usize representing the number of threads to use
+<a href=#437 id=437 data-nosnippet>437</a>/// * `max_charge` - an optional usize representing the maximum charge state to simulate
+<a href=#438 id=438 data-nosnippet>438</a>/// * `charged_probability` - an optional f64 representing the probability of a site being charged
+<a href=#439 id=439 data-nosnippet>439</a>///
+<a href=#440 id=440 data-nosnippet>440</a>/// # Returns
+<a href=#441 id=441 data-nosnippet>441</a>///
+<a href=#442 id=442 data-nosnippet>442</a>/// * `Vec&lt;Vec&lt;f64&gt;&gt;` - a vector of vectors of f64 representing the probability of each charge state for each sequence
+<a href=#443 id=443 data-nosnippet>443</a>///
+<a href=#444 id=444 data-nosnippet>444</a>/// # Example
+<a href=#445 id=445 data-nosnippet>445</a>///
+<a href=#446 id=446 data-nosnippet>446</a>/// ```
+<a href=#447 id=447 data-nosnippet>447</a>/// use mscore::algorithm::peptide::simulate_charge_states_for_sequences;
+<a href=#448 id=448 data-nosnippet>448</a>///
+<a href=#449 id=449 data-nosnippet>449</a>/// let sequences = vec!["PEPTIDEH", "PEPTIDEH", "PEPTIDEH"];
+<a href=#450 id=450 data-nosnippet>450</a>/// let charge_state_probs = simulate_charge_states_for_sequences(sequences, 4, None, None);
+<a href=#451 id=451 data-nosnippet>451</a>/// assert_eq!(charge_state_probs, vec![vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0], vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0], vec![0.03999999999999999, 0.32, 0.64, 0.0, 0.0]]);
+<a href=#452 id=452 data-nosnippet>452</a>/// ```
+<a href=#453 id=453 data-nosnippet>453</a></span><span class="kw">pub fn </span>simulate_charge_states_for_sequences(
+<a href=#454 id=454 data-nosnippet>454</a>    sequences: Vec&lt;<span class="kw-2">&amp;</span>str&gt;,
+<a href=#455 id=455 data-nosnippet>455</a>    num_threads: usize,
+<a href=#456 id=456 data-nosnippet>456</a>    max_charge: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#457 id=457 data-nosnippet>457</a>    charged_probability: <span class="prelude-ty">Option</span>&lt;f64&gt;,
+<a href=#458 id=458 data-nosnippet>458</a>) -&gt; Vec&lt;Vec&lt;f64&gt;&gt; {
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="kw">let </span>pool = ThreadPoolBuilder::new()
+<a href=#460 id=460 data-nosnippet>460</a>        .num_threads(num_threads)
+<a href=#461 id=461 data-nosnippet>461</a>        .build()
+<a href=#462 id=462 data-nosnippet>462</a>        .unwrap();
+<a href=#463 id=463 data-nosnippet>463</a>    pool.install(|| {
+<a href=#464 id=464 data-nosnippet>464</a>        sequences
+<a href=#465 id=465 data-nosnippet>465</a>            .par_iter()
+<a href=#466 id=466 data-nosnippet>466</a>            .map(|sequence| {
+<a href=#467 id=467 data-nosnippet>467</a>                simulate_charge_state_for_sequence(sequence, max_charge, charged_probability)
+<a href=#468 id=468 data-nosnippet>468</a>            })
+<a href=#469 id=469 data-nosnippet>469</a>            .collect()
+<a href=#470 id=470 data-nosnippet>470</a>    })
+<a href=#471 id=471 data-nosnippet>471</a>}
+</code></pre></div></section></main></body></html>

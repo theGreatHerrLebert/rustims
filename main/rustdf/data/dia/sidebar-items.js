@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["TimsDatasetDIA"]};
+window.SIDEBAR_ITEMS = {"fn":["attach_raw_points_for_spec_1d_threads"],"struct":["ClusterExtractionOpts","DiaIndex","Ms2GroupProgram","ProgramSlice","PseudoSpectrumBuildOpts","TimsDatasetDIA"]};

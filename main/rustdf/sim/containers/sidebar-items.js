@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["FragmentIonSim","FrameToWindowGroupSim","FramesSim","IonSim","PeptidesSim","ScansSim","SignalDistribution","WindowGroupSettingsSim"]};
+window.SIDEBAR_ITEMS = {"enum":["IsotopeTransmissionMode"],"struct":["FragmentIonSim","FrameToWindowGroupSim","FramesSim","IonSim","IsotopeTransmissionConfig","PeptidesSim","ScansSim","SignalDistribution","WindowGroupSettingsSim"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["collision","frame","quadrupole","slice","spectrum"]};
+window.SIDEBAR_ITEMS = {"mod":["collision","frame","quadrupole","slice","spectrum","spectrum_processing"]};
