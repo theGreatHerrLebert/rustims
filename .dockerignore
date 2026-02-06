@@ -1,0 +1,5 @@
+target/
+**/__pycache__/
+**/*.egg-info/
+.git/
+dist/
