@@ -125,5 +125,6 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 WORKDIR /workspace
 
-ENTRYPOINT ["/opt/venv/bin/python"]
-CMD ["--version"]
+# Ensure venv is on PATH for all commands (python, timsim, etc.)
+ENV PATH="/opt/venv/bin:${PATH}"
+CMD ["python", "--version"]
