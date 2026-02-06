@@ -74,7 +74,8 @@ impl PyTimsTransmissionDDA {
     #[new]
     #[pyo3(signature = (pasef_meta, k=None))]
     pub fn new(pasef_meta: Vec<PyPasefMeta>, k: Option<f64>) -> Self {
-        let inner_meta_vec = pasef_meta.iter().map(|x| x.inner.clone()).collect::<Vec<_>>();
+        // Use into_iter() to move instead of cloning
+        let inner_meta_vec = pasef_meta.into_iter().map(|x| x.inner).collect::<Vec<_>>();
         PyTimsTransmissionDDA {
             inner: TimsTransmissionDDA::new(inner_meta_vec, k)
         }
@@ -87,18 +88,18 @@ impl PyTimsTransmissionDDA {
 
     #[pyo3(signature = (frame_id, scan_id, spectrum, min_probability=None))]
     pub fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: PyMzSpectrum, min_probability: Option<f64>) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability) }
+        PyMzSpectrum::from_inner(self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability))
     }
 
     #[pyo3(signature = (frame, min_probability=None))]
     pub fn transmit_tims_frame(&self, frame: PyTimsFrame, min_probability: Option<f64>) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.transmit_tims_frame(&frame.inner, min_probability) }
+        PyTimsFrame::from_inner(self.inner.transmit_tims_frame(&frame.inner, min_probability))
     }
 
     #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
     pub fn transmit_ion(&self, frames: Vec<i32>, scans: Vec<i32>, spectrum: PyMzSpectrum, min_proba: Option<f64>) -> Vec<Vec<PyMzSpectrum>> {
         let transmission_profile = self.inner.transmit_ion(frames, scans, spectrum.inner, min_proba);
-        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum { inner: y.clone() }).collect::<Vec<_>>()).collect::<Vec<_>>()
+        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum::from_inner(y.clone())).collect::<Vec<_>>()).collect::<Vec<_>>()
     }
 
     #[pyo3(signature = (frame_id, scan_id, mz, min_proba=None))]
@@ -163,18 +164,18 @@ impl PyTimsTransmissionDIA {
 
     #[pyo3(signature = (frame_id, scan_id, spectrum, min_probability=None))]
     pub fn transmit_spectrum(&self, frame_id: i32, scan_id: i32, spectrum: PyMzSpectrum, min_probability: Option<f64>) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability) }
+        PyMzSpectrum::from_inner(self.inner.transmit_spectrum(frame_id, scan_id, spectrum.inner, min_probability))
     }
 
     #[pyo3(signature = (frame, min_probability=None))]
     pub fn transmit_tims_frame(&self, frame: PyTimsFrame, min_probability: Option<f64>) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.transmit_tims_frame(&frame.inner, min_probability) }
+        PyTimsFrame::from_inner(self.inner.transmit_tims_frame(&frame.inner, min_probability))
     }
 
     #[pyo3(signature = (frames, scans, spectrum, min_proba=None))]
     pub fn transmit_ion(&self, frames: Vec<i32>, scans: Vec<i32>, spectrum: PyMzSpectrum, min_proba: Option<f64>) -> Vec<Vec<PyMzSpectrum>> {
         let transmission_profile = self.inner.transmit_ion(frames, scans, spectrum.inner, min_proba);
-        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum { inner: y.clone() }).collect::<Vec<_>>()).collect::<Vec<_>>()
+        transmission_profile.iter().map(|x| x.iter().map(|y| PyMzSpectrum::from_inner(y.clone())).collect::<Vec<_>>()).collect::<Vec<_>>()
     }
 
     pub fn get_setting(&self, window_group: i32, scan_id: i32) -> (f64, f64) {

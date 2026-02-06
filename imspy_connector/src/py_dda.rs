@@ -1,10 +1,12 @@
 use pyo3::prelude::*;
+use numpy::{PyArray1, IntoPyArray};
 
-use rustdf::data::dda::{PASEFDDAFragment, TimsDatasetDDA};
-use rustdf::data::handle::TimsData;
-use rustdf::data::meta::{DDAPrecursor};
+use rustdf::data::dda::{PASEFDDAFragment, TimsDatasetDDA, PrecursorCoord, PrecursorMS1Signal, SignalMoments};
+use rustdf::data::handle::{TimsData, IndexConverter};
+use rustdf::data::meta::DDAPrecursor;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
+use crate::py_spectrum_processing::{PyPreprocessedSpectrum, PySpectrumProcessingConfig};
 
 #[pyclass]
 pub struct PyDDAPrecursor {
@@ -90,8 +92,108 @@ impl PyTimsDatasetDDA {
         let dataset = TimsDatasetDDA::new(bruker_lib_path, data_path, in_memory, use_bruker_sdk);
         PyTimsDatasetDDA { inner: dataset }
     }
+
+    /// Create a DDA dataset with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup array should be pre-computed using the Bruker SDK via
+    /// extract_calibration.py or by opening a dataset with use_bruker_sdk=True
+    /// and calling scan_to_inverse_mobility for all scan indices.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table (list or numpy array)
+    ///
+    /// # Returns
+    /// A new PyTimsDatasetDDA with accurate IM calibration and thread-safe parallel access
+    ///
+    /// # Example
+    /// ```python
+    /// import numpy as np
+    /// from imspy_connector import py_dda
+    ///
+    /// # Load pre-computed calibration
+    /// im_lookup = np.load("sample.im_calibration.npy")
+    ///
+    /// # Create dataset with calibration (fast + accurate)
+    /// dataset = py_dda.PyTimsDatasetDDA.with_calibration("sample.d", False, im_lookup.tolist())
+    /// ```
+    #[staticmethod]
+    pub fn with_calibration(data_path: &str, in_memory: bool, im_lookup: Vec<f64>) -> Self {
+        let dataset = TimsDatasetDDA::new_with_calibration(data_path, in_memory, im_lookup);
+        PyTimsDatasetDDA { inner: dataset }
+    }
+
+    /// Create a DDA dataset with regression-derived m/z calibration.
+    ///
+    /// This method uses externally-provided m/z calibration coefficients instead of
+    /// the simple boundary model, providing more accurate m/z conversion.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `tof_intercept` - Intercept for sqrt(mz) = intercept + slope * tof
+    /// * `tof_slope` - Slope for sqrt(mz) = intercept + slope * tof
+    ///
+    /// # Example
+    /// ```python
+    /// # Derive calibration from SDK data
+    /// import numpy as np
+    /// from imspy_connector import py_dda
+    ///
+    /// # First, load with SDK to get accurate m/z values
+    /// sdk_data = py_dda.PyTimsDatasetDDA(path, lib_path, False, True)
+    /// frame = sdk_data.get_frame(1)
+    /// sqrt_mz = np.sqrt(frame.mz)
+    /// tof = frame.tof
+    ///
+    /// # Fit linear regression: sqrt(mz) = intercept + slope * tof
+    /// coeffs = np.polyfit(tof, sqrt_mz, 1)
+    /// slope, intercept = coeffs[0], coeffs[1]
+    ///
+    /// # Create dataset with calibration (fast + accurate)
+    /// dataset = py_dda.PyTimsDatasetDDA.with_mz_calibration(path, False, intercept, slope)
+    /// ```
+    #[staticmethod]
+    pub fn with_mz_calibration(data_path: &str, in_memory: bool, tof_intercept: f64, tof_slope: f64) -> Self {
+        let dataset = TimsDatasetDDA::new_with_mz_calibration(data_path, in_memory, tof_intercept, tof_slope);
+        PyTimsDatasetDDA { inner: dataset }
+    }
+
+    /// Check if the Bruker SDK is being used for index conversion.
+    /// Returns false for Simple and Lookup converters (thread-safe).
+    /// Returns true only for BrukerLib converter (NOT thread-safe).
+    pub fn uses_bruker_sdk(&self) -> bool {
+        self.inner.uses_bruker_sdk()
+    }
+
+    /// Convert scan indices to inverse mobility (1/K0) values.
+    ///
+    /// # Arguments
+    /// * `frame_id` - Frame ID (typically not used for calibrated datasets)
+    /// * `scan_values` - List of scan indices to convert
+    ///
+    /// # Returns
+    /// List of 1/K0 values corresponding to the scan indices
+    pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<u32>) -> Vec<f64> {
+        self.inner.scan_to_inverse_mobility(frame_id, &scan_values)
+    }
+
+    /// Convert inverse mobility (1/K0) values to scan indices.
+    ///
+    /// # Arguments
+    /// * `frame_id` - Frame ID (typically not used for calibrated datasets)
+    /// * `im_values` - List of 1/K0 values to convert
+    ///
+    /// # Returns
+    /// List of scan indices corresponding to the 1/K0 values
+    pub fn inverse_mobility_to_scan(&self, frame_id: u32, im_values: Vec<f64>) -> Vec<u32> {
+        self.inner.inverse_mobility_to_scan(frame_id, &im_values)
+    }
+
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.get_frame(frame_id) }
+        PyTimsFrame::from_inner(self.inner.get_frame(frame_id))
     }
 
     pub fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> PyTimsSlice {
@@ -115,6 +217,27 @@ impl PyTimsDatasetDDA {
         pasef_fragments.iter().map(|pasef_fragment| PyTimsFragmentDDA { inner: pasef_fragment.clone() }).collect()
     }
 
+    /// Get fragment spectra for specific precursor IDs only.
+    /// More memory-efficient for batched processing - only loads frames for requested precursors.
+    ///
+    /// # Arguments
+    /// * `precursor_ids` - List of precursor IDs to extract fragments for
+    /// * `num_threads` - Number of threads for parallel processing
+    ///
+    /// # Returns
+    /// List of PyTimsFragmentDDA, one per PASEF event for the requested precursors
+    pub fn get_pasef_fragments_for_precursors(
+        &self,
+        precursor_ids: Vec<u32>,
+        num_threads: usize,
+    ) -> Vec<PyTimsFragmentDDA> {
+        let pasef_fragments = self.inner.get_pasef_fragments_for_precursors(
+            Some(&precursor_ids),
+            num_threads,
+        );
+        pasef_fragments.iter().map(|pasef_fragment| PyTimsFragmentDDA { inner: pasef_fragment.clone() }).collect()
+    }
+
     pub fn get_selected_precursors(&self) -> Vec<PyDDAPrecursor> {
         let pasef_precursor_meta = self.inner.get_selected_precursors();
         pasef_precursor_meta.iter().map(|precursor_meta| PyDDAPrecursor { inner: precursor_meta.clone() }).collect()
@@ -122,7 +245,7 @@ impl PyTimsDatasetDDA {
 
     pub fn get_precursor_frames(&self, min_intensity: f64, max_peaks: usize, num_threads: usize) -> Vec<PyTimsFrame> {
         let precursor_frames = self.inner.get_precursor_frames(min_intensity, max_peaks, num_threads);
-        precursor_frames.iter().map(|frame| PyTimsFrame { inner: frame.clone() }).collect()
+        precursor_frames.iter().map(|frame| PyTimsFrame::from_inner(frame.clone())).collect()
     }
     
     pub fn sample_pasef_fragments_random(&self, target_scan_apex_values: Vec<i32>, experiment_max_scan: i32, ) -> PyTimsFrame {
@@ -130,11 +253,85 @@ impl PyTimsDatasetDDA {
             target_scan_apex_values,
             experiment_max_scan,
         );
-        PyTimsFrame { inner: tims_frame }
+        PyTimsFrame::from_inner(tims_frame)
     }
 
     pub fn sample_precursor_signal(&self, num_frames: usize, max_intensity: f64, take_probability: f64) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability) }
+        PyTimsFrame::from_inner(self.inner.sample_precursor_signal(num_frames, max_intensity, take_probability))
+    }
+
+    /// Get preprocessed PASEF fragments ready for database search.
+    /// This method performs parallel processing of all fragment spectra.
+    ///
+    /// # Arguments
+    /// * `dataset_name` - Name of the dataset for generating spec_ids
+    /// * `config` - Spectrum processing configuration
+    /// * `num_threads` - Number of threads for parallel processing
+    ///
+    /// # Returns
+    /// List of preprocessed spectra ready for Sage search
+    #[pyo3(signature = (dataset_name, config, num_threads=16))]
+    pub fn get_preprocessed_pasef_fragments(
+        &self,
+        dataset_name: &str,
+        config: &PySpectrumProcessingConfig,
+        num_threads: usize,
+    ) -> Vec<PyPreprocessedSpectrum> {
+        let preprocessed = self.inner.get_preprocessed_pasef_fragments(
+            dataset_name,
+            config.inner.clone(),
+            num_threads,
+        );
+        preprocessed
+            .into_iter()
+            .map(|spec| PyPreprocessedSpectrum::from_inner(spec))
+            .collect()
+    }
+
+    /// Extract MS1 precursor signals for a batch of precursors in parallel.
+    ///
+    /// For each precursor, extracts XIC (chromatographic profile), mobilogram,
+    /// and isotope envelope from MS1 frames in the specified RT window.
+    /// Also calculates statistical moments (mean, variance, skewness, apex, FWHM).
+    ///
+    /// # Arguments
+    /// * `precursor_coords` - List of PyPrecursorCoord objects
+    /// * `rt_window_sec` - RT window in seconds (total width, default 10.0)
+    /// * `mz_tol_ppm` - m/z tolerance in ppm (default 20.0)
+    /// * `im_window` - IM window in 1/K0 units (default 0.05)
+    /// * `n_isotopes` - Number of isotope peaks to extract (default 5)
+    /// * `num_threads` - Number of threads for parallel processing (default 16)
+    ///
+    /// # Returns
+    /// List of PyPrecursorMS1Signal, one per input precursor
+    #[pyo3(signature = (precursor_coords, rt_window_sec=10.0, mz_tol_ppm=20.0, im_window=0.05, n_isotopes=5, num_threads=16))]
+    pub fn extract_precursor_ms1_signals(
+        &self,
+        precursor_coords: Vec<PyPrecursorCoord>,
+        rt_window_sec: f64,
+        mz_tol_ppm: f64,
+        im_window: f64,
+        n_isotopes: usize,
+        num_threads: usize,
+    ) -> Vec<PyPrecursorMS1Signal> {
+        let coords: Vec<PrecursorCoord> = precursor_coords
+            .into_iter()
+            .map(|c| c.inner)
+            .collect();
+
+        let signals = self.inner.extract_precursor_ms1_signals(
+            coords,
+            rt_window_sec,
+            mz_tol_ppm,
+            im_window,
+            n_isotopes,
+            num_threads,
+        );
+
+        signals
+            .into_iter()
+            .map(|s| PyPrecursorMS1Signal { inner: s })
+            .collect()
     }
 }
 
@@ -165,10 +362,178 @@ impl PyTimsFragmentDDA {
     pub fn precursor_id(&self) -> u32 { self.inner.precursor_id }
 
     #[getter]
-    pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame { inner: self.inner.selected_fragment.clone() } }
+    pub fn selected_fragment(&self) -> PyTimsFrame { PyTimsFrame::from_inner(self.inner.selected_fragment.clone()) }
 
     #[getter]
     pub fn collision_energy(&self) -> f64 { self.inner.collision_energy }
+}
+
+/// Statistical moments of a signal distribution
+#[pyclass]
+#[derive(Clone)]
+pub struct PySignalMoments {
+    inner: SignalMoments,
+}
+
+#[pymethods]
+impl PySignalMoments {
+    #[getter]
+    pub fn mean(&self) -> f64 { self.inner.mean }
+
+    #[getter]
+    pub fn variance(&self) -> f64 { self.inner.variance }
+
+    #[getter]
+    pub fn skewness(&self) -> f64 { self.inner.skewness }
+
+    #[getter]
+    pub fn apex(&self) -> f64 { self.inner.apex }
+
+    #[getter]
+    pub fn fwhm(&self) -> f64 { self.inner.fwhm }
+
+    #[getter]
+    pub fn total_intensity(&self) -> f64 { self.inner.total_intensity }
+}
+
+/// MS1 precursor signal extracted from surrounding frames
+#[pyclass]
+pub struct PyPrecursorMS1Signal {
+    inner: PrecursorMS1Signal,
+}
+
+#[pymethods]
+impl PyPrecursorMS1Signal {
+    #[getter]
+    pub fn precursor_id(&self) -> u32 { self.inner.precursor_id }
+
+    #[getter]
+    pub fn rt_coords<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.rt_coords.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn rt_intensities<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.rt_intensities.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn rt_moments(&self) -> PySignalMoments {
+        PySignalMoments { inner: self.inner.rt_moments.clone() }
+    }
+
+    #[getter]
+    pub fn im_coords<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.im_coords.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn im_intensities<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.im_intensities.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn im_moments(&self) -> PySignalMoments {
+        PySignalMoments { inner: self.inner.im_moments.clone() }
+    }
+
+    #[getter]
+    pub fn isotope_mz<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.isotope_mz.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn isotope_intensity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.isotope_intensity.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn mz_moments(&self) -> PySignalMoments {
+        PySignalMoments { inner: self.inner.mz_moments.clone() }
+    }
+
+    // Raw 2D data (merged from all MS1 frames in RT window)
+    #[getter]
+    pub fn raw_rt<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.raw_rt.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn raw_mz<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.raw_mz.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn raw_mobility<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.raw_mobility.clone().into_pyarray(py)
+    }
+
+    #[getter]
+    pub fn raw_intensity<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
+        self.inner.raw_intensity.clone().into_pyarray(py)
+    }
+}
+
+/// Input coordinates for MS1 extraction
+#[pyclass]
+#[derive(Clone)]
+pub struct PyPrecursorCoord {
+    inner: PrecursorCoord,
+}
+
+#[pymethods]
+impl PyPrecursorCoord {
+    /// Create a new precursor coordinate for MS1 extraction.
+    ///
+    /// # Arguments
+    /// * `precursor_id` - Unique precursor identifier
+    /// * `mz` - largest_peak_mz (fallback if mono_mz is 0)
+    /// * `mono_mz` - Monoisotopic m/z for isotope envelope (0 if unknown)
+    /// * `rt_seconds` - Retention time in seconds
+    /// * `mobility` - Center ion mobility (1/K0)
+    /// * `im_start` - Fragment selection IM start (for plotting)
+    /// * `im_end` - Fragment selection IM end (for plotting)
+    /// * `charge` - Charge state
+    #[new]
+    #[pyo3(signature = (precursor_id, mz, mono_mz, rt_seconds, mobility, im_start, im_end, charge))]
+    pub fn new(precursor_id: u32, mz: f64, mono_mz: f64, rt_seconds: f64, mobility: f64, im_start: f64, im_end: f64, charge: i32) -> Self {
+        PyPrecursorCoord {
+            inner: PrecursorCoord {
+                precursor_id,
+                mz,
+                mono_mz,
+                rt_seconds,
+                mobility,
+                im_start,
+                im_end,
+                charge,
+            }
+        }
+    }
+
+    #[getter]
+    pub fn precursor_id(&self) -> u32 { self.inner.precursor_id }
+
+    #[getter]
+    pub fn mz(&self) -> f64 { self.inner.mz }
+
+    #[getter]
+    pub fn mono_mz(&self) -> f64 { self.inner.mono_mz }
+
+    #[getter]
+    pub fn rt_seconds(&self) -> f64 { self.inner.rt_seconds }
+
+    #[getter]
+    pub fn mobility(&self) -> f64 { self.inner.mobility }
+
+    #[getter]
+    pub fn im_start(&self) -> f64 { self.inner.im_start }
+
+    #[getter]
+    pub fn im_end(&self) -> f64 { self.inner.im_end }
+
+    #[getter]
+    pub fn charge(&self) -> i32 { self.inner.charge }
 }
 
 #[pymodule]
@@ -176,5 +541,8 @@ pub fn py_dda(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsDatasetDDA>()?;
     m.add_class::<PyTimsFragmentDDA>()?;
     m.add_class::<PyDDAPrecursor>()?;
+    m.add_class::<PyPrecursorCoord>()?;
+    m.add_class::<PyPrecursorMS1Signal>()?;
+    m.add_class::<PySignalMoments>()?;
     Ok(())
 }

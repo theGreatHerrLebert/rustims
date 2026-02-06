@@ -62,8 +62,8 @@ impl TimsSpectrum {
     }
 
     pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, TimsSpectrum> {
-
-        let mut splits: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
+        // Build intermediate structures with raw Vecs first
+        let mut splits_raw: BTreeMap<i32, (Vec<f64>, Vec<f64>, Vec<i32>)> = BTreeMap::new();
 
         for (i, &mz) in self.spectrum.mz_spectrum.mz.iter().enumerate() {
             let intensity = self.spectrum.mz_spectrum.intensity[i];
@@ -71,21 +71,14 @@ impl TimsSpectrum {
 
             let tmp_key = (mz / window_length).floor() as i32;
 
-            splits.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                Vec::new(), Vec::new(), Vec::new()))
-            ).spectrum.mz_spectrum.mz.push(mz);
-
-            splits.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                Vec::new(), Vec::new(), Vec::new()))
-            ).spectrum.mz_spectrum.intensity.push(intensity);
-
-            splits.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                Vec::new(), Vec::new(), Vec::new()))
-            ).spectrum.index.push(tof);
+            let entry = splits_raw.entry(tmp_key).or_insert_with(|| (Vec::new(), Vec::new(), Vec::new()));
+            entry.0.push(mz);
+            entry.1.push(intensity);
+            entry.2.push(tof);
         }
 
         if overlapping {
-            let mut splits_offset = BTreeMap::new();
+            let mut splits_offset: BTreeMap<i32, (Vec<f64>, Vec<f64>, Vec<i32>)> = BTreeMap::new();
 
             for (i, &mmz) in self.spectrum.mz_spectrum.mz.iter().enumerate() {
                 let intensity = self.spectrum.mz_spectrum.intensity[i];
@@ -93,38 +86,36 @@ impl TimsSpectrum {
 
                 let tmp_key = -((mmz + window_length / 2.0) / window_length).floor() as i32;
 
-                splits_offset.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                    Vec::new(), Vec::new(), Vec::new()))
-                ).spectrum.mz_spectrum.mz.push(mmz);
-
-                splits_offset.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                    Vec::new(), Vec::new(), Vec::new()))
-                ).spectrum.mz_spectrum.intensity.push(intensity);
-
-                splits_offset.entry(tmp_key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                    Vec::new(), Vec::new(), Vec::new()))
-                ).spectrum.index.push(tof);
+                let entry = splits_offset.entry(tmp_key).or_insert_with(|| (Vec::new(), Vec::new(), Vec::new()));
+                entry.0.push(mmz);
+                entry.1.push(intensity);
+                entry.2.push(tof);
             }
 
             for (key, val) in splits_offset {
-                splits.entry(key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                    Vec::new(), Vec::new(), Vec::new()))
-                ).spectrum.mz_spectrum.mz.extend(val.spectrum.mz_spectrum.mz);
-
-                splits.entry(key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                    Vec::new(), Vec::new(), Vec::new()))
-                ).spectrum.mz_spectrum.intensity.extend(val.spectrum.mz_spectrum.intensity);
-
-                splits.entry(key).or_insert_with(|| TimsSpectrum::new(self.frame_id, self.scan, self.retention_time, self.mobility, self.ms_type.clone(), IndexedMzSpectrum::new(
-                    Vec::new(), Vec::new(), Vec::new()))
-                ).spectrum.index.extend(val.spectrum.index);
+                let entry = splits_raw.entry(key).or_insert_with(|| (Vec::new(), Vec::new(), Vec::new()));
+                entry.0.extend(val.0);
+                entry.1.extend(val.1);
+                entry.2.extend(val.2);
             }
         }
 
-        splits.retain(|_, spectrum| {
-            spectrum.spectrum.mz_spectrum.mz.len() >= min_peaks && spectrum.spectrum.mz_spectrum.intensity.iter().cloned().max_by(
-                |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
-        });
+        // Convert to TimsSpectrum and filter
+        let mut splits: BTreeMap<i32, TimsSpectrum> = BTreeMap::new();
+        for (key, (mz_vec, intensity_vec, index_vec)) in splits_raw {
+            if mz_vec.len() >= min_peaks {
+                let max_intensity = intensity_vec.iter().cloned().max_by(
+                    |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                ).unwrap_or(0.0);
+                if max_intensity >= min_intensity {
+                    let spectrum = IndexedMzSpectrum::new(index_vec, mz_vec, intensity_vec);
+                    splits.insert(key, TimsSpectrum::new(
+                        self.frame_id, self.scan, self.retention_time, self.mobility,
+                        self.ms_type.clone(), spectrum
+                    ));
+                }
+            }
+        }
 
         splits
     }
@@ -168,7 +159,7 @@ impl std::ops::Add for TimsSpectrum {
         let intensity_combined: Vec<f64> = combined_map.values().map(|(intensity, _, _)| *intensity).collect();
         let index_combined: Vec<i32> = combined_map.values().map(|(_, index, count)| index / count).collect(); // Average index
 
-        let spectrum = IndexedMzSpectrum { index: index_combined, mz_spectrum: MzSpectrum { mz: mz_combined, intensity: intensity_combined } };
+        let spectrum = IndexedMzSpectrum { index: index_combined, mz_spectrum: MzSpectrum::new(mz_combined, intensity_combined) };
         TimsSpectrum { frame_id: self.frame_id, scan: average_scan_floor, retention_time: average_retention_time, mobility: average_mobility, ms_type: self.ms_type.clone(), spectrum }
     }
 }

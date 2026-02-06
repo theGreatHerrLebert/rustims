@@ -46,7 +46,7 @@ impl PyPeptideIon {
     }
 
     pub fn calculate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min) }
+        PyMzSpectrum::from_inner(self.inner.calculate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min))
     }
 
     pub fn calculate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrumAnnotated {
@@ -65,8 +65,9 @@ pub struct PyPeptideProductIonSeries {
 impl PyPeptideProductIonSeries {
     #[new]
     pub fn new(charge: i32, n_ions: Vec<PyPeptideProductIon>, c_ions: Vec<PyPeptideProductIon>) -> Self {
-        let n_ions: Vec<PeptideProductIon> = n_ions.iter().map(|ion| ion.inner.clone()).collect();
-        let c_ions: Vec<PeptideProductIon> = c_ions.iter().map(|ion| ion.inner.clone()).collect();
+        // Use into_iter() to move instead of cloning
+        let n_ions: Vec<PeptideProductIon> = n_ions.into_iter().map(|ion| ion.inner).collect();
+        let c_ions: Vec<PeptideProductIon> = c_ions.into_iter().map(|ion| ion.inner).collect();
         PyPeptideProductIonSeries { inner: PeptideProductIonSeries::new(charge, n_ions, c_ions) }
     }
 
@@ -99,7 +100,8 @@ pub struct PyPeptideProductIonSeriesCollection {
 impl PyPeptideProductIonSeriesCollection {
     #[new]
     pub fn new(peptide_product_ion_series: Vec<PyPeptideProductIonSeries>) -> Self {
-        let inner: Vec<PeptideProductIonSeries> = peptide_product_ion_series.iter().map(|series| series.inner.clone()).collect();
+        // Use into_iter() to move instead of cloning
+        let inner: Vec<PeptideProductIonSeries> = peptide_product_ion_series.into_iter().map(|s| s.inner).collect();
         PyPeptideProductIonSeriesCollection { inner: PeptideProductIonSeriesCollection::new(inner) }
     }
 
@@ -122,7 +124,7 @@ impl PyPeptideProductIonSeriesCollection {
 
     pub fn generate_isotopic_spectrum(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrum {
         let spectrum = self.inner.generate_isotopic_spectrum(mass_tolerance, abundance_threshold, max_result, intensity_min);
-        PyMzSpectrum { inner: spectrum }
+        PyMzSpectrum::from_inner(spectrum)
     }
 
     pub fn generate_isotopic_spectrum_annotated(&self, mass_tolerance: f64, abundance_threshold: f64, max_result: i32, intensity_min: f64) -> PyMzSpectrumAnnotated {
@@ -210,7 +212,7 @@ impl PyPeptideSequence {
         };
 
         let spectrum = self.inner.calculate_mono_isotopic_product_ion_spectrum(charge, f_type);
-        PyMzSpectrum { inner: spectrum }
+        PyMzSpectrum::from_inner(spectrum)
     }
 
     pub fn calculate_mono_isotopic_product_ion_spectrum_annotated(&self, charge: i32, fragment_type: String) -> PyMzSpectrumAnnotated {

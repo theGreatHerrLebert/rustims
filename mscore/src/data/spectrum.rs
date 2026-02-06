@@ -1,5 +1,6 @@
 use std::fmt;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use nalgebra::DVector;
 use std::fmt::{Display, Formatter};
 use bincode::{Decode, Encode};
@@ -80,10 +81,38 @@ impl Display for MsType {
 }
 
 /// Represents a mass spectrum with associated m/z values and intensities.
-#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
+///
+/// Uses Arc<Vec<T>> for efficient cloning - clone is O(1) instead of O(n).
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MzSpectrum {
-    pub mz: Vec<f64>,
-    pub intensity: Vec<f64>,
+    pub mz: Arc<Vec<f64>>,
+    pub intensity: Arc<Vec<f64>>,
+}
+
+// Manual bincode implementation for Arc compatibility
+impl Encode for MzSpectrum {
+    fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
+        // Encode the inner Vec directly
+        bincode::Encode::encode(&*self.mz, encoder)?;
+        bincode::Encode::encode(&*self.intensity, encoder)?;
+        Ok(())
+    }
+}
+
+impl<Context> Decode<Context> for MzSpectrum {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let mz: Vec<f64> = bincode::Decode::decode(decoder)?;
+        let intensity: Vec<f64> = bincode::Decode::decode(decoder)?;
+        Ok(MzSpectrum::new(mz, intensity))
+    }
+}
+
+impl<'de, Context> bincode::BorrowDecode<'de, Context> for MzSpectrum {
+    fn borrow_decode<D: bincode::de::BorrowDecoder<'de, Context = Context>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let mz: Vec<f64> = bincode::BorrowDecode::borrow_decode(decoder)?;
+        let intensity: Vec<f64> = bincode::BorrowDecode::borrow_decode(decoder)?;
+        Ok(MzSpectrum::new(mz, intensity))
+    }
 }
 
 impl MzSpectrum {
@@ -103,11 +132,14 @@ impl MzSpectrum {
     /// ```rust
     /// # use mscore::data::spectrum::MzSpectrum;
     /// let spectrum = MzSpectrum::new(vec![100.0, 200.0], vec![10.0, 20.0]);
-    /// assert_eq!(spectrum.mz, vec![100.0, 200.0]);
-    /// assert_eq!(spectrum.intensity, vec![10.0, 20.0]);
+    /// assert_eq!(*spectrum.mz, vec![100.0, 200.0]);
+    /// assert_eq!(*spectrum.intensity, vec![10.0, 20.0]);
     /// ```
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        MzSpectrum {mz, intensity}
+        MzSpectrum {
+            mz: Arc::new(mz),
+            intensity: Arc::new(intensity),
+        }
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min:f64, intensity_max: f64) -> Self {
@@ -120,7 +152,7 @@ impl MzSpectrum {
                 intensity_vec.push(*intensity);
             }
         }
-        MzSpectrum { mz: mz_vec, intensity: intensity_vec }
+        MzSpectrum::new(mz_vec, intensity_vec)
     }
 
     /// Splits the spectrum into a collection of windows based on m/z values.
@@ -155,41 +187,45 @@ impl MzSpectrum {
     /// assert!(windowed_spectrum.contains_key(&102));
     /// ```
     pub fn to_windows(&self, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64) -> BTreeMap<i32, MzSpectrum> {
-        let mut splits = BTreeMap::new();
+        // Build up vectors first, then wrap in MzSpectrum at the end
+        let mut splits: BTreeMap<i32, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
 
         for (i, &mz) in self.mz.iter().enumerate() {
             let intensity = self.intensity[i];
-
             let tmp_key = (mz / window_length).floor() as i32;
 
-            splits.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.push(mz);
-            splits.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.push(intensity);
+            let entry = splits.entry(tmp_key).or_insert_with(|| (Vec::new(), Vec::new()));
+            entry.0.push(mz);
+            entry.1.push(intensity);
         }
 
         if overlapping {
-            let mut splits_offset = BTreeMap::new();
+            let mut splits_offset: BTreeMap<i32, (Vec<f64>, Vec<f64>)> = BTreeMap::new();
 
             for (i, &mmz) in self.mz.iter().enumerate() {
                 let intensity = self.intensity[i];
-
                 let tmp_key = -((mmz + window_length / 2.0) / window_length).floor() as i32;
 
-                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.push(mmz);
-                splits_offset.entry(tmp_key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.push(intensity);
+                let entry = splits_offset.entry(tmp_key).or_insert_with(|| (Vec::new(), Vec::new()));
+                entry.0.push(mmz);
+                entry.1.push(intensity);
             }
 
-            for (key, val) in splits_offset {
-                splits.entry(key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).mz.extend(val.mz);
-                splits.entry(key).or_insert_with(|| MzSpectrum::new(Vec::new(), Vec::new())).intensity.extend(val.intensity);
+            for (key, (mz_vec, int_vec)) in splits_offset {
+                let entry = splits.entry(key).or_insert_with(|| (Vec::new(), Vec::new()));
+                entry.0.extend(mz_vec);
+                entry.1.extend(int_vec);
             }
         }
 
-        splits.retain(|_, spectrum| {
-            spectrum.mz.len() >= min_peaks && spectrum.intensity.iter().cloned().max_by(
-                |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
-        });
-
-        splits
+        // Filter and convert to MzSpectrum
+        splits.into_iter()
+            .filter(|(_, (mz_vec, int_vec))| {
+                mz_vec.len() >= min_peaks && int_vec.iter().cloned().max_by(
+                    |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0) >= min_intensity
+            })
+            .map(|(key, (mz_vec, int_vec))| (key, MzSpectrum::new(mz_vec, int_vec)))
+            .collect()
     }
 
     pub fn to_centroid(&self, baseline_noise_level: i32, sigma: f64, normalize: bool) -> MzSpectrum {
@@ -255,7 +291,7 @@ impl MzSpectrum {
         let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
         let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
 
-        MzSpectrum { mz: mz_combined, intensity: intensity_combined }
+        MzSpectrum::new(mz_combined, intensity_combined)
     }
 
     pub fn add_mz_noise_uniform(&self, ppm: f64, right_drag: bool) -> Self {
@@ -290,7 +326,8 @@ impl MzSpectrum {
             F: Fn(&mut ThreadRng, f64, f64) -> f64,
     {
         let mz: Vec<f64> = self.mz.iter().map(|&mz_value| noise_fn(rng, mz_value, ppm)).collect();
-        let spectrum = MzSpectrum { mz, intensity: self.intensity.clone()};
+        // Clone intensity Arc (O(1)) and wrap new mz in Arc
+        let spectrum = MzSpectrum { mz: Arc::new(mz), intensity: self.intensity.clone() };
         // Sort the spectrum by m/z values and potentially sum up intensities at the same m/z value
         spectrum.to_resolution(6)
     }
@@ -316,10 +353,10 @@ impl ToResolution for MzSpectrum {
     /// let spectrum = MzSpectrum::new(vec![100.123, 100.121, 100.131], vec![10.0, 20.0, 30.0]);
     /// let binned_spectrum_1 = spectrum.to_resolution(1);
     /// let binned_spectrum_2 = spectrum.to_resolution(2);
-    /// /// assert_eq!(binned_spectrum_2.mz, vec![100.1]);
-    /// assert_eq!(binned_spectrum_1.intensity, vec![60.0]);
-    /// assert_eq!(binned_spectrum_2.mz, vec![100.12, 100.13]);
-    /// assert_eq!(binned_spectrum_2.intensity, vec![30.0, 30.0]);
+    /// // assert_eq!(*binned_spectrum_1.mz, vec![100.1]);
+    /// assert_eq!(*binned_spectrum_1.intensity, vec![60.0]);
+    /// assert_eq!(*binned_spectrum_2.mz, vec![100.12, 100.13]);
+    /// assert_eq!(*binned_spectrum_2.intensity, vec![30.0, 30.0]);
     /// ```
     fn to_resolution(&self, resolution: i32) -> Self {
         let mut binned: BTreeMap<i64, f64> = BTreeMap::new();
@@ -335,7 +372,7 @@ impl ToResolution for MzSpectrum {
         let mz: Vec<f64> = binned.keys().map(|&key| key as f64 / 10f64.powi(resolution)).collect();
         let intensity: Vec<f64> = binned.values().cloned().collect();
 
-        MzSpectrum { mz, intensity }
+        MzSpectrum::new(mz, intensity)
     }
 }
 
@@ -353,7 +390,7 @@ impl Vectorized<MzSpectrumVectorized> for MzSpectrum {
         MzSpectrumVectorized {
             resolution,
             indices,
-            values: binned_spectrum.intensity,
+            values: (*binned_spectrum.intensity).clone(),
         }
     }
 }
@@ -363,7 +400,7 @@ impl Display for MzSpectrum {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
 
         let (mz, i) = self.mz.iter()
-            .zip(&self.intensity)
+            .zip(self.intensity.iter())
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
@@ -382,13 +419,13 @@ impl std::ops::Add for MzSpectrum {
     /// # Example
     /// ```
     /// # use mscore::data::spectrum::MzSpectrum;
-    /// let spectrum1 = MzSpectrum { mz: vec![100.523, 101.923], intensity: vec![10.0, 20.0] };
-    /// let spectrum2 = MzSpectrum { mz: vec![101.235, 105.112], intensity: vec![15.0, 30.0] };
+    /// let spectrum1 = MzSpectrum::new(vec![100.523, 101.923], vec![10.0, 20.0]);
+    /// let spectrum2 = MzSpectrum::new(vec![101.235, 105.112], vec![15.0, 30.0]);
     ///
     /// let combined = spectrum1 + spectrum2;
     ///
-    /// assert_eq!(combined.mz, vec![100.523, 101.235, 101.923, 105.112]);
-    /// assert_eq!(combined.intensity, vec![10.0, 15.0, 20.0, 30.0]);
+    /// assert_eq!(*combined.mz, vec![100.523, 101.235, 101.923, 105.112]);
+    /// assert_eq!(*combined.intensity, vec![10.0, 15.0, 20.0, 30.0]);
     /// ```
     fn add(self, other: Self) -> MzSpectrum {
         let mut combined_map: BTreeMap<i64, f64> = BTreeMap::new();
@@ -415,19 +452,16 @@ impl std::ops::Add for MzSpectrum {
         let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
         let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
 
-        MzSpectrum { mz: mz_combined, intensity: intensity_combined }
+        MzSpectrum::new(mz_combined, intensity_combined)
     }
 }
 
 impl std::ops::Mul<f64> for MzSpectrum {
     type Output = Self;
-    fn mul(self, scale: f64) -> Self::Output{
-        let mut scaled_intensities: Vec<f64> = vec![0.0; self.intensity.len()];
-        for (idx,intensity) in self.intensity.iter().enumerate(){
-            scaled_intensities[idx] = scale*intensity;
-        }
-        Self{ mz: self.mz.clone(), intensity: scaled_intensities}
-
+    fn mul(self, scale: f64) -> Self::Output {
+        let scaled_intensities: Vec<f64> = self.intensity.iter().map(|i| scale * i).collect();
+        // Clone mz Arc (O(1)), wrap new intensities in Arc
+        Self { mz: self.mz.clone(), intensity: Arc::new(scaled_intensities) }
     }
 }
 
@@ -458,7 +492,7 @@ impl std::ops::Sub for MzSpectrum {
         let mz_combined: Vec<f64> = combined_map.keys().map(|&key| key as f64 / 1_000_000.0).collect();
         let intensity_combined: Vec<f64> = combined_map.values().cloned().collect();
 
-        MzSpectrum { mz: mz_combined, intensity: intensity_combined }
+        MzSpectrum::new(mz_combined, intensity_combined)
     }
 }
 
@@ -494,8 +528,22 @@ impl IndexedMzSpectrum {
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
     pub fn new(index: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        IndexedMzSpectrum { index, mz_spectrum: MzSpectrum { mz, intensity } }
+        IndexedMzSpectrum { index, mz_spectrum: MzSpectrum::new(mz, intensity) }
     }
+
+    /// Create an IndexedMzSpectrum from an existing MzSpectrum, sharing the Arc-wrapped vectors.
+    ///
+    /// This is more efficient than using `new()` when you already have an MzSpectrum,
+    /// as it avoids copying the mz and intensity vectors.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - A vector containing the index values.
+    /// * `mz_spectrum` - An existing MzSpectrum to share.
+    pub fn from_mz_spectrum(index: Vec<i32>, mz_spectrum: MzSpectrum) -> Self {
+        IndexedMzSpectrum { index, mz_spectrum }
+    }
+
     /// Bins the spectrum based on a given m/z resolution, summing intensities and averaging index values
     /// for m/z values that fall into the same bin.
     ///
@@ -511,8 +559,8 @@ impl IndexedMzSpectrum {
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
     ///
-    /// assert_eq!(binned_spectrum.mz_spectrum.mz, vec![100.4]);
-    /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
+    /// assert_eq!(*binned_spectrum.mz_spectrum.mz, vec![100.4]);
+    /// assert_eq!(*binned_spectrum.mz_spectrum.intensity, vec![110.0]);
     /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
     pub fn to_resolution(&self, resolution: i32) -> IndexedMzSpectrum {
@@ -535,7 +583,7 @@ impl IndexedMzSpectrum {
             (sum as f64 / count as f64).round() as i32
         }).collect();
 
-        IndexedMzSpectrum {index: tof, mz_spectrum: MzSpectrum {mz, intensity } }
+        IndexedMzSpectrum {index: tof, mz_spectrum: MzSpectrum::new(mz, intensity) }
     }
 
     /// Convert the `IndexedMzSpectrum` to a `IndexedMzVector` using the given resolution for binning.
@@ -554,8 +602,8 @@ impl IndexedMzSpectrum {
     /// let spectrum = IndexedMzSpectrum::new(vec![1000, 2000], vec![100.42, 100.43], vec![50.0, 60.0]);
     /// let binned_spectrum = spectrum.to_resolution(1);
     ///
-    /// assert_eq!(binned_spectrum.mz_spectrum.mz, vec![100.4]);
-    /// assert_eq!(binned_spectrum.mz_spectrum.intensity, vec![110.0]);
+    /// assert_eq!(*binned_spectrum.mz_spectrum.mz, vec![100.4]);
+    /// assert_eq!(*binned_spectrum.mz_spectrum.intensity, vec![110.0]);
     /// assert_eq!(binned_spectrum.index, vec![1500]);
     /// ```
     pub fn vectorized(&self, resolution: i32) -> IndexedMzSpectrumVectorized {
@@ -571,7 +619,7 @@ impl IndexedMzSpectrum {
             mz_vector: MzSpectrumVectorized {
                 resolution,
                 indices,
-                values: binned_spectrum.mz_spectrum.intensity,
+                values: (*binned_spectrum.mz_spectrum.intensity).clone(),
             }
         }
     }
@@ -588,14 +636,14 @@ impl IndexedMzSpectrum {
                 index_vec.push(index);
             }
         }
-        IndexedMzSpectrum { index: index_vec, mz_spectrum: MzSpectrum { mz: mz_vec, intensity: intensity_vec } }
+        IndexedMzSpectrum { index: index_vec, mz_spectrum: MzSpectrum::new(mz_vec, intensity_vec) }
     }
 }
 
 impl Display for IndexedMzSpectrum {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let (mz, i) = self.mz_spectrum.mz.iter()
-            .zip(&self.mz_spectrum.intensity)
+            .zip(self.mz_spectrum.intensity.iter())
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 

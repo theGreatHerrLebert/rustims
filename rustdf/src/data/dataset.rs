@@ -54,6 +54,55 @@ impl TimsDataset {
 
         TimsDataset { loader }
     }
+
+    /// Create a new dataset with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup table should be pre-computed using the Bruker SDK.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table from Bruker SDK
+    ///
+    /// # Returns
+    /// A new TimsDataset with LookupIndexConverter
+    pub fn new_with_calibration(
+        data_path: &str,
+        in_memory: bool,
+        im_lookup: Vec<f64>,
+    ) -> Self {
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+
+        let tof_max_index = global_meta_data.tof_max_index;
+        let mz_lower = global_meta_data.mz_acquisition_range_lower;
+        let mz_upper = global_meta_data.mz_acquisition_range_upper;
+
+        let loader = match in_memory {
+            true => TimsDataLoader::new_in_memory_with_calibration(
+                data_path,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+                im_lookup,
+            ),
+            false => TimsDataLoader::new_lazy_with_calibration(
+                data_path,
+                tof_max_index,
+                mz_lower,
+                mz_upper,
+                im_lookup,
+            ),
+        };
+
+        TimsDataset { loader }
+    }
+
+    /// Check if the Bruker SDK is being used for index conversion.
+    /// Returns false for both Simple and Lookup converters (which are thread-safe).
+    pub fn uses_bruker_sdk(&self) -> bool {
+        self.loader.uses_bruker_sdk()
+    }
 }
 
 impl TimsData for TimsDataset {

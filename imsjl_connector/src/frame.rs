@@ -1,5 +1,5 @@
 use std::slice;
-use mscore::data::tims_frame::TimsFrame;
+use mscore::timstof::frame::TimsFrame;
 
 #[repr(C)]
 pub struct CTimsFrame {
@@ -24,13 +24,14 @@ pub struct CTimsFrame {
 }
 
 #[no_mangle]
-pub extern "C" fn convert_to_ctims_frame(frame: TimsFrame) -> CTimsFrame {
+pub extern "C" fn convert_to_ctims_frame(frame: &TimsFrame) -> CTimsFrame {
     // Clone the vectors and convert them to boxed slices
+    // Note: ImsFrame fields are Arc<Vec<T>>, so we need to dereference them
     let scan_boxed = frame.scan.clone().into_boxed_slice();
-    let mobility_boxed = frame.ims_frame.mobility.clone().into_boxed_slice();
+    let mobility_boxed = (*frame.ims_frame.mobility).clone().into_boxed_slice();
     let tof_boxed = frame.tof.clone().into_boxed_slice();
-    let mz_boxed = frame.ims_frame.mz.clone().into_boxed_slice();
-    let intensity_boxed = frame.ims_frame.intensity.clone().into_boxed_slice();
+    let mz_boxed = (*frame.ims_frame.mz).clone().into_boxed_slice();
+    let intensity_boxed = (*frame.ims_frame.intensity).clone().into_boxed_slice();
 
     CTimsFrame {
         frame_id: frame.frame_id,

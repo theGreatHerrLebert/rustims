@@ -211,6 +211,43 @@ impl PeptideProductIon {
 
         mz_distribution
     }
+
+    /// Calculate the isotope distribution of the complementary fragment.
+    ///
+    /// This is used for quad-selection dependent isotope transmission calculations.
+    /// The complementary fragment is the portion of the precursor that remains
+    /// after the fragment ion is produced.
+    ///
+    /// # Arguments
+    ///
+    /// * `precursor_composition` - atomic composition of the full precursor
+    /// * `mass_tolerance` - mass tolerance for isotope distribution calculation
+    /// * `abundance_threshold` - minimum abundance threshold
+    /// * `max_result` - maximum number of isotope peaks
+    ///
+    /// # Returns
+    ///
+    /// * `Vec<(f64, f64)>` - complementary fragment isotope distribution as (mass, abundance) pairs
+    pub fn complementary_isotope_distribution(
+        &self,
+        precursor_composition: &HashMap<&str, i32>,
+        mass_tolerance: f64,
+        abundance_threshold: f64,
+        max_result: i32,
+    ) -> Vec<(f64, f64)> {
+        let fragment_composition = self.atomic_composition();
+        let complementary_composition = crate::algorithm::peptide::calculate_complementary_fragment_composition(
+            precursor_composition,
+            &fragment_composition,
+        );
+
+        crate::algorithm::isotope::generate_isotope_distribution(
+            &complementary_composition,
+            mass_tolerance,
+            abundance_threshold,
+            max_result,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]

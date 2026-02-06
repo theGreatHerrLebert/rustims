@@ -57,8 +57,8 @@ impl PyTimsSlice {
     #[getter]
     pub fn frame_count(&self) -> i32 { self.inner.frames.len() as i32 }
 
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSlice {
-        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, num_threads) }
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, tof_min: i32, tof_max: i32, num_threads: usize) -> PyTimsSlice {
+        PyTimsSlice { inner: self.inner.filter_ranged(mz_min, mz_max, scan_min, scan_max, inv_mob_min, inv_mob_max, intensity_min, intensity_max, tof_min, tof_max, num_threads) }
     }
 
     pub fn filter_ranged_ms_type_specific(&self,
@@ -80,17 +80,17 @@ impl PyTimsSlice {
                                           intensity_max_ms2: f64,
                                           num_threads: usize) -> PyTimsSlice {
         PyTimsSlice { inner: self.inner.filter_ranged_ms_type_specific(
-            mz_min_ms1, mz_max_ms1, scan_min_ms1, scan_max_ms1, inv_mob_min_ms1, inv_mob_max_ms1, intensity_min_ms1, intensity_max_ms1,
-            mz_min_ms2, mz_max_ms2, scan_min_ms2, scan_max_ms2, inv_mob_min_ms2, inv_mob_max_ms2, intensity_min_ms2, intensity_max_ms2,
+            mz_min_ms1, mz_max_ms1, scan_min_ms1, scan_max_ms1, inv_mob_min_ms1, inv_mob_max_ms1, intensity_min_ms1, intensity_max_ms1, 0, i32::MAX,
+            mz_min_ms2, mz_max_ms2, scan_min_ms2, scan_max_ms2, inv_mob_min_ms2, inv_mob_max_ms2, intensity_min_ms2, intensity_max_ms2, 0, i32::MAX,
             num_threads) }
     }
 
     pub fn get_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
-        let list: Py<PyList> = PyList::empty_bound(py).into();
+        let list: Py<PyList> = PyList::empty(py).into();
 
         for frame in frames {
-            let py_tims_frame = Py::new(py, PyTimsFrame { inner: frame.clone() })?;
+            let py_tims_frame = Py::new(py, PyTimsFrame::from_inner(frame.clone()))?;
             list.bind(py).append(py_tims_frame)?;
         }
 
@@ -112,10 +112,10 @@ impl PyTimsSlice {
     pub fn to_windows(&self, py: Python, window_length: f64, overlapping: bool, min_peaks: usize, min_intensity: f64, num_threads: usize) -> PyResult<Py<PyList>> {
 
         let windows = self.inner.to_windows(window_length, overlapping, min_peaks, min_intensity, num_threads);
-        let list: Py<PyList> = PyList::empty_bound(py).into();
+        let list: Py<PyList> = PyList::empty(py).into();
 
         for window in windows {
-            let py_mz_spectrum = Py::new(py, PyTimsSpectrum { inner: window })?;
+            let py_mz_spectrum = Py::new(py, PyTimsSpectrum::from_inner(window))?;
             list.bind(py).append(py_mz_spectrum)?;
         }
 
@@ -127,34 +127,32 @@ impl PyTimsSlice {
     }
 
     pub fn get_frame_at_index(&self, index: i32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.frames[index as usize].clone() }
+        PyTimsFrame::from_inner(self.inner.frames[index as usize].clone())
     }
 
     pub fn to_resolution(&self, resolution: i32, num_threads: usize) -> PyTimsSlice {
         PyTimsSlice { inner: self.inner.to_resolution(resolution, num_threads) }
     }
 
-    fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
+    fn to_arrays(&self, py: Python) -> (Py<PyArray1<i32>>, Py<PyArray1<i32>>, Py<PyArray1<i32>>, Py<PyArray1<f64>>, Py<PyArray1<f64>>, Py<PyArray1<f64>>, Py<PyArray1<f64>>) {
 
         let flat_frame = self.inner.flatten();
 
-        let frame_ids_np = flat_frame.frame_ids.into_pyarray_bound(py).unbind();
-        let scans_np = flat_frame.scans.into_pyarray_bound(py).unbind();
-        let tofs_np = flat_frame.tofs.into_pyarray_bound(py).unbind();
-        let retention_times_np = flat_frame.retention_times.into_pyarray_bound(py).unbind();
-        let mobilities_np = flat_frame.mobilities.into_pyarray_bound(py).unbind();
-        let mzs_np = flat_frame.mzs.into_pyarray_bound(py).unbind();
-        let intensities_np = flat_frame.intensities.into_pyarray_bound(py).unbind();
+        let frame_ids_np = flat_frame.frame_ids.into_pyarray(py).unbind();
+        let scans_np = flat_frame.scans.into_pyarray(py).unbind();
+        let tofs_np = flat_frame.tofs.into_pyarray(py).unbind();
+        let retention_times_np = flat_frame.retention_times.into_pyarray(py).unbind();
+        let mobilities_np = flat_frame.mobilities.into_pyarray(py).unbind();
+        let mzs_np = flat_frame.mzs.into_pyarray(py).unbind();
+        let intensities_np = flat_frame.intensities.into_pyarray(py).unbind();
 
-        Ok((frame_ids_np.to_object(py), scans_np.to_object(py), tofs_np.to_object(py),
-            retention_times_np.to_object(py), mobilities_np.to_object(py), mzs_np.to_object(py),
-            intensities_np.to_object(py)))
+        (frame_ids_np, scans_np, tofs_np, retention_times_np, mobilities_np, mzs_np, intensities_np)
     }
 
     pub fn to_tims_planes(&self, py: Python, tof_max_value: i32, num_chunks: i32, num_threads: i32) -> PyResult<Py<PyList>> {
 
         let planes = self.inner.to_tims_planes(tof_max_value, num_chunks, num_threads as usize);
-        let list: Py<PyList> = PyList::empty_bound(py).into();
+        let list: Py<PyList> = PyList::empty(py).into();
 
         for plane in planes {
             let py_plane = Py::new(py, PyTimsPlane { inner: plane })?;
@@ -174,7 +172,8 @@ impl PyTimsSlice {
 
     #[staticmethod]
     pub fn from_frames(frames: Vec<PyTimsFrame>) -> PyTimsSlice {
-        PyTimsSlice { inner: TimsSlice::new(frames.iter().map(|frame| frame.inner.clone()).collect()) }
+        // Use into_iter() to move ownership instead of cloning each frame
+        PyTimsSlice { inner: TimsSlice::new(frames.into_iter().map(|f| f.inner).collect()) }
     }
 }
 
@@ -189,7 +188,7 @@ impl PyTimsSliceVectorized {
     #[getter]
     pub fn get_vectorized_frames(&self, py: Python) -> PyResult<Py<PyList>> {
         let frames = &self.inner.frames;
-        let list: Py<PyList> = PyList::empty_bound(py).into();
+        let list: Py<PyList> = PyList::empty(py).into();
 
         for frame in frames {
             let py_tims_frame = Py::new(py, PyTimsFrameVectorized { inner: frame.clone() })?;
@@ -219,21 +218,19 @@ impl PyTimsSliceVectorized {
     }
 
 
-    pub fn to_arrays(&self, py: Python) -> PyResult<(PyObject, PyObject, PyObject, PyObject, PyObject, PyObject, PyObject)> {
+    pub fn to_arrays(&self, py: Python) -> (Py<PyArray1<i32>>, Py<PyArray1<i32>>, Py<PyArray1<i32>>, Py<PyArray1<f64>>, Py<PyArray1<f64>>, Py<PyArray1<i32>>, Py<PyArray1<f64>>) {
 
         let flat_frame = self.inner.flatten();
 
-        let frame_ids_np = flat_frame.frame_ids.into_pyarray_bound(py).unbind();
-        let scans_np = flat_frame.scans.into_pyarray_bound(py).unbind();
-        let tofs_np = flat_frame.tofs.into_pyarray_bound(py).unbind();
-        let retention_times_np = flat_frame.retention_times.into_pyarray_bound(py).unbind();
-        let mobilities_np = flat_frame.mobilities.into_pyarray_bound(py).unbind();
-        let indices_np = flat_frame.indices.into_pyarray_bound(py).unbind();
-        let intensities_np = flat_frame.intensities.into_pyarray_bound(py).unbind();
+        let frame_ids_np = flat_frame.frame_ids.into_pyarray(py).unbind();
+        let scans_np = flat_frame.scans.into_pyarray(py).unbind();
+        let tofs_np = flat_frame.tofs.into_pyarray(py).unbind();
+        let retention_times_np = flat_frame.retention_times.into_pyarray(py).unbind();
+        let mobilities_np = flat_frame.mobilities.into_pyarray(py).unbind();
+        let indices_np = flat_frame.indices.into_pyarray(py).unbind();
+        let intensities_np = flat_frame.intensities.into_pyarray(py).unbind();
 
-        Ok((frame_ids_np.to_object(py), scans_np.to_object(py), tofs_np.to_object(py),
-            retention_times_np.to_object(py), mobilities_np.to_object(py), indices_np.to_object(py),
-            intensities_np.to_object(py)))
+        (frame_ids_np, scans_np, tofs_np, retention_times_np, mobilities_np, indices_np, intensities_np)
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, num_threads: usize) -> PyTimsSliceVectorized {
@@ -274,27 +271,27 @@ impl PyTimsPlane {
 
     #[getter]
     pub fn scans(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.scan.clone().into_pyarray_bound(py).unbind()
+        self.inner.scan.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn mobilities(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.mobility.clone().into_pyarray_bound(py).unbind()
+        self.inner.mobility.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn frame_ids(&self, py: Python) -> Py<PyArray1<i32>> {
-        self.inner.frame_id.clone().into_pyarray_bound(py).unbind()
+        self.inner.frame_id.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn retention_times(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.retention_time.clone().into_pyarray_bound(py).unbind()
+        self.inner.retention_time.clone().into_pyarray(py).unbind()
     }
 
     #[getter]
     pub fn intensity(&self, py: Python) -> Py<PyArray1<f64>> {
-        self.inner.intensity.clone().into_pyarray_bound(py).unbind()
+        self.inner.intensity.clone().into_pyarray(py).unbind()
     }
 }
 

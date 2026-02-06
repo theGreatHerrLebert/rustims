@@ -1,0 +1,162 @@
+# =============================================================================
+# IT-DIA-PHOS-A: Phosphoproteomics DIA-PASEF Site Localization Benchmark (Condition A)
+# =============================================================================
+# Phosphoproteomics benchmark with variable phosphorylation modifications
+# on S/T/Y residues. This is condition A - phosphorylation applied to site_a.
+#
+# Condition A: Phosphorylation at phospho_site_a
+# Condition B: Phosphorylation at phospho_site_b (same peptide, different site)
+#
+# The A/B test validates:
+#   - PTM site localization accuracy in each condition
+#   - Detection of phospho site shifts between conditions
+# =============================================================================
+
+[test_metadata]
+test_id = "IT-DIA-PHOS-A"
+description = "Phosphoproteomics DIA-PASEF site localization benchmark - Condition A (site_a)"
+acquisition_type = "DIA"
+sample_type = "phospho"
+# This is the first condition - B will be based on this simulation
+is_fold_change_condition = true
+fold_change_condition = "A"
+# For phospho A/B, we're testing site localization rather than intensity fold changes
+# Expected: site_a phosphorylated in A, site_b phosphorylated in B
+phospho_site_validation = true
+analysis_tools = ["diann", "fragpipe"]
+
+[thresholds]
+min_id_rate = 0.25
+min_rt_correlation = 0.95
+min_im_correlation = 0.95
+# PTM site localization accuracy threshold
+min_ptm_site_accuracy = 0.80
+# For A/B phospho validation: minimum fraction of peptides with correct site in each condition
+min_site_shift_detection = 0.70
+
+# -----------------------------------------------------------------------------
+# Paths - Resolved from env.toml at runtime
+# -----------------------------------------------------------------------------
+[paths]
+save_path = "${output_base}/IT-DIA-PHOS-A"
+reference_path = "${reference_dia}"
+fasta_path = "${fasta_phospho}"
+
+[main_settings]
+experiment_name = "IT-DIA-PHOS-A"
+acquisition_type = "DIA"
+use_reference_layout = true
+reference_in_memory = false
+sample_peptides = true
+sample_seed = 42
+add_decoys = false
+proteome_mix = false
+silent_mode = false
+# This is the template simulation - generates phospho_site_a and phospho_site_b
+from_existing = false
+existing_path = ""
+apply_fragmentation = true
+use_bruker_sdk = true
+fragment_intensity_model = "local"
+modifications = ""
+
+[peptide_digestion]
+# 5000 phosphopeptides for robust PTM localization testing
+num_sample_peptides = 5000
+num_peptides_total = 250000
+n_proteins = 20000
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
+digest_proteins = true
+remove_degenerate_peptides = false
+upscale_factor = 100000
+min_rt_percent = 2.0
+exclude_accumulated_gradient_start = true
+
+[peptide_intensity]
+intensity_mean = 5
+intensity_min = 4
+intensity_max = 8
+sample_occurrences = true
+intensity_value = 6
+
+[isotopic_pattern]
+isotope_k = 8
+isotope_min_intensity = 1
+isotope_centroid = true
+
+[distribution_settings]
+gradient_length = 900.0
+koina_rt_model = ""
+mean_std_rt = 0.9
+variance_std_rt = 0.2
+mean_skewness = 1.5
+variance_skewness = 0.01
+z_score = 0.99
+target_p = 0.999
+sampling_step_size = 0.0001
+n_steps = 1000
+remove_epsilon = 0.0001
+use_inverse_mobility_std_mean = true
+inverse_mobility_std_mean = 0.009
+
+[acquisition_settings]
+round_collision_energy = true
+collision_energy_decimals = 0
+
+[variation_settings]
+re_scale_rt = false
+
+[charge_state_probabilities]
+p_charge = 0.5
+min_charge_contrib = 0.25
+max_charge = 4
+binomial_charge_model = true
+normalize_charge_states = true
+charge_state_one_probability = 0.0
+
+[noise_settings]
+noise_frame_abundance = false
+noise_scan_abundance = false
+mz_noise_precursor = true
+precursor_noise_ppm = 6.5
+mz_noise_fragment = true
+fragment_noise_ppm = 6.5
+mz_noise_uniform = false
+add_real_data_noise = true
+reference_noise_intensity_max = 150000
+down_sample_factor = 0.5
+precursor_sample_fraction = 0.2
+fragment_sample_fraction = 0.2
+num_precursor_noise_frames = 5
+num_fragment_noise_frames = 5
+
+[phosphorylation_settings]
+phospho_mode = true
+
+[quad_transmission]
+quad_isotope_transmission_mode = "none"
+quad_transmission_min_probability = 0.5
+quad_transmission_max_isotopes = 10
+
+[performance_settings]
+num_threads = -1
+batch_size = 256
+frame_batch_size = 500
+lazy_frame_assembly = true
+use_gpu = true
+gpu_memory_limit_gb = 4
+
+[logging_settings]
+log_level = "INFO"
+log_file = ""
+
+[video_settings]
+generate_preview_video = true
+preview_video_max_frames = 100
+preview_video_fps = 10
+preview_video_dpi = 80
+preview_video_annotate = true

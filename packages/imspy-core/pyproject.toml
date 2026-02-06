@@ -1,0 +1,39 @@
+[project]
+name = "imspy-core"
+version = "0.4.0"
+description = "Core data structures and utilities for processing timsTOF ion mobility spectrometry data."
+authors = [
+    { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
+]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<3.14"
+
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.21",
+    "numba>=0.53",
+    "scipy>=1.7.1",
+    "zstd>=1.5.6.1",
+    "tabulate>=0.9.0",
+    "tqdm>=4.66",
+    "pyarrow>=13.0",
+    "mendeleev>=0.7.0",
+    "toml>=0.10.2",
+    "imspy-connector>=0.3.0",
+    "opentims-bruker-bridge>=1.1.0",
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

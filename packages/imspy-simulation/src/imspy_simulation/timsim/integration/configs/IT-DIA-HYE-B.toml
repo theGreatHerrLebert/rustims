@@ -1,0 +1,183 @@
+# =============================================================================
+# IT-DIA-HYE-B: HYE Mixed Species DIA-PASEF Quantification Benchmark (Condition B)
+# =============================================================================
+# Mixed proteome benchmark using Human-Yeast-E.coli (HYE) sample with
+# DIA-PASEF acquisition. This is condition B of the fold change benchmark.
+#
+# IMPORTANT: This simulation uses from_existing=true to base on IT-DIA-HYE-A,
+# ensuring both conditions share the same peptides for paired analysis.
+#
+# Species ratios (dilution factors) - Condition B:
+#   - Human: 0.65 (65%)
+#   - Yeast: 0.20 (20%)
+#   - E.coli: 0.15 (15%)
+#
+# Expected fold changes (B/A):
+#   - Human: 1.0 (unchanged)
+#   - Yeast: 0.667 (down 1.5x)
+#   - E.coli: 3.0 (up 3x)
+#
+# Sample: Uses same peptides as condition A
+# =============================================================================
+
+[test_metadata]
+test_id = "IT-DIA-HYE-B"
+description = "HYE mixed species DIA-PASEF fold change benchmark - Condition B"
+acquisition_type = "DIA"
+sample_type = "hye"
+# This is the second condition - based on A's simulation
+is_fold_change_condition = true
+fold_change_condition = "B"
+# Reference to condition A for paired analysis
+paired_condition = "IT-DIA-HYE-A"
+# Expected fold changes for evaluation (B/A ratios)
+expected_fold_changes = { HUMAN = 1.0, YEAST = 0.667, ECOLI = 3.0 }
+analysis_tools = ["diann", "fragpipe"]
+
+[thresholds]
+# Thresholds for identification quality
+min_id_rate = 0.14
+min_rt_correlation = 0.90
+min_im_correlation = 0.90
+# Species ratio validation: observed vs expected ratio error < 20%
+max_species_ratio_error = 0.20
+# Fold change validation: max allowed deviation from expected fold change
+max_fold_change_error = 0.30
+
+# -----------------------------------------------------------------------------
+# Paths - Resolved from env.toml at runtime
+# -----------------------------------------------------------------------------
+[paths]
+save_path = "${output_base}/IT-DIA-HYE-B"
+reference_path = "${reference_dia}"
+# For HYE, fasta_path points to a directory containing HUMAN.fasta, YEAST.fasta, ECOLI.fasta
+fasta_path = "${fasta_hye_dir}"
+
+[main_settings]
+experiment_name = "IT-DIA-HYE-B"
+acquisition_type = "DIA"
+use_reference_layout = true
+reference_in_memory = false
+sample_peptides = true
+sample_seed = 42
+add_decoys = false
+# Enable proteome mix mode for multi-species simulation
+proteome_mix = true
+silent_mode = false
+# Use existing simulation from condition A as template
+from_existing = true
+# Path to condition A's simulation directory (contains synthetic_data.db)
+existing_path = "${output_base}/IT-DIA-HYE-A/IT-DIA-HYE-A"
+apply_fragmentation = true
+use_bruker_sdk = true
+fragment_intensity_model = "local"
+modifications = ""
+
+[peptide_digestion]
+# These are ignored when from_existing=true, but kept for documentation
+num_sample_peptides = 150000
+num_peptides_total = 300000
+n_proteins = 50000
+missed_cleavages = 2
+min_len = 7
+max_len = 30
+cleave_at = "KR"
+restrict = "P"
+digest_proteins = true
+remove_degenerate_peptides = false
+upscale_factor = 100000
+min_rt_percent = 2.0
+exclude_accumulated_gradient_start = true
+
+[peptide_intensity]
+intensity_mean = 5
+intensity_min = 4
+intensity_max = 8
+sample_occurrences = true
+intensity_value = 6
+
+[isotopic_pattern]
+isotope_k = 8
+isotope_min_intensity = 1
+isotope_centroid = true
+
+[distribution_settings]
+gradient_length = 900.0
+koina_rt_model = ""
+mean_std_rt = 0.9
+variance_std_rt = 0.2
+mean_skewness = 1.5
+variance_skewness = 0.01
+z_score = 0.99
+target_p = 0.999
+sampling_step_size = 0.0001
+n_steps = 1000
+remove_epsilon = 0.0001
+use_inverse_mobility_std_mean = true
+inverse_mobility_std_mean = 0.009
+
+[acquisition_settings]
+round_collision_energy = true
+collision_energy_decimals = 0
+
+[variation_settings]
+re_scale_rt = false
+# Optional: Add slight variation to make conditions more realistic
+# rt_variation_std = 5.0
+# ion_mobility_variation_std = 0.002
+# intensity_variation_std = 0.1
+
+[charge_state_probabilities]
+p_charge = 0.5
+min_charge_contrib = 0.25
+max_charge = 4
+binomial_charge_model = true
+normalize_charge_states = true
+charge_state_one_probability = 0.0
+
+[noise_settings]
+noise_frame_abundance = false
+noise_scan_abundance = false
+mz_noise_precursor = true
+precursor_noise_ppm = 6.5
+mz_noise_fragment = true
+fragment_noise_ppm = 6.5
+mz_noise_uniform = false
+add_real_data_noise = true
+reference_noise_intensity_max = 150000
+down_sample_factor = 0.5
+precursor_sample_fraction = 0.2
+fragment_sample_fraction = 0.2
+num_precursor_noise_frames = 5
+num_fragment_noise_frames = 5
+
+[phosphorylation_settings]
+phospho_mode = false
+
+[proteome_mix_settings]
+# Path to dilution factors CSV for condition B (different from A)
+multi_fasta_dilution = "${dilution_factors_hye_B}"
+
+[quad_transmission]
+quad_isotope_transmission_mode = "none"
+quad_transmission_min_probability = 0.5
+quad_transmission_max_isotopes = 10
+
+[performance_settings]
+num_threads = -1
+batch_size = 256
+frame_batch_size = 500
+lazy_frame_assembly = true
+use_gpu = true
+gpu_memory_limit_gb = 4
+
+[logging_settings]
+log_level = "INFO"
+log_file = ""
+
+[video_settings]
+generate_preview_video = true
+preview_video_max_frames = 100
+preview_video_fps = 10
+preview_video_dpi = 80
+preview_video_annotate = true

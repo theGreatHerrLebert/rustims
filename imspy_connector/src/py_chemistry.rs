@@ -9,7 +9,7 @@ use crate::py_peptide::{PyPeptideSequence};
 
 #[pyfunction]
 pub fn generate_precursor_spectrum(mass: f64, charge: i32, min_intensity: i32, k: i32, resolution: i32, centroid: bool) -> PyMzSpectrum {
-    PyMzSpectrum { inner: generate_averagine_spectrum(mass, charge, min_intensity, k, resolution, centroid, None) }
+    PyMzSpectrum::from_inner(generate_averagine_spectrum(mass, charge, min_intensity, k, resolution, centroid, None))
 }
 
 #[pyfunction]
@@ -23,7 +23,7 @@ pub fn generate_precursor_spectra(
     num_threads: usize
 ) -> Vec<PyMzSpectrum> {
     let result = generate_averagine_spectra(masses, charges, min_intensity, k, resolution, centroid, num_threads, None);
-    result.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
+    result.into_iter().map(|spectrum| PyMzSpectrum::from_inner(spectrum)).collect()
 }
 
 #[pyfunction]
@@ -39,8 +39,9 @@ pub fn simulate_charge_state_for_sequence(sequence: &str, max_charge: Option<usi
 
 #[pyfunction]
 #[pyo3(signature = (sequences, num_threads, max_charge=None, charge_probability=None))]
-pub fn simulate_charge_states_for_sequences(sequences: Vec<&str>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
-    mscore::algorithm::peptide::simulate_charge_states_for_sequences(sequences, num_threads, max_charge, charge_probability)
+pub fn simulate_charge_states_for_sequences(sequences: Vec<String>, num_threads: usize, max_charge: Option<usize>, charge_probability: Option<f64>) -> Vec<Vec<f64>> {
+    let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
+    mscore::algorithm::peptide::simulate_charge_states_for_sequences(seq_refs, num_threads, max_charge, charge_probability)
 }
 
 #[pyfunction]
@@ -59,8 +60,9 @@ pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
 }
 
 #[pyfunction]
-pub fn sequence_to_all_ions_par(sequences: Vec<&str>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<String> {
-    rustdf::sim::utility::sequence_to_all_ions_par(sequences, charges, intensities, normalize, half_charge_one, num_threads, peptide_ids)
+pub fn sequence_to_all_ions_par(sequences: Vec<String>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<String> {
+    let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
+    rustdf::sim::utility::sequence_to_all_ions_par(seq_refs, charges, intensities, normalize, half_charge_one, num_threads, peptide_ids)
 }
 
 #[pyfunction]
@@ -112,13 +114,14 @@ pub fn calculate_mz(mono_isotopic_mass: f64, charge: i32) -> f64 {
 #[pyfunction]
 #[pyo3(signature = (sequence, charge, peptide_id=None))]
 pub fn simulate_precursor_spectrum(sequence: &str, charge: i32, peptide_id: Option<i32>) -> PyMzSpectrum {
-    PyMzSpectrum { inner: mscore::algorithm::isotope::generate_precursor_spectrum(&sequence, charge, peptide_id) }
+    PyMzSpectrum::from_inner(mscore::algorithm::isotope::generate_precursor_spectrum(&sequence, charge, peptide_id))
 }
 
 #[pyfunction]
-pub fn simulate_precursor_spectra(sequences: Vec<&str>, charges: Vec<i32>, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<PyMzSpectrum> {
-    let spectra = mscore::algorithm::isotope::generate_precursor_spectra(&sequences, &charges, num_threads, peptide_ids);
-    spectra.into_iter().map(|spectrum| PyMzSpectrum { inner: spectrum }).collect()
+pub fn simulate_precursor_spectra(sequences: Vec<String>, charges: Vec<i32>, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<PyMzSpectrum> {
+    let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
+    let spectra = mscore::algorithm::isotope::generate_precursor_spectra(&seq_refs, &charges, num_threads, peptide_ids);
+    spectra.into_iter().map(|spectrum| PyMzSpectrum::from_inner(spectrum)).collect()
 }
 
 #[pyfunction]
@@ -133,7 +136,9 @@ pub fn calculate_transmission_dependent_fragment_ion_isotope_distribution(target
         &target, &complement, &transmitted_map, max_isotope
     );
 
-    PyMzSpectrum { inner: MzSpectrum { mz: result.iter().map(|(mz, _)| *mz).collect(), intensity: result.iter().map(|(_, intensity)| *intensity).collect() } }
+    let mz_vec: Vec<f64> = result.iter().map(|(mz, _)| *mz).collect();
+    let intensity_vec: Vec<f64> = result.iter().map(|(_, intensity)| *intensity).collect();
+    PyMzSpectrum::from_inner(MzSpectrum::new(mz_vec, intensity_vec))
 }
 
 #[pymodule]

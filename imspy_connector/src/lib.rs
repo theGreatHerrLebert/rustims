@@ -13,12 +13,15 @@ pub mod py_mz_spectrum;
 pub mod py_quadrupole;
 pub mod py_peptide;
 pub mod py_simulation;
+pub mod py_spectrum_processing;
 pub mod py_tims_frame;
 pub mod py_tims_slice;
 pub mod py_unimod;
 pub mod py_utility;
 pub mod py_sumformula;
 pub mod py_ml_utility;
+pub mod py_feature;
+pub mod py_pseudo;
 
 #[pymodule]
 fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -34,11 +37,14 @@ fn imspy_connector(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_wrapped(wrap_pymodule!(py_quadrupole::py_quadrupole))?;
     m.add_wrapped(wrap_pymodule!(py_peptide::py_peptide))?;
     m.add_wrapped(wrap_pymodule!(py_simulation::py_simulation))?;
+    m.add_wrapped(wrap_pymodule!(py_spectrum_processing::py_spectrum_processing))?;
     m.add_wrapped(wrap_pymodule!(py_tims_frame::py_tims_frame))?;
     m.add_wrapped(wrap_pymodule!(py_tims_slice::py_tims_slice))?;
     m.add_wrapped(wrap_pymodule!(py_unimod::py_unimod))?;
     m.add_wrapped(wrap_pymodule!(py_utility::py_utility))?;
     m.add_wrapped(wrap_pymodule!(py_sumformula::py_sum_formula))?;
     m.add_wrapped(wrap_pymodule!(py_ml_utility::py_ml_utility))?;
+    m.add_wrapped(wrap_pymodule!(py_feature::py_feature))?;
+    m.add_wrapped(wrap_pymodule!(py_pseudo::py_pseudo))?;
     Ok(())
 }

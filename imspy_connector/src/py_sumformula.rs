@@ -31,7 +31,7 @@ impl PySumFormula {
     }
 
     pub fn generate_isotope_distribution(&self, charge: i32) -> PyMzSpectrum {
-        PyMzSpectrum { inner: self.inner.isotope_distribution(charge) }
+        PyMzSpectrum::from_inner(self.inner.isotope_distribution(charge))
     }
 }
 

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::collections::BTreeMap;
 use std::fmt::{Formatter};
+use std::sync::Arc;
 use bincode::{Decode, Encode};
 use itertools;
 use itertools::izip;
@@ -58,12 +59,43 @@ impl RawTimsFrame {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ImsFrame {
     pub retention_time: f64,
-    pub mobility: Vec<f64>,
-    pub mz: Vec<f64>,
-    pub intensity: Vec<f64>,
+    pub mobility: Arc<Vec<f64>>,
+    pub mz: Arc<Vec<f64>>,
+    pub intensity: Arc<Vec<f64>>,
+}
+
+impl Encode for ImsFrame {
+    fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.retention_time, encoder)?;
+        bincode::Encode::encode(&*self.mobility, encoder)?;
+        bincode::Encode::encode(&*self.mz, encoder)?;
+        bincode::Encode::encode(&*self.intensity, encoder)?;
+        Ok(())
+    }
+}
+
+impl<Context> Decode<Context> for ImsFrame {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let retention_time: f64 = bincode::Decode::decode(decoder)?;
+        let mobility: Vec<f64> = bincode::Decode::decode(decoder)?;
+        let mz: Vec<f64> = bincode::Decode::decode(decoder)?;
+        let intensity: Vec<f64> = bincode::Decode::decode(decoder)?;
+        Ok(ImsFrame::new(retention_time, mobility, mz, intensity))
+    }
+}
+
+impl Default for ImsFrame {
+    fn default() -> Self {
+        ImsFrame {
+            retention_time: 0.0,
+            mobility: Arc::new(Vec::new()),
+            mz: Arc::new(Vec::new()),
+            intensity: Arc::new(Vec::new()),
+        }
+    }
 }
 
 impl ImsFrame {
@@ -84,7 +116,12 @@ impl ImsFrame {
     /// let frame = ImsFrame::new(100.0, vec![0.1, 0.2], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
     pub fn new(retention_time: f64, mobility: Vec<f64>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        ImsFrame { retention_time, mobility, mz, intensity }
+        ImsFrame {
+            retention_time,
+            mobility: Arc::new(mobility),
+            mz: Arc::new(mz),
+            intensity: Arc::new(intensity),
+        }
     }
 }
 
@@ -103,7 +140,7 @@ pub struct ImsFrameVectorized {
     pub resolution: i32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Encode, Decode)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimsFrame {
     pub frame_id: i32,
     pub ms_type: MsType,
@@ -112,14 +149,36 @@ pub struct TimsFrame {
     pub ims_frame: ImsFrame,
 }
 
+impl Encode for TimsFrame {
+    fn encode<E: bincode::enc::Encoder>(&self, encoder: &mut E) -> Result<(), bincode::error::EncodeError> {
+        bincode::Encode::encode(&self.frame_id, encoder)?;
+        bincode::Encode::encode(&self.ms_type, encoder)?;
+        bincode::Encode::encode(&self.scan, encoder)?;
+        bincode::Encode::encode(&self.tof, encoder)?;
+        bincode::Encode::encode(&self.ims_frame, encoder)?;
+        Ok(())
+    }
+}
+
+impl<Context> Decode<Context> for TimsFrame {
+    fn decode<D: bincode::de::Decoder<Context = Context>>(decoder: &mut D) -> Result<Self, bincode::error::DecodeError> {
+        let frame_id: i32 = bincode::Decode::decode(decoder)?;
+        let ms_type: MsType = bincode::Decode::decode(decoder)?;
+        let scan: Vec<i32> = bincode::Decode::decode(decoder)?;
+        let tof: Vec<i32> = bincode::Decode::decode(decoder)?;
+        let ims_frame: ImsFrame = bincode::Decode::decode(decoder)?;
+        Ok(TimsFrame { frame_id, ms_type, scan, tof, ims_frame })
+    }
+}
+
 impl Default for TimsFrame {
     fn default() -> Self {
         TimsFrame {
-            frame_id: 0, // Replace with a suitable default value
+            frame_id: 0,
             ms_type: MsType::Unknown,
             scan: Vec::new(),
             tof: Vec::new(),
-            ims_frame: ImsFrame::default(), // Uses the default implementation for `ImsFrame`
+            ims_frame: ImsFrame::default(),
         }
     }
 }
@@ -148,7 +207,7 @@ impl TimsFrame {
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
     /// ```
     pub fn new(frame_id: i32, ms_type: MsType, retention_time: f64, scan: Vec<i32>, mobility: Vec<f64>, tof: Vec<i32>, mz: Vec<f64>, intensity: Vec<f64>) -> Self {
-        TimsFrame { frame_id, ms_type, scan, tof, ims_frame: ImsFrame { retention_time, mobility, mz, intensity } }
+        TimsFrame { frame_id, ms_type, scan, tof, ims_frame: ImsFrame::new(retention_time, mobility, mz, intensity) }
     }
 
     ///
@@ -183,11 +242,11 @@ impl TimsFrame {
 
         // all indices and the intensity values are sorted by scan and stored in the map as a tuple (mobility, tof, mz, intensity)
         for (scan, mobility, tof, mz, intensity) in itertools::multizip((
-            &self.scan,
-            &self.ims_frame.mobility,
-            &self.tof,
-            &self.ims_frame.mz,
-            &self.ims_frame.intensity)) {
+            self.scan.iter(),
+            self.ims_frame.mobility.iter(),
+            self.tof.iter(),
+            self.ims_frame.mz.iter(),
+            self.ims_frame.intensity.iter())) {
             let entry = spectra.entry(*scan).or_insert_with(|| (*mobility, Vec::new(), Vec::new(), Vec::new()));
             entry.1.push(*tof);
             entry.2.push(*mz);
@@ -225,9 +284,9 @@ impl TimsFrame {
     /// use mscore::timstof::frame::TimsFrame;
     ///
     /// let frame = TimsFrame::new(1, MsType::Precursor, 100.0, vec![1, 2], vec![0.1, 0.2], vec![1000, 2000], vec![100.5, 200.5], vec![50.0, 60.0]);
-    /// let filtered_frame = frame.filter_ranged(100.0, 200.0, 1, 2, 0.0, 1.6, 50.0, 60.0);
+    /// let filtered_frame = frame.filter_ranged(100.0, 200.0, 1, 2, 0.0, 1.6, 50.0, 60.0, 0, i32::MAX);
     /// ```
-    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64) -> TimsFrame {
+    pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, scan_min: i32, scan_max: i32, inv_mob_min: f64, inv_mob_max: f64, intensity_min: f64, intensity_max: f64, tof_min: i32, tof_max: i32) -> TimsFrame {
 
         let mut scan_vec = Vec::new();
         let mut mobility_vec = Vec::new();
@@ -235,8 +294,8 @@ impl TimsFrame {
         let mut mz_vec = Vec::new();
         let mut intensity_vec = Vec::new();
 
-        for (mz, intensity, scan, mobility, tof) in itertools::multizip((&self.ims_frame.mz, &self.ims_frame.intensity, &self.scan, &self.ims_frame.mobility, &self.tof)) {
-            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && mobility >= &inv_mob_min && mobility <= &inv_mob_max && intensity >= &intensity_min && intensity <= &intensity_max {
+        for (mz, intensity, scan, mobility, tof) in itertools::multizip((self.ims_frame.mz.iter(), self.ims_frame.intensity.iter(), self.scan.iter(), self.ims_frame.mobility.iter(), self.tof.iter())) {
+            if mz >= &mz_min && mz <= &mz_max && scan >= &scan_min && scan <= &scan_max && mobility >= &inv_mob_min && mobility <= &inv_mob_max && intensity >= &intensity_min && intensity <= &intensity_max && tof >= &tof_min && tof <= &tof_max {
                 scan_vec.push(*scan);
                 mobility_vec.push(*mobility);
                 tof_vec.push(*tof);
@@ -332,13 +391,13 @@ impl TimsFrame {
             Some(first_spec) => first_spec.frame_id,
             _ => 1
         };
-        
+
         let ms_type = match first_spec {
             Some(first_spec) => first_spec.ms_type.clone(),
             _ => MsType::Unknown,
         };
-        
-        let retention_time = match first_spec { 
+
+        let retention_time = match first_spec {
             Some(first_spec) => first_spec.retention_time,
             _ => 0.0
         };
@@ -367,6 +426,87 @@ impl TimsFrame {
 
         for (scan_val, (mobility_val, mz_map)) in frame_map {
             for (mz_val, (tof_val, intensity_val)) in mz_map {
+                scan.push(scan_val);
+                mobility.push(mobility_val);
+                tof.push(tof_val);
+                mzs.push(mz_val as f64 / 1_000_000.0);
+                intensity.push(intensity_val);
+            }
+        }
+
+        TimsFrame::new(frame_id, ms_type, retention_time, scan, mobility, tof, mzs, intensity)
+    }
+
+    /// Create a TimsFrame from a vector of TimsSpectrum, filtering during construction.
+    /// This is more efficient than calling from_tims_spectra followed by filter_ranged,
+    /// as it avoids creating an intermediate unfiltered frame.
+    pub fn from_tims_spectra_filtered(
+        spectra: Vec<TimsSpectrum>,
+        mz_min: f64,
+        mz_max: f64,
+        scan_min: i32,
+        scan_max: i32,
+        inv_mob_min: f64,
+        inv_mob_max: f64,
+        intensity_min: f64,
+        intensity_max: f64,
+    ) -> TimsFrame {
+        let quantize = |mz: f64| -> i64 {
+            (mz * 1_000_000.0).round() as i64
+        };
+
+        let first_spec = spectra.first();
+        let frame_id = first_spec.map(|s| s.frame_id).unwrap_or(1);
+        let ms_type = first_spec.map(|s| s.ms_type.clone()).unwrap_or(MsType::Unknown);
+        let retention_time = first_spec.map(|s| s.retention_time).unwrap_or(0.0);
+
+        let mut frame_map: BTreeMap<i32, (f64, BTreeMap<i64, (i32, f64)>)> = BTreeMap::new();
+        let mut capacity_count = 0;
+
+        // Group by scan, filtering out-of-range scans and mobilities
+        for spectrum in &spectra {
+            // Early filter on scan range
+            if spectrum.scan < scan_min || spectrum.scan > scan_max {
+                continue;
+            }
+            // Early filter on mobility range
+            if spectrum.mobility < inv_mob_min || spectrum.mobility > inv_mob_max {
+                continue;
+            }
+
+            let inv_mobility = spectrum.mobility;
+            let entry = frame_map.entry(spectrum.scan).or_insert_with(|| (inv_mobility, BTreeMap::new()));
+
+            for (i, mz) in spectrum.spectrum.mz_spectrum.mz.iter().enumerate() {
+                // Filter on mz range
+                if *mz < mz_min || *mz > mz_max {
+                    continue;
+                }
+                let intensity = spectrum.spectrum.mz_spectrum.intensity[i];
+                // Filter on intensity range
+                if intensity < intensity_min || intensity > intensity_max {
+                    continue;
+                }
+
+                let tof = spectrum.spectrum.index[i];
+                entry.1.entry(quantize(*mz)).and_modify(|e| *e = (tof, e.1 + intensity)).or_insert((tof, intensity));
+                capacity_count += 1;
+            }
+        }
+
+        // Unroll the map to vectors
+        let mut scan = Vec::with_capacity(capacity_count);
+        let mut mobility = Vec::with_capacity(capacity_count);
+        let mut tof = Vec::with_capacity(capacity_count);
+        let mut mzs = Vec::with_capacity(capacity_count);
+        let mut intensity = Vec::with_capacity(capacity_count);
+
+        for (scan_val, (mobility_val, mz_map)) in frame_map {
+            for (mz_val, (tof_val, intensity_val)) in mz_map {
+                // Final intensity filter after aggregation (sum may push over threshold)
+                if intensity_val < intensity_min || intensity_val > intensity_max {
+                    continue;
+                }
                 scan.push(scan_val);
                 mobility.push(mobility_val);
                 tof.push(tof_val);
@@ -437,7 +577,7 @@ impl TimsFrame {
 
         IndexedMzSpectrum {
             index,
-            mz_spectrum: MzSpectrum { mz, intensity },
+            mz_spectrum: MzSpectrum::new(mz, intensity),
         }
     }
 
@@ -451,7 +591,7 @@ impl TimsFrame {
         let mut mz = Vec::new();
         let mut intensity = Vec::new();
 
-        for (s, m, t, mz_val, i) in itertools::multizip((&self.scan, &self.ims_frame.mobility, &self.tof, &self.ims_frame.mz, &self.ims_frame.intensity)) {
+        for (s, m, t, mz_val, i) in itertools::multizip((self.scan.iter(), self.ims_frame.mobility.iter(), self.tof.iter(), self.ims_frame.mz.iter(), self.ims_frame.intensity.iter())) {
             if rng.gen::<f64>() <= take_probability {
                 scan.push(*s);
                 mobility.push(*m);
@@ -472,7 +612,7 @@ impl TimsFrame {
         let inv_mobility_values = self.ims_frame.mobility.clone();
         let intensity_values = self.ims_frame.intensity.clone();
 
-        for intensity in &intensity_values {
+        for intensity in intensity_values.iter() {
             annotations.push(PeakAnnotation::new_random_noise(*intensity));
         }
 
@@ -481,10 +621,10 @@ impl TimsFrame {
             self.ims_frame.retention_time,
             self.ms_type.clone(),
             tof_values.iter().map(|&x| x as u32).collect(),
-            mz_values,
+            (*mz_values).clone(),
             scan_values.iter().map(|&x| x as u32).collect(),
-            inv_mobility_values,
-            intensity_values,
+            (*inv_mobility_values).clone(),
+            (*intensity_values).clone(),
             annotations,
         )
     }
@@ -492,7 +632,7 @@ impl TimsFrame {
     pub fn get_inverse_mobility_along_scan_marginal(&self) -> f64 {
         let mut marginal_map: BTreeMap<i32, (f64, f64)> = BTreeMap::new();
         // go over all data points of scan, inv_mob and intensity
-        for (scan, inv_mob, intensity) in izip!(&self.scan, &self.ims_frame.mobility, &self.ims_frame.intensity) {
+        for (scan, inv_mob, intensity) in izip!(self.scan.iter(), self.ims_frame.mobility.iter(), self.ims_frame.intensity.iter()) {
             // create a key for the map
             let key = *scan;
             // get the entry from the map or insert a new one
@@ -514,7 +654,7 @@ impl TimsFrame {
         let mut mobility_map: BTreeMap<OrderedFloat<f64>, f64> = BTreeMap::new();
 
         // Aggregate intensity values for each `inv_mob`
-        for (inv_mob, intensity) in izip!(&self.ims_frame.mobility, &self.ims_frame.intensity) {
+        for (inv_mob, intensity) in izip!(self.ims_frame.mobility.iter(), self.ims_frame.intensity.iter()) {
             let entry = mobility_map.entry(OrderedFloat(*inv_mob)).or_insert(0.0);
             *entry += *intensity;
         }
@@ -544,7 +684,7 @@ impl TimsFrame {
         let mut mz = Vec::new();
         let mut intensity = Vec::new();
 
-        for (s, t, m, i) in itertools::multizip((&self.scan, &self.tof, &self.ims_frame.mz, &self.ims_frame.intensity)) {
+        for (s, t, m, i) in itertools::multizip((self.scan.iter(), self.tof.iter(), self.ims_frame.mz.iter(), self.ims_frame.intensity.iter())) {
             if *s == scan_number {
                 tof.push(*t);
                 mz.push(*m);
@@ -624,11 +764,11 @@ impl std::ops::Add for TimsFrame {
             entry.count += 1;
         };
 
-        for (mz, tof, ion_mobility, scan, intensity) in izip!(&self.ims_frame.mz, &self.tof, &self.ims_frame.mobility, &self.scan, &self.ims_frame.intensity) {
+        for (mz, tof, ion_mobility, scan, intensity) in izip!(self.ims_frame.mz.iter(), self.tof.iter(), self.ims_frame.mobility.iter(), self.scan.iter(), self.ims_frame.intensity.iter()) {
             add_to_map(&mut combined_map, *mz, *ion_mobility, *tof, *scan, *intensity);
         }
 
-        for (mz, tof, ion_mobility, scan, intensity) in izip!(&other.ims_frame.mz, &other.tof, &other.ims_frame.mobility, &other.scan, &other.ims_frame.intensity) {
+        for (mz, tof, ion_mobility, scan, intensity) in izip!(other.ims_frame.mz.iter(), other.tof.iter(), other.ims_frame.mobility.iter(), other.scan.iter(), other.ims_frame.intensity.iter()) {
             add_to_map(&mut combined_map, *mz, *ion_mobility, *tof, *scan, *intensity);
         }
 
@@ -651,12 +791,12 @@ impl std::ops::Add for TimsFrame {
             ms_type: if self.ms_type == other.ms_type { self.ms_type.clone() } else { MsType::Unknown },
             scan: scan_combined,
             tof: tof_combined.iter().map(|&x| x as i32).collect(),
-            ims_frame: ImsFrame {
-                retention_time: self.ims_frame.retention_time,
-                mobility: ion_mobility_combined,
-                mz: mz_combined,
-                intensity: intensity_combined,
-            },
+            ims_frame: ImsFrame::new(
+                self.ims_frame.retention_time,
+                ion_mobility_combined,
+                mz_combined,
+                intensity_combined,
+            ),
         };
 
         return frame;
@@ -667,7 +807,7 @@ impl fmt::Display for TimsFrame {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
 
         let (mz, i) = self.ims_frame.mz.iter()
-            .zip(&self.ims_frame.intensity)
+            .zip(self.ims_frame.intensity.iter())
             .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap();
 
@@ -689,9 +829,9 @@ impl Vectorized<TimsFrameVectorized> for TimsFrame {
             tof: binned_frame.tof,
             ims_frame: ImsFrameVectorized {
                 retention_time: binned_frame.ims_frame.retention_time,
-                mobility: binned_frame.ims_frame.mobility,
+                mobility: (*binned_frame.ims_frame.mobility).clone(),
                 indices,
-                values: binned_frame.ims_frame.intensity,
+                values: (*binned_frame.ims_frame.intensity).clone(),
                 resolution,
             },
         };
@@ -758,12 +898,12 @@ impl ToResolution for TimsFrame {
             ms_type: self.ms_type.clone(),
             scan: new_scan,
             tof: new_tof,
-            ims_frame: ImsFrame {
-                retention_time: self.ims_frame.retention_time,
-                mobility: new_mobility,
-                mz: new_mz,
-                intensity: new_intensity,
-            },
+            ims_frame: ImsFrame::new(
+                self.ims_frame.retention_time,
+                new_mobility,
+                new_mz,
+                new_intensity,
+            ),
         }
     }
 }

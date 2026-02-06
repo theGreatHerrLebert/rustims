@@ -7,7 +7,7 @@ use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::types::PyList;
-use pyo3::{PyResult, Python, PyObject};
+use pyo3::{PyResult, Python};
 use rustdf::data::acquisition::AcquisitionMode;
 use rustdf::data::handle::TimsData;
 
@@ -24,8 +24,47 @@ impl PyTimsDataset {
         PyTimsDataset { inner: dataset }
     }
 
+    /// Create a dataset with pre-computed ion mobility calibration lookup table.
+    ///
+    /// This enables accurate ion mobility calibration with fast parallel extraction.
+    /// The im_lookup array should be pre-computed using the Bruker SDK via
+    /// extract_calibration.py or by opening a dataset with use_bruker_sdk=True
+    /// and calling scan_to_inverse_mobility for all scan indices.
+    ///
+    /// # Arguments
+    /// * `data_path` - Path to the .d folder
+    /// * `in_memory` - Whether to load all data into memory
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table (list or numpy array)
+    ///
+    /// # Returns
+    /// A new PyTimsDataset with accurate IM calibration and thread-safe parallel access
+    ///
+    /// # Example
+    /// ```python
+    /// import numpy as np
+    /// from imspy_connector import PyTimsDataset
+    ///
+    /// # Load pre-computed calibration
+    /// im_lookup = np.load("sample.im_calibration.npy")
+    ///
+    /// # Create dataset with calibration (fast + accurate)
+    /// dataset = PyTimsDataset.with_calibration("sample.d", False, im_lookup.tolist())
+    /// ```
+    #[staticmethod]
+    pub fn with_calibration(data_path: &str, in_memory: bool, im_lookup: Vec<f64>) -> Self {
+        let dataset = TimsDataset::new_with_calibration(data_path, in_memory, im_lookup);
+        PyTimsDataset { inner: dataset }
+    }
+
+    /// Check if the Bruker SDK is being used for index conversion.
+    /// Returns false for Simple and Lookup converters (thread-safe).
+    /// Returns true only for BrukerLib converter (NOT thread-safe).
+    pub fn uses_bruker_sdk(&self) -> bool {
+        self.inner.uses_bruker_sdk()
+    }
+
     pub fn get_frame(&self, frame_id: u32) -> PyTimsFrame {
-        PyTimsFrame { inner: self.inner.get_frame(frame_id) }
+        PyTimsFrame::from_inner(self.inner.get_frame(frame_id))
     }
 
     pub fn get_slice(&self, frame_ids: Vec<u32>, num_threads: usize) -> PyTimsSlice {
@@ -53,19 +92,19 @@ impl PyTimsDataset {
     }
 
     pub fn mz_to_tof(&self, frame_id: u32, mz_values: Vec<f64>) -> Vec<u32> {
-        self.inner.loader.get_index_converter().mz_to_tof(frame_id, &mz_values.clone())
+        self.inner.loader.get_index_converter().mz_to_tof(frame_id, &mz_values)
     }
 
     pub fn tof_to_mz(&self, frame_id: u32, tof_values: Vec<u32>) -> Vec<f64> {
-        self.inner.loader.get_index_converter().tof_to_mz(frame_id, &tof_values.clone())
+        self.inner.loader.get_index_converter().tof_to_mz(frame_id, &tof_values)
     }
 
     pub fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: Vec<u32>) -> Vec<f64> {
-        self.inner.loader.get_index_converter().scan_to_inverse_mobility(frame_id, &scan_values.clone())
+        self.inner.loader.get_index_converter().scan_to_inverse_mobility(frame_id, &scan_values)
     }
 
     pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<u32> {
-        self.inner.loader.get_index_converter().inverse_mobility_to_scan(frame_id, &inverse_mobility_values.clone())
+        self.inner.loader.get_index_converter().inverse_mobility_to_scan(frame_id, &inverse_mobility_values)
     }
 
     #[staticmethod]
@@ -82,7 +121,7 @@ impl PyTimsDataset {
 
     pub fn scan_tof_intensities_to_compressed_u8(&self, py: Python<'_>, scan_values: Vec<u32>, tof_values: Vec<u32>, intensity_values: Vec<u32>, total_scans: u32, compression_level: i32) -> Py<PyArray1<u8>> {
         let result = reconstruct_compressed_data(scan_values, tof_values, intensity_values, total_scans, compression_level).unwrap();
-        result.into_pyarray_bound(py).unbind()
+        result.into_pyarray(py).unbind()
     }
 
     #[staticmethod]
@@ -90,20 +129,21 @@ impl PyTimsDataset {
         let (scan_counts, tof, intensities) = parse_decompressed_bruker_binary_data(&data).unwrap();
 
         // Expand the scan counts
-        let mut expanded_scans = Vec::new();
+        let total_len: usize = scan_counts.iter().map(|&c| c as usize).sum();
+        let mut expanded_scans = Vec::with_capacity(total_len);
         for (index, &count) in scan_counts.iter().enumerate() {
             expanded_scans.extend(std::iter::repeat(index as u32).take(count as usize));
         }
 
         Ok((
-            expanded_scans.into_pyarray_bound(py).unbind(),
-            tof.into_pyarray_bound(py).unbind(),
-            intensities.into_pyarray_bound(py).unbind(),
+            expanded_scans.into_pyarray(py).unbind(),
+            tof.into_pyarray(py).unbind(),
+            intensities.into_pyarray(py).unbind(),
         ))
     }
 
     #[pyo3(signature = (frame, total_scans, use_frame_id=None, compression_level=None))]
-    pub fn compress_frame(&self, py: Python<'_>, frame: PyTimsFrame, total_scans: u32, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
+    pub fn compress_frame(&self, py: Python<'_>, frame: PyTimsFrame, total_scans: u32, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<Py<PyAny>> {
 
         let compression_level = compression_level.unwrap_or(0);
 
@@ -113,23 +153,23 @@ impl PyTimsDataset {
             1
         };
 
-        let mz = frame.inner.ims_frame.mz.clone();
-        let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, &mz);
-        let inv_mob = frame.inner.ims_frame.mobility.clone();
-        let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
+        let mz = &*frame.inner.ims_frame.mz;
+        let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, mz);
+        let inv_mob = &*frame.inner.ims_frame.mobility;
+        let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, inv_mob).iter().map(|x| *x as u32).collect::<Vec<_>>();
 
         let compressed_frame = reconstruct_compressed_data(
             scan,
             tof,
-            frame.inner.ims_frame.intensity.clone().iter().map(|x| *x as u32).collect::<Vec<_>>(),
+            frame.inner.ims_frame.intensity.iter().map(|x| *x as u32).collect::<Vec<_>>(),
             total_scans, compression_level).unwrap();
 
-        let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray_bound(py);
-        Ok(py_array.unbind().into())
+        let py_array: Bound<'_, PyArray1<u8>> = compressed_frame.into_pyarray(py);
+        Ok(py_array.unbind().into_any())
     }
 
     #[pyo3(signature = (frames, total_scans, num_threads, use_frame_id=None, compression_level=None))]
-    pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<PyObject> {
+    pub fn compress_frames(&self, py: Python<'_>, frames: Vec<PyTimsFrame>, total_scans: u32, num_threads: usize, use_frame_id: Option<bool>, compression_level: Option<i32>) -> PyResult<Py<PyAny>> {
 
         let mut filled_tims_frames = Vec::with_capacity(frames.len());
         let compression_level = compression_level.unwrap_or(0);
@@ -142,20 +182,20 @@ impl PyTimsDataset {
                 1
             };
 
-            let mz = frame.inner.ims_frame.mz.clone();
-            let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, &mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
-            let inv_mob = frame.inner.ims_frame.mobility.clone();
-            let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, &inv_mob).iter().map(|x| *x as i32).collect::<Vec<_>>();
+            let mz = &*frame.inner.ims_frame.mz;
+            let tof = self.inner.loader.get_index_converter().mz_to_tof(frame_id as u32, mz).iter().map(|x| *x as i32).collect::<Vec<_>>();
+            let inv_mob = &*frame.inner.ims_frame.mobility;
+            let scan = self.inner.loader.get_index_converter().inverse_mobility_to_scan(1, inv_mob).iter().map(|x| *x as i32).collect::<Vec<_>>();
 
             let frame = TimsFrame::new(
                 frame.inner.frame_id,
                 frame.inner.ms_type.clone(),
                 frame.inner.ims_frame.retention_time,
                 scan,
-                inv_mob,
+                inv_mob.clone(),
                 tof,
-                mz,
-                frame.inner.ims_frame.intensity,
+                mz.clone(),
+                (*frame.inner.ims_frame.intensity).clone(),
             );
 
             filled_tims_frames.push(frame);
@@ -165,10 +205,10 @@ impl PyTimsDataset {
         let compressed_frames = compress_collection(filled_tims_frames, total_scans, compression_level, num_threads);
 
         // convert the compressed frames to a python list of numpy arrays
-        let py_list = PyList::empty_bound(py);
+        let py_list = PyList::empty(py);
 
         for frame in compressed_frames {
-            let np_array = frame.into_pyarray_bound(py).unbind();
+            let np_array = frame.into_pyarray(py).unbind();
             py_list.append(np_array)?;
         }
 
@@ -220,15 +260,9 @@ pub fn get_peak_cnts(total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
 
 // pub fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
 #[pyfunction]
-pub fn modify_tofs(tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
-    // Create a mutable copy of `tofs` that can be modified.
-    let mut mutable_tofs = tofs.clone();
-
-    // Directly pass the mutable reference of the cloned `tofs`.
-    rustdf::data::utility::modify_tofs(&mut mutable_tofs, &scans);
-
-    // Return the modified `mutable_tofs`.
-    mutable_tofs
+pub fn modify_tofs(mut tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
+    rustdf::data::utility::modify_tofs(&mut tofs, &scans);
+    tofs
 }
 #[pyfunction]
 pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {

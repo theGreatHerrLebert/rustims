@@ -1,0 +1,26 @@
+# =============================================================================
+# TIMSIM Minimal Configuration
+# =============================================================================
+# This is a minimal configuration file with only the required parameters
+# and commonly adjusted settings. All other parameters use sensible defaults.
+#
+# For a complete list of options, see config.toml
+# =============================================================================
+
+[paths]
+save_path = "/path/to/output"
+reference_path = "/path/to/reference.d"
+fasta_path = "/path/to/proteome.fasta"
+
+[experiment]
+experiment_name = "TIMSIM-[PLACEHOLDER]"
+acquisition_type = "DIA"  # "DIA" or "DDA"
+gradient_length = 3600.0
+
+[digestion]
+num_sample_peptides = 25000
+missed_cleavages = 2
+
+[performance]
+num_threads = -1
+batch_size = 256

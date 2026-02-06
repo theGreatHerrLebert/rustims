@@ -1,6 +1,6 @@
 [package]
 name = "mscore"
-version = "0.3.3"
+version = "0.4.1"
 edition = "2021"
 authors = ["David Teschner <davidteschner@googlemail.com>"]
 description = "A Rust library providing core operations for computational mass spectrometry proteomics."
@@ -26,7 +26,7 @@ rayon = "1.10.0"
 # Matrix operations
 nalgebra = "0.33.2"
 # Serialization
-serde = { version = "1.0.217", features = ["derive"] }
+serde = { version = "1.0.217", features = ["derive", "rc"] }
 # Regular expressions
 regex = "1.11.1"
 # Random number generation
@@ -35,12 +35,6 @@ rand = "0.8.5"
 ordered-float = "4.6.0"
 # Binary serialization
 bincode = "2.0.0-rc.3"
-
-[profile.release]
-debug = true
-overflow-checks = true
-lto = "thin"
-panic = "abort"
 
 [package.metadata.docs.rs]
 features = ["all"]
