@@ -89,8 +89,22 @@ def _download(url: str, dest: Path) -> None:
         urllib.request.urlretrieve(url, str(dest))
 
 
+def _find_bundled_model(model_name: str) -> Path | None:
+    """Check for a model file co-located with this module (source / editable installs)."""
+    local = Path(__file__).resolve().parent / model_name
+    if local.is_file():
+        return local
+    return None
+
+
 def ensure_model(model_name: str) -> Path:
     """Return the path to a cached model, downloading it first if necessary.
+
+    Resolution order:
+
+    1. Bundled alongside this module (editable / source installs).
+    2. Local cache (``$IMSPY_CACHE_DIR`` or ``~/.cache/imspy/models/``).
+    3. Download from GitHub Releases.
 
     Parameters
     ----------
@@ -100,7 +114,7 @@ def ensure_model(model_name: str) -> Path:
     Returns
     -------
     Path
-        Absolute path to the cached ``.pt`` file.
+        Absolute path to the ``.pt`` file.
 
     Raises
     ------
@@ -115,11 +129,17 @@ def ensure_model(model_name: str) -> Path:
             f"Known models: {sorted(MODELS)}"
         )
 
+    # 1. Bundled copy (works for editable / source installs where .pt files
+    #    live next to this module even though they are excluded from wheels).
+    bundled = _find_bundled_model(model_name)
+    if bundled is not None:
+        return bundled
+
     meta = MODELS[model_name]
     cache_dir = get_cache_dir()
     cached_path = cache_dir / model_name
 
-    # Fast path: already cached and hash matches.
+    # 2. Fast path: already cached and hash matches.
     if cached_path.exists():
         digest = _sha256(cached_path)
         if digest == meta["sha256"]:
@@ -131,7 +151,7 @@ def ensure_model(model_name: str) -> Path:
             meta["sha256"],
         )
 
-    # Download into a temp file in the same filesystem, then atomic-rename.
+    # 3. Download into a temp file in the same filesystem, then atomic-rename.
     cached_path.parent.mkdir(parents=True, exist_ok=True)
     url = f"{_RELEASE_BASE}/{meta['filename']}"
     logger.info("Downloading model '%s' from %s ...", model_name, url)
