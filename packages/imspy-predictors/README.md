@@ -20,7 +20,24 @@ pip install imspy-predictors[koina]
 - **Retention Time Prediction**: GRU-based retention time predictors
 - **Fragment Intensity Prediction**: Prosit 2023 timsTOF intensity predictor
 - **Charge State Prediction**: Binomial and deep learning charge state distribution models
-- **Koina Integration**: Access remote prediction models via Koina servers (optional)
+- **Koina Integration**: Access remote prediction models via [Koina](https://koina.wilhelmlab.org) servers (optional)
+
+### Available Koina Remote Models
+
+When using `pip install imspy-predictors[koina]`, remote models can be configured in TimSim's `[models]` TOML section:
+
+| Task | Model Name |
+|------|-----------|
+| **RT** | `Deeplc_hela_hf`, `Chronologer_RT`, `AlphaPeptDeep_rt_generic`, `Prosit_2019_irt` |
+| **CCS** | `AlphaPeptDeep_ccs_generic`, `IM2Deep` |
+| **Intensity** | `prosit`, `alphapeptdeep`, `ms2pip` |
+
+```toml
+[models]
+rt_model = "AlphaPeptDeep_rt_generic"
+ccs_model = ""                          # "" = local PyTorch model
+intensity_model = "prosit"
+```
 
 ## Quick Start
 
@@ -53,8 +70,7 @@ intensity_model = Prosit2023TimsTofWrapper()
 ## Dependencies
 
 - **imspy-core**: Core data structures (required)
-- **TensorFlow**: Deep learning framework (required)
-- **dlomix**: Deep learning for omics (required)
+- **PyTorch**: Deep learning framework (required)
 - **koinapy**: Koina API client (optional, for remote models)
 
 ## Optional Dependencies

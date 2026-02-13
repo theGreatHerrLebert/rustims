@@ -257,9 +257,18 @@ pip install -e ./imspy-vis
 
 ### Docker
 
-Pre-built images available for reproducible environments:
-- [AMD64](https://github.com/MatteoLacki/rustims_docker/raw/refs/heads/main/release.zip)
-- [ARM64](https://github.com/MatteoLacki/rustims_docker/raw/refs/heads/main/release_arm64.zip)
+Build from the included Dockerfile (CUDA 12.4, Python 3.12):
+
+```bash
+# Build the image
+docker build -t rustims .
+
+# Verify GPU support
+docker run --rm --gpus all rustims python -c "import torch; print(torch.cuda.is_available())"
+
+# Run a simulation
+docker run --rm --gpus all -v /data:/workspace rustims timsim /workspace/config.toml
+```
 
 ## Documentation
 

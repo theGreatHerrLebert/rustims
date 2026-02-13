@@ -14,11 +14,19 @@ For search integration (validation workflows):
 pip install imspy-simulation[search]
 ```
 
+For KOINA remote model support (optional):
+
+```bash
+pip install imspy-predictors[koina]
+```
+
 ## Features
 
 - **Frame Builders**: DIA and DDA frame simulation with annotation support
 - **TimSim**: Complete simulation pipeline for synthetic timsTOF data
+- **Prediction Models**: Local PyTorch models with optional KOINA remote model support (see [Prediction Models](#prediction-models))
 - **Validation**: Tools for validating simulated data against search results
+- **Integration Testing (EVAL)**: Automated validation against DiaNN, FragPipe, and Sage (see [Integration Testing](#integration-testing))
 - **Isotope Simulation**: Accurate isotope distribution generation
 - **TDF Writing**: Write simulated data to Bruker TDF format
 
@@ -49,8 +57,34 @@ frames = frame_builder.build_frames([1, 2, 3])
 ### timsim
 Full simulation pipeline:
 ```bash
-timsim --config config.toml --output /path/to/output
+timsim config.toml
+timsim config.toml --save-path output.d --reference-path reference.d --fasta-path proteome.fasta
 ```
+
+## Prediction Models
+
+TimSim uses deep learning models for retention time, ion mobility (CCS), and fragment intensity prediction. By default, local PyTorch models are used. Optionally, remote models can be accessed via [KOINA](https://koina.wilhelmlab.org) servers:
+
+```toml
+[models]
+rt_model = ""              # "" = local (default), or e.g. "Deeplc_hela_hf"
+ccs_model = ""             # "" = local (default), or e.g. "AlphaPeptDeep_ccs_generic"
+intensity_model = ""       # "" = local (default), or e.g. "prosit", "alphapeptdeep"
+```
+
+Requires `pip install imspy-predictors[koina]` for remote models. Falls back to local models if KOINA is unreachable. See [SIMULATOR_README.md](SIMULATOR_README.md) for the full list of available models.
+
+## Integration Testing
+
+The EVAL pipeline validates simulated datasets against production proteomics search engines:
+
+```bash
+python -m imspy_simulation.timsim.integration.sim --env env.toml --list
+python -m imspy_simulation.timsim.integration.sim --env env.toml --test IT-DIA-HELA
+python -m imspy_simulation.timsim.integration.eval --env env.toml --test IT-DIA-HELA
+```
+
+See the [Validation README](src/imspy_simulation/timsim/integration/VALIDATION_README.md) for setup, available tests, and configuration details.
 
 ## Submodules
 

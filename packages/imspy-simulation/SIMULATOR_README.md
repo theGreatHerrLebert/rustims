@@ -7,7 +7,23 @@ A high-fidelity proteomics simulation engine for Bruker timsTOF instruments. Gen
 ### 1. Installation
 
 ```bash
-# Activate your Python environment
+# From PyPI (recommended)
+pip install imspy-simulation
+
+# With KOINA remote model support (optional)
+pip install imspy-predictors[koina]
+```
+
+**Docker** (includes all dependencies + GPU support):
+```bash
+docker build -t rustims .
+docker run --rm --gpus all -v /data:/workspace rustims timsim /workspace/config.toml
+```
+
+<details>
+<summary>From source</summary>
+
+```bash
 source /path/to/your/env/bin/activate
 
 # Install the Rust backend (requires maturin)
@@ -16,9 +32,10 @@ maturin develop --release
 
 # Install Python packages
 pip install -e /path/to/rustims/packages/imspy-core
-pip install -e /path/to/rustims/packages/imspy-simulation
 pip install -e /path/to/rustims/packages/imspy-predictors
+pip install -e /path/to/rustims/packages/imspy-simulation
 ```
+</details>
 
 ### 2. Create a Configuration File
 
@@ -71,15 +88,17 @@ You need a real timsTOF `.d` file as a template. The simulator will populate it 
 ### Simulation Pipeline
 
 ```
-FASTA → Digestion → RT Prediction → IM Prediction →
+FASTA → Digestion → Model Selection → RT Prediction → IM Prediction →
+                     (local/KOINA)
 Fragment Intensity Prediction → Frame Assembly → .d File
 ```
 
 1. **Digestion**: In-silico tryptic digest of proteins
-2. **RT Prediction**: Deep learning model predicts retention times
-3. **IM Prediction**: CCS/mobility prediction for each peptide ion
-4. **Intensity Prediction**: Fragment ion intensities (PROSPECT model)
-5. **Frame Assembly**: Signals placed into timsTOF frame structure
+2. **Model Selection**: Choose local PyTorch or KOINA remote models (see [Prediction Model Selection](#prediction-model-selection-koina))
+3. **RT Prediction**: Deep learning model predicts retention times
+4. **IM Prediction**: CCS/mobility prediction for each peptide ion
+5. **Intensity Prediction**: Fragment ion intensities (local or KOINA models)
+6. **Frame Assembly**: Signals placed into timsTOF frame structure
 
 ### Output Files
 
@@ -120,6 +139,35 @@ output_dir/
 | `sample_seed` | `42` | Random seed for reproducibility |
 | `missed_cleavages` | `2` | Allowed missed cleavages |
 | `min_len` / `max_len` | `7` / `30` | Peptide length range |
+
+### Prediction Model Selection (KOINA)
+
+TimSim supports both local PyTorch models and remote [KOINA](https://koina.wilhelmlab.org) models for predictions. Configure via the `[models]` section:
+
+```toml
+[models]
+rt_model = ""              # "" or "local" = local PyTorch (default)
+ccs_model = ""             # "" or "local" = local PyTorch (default)
+intensity_model = ""       # "" or "local" = local PyTorch (default)
+```
+
+**Available remote models:**
+
+| Task | Model Name | Notes |
+|------|-----------|-------|
+| **RT** | `"Deeplc_hela_hf"` | DeepLC HeLa model |
+| | `"Chronologer_RT"` | Chronologer RT predictor |
+| | `"AlphaPeptDeep_rt_generic"` | AlphaPeptDeep generic RT |
+| | `"Prosit_2019_irt"` | Prosit indexed RT |
+| **CCS** | `"AlphaPeptDeep_ccs_generic"` | AlphaPeptDeep generic CCS |
+| | `"IM2Deep"` | IM2Deep predictor |
+| **Intensity** | `"prosit"` | Prosit 2023 timsTOF (max 30 AA, limited mods) |
+| | `"alphapeptdeep"` | AlphaPeptDeep generic (supports phospho) |
+| | `"ms2pip"` | ms2pip timsTOF 2024 |
+
+**Prerequisites**: `pip install imspy-predictors[koina]`
+
+If a KOINA server is unreachable, the simulator automatically falls back to local models.
 
 ### Advanced Features
 
@@ -258,6 +306,23 @@ cleave_at = ""  # Non-specific
 binomial_charge_model = true
 charge_state_one_probability = 0.15
 ```
+
+## Integration Testing (EVAL Pipeline)
+
+Validate simulated datasets against production proteomics search engines (DiaNN, FragPipe, Sage):
+
+```bash
+# List available integration tests
+python -m imspy_simulation.timsim.integration.sim --env env.toml --list
+
+# Run a simulation
+python -m imspy_simulation.timsim.integration.sim --env env.toml --test IT-DIA-HELA
+
+# Analyze and validate against ground truth
+python -m imspy_simulation.timsim.integration.eval --env env.toml --test IT-DIA-HELA
+```
+
+Third-party analysis tools (DiaNN, FragPipe, Sage) must be installed separately — they are not bundled due to licensing. See the full [Validation README](src/imspy_simulation/timsim/integration/VALIDATION_README.md) for setup instructions and available test scenarios.
 
 ## Troubleshooting
 

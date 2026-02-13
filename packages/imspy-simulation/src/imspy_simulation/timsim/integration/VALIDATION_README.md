@@ -16,17 +16,27 @@ Automated validation framework for TIMSIM simulations. Generate synthetic datase
 ### 1. Setup Environment
 
 ```bash
-# Create/activate Python environment
-source /path/to/your/env/bin/activate
+# From PyPI (recommended)
+pip install imspy-simulation
 
-# Install required packages
-pip install -e /path/to/rustims/packages/imspy-simulation
+# With KOINA remote model support (optional)
+pip install imspy-predictors[koina]
+```
+
+<details>
+<summary>From source</summary>
+
+```bash
+source /path/to/your/env/bin/activate
 pip install -e /path/to/rustims/packages/imspy-core
+pip install -e /path/to/rustims/packages/imspy-predictors
+pip install -e /path/to/rustims/packages/imspy-simulation
 
 # Rebuild Rust backend if needed
 cd /path/to/rustims/imspy_connector
 maturin develop --release
 ```
+</details>
 
 ### 2. Configure Environment File
 
@@ -42,6 +52,11 @@ fragpipe_workflow_dia = "/path/to/workflows/DIA_SpecLib_Quant_diaPASEF.workflow"
 fragpipe_workflow_dda = "/path/to/workflows/LFQ-noMBR.workflow"
 sage_path = "/path/to/sage"
 
+# Optional: additional workflow files for phospho tests
+# fragpipe_workflow_dia_phospho = "/path/to/workflows/DIA_Phospho.workflow"
+# fragpipe_workflow_dda_phospho = "/path/to/workflows/DDA_Phospho.workflow"
+# fragpipe_python = "/path/to/python"  # Python used by FragPipe (if different)
+
 # Output and reference data
 [paths]
 output_base = "/path/to/output"
@@ -54,9 +69,32 @@ fasta_hela_decoys = "/path/to/hela-decoys.fasta"
 [performance]
 num_threads = -1
 use_gpu = true
+
+# Optional: tool-specific timeouts (seconds)
+# diann_threads = 8           # Override thread count for DiaNN
+# diann_timeout = 7200        # DiaNN timeout (default: 2h)
+# fragpipe_timeout = 7200     # FragPipe timeout (default: 2h)
 ```
 
-### 3. Run Tests
+### 3. Install Third-Party Analysis Tools
+
+DiaNN, FragPipe, and Sage are **not bundled** with imspy-simulation due to licensing restrictions. You must install them separately and configure their paths in `env.toml`.
+
+**DiaNN**:
+- Download the Linux binary from [https://github.com/vdemichev/DiaNN](https://github.com/vdemichev/DiaNN)
+- Make it executable: `chmod +x diann-linux`
+- Set `diann_path` in `env.toml`
+
+**FragPipe**:
+- Download a release from [https://github.com/Nesvilab/FragPipe](https://github.com/Nesvilab/FragPipe)
+- Requires Java runtime (`java -version` to verify)
+- Set `fragpipe_path`, `fragpipe_tools`, and workflow paths in `env.toml`
+
+**Sage** (optional, DDA only):
+- Open source — download a binary from [https://github.com/lazear/sage](https://github.com/lazear/sage) or build from source
+- Set `sage_path` in `env.toml` (optional — auto-discovered if on `$PATH`)
+
+### 4. Run Tests
 
 ```bash
 # List available tests
@@ -354,11 +392,11 @@ imspy_simulation/timsim/integration/
 
 ### Analysis Tools
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| DiaNN | 1.8+ | DIA/DDA analysis |
-| FragPipe | 21+ | DIA/DDA analysis |
-| Sage | 0.14+ | DDA analysis (optional) |
+| Tool | Version | Purpose | Download |
+|------|---------|---------|----------|
+| DiaNN | 1.8+ | DIA/DDA analysis | [github.com/vdemichev/DiaNN](https://github.com/vdemichev/DiaNN) |
+| FragPipe | 21+ | DIA/DDA analysis | [github.com/Nesvilab/FragPipe](https://github.com/Nesvilab/FragPipe) |
+| Sage | 0.14+ | DDA analysis (optional) | [github.com/lazear/sage](https://github.com/lazear/sage) |
 
 ### Python Packages
 
