@@ -1,6 +1,6 @@
 [project]
 name = "imspy-predictors"
-version = "0.5.0"
+version = "0.5.1"
 description = "ML-based predictors for CCS, retention time, and fragment intensity in mass spectrometry."
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
