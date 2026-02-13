@@ -81,10 +81,11 @@ output/
 8. [Property Variation Settings](#property-variation-settings)
 9. [DDA Settings](#dda-settings)
 10. [Charge State Probabilities](#charge-state-probabilities)
-11. [Quad Transmission Settings](#quad-transmission-settings)
-12. [Video Settings](#video-settings)
-13. [Performance Settings](#performance-settings)
-14. [Console and Execution](#console-and-execution)
+11. [Prediction Model Settings](#prediction-model-settings)
+12. [Quad Transmission Settings](#quad-transmission-settings)
+13. [Video Settings](#video-settings)
+14. [Performance Settings](#performance-settings)
+15. [Console and Execution](#console-and-execution)
 
 ---
 
@@ -300,6 +301,67 @@ charge_state_one_probability = 0.0
 
 ---
 
+## Prediction Model Settings
+
+TimSim uses deep learning models for retention time (RT), collisional cross section (CCS), and fragment intensity prediction. By default, local PyTorch models ship with the package. Optionally, remote models can be used via [KOINA](https://koina.wilhelmlab.org) servers.
+
+**Prerequisite for remote models**: `pip install imspy-predictors[koina]`
+
+### `[models]` Section
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `rt_model` | `""` | Retention time prediction model |
+| `ccs_model` | `""` | CCS / ion mobility prediction model |
+| `intensity_model` | `""` | Fragment intensity prediction model |
+
+### Available Models
+
+**Retention Time (`rt_model`)**:
+
+| Value | Description |
+|-------|-------------|
+| `""` or `"local"` | Local PyTorch model (default) |
+| `"Deeplc_hela_hf"` | DeepLC HeLa model (KOINA) |
+| `"Chronologer_RT"` | Chronologer RT predictor (KOINA) |
+| `"AlphaPeptDeep_rt_generic"` | AlphaPeptDeep generic RT (KOINA) |
+| `"Prosit_2019_irt"` | Prosit indexed RT (KOINA) |
+
+**CCS / Ion Mobility (`ccs_model`)**:
+
+| Value | Description |
+|-------|-------------|
+| `""` or `"local"` | Local PyTorch model (default) |
+| `"AlphaPeptDeep_ccs_generic"` | AlphaPeptDeep generic CCS (KOINA) |
+| `"IM2Deep"` | IM2Deep predictor (KOINA) |
+
+**Fragment Intensity (`intensity_model`)**:
+
+| Value | Description |
+|-------|-------------|
+| `""` or `"local"` | Local PyTorch PROSPECT fine-tuned model (default) |
+| `"prosit"` | Prosit 2023 timsTOF (KOINA) — max 30 AA, limited modifications |
+| `"alphapeptdeep"` | AlphaPeptDeep generic (KOINA) — supports all modifications including phospho |
+| `"ms2pip"` | ms2pip timsTOF 2024 (KOINA) |
+
+### Notes
+
+- If a KOINA server is unreachable, the simulator automatically falls back to local models.
+- For phosphorylated peptides, use `"alphapeptdeep"` as the intensity model — Prosit does not support phosphorylation modifications.
+- Prosit intensity models are limited to peptides ≤ 30 amino acids with standard modifications.
+- AlphaPeptDeep supports all UNIMOD modifications and has no peptide length restriction.
+
+### Configuration Example
+
+```toml
+[models]
+rt_model = "AlphaPeptDeep_rt_generic"
+ccs_model = "AlphaPeptDeep_ccs_generic"
+intensity_model = "prosit"
+```
+
+---
+
 ## Quad Transmission Settings
 
 Advanced settings for quadrupole-dependent isotope transmission and **partial fragmentation** (precursor survival).
@@ -430,6 +492,11 @@ min_charge_contrib = 0.25
 isotope_k = 8
 isotope_min_intensity = 1
 isotope_centroid = true
+
+[models]
+rt_model = ""
+ccs_model = ""
+intensity_model = ""
 
 [noise]
 mz_noise_precursor = true
