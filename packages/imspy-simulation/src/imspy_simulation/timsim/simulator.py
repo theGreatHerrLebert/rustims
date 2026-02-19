@@ -95,6 +95,7 @@ from .jobs.simulate_frame_distributions_emg import simulate_frame_distributions_
 from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
+from .jobs.load_findings import load_findings
 
 # Optional video generation import (requires imspy-vis)
 try:
@@ -285,6 +286,10 @@ def get_default_settings() -> dict:
         'apply_fragmentation': False,
         'from_existing': False,
         'existing_path': None,
+        'from_findings': False,
+        'findings_path': None,
+        'findings_format': 'diann',
+        'findings_fdr_threshold': 0.01,
         'use_bruker_sdk': True,
 
         # Peptide digestion
@@ -372,6 +377,7 @@ def get_default_settings() -> dict:
         'fragment_noise_ppm': 5.0,
         'mz_noise_uniform': False,
         'add_real_data_noise': False,
+        'superimpose_on_reference': False,
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
 
@@ -471,7 +477,13 @@ class SimulationConfig:
 
     def _validate(self) -> None:
         """Validate that required configuration options are set."""
-        required = ['save_path', 'reference_path', 'fasta_path']
+        if self._config.get('from_findings') and self._config.get('from_existing'):
+            raise ValueError("Cannot use both 'from_findings' and 'from_existing' at the same time")
+
+        if self._config.get('from_findings'):
+            required = ['save_path', 'reference_path', 'findings_path']
+        else:
+            required = ['save_path', 'reference_path', 'fasta_path']
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -489,6 +501,10 @@ class SimulationConfig:
         k_upper = self._config.get('k_upper_rt', 10)
         if k_lower >= k_upper:
             raise ValueError("k_lower_rt must be less than k_upper_rt")
+
+        # Validate superimpose_on_reference is DIA-only
+        if self._config.get('superimpose_on_reference', False) and self._config.get('acquisition_type') == 'DDA':
+            raise ValueError("superimpose_on_reference is only supported for DIA acquisition mode")
 
         # Validate p_charge
         p_charge = self._config.get('p_charge', 0.8)
@@ -692,6 +708,12 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         default=None,
         help="Override fasta_path from config"
     )
+    parser.add_argument(
+        "--findings-path",
+        type=str,
+        default=None,
+        help="Override findings_path from config (enables from_findings mode)"
+    )
     return parser
 
 
@@ -717,6 +739,9 @@ def main():
         overrides['reference_path'] = cli_args.reference_path
     if cli_args.fasta_path:
         overrides['fasta_path'] = cli_args.fasta_path
+    if cli_args.findings_path:
+        overrides['findings_path'] = cli_args.findings_path
+        overrides['from_findings'] = True
 
     # Load configuration from TOML file
     try:
@@ -933,12 +958,34 @@ def main():
             )
 
     # ----------------------------------------
-    # FASTA processing if not from existing
+    # Load from search engine findings
     # ----------------------------------------
-    fastas = get_fasta_file_paths(config.fasta_path)
+    if config.from_findings:
+        logger.info(section_header("Loading Search Engine Findings", use_unicode))
+        rt_lower = acquisition_builder.frame_table['time'].min()
+        rt_upper = acquisition_builder.frame_table['time'].max()
+        peptides, proteins, ions = load_findings(
+            findings_path=config.findings_path,
+            findings_format=config.findings_format,
+            fdr_threshold=config.findings_fdr_threshold,
+            rt_lower=rt_lower,
+            rt_upper=rt_upper,
+            mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
+            mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
+            im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
+            im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
+            upscale_factor=config.upscale_factor,
+            inverse_mobility_std_mean=config.inverse_mobility_std_mean,
+            verbose=not config.silent_mode,
+        )
+
+    # ----------------------------------------
+    # FASTA processing if not from existing or findings
+    # ----------------------------------------
+    fastas = get_fasta_file_paths(config.fasta_path) if config.fasta_path else {}
     protein_list, peptide_list = [], []
 
-    if not config.from_existing:
+    if not config.from_existing and not config.from_findings:
         logger.info(section_header("Processing FASTA Files", use_unicode))
         for fasta_name, fasta_path in fastas.items():
             if not config.silent_mode:
@@ -1094,9 +1141,9 @@ def main():
     acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
 
     # ------------------------------------------------------------------
-    # Further steps if not from existing simulation
+    # Further steps if not from existing simulation or findings
     # ------------------------------------------------------------------
-    if not config.from_existing:
+    if not config.from_existing and not config.from_findings:
         logger.info(section_header("Simulating Ion Properties", use_unicode))
         # JOB 5: Charge states
         ions = simulate_charge_states(
@@ -1131,6 +1178,14 @@ def main():
         )
 
         # JOB 7: Precursor isotopic distributions
+        ions = simulate_precursor_spectra_sequence(
+            ions=ions,
+            num_threads=num_threads,
+            verbose=not config.silent_mode,
+        )
+    elif config.from_findings:
+        # Only need isotope patterns — charge and IM come from findings
+        logger.info(section_header("Simulating Precursor Isotope Patterns", use_unicode))
         ions = simulate_precursor_spectra_sequence(
             ions=ions,
             num_threads=num_threads,
@@ -1219,6 +1274,7 @@ def main():
         quad_isotope_transmission_mode=config.quad_isotope_transmission_mode,
         quad_transmission_min_probability=config.quad_transmission_min_probability,
         quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
+        superimpose_on_reference=config.superimpose_on_reference,
     )
 
     # Collect final statistics
