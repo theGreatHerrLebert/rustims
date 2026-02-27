@@ -229,6 +229,15 @@ def _build_ions(
     if n_dropped_im > 0 and verbose:
         logger.warning(f"  Dropped {n_dropped_im} ions with NaN inverse mobility")
 
+    # Filter by peptide length (Prosit model supports max 30 amino acids)
+    aa_counts = ions_df["sequence_modified"].apply(
+        lambda s: PeptideSequence(s).amino_acid_count
+    )
+    n_too_long = (aa_counts > 30).sum()
+    if n_too_long > 0 and verbose:
+        logger.warning(f"  Dropped {n_too_long} ions with sequence length > 30")
+    ions_df = ions_df[aa_counts <= 30].reset_index(drop=True)
+
     # Filter by mz and IM range
     ions_df = ions_df[
         (ions_df["mz"] >= mz_lower) & (ions_df["mz"] <= mz_upper) &
@@ -263,7 +272,11 @@ def _build_peptides(
     """Build peptides DataFrame from ions.
 
     Each unique sequence_modified becomes one peptide. Events are derived
-    from log-scaled total observed intensity across all charge states.
+    from proportional scaling of total observed intensity across all charge
+    states, preserving the original dynamic range. The median intensity is
+    mapped to ``upscale_factor``, so brighter peptides exceed it and dimmer
+    ones fall below — matching the multi-order-of-magnitude range that the
+    normal FASTA-based pipeline produces.
     """
     grouped = ions.groupby("sequence_modified", sort=False)
 
@@ -271,7 +284,17 @@ def _build_peptides(
     unique_proteins = ions["protein_id"].unique()
     protein_name_to_id = {name: idx for idx, name in enumerate(unique_proteins)}
 
-    max_intensity = ions["observed_intensity"].max()
+    # Collect per-peptide total intensities first for scaling
+    peptide_intensities = grouped["observed_intensity"].sum()
+    median_intensity = peptide_intensities.median()
+    if median_intensity <= 0:
+        median_intensity = peptide_intensities[peptide_intensities > 0].median()
+    if median_intensity <= 0:
+        median_intensity = 1.0
+
+    if verbose:
+        logger.info(f"  Intensity scaling: median={median_intensity:.0f} -> "
+                     f"upscale_factor={upscale_factor}")
 
     peptide_rows = []
     peptide_id = 0
@@ -290,10 +313,10 @@ def _build_peptides(
         protein = group["protein_id"].iloc[0]
         prot_id = protein_name_to_id[protein]
 
-        # Log-scale intensity to event counts
-        if total_intensity > 0 and max_intensity > 0:
-            events = int(np.log1p(total_intensity) / np.log1p(max_intensity) * upscale_factor)
-            events = max(events, 1)
+        # Proportional scaling: median intensity -> upscale_factor
+        # This preserves the full dynamic range of observed intensities
+        if total_intensity > 0:
+            events = max(1, int(total_intensity / median_intensity * upscale_factor))
         else:
             events = 1
 

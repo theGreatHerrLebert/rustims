@@ -96,6 +96,7 @@ from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
 from .jobs.load_findings import load_findings
+from .jobs import checkpoint
 
 # Optional video generation import (requires imspy-vis)
 try:
@@ -437,6 +438,9 @@ def get_default_settings() -> dict:
         'preview_video_fps': 10,
         'preview_video_dpi': 80,
         'preview_video_annotate': True,
+
+        # Checkpointing
+        'enable_checkpoints': False,
     }
 
 
@@ -714,6 +718,11 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         default=None,
         help="Override findings_path from config (enables from_findings mode)"
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from the latest checkpoint (requires a previous run with enable_checkpoints=true)"
+    )
     return parser
 
 
@@ -742,6 +751,8 @@ def main():
     if cli_args.findings_path:
         overrides['findings_path'] = cli_args.findings_path
         overrides['from_findings'] = True
+    if cli_args.resume:
+        overrides['enable_checkpoints'] = True
 
     # Load configuration from TOML file
     try:
@@ -849,6 +860,27 @@ def main():
     rt_sigma = None
     rt_lambda = None
     peptides, proteins, ions = None, None, None
+    pasef_meta = None
+    precursors = None
+
+    # Check for resume from checkpoint
+    resume_after = None
+    if cli_args.resume:
+        resume_after = checkpoint.latest(str(save_path))
+        if resume_after:
+            logger.info(section_header(f"Resuming from Checkpoint: {resume_after}", use_unicode))
+            cp_data = checkpoint.load(str(save_path), resume_after)
+            proteins = cp_data["proteins"]
+            peptides = cp_data["peptides"]
+            ions = cp_data.get("ions")
+            pasef_meta = cp_data.get("pasef_meta")
+            precursors = cp_data.get("precursors")
+            if config.from_existing and "rt_sigma" in peptides.columns:
+                rt_sigma = peptides["rt_sigma"].values
+                rt_lambda = peptides["rt_lambda"].values
+        else:
+            logger.warning("--resume specified but no checkpoints found, running full pipeline")
+            resume_after = None
 
     # Proteome mix setup (if needed)
     if config.proteome_mix and config.multi_fasta_dilution:
@@ -856,7 +888,7 @@ def main():
     else:
         factors = {}
 
-    if config.from_existing:
+    if config.from_existing and not resume_after:
         logger.info(section_header("Loading Existing Simulation", use_unicode))
         # Load existing simulation data
         if config.acquisition_type == 'DIA':
@@ -960,7 +992,7 @@ def main():
     # ----------------------------------------
     # Load from search engine findings
     # ----------------------------------------
-    if config.from_findings:
+    if config.from_findings and not resume_after:
         logger.info(section_header("Loading Search Engine Findings", use_unicode))
         rt_lower = acquisition_builder.frame_table['time'].min()
         rt_upper = acquisition_builder.frame_table['time'].max()
@@ -985,7 +1017,7 @@ def main():
     fastas = get_fasta_file_paths(config.fasta_path) if config.fasta_path else {}
     protein_list, peptide_list = [], []
 
-    if not config.from_existing and not config.from_findings:
+    if not config.from_existing and not config.from_findings and not resume_after:
         logger.info(section_header("Processing FASTA Files", use_unicode))
         for fasta_name, fasta_path in fastas.items():
             if not config.silent_mode:
@@ -1091,139 +1123,166 @@ def main():
         columns[-2], columns[-1] = columns[-1], columns[-2]
         peptides = peptides[columns]
 
+    # Save proteome checkpoint (after data source + RT, before frame distributions)
+    if config.enable_checkpoints and not resume_after:
+        cp_data = {"proteins": proteins, "peptides": peptides}
+        if ions is not None:
+            cp_data["ions"] = ions
+        checkpoint.save(str(save_path), "proteome", cp_data)
+
     # Determine number of threads
     num_threads = config.num_threads
     if num_threads == -1:
         num_threads = os.cpu_count()
 
-    # JOB 4: Frame distributions
-    logger.info(section_header("Simulating Frame Distributions", use_unicode))
-    peptides = simulate_frame_distributions_emg(
-        peptides=peptides,
-        frames=acquisition_builder.frame_table,
-        sigma_lower_rt=config.sigma_lower_rt,
-        sigma_upper_rt=config.sigma_upper_rt,
-        sigma_alpha_rt=config.sigma_alpha_rt,
-        sigma_beta_rt=config.sigma_beta_rt,
-        k_lower_rt=config.k_lower_rt,
-        k_upper_rt=config.k_upper_rt,
-        k_alpha_rt=config.k_alpha_rt,
-        k_beta_rt=config.k_beta_rt,
-        rt_cycle_length=acquisition_builder.rt_cycle_length,
-        target_p=config.target_p,
-        step_size=config.sampling_step_size,
-        verbose=not config.silent_mode,
-        add_noise=config.noise_frame_abundance,
-        n_steps=config.n_steps,
-        num_threads=num_threads,
-        from_existing=config.from_existing,
-        sigmas=rt_sigma,
-        lambdas=rt_lambda,
-        gradient_length=acquisition_builder.gradient_length,
-        remove_epsilon=config.remove_epsilon,
-    )
-
-    # Save proteins
-    acquisition_builder.synthetics_handle.create_table(table_name='proteins', table=proteins)
-
-    # Handle final column ordering for phospho or proteome mixes
-    peptides = reorder_peptide_columns(
-        peptides,
-        phospho_mode=config.phospho_mode,
-        proteome_mix=config.proteome_mix
-    )
-
-    if config.proteome_mix:
-        # Remove duplicate sequences for proteome mix
-        peptides = peptides.drop_duplicates(subset=['sequence'])
-
-    # Save peptides
-    acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
-
-    # ------------------------------------------------------------------
-    # Further steps if not from existing simulation or findings
-    # ------------------------------------------------------------------
-    if not config.from_existing and not config.from_findings:
-        logger.info(section_header("Simulating Ion Properties", use_unicode))
-        # JOB 5: Charge states
-        ions = simulate_charge_states(
+    if resume_after != "ions":
+        # JOB 4: Frame distributions
+        logger.info(section_header("Simulating Frame Distributions", use_unicode))
+        peptides = simulate_frame_distributions_emg(
             peptides=peptides,
-            mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
-            mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
-            p_charge=config.p_charge,
-            max_charge=config.max_charge,
-            charge_state_one_probability=config.charge_state_one_probability,
-            use_binomial=config.binomial_charge_model,
-            min_charge_contrib=config.min_charge_contrib,
-            normalize=config.normalize_charge_states,
+            frames=acquisition_builder.frame_table,
+            sigma_lower_rt=config.sigma_lower_rt,
+            sigma_upper_rt=config.sigma_upper_rt,
+            sigma_alpha_rt=config.sigma_alpha_rt,
+            sigma_beta_rt=config.sigma_beta_rt,
+            k_lower_rt=config.k_lower_rt,
+            k_upper_rt=config.k_upper_rt,
+            k_alpha_rt=config.k_alpha_rt,
+            k_beta_rt=config.k_beta_rt,
+            rt_cycle_length=acquisition_builder.rt_cycle_length,
+            target_p=config.target_p,
+            step_size=config.sampling_step_size,
             verbose=not config.silent_mode,
+            add_noise=config.noise_frame_abundance,
+            n_steps=config.n_steps,
+            num_threads=num_threads,
+            from_existing=config.from_existing,
+            sigmas=rt_sigma,
+            lambdas=rt_lambda,
+            gradient_length=acquisition_builder.gradient_length,
+            remove_epsilon=config.remove_epsilon,
         )
 
-        # need to drop duplicates by sequence and charge state for ions if proteome mix
+        # Save proteins
+        acquisition_builder.synthetics_handle.create_table(table_name='proteins', table=proteins)
+
+        # Handle final column ordering for phospho or proteome mixes
+        peptides = reorder_peptide_columns(
+            peptides,
+            phospho_mode=config.phospho_mode,
+            proteome_mix=config.proteome_mix
+        )
+
         if config.proteome_mix:
-            ions = ions.drop_duplicates(subset=['sequence', 'charge'])
+            # Remove duplicate sequences for proteome mix
+            peptides = peptides.drop_duplicates(subset=['sequence'])
 
-        # JOB 6: Ion mobilities
-        if config.ccs_model:
-            logger.info(f"  Using CCS model: {config.ccs_model}")
-        ions = simulate_ion_mobilities_and_variance(
+        # Save peptides
+        acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
+
+        # ------------------------------------------------------------------
+        # Further steps if not from existing simulation or findings
+        # ------------------------------------------------------------------
+        if not config.from_existing and not config.from_findings:
+            logger.info(section_header("Simulating Ion Properties", use_unicode))
+            # JOB 5: Charge states
+            ions = simulate_charge_states(
+                peptides=peptides,
+                mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
+                mz_upper=acquisition_builder.tdf_writer.helper_handle.mz_upper,
+                p_charge=config.p_charge,
+                max_charge=config.max_charge,
+                charge_state_one_probability=config.charge_state_one_probability,
+                use_binomial=config.binomial_charge_model,
+                min_charge_contrib=config.min_charge_contrib,
+                normalize=config.normalize_charge_states,
+                verbose=not config.silent_mode,
+            )
+
+            # need to drop duplicates by sequence and charge state for ions if proteome mix
+            if config.proteome_mix:
+                ions = ions.drop_duplicates(subset=['sequence', 'charge'])
+
+            # JOB 6: Ion mobilities
+            if config.ccs_model:
+                logger.info(f"  Using CCS model: {config.ccs_model}")
+            ions = simulate_ion_mobilities_and_variance(
+                ions=ions,
+                im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
+                im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
+                verbose=not config.silent_mode,
+                remove_mods=True,
+                use_target_mean_std=config.use_inverse_mobility_std_mean,
+                target_std_mean=config.inverse_mobility_std_mean,
+                use_koina_model=config.ccs_model,
+            )
+
+            # JOB 7: Precursor isotopic distributions
+            ions = simulate_precursor_spectra_sequence(
+                ions=ions,
+                num_threads=num_threads,
+                verbose=not config.silent_mode,
+            )
+        elif config.from_findings:
+            # Only need isotope patterns — charge and IM come from findings
+            logger.info(section_header("Simulating Precursor Isotope Patterns", use_unicode))
+            ions = simulate_precursor_spectra_sequence(
+                ions=ions,
+                num_threads=num_threads,
+                verbose=not config.silent_mode,
+            )
+
+        # JOB 8: Scan distributions
+        logger.info(section_header("Simulating Scan Distributions", use_unicode))
+        ions = simulate_scan_distributions_with_variance(
             ions=ions,
-            im_lower=acquisition_builder.tdf_writer.helper_handle.im_lower,
-            im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
+            scans=acquisition_builder.scan_table,
             verbose=not config.silent_mode,
-            remove_mods=True,
-            use_target_mean_std=config.use_inverse_mobility_std_mean,
-            target_std_mean=config.inverse_mobility_std_mean,
-            use_koina_model=config.ccs_model,
-        )
-
-        # JOB 7: Precursor isotopic distributions
-        ions = simulate_precursor_spectra_sequence(
-            ions=ions,
+            p_target=config.target_p,
+            add_noise=config.noise_scan_abundance,
             num_threads=num_threads,
-            verbose=not config.silent_mode,
-        )
-    elif config.from_findings:
-        # Only need isotope patterns — charge and IM come from findings
-        logger.info(section_header("Simulating Precursor Isotope Patterns", use_unicode))
-        ions = simulate_precursor_spectra_sequence(
-            ions=ions,
-            num_threads=num_threads,
-            verbose=not config.silent_mode,
         )
 
-    # JOB 8: Scan distributions
-    logger.info(section_header("Simulating Scan Distributions", use_unicode))
-    ions = simulate_scan_distributions_with_variance(
-        ions=ions,
-        scans=acquisition_builder.scan_table,
-        verbose=not config.silent_mode,
-        p_target=config.target_p,
-        add_noise=config.noise_scan_abundance,
-        num_threads=num_threads,
-    )
+        # Remove ions where peptide_id is not in the peptides table
+        ions = ions[ions['peptide_id'].isin(peptides['peptide_id'])].reset_index(drop=True)
 
-    # Remove ions where peptide_id is not in the peptides table
-    ions = ions[ions['peptide_id'].isin(peptides['peptide_id'])].reset_index(drop=True)
+        # Save ions
+        acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
 
-    # Save ions
-    acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
+        if config.acquisition_type == 'DDA':
+            logger.info(section_header("Simulating DDA-PASEF Selection", use_unicode))
+            pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
+                acquisition_builder=acquisition_builder,
+                verbose=not config.silent_mode,
+                precursors_every=config.precursors_every,
+                intensity_threshold=config.precursor_intensity_threshold,
+                max_precursors=config.max_precursors,
+                selection_mode=config.selection_mode,
+                precursor_exclusion_width=config.exclusion_width,
+            )
+            acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
+            acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
 
-    pasef_meta = None
+        # Save ions checkpoint (before the expensive fragment intensity step)
+        if config.enable_checkpoints:
+            cp_data = {"proteins": proteins, "peptides": peptides, "ions": ions}
+            if pasef_meta is not None:
+                cp_data["pasef_meta"] = pasef_meta
+            if precursors is not None:
+                cp_data["precursors"] = precursors
+            checkpoint.save(str(save_path), "ions", cp_data)
 
-    if config.acquisition_type == 'DDA':
-        logger.info(section_header("Simulating DDA-PASEF Selection", use_unicode))
-        pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
-            acquisition_builder=acquisition_builder,
-            verbose=not config.silent_mode,
-            precursors_every=config.precursors_every,
-            intensity_threshold=config.precursor_intensity_threshold,
-            max_precursors=config.max_precursors,
-            selection_mode=config.selection_mode,
-            precursor_exclusion_width=config.exclusion_width,
-        )
-        acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
-        acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
+    else:
+        # Resuming from ions checkpoint — populate DB tables
+        logger.info(section_header("Restoring Database from Checkpoint", use_unicode))
+        acquisition_builder.synthetics_handle.create_table(table_name='proteins', table=proteins)
+        acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
+        acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
+        if pasef_meta is not None:
+            acquisition_builder.synthetics_handle.create_table(table_name='pasef_meta', table=pasef_meta)
+        if precursors is not None:
+            acquisition_builder.synthetics_handle.create_table(table_name='precursors', table=precursors)
+        logger.info(f"  Restored: proteins ({len(proteins)}), peptides ({len(peptides)}), ions ({len(ions)})")
 
     # JOB 9: Simulate fragment intensities
     logger.info(section_header("Simulating Fragment Intensities", use_unicode))

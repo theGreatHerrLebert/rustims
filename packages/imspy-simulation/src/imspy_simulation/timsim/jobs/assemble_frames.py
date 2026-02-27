@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 from tqdm import tqdm
 
-from .add_noise_from_real_data import add_real_data_noise_to_frames
+from .add_noise_from_real_data import add_real_data_noise_to_frames, superimpose_reference_frames
 from imspy_simulation.acquisition import TimsTofAcquisitionBuilder
 from imspy_simulation.builders import (
     create_frame_builder,
@@ -40,6 +40,7 @@ def assemble_frames(
         quad_isotope_transmission_mode: str = 'none',
         quad_transmission_min_probability: float = 0.5,
         quad_transmission_max_isotopes: int = 10,
+        superimpose_on_reference: bool = False,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -73,6 +74,8 @@ def assemble_frames(
             isotope transmission (default 0.5).
         quad_transmission_max_isotopes: Maximum number of isotope peaks to
             consider for transmission (default 10).
+        superimpose_on_reference: If True, superimpose simulated signals on top
+            of the full, unmodified reference frames (DIA only).
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -82,6 +85,9 @@ def assemble_frames(
 
     if lazy_loading:
         logger.info('Using lazy loading strategy for reduced memory usage')
+
+    if superimpose_on_reference:
+        logger.info('Simulated signals will be superimposed on full reference frames.')
 
     if add_real_data_noise:
         logger.info('Real data noise will be added to the frames.')
@@ -134,18 +140,24 @@ def assemble_frames(
             fragment=fragment,
         )
 
-        built_frames = add_real_data_noise_to_frames(
-            acquisition_builder=acquisition_builder,
-            frames=built_frames,
-            intensity_max_precursor=intensity_max_precursor,
-            intensity_max_fragment=intensity_max_fragment,
-            precursor_sample_fraction=precursor_sample_fraction,
-            fragment_sample_fraction=fragment_sample_fraction,
-            num_precursor_frames=num_precursor_frames,
-            num_fragment_frames=num_fragment_frames,
-            acquisition_mode=acquisition_builder.acquisition_mode.mode,
-            pasef_meta=pasef_meta,
-        )
+        if superimpose_on_reference:
+            built_frames = superimpose_reference_frames(
+                acquisition_builder=acquisition_builder,
+                frames=built_frames,
+            )
+        elif add_real_data_noise:
+            built_frames = add_real_data_noise_to_frames(
+                acquisition_builder=acquisition_builder,
+                frames=built_frames,
+                intensity_max_precursor=intensity_max_precursor,
+                intensity_max_fragment=intensity_max_fragment,
+                precursor_sample_fraction=precursor_sample_fraction,
+                fragment_sample_fraction=fragment_sample_fraction,
+                num_precursor_frames=num_precursor_frames,
+                num_fragment_frames=num_fragment_frames,
+                acquisition_mode=acquisition_builder.acquisition_mode.mode,
+                pasef_meta=pasef_meta,
+            )
 
         for frame in built_frames:
             if acquisition_builder.acquisition_mode.mode == 'DDA':

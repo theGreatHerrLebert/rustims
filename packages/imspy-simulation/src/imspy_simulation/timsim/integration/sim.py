@@ -44,6 +44,11 @@ AVAILABLE_TESTS = [
     "IT-DDA-TOPN",
     "IT-DDA-HLA",
     "IT-DDA-PARTIAL-FRAG",
+    "IT-DDA-SAGE-PFRAG-BASE",
+    "IT-DDA-SAGE-PFRAG-LOW",
+    "IT-DDA-SAGE-PFRAG-MED",
+    "IT-DDA-SAGE-PFRAG-HIGH",
+    "IT-DIA-FROM-FINDINGS",
 ]
 
 
@@ -194,6 +199,12 @@ def merge_configs(test_config: Dict, env_config: Dict) -> Dict:
         merged["main_settings"]["save_path"] = test_config["paths"].get("save_path", "")
         merged["main_settings"]["reference_path"] = test_config["paths"].get("reference_path", "")
         merged["main_settings"]["fasta_path"] = test_config["paths"].get("fasta_path", "")
+        existing_path = test_config["paths"].get("existing_path", "")
+        if existing_path:
+            merged["main_settings"]["existing_path"] = existing_path
+        findings_path = test_config["paths"].get("findings_path", "")
+        if findings_path:
+            merged["main_settings"]["findings_path"] = findings_path
 
     # Override performance settings from env
     if "performance_settings" not in merged:

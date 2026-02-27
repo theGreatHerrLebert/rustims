@@ -1,7 +1,7 @@
 import pandas as pd
 from typing import List, Optional
 
-from imspy_simulation.acquisition import TimsTofAcquisitionBuilderDIA
+from imspy_simulation.acquisition import TimsTofAcquisitionBuilder, TimsTofAcquisitionBuilderDIA
 from imspy_core.timstof.frame import TimsFrame
 
 import numpy as np
@@ -122,4 +122,31 @@ def add_real_data_noise_to_frames(
                 )
                 r_list.append(frame + noise)
 
+    return r_list
+
+
+def superimpose_reference_frames(
+        acquisition_builder: TimsTofAcquisitionBuilder,
+        frames: List[TimsFrame],
+) -> List[TimsFrame]:
+    """Superimpose simulated signals on top of full reference frames.
+
+    For each frame, loads the corresponding reference frame by frame_id
+    and adds the simulated signal on top using the existing TimsFrame + operator.
+
+    Args:
+        acquisition_builder: Acquisition builder with access to the reference dataset.
+        frames: List of simulated TimsFrame objects.
+
+    Returns:
+        List[TimsFrame]: Frames with simulated signals added on top of reference data.
+    """
+    r_list = []
+    num_ref_frames = acquisition_builder.tdf_writer.helper_handle.frame_count
+    for frame in frames:
+        if frame.frame_id <= num_ref_frames:
+            ref_frame = acquisition_builder.tdf_writer.helper_handle.get_tims_frame(frame.frame_id)
+            r_list.append(ref_frame + frame)
+        else:
+            r_list.append(frame)
     return r_list
