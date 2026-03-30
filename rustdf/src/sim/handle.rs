@@ -25,9 +25,15 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     pub fn read_frames(&self) -> rusqlite::Result<Vec<FramesSim>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM frames")?;
+        let mut stmt = self.connection.prepare(
+            "SELECT frame_id, time, ms_type FROM frames"
+        )?;
         let frames_iter = stmt.query_map([], |row| {
-            Ok(FramesSim::new(row.get(0)?, row.get(1)?, row.get(2)?))
+            Ok(FramesSim::new(
+                row.get("frame_id")?,
+                row.get("time")?,
+                row.get("ms_type")?,
+            ))
         })?;
         let mut frames = Vec::new();
         for frame in frames_iter {
@@ -37,56 +43,26 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     pub fn read_scans(&self) -> rusqlite::Result<Vec<ScansSim>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM scans")?;
-        let scans_iter = stmt.query_map([], |row| Ok(ScansSim::new(row.get(0)?, row.get(1)?)))?;
+        let mut stmt = self.connection.prepare(
+            "SELECT scan, mobility FROM scans"
+        )?;
+        let scans_iter = stmt.query_map([], |row| {
+            Ok(ScansSim::new(
+                row.get("scan")?,
+                row.get("mobility")?,
+            ))
+        })?;
         let mut scans = Vec::new();
         for scan in scans_iter {
             scans.push(scan?);
         }
         Ok(scans)
     }
+
     pub fn read_peptides(&self) -> rusqlite::Result<Vec<PeptidesSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
         let peptides_iter = stmt.query_map([], |row| {
-            let frame_occurrence_str: String = row.get(15)?;
-            let frame_abundance_str: String = row.get(16)?;
-
-            let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        15,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            // if the frame abundance is not available, set it to 0
-            let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
-                Ok(value) => value,
-                Err(_e) => vec![0.0; frame_occurrence.len()],
-            };
-
-            let frame_distribution =
-                SignalDistribution::new(0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
-
-            Ok(PeptidesSim {
-                protein_id: row.get(0)?,
-                peptide_id: row.get(1)?,
-                sequence: PeptideSequence::new(row.get(2)?, row.get(1)?),
-                proteins: row.get(3)?,
-                decoy: row.get(4)?,
-                missed_cleavages: row.get(5)?,
-                n_term: row.get(6)?,
-                c_term: row.get(7)?,
-                mono_isotopic_mass: row.get(8)?,
-                retention_time: row.get(9)?,
-                events: row.get(10)?,
-                frame_start: row.get(13)?,
-                frame_end: row.get(14)?,
-                frame_distribution,
-            })
+            Self::peptide_from_row(row)
         })?;
         let mut peptides = Vec::new();
         for peptide in peptides_iter {
@@ -95,59 +71,106 @@ impl TimsTofSyntheticsDataHandle {
         Ok(peptides)
     }
 
+    /// Parse a single peptide row by column name (order-independent).
+    fn peptide_from_row(row: &rusqlite::Row) -> rusqlite::Result<PeptidesSim> {
+        let frame_occurrence_str: String = row.get("frame_occurrence")?;
+        let frame_abundance_str: String = row.get("frame_abundance")?;
+
+        let frame_occurrence: Vec<u32> = serde_json::from_str(&frame_occurrence_str)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))?;
+
+        let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
+            Ok(value) => value,
+            Err(_) => vec![0.0; frame_occurrence.len()],
+        };
+
+        let frame_distribution =
+            SignalDistribution::new(0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
+
+        let peptide_id: u32 = row.get("peptide_id")?;
+
+        Ok(PeptidesSim {
+            protein_id: row.get("protein_id")?,
+            peptide_id,
+            sequence: PeptideSequence::new(row.get("sequence")?, Some(peptide_id as i32)),
+            proteins: row.get("protein")?,
+            decoy: row.get("decoy")?,
+            missed_cleavages: row.get("missed_cleavages")?,
+            n_term: row.get("n_term")?,
+            c_term: row.get("c_term")?,
+            mono_isotopic_mass: row.get("monoisotopic-mass")?,
+            retention_time: row.get("retention_time_gru_predictor")?,
+            events: row.get("events")?,
+            frame_start: row.get("frame_occurrence_start")?,
+            frame_end: row.get("frame_occurrence_end")?,
+            frame_distribution,
+        })
+    }
+
+    /// Parse a single ion row by column name (order-independent).
+    fn ion_from_row(row: &rusqlite::Row) -> rusqlite::Result<IonSim> {
+        let simulated_spectrum_str: String = row.get("simulated_spectrum")?;
+        let scan_occurrence_str: String = row.get("scan_occurrence")?;
+        let scan_abundance_str: String = row.get("scan_abundance")?;
+
+        let simulated_spectrum: MzSpectrum = serde_json::from_str(&simulated_spectrum_str)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))?;
+
+        let scan_occurrence: Vec<u32> = serde_json::from_str(&scan_occurrence_str)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))?;
+
+        let scan_abundance: Vec<f32> = serde_json::from_str(&scan_abundance_str)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))?;
+
+        Ok(IonSim::new(
+            row.get("ion_id")?,
+            row.get("peptide_id")?,
+            row.get("sequence")?,
+            row.get("charge")?,
+            row.get("relative_abundance")?,
+            row.get("inv_mobility_gru_predictor")?,
+            simulated_spectrum,
+            scan_occurrence,
+            scan_abundance,
+        ))
+    }
+
+    /// Parse a single fragment ion row by column name (order-independent).
+    fn fragment_ion_from_row(row: &rusqlite::Row) -> rusqlite::Result<FragmentIonSim> {
+        let indices_string: String = row.get("indices")?;
+        let values_string: String = row.get("values")?;
+
+        let indices: Vec<u32> = serde_json::from_str(&indices_string)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))?;
+
+        let values: Vec<f64> = serde_json::from_str(&values_string)
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))?;
+
+        Ok(FragmentIonSim::new(
+            row.get("peptide_id")?,
+            row.get("ion_id")?,
+            row.get("collision_energy")?,
+            row.get("charge")?,
+            indices,
+            values,
+        ))
+    }
+
     pub fn read_ions(&self) -> rusqlite::Result<Vec<IonSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
-        let ions_iter = stmt.query_map([], |row| {
-            let simulated_spectrum_str: String = row.get(8)?;
-            let scan_occurrence_str: String = row.get(9)?;
-            let scan_abundance_str: String = row.get(10)?;
-
-            let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str)
-            {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        8,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        9,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        10,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            Ok(IonSim::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(5)?,
-                row.get(6)?,
-                simulated_spectrum,
-                scan_occurrence,
-                scan_abundance,
-            ))
-        })?;
+        let ions_iter = stmt.query_map([], |row| Self::ion_from_row(row))?;
         let mut ions = Vec::new();
         for ion in ions_iter {
             ions.push(ion?);
@@ -159,12 +182,12 @@ impl TimsTofSyntheticsDataHandle {
         let mut stmt = self.connection.prepare("SELECT * FROM dia_ms_ms_windows")?;
         let window_group_settings_iter = stmt.query_map([], |row| {
             Ok(WindowGroupSettingsSim::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
+                row.get("window_group")?,
+                row.get("scan_start")?,
+                row.get("scan_end")?,
+                row.get("isolation_mz")?,
+                row.get("isolation_width")?,
+                row.get("collision_energy")?,
             ))
         })?;
         let mut window_group_settings = Vec::new();
@@ -177,7 +200,10 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_frame_to_window_group(&self) -> rusqlite::Result<Vec<FrameToWindowGroupSim>> {
         let mut stmt = self.connection.prepare("SELECT * FROM dia_ms_ms_info")?;
         let frame_to_window_group_iter = stmt.query_map([], |row| {
-            Ok(FrameToWindowGroupSim::new(row.get(0)?, row.get(1)?))
+            Ok(FrameToWindowGroupSim::new(
+                row.get("frame")?,
+                row.get("window_group")?,
+            ))
         })?;
 
         let mut frame_to_window_groups: Vec<FrameToWindowGroupSim> = Vec::new();
@@ -189,16 +215,19 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     pub fn read_pasef_meta(&self) -> rusqlite::Result<Vec<PASEFMeta>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM pasef_meta")?;
+        let mut stmt = self.connection.prepare(
+            "SELECT frame, scan_start, scan_end, isolation_mz, isolation_width, collision_energy, precursor FROM pasef_meta"
+        )?;
         let pasef_meta_iter = stmt.query_map([], |row| {
             Ok(PASEFMeta::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?))
+                row.get("frame")?,
+                row.get("scan_start")?,
+                row.get("scan_end")?,
+                row.get("isolation_mz")?,
+                row.get("isolation_width")?,
+                row.get("collision_energy")?,
+                row.get("precursor")?,
+            ))
         })?;
 
         let mut pasef_meta: Vec<PASEFMeta> = Vec::new();
@@ -222,44 +251,7 @@ impl TimsTofSyntheticsDataHandle {
         )?;
 
         let peptides_iter = stmt.query_map([frame_max, frame_min], |row| {
-            let frame_occurrence_str: String = row.get(15)?;
-            let frame_abundance_str: String = row.get(16)?;
-
-            let frame_occurrence: Vec<u32> = match serde_json::from_str(&frame_occurrence_str) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        15,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            let frame_abundance: Vec<f32> = match serde_json::from_str(&frame_abundance_str) {
-                Ok(value) => value,
-                Err(_e) => vec![0.0; frame_occurrence.len()],
-            };
-
-            let frame_distribution =
-                SignalDistribution::new(0.0, 0.0, 0.0, frame_occurrence, frame_abundance);
-
-            Ok(PeptidesSim {
-                protein_id: row.get(0)?,
-                peptide_id: row.get(1)?,
-                sequence: PeptideSequence::new(row.get(2)?, row.get(1)?),
-                proteins: row.get(3)?,
-                decoy: row.get(4)?,
-                missed_cleavages: row.get(5)?,
-                n_term: row.get(6)?,
-                c_term: row.get(7)?,
-                mono_isotopic_mass: row.get(8)?,
-                retention_time: row.get(9)?,
-                events: row.get(10)?,
-                frame_start: row.get(13)?,
-                frame_end: row.get(14)?,
-                frame_distribution,
-            })
+            Self::peptide_from_row(row)
         })?;
 
         let mut peptides = Vec::new();
@@ -296,56 +288,7 @@ impl TimsTofSyntheticsDataHandle {
 
             let ions_iter = stmt.query_map(
                 rusqlite::params_from_iter(chunk.iter()),
-                |row| {
-                    let simulated_spectrum_str: String = row.get(8)?;
-                    let scan_occurrence_str: String = row.get(9)?;
-                    let scan_abundance_str: String = row.get(10)?;
-
-                    let simulated_spectrum: MzSpectrum = match serde_json::from_str(&simulated_spectrum_str) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            return Err(rusqlite::Error::FromSqlConversionFailure(
-                                8,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            ))
-                        }
-                    };
-
-                    let scan_occurrence: Vec<u32> = match serde_json::from_str(&scan_occurrence_str) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            return Err(rusqlite::Error::FromSqlConversionFailure(
-                                9,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            ))
-                        }
-                    };
-
-                    let scan_abundance: Vec<f32> = match serde_json::from_str(&scan_abundance_str) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            return Err(rusqlite::Error::FromSqlConversionFailure(
-                                10,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            ))
-                        }
-                    };
-
-                    Ok(IonSim::new(
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(5)?,
-                        row.get(6)?,
-                        simulated_spectrum,
-                        scan_occurrence,
-                        scan_abundance,
-                    ))
-                },
+                |row| Self::ion_from_row(row),
             )?;
 
             for ion in ions_iter {
@@ -383,41 +326,7 @@ impl TimsTofSyntheticsDataHandle {
 
             let fragment_ion_iter = stmt.query_map(
                 rusqlite::params_from_iter(chunk.iter()),
-                |row| {
-                    let indices_string: String = row.get(4)?;
-                    let values_string: String = row.get(5)?;
-
-                    let indices: Vec<u32> = match serde_json::from_str(&indices_string) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            return Err(rusqlite::Error::FromSqlConversionFailure(
-                                4,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            ))
-                        }
-                    };
-
-                    let values: Vec<f64> = match serde_json::from_str(&values_string) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            return Err(rusqlite::Error::FromSqlConversionFailure(
-                                5,
-                                rusqlite::types::Type::Text,
-                                Box::new(e),
-                            ))
-                        }
-                    };
-
-                    Ok(FragmentIonSim::new(
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        indices,
-                        values,
-                    ))
-                },
+                |row| Self::fragment_ion_from_row(row),
             )?;
 
             for fragment_ion in fragment_ion_iter {
@@ -432,39 +341,7 @@ impl TimsTofSyntheticsDataHandle {
         let mut stmt = self.connection.prepare("SELECT * FROM fragment_ions")?;
 
         let fragment_ion_sim_iter = stmt.query_map([], |row| {
-            let indices_string: String = row.get(4)?;
-            let values_string: String = row.get(5)?;
-
-            let indices: Vec<u32> = match serde_json::from_str(&indices_string) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        4,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            let values: Vec<f64> = match serde_json::from_str(&values_string) {
-                Ok(value) => value,
-                Err(e) => {
-                    return Err(rusqlite::Error::FromSqlConversionFailure(
-                        5,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    ))
-                }
-            };
-
-            Ok(FragmentIonSim::new(
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                indices,
-                values,
-            ))
+            Self::fragment_ion_from_row(row)
         })?;
 
         let mut fragment_ion_sim = Vec::new();

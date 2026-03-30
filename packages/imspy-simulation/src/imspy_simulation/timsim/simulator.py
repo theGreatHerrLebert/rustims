@@ -95,7 +95,7 @@ from .jobs.simulate_frame_distributions_emg import simulate_frame_distributions_
 from .jobs.simulate_precursor_spectra import simulate_precursor_spectra_sequence
 from .jobs.simulate_retention_time import simulate_retention_times
 from .jobs.dda_selection_scheme import simulate_dda_pasef_selection_scheme
-from .jobs.load_findings import load_findings
+from .jobs.load_findings import load_findings, FindingsResult
 from .jobs import checkpoint
 
 # Optional video generation import (requires imspy-vis)
@@ -289,8 +289,7 @@ def get_default_settings() -> dict:
         'existing_path': None,
         'from_findings': False,
         'findings_path': None,
-        'findings_format': 'diann',
-        'findings_fdr_threshold': 0.01,
+        'intensity_multiplier': 1.0,
         'use_bruker_sdk': True,
 
         # Peptide digestion
@@ -719,6 +718,12 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         help="Override findings_path from config (enables from_findings mode)"
     )
     parser.add_argument(
+        "--intensity-multiplier",
+        type=float,
+        default=None,
+        help="Multiply all findings intensities by this factor (e.g. 10 for 10x sensitivity, 0.1 for 10x reduction)"
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="Resume from the latest checkpoint (requires a previous run with enable_checkpoints=true)"
@@ -751,6 +756,8 @@ def main():
     if cli_args.findings_path:
         overrides['findings_path'] = cli_args.findings_path
         overrides['from_findings'] = True
+    if cli_args.intensity_multiplier is not None:
+        overrides['intensity_multiplier'] = cli_args.intensity_multiplier
     if cli_args.resume:
         overrides['enable_checkpoints'] = True
 
@@ -992,14 +999,13 @@ def main():
     # ----------------------------------------
     # Load from search engine findings
     # ----------------------------------------
+    findings_result = None
     if config.from_findings and not resume_after:
         logger.info(section_header("Loading Search Engine Findings", use_unicode))
         rt_lower = acquisition_builder.frame_table['time'].min()
         rt_upper = acquisition_builder.frame_table['time'].max()
-        peptides, proteins, ions = load_findings(
+        findings_result = load_findings(
             findings_path=config.findings_path,
-            findings_format=config.findings_format,
-            fdr_threshold=config.findings_fdr_threshold,
             rt_lower=rt_lower,
             rt_upper=rt_upper,
             mz_lower=acquisition_builder.tdf_writer.helper_handle.mz_lower,
@@ -1008,8 +1014,12 @@ def main():
             im_upper=acquisition_builder.tdf_writer.helper_handle.im_upper,
             upscale_factor=config.upscale_factor,
             inverse_mobility_std_mean=config.inverse_mobility_std_mean,
+            intensity_multiplier=config.intensity_multiplier,
             verbose=not config.silent_mode,
         )
+        peptides = findings_result.peptides
+        proteins = findings_result.proteins
+        ions = findings_result.ions  # None if charge was absent
 
     # ----------------------------------------
     # FASTA processing if not from existing or findings
@@ -1117,11 +1127,18 @@ def main():
             use_koina_model=rt_model,
         )
 
-        # Workaround for the correct column ordering
-        columns = list(peptides.columns)
-        # The last two might be 'events' and 'retention_time_gru_predictor' or some similar swap:
-        columns[-2], columns[-1] = columns[-1], columns[-2]
-        peptides = peptides[columns]
+    # Simulate RT for from_findings when not provided in the input
+    if config.from_findings and findings_result is not None and not findings_result.has_rt and not resume_after:
+        logger.info(section_header("Simulating Retention Times (not in findings)", use_unicode))
+        rt_model = config.rt_model or config.koina_rt_model
+        if rt_model:
+            logger.info(f"  Using RT model: {rt_model}")
+        peptides = simulate_retention_times(
+            peptides=peptides,
+            verbose=not config.silent_mode,
+            gradient_length=acquisition_builder.gradient_length,
+            use_koina_model=rt_model,
+        )
 
     # Save proteome checkpoint (after data source + RT, before frame distributions)
     if config.enable_checkpoints and not resume_after:
@@ -1181,10 +1198,18 @@ def main():
         acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
 
         # ------------------------------------------------------------------
-        # Further steps if not from existing simulation or findings
+        # Ion property simulation
         # ------------------------------------------------------------------
-        if not config.from_existing and not config.from_findings:
-            logger.info(section_header("Simulating Ion Properties", use_unicode))
+        # Determine which steps to run based on data source
+        need_charge = not config.from_existing and (
+            not config.from_findings or findings_result is None or not findings_result.has_charge
+        )
+        need_im = not config.from_existing and (
+            not config.from_findings or findings_result is None or not findings_result.has_im
+        )
+
+        if need_charge:
+            logger.info(section_header("Simulating Charge States", use_unicode))
             # JOB 5: Charge states
             ions = simulate_charge_states(
                 peptides=peptides,
@@ -1199,10 +1224,11 @@ def main():
                 verbose=not config.silent_mode,
             )
 
-            # need to drop duplicates by sequence and charge state for ions if proteome mix
             if config.proteome_mix:
                 ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
+        if need_im:
+            logger.info(section_header("Simulating Ion Mobilities", use_unicode))
             # JOB 6: Ion mobilities
             if config.ccs_model:
                 logger.info(f"  Using CCS model: {config.ccs_model}")
@@ -1217,14 +1243,8 @@ def main():
                 use_koina_model=config.ccs_model,
             )
 
-            # JOB 7: Precursor isotopic distributions
-            ions = simulate_precursor_spectra_sequence(
-                ions=ions,
-                num_threads=num_threads,
-                verbose=not config.silent_mode,
-            )
-        elif config.from_findings:
-            # Only need isotope patterns — charge and IM come from findings
+        if not config.from_existing:
+            # JOB 7: Precursor isotopic distributions (always needed)
             logger.info(section_header("Simulating Precursor Isotope Patterns", use_unicode))
             ions = simulate_precursor_spectra_sequence(
                 ions=ions,

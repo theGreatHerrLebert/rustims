@@ -1,7 +1,7 @@
 """Unit tests for timsim/jobs/load_findings.py.
 
-These tests use mock DataFrames that mimic parser output so they can run
-without real search-engine result files or a timsTOF reference dataset.
+Tests cover the standardized findings input format with required columns
+(protein, sequence, intensity) and optional columns (charge, rt, im).
 """
 
 import numpy as np
@@ -10,11 +10,14 @@ import pytest
 
 from imspy_simulation.timsim.jobs.load_findings import (
     load_findings,
-    _parse_findings,
-    _deduplicate_findings,
+    FindingsResult,
+    _read_findings,
+    _filter_sequences,
+    _deduplicate_with_charge,
+    _deduplicate_peptides_only,
     _build_ions,
-    _build_peptides,
-    _set_relative_abundance,
+    _build_peptides_from_ions,
+    _build_peptides_no_charge,
     _build_proteins,
 )
 
@@ -23,73 +26,216 @@ from imspy_simulation.timsim.jobs.load_findings import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_parsed_df(n: int = 10, seed: int = 42) -> pd.DataFrame:
-    """Create a mock DataFrame matching parser output format."""
+_VALID_SEQUENCES = [
+    "PEPTIDEC[UNIMOD:4]K",
+    "AAGLTFHEK",
+    "LVEQFHC[UNIMOD:4]K",
+    "DLGEEHFK",
+    "YICDNQDTISSK",
+    "SLHTLFGDK",
+    "LVNELTEFAK",
+    "AEFAEVSK",
+    "HLVDEPQNLIK",
+    "SHCIAEVENDEMPADLPSLAADFVESK",
+]
+
+
+def _make_full_df(n: int = 10, seed: int = 42) -> pd.DataFrame:
+    """All 6 columns present."""
     rng = np.random.RandomState(seed)
-    sequences = [f"PEPTIDE{i}C[UNIMOD:4]K" for i in range(n)]
+    sequences = [_VALID_SEQUENCES[i % len(_VALID_SEQUENCES)] for i in range(n)]
     return pd.DataFrame({
-        "sequence": [s.replace("[UNIMOD:4]", "") for s in sequences],
-        "sequence_modified": sequences,
+        "protein": [f"PROT_{i % 3}" for i in range(n)],
+        "sequence": sequences,
         "charge": rng.choice([2, 3, 4], size=n),
-        "rt": rng.uniform(10, 50, size=n),  # minutes
-        "inverse_mobility": rng.uniform(0.7, 1.3, size=n).astype(np.float32),
         "intensity": rng.uniform(1e3, 1e6, size=n),
-        "q_value": rng.uniform(0.0, 0.005, size=n),
-        "protein_id": [f"PROT_{i % 3}" for i in range(n)],
+        "rt": rng.uniform(600, 3000, size=n),
+        "im": rng.uniform(0.7, 1.3, size=n),
+    })
+
+
+def _make_minimal_df(n: int = 10, seed: int = 42) -> pd.DataFrame:
+    """Only required columns."""
+    rng = np.random.RandomState(seed)
+    sequences = [_VALID_SEQUENCES[i % len(_VALID_SEQUENCES)] for i in range(n)]
+    return pd.DataFrame({
+        "protein": [f"PROT_{i % 3}" for i in range(n)],
+        "sequence": sequences,
+        "intensity": rng.uniform(1e3, 1e6, size=n),
     })
 
 
 # ---------------------------------------------------------------------------
-# Tests for _parse_findings
+# Tests for _read_findings
 # ---------------------------------------------------------------------------
 
-class TestParseFindings:
-    def test_unknown_format_raises(self):
-        with pytest.raises(ValueError, match="Unknown findings format"):
-            _parse_findings("/nonexistent", "unknown_format", 0.01)
+class TestReadFindings:
+    def test_missing_required_columns_raises(self, tmp_path):
+        df = pd.DataFrame({"protein": ["P1"], "sequence": ["PEPTIDEK"]})
+        path = tmp_path / "bad.tsv"
+        df.to_csv(path, sep="\t", index=False)
 
+        with pytest.raises(ValueError, match="missing required columns"):
+            _read_findings(str(path))
 
-# ---------------------------------------------------------------------------
-# Tests for _deduplicate_findings
-# ---------------------------------------------------------------------------
+    def test_reads_tsv_full(self, tmp_path):
+        df = _make_full_df(5)
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
 
-class TestDeduplicateFindings:
-    def test_basic_deduplication(self):
-        # Two entries for the same precursor (same seq+charge)
+        result = _read_findings(str(path))
+        assert len(result) == 5
+        assert "charge" in result.columns
+        assert "rt" in result.columns
+        assert "im" in result.columns
+
+    def test_reads_csv(self, tmp_path):
+        df = _make_full_df(5)
+        path = tmp_path / "findings.csv"
+        df.to_csv(path, index=False)
+
+        result = _read_findings(str(path))
+        assert len(result) == 5
+
+    def test_reads_minimal_columns(self, tmp_path):
+        df = _make_minimal_df(5)
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = _read_findings(str(path))
+        assert len(result) == 5
+        assert "charge" not in result.columns
+        assert "rt" not in result.columns
+        assert "im" not in result.columns
+
+    def test_drops_rows_with_nan(self, tmp_path):
         df = pd.DataFrame({
-            "sequence": ["PEPTIDEK", "PEPTIDEK"],
-            "sequence_modified": ["PEPTIDEK", "PEPTIDEK"],
-            "charge": [2, 2],
-            "rt": [20.0, 22.0],
-            "rt_seconds": [1200.0, 1320.0],
-            "inverse_mobility": [1.0, 1.1],
-            "intensity": [1000.0, 2000.0],
-            "q_value": [0.001, 0.005],
-            "protein_id": ["PROT_A", "PROT_A"],
+            "protein": ["P1", "P2"],
+            "sequence": ["PEPTIDEK", "AAAK"],
+            "intensity": [1000.0, np.nan],
         })
-        _, ions_df = _deduplicate_findings(df, verbose=False)
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
 
-        assert len(ions_df) == 1
-        # Best q_value entry (0.001) should provide RT/IM
-        assert ions_df.iloc[0]["rt_seconds"] == 1200.0
-        assert ions_df.iloc[0]["inverse_mobility"] == 1.0
-        # Intensity should be summed
-        assert ions_df.iloc[0]["total_intensity"] == 3000.0
+        result = _read_findings(str(path))
+        assert len(result) == 1
+
+    def test_column_name_normalization(self, tmp_path):
+        df = pd.DataFrame({
+            " Protein ": ["P1"],
+            "SEQUENCE": ["PEPTIDEK"],
+            "Intensity": [1000.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = _read_findings(str(path))
+        assert len(result) == 1
+
+    def test_nan_in_optional_charge_drops_row_not_crash(self, tmp_path):
+        """Fix #2: NaN charge must be dropped before int cast."""
+        df = pd.DataFrame({
+            "protein": ["P1", "P2", "P3"],
+            "sequence": ["PEPTIDEK", "AAAK", "LLLK"],
+            "intensity": [1000.0, 2000.0, 3000.0],
+            "charge": [2.0, np.nan, 3.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = _read_findings(str(path))
+        assert len(result) == 2
+        assert result["charge"].dtype == int
+
+
+# ---------------------------------------------------------------------------
+# Tests for _filter_sequences
+# ---------------------------------------------------------------------------
+
+class TestFilterSequences:
+    def test_drops_invalid_sequences(self):
+        df = pd.DataFrame({
+            "protein": ["P1", "P2"],
+            "sequence": ["PEPTIDEK", "NOT123VALID"],
+            "intensity": [1000.0, 2000.0],
+        })
+        result = _filter_sequences(df, verbose=False)
+        assert len(result) == 1
+        assert result.iloc[0]["sequence"] == "PEPTIDEK"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _deduplicate_with_charge
+# ---------------------------------------------------------------------------
+
+class TestDeduplicateWithCharge:
+    def test_basic_deduplication(self):
+        df = pd.DataFrame({
+            "protein": ["PROT_A", "PROT_A"],
+            "sequence": ["PEPTIDEK", "PEPTIDEK"],
+            "charge": [2, 2],
+            "intensity": [1000.0, 2000.0],
+            "rt": [1200.0, 1320.0],
+            "im": [1.0, 1.1],
+        })
+        result = _deduplicate_with_charge(df, has_rt=True, has_im=True, verbose=False)
+
+        assert len(result) == 1
+        assert result.iloc[0]["intensity"] == 3000.0
+        expected_rt = (1200.0 * 1000 + 1320.0 * 2000) / 3000.0
+        assert result.iloc[0]["rt"] == pytest.approx(expected_rt, rel=1e-4)
 
     def test_different_charges_kept(self):
         df = pd.DataFrame({
+            "protein": ["PROT_A", "PROT_A"],
             "sequence": ["PEPTIDEK", "PEPTIDEK"],
-            "sequence_modified": ["PEPTIDEK", "PEPTIDEK"],
             "charge": [2, 3],
-            "rt": [20.0, 20.0],
-            "rt_seconds": [1200.0, 1200.0],
-            "inverse_mobility": [1.0, 0.8],
             "intensity": [1000.0, 500.0],
-            "q_value": [0.001, 0.002],
-            "protein_id": ["PROT_A", "PROT_A"],
+            "rt": [1200.0, 1200.0],
+            "im": [1.0, 0.8],
         })
-        _, ions_df = _deduplicate_findings(df, verbose=False)
-        assert len(ions_df) == 2
+        result = _deduplicate_with_charge(df, has_rt=True, has_im=True, verbose=False)
+        assert len(result) == 2
+
+    def test_without_rt_and_im(self):
+        df = pd.DataFrame({
+            "protein": ["PROT_A", "PROT_A"],
+            "sequence": ["PEPTIDEK", "PEPTIDEK"],
+            "charge": [2, 2],
+            "intensity": [1000.0, 2000.0],
+        })
+        result = _deduplicate_with_charge(df, has_rt=False, has_im=False, verbose=False)
+        assert len(result) == 1
+        assert result.iloc[0]["intensity"] == 3000.0
+        assert "rt" not in result.columns
+        assert "im" not in result.columns
+
+
+# ---------------------------------------------------------------------------
+# Tests for _deduplicate_peptides_only
+# ---------------------------------------------------------------------------
+
+class TestDeduplicatePeptidesOnly:
+    def test_merges_duplicates(self):
+        df = pd.DataFrame({
+            "protein": ["PROT_A", "PROT_A"],
+            "sequence": ["PEPTIDEK", "PEPTIDEK"],
+            "intensity": [1000.0, 2000.0],
+            "rt": [1200.0, 1320.0],
+        })
+        result = _deduplicate_peptides_only(df, has_rt=True, verbose=False)
+
+        assert len(result) == 1
+        assert result.iloc[0]["intensity"] == 3000.0
+
+    def test_keeps_different_sequences(self):
+        df = pd.DataFrame({
+            "protein": ["PROT_A", "PROT_B"],
+            "sequence": ["PEPTIDEK", "AAAK"],
+            "intensity": [1000.0, 500.0],
+        })
+        result = _deduplicate_peptides_only(df, has_rt=False, verbose=False)
+        assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -98,140 +244,147 @@ class TestDeduplicateFindings:
 
 class TestBuildIons:
     def test_filters_by_mz_and_im(self):
-        ions_df = pd.DataFrame({
-            "sequence_modified": ["PEPTIDEC[UNIMOD:4]K", "PEPTIDEC[UNIMOD:4]K"],
-            "sequence": ["PEPTIDECK", "PEPTIDECK"],
+        deduped = pd.DataFrame({
+            "sequence": ["PEPTIDEC[UNIMOD:4]K", "PEPTIDEC[UNIMOD:4]K"],
             "charge": [2, 2],
-            "rt_seconds": [1200.0, 1200.0],
-            "inverse_mobility": [0.5, 1.0],  # 0.5 should be filtered if im_lower=0.6
-            "total_intensity": [1000.0, 2000.0],
-            "protein_id": ["PROT_A", "PROT_A"],
+            "rt": [1200.0, 1200.0],
+            "im": [0.5, 1.0],
+            "intensity": [1000.0, 2000.0],
+            "protein": ["PROT_A", "PROT_A"],
         })
 
-        ions = _build_ions(ions_df, mz_lower=100, mz_upper=2000,
+        ions = _build_ions(deduped, mz_lower=100, mz_upper=2000,
                            im_lower=0.6, im_upper=1.5,
-                           inverse_mobility_std_mean=0.009, verbose=False)
+                           inverse_mobility_std_mean=0.009,
+                           has_im=True, verbose=False)
 
         assert len(ions) == 1
         assert ions.iloc[0]["inv_mobility_gru_predictor"] == pytest.approx(1.0, abs=0.01)
 
-    def test_drops_nan_inverse_mobility(self):
-        ions_df = pd.DataFrame({
-            "sequence_modified": ["PEPTIDEC[UNIMOD:4]K", "AAAC[UNIMOD:4]K"],
-            "sequence": ["PEPTIDECK", "AAACK"],
-            "charge": [2, 2],
-            "rt_seconds": [1200.0, 1200.0],
-            "inverse_mobility": [1.0, np.nan],
-            "total_intensity": [1000.0, 2000.0],
-            "protein_id": ["PROT_A", "PROT_A"],
+    def test_without_im(self):
+        deduped = pd.DataFrame({
+            "sequence": ["PEPTIDEC[UNIMOD:4]K"],
+            "charge": [2],
+            "intensity": [1000.0],
+            "protein": ["PROT_A"],
         })
 
-        ions = _build_ions(ions_df, mz_lower=100, mz_upper=2000,
+        ions = _build_ions(deduped, mz_lower=100, mz_upper=2000,
                            im_lower=0.6, im_upper=1.5,
-                           inverse_mobility_std_mean=0.009, verbose=False)
+                           inverse_mobility_std_mean=0.009,
+                           has_im=False, verbose=False)
 
         assert len(ions) == 1
+        assert "inv_mobility_gru_predictor" not in ions.columns
+
+    def test_relative_abundance(self):
+        deduped = pd.DataFrame({
+            "sequence": ["PEPK", "PEPK"],
+            "charge": [2, 3],
+            "intensity": [750.0, 250.0],
+            "protein": ["PROT_A", "PROT_A"],
+        })
+
+        ions = _build_ions(deduped, mz_lower=100, mz_upper=2000,
+                           im_lower=0.6, im_upper=1.5,
+                           inverse_mobility_std_mean=0.009,
+                           has_im=False, verbose=False)
+
+        assert len(ions) == 2
+        assert ions["relative_abundance"].sum() == pytest.approx(1.0)
+        assert ions.iloc[0]["relative_abundance"] == pytest.approx(0.75)
+        assert ions.iloc[1]["relative_abundance"] == pytest.approx(0.25)
 
 
 # ---------------------------------------------------------------------------
-# Tests for _build_peptides
+# Tests for _build_peptides_from_ions
 # ---------------------------------------------------------------------------
 
-class TestBuildPeptides:
+class TestBuildPeptidesFromIons:
     def test_groups_by_sequence(self):
+        deduped = pd.DataFrame({
+            "sequence": ["PEPK", "PEPK", "AAAK"],
+            "charge": [2, 3, 2],
+            "intensity": [1000.0, 500.0, 2000.0],
+            "protein": ["PROT_A", "PROT_A", "PROT_B"],
+            "rt": [1200.0, 1200.0, 1800.0],
+        })
         ions = pd.DataFrame({
-            "sequence_modified": ["PEPK", "PEPK", "AAAK"],
             "sequence": ["PEPK", "PEPK", "AAAK"],
             "charge": [2, 3, 2],
             "mz": [300.0, 200.0, 250.0],
-            "monoisotopic-mass": [600.0, 600.0, 500.0],
-            "observed_intensity": [1000.0, 500.0, 2000.0],
-            "inv_mobility_gru_predictor": [1.0, 0.8, 0.9],
-            "inv_mobility_gru_predictor_std": [0.009, 0.009, 0.009],
-            "retention_time_gru_predictor": [1200.0, 1200.0, 1800.0],
-            "protein_id": ["PROT_A", "PROT_A", "PROT_B"],
+            "relative_abundance": [0.667, 0.333, 1.0],
         })
 
-        peptides = _build_peptides(ions, upscale_factor=100_000, verbose=False)
+        peptides = _build_peptides_from_ions(ions, deduped,
+                                              upscale_factor=100_000,
+                                              intensity_multiplier=1.0,
+                                              has_rt=True, verbose=False)
 
         assert len(peptides) == 2
-        assert "peptide_id" in ions.columns  # should be added in-place
-        assert set(peptides["sequence"]) == {"PEPK", "AAAK"}
+        assert "peptide_id" in ions.columns
         assert all(peptides["events"] > 0)
+        assert "retention_time_gru_predictor" in peptides.columns
 
-    def test_peptide_id_mapped_to_ions(self):
-        ions = pd.DataFrame({
-            "sequence_modified": ["PEPK", "PEPK"],
-            "sequence": ["PEPK", "PEPK"],
-            "charge": [2, 3],
-            "mz": [300.0, 200.0],
-            "monoisotopic-mass": [600.0, 600.0],
-            "observed_intensity": [1000.0, 500.0],
-            "inv_mobility_gru_predictor": [1.0, 0.8],
-            "inv_mobility_gru_predictor_std": [0.009, 0.009],
-            "retention_time_gru_predictor": [1200.0, 1200.0],
-            "protein_id": ["PROT_A", "PROT_A"],
+    def test_no_orphan_peptides(self):
+        """Fix #1 regression: peptides must only include sequences with surviving ions."""
+        deduped = pd.DataFrame({
+            "sequence": ["PEPK", "AAAK"],
+            "charge": [2, 2],
+            "intensity": [1000.0, 2000.0],
+            "protein": ["PROT_A", "PROT_B"],
         })
-
-        peptides = _build_peptides(ions, upscale_factor=100_000, verbose=False)
-
-        # Both ions should map to the same peptide_id
-        assert ions["peptide_id"].nunique() == 1
-        assert ions["peptide_id"].iloc[0] == peptides["peptide_id"].iloc[0]
-
-
-# ---------------------------------------------------------------------------
-# Tests for _set_relative_abundance
-# ---------------------------------------------------------------------------
-
-class TestSetRelativeAbundance:
-    def test_sums_to_one_per_peptide(self):
+        # Simulate that AAAK was filtered out during ion building (e.g., mz out of range)
         ions = pd.DataFrame({
-            "sequence_modified": ["PEPK", "PEPK"],
-            "sequence": ["PEPK", "PEPK"],
-            "charge": [2, 3],
-            "mz": [300.0, 200.0],
-            "observed_intensity": [750.0, 250.0],
-            "inv_mobility_gru_predictor": [1.0, 0.8],
-            "inv_mobility_gru_predictor_std": [0.009, 0.009],
-            "retention_time_gru_predictor": [1200.0, 1200.0],
-            "protein_id": ["PROT_A", "PROT_A"],
-            "peptide_id": [0, 0],
-            "monoisotopic-mass": [600.0, 600.0],
-        })
-
-        peptides = pd.DataFrame({"peptide_id": [0], "sequence": ["PEPK"]})
-
-        result = _set_relative_abundance(ions, peptides)
-
-        assert "relative_abundance" in result.columns
-        assert result["relative_abundance"].sum() == pytest.approx(1.0)
-        assert result.iloc[0]["relative_abundance"] == pytest.approx(0.75)
-        assert result.iloc[1]["relative_abundance"] == pytest.approx(0.25)
-
-    def test_helper_columns_dropped(self):
-        ions = pd.DataFrame({
-            "sequence_modified": ["PEPK"],
             "sequence": ["PEPK"],
             "charge": [2],
             "mz": [300.0],
-            "observed_intensity": [1000.0],
-            "inv_mobility_gru_predictor": [1.0],
-            "inv_mobility_gru_predictor_std": [0.009],
-            "retention_time_gru_predictor": [1200.0],
-            "protein_id": ["PROT_A"],
-            "peptide_id": [0],
-            "monoisotopic-mass": [600.0],
+            "relative_abundance": [1.0],
         })
 
-        peptides = pd.DataFrame({"peptide_id": [0], "sequence": ["PEPK"]})
+        peptides = _build_peptides_from_ions(ions, deduped,
+                                              upscale_factor=100_000,
+                                              intensity_multiplier=1.0,
+                                              has_rt=False, verbose=False)
 
-        result = _set_relative_abundance(ions, peptides)
+        assert len(peptides) == 1
+        assert peptides.iloc[0]["sequence"] == "PEPK"
 
-        assert "sequence_modified" not in result.columns
-        assert "observed_intensity" not in result.columns
-        assert "retention_time_gru_predictor" not in result.columns
-        assert "protein_id" not in result.columns
+
+# ---------------------------------------------------------------------------
+# Tests for _build_peptides_no_charge
+# ---------------------------------------------------------------------------
+
+class TestBuildPeptidesNoCharge:
+    def test_each_row_is_peptide(self):
+        deduped = pd.DataFrame({
+            "sequence": ["PEPK", "AAAK"],
+            "intensity": [1000.0, 2000.0],
+            "protein": ["PROT_A", "PROT_B"],
+        })
+
+        peptides = _build_peptides_no_charge(deduped, upscale_factor=100_000,
+                                              intensity_multiplier=1.0,
+                                              has_rt=False, verbose=False)
+
+        assert len(peptides) == 2
+        # RT column always present (defaults to 0.0) for Rust column order compatibility
+        assert (peptides["retention_time_gru_predictor"] == 0.0).all()
+
+    def test_with_rt(self):
+        deduped = pd.DataFrame({
+            "sequence": ["PEPK"],
+            "intensity": [1000.0],
+            "protein": ["PROT_A"],
+            "rt": [1200.0],
+        })
+
+        peptides = _build_peptides_no_charge(deduped, upscale_factor=100_000,
+                                              intensity_multiplier=1.0,
+                                              has_rt=True, verbose=False)
+
+        assert len(peptides) == 1
+        assert "retention_time_gru_predictor" in peptides.columns
 
 
 # ---------------------------------------------------------------------------
@@ -252,3 +405,213 @@ class TestBuildProteins:
         assert len(proteins) == 2
         assert set(proteins["protein"]) == {"PROT_A", "PROT_B"}
         assert list(proteins.columns) == ["protein_id", "protein", "sequence", "events"]
+
+
+# ---------------------------------------------------------------------------
+# Integration tests for load_findings flags
+# ---------------------------------------------------------------------------
+
+class TestLoadFindingsFlags:
+    def test_full_input_flags(self, tmp_path):
+        df = _make_full_df(5)
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = load_findings(
+            str(path), rt_lower=0, rt_upper=5000,
+            mz_lower=100, mz_upper=2000,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+        )
+
+        assert isinstance(result, FindingsResult)
+        assert result.has_rt is True
+        assert result.has_charge is True
+        assert result.has_im is True
+        assert result.ions is not None
+        assert len(result.peptides) > 0
+        assert len(result.proteins) > 0
+
+    def test_minimal_input_flags(self, tmp_path):
+        df = _make_minimal_df(5)
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = load_findings(
+            str(path), rt_lower=0, rt_upper=5000,
+            mz_lower=100, mz_upper=2000,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+        )
+
+        assert result.has_rt is False
+        assert result.has_charge is False
+        assert result.has_im is False
+        assert result.ions is None
+        assert len(result.peptides) > 0
+
+    def test_charge_without_im(self, tmp_path):
+        df = _make_minimal_df(5)
+        df["charge"] = [2, 3, 2, 3, 4]
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = load_findings(
+            str(path), rt_lower=0, rt_upper=5000,
+            mz_lower=100, mz_upper=2000,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+        )
+
+        assert result.has_charge is True
+        assert result.has_im is False
+        assert result.ions is not None
+        assert "inv_mobility_gru_predictor" not in result.ions.columns
+
+    def test_im_without_charge_ignored(self, tmp_path):
+        """IM without charge is meaningless — should be ignored."""
+        df = _make_minimal_df(5)
+        df["im"] = [1.0, 1.1, 0.9, 1.2, 0.8]
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = load_findings(
+            str(path), rt_lower=0, rt_upper=5000,
+            mz_lower=100, mz_upper=2000,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+        )
+
+        assert result.has_charge is False
+        assert result.has_im is False
+        assert result.ions is None
+
+
+# ---------------------------------------------------------------------------
+# Regression tests
+# ---------------------------------------------------------------------------
+
+class TestRegressions:
+    def test_no_orphan_peptides_after_mz_filtering(self, tmp_path):
+        """Fix #1: peptides with no surviving ions must be pruned."""
+        # One peptide whose ions fall inside mz range, one whose fall outside
+        df = pd.DataFrame({
+            "protein": ["P1", "P2"],
+            "sequence": ["PEPTIDEC[UNIMOD:4]K", "AAGLTFHEK"],
+            "charge": [2, 2],
+            "intensity": [1000.0, 2000.0],
+            "rt": [1200.0, 1800.0],
+            "im": [1.0, 1.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        result = load_findings(
+            str(path), rt_lower=0, rt_upper=5000,
+            # Tight mz range that only includes one peptide
+            mz_lower=490, mz_upper=550,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+        )
+
+        # Every peptide should have at least one ion
+        peptide_seqs = set(result.peptides["sequence"])
+        ion_seqs = set(result.ions["sequence"])
+        assert peptide_seqs == ion_seqs
+
+    def test_nan_charge_does_not_crash(self, tmp_path):
+        """Fix #2: NaN in optional charge must be dropped before int cast."""
+        df = pd.DataFrame({
+            "protein": ["P1", "P2", "P3"],
+            "sequence": ["PEPTIDEC[UNIMOD:4]K", "AAGLTFHEK", "DLGEEHFK"],
+            "intensity": [1000.0, 2000.0, 3000.0],
+            "charge": [2.0, np.nan, 3.0],
+            "rt": [600.0, 1200.0, 1800.0],
+            "im": [1.0, 1.0, 1.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        # Should not raise — the NaN row is dropped
+        result = load_findings(
+            str(path), rt_lower=0, rt_upper=5000,
+            mz_lower=100, mz_upper=2000,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+        )
+        assert result.has_charge is True
+        assert len(result.ions) == 2
+
+    def test_all_invalid_sequences_raises(self, tmp_path):
+        """Fix #3: fully invalid input raises a clear error."""
+        df = pd.DataFrame({
+            "protein": ["P1", "P2"],
+            "sequence": ["123INVALID", "ALSO!!!BAD"],
+            "intensity": [1000.0, 2000.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        with pytest.raises(ValueError, match="No valid rows remain"):
+            load_findings(
+                str(path), rt_lower=0, rt_upper=5000,
+                mz_lower=100, mz_upper=2000,
+                im_lower=0.5, im_upper=1.5,
+                upscale_factor=100_000,
+                inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+            )
+
+    def test_all_ions_filtered_raises(self, tmp_path):
+        """Fix #3: all ions outside mz range raises a clear error."""
+        df = pd.DataFrame({
+            "protein": ["P1"],
+            "sequence": ["PEPTIDEC[UNIMOD:4]K"],
+            "charge": [2],
+            "intensity": [1000.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        with pytest.raises(ValueError, match="No ions survive"):
+            load_findings(
+                str(path), rt_lower=0, rt_upper=5000,
+                # mz range that excludes everything
+                mz_lower=10, mz_upper=20,
+                im_lower=0.5, im_upper=1.5,
+                upscale_factor=100_000,
+                inverse_mobility_std_mean=0.009, intensity_multiplier=1.0, verbose=False,
+            )
+
+    def test_intensity_multiplier_changes_events(self, tmp_path):
+        """Intensity multiplier must actually scale event counts."""
+        df = pd.DataFrame({
+            "protein": ["P1", "P2"],
+            "sequence": ["PEPTIDEC[UNIMOD:4]K", "AAGLTFHEK"],
+            "charge": [2, 2],
+            "intensity": [1000.0, 2000.0],
+        })
+        path = tmp_path / "findings.tsv"
+        df.to_csv(path, sep="\t", index=False)
+
+        kwargs = dict(
+            rt_lower=0, rt_upper=5000,
+            mz_lower=100, mz_upper=2000,
+            im_lower=0.5, im_upper=1.5,
+            upscale_factor=100_000,
+            inverse_mobility_std_mean=0.009, verbose=False,
+        )
+
+        r1 = load_findings(str(path), intensity_multiplier=1.0, **kwargs)
+        r10 = load_findings(str(path), intensity_multiplier=10.0, **kwargs)
+
+        events_1x = r1.peptides["events"].sum()
+        events_10x = r10.peptides["events"].sum()
+
+        assert events_10x > events_1x
+        assert events_10x == pytest.approx(events_1x * 10, rel=0.01)

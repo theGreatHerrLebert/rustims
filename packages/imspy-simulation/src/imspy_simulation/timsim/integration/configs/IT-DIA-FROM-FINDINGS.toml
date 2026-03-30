@@ -42,8 +42,6 @@ use_bruker_sdk = true
 apply_fragmentation = true
 from_existing = false
 from_findings = true
-findings_format = "fragpipe"
-findings_fdr_threshold = 0.01
 silent_mode = false
 
 # -----------------------------------------------------------------------------
