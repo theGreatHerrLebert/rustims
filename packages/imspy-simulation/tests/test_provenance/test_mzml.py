@@ -454,3 +454,303 @@ def test_verify_cli_mzml_tamper_returns_5(tmp_path):
     mzml.write_text(text)
     rc = cli_main([str(mzml)])
     assert rc == EXIT_HASH_MISMATCH
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round-9: every binary array must be hashed (not just mz/intensity)
+# ---------------------------------------------------------------------------
+#
+# Previously the canonicalizer dropped any array whose role was not
+# "m/z" or "intensity". That meant ion-mobility, charge, pressure,
+# wavelength, and any other consumer-visible binary array could be
+# tampered without affecting the hash. The fix hashes every array
+# with a stable role label, sorted by role for determinism.
+
+
+def _build_mzml_with_extra_array(
+    tmp_path: Path,
+    *,
+    name: str,
+    extra_role_accession: str,
+    extra_role_name: str,
+    extra_array_values: list[float],
+) -> Path:
+    """Build a minimal mzml with one MS1 spectrum that has THREE binary arrays:
+    m/z, intensity, and an extra array with the given role accession.
+    """
+    import base64
+
+    mz_bytes = b"".join(struct.pack("<d", v) for v in [100.0, 200.0, 300.0])
+    int_bytes = b"".join(struct.pack("<d", v) for v in [1000.0, 2000.0, 3000.0])
+    extra_bytes = b"".join(struct.pack("<d", v) for v in extra_array_values)
+
+    mz_b64 = base64.b64encode(mz_bytes).decode("ascii")
+    int_b64 = base64.b64encode(int_bytes).decode("ascii")
+    extra_b64 = base64.b64encode(extra_bytes).decode("ascii")
+
+    mzml = f'''<?xml version="1.0" encoding="utf-8"?>
+<mzML xmlns="http://psi.hupo.org/ms/mzml" version="1.1.0" id="{name}">
+  <run id="r">
+    <spectrumList count="1">
+      <spectrum id="scan=1" index="0" defaultArrayLength="3">
+        <cvParam cvRef="MS" accession="MS:1000511" name="ms level" value="1"/>
+        <cvParam cvRef="MS" accession="MS:1000130" name="positive scan"/>
+        <binaryDataArrayList count="3">
+          <binaryDataArray encodedLength="{len(mz_b64)}">
+            <cvParam cvRef="MS" accession="MS:1000523" name="64-bit float"/>
+            <cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>
+            <cvParam cvRef="MS" accession="MS:1000514" name="m/z array"/>
+            <binary>{mz_b64}</binary>
+          </binaryDataArray>
+          <binaryDataArray encodedLength="{len(int_b64)}">
+            <cvParam cvRef="MS" accession="MS:1000523" name="64-bit float"/>
+            <cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>
+            <cvParam cvRef="MS" accession="MS:1000515" name="intensity array"/>
+            <binary>{int_b64}</binary>
+          </binaryDataArray>
+          <binaryDataArray encodedLength="{len(extra_b64)}">
+            <cvParam cvRef="MS" accession="MS:1000523" name="64-bit float"/>
+            <cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>
+            <cvParam cvRef="MS" accession="{extra_role_accession}" name="{extra_role_name}"/>
+            <binary>{extra_b64}</binary>
+          </binaryDataArray>
+        </binaryDataArrayList>
+      </spectrum>
+    </spectrumList>
+  </run>
+</mzML>
+'''
+    p = tmp_path / f"{name}.mzML"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(mzml, encoding="utf-8")
+    return p
+
+
+def test_canonicalize_mzml_detects_ion_mobility_array_tamper(tmp_path):
+    """The reviewer-round-9 HIGH bug: tampering an ion-mobility array
+    must NOT go undetected. Before the fix, the canonicalizer silently
+    dropped any binary array whose role was not m/z or intensity.
+    """
+    p1 = _build_mzml_with_extra_array(
+        tmp_path / "a",
+        name="clean",
+        extra_role_accession="MS:1003008",
+        extra_role_name="raw inverse reduced ion mobility array",
+        extra_array_values=[0.85, 0.90, 0.95],
+    )
+    p2 = _build_mzml_with_extra_array(
+        tmp_path / "b",
+        name="tampered",
+        extra_role_accession="MS:1003008",
+        extra_role_name="raw inverse reduced ion mobility array",
+        extra_array_values=[0.85, 0.90, 99.99],  # last value tampered
+    )
+    h1 = canonicalize_mzml(p1)
+    h2 = canonicalize_mzml(p2)
+    assert h1 != h2, (
+        "ion mobility array tamper went undetected — canonicalizer is "
+        "still dropping non-mz/intensity binary arrays"
+    )
+
+
+def test_canonicalize_mzml_detects_charge_array_tamper(tmp_path):
+    p1 = _build_mzml_with_extra_array(
+        tmp_path / "a",
+        name="clean",
+        extra_role_accession="MS:1000516",
+        extra_role_name="charge array",
+        extra_array_values=[1.0, 2.0, 3.0],
+    )
+    p2 = _build_mzml_with_extra_array(
+        tmp_path / "b",
+        name="tampered",
+        extra_role_accession="MS:1000516",
+        extra_role_name="charge array",
+        extra_array_values=[1.0, 2.0, 9.0],
+    )
+    assert canonicalize_mzml(p1) != canonicalize_mzml(p2)
+
+
+def test_canonicalize_mzml_detects_unknown_role_array_tamper(tmp_path):
+    """Even an array with an accession we do not have in our known set
+    must be hashed (under an "unknown:..." label) so a tamper is caught.
+    """
+    p1 = _build_mzml_with_extra_array(
+        tmp_path / "a",
+        name="clean",
+        extra_role_accession="MS:9999999",  # not in our known set
+        extra_role_name="hypothetical future array",
+        extra_array_values=[42.0, 43.0, 44.0],
+    )
+    p2 = _build_mzml_with_extra_array(
+        tmp_path / "b",
+        name="tampered",
+        extra_role_accession="MS:9999999",
+        extra_role_name="hypothetical future array",
+        extra_array_values=[42.0, 43.0, 99.0],
+    )
+    assert canonicalize_mzml(p1) != canonicalize_mzml(p2)
+
+
+def test_canonicalize_mzml_detects_added_unknown_array(tmp_path):
+    """Adding an unknown-role array changes the hash via the array_count tag."""
+    p_minimal = make_minimal_mzml(tmp_path / "min")
+    p_with_extra = _build_mzml_with_extra_array(
+        tmp_path / "ext",
+        name="with_extra",
+        extra_role_accession="MS:1003008",
+        extra_role_name="raw inverse reduced ion mobility array",
+        extra_array_values=[0.85, 0.90, 0.95],
+    )
+    # Both have m/z and intensity arrays in spectrum 0; the second has
+    # an extra ion-mobility array. The hashes must differ.
+    assert canonicalize_mzml(p_minimal) != canonicalize_mzml(p_with_extra)
+
+
+def test_canonicalize_mzml_array_order_invariance(tmp_path):
+    """If two converters write the same arrays in different document
+    order, the canonical form must be invariant. The canonicalizer
+    sorts by role label."""
+    import base64
+
+    mz_bytes = b"".join(struct.pack("<d", v) for v in [100.0, 200.0])
+    int_bytes = b"".join(struct.pack("<d", v) for v in [1000.0, 2000.0])
+    mz_b64 = base64.b64encode(mz_bytes).decode("ascii")
+    int_b64 = base64.b64encode(int_bytes).decode("ascii")
+
+    def build(arrays_in_order):
+        return f'''<?xml version="1.0" encoding="utf-8"?>
+<mzML xmlns="http://psi.hupo.org/ms/mzml" version="1.1.0">
+  <run id="r"><spectrumList count="1">
+    <spectrum id="scan=1" index="0" defaultArrayLength="2">
+      <cvParam cvRef="MS" accession="MS:1000511" name="ms level" value="1"/>
+      <cvParam cvRef="MS" accession="MS:1000130" name="positive scan"/>
+      <binaryDataArrayList count="2">
+        {arrays_in_order}
+      </binaryDataArrayList>
+    </spectrum>
+  </spectrumList></run>
+</mzML>
+'''
+
+    mz_array = (
+        f'<binaryDataArray encodedLength="{len(mz_b64)}">'
+        f'<cvParam cvRef="MS" accession="MS:1000523" name="64-bit float"/>'
+        f'<cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>'
+        f'<cvParam cvRef="MS" accession="MS:1000514" name="m/z array"/>'
+        f'<binary>{mz_b64}</binary>'
+        f'</binaryDataArray>'
+    )
+    int_array = (
+        f'<binaryDataArray encodedLength="{len(int_b64)}">'
+        f'<cvParam cvRef="MS" accession="MS:1000523" name="64-bit float"/>'
+        f'<cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>'
+        f'<cvParam cvRef="MS" accession="MS:1000515" name="intensity array"/>'
+        f'<binary>{int_b64}</binary>'
+        f'</binaryDataArray>'
+    )
+
+    p1 = tmp_path / "mz_first.mzML"
+    p1.write_text(build(mz_array + int_array))
+    p2 = tmp_path / "int_first.mzML"
+    p2.write_text(build(int_array + mz_array))
+
+    assert p1.read_text() != p2.read_text()  # sanity: bytes differ
+    assert canonicalize_mzml(p1) == canonicalize_mzml(p2)
+
+
+def test_canonicalize_mzml_rejects_array_with_no_role_cvparam(tmp_path):
+    """A binaryDataArray with NO content-role cvParam (only encoding ones)
+    must raise — we never silently produce a hash that ignores it."""
+    import base64
+
+    mz_bytes = b"".join(struct.pack("<d", v) for v in [100.0, 200.0])
+    mz_b64 = base64.b64encode(mz_bytes).decode("ascii")
+    bad_mzml = f'''<?xml version="1.0" encoding="utf-8"?>
+<mzML xmlns="http://psi.hupo.org/ms/mzml" version="1.1.0">
+  <run id="r"><spectrumList count="1">
+    <spectrum id="scan=1" index="0" defaultArrayLength="2">
+      <cvParam cvRef="MS" accession="MS:1000511" name="ms level" value="1"/>
+      <cvParam cvRef="MS" accession="MS:1000130" name="positive scan"/>
+      <binaryDataArrayList count="1">
+        <binaryDataArray encodedLength="{len(mz_b64)}">
+          <cvParam cvRef="MS" accession="MS:1000523" name="64-bit float"/>
+          <cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>
+          <binary>{mz_b64}</binary>
+        </binaryDataArray>
+      </binaryDataArrayList>
+    </spectrum>
+  </spectrumList></run>
+</mzML>
+'''
+    p = tmp_path / "bad.mzML"
+    p.write_text(bad_mzml)
+    with pytest.raises(MalformedSidecar, match="no cvParam identifying"):
+        canonicalize_mzml(p)
+
+
+# ---------------------------------------------------------------------------
+# Reviewer round-9: sidecar discovery uses conventional pairing first
+# ---------------------------------------------------------------------------
+
+
+def test_verify_two_mzml_bundles_in_same_directory(tmp_path):
+    """Two signed bundles can coexist in the same directory: the verifier
+    uses the conventional {sidecar_stem}.mzML pairing rather than
+    requiring the directory to contain a unique mzML."""
+    # First bundle.
+    mzml_a = make_minimal_mzml(tmp_path, name="sample_a")
+    cfg_a = tmp_path / "sample_a.toml"
+    cfg_a.write_bytes(b'[experiment]\nexperiment_name = "sample_a"\n')
+    key_dir = tmp_path / "keys"
+    write_keypair(generate_keypair(), key_dir)
+    sidecar_a = sign_mzml_output(
+        mzml_path=mzml_a,
+        config_path=cfg_a,
+        experiment_name="sample_a",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+
+    # Second bundle in the SAME directory.
+    mzml_b = make_minimal_mzml(tmp_path, name="sample_b", n_ms1_peaks=5)
+    cfg_b = tmp_path / "sample_b.toml"
+    cfg_b.write_bytes(b'[experiment]\nexperiment_name = "sample_b"\n')
+    sidecar_b = sign_mzml_output(
+        mzml_path=mzml_b,
+        config_path=cfg_b,
+        experiment_name="sample_b",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+
+    # Both sidecars must verify cleanly. Before the fix, both would
+    # fail because _find_unique_mzml(parent) saw multiple mzml files.
+    result_a = verify_sidecar(sidecar_a)
+    result_b = verify_sidecar(sidecar_b)
+    assert result_a.overall_ok, [(c.name, c.status) for c in result_a.checks]
+    assert result_b.overall_ok, [(c.name, c.status) for c in result_b.checks]
+
+
+def test_verify_falls_back_to_unique_when_convention_misses(tmp_path):
+    """If the sidecar's conventional pairing does not exist (e.g. the
+    user renamed the mzml after signing) but only one mzml is present,
+    the verifier still finds it via the uniqueness fallback."""
+    mzml = make_minimal_mzml(tmp_path, name="original")
+    cfg = tmp_path / "original.toml"
+    cfg.write_bytes(b'[experiment]\nexperiment_name = "original"\n')
+    key_dir = tmp_path / "keys"
+    write_keypair(generate_keypair(), key_dir)
+    sidecar = sign_mzml_output(
+        mzml_path=mzml,
+        config_path=cfg,
+        experiment_name="original",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+
+    # User renames the mzml. The conventional pairing
+    # original.provenance.json -> original.mzML no longer exists,
+    # but renamed.mzML is the only mzml in the dir, so the fallback
+    # finds it.
+    renamed = mzml.with_name("renamed.mzML")
+    mzml.rename(renamed)
+    result = verify_sidecar(sidecar)
+    assert result.overall_ok

@@ -712,6 +712,41 @@ def _find_unique_mzml(search_root: Path) -> Path | None:
     return None
 
 
+def _find_mzml_for_sidecar(sidecar_path: Path) -> Path | None:
+    """Find the mzml that this sidecar attests.
+
+    First tries the conventional pairing (a sidecar at
+    ``foo.provenance.json`` looks for ``foo.mzML`` in the same
+    directory, case-insensitive on the suffix). If that does not
+    resolve, falls back to ``_find_unique_mzml`` for legacy bundles
+    that did not use the convention. Both lookups are independent of
+    the sidecar payload.
+
+    The conventional-pairing-first behavior matters when several
+    bundles share the same directory: ``sample_a.provenance.json``
+    must find ``sample_a.mzML`` even when ``sample_b.mzML`` is also
+    present. The previous uniqueness-only logic incorrectly failed
+    in that layout.
+    """
+    name = sidecar_path.name
+    if name.endswith(".provenance.json"):
+        stem = name[: -len(".provenance.json")]
+    else:
+        stem = sidecar_path.stem
+
+    parent = sidecar_path.parent
+    # Try the canonical .mzML extension and the lower-case variant.
+    # We do not try every casing because most filesystems are
+    # case-sensitive and the sign-side convention is exact.
+    for suffix in (".mzML", ".mzml"):
+        candidate = parent / (stem + suffix)
+        if candidate.is_file():
+            return candidate
+
+    # Fallback for legacy / non-conventional layouts.
+    return _find_unique_mzml(parent)
+
+
 def _verify_mzml_sidecar(
     sidecar_path: Path,
     sidecar: MzmlSidecar,
@@ -770,12 +805,16 @@ def _verify_mzml_sidecar(
                 f"embedded in the sidecar."
             )
 
-    # Discover the .mzML file independently of the payload.
-    save_path = sidecar_path.parent
-    mzml_path = _find_unique_mzml(save_path)
+    # Discover the .mzML file independently of the payload. Try the
+    # conventional {sidecar_stem}.mzML pairing first so co-located
+    # bundles in the same directory verify cleanly; fall back to
+    # uniqueness only when the convention does not resolve.
+    mzml_path = _find_mzml_for_sidecar(sidecar_path)
     if mzml_path is None:
         raise MissingArtifact(
-            f"could not find a unique .mzML file near {save_path}"
+            f"could not find an .mzML file for sidecar {sidecar_path.name} "
+            f"(looked for {sidecar_path.parent / (sidecar_path.name.replace('.provenance.json', '.mzML'))} "
+            f"and any unique sibling .mzML)"
         )
 
     # Recompute the mzml content hash.

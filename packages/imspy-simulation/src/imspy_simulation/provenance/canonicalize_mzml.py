@@ -94,11 +94,53 @@ _CV = {
     "numpress_linear":  "MS:1002312",
     "numpress_pic":     "MS:1002313",
     "numpress_slof":    "MS:1002314",
-    "mz_array":         "MS:1000514",
-    "intensity_array":  "MS:1000515",
-    "ion_mobility":     "MS:1002476",  # ion mobility drift time
-    "ion_mobility_alt": "MS:1003006",  # inverse reduced ion mobility
+    "ion_mobility":     "MS:1002476",  # ion mobility drift time (scalar cvParam)
+    "ion_mobility_alt": "MS:1003006",  # inverse reduced ion mobility (scalar cvParam)
 }
+
+# PSI-MS accessions for binary-data-array roles. Anything that names
+# what kind of values an array contains belongs here. The canonical
+# form labels each array with its accession (or "unknown:..." if it is
+# not in this set), so EVERY array in a spectrum is hashed — not just
+# m/z and intensity. The previous v0 design silently dropped any array
+# whose role was not in the recognized set, which made ion-mobility,
+# charge, pressure, wavelength, and similar arrays invisible to tamper
+# detection.
+_KNOWN_ARRAY_ROLE_ACCESSIONS = frozenset({
+    "MS:1000514",  # m/z array
+    "MS:1000515",  # intensity array
+    "MS:1000516",  # charge array
+    "MS:1000517",  # signal-to-noise array
+    "MS:1000595",  # time array
+    "MS:1000617",  # wavelength array
+    "MS:1000786",  # non-standard data array
+    "MS:1000820",  # flow rate array
+    "MS:1000821",  # pressure array
+    "MS:1000822",  # temperature array
+    "MS:1002476",  # mean ion mobility array (drift time form)
+    "MS:1002477",  # mean ion mobility array (other forms)
+    "MS:1002478",  # mean charge array
+    "MS:1003006",  # mean inverse reduced ion mobility array
+    "MS:1003007",  # raw ion mobility array
+    "MS:1003008",  # raw inverse reduced ion mobility array
+    "MS:1003153",  # noise array
+})
+
+# PSI-MS accessions that describe HOW an array is encoded, not what it
+# contains. We exclude these when picking a role-identifying cvParam,
+# so a binaryDataArray with no recognized role still picks up the
+# right cvParam (the one that names its content).
+_KNOWN_ENCODING_ACCESSIONS = frozenset({
+    "MS:1000519",  # 32-bit integer
+    "MS:1000521",  # 32-bit float
+    "MS:1000522",  # 64-bit integer
+    "MS:1000523",  # 64-bit float
+    "MS:1000574",  # zlib compression
+    "MS:1000576",  # no compression
+    "MS:1002312",  # numpress linear
+    "MS:1002313",  # numpress pic
+    "MS:1002314",  # numpress slof
+})
 
 # Streaming chunk size for the file hasher.
 _HASH_CHUNK = 1 << 20  # 1 MiB
@@ -212,13 +254,33 @@ def _array_precision_tag(bda: ET.Element) -> bytes:
     return b"??"
 
 
-def _array_role(bda: ET.Element) -> str | None:
-    """Return 'mz', 'intensity', or None for a binaryDataArray's role."""
-    if _cv_present(bda, _CV["mz_array"]):
-        return "mz"
-    if _cv_present(bda, _CV["intensity_array"]):
-        return "intensity"
-    return None
+def _array_role_label(bda: ET.Element) -> str:
+    """Return a stable role label for a binaryDataArray.
+
+    The label is the PSI-MS accession of a cvParam that identifies the
+    array's content (not its encoding). Pass 1 looks for any accession
+    in the curated ``_KNOWN_ARRAY_ROLE_ACCESSIONS`` set. Pass 2 falls
+    back to any non-encoding cvParam, prefixed with ``"unknown:"`` so
+    the canonical form still distinguishes it. Pass 3 raises if there
+    is no usable cvParam at all.
+
+    Crucially: this function NEVER returns None for an array that
+    happens to be a role we did not anticipate. The whole bug the
+    previous design had was silently dropping such arrays.
+    """
+    # Pass 1: known role accessions.
+    for cv in bda.findall("ms:cvParam", _NS):
+        acc = cv.get("accession", "")
+        if acc in _KNOWN_ARRAY_ROLE_ACCESSIONS:
+            return acc
+    # Pass 2: any cvParam that is not an encoding-meta cvParam.
+    for cv in bda.findall("ms:cvParam", _NS):
+        acc = cv.get("accession", "")
+        if acc and acc not in _KNOWN_ENCODING_ACCESSIONS:
+            return f"unknown:{acc}"
+    raise MalformedSidecar(
+        "binaryDataArray has no cvParam identifying its array role"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -338,22 +400,17 @@ def _spectrum_record(spectrum: ET.Element) -> bytes:
     mob = _extract_ion_mobility(spectrum)
     precursor = _extract_precursor(spectrum)
 
-    # Walk the binary arrays and identify the m/z and intensity arrays.
-    # We tolerate any order; we record per-array hashes by role.
-    mz_hash = b""
-    mz_count = b""
-    mz_precision = b""
-    intensity_hash = b""
-    intensity_count = b""
-    intensity_precision = b""
-
+    # Walk EVERY binary array in the spectrum and collect a stable
+    # tuple per array. The previous implementation hashed only m/z
+    # and intensity, silently dropping ion-mobility / charge / time /
+    # pressure / wavelength / etc. arrays — meaning a tampered ion
+    # mobility array would not change the hash. The fix is to hash
+    # every array with a role label derived from its cvParam accession.
+    arrays: list[tuple[str, bytes, int, bytes]] = []
     bdal = spectrum.find("ms:binaryDataArrayList", _NS)
     if bdal is not None:
         for bda in bdal.findall("ms:binaryDataArray", _NS):
-            role = _array_role(bda)
-            if role is None:
-                # Unknown array role (e.g. ion mobility array). Skip in v0.
-                continue
+            role_label = _array_role_label(bda)  # never None
             payload = _decode_binary_array(bda)
             tag = _array_precision_tag(bda)
             if tag == b"f64":
@@ -364,14 +421,14 @@ def _spectrum_record(spectrum: ET.Element) -> bytes:
                 width = 0
             count = (len(payload) // width) if width else 0
             digest = hashlib.sha256(payload).hexdigest().encode("ascii")
-            if role == "mz":
-                mz_hash = digest
-                mz_count = str(count).encode("ascii")
-                mz_precision = tag
-            elif role == "intensity":
-                intensity_hash = digest
-                intensity_count = str(count).encode("ascii")
-                intensity_precision = tag
+            arrays.append((role_label, tag, count, digest))
+
+    # Sort by role label so the canonical form is invariant under
+    # binaryDataArray document order. Two arrays with identical role
+    # labels in the same spectrum would be a malformed mzml; we keep
+    # them adjacent and let the count tag flag the abnormality, but
+    # do not raise (the canonical form stays deterministic either way).
+    arrays.sort(key=lambda t: t[0])
 
     parts: list[bytes] = []
     def emit(key: bytes, value: bytes) -> None:
@@ -398,12 +455,16 @@ def _spectrum_record(spectrum: ET.Element) -> bytes:
         emit(b"prec_selected", _ieee754_hex(precursor["selected_mz"]) if "selected_mz" in precursor else b"")
         emit(b"prec_charge", str(precursor["charge"]).encode("ascii") if "charge" in precursor else b"")
 
-    emit(b"mz_count", mz_count)
-    emit(b"mz_precision", mz_precision)
-    emit(b"mz_hash", mz_hash)
-    emit(b"int_count", intensity_count)
-    emit(b"int_precision", intensity_precision)
-    emit(b"int_hash", intensity_hash)
+    # Emit ALL arrays in role-sorted order. The array_count up front
+    # guards against truncation: an attacker who removes one array
+    # from the bytes after this header would also have to fix the
+    # count, which is itself in the hash stream.
+    emit(b"array_count", str(len(arrays)).encode("ascii"))
+    for role, prec, count, digest in arrays:
+        emit(b"array_role", role.encode("ascii"))
+        emit(b"array_precision", prec)
+        emit(b"array_value_count", str(count).encode("ascii"))
+        emit(b"array_hash", digest)
 
     return b"".join(parts) + RS
 
