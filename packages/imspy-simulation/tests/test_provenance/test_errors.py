@@ -485,6 +485,59 @@ def test_malformed_signature_raises_malformed_sidecar(tmp_path):
         verify_sidecar(sidecar)
 
 
+def test_verify_cli_malformed_public_key_override_returns_key_error(tmp_path):
+    """timsim-verify --public-key bad.pem -> exit 2 (EXIT_KEY_ERROR), not generic 1.
+
+    Reviewer round-6 (LOW): MalformedKey was falling through the explicit
+    except clauses and surfacing as 'unexpected error: MalformedKey' with
+    exit 1. The typed error should map to the documented key-error code.
+    """
+    from imspy_simulation.provenance.cli import main as cli_main, EXIT_KEY_ERROR
+
+    d = make_minimal_d(tmp_path, name="x")
+    config = tmp_path / "c.toml"
+    config.write_bytes(b'[experiment]\nexperiment_name = "x"\n')
+    key_dir = tmp_path / "keys"
+    write_keypair(generate_keypair(), key_dir)
+    sidecar = sign_simulation_output(
+        d_path=d,
+        ground_truth_path=None,
+        config_path=config,
+        experiment_name="x",
+        simulator_version="test",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+
+    bad_pem = tmp_path / "bad.pem"
+    bad_pem.write_bytes(b"not a real public key PEM")
+
+    rc = cli_main([str(sidecar.parent), "--public-key", str(bad_pem)])
+    assert rc == EXIT_KEY_ERROR
+
+
+def test_keys_cli_show_with_corrupt_signing_key_returns_key_error(tmp_path):
+    """timsim-keys show with a corrupt signing_key.pem -> exit 2."""
+    from imspy_simulation.provenance.keys_cli import main as keys_main, EXIT_KEY_ERROR
+
+    key_dir = tmp_path / "kd"
+    key_dir.mkdir()
+    (key_dir / "signing_key.pem").write_bytes(b"not a real PKCS8 PEM")
+
+    rc = keys_main(["show", "--key-dir", str(key_dir)])
+    assert rc == EXIT_KEY_ERROR
+
+
+def test_keys_cli_export_with_corrupt_signing_key_returns_key_error(tmp_path):
+    from imspy_simulation.provenance.keys_cli import main as keys_main, EXIT_KEY_ERROR
+
+    key_dir = tmp_path / "kd"
+    key_dir.mkdir()
+    (key_dir / "signing_key.pem").write_bytes(b"-----BEGIN PRIVATE KEY-----\nGARBAGE\n-----END PRIVATE KEY-----\n")
+
+    rc = keys_main(["export", "--key-dir", str(key_dir), "--to", str(tmp_path / "out.pem")])
+    assert rc == EXIT_KEY_ERROR
+
+
 def test_cli_unsigned_default_returns_zero(tmp_path):
     """timsim-verify on an unsigned directory: default mode → exit 0 + UNSIGNED message.
 

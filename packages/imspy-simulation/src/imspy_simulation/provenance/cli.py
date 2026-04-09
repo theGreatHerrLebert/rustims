@@ -23,6 +23,7 @@ from pathlib import Path
 
 from imspy_simulation.provenance.errors import (
     KeyNotFoundError,
+    MalformedKey,
     MalformedSidecar,
     MissingArtifact,
     SqliteNotQuiescent,
@@ -217,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             expected_key_id=args.expected_key_id,
             require_trusted=args.require_trusted,
         )
-    except KeyNotFoundError as e:
+    except (KeyNotFoundError, MalformedKey) as e:
         print(f"timsim-verify: key error: {e}", file=sys.stderr)
         return EXIT_KEY_ERROR
     except SqliteNotQuiescent as e:

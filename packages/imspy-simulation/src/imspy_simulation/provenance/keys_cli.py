@@ -32,6 +32,7 @@ from pathlib import Path
 
 from imspy_simulation.provenance.errors import (
     KeyNotFoundError,
+    MalformedKey,
     MalformedSidecar,
     ProvenanceError,
 )
@@ -306,6 +307,12 @@ def main(argv: list[str] | None = None) -> int:
     handler = _DISPATCH[args.cmd]
     try:
         return handler(args)
+    except (KeyNotFoundError, MalformedKey) as e:
+        print(f"timsim-keys: key error: {e}", file=sys.stderr)
+        return EXIT_KEY_ERROR
+    except (MalformedSidecar, ProvenanceError) as e:
+        print(f"timsim-keys: registry/sidecar error: {e}", file=sys.stderr)
+        return EXIT_REGISTRY_ERROR
     except Exception as e:  # pragma: no cover - safety net
         print(f"timsim-keys: unexpected error: {type(e).__name__}: {e}", file=sys.stderr)
         return EXIT_GENERIC

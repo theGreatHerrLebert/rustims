@@ -415,6 +415,8 @@ Two layered ways to do this:
 
 Without either flag, `timsim-verify` reports `(not pinned)` for the trust line and only checks integrity. That is the correct default for ad-hoc inspection but should not be used for automated trust decisions.
 
+There is also a `--public-key PEM` flag that acts as a **consistency check** against an out-of-band copy of the trusted public key. If you have a known-good PEM of the signer (e.g. pasted from a collaborator's README), pass it via `--public-key`; the verifier requires the embedded `verifying_key` to match it byte-for-byte and refuses with `MalformedSidecar` otherwise. `--public-key` is **not** an alternative trust path — it cannot be used to verify a signature against a key different from the one in the sidecar. Use `--require-trusted` for ongoing trust decisions.
+
 ## Citation
 
 If you use TIMSIM in your research, please cite:
