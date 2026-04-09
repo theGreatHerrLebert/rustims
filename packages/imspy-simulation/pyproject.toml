@@ -50,3 +50,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests that build large fixtures or run real simulations (deselect with '-m \"not slow\"')",
+]
